@@ -47,7 +47,7 @@ pub(crate) fn stage(
     state: HandoverState,
     path: &Path,
     pid_file: &Path,
-    scrollback_limit_bytes: usize,
+    scrollback_limits: crate::ghostty::ScrollbackLimits,
     event_queue_bytes: usize,
     resumed_from: Option<RestoreFailure>,
 ) -> io::Result<Staged> {
@@ -70,7 +70,7 @@ pub(crate) fn stage(
     }
     originals.extend(state.panes.iter().map(|pane| pane.master_fd));
     let lanes = std::thread::available_parallelism().map_or(1, usize::from);
-    let staged_panes = stage_panes(state.panes, lanes, scrollback_limit_bytes, fallback)?;
+    let staged_panes = stage_panes(state.panes, lanes, scrollback_limits, fallback)?;
     for (slot, reservation, exit) in staged_panes {
         if let Some(reservation) = reservation {
             reservations.insert(reservation.id.clone(), reservation);
@@ -145,7 +145,7 @@ type StagedPane = (TerminalSlot, Option<Reservation>, Option<ChildExit>);
 pub(super) fn stage_panes(
     panes: Vec<CarriedPane>,
     lanes: usize,
-    scrollback_limit_bytes: usize,
+    scrollback_limits: crate::ghostty::ScrollbackLimits,
     fallback: bool,
 ) -> io::Result<Vec<StagedPane>> {
     let per_lane = panes.len().div_ceil(lanes.max(1)).max(1);
@@ -169,7 +169,7 @@ pub(super) fn stage_panes(
                         run.into_iter()
                             .map(|pane| {
                                 catch_unwind(AssertUnwindSafe(|| {
-                                    stage_pane(pane, scrollback_limit_bytes, fallback)
+                                    stage_pane(pane, scrollback_limits, fallback)
                                 }))
                             })
                             .collect::<Vec<_>>()
@@ -197,7 +197,7 @@ pub(super) fn stage_panes(
 
 fn stage_pane(
     pane: CarriedPane,
-    scrollback_limit_bytes: usize,
+    scrollback_limits: crate::ghostty::ScrollbackLimits,
     fallback: bool,
 ) -> io::Result<(TerminalSlot, Option<Reservation>, Option<ChildExit>)> {
     let fault = |kind| injected_fault(fallback, kind, &pane.host_terminal_id);
@@ -215,8 +215,7 @@ fn stage_pane(
     } else {
         &pane.snapshot_b64
     })?;
-    let terminal =
-        GhosttyPaneTerminal::from_handover(&snapshot, pane.core, scrollback_limit_bytes)?;
+    let terminal = GhosttyPaneTerminal::from_handover(&snapshot, pane.core, scrollback_limits)?;
     if fault("actor") {
         return Err(io::Error::other("injected actor construction failure"));
     }

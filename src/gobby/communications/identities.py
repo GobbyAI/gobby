@@ -120,17 +120,8 @@ class IdentityManager:
         link_session_to_identity = conversation_key is None
         if conversation_key is None:
             session_external_id = f"comms:{channel_id}:{external_user_id}"
-            session_title = f"Comms: {external_username or external_user_id}"
         else:
             session_external_id = f"comms:{channel_id}:{conversation_key}"
-            conversation_type, _, conversation_id = conversation_key.partition(":")
-            if conversation_type == "group":
-                session_title = f"Comms group: {conversation_id}"
-            elif conversation_type == "topic":
-                chat_id, _, thread_id = conversation_id.partition(":")
-                session_title = f"Comms topic: {chat_id}/{thread_id}"
-            else:
-                session_title = f"Comms conversation: {conversation_key}"
 
         session_id = None
         if link_session_to_identity and identity and identity.session_id:
@@ -144,7 +135,6 @@ class IdentityManager:
                 machine_id=None,
                 source="comms",
                 project_id=project_id,
-                title=session_title,
             )
             session_id = session.id
 

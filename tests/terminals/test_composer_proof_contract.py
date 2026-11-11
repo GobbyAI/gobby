@@ -42,6 +42,23 @@ def test_only_exact_disjoint_surface_can_be_used(tmp_path: Path) -> None:
         wrong_project.require_surface(own, own)
 
 
+@pytest.mark.parametrize("provider", ["grok", "agy", "droid"])
+def test_scope_admits_only_the_providers_it_names(tmp_path: Path, provider: str) -> None:
+    own = surface(provider)
+    excluded = frozenset({str(uuid4())})
+    composer = ProofScope(tmp_path, own.project_id, excluded, "a" * 40)
+    with pytest.raises(ProofRefused, match="unsupported provider"):
+        composer.require_surface(own, own)
+    handoff = ProofScope(
+        tmp_path,
+        own.project_id,
+        excluded,
+        "a" * 40,
+        providers=frozenset({"claude", "codex", "grok", "agy", "droid"}),
+    )
+    handoff.require_surface(own, own)
+
+
 @pytest.mark.parametrize("provider", ["claude", "codex"])
 def test_cleanup_only_erases_the_exact_owned_synthetic_draft(provider: str) -> None:
     text = f"R2_22915_{provider.upper()}_DRAFT_ABCD_EFGH"

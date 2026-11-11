@@ -372,14 +372,16 @@ class ComposerRaces:
 
     async def pull(self, session_id: str, arguments: dict[str, Any]) -> dict[str, Any]:
         client = AsyncMCPTestClient(
-            self.proof.daemon.http_url, daemon_token(self.proof.daemon.gobby_home)
+            self.proof.daemon.http_url,
+            daemon_token(self.proof.daemon.gobby_home),
+            gobby_home=self.proof.daemon.gobby_home,
         )
         client.session_id = session_id
         try:
             schema = await client.client.post(
                 "/api/mcp/tools/schema",
                 json={"server_name": "gobby-sessions", "tool_name": "get_handoff"},
-                headers=client._session_headers(),
+                headers=await client._session_headers(),
             )
             schema.raise_for_status()
             if schema.json().get("success") is not True:
@@ -553,7 +555,9 @@ class ComposerRaces:
         ):
             raise ProofRefused("staging provider identity changed")
         client = AsyncMCPTestClient(
-            self.proof.daemon.http_url, daemon_token(self.proof.daemon.gobby_home)
+            self.proof.daemon.http_url,
+            daemon_token(self.proof.daemon.gobby_home),
+            gobby_home=self.proof.daemon.gobby_home,
         )
         client.session_id = own.session_id
         leases: set[tuple[str, str]] = set()
@@ -563,7 +567,7 @@ class ComposerRaces:
                 schema = await client.client.post(
                     "/api/mcp/tools/schema",
                     json={"server_name": server, "tool_name": tool},
-                    headers=client._session_headers(),
+                    headers=await client._session_headers(),
                 )
                 schema.raise_for_status()
                 if schema.json().get("success") is not True:

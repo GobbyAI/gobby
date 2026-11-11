@@ -361,6 +361,12 @@ pub struct Chrome {
     /// Shared with the input reader so a runtime OSC 10/11 query's reply is
     /// framed as a reply, never as keystrokes.
     pub host_color_query: HostColorQueryArm,
+    /// Destroy-orphans requests issued so far; each inventory read carries
+    /// the number of the request that asked for it.
+    pub orphan_requests: u64,
+    /// The destroy-orphans request still waiting on its inventory. Input
+    /// cancels it (`route_live_input`); only its own inventory opens the dialog.
+    pub orphan_pending: Option<u64>,
 }
 
 /// A palette colour as the RGB a host declaration carries; palettes paint
@@ -407,6 +413,8 @@ impl Chrome {
             ticker: 0,
             host_colors: TerminalTheme::default(),
             host_color_query: HostColorQueryArm::default(),
+            orphan_requests: 0,
+            orphan_pending: None,
         }
     }
 

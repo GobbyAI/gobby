@@ -23,12 +23,12 @@ async def test_scheduled_tmux_rename_is_retained_until_done() -> None:
     started = asyncio.Event()
     release = asyncio.Event()
 
-    async def rename(_session: Any, _title: str) -> None:
+    async def rename(_session: Any) -> None:
         started.set()
         await release.wait()
 
     with patch("gobby.sessions.tmux_window_naming._rename_tmux_window", side_effect=rename):
-        schedule_tmux_window_rename(MagicMock(), "title")
+        schedule_tmux_window_rename(MagicMock())
 
         await started.wait()
         assert len(background_tasks._background_tasks) == 1
@@ -122,7 +122,7 @@ class TestRenameTmuxWindow:
         session = MagicMock()
         session.terminal_context = None
         with patch("gobby.utils.spawn.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
-            await _rename_tmux_window(session, "Title")
+            await _rename_tmux_window(session)
 
         assert mock_exec.await_count == 0
 
@@ -134,13 +134,13 @@ class TestRenameTmuxWindow:
         session = MagicMock()
         session.terminal_context = {"parent_pid": 123}
         with patch("gobby.utils.spawn.create_subprocess_exec", new_callable=AsyncMock) as mock_exec:
-            await _rename_tmux_window(session, "Title")
+            await _rename_tmux_window(session)
 
         assert mock_exec.await_count == 0
 
     @pytest.mark.asyncio
     async def test_provisional_user_session_renames_on_recorded_socket(self) -> None:
-        """A provisional provider title is used verbatim on the pane's own server."""
+        """The window is named for the session ref on the pane's own server."""
         from gobby.sessions.tmux_window_naming import _rename_tmux_window
 
         _RecordingTmuxManager.instances = []
@@ -148,18 +148,17 @@ class TestRenameTmuxWindow:
         session.terminal_context = {"tmux_socket_path": _SOCKET, "tmux_pane": "%42"}
         session.agent_depth = 0
         session.ref = "gobby#99"
-        session.title_source = "provisional"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
-            await _rename_tmux_window(session, "Codex")
+            await _rename_tmux_window(session)
 
         manager = _RecordingTmuxManager.instances[0]
         assert manager.socket_path == _SOCKET
-        assert manager.rename_calls == [("%42", "Codex")]
+        assert manager.rename_calls == [("%42", "gobby#99")]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status", ["active", "paused", "awaiting_handoff"])
-    async def test_queued_rename_reloads_authoritative_persisted_title(self, status: str) -> None:
+    async def test_queued_rename_reloads_authoritative_persisted_ref(self, status: str) -> None:
         from gobby.sessions.tmux_window_naming import _rename_tmux_window
         from gobby.terminal_ownership import PaneOwnershipDecision
 
@@ -172,7 +171,6 @@ class TestRenameTmuxWindow:
             },
             agent_depth=0,
             ref="#99",
-            title="#99 Codex",
         )
         persisted_session = SimpleNamespace(
             id="session-id",
@@ -181,8 +179,7 @@ class TestRenameTmuxWindow:
                 "tmux_socket_path": "/tmp/tmux-501/default",
             },
             agent_depth=0,
-            ref="#99",
-            title="(gobby): Task #42 - Work",
+            ref="#100",
             status=status,
         )
         container = _ReloadingAppContext(persisted_session)
@@ -206,11 +203,11 @@ class TestRenameTmuxWindow:
             ),
             patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager),
         ):
-            await _rename_tmux_window(stale_session, "#99 Codex")
+            await _rename_tmux_window(stale_session)
 
         assert container.calls == [(container.session_manager.get, ("session-id",))]
         manager = _RecordingTmuxManager.instances[0]
-        assert manager.rename_calls == [("%42", "(gobby): Task #42 - Work")]
+        assert manager.rename_calls == [("%42", "#100")]
 
     @pytest.mark.asyncio
     async def test_nested_child_queued_rename_is_rejected_for_parent_owned_pane(
@@ -227,13 +224,11 @@ class TestRenameTmuxWindow:
             id="codex-parent",
             terminal_context=terminal_context,
             status="active",
-            title="Codex title",
         )
         child = SimpleNamespace(
             id="grok-child",
             terminal_context=terminal_context,
             status="paused",
-            title="Grok title",
         )
         session_manager = SimpleNamespace(
             get=lambda _session_id: child,
@@ -265,7 +260,7 @@ class TestRenameTmuxWindow:
             ),
             patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager),
         ):
-            await _rename_tmux_window(child, "Grok title")
+            await _rename_tmux_window(child)
 
         assert _RecordingTmuxManager.instances == []
 
@@ -282,14 +277,12 @@ class TestRenameTmuxWindow:
             terminal_context={"tmux_socket_path": _SOCKET, "tmux_pane": "%42"},
             agent_depth=0,
             ref="#99",
-            title="Queued title",
         )
         persisted_session = SimpleNamespace(
             id="session-id",
             terminal_context={"tmux_socket_path": _SOCKET, "tmux_pane": "%42"},
             agent_depth=0,
             ref="#99",
-            title="Late task title",
             status=status,
         )
         container = _ReloadingAppContext(persisted_session)
@@ -299,7 +292,7 @@ class TestRenameTmuxWindow:
             patch("gobby.app_context.get_app_context", return_value=container),
             patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager),
         ):
-            await _rename_tmux_window(stale_session, "Queued title")
+            await _rename_tmux_window(stale_session)
 
         assert container.calls == [(container.session_manager.get, ("session-id",))]
         assert _RecordingTmuxManager.instances == []
@@ -321,7 +314,7 @@ class TestRenameTmuxWindow:
             caplog.at_level(logging.DEBUG, logger="gobby.sessions.tmux_window_naming"),
             patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager),
         ):
-            await _rename_tmux_window(session, "My Title")
+            await _rename_tmux_window(session)
 
         rename_records = [
             record
@@ -351,7 +344,6 @@ class TestRenameTmuxWindow:
                 session,
                 {"tmux_socket_path": _SOCKET, "tmux_pane": "%42"},
                 "%42",
-                "My Title",
             )
 
         outcome_records = [
@@ -364,54 +356,13 @@ class TestRenameTmuxWindow:
         assert outcome_records[0].levelno == logging.DEBUG
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
 
-    @pytest.mark.asyncio
-    async def test_empty_title_falls_back_to_source_not_cwd_basename(self) -> None:
-        """Empty titles never use the cwd basename (the old ``#N gobby`` bug).
-
-        The fallback is the session ``source``, even when a cwd basename exists —
-        a path basename is indistinguishable from a real title.
-        """
-        from gobby.sessions.tmux_window_naming import _rename_tmux_window
-
-        _RecordingTmuxManager.instances = []
-        session = MagicMock()
-        session.terminal_context = {
-            "tmux_socket_path": _SOCKET,
-            "tmux_pane": "%42",
-            "cwd": "/work/repos/gobby/",
-        }
-        session.agent_depth = 0
-        session.ref = "gobby#99"
-        session.source = "claude"
-
-        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
-            await _rename_tmux_window(session, "")
-
-        manager = _RecordingTmuxManager.instances[0]
-        assert manager.rename_calls == [("%42", "gobby#99")]
-
-    @pytest.mark.asyncio
-    async def test_unresolved_session_ref_uses_seq_num(self) -> None:
+    def test_unresolved_session_ref_falls_back_to_session_id(self) -> None:
         """The literal #session_ref placeholder is never used in a window title."""
-        from gobby.sessions.tmux_window_naming import _rename_tmux_window
+        from gobby.sessions.tmux_window_naming import _synthesize_fallback_title
 
-        _RecordingTmuxManager.instances = []
-        session = MagicMock()
-        session.terminal_context = {
-            "tmux_socket_path": _SOCKET,
-            "tmux_pane": "%42",
-            "cwd": "/work/repos/gobby/",
-        }
-        session.agent_depth = 0
-        session.seq_num = 99
-        session.ref = "gobby#99"
-        session.source = "claude"
+        session = SimpleNamespace(ref="#session_ref gobby", id="sess-uuid-1")
 
-        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
-            await _rename_tmux_window(session, "")
-
-        manager = _RecordingTmuxManager.instances[0]
-        assert manager.rename_calls == [("%42", "gobby#99")]
+        assert _synthesize_fallback_title(session) == "sess-uuid-1"
 
     def test_unresolved_session_ref_detection_requires_placeholder_token(self) -> None:
         from gobby.sessions.tmux_window_naming import _contains_unresolved_session_ref
@@ -421,74 +372,6 @@ class TestRenameTmuxWindow:
         assert _contains_unresolved_session_ref("{session_ref}: gobby") is True
         assert _contains_unresolved_session_ref("session_ref: gobby") is False
         assert _contains_unresolved_session_ref("session_reference: gobby") is False
-
-    def test_resolve_window_title_uses_persisted_title_verbatim(self) -> None:
-        from gobby.sessions.tmux_window_naming import _resolve_window_title
-
-        session = MagicMock()
-        session.seq_num = 99
-        session.ref = "gobby#99"
-
-        assert _resolve_window_title(session, {}, "gobby#99") == "gobby#99"
-        assert _resolve_window_title(session, {}, "Manual: title") == "Manual: title"
-        assert _resolve_window_title(session, {}, "") == "gobby#99"
-
-    @pytest.mark.asyncio
-    async def test_unresolved_title_falls_back_before_prefixing(self) -> None:
-        """A stored placeholder title is replaced with the source fallback."""
-        from gobby.sessions.tmux_window_naming import _rename_tmux_window
-
-        _RecordingTmuxManager.instances = []
-        session = MagicMock()
-        session.terminal_context = {
-            "tmux_socket_path": _SOCKET,
-            "tmux_pane": "%42",
-            "cwd": "/work/repos/gobby/",
-        }
-        session.agent_depth = 0
-        session.seq_num = 99
-        session.ref = "gobby#99"
-        session.source = "claude"
-
-        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
-            await _rename_tmux_window(session, "#session_ref gobby")
-
-        manager = _RecordingTmuxManager.instances[0]
-        assert manager.rename_calls == [("%42", "gobby#99")]
-
-    @pytest.mark.asyncio
-    async def test_empty_title_falls_back_to_source_then_untitled(self) -> None:
-        """Empty titles use the session source, then a neutral 'untitled' label."""
-        from gobby.sessions.tmux_window_naming import _rename_tmux_window
-
-        _RecordingTmuxManager.instances = []
-        source_session = MagicMock()
-        source_session.terminal_context = {
-            "tmux_socket_path": _SOCKET,
-            "tmux_pane": "%43",
-            "cwd": "/work/repos/gobby",
-        }
-        source_session.agent_depth = 0
-        source_session.ref = None
-        source_session.source = "codex"
-
-        session_fallback = MagicMock()
-        session_fallback.terminal_context = {
-            "tmux_socket_path": _SOCKET,
-            "tmux_pane": "%44",
-            "cwd": "/work/repos/gobby",
-        }
-        session_fallback.agent_depth = 0
-        session_fallback.ref = None
-        session_fallback.source = None
-
-        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
-            await _rename_tmux_window(source_session, "")
-            await _rename_tmux_window(session_fallback, "")
-
-        # Even with a cwd basename present, the fallback is deterministic.
-        assert _RecordingTmuxManager.instances[0].rename_calls == [("%43", "gobby")]
-        assert _RecordingTmuxManager.instances[1].rename_calls == [("%44", "gobby")]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -510,7 +393,7 @@ class TestRenameTmuxWindow:
         session = SimpleNamespace(agent_depth=depth, ref="#55", status="active")
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
-            applied = await _apply_window_rename(session, context, context["tmux_pane"], "Title")
+            applied = await _apply_window_rename(session, context, context["tmux_pane"])
 
         assert applied is False
         assert _RecordingTmuxManager.instances == []
@@ -527,14 +410,14 @@ class TestRenameTmuxWindow:
             "tmux_socket_path": "/tmp/tmux-501/gobby",
         }
         session.agent_depth = 0
-        session.ref = None
+        session.ref = "gobby#9"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
-            await _rename_tmux_window(session, "Socket Path Title")
+            await _rename_tmux_window(session)
 
         manager = _RecordingTmuxManager.instances[0]
         assert manager.socket_path == "/tmp/tmux-501/gobby"
-        assert manager.rename_calls == [("%9", "Socket Path Title")]
+        assert manager.rename_calls == [("%9", "gobby#9")]
 
     @pytest.mark.asyncio
     async def test_failure_does_not_propagate_and_logs_warning(
@@ -558,7 +441,7 @@ class TestRenameTmuxWindow:
             caplog.at_level(logging.DEBUG, logger="gobby.sessions.tmux_window_naming"),
             patch("gobby.sessions.tmux_context.TmuxSessionManager", FailingTmuxManager),
         ):
-            await _rename_tmux_window(session, "Title")
+            await _rename_tmux_window(session)
 
         assert "tmux window rename errored" in caplog.text
         assert f"#99 pane=%42 socket={_SOCKET}" in caplog.text
@@ -609,7 +492,6 @@ class TestEnforceWindowNameIfUnmanaged:
             terminal_context={"tmux_socket_path": _SOCKET, "tmux_pane": "%42"},
             agent_depth=0,
             ref="#99",
-            title="Historical title",
             status=status,
         )
         container = _ReloadingAppContext(persisted_session)
@@ -640,7 +522,6 @@ class TestEnforceWindowNameIfUnmanaged:
         }
         session.agent_depth = 0
         session.ref = "gobby#99"
-        session.title = ""
         session.source = "claude"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
@@ -652,12 +533,12 @@ class TestEnforceWindowNameIfUnmanaged:
 
     @pytest.mark.asyncio
     async def test_skips_window_already_managed(self) -> None:
-        """A managed window matching the persisted title is left untouched."""
+        """A managed window already showing the session ref is left untouched."""
         from gobby.sessions.tmux_window_naming import enforce_window_name_if_unmanaged
 
         _EnforceTmuxManager.instances = []
         _EnforceTmuxManager.auto_rename_return = False
-        _EnforceTmuxManager.window_name_return = "Session title"
+        _EnforceTmuxManager.window_name_return = "gobby#99"
         session = MagicMock()
         session.terminal_context = {
             "tmux_socket_path": _SOCKET,
@@ -666,7 +547,6 @@ class TestEnforceWindowNameIfUnmanaged:
         }
         session.agent_depth = 0
         session.ref = "gobby#99"
-        session.title = "Session title"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
             acted = await enforce_window_name_if_unmanaged(session)
@@ -676,8 +556,8 @@ class TestEnforceWindowNameIfUnmanaged:
         assert rename_calls == []
 
     @pytest.mark.asyncio
-    async def test_repairs_managed_window_with_stale_persisted_title(self) -> None:
-        """A managed window follows a newer persisted session title."""
+    async def test_repairs_managed_window_with_stale_name(self) -> None:
+        """A managed window showing an old name is repaired to the session ref."""
         from gobby.sessions.tmux_window_naming import enforce_window_name_if_unmanaged
 
         _EnforceTmuxManager.instances = []
@@ -687,14 +567,13 @@ class TestEnforceWindowNameIfUnmanaged:
         session.terminal_context = {"tmux_socket_path": _SOCKET, "tmux_pane": "%42"}
         session.agent_depth = 0
         session.ref = "gobby#99"
-        session.title = "New title"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
             acted = await enforce_window_name_if_unmanaged(session)
 
         assert acted is True
         rename_calls = [c for m in _EnforceTmuxManager.instances for c in m.rename_calls]
-        assert rename_calls == [("%42", "New title")]
+        assert rename_calls == [("%42", "gobby#99")]
 
     @pytest.mark.asyncio
     async def test_repairs_managed_window_with_unresolved_placeholder(self) -> None:
@@ -713,7 +592,6 @@ class TestEnforceWindowNameIfUnmanaged:
         session.agent_depth = 0
         session.seq_num = 99
         session.ref = "gobby#99"
-        session.title = "#session_ref gobby"
         session.source = "claude"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
@@ -734,7 +612,6 @@ class TestEnforceWindowNameIfUnmanaged:
         session.terminal_context = {"tmux_socket_path": _SOCKET, "tmux_pane": "%42"}
         session.agent_depth = 0
         session.ref = "gobby#99"
-        session.title = "#99 codex"
         session.source = "codex"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
@@ -742,7 +619,7 @@ class TestEnforceWindowNameIfUnmanaged:
 
         assert acted is True
         rename_calls = [c for m in _EnforceTmuxManager.instances for c in m.rename_calls]
-        assert rename_calls == [("%42", "#99 codex")]
+        assert rename_calls == [("%42", "gobby#99")]
 
     @pytest.mark.asyncio
     async def test_skips_when_window_unreadable(self) -> None:
@@ -760,7 +637,6 @@ class TestEnforceWindowNameIfUnmanaged:
         }
         session.agent_depth = 0
         session.ref = "gobby#99"
-        session.title = ""
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
             acted = await enforce_window_name_if_unmanaged(session)
@@ -795,7 +671,6 @@ class TestReleaseWindowNameIfUnowned:
         session = SimpleNamespace(
             id="stale-session",
             status=status,
-            title="#7951 Frozen title",
             terminal_context={
                 "tmux_pane": "%42",
                 "tmux_socket_path": "/tmp/tmux-501/default",
@@ -829,7 +704,7 @@ class TestReleaseWindowNameIfUnowned:
         assert _RecordingTmuxManager.instances[0].release_calls == ["%42"]
 
     @pytest.mark.asyncio
-    async def test_preserves_title_when_foreground_owner_exists(self) -> None:
+    async def test_preserves_window_name_when_foreground_owner_exists(self) -> None:
         from gobby.sessions.tmux_window_naming import release_window_name_if_unowned
         from gobby.terminal_ownership import PaneOwnershipDecision
 
@@ -862,7 +737,7 @@ class TestReleaseWindowNameIfUnowned:
 
 
 class TestSynthesizeFallbackTitle:
-    """Tests that the empty-title fallback never leaks a directory basename."""
+    """Tests that the window label never leaks a directory basename."""
 
     def test_never_uses_path_basename(self) -> None:
         from gobby.sessions.tmux_window_naming import _synthesize_fallback_title
@@ -874,10 +749,9 @@ class TestSynthesizeFallbackTitle:
         # The directory name 'gobby' must never surface as a title.
         assert _synthesize_fallback_title(session) == "gobby#99"
 
-    def test_falls_back_to_untitled_without_source(self) -> None:
+    def test_falls_back_to_gobby_without_ref_or_id(self) -> None:
         from gobby.sessions.tmux_window_naming import _synthesize_fallback_title
 
-        session = MagicMock()
-        session.seq_num = None
+        session = SimpleNamespace(ref=None, id=None)
 
         assert _synthesize_fallback_title(session) == "gobby"

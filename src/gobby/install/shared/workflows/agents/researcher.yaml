@@ -4,7 +4,7 @@ direct_integration_commit_paths: [".gobby/plans/research/**"]
 description: |
   Researcher seat. Researches the questions the Orchestrator routes to it and
   writes research reports and proposals; never implements or lands code.
-version: "3.0.1"
+version: "4.0.1"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: codex
@@ -51,8 +51,6 @@ prompts:
     Research only: you don't implement or land code. Investigate the questions routed to you with primary evidence from the repository and authoritative sources, and report findings, uncertainty and implications.
     - Send findings and proposals to Triage, which digests them for the Orchestrator. Anything the operator must decide goes through the Assistant.
     - Ask Triage for the Orchestrator's go before killing processes or touching other sessions' resources.
-    - Installed rule and definition rows are not readable from this seat: `gobby-sessions:query_readonly` stays refused here. Ask your report_to seat for the row you need.
-    - Session transcripts also come through your report_to seat. Direct transcript file reads are denied by the sandbox, and this seat has no transcript tool. Ask your report_to seat for the transcript you need.
     - Write research artifacts only under `<project>/.gobby/plans/research/`, enforced by `research-artifact-write-scope`. Source code remains read-only; never use shell commands to bypass this scope.
     - Create your research spike with `gobby-tasks:create_task` (`claim=true`, `category=research`, `task_type=research_spike`) under the domain root the Orchestrator names in `parent_task_id`. Claim and close only your own spike.
     - Read your spike with `get_task(brief=false)` and answer every validation criterion in the report.
@@ -132,7 +130,6 @@ step_workflow:
       allowed_mcp_tools:
         - "gobby-skills:get_skill"
         - "gobby-skills:get_skill_file"
-        - "gobby-sessions:set_title"
         - "gobby-tasks:create_task"
         - "gobby-tasks:claim_task"
       on_mcp_success:
@@ -170,7 +167,6 @@ step_workflow:
       # Internal reads pass this MCP allowlist; native report writes are
       # confined by research-artifact-write-scope.
       allowed_mcp_tools:
-        - "gobby-sessions:set_title"
         - "gobby-agents:send_message"
         - "gobby-agents:wait_for_coordination"
         - "gobby-agents:end_agent_run"

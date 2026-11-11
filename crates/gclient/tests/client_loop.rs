@@ -136,6 +136,33 @@ async fn wait_for_websocket_requests(mock: &MockDaemon, kind: &str, expected: us
     });
 }
 
+/// Waits until the loop's latest focus hint names `pane`. The loop sends a hint only
+/// once focus has moved, so this is the step that proves a split placed its pane.
+async fn wait_for_focus_hint(mock: &MockDaemon, pane: &str) {
+    timeout(WAIT_BUDGET, async {
+        loop {
+            let latest = workspace_ops(mock, "workspace.set_focus_hints")
+                .last()
+                .and_then(|hint| hint["pane"].as_str().map(str::to_owned));
+            if latest.as_deref() == Some(pane) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        let hints: Vec<_> = workspace_ops(mock, "workspace.set_focus_hints")
+            .iter()
+            .map(|hint| hint["pane"].clone())
+            .collect();
+        panic!(
+            "timed out waiting for focus on pane {pane}; hints={hints:?}\n{}",
+            mock.activity().join("\n")
+        )
+    });
+}
+
 fn request_count(mock: &MockDaemon, method: &str, path: &str) -> usize {
     mock.requests()
         .into_iter()
@@ -1230,6 +1257,8 @@ async fn closing_an_adopted_native_tab_releases_its_terminal() {
             title: None,
             terminal_id: Some("terminal-native".into()),
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         })
         .await
@@ -7277,6 +7306,12 @@ async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() 
                 })
         })
         .await;
+        // The second chord splits the focused pane. Until the first shell takes
+        // focus, that pane resolves to nothing, so wait for its focus hint first.
+        let owned_pane = mock
+            .newest_pane_for_terminal(OWNED)
+            .expect("daemon pane for the first new shell");
+        wait_for_focus_hint(&mock, &owned_pane).await;
         mock.enqueue(
             "GET",
             "/api/terminals?",
@@ -7302,28 +7337,12 @@ async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() 
                 })
         })
         .await;
-        // The placement that focuses the new pane lands after its viewport is
-        // sent. Close input only once the focus hint names that pane.
-        let focus_hinted = || {
-            let next_pane = mock
-                .published_workspace_events()
-                .iter()
-                .flat_map(|event| event["panes"].as_array().cloned().unwrap_or_default())
-                .find(|pane| pane["terminal_id"] == json!(NEXT_OWNED))
-                .and_then(|pane| pane["id"].as_str().map(str::to_owned));
-            next_pane.is_some_and(|pane| {
-                workspace_ops(&mock, "workspace.set_focus_hints")
-                    .iter()
-                    .any(|op| op["pane"] == json!(pane))
-            })
-        };
-        timeout(Duration::from_secs(10), async {
-            while !focus_hinted() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("focus hint names NEXT_OWNED's pane once its terminal resolves");
+        // A split's placement moves focus only once its reply is applied. Close
+        // input only once the focus hint names the new shell's pane.
+        let next_pane = mock
+            .pane_for_terminal(NEXT_OWNED)
+            .expect("daemon pane for the new shell");
+        wait_for_focus_hint(&mock, &next_pane).await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -7700,6 +7719,7 @@ async fn source_status_failure_does_not_block_sessions_or_worktrees() {
     let mock = MockDaemon::start("local-token").await;
     let mut roster_entry = sidebar_roster_entry("session:session-1", "run-1", "terminal-1");
     roster_entry["session_id"] = json!("session-1");
+    roster_entry["definition"] = json!("Restore Architect");
     mock.enqueue(
         "GET",
         "/api/attention/roster",
@@ -7734,7 +7754,6 @@ async fn source_status_failure_does_not_block_sessions_or_worktrees() {
             "sessions": [{
                 "id": "session-1",
                 "ref": "#13923",
-                "title": "Restore gclient",
                 "status": "active",
                 "source": "codex",
             }],
@@ -7757,7 +7776,7 @@ async fn source_status_failure_does_not_block_sessions_or_worktrees() {
     assert!(workspace.daemon_ready());
     let agent = &workspace.sidebar().agents[0];
     assert_eq!(agent.session_ref.as_deref(), Some("#13923"));
-    assert_eq!(agent.name, "Restore gclient");
+    assert_eq!(agent.name, "Restore Architect");
     let worktrees = &workspace.sidebar().projects[0].worktrees;
     assert_eq!(worktrees.len(), 1);
     assert_eq!(worktrees[0].worktree_id, "wt-1");
@@ -9569,6 +9588,8 @@ async fn tab_sets_follow_the_focused_project() {
             title: None,
             terminal_id: Some("terminal-b1".into()),
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         })
         .await
@@ -11019,6 +11040,8 @@ async fn other_window_creates_tab(daemon: &LiveDaemon, workspace_id: &str, termi
             title: None,
             terminal_id: Some(terminal.to_string()),
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         })
         .await

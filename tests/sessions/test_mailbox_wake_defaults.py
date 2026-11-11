@@ -31,7 +31,6 @@ def _sessions(session_manager: SessionManager, project_id: str) -> tuple[str, st
             machine_id=None,
             source="codex",
             project_id=project_id,
-            title=name,
         ).id
         for name in ("sender", "recipient")
     )

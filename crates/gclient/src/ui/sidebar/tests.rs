@@ -93,7 +93,7 @@ fn seat_sidebar_renders_live_claim_from_roster_without_run_task_binding() {
             "project_id": "proj-alpha",
             "machine_id": "local",
             "provider": "codex",
-            "definition_title": "Developer",
+            "definition": "Architect",
             "lifecycle_status": "active",
             "terminal": {"terminal_id": "term-alpha", "backend": "native"},
             "task": {"id": "live-task", "ref": "#24638", "title": "Live claim label"}
@@ -404,7 +404,7 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     assert_eq!(lines[6], " Agents");
     assert_eq!(lines[7], " ⍾ Codex");
     assert_eq!(lines[8], "   gpt-6-sol");
-    assert_eq!(lines[9], "   No assigned task");
+    assert!(blank(lines[9]), "{:?}", lines[9]);
     assert!(blank(lines[22]), "{:?}", lines[22]);
     assert_eq!(lines[23], " Terminals");
     assert_eq!(lines[24], "   term-beta      gclient");
@@ -544,7 +544,7 @@ fn list_scroll_clamps_to_the_last_page() {
     assert!(!should_show_scrollbar(list_metrics(3, 4, 0)));
 }
 
-/// Every drawn cell of an agent's quiet lines (`No assigned task`, the
+/// Every drawn cell of an agent's quiet lines (its status line, the
 /// model) and of a selected project's accent name meets AA against the fill
 /// it actually sits on: the ground or the selection fill, which the active
 /// and the selected row share. Each theme Dark and Light offer, in colour
@@ -565,6 +565,7 @@ fn agent_quiet_lines_meet_aa_on_every_row_fill() {
         kind: RowKind::Agent,
         active,
         selected,
+        status_line: Some("Reviewing the ticker".into()),
         ..SidebarRow::default()
     };
     let rows = [
@@ -617,7 +618,7 @@ fn agent_quiet_lines_meet_aa_on_every_row_fill() {
         let mut checked = [0usize; 3];
         for (y, line) in text.lines().enumerate() {
             let quiet = line.trim();
-            if quiet != "No assigned task" && quiet != "gpt-6-sol" {
+            if quiet != "Reviewing the ticker" && quiet != "gpt-6-sol" {
                 continue;
             }
             let row_y = u16::try_from(y).unwrap();

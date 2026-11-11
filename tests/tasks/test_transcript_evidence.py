@@ -633,7 +633,6 @@ def _session(source: str, transcript_path: Path | None, *, suffix: str = "1") ->
         machine_id=LOCAL_MACHINE_ID,
         source=source,
         project_id="project",
-        title=None,
         status="active",
         transcript_path=str(transcript_path) if transcript_path else None,
         summary_path=None,

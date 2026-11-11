@@ -10,6 +10,7 @@ import os
 import ssl
 import subprocess
 import time
+import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,7 @@ from websockets.sync.client import connect
 
 from gobby.storage.api_keys import ApiKeyManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
 from tests.e2e.conftest import (
     DaemonInstance,
@@ -28,7 +30,7 @@ from tests.e2e.conftest import (
     prepare_daemon_env,
     spawn_daemon_instance,
 )
-from tests.e2e.gmcp_client import gmcp_session
+from tests.e2e.gmcp_client import bind_cli_session, gmcp_session
 from tests.e2e.test_auth_login_e2e import TEST_EMAIL, _login
 from tests.e2e.test_auth_login_e2e import e2e_pre_daemon_setup as e2e_pre_daemon_setup
 from tests.fixtures.postgres import TEST_USER_ID
@@ -271,10 +273,27 @@ async def test_gmcp_on_node_reaches_hub_through_relay(
     ):
         _wait_listener(client, pair_node)
         _wait_connection(observer, pair_node, connected=True, deadline=time.monotonic() + 30.0)
+        # gmcp presents only its CLI's session credential: a node-local session the hub
+        # minted for, stored in the node home as that CLI's SessionStart would store it.
+        registered = client.post(
+            "/api/sessions/register",
+            headers={"Authorization": f"Bearer {pair_node.api_key}"},
+            json={
+                "external_id": f"pair-gmcp-{uuid.uuid4()}",
+                "machine_id": pair_node.machine_id,
+                "source": "Claude Code",
+                "project_id": "00000000-0000-0000-0000-000000000e2e",
+            },
+        )
+        assert registered.status_code == 200, registered.text
+        session = SessionManager(postgres_db).get(str(registered.json()["id"]))
+        assert session is not None
+        bind_cli_session(pair_node.home, session, signing_home=pair_hub.gobby_home)
         # GOBBY_HOME is the only input: the wrapper reads the node's front door and key
         # from its bootstrap.yaml, with no GOBBY_DAEMON_URL or GOBBY_PORT. HOME is the node
         # home too, so only the relay can answer for gobby-tasks, a hub-only registry.
-        async with gmcp_session(home=pair_node.home) as gmcp:
+        # The CLI runs in its project, whose .gobby/project.json names the caller project.
+        async with gmcp_session(home=pair_node.home, cwd=pair_hub.project_dir) as gmcp:
             listed = await gmcp.list_mcp_servers()
 
     assert listed["success"] is True, listed

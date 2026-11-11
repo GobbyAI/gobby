@@ -20,7 +20,9 @@ use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::pane_chrome::sandbox_mark;
 use crate::ui::settings::AgentSort;
-use crate::ui::sidebar_rows::{displayed_project_ids, project_label, RowKind, SidebarRow};
+use crate::ui::sidebar_rows::{
+    claim_mark, displayed_project_ids, project_label, RowKind, SidebarRow,
+};
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
@@ -327,12 +329,14 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
             definition: agent.definition_label(),
             reference: agent_reference(ws, chrome, agent),
             task: agent.task_ref.clone().zip(agent.task_title.clone()),
+            status_line: agent.status_line.clone(),
             model_slug: agent.model_slug(),
             label: agent_title(agent),
             kind: RowKind::Agent,
             state,
             active: focused.is_some() && pane == focused,
             sandbox_mark: sandbox_mark(agent.sandbox, chrome.prefs.nerd_glyphs),
+            claim_mark: claim_mark(agent.task_claim_held, chrome.prefs.nerd_glyphs),
             ..SidebarRow::default()
         },
         project_id: agent.project_id.clone(),

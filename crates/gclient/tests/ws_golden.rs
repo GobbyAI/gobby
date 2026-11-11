@@ -88,6 +88,37 @@ fn leaf(pane_id: &str) -> LayoutNode {
     }
 }
 
+/// A right-deep tree: every split keeps one pane on the left and the rest of
+/// the layout on the right, so `panes - 1` splits nest `2 * (panes - 1)` levels.
+fn right_deep_layout(panes: usize) -> LayoutNode {
+    let mut node = leaf(&format!("pane-{}", panes - 1));
+    for index in (0..panes - 1).rev() {
+        node = LayoutNode::Split {
+            axis: LayoutAxis::Horizontal,
+            ratio: 0.5,
+            children: Box::new([leaf(&format!("pane-{index}")), node]),
+        };
+    }
+    node
+}
+
+#[test]
+fn right_deep_layout_decodes_through_the_ws_codec_without_truncation() {
+    for panes in [64, 100] {
+        let layout = right_deep_layout(panes);
+        let raw = serde_json::to_vec(&json!({"type": "workspace", "layout": layout}))
+            .expect("encode layout message");
+        let decoded = decode_message(&raw)
+            .unwrap_or_else(|error| panic!("{panes}-pane layout must decode: {error}"));
+        let roundtrip: LayoutNode =
+            serde_json::from_value(decoded["layout"].clone()).expect("decoded layout value");
+        assert_eq!(
+            roundtrip, layout,
+            "{panes}-pane layout must round-trip unchanged"
+        );
+    }
+}
+
 /// 4.1.1: the snapshot, op, event, and error fixtures decode into typed rows,
 /// ops, and events. The outbound `workspace_attach` fixture is matched by
 /// `daemon_live.rs::workspace_attach_op_and_event_round_trip`.
@@ -136,6 +167,8 @@ fn workspace_fixtures_decode_into_typed_rows_ops_and_events() {
             axis: LayoutAxis::Horizontal,
             terminal_id: None,
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         }
     );

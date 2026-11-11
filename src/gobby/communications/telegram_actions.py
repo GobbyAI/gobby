@@ -236,8 +236,17 @@ class TelegramActionController:
         seats = await asyncio.to_thread(
             lambda: [session for session in sessions if is_operator_seat(db, session)]
         )
-        agents = sorted(seats, key=lambda session: (agent_label(session).casefold(), session.id))
-        labels = agent_menu_labels(agents)
+        seat_labels = await asyncio.to_thread(
+            lambda: {session.id: self._manager.session_seat_label(session.id) for session in seats}
+        )
+        agents = sorted(
+            seats,
+            key=lambda session: (
+                agent_label(session, seat_labels[session.id]).casefold(),
+                session.id,
+            ),
+        )
+        labels = agent_menu_labels(agents, seat_labels)
         current = await asyncio.to_thread(
             self._manager.attached_session, channel.id, conversation_id
         )
@@ -379,16 +388,18 @@ class TelegramActionController:
                 await self._agent_feedback(
                     channel,
                     message,
-                    f"Active agent: {agent_label(target)}. Menu could not refresh; run /agent.",
+                    f"Active agent: {await self._target_label(target)}. Menu could not refresh; run /agent.",
                 )
                 return
             await self._agent_feedback(
                 channel,
                 message,
-                f"Active agent: {agent_label(target)}. A new menu was sent because the old one could not refresh.",
+                f"Active agent: {await self._target_label(target)}. A new menu was sent because the old one could not refresh.",
             )
             return
-        await self._agent_feedback(channel, message, f"Active agent: {agent_label(target)}")
+        await self._agent_feedback(
+            channel, message, f"Active agent: {await self._target_label(target)}"
+        )
 
     async def _source_message(
         self,
@@ -435,6 +446,10 @@ class TelegramActionController:
             session_id=None,
             metadata=_reply_destination(message),
         )
+
+    async def _target_label(self, session: Session) -> str:
+        seat_label = await asyncio.to_thread(self._manager.session_seat_label, session.id)
+        return agent_label(session, seat_label)
 
     async def _agent_feedback(
         self, channel: ChannelConfig, message: CommsMessage, content: str

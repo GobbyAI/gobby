@@ -279,7 +279,6 @@ def register_core_routes(
                 machine_id=machine_id,
                 project_id=project_id,
                 source=provider,
-                title=body.title,
                 model=model,
                 is_local=is_local,
                 chat_mode=chat_mode,
@@ -350,12 +349,6 @@ def register_core_routes(
                 source=request_data.source or "Claude Code",
                 project_id=project_id,
                 transcript_path=request_data.transcript_path,
-                title=request_data.title,
-                title_source=(
-                    "manual"
-                    if isinstance(request_data.title, str) and request_data.title.strip()
-                    else None
-                ),
                 git_branch=git_branch,
                 parent_session_id=(
                     request_data.parent_session_id

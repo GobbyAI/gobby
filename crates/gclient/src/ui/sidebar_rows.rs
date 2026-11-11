@@ -87,6 +87,11 @@ pub struct SidebarRow {
     /// An agent row's sandbox lock, resolved from its session's sandbox state
     /// and the nerd-glyph pref; `None` for an unrestricted agent.
     pub sandbox_mark: Option<&'static str>,
+    /// An agent row's claim mark on its task line, set only on the seat whose
+    /// session holds the claim; `None` for every other seat.
+    pub claim_mark: Option<&'static str>,
+    /// An agent row's one-line status, drawn on line three while it holds no task.
+    pub status_line: Option<String>,
     /// A project or machine row's agents that need the operator, drawn beside
     /// its glyph as `⍾N`; zero draws nothing.
     pub needs_you: usize,
@@ -458,8 +463,8 @@ pub(crate) fn row_line_with_scrolling<'a>(
                 let definition = (row.definition.as_str(), title_style);
                 let pinned = pinned_width(row);
                 if pinned < budget {
-                    // `{ref}: ` stays put and a title the row cannot hold,
-                    // such as a lane seat's manual title, scrolls after it
+                    // `{ref}: ` stays put and a definition the row cannot hold,
+                    // such as a long lane seat's definition, scrolls after it
                     // on the shared clock like the task line.
                     if pinned > 0 {
                         spans.push(Span::styled(row.reference.as_str(), identifier_style));
@@ -561,10 +566,16 @@ pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
                 display_width(&row.definition),
                 budget.saturating_sub(pinned_width(row)),
             );
-            let task = task_line(row).map_or(0, |(lead, title)| {
-                overrun(display_width(&lead) + display_width(&title), budget)
-            });
-            name.max(task)
+            // The lead stays put, so only the title's overrun beside it scrolls. With
+            // no task held, line three is the status line, which scrolls in full.
+            let line_three = match task_line(row) {
+                Some((lead, title)) => overrun(
+                    display_width(&title),
+                    budget.saturating_sub(display_width(&lead)),
+                ),
+                None => status_line(row).map_or(0, |text| overrun(display_width(&text), budget)),
+            };
+            name.max(line_three)
         }
         RowKind::Worktree => overrun(display_width(&row.label), worktree_name_budget(row, width)),
         _ => 0,
@@ -600,7 +611,36 @@ fn pinned_width(row: &SidebarRow) -> usize {
 fn task_line(row: &SidebarRow) -> Option<(String, String)> {
     let (reference, title) = row.task.as_ref()?;
     let number = reference.rsplit('#').next().unwrap_or(reference);
-    Some((format!("Working task {number}"), format!(" {title}")))
+    // The claim mark sits between the number and the title, one cell from each.
+    let mark = row
+        .claim_mark
+        .map_or_else(String::new, |mark| format!("{mark} "));
+    // The lead keeps its trailing space, so a scrolled title never runs into it.
+    Some((format!("Working task {number} {mark}"), title.clone()))
+}
+
+/// The claim-holder mark on a task line: the key glyph with nerd glyphs, else the
+/// word `claim`. Only the seat whose session holds the claim carries it.
+pub fn claim_mark(holds_claim: bool, nerd_glyphs: bool) -> Option<&'static str> {
+    match (holds_claim, nerd_glyphs) {
+        (true, true) => Some("\u{f084}"),
+        (true, false) => Some("claim"),
+        (false, _) => None,
+    }
+}
+
+/// The agent's status line for line three when it holds no task. Control
+/// characters (ESC, C0, DEL, C1) are dropped before trimming, so a stored value
+/// draws as inert text; blank text counts as none.
+fn status_line(row: &SidebarRow) -> Option<String> {
+    let printable: String = row
+        .status_line
+        .as_deref()?
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect();
+    let trimmed = printable.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 /// The `budget`-cell window of `text` the marquee shows at `ticker`: the
@@ -768,21 +808,35 @@ pub(crate) fn row_third_line_with_travel<'a>(
     let style = Style::default().fg(chrome.palette.subtext0);
     let mut spans = vec![continuation_indent(row, width, &chrome.palette)];
     if let Some((lead, title)) = task_line(row) {
-        spans.extend(ticker_spans(
-            &[
-                (&lead, Style::default().fg(chrome.palette.text)),
-                (&title, style),
-            ],
-            budget,
-            chrome.ticker,
-            max_travel,
-            chrome.prefs.title_scrolling,
-        ));
-    } else {
-        spans.push(Span::styled(
-            truncate_end("No assigned task", budget),
-            style,
-        ));
+        // The lead holds its cells; only the title scrolls in what remains.
+        let lead_width = display_width(&lead);
+        let lead_style = Style::default().fg(chrome.palette.text);
+        if lead_width <= budget {
+            spans.push(Span::styled(lead, lead_style));
+            let title_budget = budget - lead_width;
+            if title_budget > 0 {
+                spans.extend(ticker_spans(
+                    &[(&title, style)],
+                    title_budget,
+                    chrome.ticker,
+                    max_travel,
+                    chrome.prefs.title_scrolling,
+                ));
+            }
+        } else {
+            spans.push(Span::styled(truncate_end(&lead, budget), lead_style));
+        }
+    } else if let Some(text) = status_line(row) {
+        // With no task held, the status line fills line three and scrolls alone.
+        if budget > 0 {
+            spans.extend(ticker_spans(
+                &[(&text, style)],
+                budget,
+                chrome.ticker,
+                max_travel,
+                chrome.prefs.title_scrolling,
+            ));
+        }
     }
     Line::from(spans)
 }

@@ -33,7 +33,7 @@ from gobby.providers.version_gate import (
     ensure_agy_support,
     peek_agy_support,
 )
-from gobby.sessions.title_lifecycle import definition_display_name
+from gobby.sessions.display_labels import definition_display_name
 from gobby.storage.sessions._constants import TURN_ENDED_SESSION_STATUSES
 from gobby.terminals.workspace_agent_panes import AgentPaneReserver
 from gobby.utils.git import run_thread_to_completion, run_to_completion

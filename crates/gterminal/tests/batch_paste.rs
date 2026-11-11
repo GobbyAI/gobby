@@ -3,8 +3,8 @@
 #![cfg(all(unix, feature = "vt-engine"))]
 
 use crate::host_support::{
-    committed_pane, control, pane_text, rpc, spawn_host, temp_socket_dir, wait_socket, wait_until,
-    write_token, CONTROL_SOCKET,
+    committed_pane, control, pane_text, rpc, spawn_host, temp_socket_dir, wait_socket,
+    wait_until_host, write_token, CONTROL_SOCKET,
 };
 use base64::Engine;
 use serde_json::json;
@@ -24,7 +24,7 @@ fn batch_paste_preserves_long_prompt_and_separate_return() {
         expected.len()
     );
     let pane = committed_pane(&mut host, &mut stream, 1, "batch-paste", &script);
-    wait_until("child enabled bracketed paste", || {
+    wait_until_host(&dir, "child enabled bracketed paste", || {
         pane_text(&mut stream, &pane.host_terminal_id).contains("READY")
     });
     let response = rpc(
@@ -49,7 +49,7 @@ fn batch_paste_preserves_long_prompt_and_separate_return() {
         "paste result: {response}"
     );
     let captured = dir.path().join("input.bin");
-    wait_until("complete child input", || {
+    wait_until_host(&dir, "complete child input", || {
         std::fs::metadata(&captured).is_ok_and(|metadata| metadata.len() == expected.len() as u64)
     });
     assert_eq!(

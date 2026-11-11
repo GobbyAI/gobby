@@ -3,28 +3,25 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
+from gobby.sessions.display_labels import provider_display_name
 from gobby.storage.session_models import Session
-from gobby.storage.sessions._title_defaults import provider_title_label
 
 
-def agent_label(session: Session) -> str:
-    """Prefer a role or title while removing an automatic session-ref prefix."""
-    title = session.title.strip() if isinstance(session.title, str) else ""
-    prefix, separator, remainder = title.partition(": ")
-    if separator and prefix.rsplit("#", maxsplit=1)[-1].isdigit():
-        title = remainder.strip()
-    if title and not title.rsplit("#", maxsplit=1)[-1].isdigit():
-        return title
-    source = session.source.strip()
-    label = provider_title_label(source)
-    return label if label != source else source.replace("_", " ").title()
+def agent_label(session: Session, seat_label: str | None = None) -> str:
+    """Name a seat by its definition, else by its provider. Sessions store no title."""
+    if seat_label:
+        return seat_label
+    return provider_display_name(session.source)
 
 
-def agent_menu_labels(sessions: Sequence[Session]) -> dict[str, str]:
+def agent_menu_labels(
+    sessions: Sequence[Session], seat_labels: Mapping[str, str | None] | None = None
+) -> dict[str, str]:
     """Give Telegram buttons distinct, bounded labels across all menu pages."""
-    names = {session.id: agent_label(session) for session in sessions}
+    seats = seat_labels or {}
+    names = {session.id: agent_label(session, seats.get(session.id)) for session in sessions}
     stems = {session_id: name[:42] for session_id, name in names.items()}
     counts = Counter(stem.casefold() for stem in stems.values())
     labels = {}

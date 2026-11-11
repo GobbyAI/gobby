@@ -953,7 +953,6 @@ class TestAgentWorkflowCompletion:
             machine_id="21000000-0000-4000-8000-000000000001",
             source="dispatcher_launcher",
             project_id=PROJECT_ID,
-            title="Dispatcher Launcher",
         )
         child = sessions.register(
             external_id="child-session",

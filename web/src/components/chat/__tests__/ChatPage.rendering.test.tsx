@@ -238,7 +238,6 @@ describe("ChatPage – rendering", () => {
           mainSessionMeta: {
             ref: "#77",
             source: "claude",
-            title: "Claude Session",
             status: "active",
             model: null,
             externalId: "session-77",

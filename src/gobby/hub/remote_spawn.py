@@ -67,7 +67,6 @@ class RemoteSpawnRequest:
     model: str | None = None
     reasoning_effort: str | None = None
     reasoning_required: bool | None = None
-    title: str | None = None
     isolation: str | None = None
     branch_name: str | None = None
     base_branch: str | None = None
@@ -385,7 +384,6 @@ async def spawn_remote_agent(
                         "initial_variables": request.initial_variables,
                         "agent_depth": prepared.agent_depth,
                         "max_agent_depth": request.max_agent_depth,
-                        "title": request.title,
                         "timeout": request.timeout_seconds,
                         "droid_mode": "exec",
                         "agent_lookup_name": request.agent_name,

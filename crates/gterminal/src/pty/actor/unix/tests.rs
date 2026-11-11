@@ -134,6 +134,24 @@ fn actor_wakes_idle_poll_for_user_input() {
     handle.shutdown();
 }
 
+/// Receives `expected` bytes of `fill` one chunk at a time. Each chunk must arrive
+/// within `STALL_LIMIT` of the previous one, so the wait is bounded by progress: a
+/// loaded run that takes longer in total still passes (#25733).
+fn receive_output_by_progress(read_rx: &std_mpsc::Receiver<Bytes>, fill: u8, expected: usize) {
+    const STALL_LIMIT: Duration = Duration::from_secs(10);
+    let mut received = 0;
+    while received < expected {
+        let output = read_rx.recv_timeout(STALL_LIMIT).unwrap_or_else(|err| {
+            panic!(
+                "actor stalled: no output for {STALL_LIMIT:?} after {received} of {expected} bytes: {err}"
+            )
+        });
+        assert!(output.iter().all(|byte| *byte == fill));
+        received += output.len();
+    }
+    assert_eq!(received, expected);
+}
+
 #[test]
 fn actor_reads_output_while_input_is_backpressured() {
     let (mut actor_socket, mut peer) = UnixStream::pair().expect("socket pair");
@@ -182,21 +200,7 @@ fn actor_reads_output_while_input_is_backpressured() {
             .write_all(&vec![0xBB; OUTPUT_LEN])
             .expect("peer writes sustained output");
     });
-    let deadline = Instant::now() + Duration::from_millis(500);
-    let mut output_len = 0;
-    while output_len < OUTPUT_LEN {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        assert!(
-            !remaining.is_zero(),
-            "actor did not keep reading blocked peer output"
-        );
-        let output = read_rx
-            .recv_timeout(remaining)
-            .expect("actor keeps reading while input remains blocked");
-        assert!(output.iter().all(|byte| *byte == 0xBB));
-        output_len += output.len();
-    }
-    assert_eq!(output_len, OUTPUT_LEN);
+    receive_output_by_progress(&read_rx, 0xBB, OUTPUT_LEN);
     output_writer.join().expect("output writer joins");
 
     let mut received_input = vec![0; prefilled + marker.len()];
@@ -204,6 +208,45 @@ fn actor_reads_output_while_input_is_backpressured() {
         .expect("peer receives prefill and queued input");
     assert!(received_input[..prefilled].iter().all(|byte| *byte == 0xAA));
     assert_eq!(&received_input[prefilled..], marker.as_ref());
+    handle.shutdown();
+}
+
+#[test]
+fn paced_output_that_keeps_arriving_is_not_a_stall() {
+    // #25733: the read wait is bounded by progress, not by total time. Output
+    // that keeps arriving past the old 500 ms total deadline is still progress.
+    let (actor_socket, mut peer) = UnixStream::pair().expect("socket pair");
+    actor_socket
+        .set_nonblocking(true)
+        .expect("actor socket nonblocking");
+    // SAFETY: into_raw_fd transfers sole ownership of the socket's descriptor to OwnedFd.
+    let owned = unsafe { OwnedFd::from_raw_fd(actor_socket.into_raw_fd()) };
+    let (read_tx, read_rx) = std_mpsc::channel();
+    let handle = PtyIoActor::spawn(PtyIoActorConfig {
+        pane_id: 1,
+        master_fd: owned,
+        initially_quiesced: false,
+        on_read: Box::new(move |bytes| {
+            read_tx
+                .send(Bytes::copy_from_slice(bytes))
+                .expect("read callback receiver alive");
+            PtyReadResult::empty()
+        }),
+        on_reader_exit: None,
+    })
+    .expect("actor spawn");
+
+    const CHUNK_LEN: usize = 8 * 1024;
+    const CHUNKS: usize = 16;
+    let paced_writer = std::thread::spawn(move || {
+        for _ in 0..CHUNKS {
+            peer.write_all(&[0xCC; CHUNK_LEN])
+                .expect("peer writes paced output");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    });
+    receive_output_by_progress(&read_rx, 0xCC, CHUNK_LEN * CHUNKS);
+    paced_writer.join().expect("paced writer joins");
     handle.shutdown();
 }
 

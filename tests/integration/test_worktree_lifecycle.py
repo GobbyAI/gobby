@@ -84,7 +84,6 @@ def session(session_manager: SessionManager, project: Project) -> Session:
         source="claude",
         project_id=project.id,
         external_id="ext-test-session",
-        title="Test Session",
     )
 
 
@@ -366,7 +365,6 @@ class TestWorktreeStatusTransitions:
             source="claude",
             project_id=proj.id,
             external_id="ext-claim-session",
-            title="Claim Session",
         )
 
         worktree = worktree_manager.create(
@@ -471,7 +469,6 @@ class TestWorktreeStatusTransitions:
             source="claude",
             project_id=proj.id,
             external_id="ext-lifecycle-session",
-            title="Lifecycle Session",
         )
 
         # Create (active)

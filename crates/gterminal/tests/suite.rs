@@ -70,6 +70,10 @@ mod source_size;
 #[path = "terminal_theme.rs"]
 mod terminal_theme;
 
+#[cfg(all(unix, feature = "vt-engine"))]
+#[path = "wait_diagnostics.rs"]
+mod wait_diagnostics;
+
 #[path = "wire_codec_async.rs"]
 mod wire_codec_async;
 

@@ -7,10 +7,11 @@ import inspect
 import logging
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_init import services
 from gobby.storage.projects import GLOBAL_PROJECT_ID
@@ -110,19 +111,13 @@ class _MarkerStore:
         self.values[key] = value
 
 
-async def _run_servers_backfill(search: Any, proxy: Any, store: Any) -> set[Any]:
-    """Call mcp_stack's scheduler directly with the internal manager servers.py passes.
-
-    servers.py itself is not run here.
-    """
+async def _run_scoped_backfill(search: Any, proxy: Any, store: Any, internal: Any) -> set[Any]:
+    """Schedule the live backfill as init_servers does and await the task it spawns."""
     from gobby.runner_init import mcp_stack
 
     before = set(mcp_stack._BACKFILL_TASKS)
     mcp_stack.schedule_scoped_embedding_backfill(
-        search,
-        proxy,
-        config_store=store,
-        internal_manager=MagicMock(),
+        search, proxy, config_store=store, internal_manager=internal
     )
     created = set(mcp_stack._BACKFILL_TASKS) - before
     await asyncio.gather(*created)
@@ -130,60 +125,100 @@ async def _run_servers_backfill(search: Any, proxy: Any, store: Any) -> set[Any]
 
 
 @pytest.mark.asyncio
-async def test_servers_backfill_schedules_scoped_embedding_backfill() -> None:
+async def test_scoped_backfill_embeds_and_records_marker() -> None:
     from gobby.runner_init import mcp_stack
 
     search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
     store = _MarkerStore()
-    proxy = MagicMock()
+    proxy, internal = MagicMock(), object()
 
-    created = await _run_servers_backfill(search, proxy, store)
+    created = await _run_scoped_backfill(search, proxy, store, internal)
 
     assert len(created) == 1
-    search.embed_all_tools.assert_awaited_once_with(GLOBAL_PROJECT_ID, proxy, internal_manager=ANY)
+    search.embed_all_tools.assert_awaited_once_with(
+        GLOBAL_PROJECT_ID, proxy, internal_manager=internal
+    )
     assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
 
 
 @pytest.mark.asyncio
-async def test_servers_backfill_runs_once_across_restarts() -> None:
+async def test_scoped_backfill_runs_once_across_restarts() -> None:
     from gobby.runner_init import mcp_stack
 
     search = SimpleNamespace(embed_all_tools=AsyncMock(return_value={"embedded": 3}))
     store = _MarkerStore()
+    proxy, internal = MagicMock(), object()
 
-    await _run_servers_backfill(search, MagicMock(), store)
-    await _run_servers_backfill(search, MagicMock(), store)
+    await _run_scoped_backfill(search, proxy, store, internal)
+    await _run_scoped_backfill(search, proxy, store, internal)
 
     search.embed_all_tools.assert_awaited_once()
     assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
 
 
 @pytest.mark.asyncio
-async def test_servers_backfill_skips_when_marker_current() -> None:
+async def test_scoped_backfill_skips_when_marker_current() -> None:
     from gobby.runner_init import mcp_stack
 
     search = SimpleNamespace(embed_all_tools=AsyncMock())
     store = _MarkerStore()
     store.set(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY, mcp_stack.SCOPED_PAYLOAD_VERSION)
 
-    await _run_servers_backfill(search, MagicMock(), store)
+    await _run_scoped_backfill(search, MagicMock(), store, object())
 
     search.embed_all_tools.assert_not_awaited()
     assert store.get(mcp_stack.SCOPED_PAYLOAD_VERSION_KEY) == mcp_stack.SCOPED_PAYLOAD_VERSION
 
 
 @pytest.mark.asyncio
-async def test_servers_backfill_skipped_without_search_service() -> None:
-    from gobby.runner_init import mcp_stack
-
+async def test_scoped_backfill_skipped_without_search() -> None:
     store = _MarkerStore()
-    before = set(mcp_stack._BACKFILL_TASKS)
 
-    created = await _run_servers_backfill(None, MagicMock(), store)
+    created = await _run_scoped_backfill(None, MagicMock(), store, object())
 
     assert created == set()
-    assert set(mcp_stack._BACKFILL_TASKS) == before
     assert store.values == {}
+
+
+@pytest.mark.parametrize(
+    ("bootstrap_config", "schedules"),
+    [
+        (BootstrapConfig(), True),
+        (BootstrapConfig(hub=True), True),
+        (BootstrapConfig(datastore_mode="remote"), False),
+    ],
+    ids=["standalone", "hub", "node"],
+)
+def test_runner_scoped_backfill_skips_node_mode(
+    bootstrap_config: BootstrapConfig,
+    schedules: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.runner_init import mcp_stack
+
+    runner = _fake_runner(
+        bootstrap_config=bootstrap_config,
+        http_server=SimpleNamespace(
+            _tools_handler=SimpleNamespace(_semantic_search=object()),
+            _internal_manager=object(),
+        ),
+        mcp_proxy=MagicMock(),
+        database=object(),
+    )
+    caplog.set_level(logging.INFO, logger=mcp_stack.__name__)
+    skip = "skipping hub-only scoped tool backfill in node mode"
+    with (
+        patch.object(mcp_stack, "schedule_scoped_embedding_backfill") as backfill,
+        patch.object(mcp_stack, "ConfigStore"),
+    ):
+        mcp_stack.schedule_runner_scoped_backfill(runner)
+
+    if schedules:
+        backfill.assert_called_once()
+        assert skip not in caplog.messages
+    else:
+        backfill.assert_not_called()
+        assert caplog.messages.count(skip) == 1
 
 
 def test_scoped_backfill_marker_roundtrip_real_config_store(temp_db: Any) -> None:

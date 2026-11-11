@@ -51,6 +51,7 @@ def clean_start_proof(monkeypatch: pytest.MonkeyPatch) -> None:
     config = MagicMock()
     config.agent_sandbox.enabled = False
     config.web_chat_sandbox.enabled = False
+    config.agent_build.build_root = None
     runtime = MagicMock()
     runtime.read_only_operational_config.return_value = config
     monkeypatch.setattr(pack_module, "get_cli_runtime", lambda *_args: runtime)

@@ -5,10 +5,21 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from gobby.storage.session_models import Session
+from gobby.storage.sessions._constants import STATUS_LINE_MAX_LENGTH
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
+
+
+def normalize_status_line(status_line: str | None) -> str | None:
+    """Collapse whitespace to single spaces and drop non-printable characters.
+
+    The sidebar draws the line into terminal cells, so an ESC, a CR or a bell from a
+    seat must not reach the operator's terminal as-is. A blank result means clear.
+    """
+    collapsed = " ".join((status_line or "").split())
+    return "".join(ch for ch in collapsed if ch.isprintable()) or None
 
 
 class _ManagerState(Protocol):
@@ -84,3 +95,26 @@ class _SessionMetadataUpdateMixin:
         if updated is not None:
             self._notify_session_change("session_updated", session_id)
         return updated
+
+    def set_status_line(self: _ManagerState, session_id: str, status_line: str | None) -> bool:
+        """Set or clear a session's one-line status; a blank line clears it.
+
+        The line is normalized to one printable line. A line past STATUS_LINE_MAX_LENGTH
+        after normalization is refused with ValueError and the stored line stays as it
+        was. updated_at is left alone: the line labels the work and is not activity.
+
+        Returns:
+            True when the session row exists and was written, False otherwise.
+        """
+        text = normalize_status_line(status_line)
+        if text is not None and len(text) > STATUS_LINE_MAX_LENGTH:
+            raise ValueError(f"status_line must be at most {STATUS_LINE_MAX_LENGTH} characters")
+        with self.db.transaction():
+            cursor = self.db.execute(
+                "UPDATE sessions SET status_line = %s WHERE id = %s",
+                (text, session_id),
+            )
+        if cursor.rowcount <= 0:
+            return False
+        self._notify_session_change("session_updated", session_id)
+        return True

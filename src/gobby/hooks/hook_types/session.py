@@ -112,11 +112,6 @@ class UserPromptSubmitOutput(HookOutput):
         alias="additionalContext",
         description="Context injected into Claude for the submitted prompt",
     )
-    session_title: str | None = Field(
-        default=None,
-        alias="sessionTitle",
-        description="Optional session title override",
-    )
 
 
 class UserPromptExpansionInput(HookInput):

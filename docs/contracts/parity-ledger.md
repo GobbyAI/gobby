@@ -29,7 +29,7 @@ Parity waivers in `docs/contracts/parity-waivers.json` cite a changed behaviour 
 row; the row status is unchanged and the note reads `Waived`. `native-extension` rows are
 additive surfaces with no Python counterpart; their readiness comes from native tests alone.
 
-Public surfaces and evidence gates: 1093. Unclassified: 0.
+Public surfaces and evidence gates: 1094. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -653,7 +653,7 @@ Public surfaces and evidence gates: 1093. Unclassified: 0.
 | `HTTP POST /api/sessions/{session_id}/expire` | proxied | Python `src/gobby/servers/routes/sessions/lifecycle.py::expire_session`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts. |
 | `HTTP POST /api/sessions/{session_id}/generate-summary` | proxied | Python `src/gobby/servers/routes/sessions/analytics.py::generate_session_summary`; Rust blocker: implement native session summary generation/update and stop-signal HTTP handlers. Owner: #21562 Sessions and transcripts. |
 | `HTTP POST /api/sessions/{session_id}/release-composer` | proxied | Python `src/gobby/servers/routes/sessions/lifecycle.py::release_session_composer`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts. |
-| `HTTP POST /api/sessions/{session_id}/rename` | proxied | Python `src/gobby/servers/routes/sessions/lifecycle.py::rename_session`; Rust blocker: implement native session lookup, project moves, status/expiry/composer/rename HTTP handlers. Owner: #21562 Sessions and transcripts. |
+| `HTTP POST /api/sessions/{session_id}/rename` | dropped by decision #25485 | Removed with stored session titles and manual names (#25485). Labels derive from ref, agent definition, claimed task and status line; no route stores a name. |
 | `HTTP POST /api/sessions/{session_id}/restore-transcript` | proxied | Python `src/gobby/servers/routes/sessions/messages.py::restore_transcript_endpoint`; Rust blocker: implement native session messages/transcript streaming, status and archive restore HTTP handlers. Owner: #21562 Sessions and transcripts. |
 | `HTTP POST /api/sessions/{session_id}/stop` | proxied | Python `src/gobby/servers/routes/sessions/analytics.py::stop_session`; Rust blocker: implement native session summary generation/update and stop-signal HTTP handlers. Owner: #21562 Sessions and transcripts. |
 | `HTTP POST /api/sessions/{session_id}/variables/get` | proxied | Python `src/gobby/servers/routes/sessions/variables.py::get_variable`; Rust blocker: implement native session/step variable storage and context-aware HTTP handlers. Owner: #21562 Sessions and transcripts. |
@@ -906,7 +906,8 @@ Public surfaces and evidence gates: 1093. Unclassified: 0.
 | `MCP gobby-sessions:send_wake` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_terminal_send_keys.py::send_wake (line 314)`; Rust blocker: implement native terminal input routing with wake admission and delivery verification MCP handler. Owner: #21565 Daemon-side gterm adoption and terminal WS. Registry flip: #21570 MCP registries. |
 | `MCP gobby-sessions:session_stats` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_crud.py::session_stats`; Rust blocker: implement native session CRUD/statistics/usage MCP handlers and storage projections. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
 | `MCP gobby-sessions:set_handoff` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_terminal.py::set_handoff`; Rust blocker: implement native provider compact/clear handoff orchestration and terminal capture MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
-| `MCP gobby-sessions:set_title` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_handoff.py::set_title`; Rust blocker: implement native handoff consumption receipts, feedback persistence and title MCP handlers. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:set_status_line` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_status_line.py::set_status_line`; Rust blocker: implement native session status-line storage and projection MCP handler. Owner: #21562 Sessions and transcripts. Registry flip: #21570 MCP registries. |
+| `MCP gobby-sessions:set_title` | dropped by decision #25485 | Removed with stored session titles and manual names (#25485). Labels derive from ref, agent definition, claimed task and status line; no tool stores a name. |
 | `MCP gobby-sessions:terminate_terminal` | proxied | Python `src/gobby/mcp_proxy/tools/sessions/_terminal_termination.py::terminate_terminal`; Rust blocker: implement native session terminal ownership resolution and termination orchestration MCP handler. Owner: #21565 Daemon-side gterm adoption and terminal WS. Registry flip: #21570 MCP registries. |
 | `MCP gobby-skills:get_skill` | proxied | Python src/gobby/mcp_proxy/tools/skills/get_skill.py::get_skill; Rust MCP tool handler parity for gobby-skills:get_skill remains under #21568 Remaining route families (Skills). |
 | `MCP gobby-skills:get_skill_file` | proxied | Python src/gobby/mcp_proxy/tools/skills/get_skill.py::get_skill_file_tool; Rust MCP tool handler parity for gobby-skills:get_skill_file remains under #21568 Remaining route families (Skills). |

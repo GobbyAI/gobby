@@ -131,6 +131,8 @@ mod tests {
             axis: LayoutAxis::Horizontal,
             terminal_id: None,
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         }
     }
@@ -162,6 +164,8 @@ mod tests {
             title: None,
             terminal_id: None,
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         };
         for op in [split(), create] {

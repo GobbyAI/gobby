@@ -28,30 +28,23 @@ TS = datetime(2026, 10, 10, tzinfo=UTC)
 
 
 @pytest.mark.parametrize(
-    "agent_type,definition_title,seat",
+    "agent_type,seat",
     [
-        ("fixture-definition-599e0437", None, "Fixture Definition 599E0437"),
-        ("lane-manager", None, "Lane Manager"),
-        ("fixture-definition-e08ba693", None, "Fixture Definition E08Ba693"),
-        ("fixture-worker", "Lane 1 Developer", "Lane 1 Developer"),
+        ("fixture-definition-599e0437", "Fixture Definition 599E0437"),
+        ("lane-manager", "Lane Manager"),
+        ("fixture-definition-e08ba693", "Fixture Definition E08Ba693"),
     ],
 )
-async def test_telegram_provisional_title_uses_persisted_seat(
+async def test_telegram_seat_label_uses_persisted_agent_type(
     attached: tuple[CommunicationsManager, str, AsyncMock],
     temp_db: HubDatabase,
     agent_type: str,
-    definition_title: str | None,
     seat: str,
 ) -> None:
     manager, session_id, _ = attached
     session = SessionManager(temp_db).get(session_id)
     assert session is not None
-    assert session.title_source == "provisional"
     SessionVariableManager(temp_db).set_variable(session_id, "_agent_type", agent_type)
-    if definition_title is not None:
-        SessionVariableManager(temp_db).set_variable(
-            session_id, "_definition_title", definition_title
-        )
     payloads: list[str] = []
 
     def respond(request: httpx.Request) -> httpx.Response:

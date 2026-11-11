@@ -227,9 +227,6 @@ async def test_deleted_telegram_target_falls_back_by_capability(
     holder = env.sessions.register("selected-for-fallback", None, "codex", env.project_id)
     env.manager.attach_conversation(env.channel.name, "dm:42", holder.id)
     seat = env.assistant(definition)
-    env.sessions.update_title(
-        seat.id, "Assistant" if definition == "fixture-helper" else "Help desk"
-    )
     assert env.sessions.delete(holder.id)
 
     await fallback_telegram_targets(

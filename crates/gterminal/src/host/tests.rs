@@ -231,3 +231,21 @@ async fn frame_attach_allocators_refuse_while_the_upgrade_gate_is_held() {
         .await
         .is_ok());
 }
+
+#[test]
+fn pidfile_write_does_not_recreate_a_removed_socket_dir() {
+    let root = tempfile::tempdir().expect("tempdir");
+    let socket_dir = root.path().join("gterm-host");
+    let removed_dir = root.path().join("gterm-host.removed");
+    fs::create_dir_all(&socket_dir).expect("socket dir");
+    fs::rename(&socket_dir, &removed_dir).expect("remove socket dir during startup");
+
+    let error = write_pidfile(&socket_dir.join(PID_FILE), 4242)
+        .expect_err("a pidfile write must not resurrect a removed socket dir");
+
+    assert_eq!(error.kind(), io::ErrorKind::NotFound, "{error}");
+    assert!(
+        !socket_dir.exists(),
+        "the removed socket dir must stay removed so the ticker can shut the host down"
+    );
+}

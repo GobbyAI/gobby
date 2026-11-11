@@ -10,6 +10,11 @@ use crate::host::state::{Identity, ObserverBind, TerminalSlot};
 use crate::pane::{PaneLaunchEnv, PaneRuntime};
 use crate::terminal_theme::TerminalTheme;
 
+const TEST_SCROLLBACK: crate::ghostty::ScrollbackLimits = crate::ghostty::ScrollbackLimits {
+    bytes: 1 << 20,
+    lines: 10_000,
+};
+
 fn state_with(panes: Vec<CarriedPane>, control: RawFd, frames: RawFd) -> HandoverState {
     HandoverState {
         format_version: FORMAT_VERSION,
@@ -219,8 +224,9 @@ async fn concurrent_restore_matches_the_serial_restore() {
         .map(|pane| pane.master_fd)
         .collect();
 
-    let serial = stage_panes(serial_panes, 1, 1 << 20, false).expect("serial restore");
-    let concurrent = stage_panes(concurrent_panes, 4, 1 << 20, false).expect("concurrent restore");
+    let serial = stage_panes(serial_panes, 1, TEST_SCROLLBACK, false).expect("serial restore");
+    let concurrent =
+        stage_panes(concurrent_panes, 4, TEST_SCROLLBACK, false).expect("concurrent restore");
 
     assert_eq!(concurrent.len(), PANES);
     for ((serial_slot, _, _), (slot, _, _)) in serial.iter().zip(&concurrent) {
@@ -282,7 +288,10 @@ async fn stage_rebuilds_generation_attempt_and_registry() {
         dir.path().to_path_buf(),
         &["sh".into(), "-c".into(), "sleep 30".into()],
         &PaneLaunchEnv::default(),
-        1 << 20,
+        crate::ghostty::ScrollbackLimits {
+            bytes: 1 << 20,
+            lines: 10_000,
+        },
         TerminalTheme::default(),
         None,
     )
@@ -350,7 +359,18 @@ async fn stage_rebuilds_generation_attempt_and_registry() {
     .expect("write state");
 
     let carried = read_state(&path).expect("read state");
-    let staged = stage(carried, &path, &pid_file, 1 << 20, 1 << 20, None).expect("stage");
+    let staged = stage(
+        carried,
+        &path,
+        &pid_file,
+        crate::ghostty::ScrollbackLimits {
+            bytes: 1 << 20,
+            lines: 10_000,
+        },
+        1 << 20,
+        None,
+    )
+    .expect("stage");
 
     assert_eq!(staged.host.host_epoch, "epoch-1");
     assert_eq!(staged.host.generation, 3);

@@ -10,10 +10,13 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::chrome::Tab;
+use crate::ui::pane_layout::{lone_pane_inner_rect, split_terminal_rect};
 use crate::ui::Chrome;
+use ratatui::layout::{Direction, Rect};
 
 use super::super::viewer_state::EMPTY_LOCAL_TAB_PREFIX;
 use super::super::Workspace;
+use super::actions::live_layout_area;
 use super::daemon_ops::op_tag;
 use super::jobs::{spawn_job, JobOutcome, JobResult, OwnedShell};
 use super::local_adoption::spawn_in_adopted_local_tab;
@@ -29,11 +32,61 @@ pub(super) fn daemon_pane_id(chrome: &Chrome, slot: layout::PaneId) -> Option<St
     chrome.viewer.panes.daemon_id(slot).map(str::to_owned)
 }
 
+/// Rows and columns a shell spawns at to fill `inner`. With no room for a
+/// terminal, the daemon's default size applies.
+pub(super) fn viewport_of(inner: Rect) -> (Option<u16>, Option<u16>) {
+    if inner.is_empty() {
+        return (None, None);
+    }
+    (Some(inner.height), Some(inner.width))
+}
+
+/// Rows and columns a new tab's first shell spawns at: the terminal rect its
+/// lone pane gets in the live layout, so the PTY starts at the viewport.
+pub(super) fn new_tab_viewport(chrome: &Chrome) -> (Option<u16>, Option<u16>) {
+    viewport_of(lone_pane_inner_rect(
+        live_layout_area(chrome),
+        chrome.prefs.pane_scrollbars,
+    ))
+}
+
+/// Rows and columns a split of `tab`'s focused pane spawns at: the rect the
+/// split gives the new pane. Without room, the daemon's default applies.
+pub(super) fn split_viewport(
+    chrome: &Chrome,
+    tab: &Tab,
+    axis: LayoutAxis,
+) -> (Option<u16>, Option<u16>) {
+    let direction = match axis {
+        LayoutAxis::Horizontal => Direction::Horizontal,
+        LayoutAxis::Vertical => Direction::Vertical,
+    };
+    split_terminal_rect(
+        &tab.layout,
+        chrome.tab_focus(tab),
+        direction,
+        live_layout_area(chrome),
+        &chrome.prefs,
+    )
+    .map_or((None, None), viewport_of)
+}
+
+/// The toast for a placement that `placement_op` refused on a daemon tab. The
+/// refusal comes only from a missing project or an unresolved focused pane.
+pub(super) fn refusal_message(workspace: &Workspace<LiveDaemon>) -> &'static str {
+    if workspace.project_id().is_some() {
+        "Wait for the focused pane before splitting"
+    } else {
+        "Select a project before opening a shell"
+    }
+}
+
 /// The op that places `terminal_id` per `placement` when the window views a
 /// daemon workspace: a new tab of the focused project, or a split of the
 /// active daemon tab's focused pane (a bar with no tab yet gets a tab).
-/// `None` keeps the chrome-only placement: no model, no project, or a
-/// local tab active.
+/// `None` is no daemon op. With no model, no project, or a local tab active,
+/// the caller places the pane chrome-only. A split whose daemon tab's focus
+/// names no pane yet is refused: the caller must not place it chrome-only.
 pub(super) fn placement_op(
     workspace: &Workspace<LiveDaemon>,
     chrome: &Chrome,
@@ -54,15 +107,22 @@ pub(super) fn placement_op(
         return None;
     }
     let focused =
-        active_daemon_tab(chrome).and_then(|tab| daemon_pane_id(chrome, chrome.tab_focus(tab)));
+        active_daemon_tab(chrome).map(|tab| daemon_pane_id(chrome, chrome.tab_focus(tab)));
     let terminal_id = terminal_id.map(str::to_owned);
-    let split = |pane, axis| WorkspaceOp::PaneSplit {
-        pane,
-        axis,
-        terminal_id: terminal_id.clone(),
-        cwd: cwd.clone(),
-        node: None,
+    let split = |pane, axis| {
+        let (rows, cols) =
+            active_daemon_tab(chrome).map_or((None, None), |tab| split_viewport(chrome, tab, axis));
+        WorkspaceOp::PaneSplit {
+            pane,
+            axis,
+            terminal_id: terminal_id.clone(),
+            cwd: cwd.clone(),
+            rows,
+            cols,
+            node: None,
+        }
     };
+    let (rows, cols) = new_tab_viewport(chrome);
     Some(match (placement, focused) {
         (Placement::Tab, _) | (_, None) => WorkspaceOp::TabCreate {
             workspace: model.workspace.id.clone(),
@@ -71,10 +131,15 @@ pub(super) fn placement_op(
             title: None,
             terminal_id,
             cwd,
+            rows,
+            cols,
             node: None,
         },
-        (Placement::SplitRight, Some(pane)) => split(pane, LayoutAxis::Horizontal),
-        (Placement::SplitDown, Some(pane)) => split(pane, LayoutAxis::Vertical),
+        // The daemon tab's focus names no daemon pane yet, so there is nothing
+        // to split. Refuse; a tab.create here would open a second tab instead.
+        (_, Some(None)) => return None,
+        (Placement::SplitRight, Some(Some(pane))) => split(pane, LayoutAxis::Horizontal),
+        (Placement::SplitDown, Some(Some(pane))) => split(pane, LayoutAxis::Vertical),
     })
 }
 

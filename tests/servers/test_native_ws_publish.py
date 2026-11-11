@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import contextlib
+import gc
 import json
+import tracemalloc
+import warnings
 from collections.abc import Callable, Iterator, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -17,7 +22,9 @@ from starlette.websockets import WebSocket
 
 import gobby.runner_backend as runner_backend
 import gobby.servers.websocket.native_publish as native_publish
+import gobby.terminals.ws_protocol as ws_protocol
 from gobby.config.bootstrap import BootstrapConfig
+from gobby.servers.websocket.broadcast import BroadcastMixin
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.native_bridge import NativeBridgeAdapter, add_server_subscriptions
 from gobby.servers.websocket.native_publish import (
@@ -28,6 +35,11 @@ from gobby.servers.websocket.proxy_relay import ProxyHub
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.session_control import SessionControlMixin
 from gobby.terminals.leases import TerminalLeaseRegistry
+from gobby.terminals.ws_protocol import (
+    TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES,
+    canonical_json,
+    fragment_event,
+)
 from gobby.utils.json_helpers import json_dumps
 from tests.fixtures.native_ws_probe_records import RECORDS_FILE, recording_bind
 
@@ -39,6 +51,9 @@ BASE_URL = "http://127.0.0.1:60887"
 GEN1 = f"{1:032x}"
 GEN2 = f"{2:032x}"
 CONFIG = WebSocketConfig(max_message_size=4096, ping_interval=7, ping_timeout=3)
+# gdaemon's PUBLISH_LIMIT: a publish body over this is refused with 413.
+DAEMON_PUBLISH_LIMIT = 16 * 1024 * 1024
+WORKSPACE_ROUTING_FIELDS = ("type", "kind", "workspace_id", "project_id", "seq", "timestamp")
 
 
 @pytest.mark.parametrize("stage", ["bind", "rebind"])
@@ -104,12 +119,303 @@ async def test_publish_requests_stay_within_a_deadline_sized_batch(supervisor_to
     frame = {"type": "terminal_output", "data": "x" * (1 << 20)}
     try:
         await publisher.start()
-        pending = [publisher.publish({"type": "terminal_output"}, [frame]) for _ in range(4)]
+        pending = [
+            publisher.publish(
+                {"type": "terminal_output"}, [frame], source_bytes=_source_bytes([frame])
+            )
+            for _ in range(4)
+        ]
         await asyncio.wait_for(asyncio.gather(*pending), 5.0)
     finally:
         await publisher.stop()
     assert len(publish_bodies) > 1
     assert max(publish_bodies) <= 2 * (1 << 20)
+
+
+async def test_large_publish_splits_into_bounded_ops_in_frame_order(supervisor_token: str) -> None:
+    """One publish call of many frames never becomes one oversized request body."""
+    daemon = _Daemon()
+    frames = [{"type": "terminal_output", "seq": seq, "data": "x" * (1 << 20)} for seq in range(10)]
+    publisher = _publisher(daemon)
+    try:
+        await publisher.start()
+        await asyncio.wait_for(
+            publisher.publish(
+                {"type": "terminal_output"}, frames, source_bytes=_source_bytes(frames)
+            ),
+            5.0,
+        )
+    finally:
+        await publisher.stop()
+    delivered = [json.loads(payload)["seq"] for op in daemon.ops(GEN1) for payload in op["frames"]]
+    assert delivered == list(range(10))
+    assert len(daemon.body_sizes) > 1
+    assert max(daemon.body_sizes) <= 4 * (1 << 20) + 1024
+
+
+async def test_publish_frame_larger_than_the_op_cap_goes_alone(supervisor_token: str) -> None:
+    """A frame too large to share an op with its neighbours is sent alone, in frame order."""
+    daemon = _Daemon()
+    frames = [
+        {"type": "terminal_output", "seq": 0, "data": "x" * (1 << 20)},
+        {"type": "terminal_output", "seq": 1, "data": "x" * (5 << 20)},
+        {"type": "terminal_output", "seq": 2, "data": "x" * (1 << 20)},
+    ]
+    publisher = _publisher(daemon)
+    try:
+        await publisher.start()
+        await asyncio.wait_for(
+            publisher.publish(
+                {"type": "terminal_output"}, frames, source_bytes=_source_bytes(frames)
+            ),
+            5.0,
+        )
+    finally:
+        await publisher.stop()
+    delivered = [json.loads(payload)["seq"] for op in daemon.ops(GEN1) for payload in op["frames"]]
+    assert delivered == [0, 1, 2]
+    assert [len(op["frames"]) for op in daemon.ops(GEN1)] == [1, 1, 1]
+
+
+def test_publish_op_bytes_match_the_generic_encoder() -> None:
+    """An op assembled from frame literals encodes exactly as json_dumps encodes the op."""
+    message = {"type": "terminal_output"}
+    payloads = [
+        json_dumps({"seq": 1, "data": 'quote " and \\ slash'}),
+        json_dumps({"seq": 2, "data": "héllo"}),
+    ]
+    literals = [json_dumps(payload).encode() for payload in payloads]
+    op = {"op": "publish", "filter": message, "frames": payloads}
+    assert native_publish._publish_op(json_dumps(message), literals) == json_dumps(op).encode()
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        {"type": "terminal_ws_fragment", "payload": "QUJD" * 50_000},
+        {"payload": "x" * (native_publish._LITERAL_SLICE_CHARS - 1)},
+        {"payload": "x" * native_publish._LITERAL_SLICE_CHARS},
+        {"payload": "x" * (native_publish._LITERAL_SLICE_CHARS + 1)},
+        {"payload": "é" * 20_000 + "😀" * 9_000},
+        {"text": 'quote " and \\ slash\n\t\x00' * 3_000},
+        {"when": datetime(2026, 11, 5, 12, 30, tzinfo=UTC), "day": date(2026, 11, 5)},
+        {"pair": ("a", None), "items": [{"b": 1, "a": [True, None, 1.5, float("nan")]}]},
+        {"empty": {}, "list": [], "text": ""},
+    ],
+    ids=[
+        "multi-slice-payload",
+        "slice-minus-one",
+        "exact-slice",
+        "slice-plus-one",
+        "non-bmp-and-accents",
+        "quotes-backslashes-controls",
+        "datetime-and-date",
+        "tuple-and-nested-list",
+        "empty-containers",
+    ],
+)
+async def test_frame_literal_bytes_match_the_generic_encoder(frame: dict[str, Any]) -> None:
+    assert await native_publish._frame_literal(frame) == json_dumps(json_dumps(frame)).encode()
+
+
+async def test_frame_literal_rejects_an_unencodable_value() -> None:
+    with pytest.raises(TypeError):
+        await native_publish._frame_literal({"bad": {1, 2}})
+
+
+async def test_frame_literal_yields_while_it_encodes_a_large_frame() -> None:
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    task = asyncio.create_task(ticker())
+    try:
+        literal = await native_publish._frame_literal({"payload": "A" * (1024 * 1024)})
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert len(literal) > 1024 * 1024
+    assert ticks >= 8
+
+
+def test_fragment_event_encodes_a_bounded_multiple_of_its_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fragmenting a cap-sized event encodes a bounded multiple of its bytes.
+
+    The count comes from canonical_json calls, so the bound holds at any host load.
+    """
+    empty = len(canonical_json(_workspace_event("")))
+    raw = canonical_json(
+        _workspace_event("x" * (TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES - empty))
+    )
+    encoded: list[int] = []
+    real = ws_protocol.canonical_json
+
+    def counting(message: Any) -> bytes:
+        data = real(message)
+        encoded.append(len(data))
+        return data
+
+    monkeypatch.setattr(ws_protocol, "canonical_json", counting)
+    frames = fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=raw,
+    )
+    assert len(frames) > 2
+    assert sum(encoded) <= 4 * len(raw)
+
+
+def test_fragment_event_base64_encodes_each_input_byte_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each event byte reaches the base64 encoder exactly once.
+
+    The encoder input total is fixed by the event, so the assertion holds at any host load.
+    """
+    empty = len(canonical_json(_workspace_event("")))
+    raw = canonical_json(
+        _workspace_event("x" * (TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES - empty))
+    )
+    encoded: list[int] = []
+    real_b64encode = base64.b64encode
+
+    def counting(data: bytes) -> bytes:
+        encoded.append(len(data))
+        return real_b64encode(data)
+
+    monkeypatch.setattr(base64, "b64encode", counting)
+    frames = fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=raw,
+    )
+    assert len(frames) > 2
+    assert sum(encoded) == len(raw)
+    assert b"".join(base64.b64decode(frame["payload"]) for frame in frames) == raw
+
+
+class _Host(BroadcastMixin):
+    """A broadcaster whose only sink is the native publisher."""
+
+    def __init__(self, publisher: NativePublisher) -> None:
+        self.clients: dict[Any, dict[str, Any]] = {}
+        self.native_publisher = publisher
+
+
+def _workspace_event(scrollback: str) -> dict[str, Any]:
+    """A workspace_event shaped as broadcast_workspace_event builds it, rows included."""
+    return {
+        "type": "workspace_event",
+        "kind": "pane.added",
+        "workspace_id": "ws-1",
+        "project_id": "proj-1",
+        "seq": 42,
+        "timestamp": "2026-11-02T00:00:00+00:00",
+        "workspace": None,
+        "tabs": [{"id": "tab-1", "project_id": "proj-1"}],
+        "panes": [{"id": "pane-1", "tab_id": "tab-1", "scrollback": scrollback}],
+    }
+
+
+async def test_workspace_event_at_the_fragment_cap_publishes_bounded_ops(
+    supervisor_token: str,
+) -> None:
+    """A fragmented workspace event at the cap stays under the daemon bound.
+
+    Every op's filter holds the routing fields alone. The rows travel only in the
+    fragments, which arrive in order and reassemble to the event's own bytes.
+    """
+    empty = len(canonical_json(_workspace_event("")))
+    message = _workspace_event("x" * (TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES - empty))
+    raw = canonical_json(message)
+    assert len(raw) == TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES
+    daemon = _Daemon()
+    daemon.publish_limit = DAEMON_PUBLISH_LIMIT
+    publisher = _publisher(daemon)
+    host = _Host(publisher)
+    try:
+        await publisher.start()
+        await asyncio.wait_for(host._publish_workspace_event(message), 5.0)
+    finally:
+        await publisher.stop()
+
+    assert max(daemon.body_sizes) <= DAEMON_PUBLISH_LIMIT
+    assert len(daemon.binds) == 1
+    ops = daemon.ops(GEN1)
+    route = {field: message[field] for field in WORKSPACE_ROUTING_FIELDS}
+    assert [op["filter"] for op in ops] == [route] * len(ops)
+    fragments = [json.loads(payload) for op in ops for payload in op["frames"]]
+    assert len(fragments) > 2
+    assert [fragment["fragment_index"] for fragment in fragments] == list(range(len(fragments)))
+    assert b"".join(base64.b64decode(fragment["payload"]) for fragment in fragments) == raw
+
+
+async def test_publish_preparation_peak_stays_within_queued_bytes_and_op_transients(
+    supervisor_token: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preparing a cap-sized publish holds its peak allocation near the queued wire bytes.
+
+    Encoding runs in a task after publish() returns, so the peak is read where the call
+    exchanges its ops. The exchange runs synchronously once preparation finishes and before
+    any POST starts, so the window covers the whole encode and none of the daemon side.
+    The queued ops are the only whole-wire copies that outlive the call. Each op is
+    assembled from at most PUBLISH_CHUNK bytes, so the transient allocation above them
+    is a few op sizes. Traced allocation is fixed by the event, so the bound holds at
+    any host load.
+    """
+    empty = len(canonical_json(_workspace_event("")))
+    message = _workspace_event("x" * (TERMINAL_WS_FRAGMENT_MAX_REASSEMBLY_BYTES - empty))
+    frames = fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=canonical_json(message),
+    )
+    route = {field: message[field] for field in WORKSPACE_ROUTING_FIELDS}
+    source_bytes = _source_bytes(frames)
+    daemon = _Daemon()
+    daemon.publish_limit = DAEMON_PUBLISH_LIMIT
+    publisher = _publisher(daemon)
+    enqueue = publisher._enqueue
+    exchanged: list[tuple[int, int]] = []
+
+    def measure_exchange(
+        turn: asyncio.Future[None], generation: str | None, encoded: list[bytes]
+    ) -> list[asyncio.Future[None]]:
+        futures = enqueue(turn, generation, encoded)
+        _, peak = tracemalloc.get_traced_memory()
+        exchanged.append((peak, sum(len(op) for op in encoded)))
+        return futures
+
+    try:
+        await publisher.start()
+        monkeypatch.setattr(publisher, "_enqueue", measure_exchange)
+        tracemalloc.start()
+        try:
+            base, _ = tracemalloc.get_traced_memory()
+            tracemalloc.reset_peak()
+            settled = publisher.publish(route, frames, source_bytes=source_bytes)
+            await asyncio.wait_for(settled, 5.0)
+        finally:
+            tracemalloc.stop()
+    finally:
+        await publisher.stop()
+
+    [(peak, queued)] = exchanged
+    assert peak - base <= queued + 4 * native_publish.PUBLISH_CHUNK
 
 
 class _Daemon:
@@ -122,6 +428,7 @@ class _Daemon:
         self.bind_times: list[float] = []
         self.requests: list[dict[str, Any]] = []
         self.body_sizes: list[int] = []
+        self.publish_limit: int | None = None
         self.publish_headers: list[httpx.Headers] = []
         self.received = asyncio.Event()
         self.gate: asyncio.Event | None = None
@@ -143,6 +450,8 @@ class _Daemon:
         index = len(self.requests)
         self.requests.append(json.loads(request.content))
         self.body_sizes.append(len(request.content))
+        if self.publish_limit is not None and len(request.content) > self.publish_limit:
+            return httpx.Response(413)
         self.publish_headers.append(request.headers)
         self.in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self.in_flight)
@@ -292,6 +601,11 @@ def _publish_op(
     return {"op": "publish", "filter": json.loads(json_dumps(message)), "frames": payloads}
 
 
+def _source_bytes(frames: list[dict[str, Any]]) -> int:
+    """The bytes the frames encode from, which the caller passes as their source size."""
+    return len(json_dumps(frames))
+
+
 def _adapter(publisher: NativePublisher, socket: _Socket, leg: int = 7) -> NativeBridgeAdapter:
     return NativeBridgeAdapter(
         cast(WebSocket, socket),
@@ -333,7 +647,7 @@ async def test_publisher_binds_and_publishes_encoded_frames(
         sent_first = publisher.publish(first)
         await _until(daemon.received.is_set)
         later = [
-            publisher.publish(second, frames=fragments),
+            publisher.publish(second, frames=fragments, source_bytes=_source_bytes(fragments)),
             publisher.subscribe(7, events),
             publisher.publish(first),
         ]
@@ -376,8 +690,7 @@ async def test_publisher_binds_and_publishes_encoded_frames(
         # One operation whose request would exceed the bound fails its generation unsent.
         monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", op_size)
         oversized = publisher.publish(second)
-        assert oversized.done()
-        assert oversized.result() is None
+        await asyncio.wait_for(oversized, 1.0)
         await _turns()
         assert len(daemon.requests) == sent + 2
         assert publisher.generation != GEN1
@@ -1133,11 +1446,11 @@ async def test_publisher_admission_budgets_fail_generation_on_overflow(
             return publisher.publish(message("burst", n))
 
         futures.extend(await asyncio.gather(produce(1), produce(2)))
+        await _turns()
         assert (publisher.retained_bytes, publisher.retained_ops) == (3 * size, 3)
         [overflow] = await asyncio.gather(produce(3))
-        assert overflow.done()
-        assert overflow.result() is None
-        assert all(future.done() and future.result() is None for future in futures)
+        await asyncio.wait_for(overflow, 1.0)
+        assert await asyncio.wait_for(asyncio.gather(*futures), 1.0) == [None, None, None]
         assert publisher.generation != GEN1
         assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
         await _until(lambda: leg.closed == [1011], timeout=1.0)
@@ -1163,6 +1476,414 @@ async def test_publisher_admission_budgets_fail_generation_on_overflow(
         assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
     finally:
         await publisher.stop()
+
+
+async def test_frame_that_fails_to_encode_queues_no_op(supervisor_token: str) -> None:
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        # The first frame encodes; the second cannot. Neither op may be queued.
+        # Only the first frame has a size to charge; the second cannot be encoded at all.
+        bad = publisher.publish(
+            {"type": "burst"},
+            [{"seq": 1}, {"seq": 2, "data": object()}],
+            source_bytes=_source_bytes([{"seq": 1}]),
+        )
+        with pytest.raises(TypeError):
+            await asyncio.wait_for(bad, 1.0)
+        assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
+        await _turns()
+        assert daemon.requests == []
+
+        # The failed call leaves the queue order intact for the calls after it.
+        await asyncio.wait_for(publisher.publish({"type": "ok"}), 1.0)
+        assert [op["filter"]["type"] for op in daemon.ops(GEN1)] == ["ok"]
+    finally:
+        await publisher.stop()
+
+
+async def test_canonical_json_async_bytes_match_canonical_json() -> None:
+    event = {
+        "type": "workspace_event",
+        "seq": 7,
+        "flag": True,
+        "none": None,
+        "ratio": 0.1,
+        "big": 2**40,
+        "empty": {"list": [], "dict": {}},
+        "text": 'quote " slash \\ tab \t nul \x00 unit   é 😀',
+        "huge": "é" * (2 * 1024 * 1024),
+        "nested": {"b": [1, {"d": "x", "c": "y"}], "a": ("t", None)},
+    }
+    assert await ws_protocol.canonical_json_async(event) == canonical_json(event)
+
+
+@pytest.mark.parametrize("bad", [{"seq": 2**53}, {"outer": [{"message_seq": -1}]}])
+async def test_canonical_json_async_rejects_unsafe_integers_as_canonical_json_does(
+    bad: dict[str, Any],
+) -> None:
+    with pytest.raises(ws_protocol.SafeIntegerOverflowError):
+        canonical_json(bad)
+    with pytest.raises(ws_protocol.SafeIntegerOverflowError):
+        await ws_protocol.canonical_json_async(bad)
+
+
+def test_iter_fragment_event_frames_match_fragment_event() -> None:
+    raw = canonical_json({"type": "workspace_event", "seq": 42, "text": "é" * 1_000_000})
+    expected = fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=raw,
+    )
+    assert len(expected) > 1
+    frames = ws_protocol.iter_fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=raw,
+    )
+    assert list(frames) == expected
+
+
+async def test_fragment_event_async_frames_match_fragment_event() -> None:
+    event = {"type": "workspace_event", "seq": 42, "text": "é" * 1_000_000}
+    expected = fragment_event(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=canonical_json(event),
+    )
+    assert len(expected) > 1
+    # canonical_json_async returns a bytearray, the buffer the publisher fragments.
+    raw = await ws_protocol.canonical_json_async(event)
+    frames = await ws_protocol.fragment_event_async(
+        event="workspace_event",
+        terminal_id="ws-1",
+        attachment_id="ws-1",
+        message_seq=42,
+        complete_json=raw,
+    )
+    assert frames == expected
+
+
+async def test_canonical_json_async_pauses_once_per_piece_budget() -> None:
+    value = {"text": "é" * (4 * ws_protocol.CANONICAL_PIECE_CHARS)}
+    pieces = list(ws_protocol._canonical_pieces(value))
+    assert max(len(piece) for piece in pieces) <= ws_protocol.CANONICAL_PIECE_CHARS
+    pauses: list[int] = []
+
+    async def counting_pause() -> None:
+        pauses.append(1)
+        await asyncio.sleep(0)
+
+    encoded = await ws_protocol.canonical_json_async(value, pause=counting_pause)
+    assert encoded == canonical_json(value)
+    total_chars = sum(len(piece) for piece in pieces)
+    assert len(pauses) >= total_chars // ws_protocol.CANONICAL_PIECE_CHARS
+
+
+async def test_large_publish_keeps_its_place_before_later_calls(supervisor_token: str) -> None:
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        big = publisher.publish(
+            {"type": "big"},
+            [{"type": "big", "text": "é" * (2 * ws_protocol.CANONICAL_PIECE_CHARS)}],
+            # Each "é" is two bytes of UTF-8 source.
+            source_bytes=4 * ws_protocol.CANONICAL_PIECE_CHARS,
+        )
+        subscribed = publisher.subscribe(7, ["terminal.output"])
+        small = publisher.publish({"type": "small"})
+        # The big encode yields to the loop, so the later calls are made while it is pending.
+        assert not big.done()
+        await asyncio.wait_for(asyncio.gather(big, subscribed, small), 2.0)
+        labels = [op.get("filter", {}).get("type", op.get("op")) for op in daemon.ops(GEN1)]
+        assert labels == ["big", "subscribe", "small"]
+    finally:
+        await publisher.stop()
+
+
+def _hold_encodes(monkeypatch: pytest.MonkeyPatch) -> asyncio.Event:
+    """Keep every publish's encoding pending until the returned event is set."""
+    gate = asyncio.Event()
+    encode = native_publish._publish_ops
+
+    async def held(filter_json: str, sources: Any) -> list[bytes]:
+        await gate.wait()
+        return await encode(filter_json, sources)
+
+    monkeypatch.setattr(native_publish, "_publish_ops", held)
+    return gate
+
+
+async def test_cancelled_waiter_keeps_later_calls_behind_its_predecessor(
+    supervisor_token: str,
+) -> None:
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        big = publisher.publish(
+            {"type": "big"},
+            [{"type": "big", "text": "é" * (2 * ws_protocol.CANONICAL_PIECE_CHARS)}],
+            # Each "é" is two bytes of UTF-8 source.
+            source_bytes=4 * ws_protocol.CANONICAL_PIECE_CHARS,
+        )
+        waiter = publisher.publish({"type": "waiter"})
+        # One loop turn lets big start encoding and the waiter block on big's place.
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        small = publisher.publish({"type": "small"})
+        await asyncio.wait_for(asyncio.gather(big, small), 2.0)
+        labels = [op.get("filter", {}).get("type", op.get("op")) for op in daemon.ops(GEN1)]
+        assert labels == ["big", "small"]
+    finally:
+        await publisher.stop()
+
+
+async def test_call_cancelled_before_it_starts_leaves_no_op_coroutine(
+    supervisor_token: str,
+) -> None:
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        big = publisher.publish(
+            {"type": "big"},
+            [{"type": "big", "text": "é" * (2 * ws_protocol.CANONICAL_PIECE_CHARS)}],
+            # Each "é" is two bytes of UTF-8 source.
+            source_bytes=4 * ws_protocol.CANONICAL_PIECE_CHARS,
+        )
+        cancelled = publisher.publish({"type": "cancelled"})
+        cancelled.cancel()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(asyncio.CancelledError):
+                await cancelled
+            gc.collect()
+        after = publisher.publish({"type": "after"})
+        await asyncio.wait_for(asyncio.gather(big, after), 2.0)
+        assert [str(w.message) for w in caught if "never awaited" in str(w.message)] == []
+        labels = [op.get("filter", {}).get("type", op.get("op")) for op in daemon.ops(GEN1)]
+        assert labels == ["big", "after"]
+    finally:
+        await publisher.stop()
+
+
+async def test_preparations_over_the_waiting_cap_fail_the_generation(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "MAX_WAITING_FUTURES", 2)
+    monkeypatch.setattr(native_publish, "REBIND_INTERVAL", 0.2)
+    gate = _hold_encodes(monkeypatch)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        held = [publisher.publish({"type": "held", "n": n}) for n in range(2)]
+        # Both held calls wait for encoding and count as waiting, so the third is refused
+        # without building any op.
+        refused = publisher.publish({"type": "refused"})
+        assert refused.done() and refused.result() is None
+        assert publisher.generation is None
+        gate.set()
+        await asyncio.wait_for(asyncio.gather(*held), 2.0)
+        assert daemon.ops(GEN1) == []
+        assert publisher.retained_ops == 0
+    finally:
+        await publisher.stop()
+
+
+async def test_cap_holds_while_a_call_expands_into_queued_ops(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One op per frame, and room for three places: the expanding call and two waiting behind it.
+    monkeypatch.setattr(native_publish, "PUBLISH_CHUNK", 1)
+    monkeypatch.setattr(native_publish, "MAX_RETAINED_OPS", 3)
+    monkeypatch.setattr(native_publish, "MAX_WAITING_FUTURES", 3)
+    gate = _hold_encodes(monkeypatch)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    places: list[int] = []
+
+    async def watch() -> None:
+        while True:
+            places.append(len(publisher._preparing) + publisher.retained_ops)
+            await asyncio.sleep(0)
+
+    watcher = asyncio.create_task(watch())
+    try:
+        frames = [{"n": n} for n in range(3)]
+        expanding = publisher.publish({"type": "burst"}, frames, source_bytes=_source_bytes(frames))
+        waiting = [publisher.publish({"type": "waiter", "n": n}) for n in range(2)]
+        await _turns()
+        gate.set()
+        assert await asyncio.wait_for(asyncio.gather(expanding, *waiting), 2.0) == [None] * 3
+        assert publisher.generation != GEN1
+        # The expanding call's three ops would join the two calls still waiting behind it, so
+        # the call is refused before any op is queued.
+        assert daemon.requests == []
+        assert publisher.retained_ops == 0
+        assert max(places) <= 3
+    finally:
+        watcher.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watcher
+        await publisher.stop()
+
+
+async def test_source_bytes_hit_the_byte_cap_before_the_count_cap(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", 10_000)
+    gate = _hold_encodes(monkeypatch)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        frames = [{"data": "a" * 4_000}]
+        held = publisher.publish({"type": "large"}, frames, source_bytes=6_000)
+        # Two 6,000-byte sources exceed the 10,000-byte cap with two places in use. The count
+        # caps are far above two, so the refusal comes from the byte cap at admission.
+        refused = publisher.publish({"type": "large"}, frames, source_bytes=6_000)
+        assert refused.done() and refused.result() is None
+        assert publisher.generation != GEN1
+        gate.set()
+        await asyncio.wait_for(held, 2.0)
+        assert daemon.requests == []
+    finally:
+        await publisher.stop()
+
+
+async def test_exchange_refuses_encoded_bytes_that_exceed_the_queued_bytes(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", 10_000)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        # Holding the POST keeps the first op's bytes queued.
+        gate = asyncio.Event()
+        daemon.gate = gate
+        first = publisher.publish({"type": "first"}, [{"data": "a" * 6_000}], source_bytes=10)
+        await _until(daemon.received.is_set)
+        # The declared source is small, so admission passes. The encoded op does not fit beside
+        # the queued first op, so the exchange refuses it.
+        over = publisher.publish({"type": "over"}, [{"data": "b" * 6_000}], source_bytes=10)
+        await asyncio.wait_for(over, 1.0)
+        assert publisher.generation != GEN1
+        await asyncio.wait_for(first, 1.0)
+        assert len(daemon.requests) == 1
+        assert (publisher.retained_bytes, publisher.retained_ops) == (0, 0)
+    finally:
+        gate.set()
+        await publisher.stop()
+
+
+async def test_exchange_counts_the_source_bytes_of_calls_still_waiting(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", 10_000)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        # The first call encodes to about 4,600 bytes from a 3,000-byte source. The second waits
+        # behind it with a 6,000-byte source reserved, so 4,600 encoded bytes do not fit beside it.
+        first = publisher.publish({"type": "first"}, [{"data": "a" * 4_500}], source_bytes=3_000)
+        second = publisher.publish({"type": "second"}, [{"data": "b"}], source_bytes=6_000)
+        await asyncio.wait_for(asyncio.gather(first, second), 2.0)
+        assert publisher.generation != GEN1
+        assert daemon.requests == []
+    finally:
+        await publisher.stop()
+
+
+async def test_reserved_source_bytes_return_at_the_exchange_or_on_cancel(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(native_publish, "MAX_RETAINED_BYTES", 10_000)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    try:
+        sent = publisher.publish({"type": "sent"}, [{"data": "a"}], source_bytes=6_000)
+        await asyncio.wait_for(sent, 1.0)
+        # The 6,000 bytes went back at the exchange, so a 9,000-byte source is admitted.
+        nxt = publisher.publish({"type": "next"}, [{"data": "b"}], source_bytes=9_000)
+        await asyncio.wait_for(nxt, 1.0)
+        cancelled = publisher.publish({"type": "cancelled"}, [{"data": "c"}], source_bytes=6_000)
+        cancelled.cancel()
+        await _turns()
+        # A cancelled call returns its reservation too.
+        after = publisher.publish({"type": "after"}, [{"data": "d"}], source_bytes=9_000)
+        await asyncio.wait_for(after, 1.0)
+        assert publisher.generation == GEN1
+        assert [op["filter"]["type"] for op in daemon.ops(GEN1)] == ["sent", "next", "after"]
+    finally:
+        await publisher.stop()
+
+
+async def test_stop_cancels_calls_still_preparing(
+    supervisor_token: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _hold_encodes(monkeypatch)
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    await publisher.start()
+    first = publisher.publish({"type": "first"})
+    second = publisher.publish({"type": "second"})
+    await _turns()
+    await asyncio.wait_for(publisher.stop(), 2.0)
+    assert first.cancelled() and second.cancelled()
+    assert publisher.retained_ops == 0
+    assert daemon.ops(GEN1) == []
+
+
+async def test_bind_token_poll_stays_inside_token_wait_while_large_events_encode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A publish's encode runs on the same loop as the rebind poll: the poll must still give up
+    # at TOKEN_WAIT, with one poll per TOKEN_POLL_INTERVAL and no extra polls.
+    monkeypatch.setattr(native_publish, "TOKEN_WAIT", 0.5)
+    monkeypatch.setattr(native_publish, "TOKEN_POLL_INTERVAL", 0.05)
+    runner_backend._token.reset()
+    polls = _count_token_polls(monkeypatch)
+    event = {"type": "workspace_event", "text": "é" * (2 * 1024 * 1024)}
+    stop = asyncio.Event()
+    encodes = 0
+
+    async def encode_until_stopped() -> None:
+        nonlocal encodes
+        while not stop.is_set():
+            await ws_protocol.canonical_json_async(event)
+            encodes += 1
+
+    daemon = _Daemon()
+    publisher = _publisher(daemon)
+    encoder = asyncio.create_task(encode_until_stopped())
+    try:
+        with pytest.raises(native_publish._BindFailed):
+            await asyncio.wait_for(publisher.bind(), native_publish.TOKEN_WAIT + 1.0)
+    finally:
+        stop.set()
+        await encoder
+        await publisher.stop()
+    budget = native_publish.TOKEN_WAIT / native_publish.TOKEN_POLL_INTERVAL + 1
+    assert encodes >= 1
+    assert set(polls) == {None}
+    assert 2 <= len(polls) <= budget
+    assert daemon.binds == []
 
 
 async def test_loop_stall_under_host_load_keeps_the_front_door_bound(

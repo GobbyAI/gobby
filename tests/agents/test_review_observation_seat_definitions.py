@@ -240,7 +240,6 @@ async def test_load_step_refuses_serve_calls_and_serve_step_admits_its_handoff(
             "allowed_mcp_tools": [
                 "gobby-skills:get_skill",
                 "gobby-skills:get_skill_file",
-                "gobby-sessions:set_title",
             ],
             "transitions": [
                 {
@@ -265,7 +264,7 @@ async def test_load_step_refuses_serve_calls_and_serve_step_admits_its_handoff(
         {"required_skills": ["gobby:references/synthetic/research.md"]},
     )
     run = SeatRun(temp_db, "research-seat", definition=definition)
-    assert await run.admits("gobby-sessions", "set_title")
+    assert await run.admits("gobby-skills", "get_skill")
     assert not await run.admits("gobby-tasks", "claim_task")
     # A send without a target is a parent send that every step admits, so the refusal is
     # checked with a session target.

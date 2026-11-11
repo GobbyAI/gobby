@@ -61,6 +61,9 @@ class ProofScope:
     project_id: str
     excluded: frozenset[str]
     source_commit: str
+    # The composer proof drives Claude and Codex editors; the handoff proof admits
+    # every provider its reviewed admission pins.
+    providers: frozenset[str] = frozenset({"claude", "codex"})
 
     def require_surface(self, expected: Surface, observed: Surface) -> None:
         if expected != observed or not expected.host_epoch:
@@ -69,7 +72,7 @@ class ProofScope:
             raise ProofRefused("foreign project")
         if not self.excluded or {expected.session_id, expected.terminal_id} & self.excluded:
             raise ProofRefused("missing exclusion map or excluded identity")
-        if expected.provider not in {"claude", "codex"}:
+        if expected.provider not in self.providers:
             raise ProofRefused("unsupported provider")
         for value in (expected.session_id, expected.terminal_id, self.project_id):
             try:

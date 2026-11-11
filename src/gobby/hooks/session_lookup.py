@@ -455,7 +455,6 @@ class SessionLookupService:
     def _rename_tmux_window(self, session: Session) -> None:
         schedule_tmux_window_rename(
             session,
-            getattr(session, "title", None) or "",
             loop=getattr(self._session_coordinator, "_event_loop", None),
         )
 

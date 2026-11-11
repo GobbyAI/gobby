@@ -25,17 +25,8 @@ from ._constants import ensure_system_session, get_logger, system_session_id
 from ._identity_crud import _SessionIdentityCRUDMixin
 from ._identity_reconciliation import reconcile_session_identity
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
-from ._registration import (
-    manual_registration_title,
-    require_registered_machine,
-    require_valid_title_source,
-)
+from ._registration import require_registered_machine
 from ._session_mapping_cache import invalidate_session_caches
-from ._title_defaults import (
-    PROVISIONAL_TITLE_SOURCE,
-    format_provisional_session_title,
-    project_name_for_session_title,
-)
 from ._update_sentinel import UNSET, UnsetType, is_set
 from ._upsert import is_session_unique_conflict, update_existing_session
 
@@ -43,7 +34,6 @@ from ._upsert import is_session_unique_conflict, update_existing_session
 class _SessionCRUDHost(Protocol):
     db: HubDatabase
     _VALID_CHAT_MODES: ClassVar[set[str]]
-    _VALID_TITLE_SOURCES: ClassVar[set[str]]
 
     def find_by_external_id(
         self,
@@ -76,7 +66,6 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         machine_id: str | None,
         source: str,
         project_id: str | None,
-        title: str | None | UnsetType = UNSET,
         transcript_path: str | None | UnsetType = UNSET,
         git_branch: str | None | UnsetType = UNSET,
         parent_session_id: str | None | UnsetType = UNSET,
@@ -88,7 +77,6 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         is_local: bool = False,
         sandbox_enabled: bool | None = None,
         sandbox_policy_hash: str | None = None,
-        title_source: str | None | UnsetType = UNSET,
         workspace_path: str | None = None,
         routed_machine_id: str | None = None,
     ) -> Session:
@@ -114,9 +102,6 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         terminal_context_json = json.dumps(terminal_context) if terminal_context else None
         storage_project_id = project_id or PERSONAL_PROJECT_ID
         require_registered_machine(self.db, machine_id, seen_at=now)
-        require_valid_title_source(title_source, self._VALID_TITLE_SOURCES)
-
-        manual_title, manual_title_source = manual_registration_title(title, title_source)
 
         if is_set(parent_session_id) and parent_session_id == system_session_id():
             ensure_system_session(self.db)
@@ -197,20 +182,6 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                 )
 
             if existing:
-                registration_title = manual_title
-                registration_title_source = manual_title_source
-                existing_seq_num = existing.seq_num
-                if (
-                    not is_set(manual_title)
-                    and existing_seq_num is not None
-                    and not str(existing.title or "").strip()
-                ):
-                    registration_title = format_provisional_session_title(
-                        project_name_for_session_title(conn, existing.project_id),
-                        existing_seq_num,
-                        existing.source,
-                    )
-                    registration_title_source = PROVISIONAL_TITLE_SOURCE
                 if existing.parent_session_id == existing.id:
                     repair_self_parent_session(conn, session_id=existing.id, now=now)
                 registration_parent_session_id = parent_session_id
@@ -232,8 +203,6 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                     conn,
                     existing,
                     machine_id=machine_id,
-                    title=registration_title,
-                    title_source=registration_title_source,
                     transcript_path=transcript_path,
                     git_branch=git_branch,
                     parent_session_id=sanitized_parent_session_id,
@@ -270,21 +239,10 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                 )
 
                 try:
-                    insert_title = manual_title if is_set(manual_title) else None
-                    insert_title_source = (
-                        manual_title_source if is_set(manual_title_source) else None
-                    )
-                    if insert_title is None:
-                        insert_title = format_provisional_session_title(
-                            project_name_for_session_title(conn, storage_project_id),
-                            next_seq_num,
-                            source,
-                        )
-                        insert_title_source = PROVISIONAL_TITLE_SOURCE
                     conn.execute(
                         """
                         INSERT INTO sessions (
-                            id, external_id, machine_id, source, project_id, title, title_source,
+                            id, external_id, machine_id, source, project_id,
                             transcript_path, git_branch, parent_session_id,
                             agent_depth, spawned_by_agent_id, terminal_context,
                             workflow_name, session_type, is_local, sandbox_enabled, sandbox_policy_hash,
@@ -292,7 +250,7 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                             status, seq_num,
                             had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, FALSE, 0, 0, 0, NULL)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, FALSE, 0, 0, 0, NULL)
                         """,
                         (
                             session_id,
@@ -300,8 +258,6 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                             machine_id,
                             source,
                             storage_project_id,
-                            insert_title,
-                            insert_title_source,
                             transcript_path if is_set(transcript_path) else None,
                             git_branch if is_set(git_branch) else None,
                             sanitized_parent_session_id,
@@ -348,27 +304,11 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                         )
                     else:
                         sanitized_parent_session_id = UNSET
-                    registration_title = manual_title
-                    registration_title_source = manual_title_source
-                    conflicting_seq_num = conflicting.seq_num
-                    if (
-                        not is_set(manual_title)
-                        and conflicting_seq_num is not None
-                        and not str(conflicting.title or "").strip()
-                    ):
-                        registration_title = format_provisional_session_title(
-                            project_name_for_session_title(conn, conflicting.project_id),
-                            conflicting_seq_num,
-                            conflicting.source,
-                        )
-                        registration_title_source = PROVISIONAL_TITLE_SOURCE
                     session = update_existing_session(
                         self,
                         conn,
                         conflicting,
                         machine_id=machine_id,
-                        title=registration_title,
-                        title_source=registration_title_source,
                         transcript_path=transcript_path,
                         git_branch=git_branch,
                         parent_session_id=sanitized_parent_session_id,

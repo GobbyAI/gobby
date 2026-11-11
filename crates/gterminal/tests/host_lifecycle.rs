@@ -6,7 +6,7 @@ use crate::host_support;
 
 use host_support::{
     connect, recv_json, send_json, socket_mode, spawn_host, temp_socket_dir, wait_exit,
-    wait_socket, wait_until, write_token, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE,
+    wait_socket, wait_until_host, write_token, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -45,7 +45,7 @@ fn panes_do_not_inherit_supervisor_fd_from_host() {
         "printf '%s' \"${GOBBY_SUPERVISOR_FD-unset}\" > pane-env; exec sleep 30",
     );
     let captured = dir.path().join("pane-env");
-    wait_until("pane environment recorded", || {
+    wait_until_host(&dir, "pane environment recorded", || {
         std::fs::read_to_string(&captured).is_ok_and(|value| !value.is_empty())
     });
     assert_eq!(std::fs::read_to_string(captured).unwrap(), "unset");
@@ -147,8 +147,8 @@ fn assert_no_terminals(stream: &mut std::os::unix::net::UnixStream) {
     assert_eq!(listed["terminals"], json!([]), "{listed}");
 }
 
-fn wait_for_no_terminals(stream: &mut std::os::unix::net::UnixStream) {
-    wait_until("terminal slot removal", || {
+fn wait_for_no_terminals(dir: impl AsRef<Path>, stream: &mut std::os::unix::net::UnixStream) {
+    wait_until_host(dir, "terminal slot removal", || {
         send_json(stream, &json!({"method": "list"}));
         recv_json(stream)["terminals"] == json!([])
     });
@@ -194,7 +194,6 @@ fn host_exits_when_socket_dir_vanishes() {
     let mut host = spawn_host(dir.path());
     wait_socket(&dir.path().join(CONTROL_SOCKET));
 
-    let started = Instant::now();
     let socket_dir = dir.keep();
     let removed_dir = socket_dir.with_extension("removed");
     std::fs::rename(&socket_dir, &removed_dir).expect("remove live socket dir");
@@ -202,14 +201,40 @@ fn host_exits_when_socket_dir_vanishes() {
         wait_exit(&mut host, Duration::from_millis(250)).is_some(),
         "host must exit within two health ticks after its socket directory vanishes"
     );
-    assert!(
-        started.elapsed() < Duration::from_millis(250),
-        "socket-directory shutdown took {:?}",
-        started.elapsed()
-    );
     let log = std::fs::read_to_string(removed_dir.join("gterm.log")).expect("host log");
     assert!(log.contains("socket_dir_removed"), "{log}");
     let _ = std::fs::remove_dir_all(&removed_dir);
+}
+
+#[test]
+fn host_exits_when_socket_dir_is_renamed_during_startup() {
+    // The control socket appears at bind; the pidfile write follows a few ms later.
+    // A rename inside that window must still end the host, not leave it running in a
+    // socket directory that startup recreated.
+    for round in 0..20 {
+        let dir = temp_socket_dir();
+        write_token(dir.path(), "control-token-startup-rename");
+        let mut host = spawn_host(dir.path());
+        let control = dir.path().join(CONTROL_SOCKET);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !control.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "round {round}: host never bound its control socket"
+            );
+            std::hint::spin_loop();
+        }
+        let socket_dir = dir.keep();
+        let removed_dir = socket_dir.with_extension(format!("removed-{round}"));
+        std::fs::rename(&socket_dir, &removed_dir).expect("remove socket dir during startup");
+        if wait_exit(&mut host, Duration::from_secs(10)).is_none() {
+            let _ = host.kill();
+            panic!(
+                "round {round}: host kept running after its socket dir was removed during startup"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&removed_dir);
+    }
 }
 
 #[test]
@@ -264,7 +289,7 @@ fn drain_honours_grace_then_kills() {
         commit_terminal(&mut stream, &stubborn_terminal, &stubborn_spawn, 1_000,)["ok"],
         true
     );
-    wait_until("drain children to install SIGHUP traps", || {
+    wait_until_host(&dir, "drain children to install SIGHUP traps", || {
         polite_ready.exists() && stubborn_ready.exists()
     });
 
@@ -417,7 +442,7 @@ fn kill_acks_only_after_group_exit() {
     let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
     assert_eq!(response["ok"], true, "{response}");
     // The leader ignores SIGTERM only once the trap ran and exec replaced sh.
-    wait_until("TERM-ignoring sleep leader", || {
+    wait_until_host(&_dir, "TERM-ignoring sleep leader", || {
         process_name(pgid).as_deref() == Some("sleep")
     });
     // Longer than the host's 100ms default, so an ignored grace_ms shows.
@@ -461,7 +486,7 @@ fn kill_in_flight_stays_listed() {
     );
     let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
     assert_eq!(response["ok"], true, "{response}");
-    wait_until("TERM-ignoring sleep leader", || {
+    wait_until_host(&_dir, "TERM-ignoring sleep leader", || {
         process_name(pgid).as_deref() == Some("sleep")
     });
     let grace = Duration::from_millis(600);
@@ -540,7 +565,7 @@ fn leader_exit_under_kill_emits_no_terminal_exited() {
     );
     let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
     assert_eq!(response["ok"], true, "{response}");
-    wait_until("the background sleep to ignore SIGTERM", || {
+    wait_until_host(&dir, "the background sleep to ignore SIGTERM", || {
         trap_set.exists()
     });
     send_json(
@@ -646,7 +671,7 @@ fn preexec_signal_settles_as_exit_and_injected_faults_never_commit() {
     let signaled = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
     assert_eq!(signaled["ok"], true, "{signaled}");
     assert_eq!(signaled["commit_state"], "committed", "{signaled}");
-    wait_for_no_terminals(&mut stream);
+    wait_for_no_terminals(&_dir, &mut stream);
 
     let (terminal_id, spawn_key, _, pid) = prepare_terminal(
         &mut stream,
@@ -765,7 +790,7 @@ fn exited_terminal_keeps_its_final_output_for_snapshot() {
     );
     let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
     assert_eq!(response["ok"], true, "{response}");
-    wait_for_no_terminals(&mut stream);
+    wait_for_no_terminals(&_dir, &mut stream);
 
     send_json(
         &mut stream,
@@ -806,7 +831,7 @@ fn exit_tail_keeps_output_written_just_before_the_exit() {
     );
     let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
     assert_eq!(response["ok"], true, "{response}");
-    wait_for_no_terminals(&mut stream);
+    wait_for_no_terminals(&_dir, &mut stream);
 
     send_json(
         &mut stream,
@@ -978,6 +1003,30 @@ fn host_shutdown_drains_and_is_idempotent() {
     assert_host_dead(dir.path(), child.id());
 }
 
+/// #25733: the host writes an unauthenticated refusal and then closes the
+/// connection. A client that reads only after that close must still receive the
+/// buffered refusal, although macOS fails a read timeout set on a peer-closed
+/// socket with EINVAL.
+#[test]
+fn refusal_reply_is_read_after_the_host_closes() {
+    let dir = temp_socket_dir();
+    write_token(dir.path(), "control-token-refusal");
+    let _host = spawn_host(dir.path());
+    let control = dir.path().join(CONTROL_SOCKET);
+    wait_socket(&control);
+
+    let mut stream = connect(&control);
+    send_json(
+        &mut stream,
+        &json!({"method": "host_shutdown", "grace_ms": 20}),
+    );
+    // The host closes within microseconds of refusing; read only after that.
+    std::thread::sleep(Duration::from_millis(200));
+    let reply = recv_json(&mut stream);
+    assert_eq!(reply["ok"], false, "{reply}");
+    assert_eq!(reply["error"], "unauthenticated");
+}
+
 fn assert_host_dead(socket_dir: &Path, pid: u32) {
     let pidfile = socket_dir.join(PID_FILE);
     if pidfile.exists() {
@@ -1146,7 +1195,7 @@ fn host_survives_daemon_disconnect_and_readopts() {
     );
     // A wrong-key release reports `released: false` while the reservation
     // exists and `released: true` once the host has reaped it on disconnect.
-    wait_until("host to process daemon #1's disconnect", || {
+    wait_until_host(&dir, "host to process daemon #1's disconnect", || {
         send_json(
             &mut second,
             &json!({

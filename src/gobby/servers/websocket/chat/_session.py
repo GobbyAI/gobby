@@ -295,11 +295,6 @@ class ChatSessionMixin:
         proxy_ready = inherited_mcp_proxy_ready(predecessor_vars)
         if proxy_ready:
             sv_mgr.merge_variables(successor_id, proxy_ready)
-        predecessor = session_manager.get(predecessor_id)
-        if predecessor is not None:
-            from gobby.sessions.title_lifecycle import apply_clear_successor_title
-
-            apply_clear_successor_title(session_manager, successor_id, predecessor)
 
     async def _create_chat_session_inner(
         self,

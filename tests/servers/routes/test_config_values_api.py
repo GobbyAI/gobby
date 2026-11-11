@@ -286,7 +286,11 @@ class _RecordingBroadcaster(BroadcastMixin):
         self.messages: list[dict[str, object]] = []
 
     async def broadcast(
-        self, message: dict[str, Any], *, frames: Sequence[dict[str, Any]] = ()
+        self,
+        message: dict[str, Any],
+        *,
+        frames: Sequence[dict[str, Any]] = (),
+        source_bytes: int | None = None,
     ) -> None:
         self.messages.append(message)
 

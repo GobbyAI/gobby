@@ -154,7 +154,7 @@ export const SessionsTab = memo(function SessionsTab({
   onSwapSession,
 }: SessionsTabProps) {
   const { agents, agentsLoading, fetchError } = useRunningAgents();
-  const { attentionBySession } = useSessionAttention();
+  const { attentionBySession, rosterBySession } = useSessionAttention();
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [contentMode, setContentMode] =
@@ -307,6 +307,7 @@ export const SessionsTab = memo(function SessionsTab({
     filters,
     search,
     sessions: sessionsWithAttention,
+    rosterBySession,
     statusMode,
   });
   const entries = useMemo(

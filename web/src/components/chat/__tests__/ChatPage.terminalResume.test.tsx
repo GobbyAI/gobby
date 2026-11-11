@@ -60,7 +60,6 @@ describe("ChatPage – terminal resume", () => {
             viewingSessionMeta: {
               ref: "#153",
               source: "grok",
-              title: "Resume Only Terminal",
               status: "awaiting_handoff",
               canProxyAttach: false,
               model: "grok-build",
@@ -91,7 +90,6 @@ describe("ChatPage – terminal resume", () => {
             viewingSessionMeta: {
               ref: "#52",
               source: "claude",
-              title: "Observed Terminal",
               status: "active",
               model: "claude-sonnet-4-6",
               externalId: "term-52",

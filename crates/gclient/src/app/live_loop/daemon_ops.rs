@@ -19,7 +19,7 @@ use super::super::{PaneId, Workspace};
 use super::jobs::{spawn_job, JobKey, JobOutcome, JobResult, JobTag};
 use super::menu::MenuAction;
 use super::mouse::Placement;
-use super::workspace_actions::{active_daemon_tab, daemon_pane_id, placement_op};
+use super::workspace_actions::{active_daemon_tab, daemon_pane_id, placement_op, refusal_message};
 
 /// A close or focus hint refused `not_found` is done: the daemon reaps a
 /// killed terminal's pane and closes an emptied tab itself, and the client's
@@ -222,6 +222,12 @@ pub(super) fn place_live_terminal(
         }
         workspace.expect_placement(terminal_id);
         issue_op(workspace, outcomes, op, Some(terminal_id.to_owned()));
+        return;
+    }
+    // A daemon tab never changes locally. When its op was refused, the pane
+    // stays unplaced rather than opening in the chrome alone; say why.
+    if chrome.active_tab().is_some_and(|tab| !tab.is_local()) {
+        chrome.notify(Toast::warning(refusal_message(workspace)));
         return;
     }
     if let Some(pane) = workspace.pane_for_terminal(terminal_id) {
@@ -572,6 +578,8 @@ pub(super) fn move_focused_pane_to_tab(
             title: agent_tab_title(workspace, &terminal_id),
             terminal_id: None,
             cwd: None,
+            rows: None,
+            cols: None,
             node: None,
         })
     };

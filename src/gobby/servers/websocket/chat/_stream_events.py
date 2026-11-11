@@ -148,12 +148,6 @@ class ChatStreamEventHandler:
         if isinstance(session_ref, str) and session_ref:
             payload["session_ref"] = session_ref
 
-        if "title" in info:
-            title = info.get("title")
-            if isinstance(title, str) or title is None:
-                payload["title"] = title
-                payload["session_title"] = title
-
         updated_at = info.get("updatedAt")
         if isinstance(updated_at, str) and updated_at:
             payload["updated_at"] = updated_at

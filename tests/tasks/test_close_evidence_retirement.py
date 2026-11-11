@@ -87,7 +87,6 @@ async def test_shared_transcript_consumers_survive(tmp_path: Path) -> None:
         machine_id=require_machine_id(),
         source="claude",
         project_id="project",
-        title=None,
         status="active",
         transcript_path=str(transcript),
         summary_path=None,

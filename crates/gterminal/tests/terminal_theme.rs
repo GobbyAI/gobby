@@ -7,7 +7,7 @@
 
 use crate::host_support::{
     connect, hello_control, recv_json, rpc, send_json, spawn_host, temp_socket_dir, wait_socket,
-    wait_until, write_token, HostProc, CONTROL_SOCKET, FRAMES_SOCKET,
+    wait_until_host, write_token, HostProc, CONTROL_SOCKET, FRAMES_SOCKET,
 };
 use gobby_terminal::protocol::{
     read_message, write_message, ClientMessage, RenderEncoding, ServerMessage, MAX_FRAME_SIZE,
@@ -168,7 +168,8 @@ impl Host {
         ready: impl Fn(&str) -> bool,
     ) -> String {
         let mut screen = String::new();
-        wait_until(what, || {
+        let dir = self._dir.path().to_path_buf();
+        wait_until_host(&dir, what, || {
             screen = self.screen(host_terminal_id);
             ready(&screen)
         });

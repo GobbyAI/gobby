@@ -127,14 +127,12 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
     mainSessionMeta,
     sessionRef,
     sessionRefRef,
-    sessionTitle,
     setConversationId,
     setConversationSwitchKey,
     setCurrentBranch,
     setDbSessionId,
     setMainSessionMeta,
     setSessionRef,
-    setSessionTitle,
     setWorktreePath,
     worktreePath,
   } = useSessionIdentityState({
@@ -262,7 +260,6 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
     setIsStreaming(false);
     setIsThinking(false);
     setSessionRef(null);
-    setSessionTitle(null);
     setMainSessionMeta(null);
     setCurrentBranch(null);
     setWorktreePath(null);
@@ -285,7 +282,6 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
     setPlanApproved,
     setPlanPendingApproval,
     setSessionRef,
-    setSessionTitle,
     setWorktreePath,
   ]);
 
@@ -325,7 +321,6 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
       setObservedSessionId,
       setSelectedProvider,
       setSessionRef,
-      setSessionTitle,
       setViewingSessionId,
     },
     conversationRefs: {
@@ -473,7 +468,6 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
     setSelectedProvider,
     setSessionInteractionMode,
     setSessionRef,
-    setSessionTitle,
     setViewingSessionId,
     setViewingSessionMeta,
     setWorktreePath,
@@ -581,7 +575,6 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
     sessionInteractionMode,
     sessionInteractionModeRef,
     sessionRef,
-    sessionTitle,
     setActiveAgent,
     setContextUsage,
     setConversationId,
@@ -644,7 +637,6 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
     setProxyDeliveryNotice,
     setSessionInteractionMode,
     setSessionRef,
-    setSessionTitle,
     setViewingSessionId,
     setViewingSessionMeta,
     shouldApplyHydratedUsage,
@@ -689,7 +681,6 @@ export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
     conversationId,
     conversationSwitchKey,
     sessionRef,
-    sessionTitle,
     dbSessionId,
     currentBranch,
     worktreePath,

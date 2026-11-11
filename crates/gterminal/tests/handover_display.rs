@@ -3,7 +3,9 @@
 //! around it.
 
 use bytes::Bytes;
-use gobby_terminal::ghostty::{ActiveScreen, RenderColors, RenderState, RgbColor, Terminal};
+use gobby_terminal::ghostty::{
+    ActiveScreen, RenderColors, RenderState, RgbColor, ScrollbackLimits, Terminal,
+};
 use gobby_terminal::layout::PaneId;
 use gobby_terminal::pane::{GhosttyPaneTerminal, PaneCoreHandover, PANE_CONTINUATION_MAX_BYTES};
 use gobby_terminal::terminal_theme::{self, HostAppearance, TerminalTheme};
@@ -12,6 +14,7 @@ use tokio::sync::mpsc;
 const COLS: u16 = 20;
 const ROWS: u16 = 6;
 const SCROLLBACK_BYTES: usize = 1 << 20;
+const SCROLLBACK_LINES: usize = 10_000;
 const MODE_ORIGIN: u16 = 6;
 const MODE_WRAPAROUND: u16 = 7;
 const MODE_CURSOR_VISIBLE: u16 = 25;
@@ -225,7 +228,11 @@ fn feed(pane: &GhosttyPaneTerminal, sender: &mpsc::Sender<Bytes>, bytes: &[u8]) 
 }
 
 fn restore(snapshot: &[u8], core: PaneCoreHandover) -> GhosttyPaneTerminal {
-    GhosttyPaneTerminal::from_handover(snapshot, core, SCROLLBACK_BYTES).expect("restore pane")
+    let limits = ScrollbackLimits {
+        bytes: SCROLLBACK_BYTES,
+        lines: SCROLLBACK_LINES,
+    };
+    GhosttyPaneTerminal::from_handover(snapshot, core, limits).expect("restore pane")
 }
 
 #[test]

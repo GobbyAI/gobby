@@ -10,7 +10,7 @@ use gobby_terminal::protocol::{
 };
 use host_support::{
     connect, recv_json, rpc, send_json, spawn_host, temp_socket_dir, wait_exit, wait_socket,
-    wait_until, write_token, CONTROL_SOCKET, FRAMES_SOCKET,
+    wait_until_host, write_token, CONTROL_SOCKET, FRAMES_SOCKET,
 };
 use serde_json::json;
 use std::io::{Read, Write};
@@ -396,7 +396,7 @@ fn attached_input_writes_with_no_grant_and_unattached_input_is_refused() {
             data: b"hello\n".to_vec(),
         },
     );
-    wait_until("attached input echoes with no grant", || {
+    wait_until_host(&dir, "attached input echoes with no grant", || {
         snapshot_text(&mut ctrl, &host_terminal_id).contains("GOT:hello")
     });
 
@@ -413,7 +413,7 @@ fn attached_input_writes_with_no_grant_and_unattached_input_is_refused() {
             data: b"again\n".to_vec(),
         },
     );
-    wait_until("bound input echoes", || {
+    wait_until_host(&dir, "bound input echoes", || {
         snapshot_text(&mut ctrl, &host_terminal_id).contains("GOT:again")
     });
 
@@ -544,7 +544,7 @@ fn read_text_spans_native_scrollback_and_requires_an_attachment() {
     child.track_pgid(prepared["pgid"].as_i64().unwrap() as i32);
     let host_terminal_id = prepared["host_terminal_id"].as_str().unwrap().to_string();
     commit_spawn(&mut ctrl, "term-read-text");
-    wait_until("child fills native scrollback", || {
+    wait_until_host(&dir, "child fills native scrollback", || {
         snapshot_text(&mut ctrl, &host_terminal_id).contains("read-40")
     });
 
@@ -725,7 +725,7 @@ fn attached_reports_distinct_host_owned_stream_identifiers() {
             data: b"owner\n".to_vec(),
         },
     );
-    wait_until("owner's input reaches the child", || {
+    wait_until_host(&dir, "owner's input reaches the child", || {
         snapshot_text(&mut ctrl, &terminal).contains("READ:owner")
     });
     let activity = recv_json(&mut events);
@@ -745,7 +745,7 @@ fn attached_reports_distinct_host_owned_stream_identifiers() {
             text: "second-stream\n".into(),
         },
     );
-    wait_until("the unbound stream's input reaches the child", || {
+    wait_until_host(&dir, "the unbound stream's input reaches the child", || {
         snapshot_text(&mut ctrl, &terminal).contains("READ:second-stream")
     });
     let activity = recv_json(&mut events);

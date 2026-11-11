@@ -288,7 +288,9 @@ pub fn gclient_views() -> String {
     .expect("gclient views")
 }
 
-pub fn wait_until<F: FnMut() -> bool>(timeout: Duration, mut pred: F) {
+/// Poll `pred` until it holds, panicking after `timeout` with the host state under `dir`
+/// (#25733 criterion 2).
+pub fn wait_until_host<F: FnMut() -> bool>(dir: impl AsRef<Path>, timeout: Duration, mut pred: F) {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
         if pred() {
@@ -296,5 +298,8 @@ pub fn wait_until<F: FnMut() -> bool>(timeout: Duration, mut pred: F) {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    panic!("condition not met in {timeout:?}");
+    panic!(
+        "condition not met in {timeout:?}; {}",
+        crate::host_support::host_report(dir.as_ref())
+    );
 }

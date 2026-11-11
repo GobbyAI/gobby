@@ -183,10 +183,11 @@ class AttentionRosterRow:
     terminal_id: str | None
     terminal: AttentionRosterTerminal | None
     task_title: str | None = None
-    definition_title: str | None = None
-    definition_name: str | None = None
+    task_claim_held: bool = False
+    definition: str | None = None
     machine_id: str | None = None
     project_id: str | None = None
+    status_line: str | None = None
 
     @classmethod
     def from_row(cls, row: Row) -> AttentionRosterRow:
@@ -225,14 +226,11 @@ class AttentionRosterRow:
             terminal_id=str(terminal_id) if terminal_id is not None else None,
             terminal=terminal,
             task_title=str(row["task_title"]) if row.get("task_title") is not None else None,
-            definition_title=(
-                str(row["definition_title"]) if row.get("definition_title") is not None else None
-            ),
-            definition_name=(
-                str(row["definition_name"]) if row.get("definition_name") is not None else None
-            ),
+            task_claim_held=bool(row.get("task_claim_held")),
+            definition=(str(row["definition"]) if row.get("definition") is not None else None),
             machine_id=str(row["machine_id"]) if row.get("machine_id") is not None else None,
             project_id=str(row["project_id"]) if row.get("project_id") is not None else None,
+            status_line=(str(row["status_line"]) if row.get("status_line") is not None else None),
         )
 
 
@@ -339,18 +337,13 @@ class AttentionStateManager:
                 terminal.session_name AS terminal_session_name,
                 terminal.locator::text AS terminal_locator,
                 task.title AS task_title,
+                (claimed.id IS NOT NULL) AS task_claim_held,
+                child.status_line AS status_line,
                 COALESCE(
-                    CASE WHEN jsonb_typeof(seat.variables->'_definition_title') = 'string'
-                         THEN NULLIF(BTRIM(seat.variables->>'_definition_title'), '') END,
-                    CASE WHEN jsonb_typeof(run.resume_metadata_json->'placement'->'title') = 'string'
-                         THEN NULLIF(BTRIM(run.resume_metadata_json->'placement'->>'title'), '') END,
-                    NULLIF(BTRIM(run.agent_name), '')
-                ) AS definition_title,
-                COALESCE(
+                    NULLIF(BTRIM(run.agent_name), ''),
                     CASE WHEN jsonb_typeof(seat.variables->'_agent_type') = 'string'
-                         THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END,
-                    NULLIF(BTRIM(run.agent_name), '')
-                ) AS definition_name,
+                         THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END
+                ) AS definition,
                 run.machine_id::text AS machine_id,
                 COALESCE(child.project_id, parent.project_id)::text AS project_id
             FROM eligible_runs eligible
@@ -396,14 +389,10 @@ class AttentionStateManager:
                 terminal.session_name AS terminal_session_name,
                 terminal.locator::text AS terminal_locator,
                 claimed.title AS task_title,
-                COALESCE(
-                    CASE WHEN jsonb_typeof(seat.variables->'_definition_title') = 'string'
-                         THEN NULLIF(BTRIM(seat.variables->>'_definition_title'), '') END,
-                    CASE WHEN jsonb_typeof(seat.variables->'_agent_type') = 'string'
-                         THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END
-                ) AS definition_title,
+                (claimed.id IS NOT NULL) AS task_claim_held,
+                session.status_line AS status_line,
                 CASE WHEN jsonb_typeof(seat.variables->'_agent_type') = 'string'
-                     THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END AS definition_name,
+                     THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END AS definition,
                 session.machine_id::text AS machine_id,
                 session.project_id::text AS project_id
             FROM eligible_sessions eligible

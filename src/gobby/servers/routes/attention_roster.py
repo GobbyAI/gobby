@@ -47,12 +47,12 @@ def _load_roster_entries(
                 "machine_id": run.machine_id,
                 "project_id": run.project_id,
                 "lifecycle_status": run.lifecycle_status,
-                "definition_title": run.definition_title,
-                "definition_name": run.definition_name,
+                "definition": run.definition,
                 "attention": _serialize_attention(attention.get(entry_id))
                 or _serialize_attention(session_attention),
                 "provider_error": _provider_error(session_attention),
                 "task": _task_payload(run),
+                "status_line": run.status_line,
                 "provider": run.provider,
                 "model": run.model,
                 "model_display_name": display_names.get((run.provider, run.model)),
@@ -82,11 +82,11 @@ def _load_roster_entries(
                 "machine_id": session.machine_id,
                 "project_id": session.project_id,
                 "lifecycle_status": session.lifecycle_status,
-                "definition_title": session.definition_title,
-                "definition_name": session.definition_name,
+                "definition": session.definition,
                 "attention": _serialize_attention(attention.get(entry_id)),
                 "provider_error": _provider_error(attention.get(entry_id)),
                 "task": _task_payload(session),
+                "status_line": session.status_line,
                 "provider": session.provider,
                 "model": session.model,
                 "model_display_name": display_names.get((session.provider, session.model)),
@@ -107,6 +107,7 @@ def _task_payload(row: AttentionRosterRow) -> dict[str, object] | None:
         "id": row.task_id,
         "ref": row.task_ref,
         "title": row.task_title,
+        "claim_holder": row.task_claim_held,
     }
 
 

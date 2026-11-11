@@ -82,7 +82,6 @@ def session(temp_db, project_id: str):
         machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
-        title="Test session",
     )
 
 

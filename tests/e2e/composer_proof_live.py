@@ -156,7 +156,7 @@ class LiveProof:
         self.http = httpx.AsyncClient(
             base_url=daemon.http_url, headers={"Authorization": f"Bearer {token}"}, timeout=10
         )
-        self.mcp = MCPTestClient(daemon.http_url, token)
+        self.mcp = MCPTestClient(daemon.http_url, token, gobby_home=daemon.gobby_home)
         self.leases: set[tuple[str, str]] = set()
         self.seats: list[Seat] = []
         self.evidence: list[dict[str, object]] = []
@@ -187,7 +187,6 @@ class LiveProof:
                 "external_id": str(uuid4()),
                 "source": "codex",
                 "project_id": self.scope.project_id,
-                "title": "22915-proof-controller",
             },
         )
         self.mcp.session_id = str(controller["session_id"])
@@ -241,9 +240,7 @@ class LiveProof:
                 or details.get("project_id") != self.scope.project_id
             ):
                 raise ProofRefused("real provider registration mismatch")
-            await ws.attach(
-                terminal_id, delivery="direct", request_id=f"proof-{provider}", viewer="web"
-            )
+            await ws.attach(terminal_id, delivery="direct", request_id=f"proof-{provider}")
             control = await ws.take(terminal_id, takeover=False)
             if control.get("granted") is not True:
                 raise ProofRefused("proof control refused")

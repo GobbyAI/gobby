@@ -33,22 +33,6 @@ function isApprovalOption(value: unknown): value is ApprovalOption {
   );
 }
 
-function readNullableString(
-  data: Record<string, unknown>,
-  key: string,
-): string | null | undefined {
-  const value = data[key];
-  if (typeof value === "string" || value === null) return value;
-  return undefined;
-}
-
-function readSessionTitle(
-  data: Record<string, unknown>,
-): string | null | undefined {
-  const explicit = readNullableString(data, "session_title");
-  return explicit !== undefined ? explicit : readNullableString(data, "title");
-}
-
 function readAcpAvailableCommands(value: unknown): AcpAvailableCommand[] {
   if (!Array.isArray(value)) return [];
 
@@ -88,15 +72,13 @@ function readAcpAvailableCommands(value: unknown): AcpAvailableCommand[] {
 function patchSessionMeta(
   meta: SessionObservationMeta | null,
   patch: {
-    title: string | null | undefined;
     updatedAt: string | undefined;
   },
 ): SessionObservationMeta | null {
   if (!meta) return meta;
-  const { title, updatedAt } = patch;
+  const { updatedAt } = patch;
   return {
     ...meta,
-    ...(title !== undefined ? { title } : {}),
     ...(updatedAt !== undefined ? { updatedAt } : {}),
   };
 }
@@ -206,13 +188,11 @@ export function handleSessionInfo(
     } else {
       ctx.setAcpAvailableCommands([]);
     }
-    const title = readSessionTitle(data);
     const updatedAt =
       typeof data.updated_at === "string" ? data.updated_at : undefined;
-    if (title !== undefined) ctx.setSessionTitle(title);
-    if (title !== undefined || updatedAt !== undefined) {
+    if (updatedAt !== undefined) {
       const applyPatch = (prev: SessionObservationMeta | null) =>
-        patchSessionMeta(prev, { title, updatedAt });
+        patchSessionMeta(prev, { updatedAt });
       const currentSessionId = dbSid ?? ctx.dbSessionIdRef.current;
       ctx.setMainSessionMeta(applyPatch);
       if (
@@ -312,7 +292,6 @@ export function handleSessionContinued(
   });
   if (continuedMeta) {
     ctx.setMainSessionMeta(continuedMeta);
-    ctx.setSessionTitle(continuedMeta.title ?? null);
     if (continuedMeta.ref) {
       ctx.setSessionRef(continuedMeta.ref);
     }

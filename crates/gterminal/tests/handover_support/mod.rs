@@ -33,7 +33,11 @@ use super::host_support::{
 pub const HELPER_TEST: &str = "host_handover::handover_helper";
 pub const TOKEN: &str = "handover-token";
 const SPEC_ENV: &str = "GTERM_HANDOVER_HELPER_SPEC";
-pub const WAIT: Duration = Duration::from_secs(10);
+/// Restore wait (#25733). Fallback restores took 3.8 to 5.7 s typically, with peaks of
+/// 7.1, 9.1 and 9.7 s at load 45 to 58; a 10 s wait expired at that peak. Parallel
+/// host_handover stress passed 152 of 152 (4 iterations of 38 at -j 12, load 36 to 47).
+/// 30 s is about three times the observed peak.
+pub const WAIT: Duration = Duration::from_secs(30);
 /// Socket and pidfile identities the helper saw before exec.
 pub const BOUND_FILE: &str = "helper-bound.json";
 
@@ -202,11 +206,11 @@ impl RestoredHost {
     }
 
     pub fn diagnostics(&self) -> String {
-        let read = |name: &str| std::fs::read_to_string(self.socket_dir.join(name));
+        let helper_stderr =
+            std::fs::read_to_string(self.socket_dir.join("helper.stderr")).unwrap_or_default();
         format!(
-            "log={:?} stderr={:?}",
-            read("gterm.log").unwrap_or_default(),
-            read("helper.stderr").unwrap_or_default()
+            "{}; helper_stderr={helper_stderr:?}",
+            crate::host_support::host_report(&self.socket_dir)
         )
     }
 }
@@ -366,7 +370,10 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
             dir.clone(),
             &["sh".into(), "-c".into(), pane.script.clone()],
             &PaneLaunchEnv::default(),
-            1 << 20,
+            gobby_terminal::ghostty::ScrollbackLimits {
+                bytes: 1 << 20,
+                lines: 10_000,
+            },
             pane.theme
                 .as_ref()
                 .map_or_else(TerminalTheme::default, ThemeDeclaration::terminal_theme),
@@ -382,7 +389,7 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
         )
         .expect("pgid file");
         if let Some(text) = &pane.ready_text {
-            wait_until(&format!("pane text {text:?}"), || {
+            wait_until_host(&spec.socket_dir, &format!("pane text {text:?}"), || {
                 runtime.visible_text().contains(text.as_str())
             });
         }
@@ -410,13 +417,15 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
     }
     for (pane, (runtime, pid, _)) in spec.panes.iter().zip(&runtimes) {
         if let Some(done) = &pane.window_done {
-            wait_until("window output", || done.exists());
+            wait_until_host(&spec.socket_dir, "window output", || done.exists());
         }
         if pane.exits_in_window {
-            wait_until("frozen exit", || is_zombie(*pid));
+            wait_until_host(&spec.socket_dir, "frozen exit", || is_zombie(*pid));
         }
         if pane.recorded_exit {
-            wait_until("recorded exit", || runtime.child_exit().is_some());
+            wait_until_host(&spec.socket_dir, "recorded exit", || {
+                runtime.child_exit().is_some()
+            });
         }
     }
 
@@ -623,10 +632,7 @@ pub fn is_zombie(pid: u32) -> bool {
     rc == 0 && unsafe { info.si_pid() } == pid as libc::pid_t
 }
 
-pub fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
-    let deadline = Instant::now() + WAIT;
-    while !ready() {
-        assert!(Instant::now() < deadline, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(10));
-    }
+/// Polls `ready` until `WAIT`, panicking with the host state under `dir` (#25733 criterion 2).
+pub fn wait_until_host(dir: impl AsRef<Path>, what: &str, ready: impl FnMut() -> bool) {
+    crate::host_support::wait_until_host_within(dir, what, WAIT, ready);
 }

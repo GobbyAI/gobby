@@ -60,4 +60,5 @@ def test_managed_execution_reads_its_project_code_index_and_nothing_else(
         assert own is not None
         assert storage.get_project_stats(str(fixture.other_project_id)) is None
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
-            db.fetchone("SELECT id FROM tasks LIMIT 1")
+            # Tasks are project-scoped readable since #25804; sessions stay ungranted.
+            db.fetchone("SELECT id FROM sessions LIMIT 1")

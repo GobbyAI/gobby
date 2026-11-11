@@ -53,7 +53,6 @@ def _stranded_seat(session_manager: SessionManager, project_id: str) -> str:
         machine_id=None,
         source="agy",
         project_id=project_id,
-        title="stranded-agy",
     ).id
     with session_manager.db.transaction():
         session_manager.db.execute(
@@ -77,7 +76,6 @@ async def _deferred_wake(
         machine_id=None,
         source="claude",
         project_id=project_id,
-        title="wake-sender",
     ).id
     messages = InterSessionMessageManager(temp_db)
     messages.create_message(

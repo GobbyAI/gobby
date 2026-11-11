@@ -205,7 +205,6 @@ class CommunicationsManager:
                         status="deleted",
                         transitioned_at=utc_now(),
                         seq_num=None,
-                        title=None,
                         source="unknown",
                     )
                 )
@@ -475,25 +474,25 @@ class CommunicationsManager:
                 content,
             )
 
+    def session_seat_label(self, session_id: str) -> str | None:
+        """Return the seat's definition label, or None when it runs no named definition."""
+        from gobby.sessions.display_labels import definition_display_name
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        variables = SessionVariableManager(self._store.db).get_variable_subset(
+            session_id, ("_agent_type",)
+        )
+        agent_type = variables.get("_agent_type")
+        if isinstance(agent_type, str) and agent_type.strip() and agent_type != "default":
+            return definition_display_name(agent_type.strip())
+        return None
+
     def telegram_sender_label(self, channel: ChannelConfig, session_id: str | None) -> str | None:
         """Resolve the trusted origin heading shared by every Telegram outbound path."""
         if channel.channel_type != "telegram":
             return None
         session = self._session_store.get(session_id) if session_id is not None else None
-        seat_label = None
-        if session is not None:
-            from gobby.sessions.title_lifecycle import DEFINITION_TITLE_VARIABLE
-            from gobby.workflows.state_manager import SessionVariableManager
-
-            variables = SessionVariableManager(self._store.db).get_variable_subset(
-                session.id, (DEFINITION_TITLE_VARIABLE, "_agent_type")
-            )
-            definition_title = variables.get(DEFINITION_TITLE_VARIABLE)
-            agent_type = variables.get("_agent_type")
-            if isinstance(definition_title, str) and definition_title.strip():
-                seat_label = definition_title.strip()
-            elif isinstance(agent_type, str) and agent_type.strip() and agent_type != "default":
-                seat_label = agent_type.strip().replace("-", " ").replace("_", " ").title()
+        seat_label = self.session_seat_label(session.id) if session is not None else None
         return telegram_agent_label(session, seat_label)
 
     async def send_attachment(

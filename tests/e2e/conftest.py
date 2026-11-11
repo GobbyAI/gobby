@@ -24,7 +24,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import AsyncGenerator, Callable, Generator
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,7 +46,11 @@ from gobby.guard_set_g import socket_dir_from_cmdline
 from gobby.terminals.host_manager import TerminalHostManager
 from gobby.terminals.host_protocol import read_pidfile, write_pidfile
 from gobby.utils.dependency_requirements import SRT_RELEASE
-from gobby.utils.local_token import issue_session_api_token, read_managed_signing_key
+from gobby.utils.local_token import (
+    issue_agent_api_token,
+    issue_session_api_token,
+    read_managed_signing_key,
+)
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 from tests.native_binary_selection import (
     NativeBinarySelectionError,
@@ -326,9 +330,11 @@ def _isolated_native_bin_dir(
     """Copy the native set so test provisioning and locks cannot mutate its source.
 
     gterm refuses a symlinked executable. Copies also isolate in-place writes,
-    unlike hard links. A checkout gdaemon stays a symlink to follow rebuilds;
-    only that replacement invalidates the pinned set's identity stamp.
+    unlike hard links. A checkout gdaemon stays a symlink to follow rebuilds, and
+    the set is stamped with that gdaemon's identity, as an install of it stamps it,
+    so restart preflight checks the other members against the gdaemon that runs.
     """
+    from gobby.storage.schema_identity_pin import probe_identity, stamp_bytes
     from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
 
     composite = Path(tempfile.mkdtemp(prefix="native-bin-", dir=home_dir))
@@ -338,6 +344,7 @@ def _isolated_native_bin_dir(
             shutil.copy2(entry, composite / entry.name)
     if checkout_gdaemon is not None:
         (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
+        (composite / IDENTITY_STAMP_NAME).write_bytes(stamp_bytes(probe_identity(checkout_gdaemon)))
     return composite
 
 
@@ -1490,6 +1497,17 @@ def authenticated_async_daemon_client(
 # --- CLI Event Helpers ---
 
 
+def _raise_with_body(response: httpx.Response) -> None:
+    """Fail an error response with its body, which carries the daemon's refusal code."""
+    if response.is_error:
+        response.read()
+        raise httpx.HTTPStatusError(
+            f"{response.status_code} for {response.request.url}: {response.text}",
+            request=response.request,
+            response=response,
+        )
+
+
 class CLIEventSimulator:
     """Helper for simulating CLI hook events and session registration."""
 
@@ -1499,6 +1517,7 @@ class CLIEventSimulator:
             base_url=daemon_url,
             headers={"Authorization": f"Bearer {token}"},
             timeout=10.0,
+            event_hooks={"response": [_raise_with_body]},
         )
 
     def close(self) -> None:
@@ -1522,13 +1541,15 @@ class CLIEventSimulator:
         self,
         external_id: str,
         machine_id: str = "21000000-0000-4000-8000-000000000002",
-        source: str = "Claude Code",
+        source: str = "claude",
         project_id: str | None = None,
         parent_session_id: str | None = None,
         cwd: str | None = None,
     ) -> dict[str, Any]:
         """Register a new session via /sessions/register endpoint.
 
+        The default source is the one this simulator's hooks send, so the hook claim
+        finds the registered row as its own live session (#25905).
         Returns response with 'id' (internal session ID), 'external_id', 'machine_id'.
         """
         payload: dict[str, Any] = {
@@ -1887,67 +1908,87 @@ def cli_events(daemon_instance: DaemonInstance) -> Generator[CLIEventSimulator]:
 # --- MCP Client Helpers ---
 
 
-def _session_bearer(signing_key: bytes, session: dict[str, Any]) -> dict[str, str]:
-    """Headers that select ``session`` with a credential bound to it.
+def session_bound_headers(
+    gobby_home: Path, session: Mapping[str, Any], agent_run_id: str | None = None
+) -> dict[str, str]:
+    """Headers a session's own caller sends: its bound bearer and selectors.
 
-    Identity-bound routes such as tool calls also require the caller's project, which
-    must be the token's.
+    The machine bearer may not select a session (#25855). A SessionStart hands its
+    caller a token bound to that one session, and a spawned run gets one bound to its
+    run; this mints the same token with the isolated daemon's signing key so a test
+    acts as the session, or the run, it names.
     """
+    signing_key = read_managed_signing_key(gobby_home / "bootstrap.yaml")
+    if signing_key is None:
+        raise RuntimeError(f"Daemon signing key is missing beside {gobby_home / 'bootstrap.yaml'}")
     session_id = str(session["id"])
-    project_id = str(session.get("project_id") or "")
-    token = issue_session_api_token(
-        signing_key,
-        session_id=session_id,
-        project_id=project_id,
-        machine_id=session.get("machine_id"),
-    )
+    project_id = str(session["project_id"])
+    machine_id = session.get("machine_id")
+    machine = str(machine_id) if machine_id else None
+    if agent_run_id:
+        token = issue_agent_api_token(
+            signing_key,
+            agent_run_id=agent_run_id,
+            session_id=session_id,
+            project_id=project_id,
+            machine_id=machine,
+        )
+    else:
+        token = issue_session_api_token(
+            signing_key, session_id=session_id, project_id=project_id, machine_id=machine
+        )
     return {
         "Authorization": f"Bearer {token}",
         "X-Gobby-Session-Id": session_id,
+        "X-Gobby-Project-Id": project_id,
         "X-Gobby-Caller-Project-Id": project_id,
     }
-
-
-def _daemon_signing_key(daemon_instance: DaemonInstance) -> bytes | None:
-    """The isolated daemon's managed signing key, which mints its session credentials."""
-    return read_managed_signing_key(daemon_instance.gobby_home / "bootstrap.yaml")
 
 
 class MCPTestClient:
     """Helper for testing MCP proxy functionality.
 
-    Set ``session_id`` to have the client send ``X-Gobby-Session-Id`` on tool
-    calls. The daemon's MCP execution endpoint populates the SessionContext
-    ContextVar from this header, which tools like ``gobby-tasks.create_task``
-    now require (session_id was removed from their argument schemas). Set
-    ``agent_run_id`` when the session belongs to an active agent run. The machine
-    bearer may not select a session, so a session the client selects without a run
-    is presented with a credential bound to it, as its own CLI would present one.
+    Set ``session_id`` to have the client act as that session on tool calls. The
+    daemon's MCP execution endpoint populates the SessionContext ContextVar from
+    the session selector, which tools like ``gobby-tasks.create_task`` require.
+    With ``gobby_home`` the client presents a credential bound to the session, as
+    the session's own caller does; the machine bearer alone may not select one.
+    Set ``agent_run_id`` when the session belongs to an active agent run; the bound
+    credential is then the run's own.
     """
 
-    def __init__(self, daemon_url: str, token: str, signing_key: bytes | None = None):
+    def __init__(self, daemon_url: str, token: str, gobby_home: Path | None = None):
         self.daemon_url = daemon_url
+        self.gobby_home = gobby_home
         self.client = httpx.Client(
             base_url=daemon_url,
             headers={"Authorization": f"Bearer {token}"},
             timeout=30.0,
         )
-        self.signing_key = signing_key
         self.session_id: str | None = None
         self.agent_run_id: str | None = None
+        self._bound: tuple[tuple[str, str | None], dict[str, str]] | None = None
 
     def close(self) -> None:
         """Close the HTTP client."""
         self.client.close()
 
-    def _session_headers(self) -> dict[str, str]:
-        if self.session_id and not self.agent_run_id and self.signing_key is not None:
-            response = self.client.get(f"/api/sessions/{self.session_id}")
+    def _bound_headers(self, session_id: str, agent_run_id: str | None) -> dict[str, str]:
+        key = (session_id, agent_run_id)
+        if self._bound is None or self._bound[0] != key:
+            assert self.gobby_home is not None
+            response = self.client.get(f"/api/sessions/{session_id}")
             response.raise_for_status()
             session = cast(dict[str, Any], response.json()["session"])
-            return _session_bearer(self.signing_key, session)
+            headers = session_bound_headers(self.gobby_home, session, agent_run_id)
+            self._bound = (key, headers)
+        return dict(self._bound[1])
+
+    def _session_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
-        if self.session_id:
+        if self.session_id and self.gobby_home is not None:
+            headers.update(self._bound_headers(self.session_id, self.agent_run_id))
+        elif self.session_id:
             headers["X-Gobby-Session-Id"] = self.session_id
         if self.agent_run_id:
             headers[AGENT_RUN_ID_HEADER] = self.agent_run_id
@@ -2029,7 +2070,7 @@ def mcp_client(daemon_instance: DaemonInstance) -> Generator[MCPTestClient]:
     client = MCPTestClient(
         daemon_instance.http_url,
         daemon_token(daemon_instance.gobby_home),
-        _daemon_signing_key(daemon_instance),
+        gobby_home=daemon_instance.gobby_home,
     )
     yield client
     client.close()
@@ -2044,14 +2085,14 @@ class AsyncMCPTestClient:
     See ``MCPTestClient`` for the session-context rationale.
     """
 
-    def __init__(self, daemon_url: str, token: str, signing_key: bytes | None = None):
+    def __init__(self, daemon_url: str, token: str, gobby_home: Path | None = None):
         self.daemon_url = daemon_url
+        self.gobby_home = gobby_home
         self.client = httpx.AsyncClient(
             base_url=daemon_url,
             headers={"Authorization": f"Bearer {token}"},
             timeout=30.0,
         )
-        self.signing_key = signing_key
         self.session_id: str | None = None
 
     async def close(self) -> None:
@@ -2061,12 +2102,12 @@ class AsyncMCPTestClient:
     async def _session_headers(self) -> dict[str, str]:
         if not self.session_id:
             return {}
-        if self.signing_key is None:
+        if self.gobby_home is None:
             return {"X-Gobby-Session-Id": self.session_id}
         response = await self.client.get(f"/api/sessions/{self.session_id}")
         response.raise_for_status()
         session = cast(dict[str, Any], response.json()["session"])
-        return _session_bearer(self.signing_key, session)
+        return session_bound_headers(self.gobby_home, session)
 
     async def list_servers(self) -> list[dict[str, Any]]:
         """List available MCP servers."""
@@ -2135,7 +2176,7 @@ async def async_mcp_client(
     client = AsyncMCPTestClient(
         daemon_instance.http_url,
         daemon_token(daemon_instance.gobby_home),
-        _daemon_signing_key(daemon_instance),
+        gobby_home=daemon_instance.gobby_home,
     )
     yield client
     await client.close()

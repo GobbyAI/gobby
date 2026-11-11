@@ -702,7 +702,6 @@ class TestRegisterSession:
                     "external_id": "ext-123",
                     "source": "Claude Code",
                     "project_id": "proj-123",
-                    "title": "User Title",
                 },
             )
 
@@ -717,8 +716,6 @@ class TestRegisterSession:
             mock_server.session_manager.register.call_args.kwargs["machine_id"]
             == "20000000-0000-4000-8000-000000000001"
         )
-        assert mock_server.session_manager.register.call_args.kwargs["title"] == "User Title"
-        assert mock_server.session_manager.register.call_args.kwargs["title_source"] == "manual"
 
     def test_register_reuses_null_machine_session_for_uuid_ingress(
         self,
@@ -884,7 +881,6 @@ class TestCreateWebChatSession:
                     "provider": "claude",
                     "project_id": "proj-123",
                     "cwd": "/repo",
-                    "title": "Web Chat",
                     "model": "sonnet",
                     "chat_mode": "plan",
                 },
@@ -899,7 +895,6 @@ class TestCreateWebChatSession:
             machine_id="20000000-0000-4000-8000-000000000001",
             project_id="proj-123",
             source="claude",
-            title="Web Chat",
             model="sonnet",
             is_local=False,
             chat_mode="plan",
@@ -1642,94 +1637,6 @@ class TestUpdateSessionSummary:
 # =============================================================================
 # POST /sessions/{session_id}/rename
 # =============================================================================
-
-
-class TestRenameSession:
-    """Test POST /sessions/{session_id}/rename endpoint."""
-
-    def test_rename_success(self, client, mock_server) -> None:
-        """Renames a session title successfully."""
-        session = _make_session()
-        mock_server.session_manager.get.return_value = session
-        mock_server.session_manager.update_title.return_value = session
-
-        response = client.post(
-            "/api/sessions/sess-abc123/rename",
-            json={"title": "New Title"},
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "success"
-        assert data["title"] == "New Title"
-        mock_server.session_manager.update_title.assert_called_once_with(
-            "sess-abc123",
-            "New Title",
-            title_source="manual",
-        )
-
-    def test_rename_empty_title(self, client, mock_server) -> None:
-        """Returns 400 when title is empty."""
-        response = client.post(
-            "/api/sessions/sess-abc123/rename",
-            json={"title": ""},
-        )
-
-        assert response.status_code == 400
-        assert "Title must not be empty" in response.json()["detail"]
-
-    def test_rename_whitespace_title(self, client, mock_server) -> None:
-        """Returns 400 when title is only whitespace."""
-        response = client.post(
-            "/api/sessions/sess-abc123/rename",
-            json={"title": "   "},
-        )
-
-        assert response.status_code == 400
-
-    def test_rename_no_title_field(self, client, mock_server) -> None:
-        """Returns 400 when title field is missing."""
-        response = client.post(
-            "/api/sessions/sess-abc123/rename",
-            json={},
-        )
-
-        assert response.status_code == 400
-
-    def test_rename_session_not_found(self, client, mock_server) -> None:
-        """Returns 404 when session does not exist."""
-        mock_server.session_manager.get.return_value = None
-
-        response = client.post(
-            "/api/sessions/sess-abc123/rename",
-            json={"title": "New Title"},
-        )
-
-        assert response.status_code == 404
-
-    def test_rename_update_title_returns_none(self, client, mock_server) -> None:
-        """Returns 404 when update_title returns None (race condition)."""
-        session = _make_session()
-        mock_server.session_manager.get.return_value = session
-        mock_server.session_manager.update_title.return_value = None
-
-        response = client.post(
-            "/api/sessions/sess-abc123/rename",
-            json={"title": "New Title"},
-        )
-
-        assert response.status_code == 404
-
-    def test_rename_no_session_manager(self, client, mock_server) -> None:
-        """Returns 503 when session_manager is None."""
-        mock_server.session_manager = None
-
-        response = client.post(
-            "/api/sessions/sess-abc123/rename",
-            json={"title": "New Title"},
-        )
-
-        assert response.status_code == 503
 
 
 # =============================================================================

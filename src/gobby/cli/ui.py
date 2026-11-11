@@ -15,7 +15,6 @@ from pydantic import ValidationError
 
 from gobby.config.app import McpExposureConfig, UiExposureConfig
 from gobby.config.bootstrap import load_bootstrap
-from gobby.config.bootstrap_io import bootstrap_path
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.ui_exposure import (
     UiExposeError,
@@ -143,7 +142,7 @@ _PORT_HELP = "HTTPS port on this node. Tailscale Funnel allows only 443, 8443 an
 def ui_expose(port: int) -> None:
     """Expose the web UI to this machine's Tailscale network and record the choice."""
     proposed = UiExposureConfig(mode="tailnet", port=port)
-    recorded_ui, recorded_mcp = read_exposure_config(bootstrap_path())
+    recorded_ui, recorded_mcp = read_exposure_config()
     try:
         validate_exposure_pair(proposed, recorded_mcp)
     except ValidationError as exc:
@@ -154,7 +153,7 @@ def ui_expose(port: int) -> None:
             daemon_port,
             previous=recorded_ui,
             port=port,
-            persist=lambda: record_exposure(bootstrap_path(), ui=proposed),
+            persist=lambda: record_exposure(ui=proposed),
         )
     except UiExposeError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -170,15 +169,13 @@ def ui_expose(port: int) -> None:
 def ui_unexpose(forget: bool) -> None:
     """Remove Gobby's recorded Web UI Tailscale handler."""
     daemon_port = load_bootstrap().daemon_port
-    ui_config, _ = read_exposure_config(bootstrap_path())
+    ui_config, _ = read_exposure_config()
     try:
         disable_tailscale_ui(
             daemon_port,
             port=ui_config.port,
             forget=forget,
-            persist=lambda: record_exposure(
-                bootstrap_path(), ui=UiExposureConfig(mode="off", port=ui_config.port)
-            ),
+            persist=lambda: record_exposure(ui=UiExposureConfig(mode="off", port=ui_config.port)),
         )
     except UiExposeError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -202,7 +199,7 @@ def ui_mcp_expose(port: int, funnel: bool) -> None:
     mode: Literal["tailnet", "funnel"] = "funnel" if funnel else "tailnet"
     try:
         proposed = McpExposureConfig(mode=mode, port=port)
-        recorded_ui, previous = read_exposure_config(bootstrap_path())
+        recorded_ui, previous = read_exposure_config()
         validate_exposure_pair(recorded_ui, proposed)
     except ValidationError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -213,7 +210,7 @@ def ui_mcp_expose(port: int, funnel: bool) -> None:
             previous=previous,
             mode=mode,
             port=port,
-            persist=lambda: record_exposure(bootstrap_path(), mcp=proposed),
+            persist=lambda: record_exposure(mcp=proposed),
         )
     except UiExposeError as exc:
         raise click.ClickException(str(exc)) from exc
@@ -230,7 +227,7 @@ def ui_mcp_expose(port: int, funnel: bool) -> None:
 def ui_mcp_unexpose(forget: bool) -> None:
     """Remove Gobby's recorded /mcp Tailscale handler."""
     daemon_port = load_bootstrap().daemon_port
-    _, mcp_config = read_exposure_config(bootstrap_path())
+    _, mcp_config = read_exposure_config()
     mode = mcp_config.mode
     if mode == "off":
         raise click.ClickException("No /mcp exposure is recorded; nothing to remove.")
@@ -241,7 +238,7 @@ def ui_mcp_unexpose(forget: bool) -> None:
             port=mcp_config.port,
             forget=forget,
             persist=lambda: record_exposure(
-                bootstrap_path(), mcp=McpExposureConfig(mode="off", port=mcp_config.port)
+                mcp=McpExposureConfig(mode="off", port=mcp_config.port)
             ),
         )
     except UiExposeError as exc:

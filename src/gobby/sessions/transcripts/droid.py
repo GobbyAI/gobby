@@ -12,6 +12,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
     ParsedAdjustment,
@@ -264,6 +265,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
         self._sidecar_usage: TokenUsage | None = None
         self._sidecar_context_used: int | None = None
         self._sidecar_model: str | None = None
+        self._sidecar_effort: str | None = None
         self._last_emitted_usage: TokenUsage | None = None
         self._last_assistant_index: int | None = None
 
@@ -281,6 +283,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
         self._sidecar_usage = None
         self._sidecar_context_used = None
         self._sidecar_model = None
+        self._sidecar_effort = None
 
         try:
             raw = sidecar_path.read_text(encoding="utf-8")
@@ -311,6 +314,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
             self._sidecar_context_used = prompt_tokens or None
         model = data.get("model")
         self._sidecar_model = model if isinstance(model, str) else None
+        self._sidecar_effort = observed_reasoning_effort(data)
 
     def _expand_line(self, line: str, index: int) -> list[ParsedMessage]:
         """Expand one Droid JSONL line into zero or more ParsedMessage records."""
@@ -344,6 +348,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
                         raw_json=record,
                         message_id=message_id,
                         model=self._sidecar_model,
+                        reasoning_effort=self._sidecar_effort,
                     )
                 ]
             return []
@@ -430,6 +435,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
                         raw_json=record,
                         message_id=message_id,
                         model=self._sidecar_model,
+                        reasoning_effort=self._sidecar_effort,
                     )
                 )
             elif raw_block_type == "thinking":
@@ -449,6 +455,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
                         raw_json=record,
                         message_id=message_id,
                         model=self._sidecar_model,
+                        reasoning_effort=self._sidecar_effort,
                     )
                 )
             elif raw_block_type == "tool_use":
@@ -469,6 +476,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
                         raw_json=record,
                         message_id=message_id,
                         model=self._sidecar_model,
+                        reasoning_effort=self._sidecar_effort,
                     )
                 )
             elif raw_block_type == "tool_result":
@@ -490,6 +498,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
                         raw_json=record,
                         message_id=message_id,
                         model=self._sidecar_model,
+                        reasoning_effort=self._sidecar_effort,
                     )
                 )
             else:
@@ -503,6 +512,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
                         timestamp=timestamp,
                         message_id=message_id,
                         model=self._sidecar_model,
+                        reasoning_effort=self._sidecar_effort,
                     )
                 )
 

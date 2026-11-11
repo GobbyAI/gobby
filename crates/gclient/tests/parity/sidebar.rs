@@ -382,7 +382,7 @@ parity_tests! {
             let second = row_str(&terminal, body.y + 1, 25);
             let third = row_str(&terminal, body.y + 2, 25);
             assert_eq!(first, format!(" {} pi", dot(RowState::Working)));
-            assert_eq!(third, "   No assigned task");
+            assert!(third.trim().is_empty(), "{third:?}");
             // herdr: `!contains("working")`; gclient's working glyph is the
             // whole indicator, so no line carries the word.
             assert!(!first.contains("working"));
@@ -396,14 +396,9 @@ parity_tests! {
             assert!(!workspace_style.add_modifier.contains(Modifier::DIM));
             assert_eq!(workspace_style.bg, Some(p.selection));
 
-            let agent_x = find_symbol_x(&terminal, body.y + 2, body.width, "N");
-            let agent_style = style_at(&terminal, agent_x, body.y + 2);
-            // Secondary text is subtext0 on every ground (#23280 Option B),
-            // inked for the selection fill the active row sits on (#23416).
-            assert_eq!(agent_style.fg, Some(p.selection_ink.ink(p.subtext0)));
-            assert!(!agent_style.add_modifier.contains(Modifier::DIM));
-            assert!(!agent_style.add_modifier.contains(Modifier::BOLD));
-            assert_eq!(agent_style.bg, Some(p.selection));
+            // Line three is blank with no task held, so there is no secondary
+            // glyph to style here. The subtext0 role for line-three text is
+            // pinned by `sidebar_rows::tests::a_scrolling_task_line_keeps_text_and_subtext_roles`.
         }
 
         fn occurrence_false_removes_default_workspace_bold_and_agent_dim() {
@@ -953,7 +948,7 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} pi", dot(RowState::Working)));
             assert_eq!(text.matches('·').count(), 0);
-            assert_eq!(third_text(&row, 60, &chrome), "   No assigned task");
+            assert_eq!(third_text(&row, 60, &chrome), "   ");
         }
 
         fn state_text_and_arbitrary_values_are_independent_tokens() {
@@ -1014,7 +1009,7 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} feature", dot(RowState::Blank)));
             assert!(!text.contains("worktree/feature") && !text.contains('↑'));
-            assert_eq!(third_text(&row, 60, &chrome), "   No assigned task");
+            assert_eq!(third_text(&row, 60, &chrome), "   ");
         }
 
         fn workspace_custom_token_can_replace_git_specific_details() {
@@ -1194,8 +1189,8 @@ fn agent_rows_follow_project_and_machine_filter() {
     chrome.sidebar.machine_filter = Some(ALL_MACHINES.to_string());
     assert_eq!(labels(&board, &chrome), ["alpha", "alpha-remote"]);
     let rows = agent_rows(&board, &chrome);
-    assert_eq!(third_text(&rows[0], 40, &chrome), "   No assigned task");
-    assert_eq!(third_text(&rows[1], 40, &chrome), "   No assigned task");
+    assert_eq!(third_text(&rows[0], 40, &chrome), "   ");
+    assert_eq!(third_text(&rows[1], 40, &chrome), "   ");
 
     // The `all` scope adds the other projects' rows under dim group rows,
     // in project order; the group rows are no hits.

@@ -195,7 +195,7 @@ def test_running_close_reviewer_is_listed_until_its_run_ends(
 
     running = roster.load_roster_rows(live_session_statuses=["active"])
     listed = [row for row in running if row.kind == "run" and row.source_id == run.id]
-    assert [(row.terminal_id, row.session_id, row.definition_title) for row in listed] == [
+    assert [(row.terminal_id, row.session_id, row.definition) for row in listed] == [
         (reviewer_pane.id, child.id, "task-close-reviewer")
     ]
 

@@ -3,6 +3,7 @@
 mod live;
 mod live_reader;
 mod live_workspace;
+mod nested_json;
 mod projects;
 mod rest;
 pub(crate) use rest::project_rows;

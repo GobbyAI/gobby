@@ -149,6 +149,15 @@ impl HostConfig {
         Ok(self)
     }
 
+    /// Retention budget every native pane's primary screen enforces.
+    #[cfg(feature = "vt-engine")]
+    pub fn scrollback_limits(self) -> crate::ghostty::ScrollbackLimits {
+        crate::ghostty::ScrollbackLimits {
+            bytes: self.native_scrollback_max_bytes as usize,
+            lines: self.native_scrollback_max_lines as usize,
+        }
+    }
+
     pub fn native_entitlement_ceiling(self) -> u32 {
         self.max_attachments_total.saturating_sub(4)
     }

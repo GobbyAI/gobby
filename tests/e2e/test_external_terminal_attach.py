@@ -611,9 +611,26 @@ async def _ws_write(
         raise AssertionError("write outcome not received")
 
 
+@pytest.fixture
+def installed_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Install this interpreter as ``codex`` on the isolated daemon's PATH.
+
+    A wake types only into a foreground process that is the build the daemon's PATH
+    resolves for an agent CLI. The scripted Codex runs on this interpreter, so the
+    daemon must resolve ``codex`` to it. Requested before the daemon, which copies PATH.
+    """
+    bin_dir = tmp_path / "agent-bin"
+    bin_dir.mkdir()
+    codex = bin_dir / "codex"
+    codex.symlink_to(Path(sys.executable).resolve())
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    return codex
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", ["replied", "timeout"])
 async def test_codex_reply_wait_reaches_terminal_after_isolated_restart(
+    installed_codex: Path,
     daemon_instance: DaemonInstance,
     daemon_client: httpx.Client,
     cli_events: CLIEventSimulator,
@@ -634,7 +651,7 @@ async def test_codex_reply_wait_reaches_terminal_after_isolated_restart(
     _wait_for_host(daemon_client, daemon_instance)
     script = tmp_path / "codex-idle.py"
     script.write_text(_CLI_SCRIPT)
-    created = await _ws_create(daemon_instance, [sys.executable, str(script), "--codex-idle"])
+    created = await _ws_create(daemon_instance, [str(installed_codex), str(script), "--codex-idle"])
     assert created.get("success") is True, created
     terminal_id = str(created["terminal_id"])
     terminals = TerminalManager(postgres_db)
@@ -644,13 +661,13 @@ async def test_codex_reply_wait_reaches_terminal_after_isolated_restart(
     host_terminal_id = str(terminal.locator["host_terminal_id"])
     waiter = cli_events.register_session(
         external_id=f"codex-restart-{uuid.uuid4().hex}",
-        source="Codex",
+        source="codex",
         project_id=E2E_PROJECT_ID,
         cwd=str(daemon_instance.project_dir),
     )["id"]
     owner = cli_events.register_session(
         external_id=f"owner-restart-{uuid.uuid4().hex}",
-        source="Codex",
+        source="codex",
         project_id=E2E_PROJECT_ID,
         cwd=str(daemon_instance.project_dir),
     )["id"]
@@ -712,14 +729,19 @@ async def test_codex_reply_wait_reaches_terminal_after_isolated_restart(
             f"Isolated runner did not stop for restart; pid={daemon_instance.pid}; "
             f"logs={daemon_instance.read_logs()}; errors={daemon_instance.read_error_logs()}"
         ) from exc
-    if outcome == "timeout":
-        postgres_db.execute(
-            "UPDATE coordination_waits SET expires_at = clock_timestamp() - interval '1 second' "
-            "WHERE id = %s",
-            (wait_id,),
-        )
     daemon_instance.restart()
     _wait_for_host(daemon_client, daemon_instance)
+    if outcome == "timeout":
+        # Start re-arms a deadline that lapsed in downtime, so the deadline lapses after
+        # the restart. Resolving it changes its outcome, and the schema trigger notifies
+        # the restarted delivery service, which wakes the waiter.
+        with postgres_db.transaction() as conn:
+            conn.execute(
+                "UPDATE coordination_waits SET expires_at = clock_timestamp() - interval "
+                "'1 second' WHERE id = %s",
+                (wait_id,),
+            )
+            conn.execute("SELECT resolve_coordination_wait(%s)", (wait_id,))
     if outcome == "replied":
         mcp_client.session_id = owner
         sent = mcp_client.call_tool(

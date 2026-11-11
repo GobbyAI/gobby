@@ -514,9 +514,29 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 496,
-        filename: "496_skills_live_name_slots.sql",
+        filename: "496_session_status_line.sql",
+        checksum: "2a0511ee870e9603ce1773a344b80f72d3ae00de9009e31fdf12d104f9c0c743",
+        sql: include_str!("../../assets/schema/migrations/496_session_status_line.sql"),
+    },
+    EmbeddedMigration {
+        version: 497,
+        filename: "497_drop_session_titles.sql",
+        checksum: "1422055d191cb7c7c488995a5b23667d77b4c47eb5a0e6b64eac04239047c14b",
+        sql: include_str!("../../assets/schema/migrations/497_drop_session_titles.sql"),
+    },
+    EmbeddedMigration {
+        version: 498,
+        filename: "498_session_status_line_control_check.sql",
+        checksum: "81166e87a4295fda233c9e265ee33136a9bcd1dcfcf1f0f93bbcdbac2329cb29",
+        sql: include_str!(
+            "../../assets/schema/migrations/498_session_status_line_control_check.sql"
+        ),
+    },
+    EmbeddedMigration {
+        version: 499,
+        filename: "499_skills_live_name_slots.sql",
         checksum: "fa41e53264261e7da9f476975a473ffa41d398b2356204a1e0d31b8bff0ff33a",
-        sql: include_str!("../../assets/schema/migrations/496_skills_live_name_slots.sql"),
+        sql: include_str!("../../assets/schema/migrations/499_skills_live_name_slots.sql"),
     },
 ];
 // Numbered migrations after canonical baseline@420 land here.

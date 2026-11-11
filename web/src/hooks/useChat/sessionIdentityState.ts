@@ -68,7 +68,6 @@ export function useSessionIdentityState({
 
   const [currentBranch, setCurrentBranch] = useState<string | null>(null);
   const [worktreePath, setWorktreePath] = useState<string | null>(null);
-  const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [mainSessionMeta, setMainSessionMeta] =
     useState<SessionObservationMeta | null>(null);
 
@@ -104,7 +103,6 @@ export function useSessionIdentityState({
         sessionType: "web_chat",
       });
       setMainSessionMeta(nextMeta);
-      setSessionTitle(nextMeta?.title ?? null);
       if (nextMeta?.ref) {
         setSessionRef(nextMeta.ref);
       }
@@ -152,7 +150,6 @@ export function useSessionIdentityState({
         model: options?.model ?? null,
         reasoningEffort: options?.reasoningEffort ?? null,
         chatMode: options?.chatMode ?? currentModeRef.current,
-        title: options?.title ?? null,
       })
         .then((session) => {
           bindActiveSession(session.id);
@@ -229,14 +226,12 @@ export function useSessionIdentityState({
     mainSessionMeta,
     sessionRef,
     sessionRefRef,
-    sessionTitle,
     setConversationId,
     setConversationSwitchKey,
     setCurrentBranch,
     setDbSessionId,
     setMainSessionMeta,
     setSessionRef,
-    setSessionTitle,
     setWorktreePath,
     worktreePath,
   };

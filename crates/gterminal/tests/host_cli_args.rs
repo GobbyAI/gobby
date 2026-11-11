@@ -166,7 +166,7 @@ fn host_losing_the_busy_socket_check_keeps_the_live_pidfile() {
     host_support::wait_socket(&control_path);
     let pid_path = dir.path().join(PID_FILE);
     let first_pid = first.id().to_string();
-    host_support::wait_until("the live host publishes its pid", || {
+    host_support::wait_until_host(&dir, "the live host publishes its pid", || {
         std::fs::read_to_string(&pid_path)
             .map(|pid| pid.trim() == first_pid)
             .unwrap_or(false)
@@ -208,11 +208,15 @@ fn probe_resume(socket_dir: &Path, version: &str) -> Output {
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("spawn gterm host --probe-resume");
+    let pid = child.id();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while child.try_wait().expect("poll probe").is_none() {
         if std::time::Instant::now() >= deadline {
             child.kill().expect("kill probe");
-            panic!("--probe-resume {version} did not exit");
+            panic!(
+                "--probe-resume {version} did not exit (probe pid {pid}); {}",
+                host_support::host_report(socket_dir)
+            );
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }

@@ -241,6 +241,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
             {
                 "entry_id": "session:sess-1",
                 "session_id": "sess-1",
+                "definition": "Architect",
                 "terminal": {"terminal_id": "terminal-1", "backend": "tmux"},
                 "attention": {
                     "attention_id": "att-1",
@@ -385,7 +386,11 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         Some("No actionable attention prompt."),
         "an idle row asks for no prompt"
     );
-    assert_eq!(attention_label(&workspace, "session:sess-1"), "#12217: 15");
+    assert_eq!(
+        attention_label(&workspace, "session:sess-1"),
+        "#12217: Architect",
+        "the ref and the definition name the seat; the stored session title is gone"
+    );
 
     terminal
         .draw(|frame| {
@@ -399,7 +404,10 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         .iter()
         .map(|cell| cell.symbol())
         .collect();
-    assert!(screen.contains("#12217: Claude"), "rendered UI: {screen:?}");
+    assert!(
+        screen.contains("#12217: Architect"),
+        "rendered UI: {screen:?}"
+    );
     assert!(screen.contains("  Unknown"), "rendered UI: {screen:?}");
     let sidebar: String = terminal
         .backend()

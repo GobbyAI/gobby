@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
-use crossterm::event::{KeyCode, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::run_loop::RENDER_TICK;
 use gobby_client::app::{run_live_loop, spawn_job, JobKey, JobLedger, JobResult, PaneId};
 use gobby_client::daemon::{Daemon, Generation, LiveDaemon};
@@ -1645,6 +1645,262 @@ fn warnings_for(logs: &Arc<Mutex<Vec<u8>>>, terminal_id: &str) -> Vec<String> {
         .collect()
 }
 
+fn orphan_row(terminal_id: &str, name: &str) -> Value {
+    json!({
+        "terminal_id": terminal_id,
+        "backend": "native",
+        "state": "orphaned",
+        "name": name,
+    })
+}
+
+#[tokio::test]
+async fn held_orphan_fetch_and_kill_fanout_are_nonblocking_and_complete() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _tab_id, _pane) = on_demand_workspace(&mock).await;
+    // The roster refresh after the kills needs answers too.
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+    }
+    mock.seed_terminal_inventory(vec![
+        orphan_row("orphan-a", "alpha"),
+        orphan_row("orphan-b", "beta"),
+    ]);
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let inventory = mock.hold_ws("terminal_list", |_| true);
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        // Empty tab-bar space opens the global menu, where destroy is the
+        // eighth item.
+        input_tx
+            .send(RawInputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Right),
+                column: 95,
+                row: 0,
+                modifiers: KeyModifiers::empty(),
+            }))
+            .await
+            .expect("live loop mouse input");
+        probe.shows("Destroy orphaned terminals").await;
+        for _ in 0..8 {
+            probe.key(KeyCode::Down, KeyModifiers::empty()).await;
+        }
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        wait_until("the held inventory request", || {
+            websocket_requests(&mock, "terminal_list").len() == 1
+        })
+        .await;
+        // The held inventory leaves the window and loop live.
+        probe.draws_continue().await;
+        inventory.notify_one();
+        probe.shows("alpha").await;
+
+        // Hold each kill separately so both must be in flight at once.
+        let kill_a = mock.hold_ws("terminal_kill", |request| {
+            request["terminal_id"] == "orphan-a"
+        });
+        let kill_b = mock.hold_ws("terminal_kill", |request| {
+            request["terminal_id"] == "orphan-b"
+        });
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        wait_for_websocket_requests(&mock, "terminal_kill", 2).await;
+        probe.draws_continue().await;
+        // Complete the later request first; the summary still counts both.
+        kill_b.notify_one();
+        kill_a.notify_one();
+        probe.shows("destroyed 2 of 2 orphaned terminals").await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert_eq!(
+        websocket_requests(&mock, "terminal_kill").len(),
+        2,
+        "one kill per requested orphan"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn orphan_kill_fanout_keeps_at_most_eight_requests_in_flight() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _tab_id, _pane) = on_demand_workspace(&mock).await;
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+    }
+    let ids: Vec<String> = (0..9).map(|index| format!("orphan-{index}")).collect();
+    mock.seed_terminal_inventory(ids.iter().map(|id| orphan_row(id, id)).collect());
+    let kills: Vec<_> = ids
+        .iter()
+        .map(|id| {
+            let id = id.clone();
+            mock.hold_ws("terminal_kill", move |request| {
+                request["terminal_id"].as_str() == Some(id.as_str())
+            })
+        })
+        .collect();
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let inventory = mock.hold_ws("terminal_list", |_| true);
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        input_tx
+            .send(RawInputEvent::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Right),
+                column: 95,
+                row: 0,
+                modifiers: KeyModifiers::empty(),
+            }))
+            .await
+            .expect("live loop mouse input");
+        probe.shows("Destroy orphaned terminals").await;
+        for _ in 0..8 {
+            probe.key(KeyCode::Down, KeyModifiers::empty()).await;
+        }
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        wait_until("the held inventory request", || {
+            websocket_requests(&mock, "terminal_list").len() == 1
+        })
+        .await;
+        inventory.notify_one();
+        probe.shows("orphan-0").await;
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+
+        wait_for_websocket_requests(&mock, "terminal_kill", 8).await;
+        probe.draws_continue().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_kill").len(),
+            8,
+            "at most eight kills in flight"
+        );
+        // One reply frees a slot for the ninth kill.
+        kills[0].notify_one();
+        wait_for_websocket_requests(&mock, "terminal_kill", 9).await;
+        for kill in &kills[1..] {
+            kill.notify_one();
+        }
+        probe.shows("destroyed 9 of 9 orphaned terminals").await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    mock.shutdown().await;
+}
+
+async fn open_global_menu(input_tx: &mpsc::Sender<RawInputEvent>) {
+    input_tx
+        .send(RawInputEvent::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: 95,
+            row: 0,
+            modifiers: KeyModifiers::empty(),
+        }))
+        .await
+        .expect("live loop mouse input");
+}
+
+#[tokio::test]
+async fn a_stale_orphan_inventory_never_replaces_a_dialog_opened_after_it() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _tab_id, _pane) = on_demand_workspace(&mock).await;
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+    }
+    mock.seed_terminal_inventory(vec![
+        orphan_row("orphan-a", "alpha"),
+        orphan_row("orphan-b", "beta"),
+    ]);
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let inventory = mock.hold_ws("terminal_list", |_| true);
+
+    let driver = async {
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        // Destroy is the eighth global menu item. Its inventory is held.
+        open_global_menu(&input_tx).await;
+        probe.shows("Destroy orphaned terminals").await;
+        for _ in 0..8 {
+            probe.key(KeyCode::Down, KeyModifiers::empty()).await;
+        }
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        wait_until("the held inventory request", || {
+            websocket_requests(&mock, "terminal_list").len() == 1
+        })
+        .await;
+        // The user opens keybinding help, the sixth item, before the inventory lands.
+        open_global_menu(&input_tx).await;
+        probe.shows("Keybinding help").await;
+        for _ in 0..5 {
+            probe.key(KeyCode::Down, KeyModifiers::empty()).await;
+        }
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        probe.shows("Keybinds").await;
+        // The stale reply lands while the help is open.
+        inventory.notify_one();
+        for _ in 0..5 {
+            probe.draws_continue().await;
+        }
+        // Enter answers the open help, never a destroy list of checked rows.
+        probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
+        probe.draws_continue().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(
+        chrome.dialog.is_none(),
+        "a stale inventory replaced the dialog state after the user moved on"
+    );
+    assert_eq!(
+        websocket_requests(&mock, "terminal_kill").len(),
+        0,
+        "Enter sent kills for rows the user never asked to destroy"
+    );
+    mock.shutdown().await;
+}
+
 #[tokio::test]
 async fn a_held_open_unresolved_terminal_job_is_coalesced_and_nonblocking() {
     let mock = MockDaemon::start("local-token").await;
@@ -2187,11 +2443,19 @@ async fn resize_burst_sends_at_most_one_resize_per_pane_in_flight() {
             "the latest geometry, zoomed, wins: {burst:?} after {unzoomed:?}"
         );
         let order = geometry_requests(&mock, "terminal-b").split_off(requests_before);
+        // A rect the PTY already has is not resized, so a viewport may go out alone.
+        // A size claim never goes out without its viewport before it.
         assert!(
             order
-                .chunks(2)
-                .all(|pair| pair == ["terminal_set_viewport", "terminal_resize"]),
-            "each viewport precedes its size claim: {order:?}"
+                .first()
+                .is_some_and(|first| first == "terminal_set_viewport"),
+            "the burst opens with a viewport: {order:?}"
+        );
+        assert!(
+            order
+                .windows(2)
+                .all(|pair| pair[1] != "terminal_resize" || pair[0] == "terminal_set_viewport"),
+            "each size claim follows its viewport: {order:?}"
         );
         drop(input_tx);
     };

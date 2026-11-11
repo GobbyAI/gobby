@@ -285,7 +285,7 @@ fn human_waits_drive_tab_bells_and_needs_you_counts() {
                 "entry_id": "session:seat",
                 "session_id": "seat",
                 "provider": "codex",
-                "definition_title": "Lane 1 Publisher",
+                "definition": "Lane 1 Publisher",
                 "terminal": {"terminal_id": "term-seat", "backend": "native"},
                 "lifecycle_status": status,
                 "attention": attention

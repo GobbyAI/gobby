@@ -230,7 +230,6 @@ def _build(
         machine_id=LOCAL_MACHINE_ID,
         source="claude",
         project_id=project_id,
-        title="Runbook pipeline",
     )
     worktree = LocalWorktreeManager(db).create(
         project_id=project_id,
@@ -647,7 +646,6 @@ async def test_refused_placement_has_no_side_effects(placed: _Harness) -> None:
         machine_id=LOCAL_MACHINE_ID,
         source="claude",
         project_id=other.id,
-        title="Outsider",
     )
     panes, terminals = _panes(h), _terminal_states(h)
     cases: list[tuple[str, dict[str, Any], dict[str, Any]]] = [
@@ -974,7 +972,6 @@ async def test_parent_and_project_provenance(
         source="pipeline",
         project_id=h.project_id,
         parent_session_id=system_parent,
-        title="Pipeline run",
     )
     accepted = await _spawn(h, _tab(h), parent_session_id=pipeline_child)
     assert accepted["success"] is True, accepted

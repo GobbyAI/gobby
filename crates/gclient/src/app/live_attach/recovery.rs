@@ -342,6 +342,9 @@ impl Workspace<LiveDaemon> {
                     .unwrap_or_default();
                 let pane = self.panes.get_mut(&pane_id).expect("pane exists");
                 pane.adopt_attachment(attachment, generation, lease_generation);
+                // A fresh attachment knows only the size its reply reports, so
+                // the kept PTY size is forgotten unless the reply restates it.
+                pane.pty_size = super::super::attach::reply_pty_size(&reply);
                 self.attached_generation.insert(pane_id, generation);
                 Ok(None)
             }

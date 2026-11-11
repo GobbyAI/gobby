@@ -222,20 +222,40 @@ pub fn wait_socket_with(
         pause();
     }
     let dir = path.parent().unwrap_or(path);
-    let log = std::fs::read_to_string(dir.join("gterm.log")).unwrap_or_default();
-    let stderr = std::fs::read_to_string(dir.join("gterm.stderr")).unwrap_or_default();
-    let pid = std::fs::read_to_string(dir.join(PID_FILE)).unwrap_or_default();
-    let spawned = std::fs::read_to_string(dir.join(SPAWN_PID_FILE)).unwrap_or_default();
-    let state = host_process_state(&spawned);
     panic!(
         "timed out waiting for {}; elapsed={:?}; budget={SOCKET_STARTUP:?}; \
-         path_len={}; exists={}; pid={pid:?}; \
-         spawned_pid={spawned:?}; state={state:?}; log={log:?}; stderr={stderr:?}",
+         path_len={}; exists={}; {}",
         path.display(),
         elapsed(),
         path.as_os_str().len(),
         path.exists(),
+        host_report(dir),
     );
+}
+
+/// The host state a timed-out wait names under `dir`: the host and spawned pids,
+/// the host's process state, probe start markers, and the log and stderr tails.
+pub fn host_report(dir: &Path) -> String {
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_default();
+    let pid = read(PID_FILE).trim().to_string();
+    let spawned = read(SPAWN_PID_FILE).trim().to_string();
+    let state = host_process_state(&spawned);
+    let mut probes: Vec<String> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".started"))
+        .collect();
+    probes.sort();
+    let log = read("gterm.log");
+    let mut log_tail: Vec<&str> = log.lines().rev().take(20).collect();
+    log_tail.reverse();
+    let stderr = read("gterm.stderr");
+    format!(
+        "pid={pid:?}; spawned_pid={spawned:?}; host_state={state:?}; \
+         probe_markers={probes:?}; log={log_tail:?}; stderr={stderr:?}"
+    )
 }
 
 /// `ps` state of the host this test spawned. `Z` means it exited before its
@@ -260,13 +280,20 @@ fn host_process_state(spawned: &str) -> String {
     }
 }
 
-/// Poll `ready` until it reports true, panicking after five seconds.
-pub fn wait_until(what: &str, ready: impl FnMut() -> bool) {
-    wait_until_within(what, Duration::from_secs(5), ready);
+/// Poll `ready` until it reports true, panicking after five seconds with the host
+/// state under `dir` (#25733 criterion 2).
+pub fn wait_until_host(dir: impl AsRef<Path>, what: &str, ready: impl FnMut() -> bool) {
+    wait_until_host_within(dir, what, Duration::from_secs(5), ready);
 }
 
-/// Poll `ready` until it reports true, panicking after `budget`.
-pub fn wait_until_within(what: &str, budget: Duration, mut ready: impl FnMut() -> bool) {
+/// Poll `ready` until it reports true, panicking after `budget` with the host state
+/// under `dir` (#25733 criterion 2).
+pub fn wait_until_host_within(
+    dir: impl AsRef<Path>,
+    what: &str,
+    budget: Duration,
+    mut ready: impl FnMut() -> bool,
+) {
     let deadline = Instant::now() + budget;
     while Instant::now() < deadline {
         if ready() {
@@ -274,7 +301,10 @@ pub fn wait_until_within(what: &str, budget: Duration, mut ready: impl FnMut() -
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    panic!("timed out waiting for {what}");
+    panic!(
+        "timed out waiting for {what}; {}",
+        host_report(dir.as_ref())
+    );
 }
 
 pub fn connect(path: &Path) -> UnixStream {
@@ -309,9 +339,16 @@ pub fn recv_json(stream: &mut UnixStream) -> Value {
 
 /// `recv_json` for a reply that can take longer, such as an upgrade probe.
 pub fn recv_json_within(stream: &mut UnixStream, timeout: Duration) -> Value {
-    stream
-        .set_read_timeout(Some(timeout))
-        .expect("read timeout");
+    // macOS refuses a read timeout once the host has closed its end, though the
+    // reply it wrote before closing is still buffered. The read below then returns
+    // that reply, or EOF, without blocking (#25733).
+    if let Err(err) = stream.set_read_timeout(Some(timeout)) {
+        assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::InvalidInput,
+            "read timeout: {err}"
+        );
+    }
     // This helper does not retain a BufReader between calls. A one-byte buffer
     // prevents it from reading and then discarding the next correlated reply.
     let mut reader = BufReader::with_capacity(1, stream);
@@ -495,7 +532,8 @@ pub fn wait_outcome(socket_dir: &Path, token: &str, attempt_id: &str, timeout: D
         }
         assert!(
             Instant::now() < deadline,
-            "no outcome for {attempt_id}; last ping {last:?}"
+            "no outcome for {attempt_id}; last ping {last:?}; {}",
+            host_report(socket_dir)
         );
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -570,20 +608,11 @@ pub fn send_held_upgrade(
     }
 }
 
-/// What a timed-out `send_held_upgrade` wait saw: the host's process state,
-/// whether the probe started, whether an unread reply waits, and the log tail.
+/// What a timed-out `send_held_upgrade` wait saw: the shared host report under the
+/// FIFO's directory, which includes the probe markers, plus whether a reply waits.
 fn held_upgrade_report(fifo: &Path, stream: &UnixStream) -> String {
     let dir = fifo.parent().unwrap_or(fifo);
-    let spawned = std::fs::read_to_string(dir.join(SPAWN_PID_FILE)).unwrap_or_default();
-    let state = host_process_state(&spawned);
-    let started = fifo.with_extension("started").exists();
-    let log = std::fs::read_to_string(dir.join("gterm.log")).unwrap_or_default();
-    let tail: Vec<&str> = log.lines().rev().take(20).collect();
-    let tail: Vec<&str> = tail.into_iter().rev().collect();
-    format!(
-        "host_state={state:?}; probe_started={started}; unread_reply={}; log_tail={tail:?}",
-        replied(stream)
-    )
+    format!("{}; unread_reply={}", host_report(dir), replied(stream))
 }
 
 /// Whether a reply waits on `stream`, without reading it.

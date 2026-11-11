@@ -23,7 +23,6 @@ from gobby.cli.daemon_singleton import (
 )
 from gobby.cli.exposure_config import read_exposure_config
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_daemon_refusal
-from gobby.config.bootstrap_io import bootstrap_path as default_bootstrap_path
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.runner_pid_file import cancel_service_reservation, convert_held_claim_to_reservation
 from gobby.ui_exposure import reconcile_exposures
@@ -80,7 +79,7 @@ def _start_dependency_errors() -> list[str]:
 def _reconcile_exposures(daemon_port: int) -> None:
     """Re-derive the recorded Web UI and /mcp exposures on this node at daemon start."""
     try:
-        ui_config, mcp_config = read_exposure_config(default_bootstrap_path())
+        ui_config, mcp_config = read_exposure_config()
     except (BootstrapConfigError, RuntimeError, psycopg.Error) as exc:
         click.secho(f"warning: could not read Tailscale exposure intent: {exc}", fg="yellow")
         return

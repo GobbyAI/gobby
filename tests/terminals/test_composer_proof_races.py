@@ -1108,7 +1108,7 @@ async def test_handoff_stage_uses_public_bound_mcp_and_complete_instruction_page
         return httpx.Response(200, json=staged)
 
     client = AsyncMCPTestClient.__new__(AsyncMCPTestClient)
-    client.session_id = None
+    client.session_id, client.gobby_home = None, None
     client.client = httpx.AsyncClient(
         base_url="http://proof.invalid", transport=httpx.MockTransport(handle)
     )
@@ -1314,9 +1314,9 @@ async def test_settlement_requires_canonical_receipt_and_bound_public_consumptio
             result.update(attempt_id=attempt_id, delivery_state="failed_not_deliverable")
         return httpx.Response(200, json={"success": True, "result": result})
 
-    def client_factory(*_args: Any) -> AsyncMCPTestClient:
+    def client_factory(*_args: Any, **_kwargs: Any) -> AsyncMCPTestClient:
         client = AsyncMCPTestClient.__new__(AsyncMCPTestClient)
-        client.session_id = None
+        client.session_id, client.gobby_home = None, None
         client.client = httpx.AsyncClient(
             base_url="http://proof.invalid", transport=httpx.MockTransport(handle)
         )

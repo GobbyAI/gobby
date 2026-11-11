@@ -2,10 +2,15 @@
 
 import asyncio
 import os
+from contextlib import suppress
 from pathlib import Path
 
-from gobby.agents.idle_detector import IdleDetector
-from gobby.terminals.frame_client import FrameClient
+import httpx
+
+from gobby.agents.detection.matcher import CompiledManifest
+from gobby.agents.idle_detector import IdleDetector, plain_text
+from gobby.terminals.frame_client import FrameClient, FrameProtocolError
+from gobby.terminals.host_client import HostEpochChangedError, HostNotAdoptedError
 from gobby.terminals.host_protocol import frames_socket_path
 from tests.e2e.composer_proof import ProofRefused
 from tests.e2e.composer_proof_live import Frames, LiveProof, ProofWsSession, Seat
@@ -13,6 +18,82 @@ from tests.e2e.composer_proof_runner import main as composer_main
 from tests.e2e.conftest import daemon_token
 from tests.e2e.handoff_continuation_barrier import install_barrier
 from tests.e2e.test_terminal_client_stack import _ws_create
+
+# Rules a provider's detection manifest names for a screen that waits on the operator.
+_PROMPT_RULES = (("trust_prompt", "trust_prompt"), ("approval_prompt", "approval_prompt"))
+_FRAME_READ_SECONDS = 5
+_FRAME_CLOSE_SECONDS = 2
+# What reading an unregistered seat's frame can raise: the proof's refusals, the frame and
+# host clients' protocol, epoch and adoption errors (all RuntimeError), socket and decode
+# failures, and the terminal readback's HTTP errors. Any of them means "unreadable".
+_UNREADABLE_FRAME_ERRORS = (
+    ProofRefused,
+    FrameProtocolError,
+    HostEpochChangedError,
+    HostNotAdoptedError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    ValueError,
+    httpx.HTTPError,
+)
+
+
+def classify_frame(manifest: CompiledManifest | None, detector: IdleDetector, ansi: str) -> str:
+    """Name what a seat's screen shows without keeping any of its text.
+
+    The class is ``trust_prompt``, ``approval_prompt``, ``composer`` or ``unknown``. It is
+    the only frame-derived value a registration timeout records.
+    """
+    text = plain_text(ansi)
+    if manifest is not None:
+        for rule, label in _PROMPT_RULES:
+            if manifest.match_rule(rule, text).match is not None:
+                return label
+    if detector.composer_read(ansi).state != "unknown":
+        return "composer"
+    return "unknown"
+
+
+async def unregistered_frame_class(proof: LiveProof, provider: str, terminal_id: str) -> str:
+    """Classify the last frame of a seat that never bound a session.
+
+    Returns ``unreadable`` when the native frame cannot be read; never raises.
+    """
+    # One deadline covers the readback, connect, handshake, attach and first frame, so a
+    # host that accepts and then stays silent cannot delay the registration evidence.
+    held: list[FrameClient | Frames] = []
+    try:
+        async with asyncio.timeout(_FRAME_READ_SECONDS):
+            return await _read_frame_class(proof, provider, terminal_id, held)
+    except _UNREADABLE_FRAME_ERRORS:
+        return "unreadable"
+    finally:
+        # Cleanup is bounded too: closing a stuck reader must not stall the evidence either.
+        with suppress(*_UNREADABLE_FRAME_ERRORS):
+            async with asyncio.timeout(_FRAME_CLOSE_SECONDS):
+                if held:
+                    await held[-1].close()
+
+
+async def _read_frame_class(
+    proof: LiveProof, provider: str, terminal_id: str, held: list[FrameClient | Frames]
+) -> str:
+    locator = proof.locator(await proof.terminal(terminal_id))
+    if locator.host_socket is None:
+        return "unreadable"
+    socket_dir = Path(locator.host_socket).parent
+    reader, writer = await asyncio.open_unix_connection(frames_socket_path(socket_dir))
+    client = FrameClient(reader, writer)
+    held.append(client)
+    await client.handshake(locator, local_token=daemon_token(socket_dir))
+    await client.attach_terminal(locator)
+    # Frames owns the client from here; closing it closes the client.
+    frames = Frames(client)
+    held.append(frames)
+    frame = await frames.wait_for(lambda _: True, timeout=_FRAME_READ_SECONDS)
+    manifest = proof.detection_registry.for_provider(provider)
+    return classify_frame(manifest, IdleDetector(proof.detection_registry, provider), frame.ansi)
 
 
 async def adopt(proof: LiveProof, provider: str, command: list[str]) -> Seat:
@@ -36,11 +117,25 @@ async def adopt(proof: LiveProof, provider: str, command: list[str]) -> Seat:
         # Poll the authoritative row. The row binds after the SessionStart event, so waiting
         # for a later event let the seat's launch turn stage and deliver its handoff before
         # the proof trace owned the terminal.
-        async with asyncio.timeout(90):
-            item = await proof.terminal(terminal_id)
-            while not item.get("session_id"):
-                await asyncio.sleep(0.2)
+        try:
+            async with asyncio.timeout(90):
                 item = await proof.terminal(terminal_id)
+                while not item.get("session_id"):
+                    await asyncio.sleep(0.2)
+                    item = await proof.terminal(terminal_id)
+        except TimeoutError:
+            # Record what the seat stopped on, as a class only: no frame text or auth data.
+            proof.evidence.append(
+                {
+                    "case": "registration_timeout",
+                    "provider": provider,
+                    "terminal_id": terminal_id,
+                    "last_frame_class": await unregistered_frame_class(
+                        proof, provider, terminal_id
+                    ),
+                }
+            )
+            raise
         locator = proof.locator(item)
         own, details = await proof.row_surface(provider, item)
         proof.scope.require_surface(own, own)

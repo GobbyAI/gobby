@@ -17,6 +17,7 @@ import pytest
 
 from gobby.storage.sessions._constants import ALLOWED_SESSION_STATUSES
 from gobby.terminals.frame_client import FrameClient
+from gobby.terminals.host_protocol import frames_socket_path
 from tests.e2e.composer_proof import ProofRefused, ProofScope, Surface, require_private_root
 from tests.e2e.composer_proof_frames import ProofFrame
 from tests.e2e.composer_proof_live import Frames, LiveProof, Seat
@@ -225,7 +226,9 @@ async def test_rebound_surface_receives_zero_editor_input(tmp_path: Path, field:
         "attach": {
             "backend": "native",
             "frame_host_epoch": own.host_epoch,
-            "host_socket": "/proof/control.sock",
+            # The owned binding names the private root's frames socket, so only the
+            # parametrized change below can refuse the edit.
+            "host_socket": str(frames_socket_path(tmp_path / "h")),
             "host_terminal_id": own.terminal_id,
         },
     }

@@ -70,14 +70,6 @@ class HookSessionManager(Protocol):
 
     def update(self, session_id: str, **kwargs: Any) -> Session | None: ...
 
-    def update_title(
-        self,
-        session_id: str,
-        title: str,
-        *,
-        title_source: str | None = "manual",
-    ) -> Session | None: ...
-
     def update_status(self, session_id: str, status: str) -> Session | None: ...
 
     def update_status_if_non_terminal(self, session_id: str, status: str) -> Session | None: ...
@@ -109,7 +101,6 @@ class HookSessionManager(Protocol):
         project_id: str | None,
         parent_session_id: str | None | UnsetType = UNSET,
         transcript_path: str | None = None,
-        title: str | None = None,
         git_branch: str | None = None,
         project_path: str | None = None,
         terminal_context: dict[str, Any] | None = None,

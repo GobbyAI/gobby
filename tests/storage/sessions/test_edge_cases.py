@@ -53,7 +53,6 @@ class TestSessionEdgeCases:
                         machine_id="20000000-0000-4000-8000-000000000001",
                         source="claude",
                         project_id=sample_project["id"],
-                        title="Updated",
                     )
 
     def test_register_raises_on_session_not_found_after_creation(
@@ -169,7 +168,6 @@ class TestSessionEdgeCases:
                 machine_id="20000000-0000-4000-8000-000000000001",
                 source="claude",
                 project_id=sample_project["id"],
-                title="Updated",
             )
             # Verify debug log was called for reusing session
             mock_logger.debug.assert_called()
@@ -198,25 +196,6 @@ class TestSessionEdgeCases:
         retrieved = session_manager.get(session.id)
         assert retrieved is not None
         assert retrieved.agent_depth == 0
-
-    def test_update_title_only(
-        self,
-        session_manager: SessionManager,
-        sample_project: dict,
-    ) -> None:
-        """Test updating just title via update method."""
-        session = session_manager.register(
-            external_id="title-only-update",
-            machine_id="20000000-0000-4000-8000-000000000001",
-            source="claude",
-            project_id=sample_project["id"],
-            title="Original",
-        )
-
-        updated = session_manager.update(session.id, title="New Title Only")
-
-        assert updated is not None
-        assert updated.title == "New Title Only"
 
     def test_find_parent_returns_most_recent(
         self,

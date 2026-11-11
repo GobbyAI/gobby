@@ -22,6 +22,13 @@ from tests.e2e.conftest import CLIEventSimulator, DaemonInstance
 pytestmark = pytest.mark.e2e
 
 PROJECT_ID = "00000000-0000-0000-0000-000000000e2e"
+E2E_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+
+
+@pytest.fixture(autouse=True)
+def _daemon_machine_identity(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Hooks name the isolated daemon's machine, as a CLI on that machine does."""
+    monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", E2E_MACHINE_ID)
 
 
 @pytest.fixture

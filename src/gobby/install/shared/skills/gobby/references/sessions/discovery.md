@@ -1,9 +1,9 @@
 # Discover sessions
 
-Load when resolving identity, browsing work, registering a hookless client, or
-changing a title. Fetch schemas for `gobby-sessions:get_current_session`,
-`get_session`, `list_sessions`, `session_stats`, `get_usage_breakdown`,
-`register_session`, and `set_title` as needed.
+Load when resolving identity, browsing work, or registering a hookless client.
+Fetch schemas for `gobby-sessions:get_current_session`, `get_session`,
+`list_sessions`, `session_stats`, `get_usage_breakdown`, `register_session`, and
+`set_status_line` as needed.
 
 Use the injected session reference first. Otherwise resolve the actual external
 CLI identity and source with `get_current_session`. Never identify yourself with
@@ -25,9 +25,14 @@ and an ambient same-source identity mismatch is rejected. Resolve that mismatch
 rather than registering a substitute identity. Do not register normal hooked
 sessions again just to obtain a reference.
 
-`set_title` sets a sticky manual title on the caller. Manual titles outrank
-automatic claim titles and are inherited by bound clear successors. Operator
-CLI maintenance includes `sessions renumber --project PROJECT` (preview until
+Sessions store no title or manual name; display labels are derived when read.
+A session may publish one line about its current work with
+`set_status_line(status_line=...)`, and passing null or a blank line clears it. It
+writes only the calling session's own row: naming any other `session_id` is
+refused with `status_line_target_forbidden`, an unresolved caller with
+`status_line_caller_unknown`, and an overlong line with `status_line_too_long`.
+
+Operator CLI maintenance includes `sessions renumber --project PROJECT` (preview until
 `--apply`) and `backfill-context-windows --dry-run` (writes without that flag).
 Renumbering changes display references; preserve UUIDs in durable integrations.
 
@@ -48,6 +53,6 @@ background calls of sessions that have ended on this machine. Source:
 
 Guide: [Finding your session](../../../../../../../../docs/guides/sessions.md#finding-your-own-session).
 
-_Version: 1.1.0_
+_Version: 2.2.0_
 
-_Last verified: 2026-11-06_
+_Last verified: 2026-11-10_

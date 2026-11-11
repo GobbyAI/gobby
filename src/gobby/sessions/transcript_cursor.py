@@ -36,6 +36,7 @@ __all__ = [
     "INTERRUPT_OBSERVED_SOURCES",
     "ClaudeTranscriptCursor",
     "CodexRolloutCursor",
+    "DroidTranscriptCursor",
     "GROK_EVENTS_FILENAME",
     "GrokEventsCursor",
     "InterruptObserver",
@@ -236,6 +237,15 @@ class CodexRolloutCursor(TranscriptTailCursor):
     def saw_fresh_compacted(self) -> bool:
         """Return whether Codex appended a provider compact boundary after this cursor."""
         return any(record.get("type") == "compacted" for record in self.fresh_records())
+
+
+@dataclass
+class DroidTranscriptCursor(TranscriptTailCursor):
+    """Droid session cursor: /compress compacts in place and has no PostCompact hook."""
+
+    def saw_fresh_compacted(self) -> bool:
+        """Return whether Droid appended a ``compaction_state`` record after this cursor."""
+        return any(record.get("type") == "compaction_state" for record in self.fresh_records())
 
 
 def codex_compact_boundary_between(

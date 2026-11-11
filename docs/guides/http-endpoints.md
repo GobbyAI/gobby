@@ -209,7 +209,6 @@ cases, and share the same per-client rate limit.
 | `POST` | `/api/sessions/bulk-move` | Move session rows to another project. |
 | `GET` | `/api/sessions/{session_id}` | Get one session. |
 | `POST` | `/api/sessions/{session_id}/expire` | Expire a session; terminate any daemon-tracked terminal and mark its row exited before returning. |
-| `POST` | `/api/sessions/{session_id}/rename` | Rename a session. |
 | `POST` | `/api/sessions/{session_id}/generate-summary` | Generate a session summary. |
 | `GET` | `/api/sessions/{session_id}/messages` | Read rendered transcript windows. |
 | `GET` | `/api/sessions/{session_id}/transcript/status` | Inspect transcript availability. |
@@ -243,7 +242,6 @@ not forwarded by registration; use the lifecycle interface for status changes.
 {
   "external_id": "session-abc123",
   "transcript_path": "/path/to/transcript.jsonl",
-  "title": "Session Title",
   "source": "Claude Code",
   "parent_session_id": "uuid-of-parent",
   "project_id": "project-uuid",

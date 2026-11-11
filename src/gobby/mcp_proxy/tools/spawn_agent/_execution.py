@@ -21,7 +21,6 @@ from gobby.mcp_proxy.tools.spawn_agent._health import (
 from gobby.mcp_proxy.tools.spawn_agent._response import build_spawn_response
 from gobby.mcp_proxy.tools.spawn_agent._runtime import _persist_spawn_runtime
 from gobby.mcp_proxy.tools.spawn_agent._step_state import apply_claimed_step_update
-from gobby.sessions.title_lifecycle import update_title_for_claim
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
@@ -52,14 +51,6 @@ def _record_spawn_receipt(
         ),
         message_id=str(uuid5(NAMESPACE_URL, f"gobby:agent-started:{parent_session_id}:{run_id}")),
     )
-
-
-def _title_auto_claimed_session(session_manager: Any, session_id: str, task: Any) -> None:
-    """Apply the task title after spawn-time auto-claiming."""
-    try:
-        update_title_for_claim(session_manager, session_id, task)
-    except Exception as exc:
-        logger.debug("Best-effort auto-claim session titling failed: %s", exc)
 
 
 def _clear_parent_claim_session_variables(
@@ -282,12 +273,6 @@ async def finalize_executed_spawn(
                     # claim_task records the child's 'claimed' session_tasks link (#21102)
                     # in its own transaction.
                     if task_owned_by_child:
-                        await asyncio.to_thread(
-                            _title_auto_claimed_session,
-                            session_manager,
-                            spawn_result.child_session_id,
-                            claimed_task,
-                        )
                         if transferred_parent_claim:
                             await asyncio.to_thread(
                                 _clear_parent_claim_session_variables,

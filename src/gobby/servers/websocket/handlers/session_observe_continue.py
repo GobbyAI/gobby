@@ -127,17 +127,6 @@ async def _release_source_session(
         raise RuntimeError("terminal session was not killed")
 
 
-async def _resolved_session_title(
-    mixin: SessionControlMixin,
-    session_manager: Any,
-    session_id: str | None,
-) -> str | None:
-    if session_manager is None or session_id is None:
-        return None
-    persisted_session = await run_db(mixin, session_manager.get, session_id)
-    return _as_str(getattr(persisted_session, "title", None))
-
-
 async def handle_continue_in_chat(
     mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]
 ) -> None:
@@ -227,11 +216,6 @@ async def handle_continue_in_chat(
 
     source_provider = _as_str(getattr(source_session, "source", None)) if source_session else None
     effective_provider = target_provider or source_provider
-    source_title = _as_str(getattr(source_session, "title", None)) if source_session else None
-    source_title_source = (
-        _as_str(getattr(source_session, "title_source", None)) if source_session else None
-    )
-    manual_source_title = source_title if source_title_source == "manual" else None
     fallback_source_session = source_session
     source_chat_mode = (
         _as_str(getattr(source_session, "chat_mode", None)) if source_session else None
@@ -338,10 +322,6 @@ async def handle_continue_in_chat(
                         and getattr(target_session, "model", None) != effective_model
                     )
                     or (
-                        manual_source_title
-                        and getattr(target_session, "title", None) != manual_source_title
-                    )
-                    or (
                         effective_chat_mode
                         and getattr(target_session, "chat_mode", None) != effective_chat_mode
                     )
@@ -351,9 +331,6 @@ async def handle_continue_in_chat(
                         "model": effective_model,
                         "chat_mode": effective_chat_mode,
                     }
-                    if manual_source_title:
-                        target_updates["title"] = manual_source_title
-                        target_updates["title_source"] = "manual"
                     await run_db(
                         mixin,
                         session_manager.update,
@@ -383,12 +360,9 @@ async def handle_continue_in_chat(
                 session_manager
                 and session.db_session_id
                 and not resume_in_place
-                and (manual_source_title or effective_chat_mode or effective_model)
+                and (effective_chat_mode or effective_model)
             ):
                 session_updates: dict[str, Any] = {}
-                if manual_source_title:
-                    session_updates["title"] = manual_source_title
-                    session_updates["title_source"] = "manual"
                 if effective_chat_mode:
                     session_updates["chat_mode"] = effective_chat_mode
                 if effective_model:
@@ -439,11 +413,6 @@ async def handle_continue_in_chat(
         except Exception as e:
             logger.warning("Failed to set parent_session_id: %s", e)
 
-    continued_title = (
-        source_title
-        if resume_in_place
-        else await _resolved_session_title(mixin, session_manager, session.db_session_id)
-    )
     session_ref = getattr(session, "session_ref", None)
     if not isinstance(session_ref, str) or not session_ref:
         session_ref = session.db_session_id
@@ -458,7 +427,6 @@ async def handle_continue_in_chat(
                 "db_session_id": session.db_session_id,
                 "resumed": bool(sdk_resume_id),
                 "ref": session_ref,
-                "title": continued_title,
                 "source": effective_provider,
                 "model": effective_model,
                 "chat_mode": effective_chat_mode,

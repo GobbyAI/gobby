@@ -250,7 +250,7 @@ impl RestClient {
                     DaemonError::Unavailable { retry_after: None }
                 }
             })?;
-        serde_json::from_slice(&bytes).map_err(protocol)
+        super::nested_json::from_slice_nested(&bytes).map_err(protocol)
     }
 
     async fn empty(

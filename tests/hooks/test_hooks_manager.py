@@ -523,7 +523,6 @@ class TestHookManagerSessionEnd:
             machine_id="21000000-0000-4000-8000-000000000004",
             source="claude",
             project_id="test-project-id",
-            title="Test Session",
             status="active",
             transcript_path=None,
             summary_path=None,
@@ -703,9 +702,6 @@ class TestHookManagerBeforeAgent:
         session_id = first_prompt.metadata["_platform_session_id"]
         session = manager._session_manager.get(session_id)
         assert session is not None
-        # The first prompt never titles the session; the provisional title stands.
-        assert session.title == f"test-project#{session.seq_num}: Codex"
-        assert session.title_source == "provisional"
         assert session.reasoning_effort == "high"
         assert session.terminal_context is not None
         for key, value in {**terminal_context, "cwd": str(temp_dir)}.items():
@@ -889,8 +885,6 @@ class TestHookManagerBeforeAgent:
         child = manager._session_manager.get(child_id)
         assert child is not None
         assert child.agent_depth == 1
-        assert child.title == f"test-project#{child.seq_num}: Codex"
-        assert child.title_source == "provisional"
 
     def test_internal_native_subagent_prompt_does_not_title_parent(
         self,
@@ -915,9 +909,6 @@ class TestHookManagerBeforeAgent:
             event.metadata["_platform_session_id"]
         )
         assert parent is not None
-        assert parent.title is not None
-        assert parent.title.endswith(f"#{parent.seq_num}: Claude")
-        assert parent.title_source == "provisional"
 
     def test_spawn_only_fallback_definition_does_not_log_persona_injection_error(
         self,
@@ -2001,7 +1992,6 @@ class TestHookManagerSessionLookup:
             source="codex",
             project_id=project_id,
             transcript_path=str(temp_dir / "rollout-shared-session-id.jsonl"),
-            title="Recovered Session",
         )
         existing_session_id = existing.id
 
@@ -2039,8 +2029,8 @@ class TestHookManagerSessionLookup:
         session_id = registered.id
 
         manager._session_manager.db.execute(
-            "UPDATE sessions SET title = %s, handoff_markdown = %s WHERE id = %s",
-            ("Recovered Codex Title", None, session_id),
+            "UPDATE sessions SET handoff_markdown = %s WHERE id = %s",
+            (None, session_id),
         )
 
         repair_event = HookEvent(

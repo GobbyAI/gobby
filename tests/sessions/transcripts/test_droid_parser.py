@@ -147,6 +147,26 @@ def test_missing_sidecar_is_retried_when_created_later(tmp_path: Path) -> None:
     assert assistant_records[-1].usage.cache_read_tokens == 7
 
 
+def test_messages_carry_the_sidecar_model_and_reasoning_effort(tmp_path: Path) -> None:
+    # Droid records its effort only in the settings sidecar; no transcript record has it.
+    transcript_path = tmp_path / "session.jsonl"
+    transcript_path.with_suffix(".settings.json").write_text(
+        json.dumps({"model": "glm-5.3-flash", "reasoningEffort": "high"}), encoding="utf-8"
+    )
+    parser = DroidTranscriptParser(transcript_path=transcript_path)
+
+    messages = [
+        record
+        for record in parser.parse_lines(_fixture_lines(), start_index=0)
+        if isinstance(record, ParsedMessage)
+    ]
+
+    assert messages
+    assert {(message.model, message.reasoning_effort) for message in messages} == {
+        ("glm-5.3-flash", "high")
+    }
+
+
 def test_context_occupancy_comes_from_the_last_call_not_cumulative_usage(tmp_path: Path) -> None:
     transcript_path = tmp_path / "session.jsonl"
     transcript_path.with_suffix(".settings.json").write_text(

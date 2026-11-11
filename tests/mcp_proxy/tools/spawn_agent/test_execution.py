@@ -59,7 +59,6 @@ def _register_parent_session(
         machine_id=require_machine_id(),
         source="test",
         project_id=str(sample_project["id"]),
-        title="Parent",
     )
 
 
@@ -71,7 +70,6 @@ def _spawn_success(run_storage: LocalAgentRunManager, delay: float = 0.0) -> Asy
             source="test-agent",
             project_id=request.project_id,
             parent_session_id=request.parent_session_id,
-            title="Child",
         )
         run_storage.create(
             parent_session_id=request.parent_session_id,
@@ -177,7 +175,7 @@ async def test_parent_claim_transfer_failure_cleans_up_spawn(
 
 
 @pytest.mark.asyncio
-async def test_auto_claimed_task_titles_child_session(
+async def test_auto_claim_reports_claim_and_skips_a_task_held_by_another_session(
     isolation_context: IsolationContext,
 ) -> None:
     from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
@@ -196,7 +194,6 @@ async def test_auto_claimed_task_titles_child_session(
         closed_at=None,
         escalated_at=None,
         seq_num=22633,
-        title="Spawned Codex sessions get task titles",
     )
     task_manager = MagicMock()
     task_manager.get_task.return_value = unclaimed_task
@@ -210,6 +207,32 @@ async def test_auto_claimed_task_titles_child_session(
         pid=None,
         error=None,
     )
+
+    async def finalize() -> dict[str, Any]:
+        return await finalize_executed_spawn(
+            runner=runner,
+            run_id="run-auto-claim",
+            session_manager=session_manager,
+            spawn_result=spawn_result,
+            spawn_request=None,
+            isolation_ctx=isolation_context,
+            effective_checkout_mode="none",
+            base_commit_sha=None,
+            handler=SimpleNamespace(commit_environment=None),
+            spawn_config=MagicMock(),
+            completion_registry=None,
+            cleanup_isolation_on_failure=False,
+            task_manager=task_manager,
+            parent_session_id=parent_session_id,
+            effective_provider="codex",
+            resolved_task_id=task_id,
+            task_seq_num=22633,
+            db=None,
+            agent_body=None,
+            effective_initial_variables={},
+            reasoning=MagicMock(),
+        )
+
     with (
         patch("gobby.mcp_proxy.tools.spawn_agent._execution._record_spawn_receipt"),
         patch("gobby.mcp_proxy.tools.spawn_agent._execution._persist_spawn_runtime"),
@@ -220,43 +243,11 @@ async def test_auto_claimed_task_titles_child_session(
         ),
         patch("gobby.runner_broadcasting.fire_agent_event"),
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim"
-        ) as update_title,
-        patch(
             "gobby.mcp_proxy.tools.spawn_agent._execution.build_spawn_response",
             return_value={"success": True},
         ),
     ):
-        result = await finalize_executed_spawn(
-            runner=runner,
-            run_id="run-auto-claim-title",
-            session_manager=session_manager,
-            spawn_result=spawn_result,
-            spawn_request=None,
-            isolation_ctx=isolation_context,
-            effective_checkout_mode="none",
-            base_commit_sha=None,
-            handler=SimpleNamespace(commit_environment=None),
-            spawn_config=MagicMock(),
-            completion_registry=None,
-            cleanup_isolation_on_failure=False,
-            task_manager=task_manager,
-            parent_session_id=parent_session_id,
-            effective_provider="codex",
-            resolved_task_id=task_id,
-            task_seq_num=22633,
-            db=None,
-            agent_body=None,
-            effective_initial_variables={},
-            reasoning=MagicMock(),
-        )
-
-        assert result == {"success": True, "claim": True}
-        update_title.assert_called_once_with(
-            session_manager,
-            child_session_id,
-            claimed_task,
-        )
+        assert await finalize() == {"success": True, "claim": True}
 
         task_manager.get_task.return_value = SimpleNamespace(
             claimed_by_session_id=other_session_id,
@@ -264,35 +255,9 @@ async def test_auto_claimed_task_titles_child_session(
             escalated_at=None,
         )
         task_manager.claim_task.reset_mock()
-        update_title.reset_mock()
 
-        result = await finalize_executed_spawn(
-            runner=runner,
-            run_id="run-owned-by-other-session",
-            session_manager=session_manager,
-            spawn_result=spawn_result,
-            spawn_request=None,
-            isolation_ctx=isolation_context,
-            effective_checkout_mode="none",
-            base_commit_sha=None,
-            handler=SimpleNamespace(commit_environment=None),
-            spawn_config=MagicMock(),
-            completion_registry=None,
-            cleanup_isolation_on_failure=False,
-            task_manager=task_manager,
-            parent_session_id=parent_session_id,
-            effective_provider="codex",
-            resolved_task_id=task_id,
-            task_seq_num=22633,
-            db=None,
-            agent_body=None,
-            effective_initial_variables={},
-            reasoning=MagicMock(),
-        )
-
-        assert result == {"success": True, "claim": True}
+        assert await finalize() == {"success": True, "claim": True}
         task_manager.claim_task.assert_not_called()
-        update_title.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -302,7 +267,7 @@ async def test_auto_claim_survives_runner_without_session_manager(
     """A task-bound spawn must not roll back when the runner lacks ``session_manager``.
 
     ``AgentRunner`` exposes sessions through ``child_session_manager`` only, so the
-    title step has to use the session manager the tool receives explicitly.
+    claim step has to use the session manager the tool receives explicitly.
     """
     from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
 
@@ -345,9 +310,6 @@ async def test_auto_claim_survives_runner_without_session_manager(
         ),
         patch("gobby.runner_broadcasting.fire_agent_event"),
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim"
-        ) as update_title,
-        patch(
             "gobby.mcp_proxy.tools.spawn_agent._execution.cleanup_failed_spawn",
             new_callable=AsyncMock,
         ) as cleanup,
@@ -383,7 +345,6 @@ async def test_auto_claim_survives_runner_without_session_manager(
     assert result == {"success": True, "status": "starting", "claim": True}
     task_manager.claim_task.assert_called_once_with(task_id, session_id=child_session_id)
     task_manager.release_task_claim.assert_not_called()
-    update_title.assert_called_once_with(session_manager, child_session_id, claimed_task)
     cleanup.assert_not_awaited()
 
 
@@ -428,9 +389,6 @@ async def test_team_manager_spawn_takes_no_task_claim(
         ) as start_run,
         patch("gobby.runner_broadcasting.fire_agent_event") as fire_event,
         patch(
-            "gobby.mcp_proxy.tools.spawn_agent._execution.update_title_for_claim"
-        ) as update_title,
-        patch(
             "gobby.mcp_proxy.tools.spawn_agent._execution.cleanup_failed_spawn",
             new_callable=AsyncMock,
         ) as cleanup,
@@ -473,7 +431,6 @@ async def test_team_manager_spawn_takes_no_task_claim(
     assert fire_event.call_args.args[0] == "agent_started"
     task_manager.get_task.assert_not_called()
     task_manager.claim_task.assert_not_called()
-    update_title.assert_not_called()
     cleanup.assert_not_awaited()
 
 
@@ -1282,7 +1239,6 @@ class TestSpawnAgentPreRegistration:
             machine_id=ALTERNATE_MACHINE_ID,
             source="test",
             project_id=str(sample_project["id"]),
-            title="Parent",
         )
         child_manager = ChildSessionManager(session_manager)
         run_storage = LocalAgentRunManager(temp_db)
@@ -1388,7 +1344,6 @@ class TestSpawnAgentPreRegistration:
             machine_id=ALTERNATE_MACHINE_ID,
             source="test",
             project_id=str(sample_project["id"]),
-            title="Parent",
         )
         child_manager = ChildSessionManager(session_manager)
         run_storage = LocalAgentRunManager(temp_db)

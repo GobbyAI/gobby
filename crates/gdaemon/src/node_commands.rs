@@ -327,8 +327,6 @@ pub struct SpawnPayload {
     pub reasoning_effort: Option<String>,
     pub sandbox: Sandbox,
     pub timeout_seconds: u64,
-    #[serde(deserialize_with = "Option::deserialize")]
-    pub title: Option<String>,
     pub source_root: String,
     /// The daemon's configured build-output root (`agent_build.build_root`): an absolute,
     /// canonical directory. Cargo target folders for every launch live under it.

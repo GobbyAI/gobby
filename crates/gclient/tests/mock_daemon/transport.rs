@@ -80,6 +80,8 @@ struct MockState {
     websocket_gate: Option<Arc<Notify>>,
     websocket_read_gate: Option<Arc<Notify>>,
     ws_holds: Vec<WsHold>,
+    /// Rows the `terminal_list` reply serves, filtered by the request's `states`.
+    terminal_inventory: Vec<Value>,
     /// Replies actually written, per request `type`.
     ws_replies: HashMap<String, usize>,
     active_websockets: usize,
@@ -145,6 +147,7 @@ impl MockDaemon {
             websocket_gate: None,
             websocket_read_gate: None,
             ws_holds: Vec::new(),
+            terminal_inventory: Vec::new(),
             ws_replies: HashMap::new(),
             active_websockets: 0,
             websocket_closes: 0,
@@ -362,6 +365,24 @@ impl MockDaemon {
             .tab_for_terminal(terminal_id)
     }
 
+    /// The daemon pane id showing `terminal_id` on the current or a parked workspace.
+    pub fn pane_for_terminal(&self, terminal_id: &str) -> Option<String> {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace
+            .pane_for_terminal(terminal_id)
+    }
+
+    /// The daemon pane this workspace created most recently for `terminal_id`.
+    pub fn newest_pane_for_terminal(&self, terminal_id: &str) -> Option<String> {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace
+            .newest_pane_for_terminal(terminal_id)
+    }
+
     pub fn enqueue_spawn_events_before_reply(&self, events: Vec<Value>) {
         self.state
             .lock()
@@ -376,6 +397,22 @@ impl MockDaemon {
 
     pub fn requests(&self) -> Vec<RequestRecord> {
         self.state.lock().expect("mock state").requests.clone()
+    }
+
+    /// Count the websocket requests of `kind` that name a terminal, in place,
+    /// without copying the log. A request without a `terminal_id` is not a
+    /// terminal request, so it is left out, as the wire readers leave it out.
+    pub fn websocket_terminal_request_count(&self, kind: &str) -> usize {
+        self.state
+            .lock()
+            .expect("mock state")
+            .requests
+            .iter()
+            .filter(|request| request.method == "WS")
+            .filter_map(|request| request.body.as_ref())
+            .filter(|body| body.get("type").and_then(Value::as_str) == Some(kind))
+            .filter(|body| body.get("terminal_id").and_then(Value::as_str).is_some())
+            .count()
     }
 
     pub async fn wait_for_request(&self, matches: impl Fn(&RequestRecord) -> bool) {
@@ -554,6 +591,11 @@ impl MockDaemon {
     /// Hold the reply to the `workspace_attach` request until released.
     pub fn hold_attach(&self) -> Arc<Notify> {
         self.hold_ws("workspace_attach", |_| true)
+    }
+
+    /// Serve these rows to every `terminal_list` request whose `states` name them.
+    pub fn seed_terminal_inventory(&self, rows: Vec<Value>) {
+        self.state.lock().expect("mock state").terminal_inventory = rows;
     }
 
     /// Hold the reply (and the events sent before it) to the next websocket
@@ -1160,6 +1202,30 @@ fn websocket_reply(
                     "reason": null,
                 }))
             }
+        }
+        "terminal_list" => {
+            let states = request.get("states").and_then(Value::as_array);
+            let items: Vec<Value> = state
+                .lock()
+                .expect("mock state")
+                .terminal_inventory
+                .iter()
+                .filter(|row| {
+                    states.is_none_or(|states| {
+                        states
+                            .iter()
+                            .any(|name| name.as_str() == row.get("state").and_then(Value::as_str))
+                    })
+                })
+                .cloned()
+                .collect();
+            Some(json!({
+                "type": "terminal_list_result",
+                "request_id": request.get("request_id"),
+                "success": true,
+                "items": items,
+                "next_cursor": null,
+            }))
         }
         "terminal_kill" => {
             let mut state = state.lock().expect("mock state");

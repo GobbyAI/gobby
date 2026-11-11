@@ -369,6 +369,91 @@ def test_workspace_ws_accepts_role_argument(method: str) -> None:
     assert _arguments(method, args, _OP_ENVELOPE)["role"] == "reviewer"
 
 
+def test_workspace_ws_accepts_tab_create_viewport() -> None:
+    args: dict[str, object] = {
+        "workspace": "w#0",
+        "project_id": str(uuid.uuid4()),
+        "rows": 30,
+        "cols": 100,
+    }
+    parsed = _arguments("tab_create", args, _OP_ENVELOPE)
+    assert (parsed["rows"], parsed["cols"]) == (30, 100)
+
+
+async def test_tab_create_spawns_at_the_viewport_it_is_given(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    await h.ops.tab_create(OPERATOR, workspace.id, h.project_id, rows=30, cols=100)
+    request = h.native.last_request
+    assert request is not None
+    assert (request.rows, request.cols) == (30, 100)
+
+
+async def test_tab_create_without_a_viewport_spawns_at_the_default(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)
+    request = h.native.last_request
+    assert request is not None
+    assert (request.rows, request.cols) == (24, 80)
+
+
+@pytest.mark.parametrize(("rows", "cols"), [(30, None), (None, 100), (0, 100)])
+async def test_tab_create_refuses_a_partial_or_empty_viewport(
+    harness: _Harness, rows: int | None, cols: int | None
+) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    tabs = h.workspaces.list_tabs(workspace.id)
+    await _raises(
+        "invalid_op",
+        h.ops.tab_create(OPERATOR, workspace.id, h.project_id, rows=rows, cols=cols),
+    )
+    assert h.workspaces.list_tabs(workspace.id) == tabs
+    assert h.workspaces.list_panes(workspace.id) == []
+
+
+def test_workspace_ws_accepts_pane_split_viewport() -> None:
+    args: dict[str, object] = {"pane": "p#0", "axis": "horizontal", "rows": 30, "cols": 100}
+    parsed = _arguments("pane_split", args, _OP_ENVELOPE)
+    assert (parsed["rows"], parsed["cols"]) == (30, 100)
+
+
+async def test_pane_split_spawns_at_the_viewport_it_is_given(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    first = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+    await h.ops.pane_split(OPERATOR, first.id, "horizontal", rows=30, cols=100)
+    request = h.native.last_request
+    assert request is not None
+    assert (request.rows, request.cols) == (30, 100)
+
+
+async def test_pane_split_without_a_viewport_spawns_at_the_default(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    first = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+    await h.ops.pane_split(OPERATOR, first.id, "horizontal")
+    request = h.native.last_request
+    assert request is not None
+    assert (request.rows, request.cols) == (24, 80)
+
+
+@pytest.mark.parametrize(("rows", "cols"), [(30, None), (None, 100), (0, 100)])
+async def test_pane_split_refuses_a_partial_or_empty_viewport(
+    harness: _Harness, rows: int | None, cols: int | None
+) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    first = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+    panes = h.workspaces.list_panes(workspace.id)
+    await _raises(
+        "invalid_op",
+        h.ops.pane_split(OPERATOR, first.id, "horizontal", rows=rows, cols=cols),
+    )
+    assert h.workspaces.list_panes(workspace.id) == panes
+
+
 async def test_spawned_shell_is_killed_when_pane_binding_raises(harness: _Harness) -> None:
     h = harness
     workspace = await h.ops.workspace_create(OPERATOR)

@@ -21,7 +21,6 @@ interface UseChatPageSessionRoutingArgs {
 export interface UseChatPageSessionRoutingResult {
   activeSession: GobbySession | undefined;
   mainSessionMeta: SessionObservationMeta | null;
-  activeTitle: string | null;
   effectiveSessionRef: string | null;
   focusSessionId: string | null;
   activityPanelChatSessionId: string | null;
@@ -38,7 +37,6 @@ function sessionToObservationMeta(
   return {
     ref: session.ref ?? null,
     source: session.source,
-    title: session.title ?? null,
     status: session.status,
     model: session.model ?? null,
     externalId: session.external_id,
@@ -66,7 +64,6 @@ export function useChatPageSessionRouting({
   const mainSessionMeta =
     chat.mainSessionMeta ??
     (activeSession ? sessionToObservationMeta(activeSession) : null);
-  const activeTitle = chat.sessionTitle ?? mainSessionMeta?.title ?? null;
   const effectiveSessionRef =
     chat.sessionRef ?? mainSessionMeta?.ref ?? activeSession?.ref ?? null;
 
@@ -149,7 +146,6 @@ export function useChatPageSessionRouting({
   return {
     activeSession,
     mainSessionMeta,
-    activeTitle,
     effectiveSessionRef,
     focusSessionId,
     activityPanelChatSessionId,

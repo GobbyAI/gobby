@@ -366,6 +366,7 @@ fn epic_integration_tree_shows_its_live_lead() {
             id: epic_id.to_string(),
             reference: Some("#9".to_string()),
             title: Some("Epic nine".to_string()),
+            ..Default::default()
         }),
         ..running("lead", "s-lead", "t-lead")
     };
@@ -494,6 +495,7 @@ fn task_lead(entry_id: &str) -> RosterEntry {
             id: "epic-task-id".to_string(),
             reference: Some("#9".to_string()),
             title: Some("Epic nine".to_string()),
+            ..Default::default()
         }),
         ..running(entry_id, &format!("s-{entry_id}"), &format!("t-{entry_id}"))
     }
@@ -621,6 +623,7 @@ fn integration_tree_focus_reaches_its_live_lead() {
             id: epic_id.to_string(),
             reference: Some("#9".to_string()),
             title: Some("Epic nine".to_string()),
+            ..Default::default()
         }),
         ..running("lead", "s-lead", "t-lead")
     };
@@ -691,15 +694,13 @@ fn non_default_needs_you_logs_a_warning_on_transition_only() {
             },
         ],
     );
-    // The display title reads "default"; only the definition identity decides.
+    // Only the definition identity decides; the default definition is not logged.
     let custom = RosterEntry {
-        definition_name: Some("custom-seat".to_string()),
-        definition_title: Some("default".to_string()),
+        definition: Some("custom-seat".to_string()),
         ..with_lifecycle(running("custom", "s-custom", "t-custom"), "awaiting_input")
     };
     let plain = RosterEntry {
-        definition_name: Some("default".to_string()),
-        definition_title: Some("Lane 2 Seat".to_string()),
+        definition: Some("default".to_string()),
         ..with_lifecycle(running("plain", "s-plain", "t-plain"), "awaiting_input")
     };
     let lines = needs_you_warnings(&rows, &[], &[custom, plain]);
@@ -712,7 +713,7 @@ fn non_default_needs_you_logs_a_warning_on_transition_only() {
 #[test]
 fn needs_you_log_names_the_session_id_when_the_session_is_not_fetched() {
     let entry = RosterEntry {
-        definition_name: Some("custom-seat".to_string()),
+        definition: Some("custom-seat".to_string()),
         ..with_lifecycle(running("bare", "s-bare", "t-bare"), "awaiting_input")
     };
     let lines = needs_you_warnings(&rows_with(vec![], vec![]), &[], &[entry]);
@@ -728,6 +729,7 @@ fn ended_assignment_without_a_terminal_is_no_live_in_its_project() {
             id: "task-ended".to_string(),
             reference: Some("#7".to_string()),
             title: None,
+            ..Default::default()
         }),
         ..with_lifecycle(running("ended", "s-ended", "t-unused"), "dead")
     };

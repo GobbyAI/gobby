@@ -72,7 +72,6 @@ def _register(session_manager: SessionManager, project_id: str, external_id: str
         machine_id=None,
         source="codex",
         project_id=project_id,
-        title=external_id,
     )
 
 

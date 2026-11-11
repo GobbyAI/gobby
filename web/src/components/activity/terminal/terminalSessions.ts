@@ -1,16 +1,20 @@
 import type { TmuxSession } from "../../../hooks/terminalRosterSnapshot";
-import { getActivitySessionTitleParts } from "../../../lib/sessionTitle";
+import {
+  getSessionLabelLines,
+  getSessionRefLabel,
+  type SessionRosterLabel,
+} from "../../../lib/sessionLabel";
 import type { GobbySession } from "../../../types/sessions";
 
 export interface JoinedTerminalSession {
   tmux: TmuxSession;
   gobby: GobbySession | null;
-  /** Full display label: `refLabel: titleText` for Gobby sessions. */
+  /** Derived head: the ref, plus `: definition` when the roster knows one. */
   label: string;
   /** Static row prefix (`#12856`); null for panes without a Gobby session. */
   refLabel: string | null;
-  /** The part of the label that may ticker when it overflows the row. */
-  titleText: string;
+  /** Derived detail (definition · task or status line) that may ticker when it overflows the row. */
+  tickerText: string;
   provider: string | null;
   paneRef: string;
   /** Terminal backend as the product names it: `tmux` or `gterm`. */
@@ -43,27 +47,30 @@ function paneDirectory(panePath: string | null): string | null {
 // running app, then cwd basename, then the raw tmux session name.
 type DisplayParts = Pick<
   JoinedTerminalSession,
-  "label" | "refLabel" | "titleText"
+  "label" | "refLabel" | "tickerText"
 >;
 
 function displayParts(
   tmuxSession: TmuxSession,
   gobbySession: GobbySession | null,
   currentProjectId: string | null,
+  rosterBySession: ReadonlyMap<string, SessionRosterLabel>,
 ): DisplayParts {
   if (gobbySession !== null) {
-    const { ref, title } = getActivitySessionTitleParts(
-      gobbySession,
-      currentProjectId !== null && gobbySession.project_id === currentProjectId,
-    );
+    const trimProject =
+      currentProjectId !== null && gobbySession.project_id === currentProjectId;
+    const roster = rosterBySession.get(gobbySession.id);
+    const lines = getSessionLabelLines(gobbySession, roster, trimProject);
+    const definition = roster?.definition?.trim();
+    const detail = lines.taskLine ?? lines.statusLine;
     return {
-      label: title === null ? ref : `${ref}: ${title}`,
-      refLabel: ref,
-      titleText: title ?? "",
+      label: lines.head,
+      refLabel: getSessionRefLabel(gobbySession.ref, trimProject),
+      tickerText: [definition, detail].filter(Boolean).join(" · "),
     };
   }
   const label = externalLabel(tmuxSession);
-  return { label, refLabel: null, titleText: label };
+  return { label, refLabel: null, tickerText: label };
 }
 
 function externalLabel(tmuxSession: TmuxSession): string {
@@ -100,6 +107,7 @@ export function joinTmuxSessions(
   tmuxSessions: TmuxSession[],
   gobbySessions: GobbySession[] | undefined,
   currentProjectId: string | null = null,
+  rosterBySession: ReadonlyMap<string, SessionRosterLabel> = new Map(),
 ): JoinedTerminalSession[] {
   const byId = new Map<string, GobbySession>();
   const byAgentRunId = new Map<string, GobbySession>();
@@ -120,13 +128,13 @@ export function joinTmuxSessions(
       gobby = byAgentRunId.get(tmux.agent_run_id) ?? null;
     }
 
-    const parts = displayParts(tmux, gobby, currentProjectId);
+    const parts = displayParts(tmux, gobby, currentProjectId, rosterBySession);
     return {
       tmux,
       gobby,
       label: parts.label,
       refLabel: parts.refLabel,
-      titleText: parts.titleText,
+      tickerText: parts.tickerText,
       provider: providerFor(tmux, gobby),
       paneRef: tmux.name,
       backendLabel: tmux.backend === "native" ? "gterm" : "tmux",

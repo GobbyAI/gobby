@@ -494,9 +494,7 @@ def install(
             exposure_result = apply_installer_ui_exposure(
                 expose_ui,
                 load_bootstrap().daemon_port,
-                persist=lambda: record_exposure(
-                    bootstrap_path(), ui=UiExposureConfig(mode="tailnet", port=443)
-                ),
+                persist=lambda: record_exposure(ui=UiExposureConfig(mode="tailnet", port=443)),
             )
         except UiExposeError as exc:
             click.echo(

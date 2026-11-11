@@ -84,7 +84,6 @@ def parent_session(session_storage: SessionManager, project: Project) -> Session
         source="claude",
         project_id=project.id,
         external_id="ext-parent-terminal",
-        title="Parent Session",
     )
 
 

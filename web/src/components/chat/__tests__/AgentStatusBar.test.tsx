@@ -11,7 +11,6 @@ describe("AgentStatusBar", () => {
         viewingMeta={{
           ref: "#77",
           source: "codex",
-          title: "Observed Session",
           status: "active",
           model: "gpt-5.4",
           externalId: "ext-77",
@@ -45,7 +44,6 @@ describe("AgentStatusBar", () => {
         viewingMeta={{
           ref: "#88",
           source: "claude",
-          title: "Observed Session",
           status: "paused",
           model: "sonnet",
           externalId: "ext-88",
@@ -88,7 +86,6 @@ describe("AgentStatusBar", () => {
         viewingMeta={{
           ref: "#91",
           source: "claude",
-          title: "Observed Session",
           status: "active",
           model: "sonnet",
           externalId: "ext-91",
@@ -162,7 +159,6 @@ describe("AgentStatusBar", () => {
         viewingMeta={{
           ref: "#89",
           source: "claude",
-          title: "Attached Session",
           status: "active",
           model: "sonnet",
           externalId: "ext-89",
@@ -194,7 +190,6 @@ describe("AgentStatusBar", () => {
         viewingMeta={{
           ref: "#89",
           source: "claude",
-          title: "Attached Session",
           status: "active",
           model: "sonnet",
           externalId: "ext-89",
@@ -244,7 +239,6 @@ describe("AgentStatusBar", () => {
         viewingMeta={{
           ref: "#89",
           source: "claude",
-          title: "Attached Session",
           status: "active",
           model: "sonnet",
           externalId: "ext-89",
@@ -280,7 +274,6 @@ describe("AgentStatusBar", () => {
         viewingMeta={{
           ref: "#90",
           source: "claude",
-          title: "Autonomous Agent Session",
           status: "active",
           model: "sonnet",
           externalId: "ext-90",
@@ -310,7 +303,6 @@ describe("AgentStatusBar", () => {
         viewingMeta={{
           ref: "#91",
           source: "claude",
-          title: "Autonomous Agent Session",
           status: "active",
           model: "sonnet",
           externalId: "ext-91",

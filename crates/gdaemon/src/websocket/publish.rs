@@ -22,8 +22,10 @@ const BIND: &str = "/_gobby/ws/bind";
 const PUBLISH: &str = "/_gobby/ws/publish";
 /// A bind body is a handful of integers; anything larger is refused unread.
 const BIND_LIMIT: usize = 4 * 1024;
-/// The largest publish body the bridge may send.
-const PUBLISH_LIMIT: usize = 128 * 1024 * 1024;
+/// Largest publish body. The Python bridge sends at most 4 MiB per op, except a single
+/// frame above that, which can reach about 10 MiB encoded at the default 5 MiB
+/// max_message_size with every byte escaped. 16 MiB leaves margin above that.
+const PUBLISH_LIMIT: usize = 16 * 1024 * 1024;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

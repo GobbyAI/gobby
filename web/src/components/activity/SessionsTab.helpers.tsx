@@ -1,4 +1,4 @@
-import type { AcpSessionInfo, GobbySession } from "../../types/sessions";
+import type { AcpSessionInfo } from "../../types/sessions";
 import { Chip } from "../ui/Chip";
 import { chipIdentityClasses } from "../ui/chipVariants";
 
@@ -17,6 +17,8 @@ export interface WatchingSessionEntry {
   id: string;
   type: "agent" | "session";
   label: string;
+  /** Task line while a task is held, otherwise the status line. */
+  detailLine?: string | null;
   provider: string;
   status: string;
   sessionType?: string;
@@ -169,18 +171,6 @@ export function renderBadges(entry: WatchingSessionEntry) {
         </Chip>
       ))}
     </>
-  );
-}
-
-export function matchesSearch(session: GobbySession, search: string): boolean {
-  if (!search.trim()) {
-    return true;
-  }
-  const query = search.trim().toLowerCase();
-  return (
-    (session.title && session.title.toLowerCase().includes(query)) ||
-    session.ref.toLowerCase().includes(query) ||
-    (session.external_id?.toLowerCase().includes(query) ?? false)
   );
 }
 

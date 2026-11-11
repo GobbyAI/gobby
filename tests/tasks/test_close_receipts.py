@@ -34,23 +34,22 @@ class _Sessions:
         self.project_id = project_id
         self.next_seq = 900
 
-    def add(self, title: str) -> str:
+    def add(self) -> str:
         session_id = str(uuid4())
         self.next_seq += 1
         self.db.execute(
             """
             INSERT INTO sessions (
-                id, external_id, machine_id, source, project_id, title,
+                id, external_id, machine_id, source, project_id,
                 status, agent_depth, seq_num
             )
-            VALUES (%s, %s, %s, 'test', %s, %s, 'active', 0, %s)
+            VALUES (%s, %s, %s, 'test', %s, 'active', 0, %s)
             """,
             (
                 session_id,
                 f"ext-{session_id}",
                 require_machine_id(),
                 self.project_id,
-                title,
                 self.next_seq,
             ),
         )
@@ -65,10 +64,10 @@ def sessions(temp_db: HubDatabase, sample_project: dict[str, Any]) -> _Sessions:
 @pytest.fixture
 def roles(sessions: _Sessions) -> dict[str, str]:
     return {
-        "creator": sessions.add("Program Director"),
-        "claimant": sessions.add("Lane seat"),
-        "lander": sessions.add("Dev Team Lead"),
-        "bystander": sessions.add("Other lane"),
+        "creator": sessions.add(),
+        "claimant": sessions.add(),
+        "lander": sessions.add(),
+        "bystander": sessions.add(),
     }
 
 

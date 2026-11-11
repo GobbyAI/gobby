@@ -13,8 +13,14 @@ use super::*;
 
 #[path = "jobs_apply_focus_tests.rs"]
 mod focus;
+#[path = "jobs_held_placement_tests.rs"]
+mod held_placement;
+#[path = "jobs_apply_orphan_tests.rs"]
+mod orphan_inventory;
 #[path = "jobs_snapshot_order_tests.rs"]
 mod snapshot_order;
+#[path = "jobs_split_focus_tests.rs"]
+mod split_focus;
 use crate::app::live_loop::jobs;
 use crate::app::live_loop::lifecycle::spawn_live_shell;
 use crate::app::live_loop::mouse::Placement;

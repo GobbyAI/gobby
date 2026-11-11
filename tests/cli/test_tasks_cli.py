@@ -37,7 +37,6 @@ def _owner_session_row(session_id: str, seq_num: int) -> dict[str, Any]:
             project_id="test-project",
             project_name="gobby",
             seq_num=seq_num,
-            title=None,
             status="active",
             transcript_path=None,
             summary_path=None,

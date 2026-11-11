@@ -3167,7 +3167,6 @@ class TestFilterSessionTitleMessages:
 
         assert result == [text_message]
         session_manager.get.assert_not_called()
-        session_manager.update_title.assert_not_called()
 
     def test_returns_non_title_messages_unchanged(self, mock_db: MagicMock) -> None:
         processor = SessionMessageProcessor(mock_db)

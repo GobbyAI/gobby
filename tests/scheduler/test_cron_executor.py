@@ -6,7 +6,7 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, create_autospec, patch
 
 import pytest
 
@@ -66,10 +66,13 @@ def _agent_spawn_services(
 ) -> SimpleNamespace:
     git_manager = SimpleNamespace(repo_path=Path("/target/project"))
     if session_manager is None:
-        session_manager = MagicMock()
-        session_manager.register.return_value = SimpleNamespace(
+        # Autospec checks register's keyword arguments against SessionManager.register,
+        # so a stale kwarg such as title= fails here instead of passing silently.
+        autospec_manager = create_autospec(SessionManager, instance=True)
+        autospec_manager.register.return_value = SimpleNamespace(
             id="cccccccc-cccc-4ccc-8ccc-cccccccc0001"
         )
+        session_manager = autospec_manager
 
     def get_git_manager(project_id: str) -> object | None:
         assert project_id == PROJECT_ID

@@ -117,6 +117,8 @@ class ParsedMessage:
     usage: TokenUsage | None = None
     tool_use_id: str | None = None
     model: str | None = None
+    # Effort the provider reports outside the record itself (Droid's settings sidecar).
+    reasoning_effort: str | None = None
     message_id: str | None = None
     source: str | None = None
     source_ref: str | None = None
@@ -137,6 +139,7 @@ def _unknown_block_message(
     timestamp: datetime,
     message_id: str | None = None,
     model: str | None = None,
+    reasoning_effort: str | None = None,
     usage: TokenUsage | None = None,
 ) -> ParsedMessage:
     content = _unknown_block_content(block_type=block_type, raw=raw)
@@ -152,6 +155,7 @@ def _unknown_block_message(
         raw_json=raw,
         usage=usage,
         model=model,
+        reasoning_effort=reasoning_effort,
         message_id=message_id,
     )
 

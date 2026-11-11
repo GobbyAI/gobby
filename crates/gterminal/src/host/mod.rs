@@ -140,7 +140,7 @@ pub async fn run() -> io::Result<()> {
                     carried,
                     &resume.state,
                     &args.pid_file,
-                    host_config.native_scrollback_max_bytes as usize,
+                    host_config.scrollback_limits(),
                     host_config.event_queue_bytes as usize,
                     fallback.resumed_from(),
                 )?;
@@ -634,10 +634,9 @@ fn check_socket_path(path: &Path) -> io::Result<()> {
         })
 }
 
+// The socket dir is created by prepare_socket_path. Creating it here would revive a dir that a
+// startup rename removed, so the ticker would never see it vanish and the host would not exit.
 fn write_pidfile(path: &Path, pid: u32) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let mut file = fs::File::create(path)?;
     writeln!(file, "{pid}")?;
     Ok(())

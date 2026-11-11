@@ -222,6 +222,10 @@ pub struct Pane {
     /// The viewer the daemon says sizes this terminal, from a refused
     /// `terminal_resize` (decision 14); `None` while gclient's claim stands.
     pub sized_by: Option<String>,
+    /// The PTY size the daemon reports for this terminal: the attach reply's
+    /// rows and cols, then each size gclient claimed. `None` when unknown.
+    /// A geometry pass claims only when the rect differs from it.
+    pub(super) pty_size: Option<(u16, u16)>,
     pub(crate) latest_frame: Option<FrameData>,
 }
 
@@ -292,6 +296,7 @@ impl Pane {
             terminating: false,
             viewport: (24, 80),
             sized_by: None,
+            pty_size: None,
             latest_frame: None,
         }
     }
@@ -311,7 +316,7 @@ impl Pane {
 
     /// What every chrome surface calls a bare terminal: the name the user gave
     /// the pane, then the command in its foreground, then a short terminal ID.
-    /// A terminal running a Gobby session is named by that session's title on
+    /// A terminal running a Gobby seat is named by its agent definition and ref on
     /// the sidebar instead, so the provider is no rung here.
     ///
     /// The ID fallback distinguishes unnamed terminals. The daemon's own

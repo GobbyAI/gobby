@@ -45,11 +45,26 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
                 tab.slots.remove(&slot);
             }
         }
-        // A new terminal keeps its layout slot while resolving. A reaped
-        // terminal or a pane now owned by another tab cannot retain focus.
+        // A new terminal keeps its layout slot while resolving, and a focus whose
+        // shell the roster has not reached yet is pending, not gone: its placement
+        // is consumed when applied, so a fallback here would lose that focus for
+        // good. A reaped terminal or a pane now owned by another tab cannot
+        // retain focus.
         let focus = viewer.focus_of(tab);
-        let pending =
-            !reaped_slots.contains(&focus) && awaiting_pane(workspace, viewer, tab, focus);
+        // A pane whose spawn is still in flight is pending wherever the daemon
+        // put it, as is one awaiting its terminal in this tab.
+        let spawning = workspace
+            .workspace_model()
+            .and_then(|model| {
+                viewer
+                    .panes
+                    .daemon_id(focus)
+                    .and_then(|pane| model.pane(pane))
+            })
+            .and_then(|pane| pane.terminal_id.as_deref())
+            .is_some_and(|terminal_id| workspace.pending_spawns.contains(terminal_id));
+        let pending = !reaped_slots.contains(&focus)
+            && (spawning || awaiting_pane(workspace, viewer, tab, focus));
         if !tab.slots.is_empty() && !tab.slots.contains_key(&focus) && !pending {
             if let Some(slot) = tab
                 .layout
@@ -171,26 +186,43 @@ fn project_live_workspace(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Ch
     for (tab_id, pane_id) in workspace.take_placed_panes() {
         // Placement replies can outlive a move. Follow the pane's current
         // owner rather than focusing its slot in the reply's former tab.
-        let Some(tab_id) = workspace
+        let Some(owner) = workspace
             .workspace_model()
             .and_then(|model| model.pane(&pane_id))
             .map(|pane| pane.tab_id.clone())
         else {
-            held.push((tab_id, pane_id));
-            continue;
-        };
-        let on_bar = chrome.tabs().tabs.iter().any(|tab| tab.id == tab_id);
-        let Some(slot) = chrome.viewer.panes.slot(&pane_id).filter(|_| on_bar) else {
-            // Another project's tab: the placement waits for its bar while
-            // the daemon still has the tab.
-            if workspace
-                .workspace_model()
-                .is_some_and(|model| model.tab(&tab_id).is_some())
-            {
+            // A pane the model has not shown yet waits for its row. A pane that
+            // left the model after it was seen cannot resolve, so its placement
+            // is dropped.
+            if !workspace.placement_seen.remove(&pane_id) {
                 held.push((tab_id, pane_id));
             }
             continue;
         };
+        let tab_id = owner;
+        // A placement in the tab already shown waits until that tab shows its
+        // shell, so focus stays on the pane in use while the terminal lands. One
+        // in another tab on the bar switches there at once: its layout slot takes
+        // focus, and the pending check in `sync_live_chrome` keeps it while the
+        // terminal resolves.
+        let tab = chrome.tabs().tabs.iter().find(|tab| tab.id == tab_id);
+        let shown = chrome
+            .active_tab()
+            .is_some_and(|active| active.id == tab_id);
+        let Some(slot) = tab.and_then(|tab| {
+            chrome
+                .viewer
+                .panes
+                .slot(&pane_id)
+                .filter(|slot| !shown || tab.slots.contains_key(slot))
+        }) else {
+            // Another project's tab, or a pane with no layout slot yet: the
+            // placement waits while the daemon still shows its pane on its tab.
+            workspace.placement_seen.insert(pane_id.clone());
+            held.push((tab_id, pane_id));
+            continue;
+        };
+        workspace.placement_seen.remove(&pane_id);
         chrome
             .viewer
             .active_tab

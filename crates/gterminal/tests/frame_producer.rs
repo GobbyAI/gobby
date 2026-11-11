@@ -148,7 +148,10 @@ fn broadcast_task_exits_on_closed_channel() {
                 ) =>
             {
                 if Instant::now() >= deadline {
-                    panic!("frame task did not close its socket: {error}");
+                    panic!(
+                        "frame task did not close its socket: {error}; {}",
+                        host_support::host_report(dir.path())
+                    );
                 }
             }
             Err(error) => panic!("frame task did not close its socket: {error}"),
@@ -172,7 +175,10 @@ async fn end_to_end_without_ratatui_frame() {
         24,
         80,
         cwd,
-        64 * 1024,
+        gobby_terminal::ghostty::ScrollbackLimits {
+            bytes: 64 * 1024,
+            lines: 10_000,
+        },
         TerminalTheme::default(),
         None,
         PaneShellConfig::new("", ShellMode::NonLogin),

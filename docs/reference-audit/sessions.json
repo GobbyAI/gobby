@@ -19,7 +19,7 @@
         "reading-session-data",
         "creating-and-reading-handoffs",
         "hookless-registration",
-        "titles-reasoning-effort-and-reading-direction",
+        "labels-reasoning-effort-and-reading-direction",
         "terminal-tools",
         "handoff-flow",
         "compaction-is-in-place",
@@ -266,21 +266,6 @@
     },
     {
       "surface": "mcp",
-      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/sessions/_handoff.py",
-        "symbol": "register_handoff_tools.set_title"
-      },
-      "verification": [
-        "source-audit",
-        "focused-sessions"
-      ],
-      "audience": "agent",
-      "server": "gobby-sessions",
-      "tool": "set_title"
-    },
-    {
-      "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/sessions/transcripts.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/sessions/_messages.py",
@@ -338,6 +323,21 @@
       "audience": "agent",
       "server": "gobby-sessions",
       "tool": "set_handoff"
+    },
+    {
+      "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/sessions/_status_line.py",
+        "symbol": "register_status_line_tools.set_status_line"
+      },
+      "verification": [
+        "source-audit",
+        "focused-sessions"
+      ],
+      "audience": "agent",
+      "server": "gobby-sessions",
+      "tool": "set_status_line"
     },
     {
       "surface": "mcp",
@@ -807,20 +807,6 @@
       ],
       "audience": "operator/client",
       "route": "POST /api/sessions/{session_id}/expire"
-    },
-    {
-      "surface": "http",
-      "reference": "src/gobby/install/shared/skills/gobby/references/sessions/discovery.md",
-      "implementation": {
-        "path": "src/gobby/servers/routes/sessions/lifecycle.py",
-        "symbol": "register_lifecycle_routes.rename_session"
-      },
-      "verification": [
-        "source-audit",
-        "focused-sessions"
-      ],
-      "audience": "operator/client",
-      "route": "POST /api/sessions/{session_id}/rename"
     },
     {
       "surface": "http",
@@ -1423,7 +1409,7 @@
       "id": "title-provenance",
       "kind": "completed-task-contract",
       "command": "get_task(#22741,brief=false); git log -- src/gobby/storage/sessions/_title_fields.py (64caf96a7e, #22739); read format_provisional_session_title and format_task_session_title (src/gobby/storage/sessions/_title_defaults.py), clear_successor_title (src/gobby/sessions/title_lifecycle.py) and _canonical_session_title (src/gobby/communications/session_events.py); pytest tests/communications/test_session_events.py",
-      "result": "Titles are deterministic: provisional project#seq: Provider, task project#seq: Task #ref - title, or manual verbatim. Precedence is manual > open claimed task > provisional; title_source is provisional, task or manual (#22739 deleted the heuristic source). A /clear successor inherits only a manual title and recomputes the rest. Status notifications keep ref-prefixed provisional and task titles verbatim and prefix manual titles with the ref (#22741)."
+      "result": "Titles are deterministic: provisional project#seq: Provider, task project#seq: Task #ref - title, or manual verbatim. Precedence is manual > open claimed task > provisional; title_source is provisional, task or manual (#22739 deleted the heuristic source). A /clear successor inherits only a manual title and recomputes the rest. Status notifications keep ref-prefixed provisional and task titles verbatim and prefix manual titles with the ref (#22741). Superseded by #25485: stored titles, title_source and manual names are removed; labels derive from ref, agent definition, claimed task and status line (docs/contracts/seat-titles.md)."
     },
     {
       "id": "focused-sessions",

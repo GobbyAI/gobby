@@ -729,10 +729,10 @@ mod tests {
             let state = state();
             crate::host::state::insert_native_slot(&state, "ht-1", 24, 80).await;
             let (runtime, _received) =
-                crate::pane::PaneRuntime::test_with_channel_and_scrollback_bytes(
+                crate::pane::PaneRuntime::test_with_channel_and_scrollback_limits(
                     80,
                     24,
-                    0,
+                    crate::ghostty::ScrollbackLimits { bytes: 0, lines: 0 },
                     child_output,
                     4,
                 );

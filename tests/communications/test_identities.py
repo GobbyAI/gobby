@@ -126,7 +126,6 @@ def test_dm_resolution_links_sender_scoped_session() -> None:
         machine_id=None,
         source="comms",
         project_id=None,
-        title="Comms: alice",
     )
 
 
@@ -222,7 +221,7 @@ def test_topic_resolution_is_stable_and_isolated_by_chat_and_topic() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("metadata", "external_id", "title"),
+    ("metadata", "external_id"),
     [
         pytest.param(
             {
@@ -231,7 +230,6 @@ def test_topic_resolution_is_stable_and_isolated_by_chat_and_topic() -> None:
                 "external_username": "alice",
             },
             "comms:channel-1:group:-10042",
-            "Comms group: -10042",
             id="group",
         ),
         pytest.param(
@@ -242,7 +240,6 @@ def test_topic_resolution_is_stable_and_isolated_by_chat_and_topic() -> None:
                 "external_username": "alice",
             },
             "comms:channel-1:topic:2222222:42",
-            "Comms topic: 2222222/42",
             id="private-topic",
         ),
     ],
@@ -250,7 +247,6 @@ def test_topic_resolution_is_stable_and_isolated_by_chat_and_topic() -> None:
 async def test_inbound_metadata_selects_conversation_scoped_session(
     metadata: dict[str, object],
     external_id: str,
-    title: str,
 ) -> None:
     channel = ChannelConfig(
         id="channel-1",
@@ -304,7 +300,6 @@ async def test_inbound_metadata_selects_conversation_scoped_session(
         machine_id=None,
         source="comms",
         project_id=None,
-        title=title,
     )
 
 

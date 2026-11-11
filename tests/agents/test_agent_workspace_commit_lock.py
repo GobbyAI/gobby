@@ -24,6 +24,7 @@ from gobby.agents.agent_workspaces import (
     workspace_git_dir,
 )
 from gobby.storage.cron_models import CronJob
+from gobby.utils import spawn
 from gobby.utils.daemon_git import GitResult, daemon_git
 
 pytestmark = pytest.mark.unit
@@ -192,6 +193,27 @@ async def test_stale_index_lock_is_recovered_with_a_warning(
         if record.name == agent_workspaces.logger.name and record.levelno == logging.WARNING
     ]
     assert any("index.lock" in message for message in warnings), warnings
+
+
+def test_slow_lsof_probe_still_recovers_a_stale_index_lock(
+    project_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ensure_workspace(project_id)
+    lock = _stale_lock(project_id)
+    real_run = spawn.run
+
+    def slow_lsof(args: Sequence[str], **kwargs: Any) -> Any:
+        if args[0] == "lsof":
+            # lsof takes 6 seconds here, longer than the old 5 second probe bound.
+            if kwargs["timeout"] < 6:
+                raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+            return subprocess.CompletedProcess(args, 1, "", "")
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(spawn, "run", slow_lsof)
+
+    assert agent_workspaces._recover_index_lock(project_id, minimum_age=0) is True
+    assert not lock.exists()
 
 
 async def test_fresh_orphan_lock_is_not_removed(

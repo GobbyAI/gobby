@@ -3941,6 +3941,10 @@
       "definition": "text|text|YES|'active'::text|NEVER"
     },
     {
+      "name": "sessions.status_line",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "sessions.summary_generated_at",
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },
@@ -3963,14 +3967,6 @@
     {
       "name": "sessions.terminal_context",
       "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "sessions.title",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "sessions.title_source",
-      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "sessions.tool_call_count",
@@ -7097,6 +7093,10 @@
     {
       "name": "sessions.sessions_startup_claim_state_valid",
       "definition": "CHECK (startup_claim_state = ANY (ARRAY['idle'::text, 'claimed'::text, 'committed'::text, 'invalidated'::text]))"
+    },
+    {
+      "name": "sessions.sessions_status_line_check",
+      "definition": "CHECK (status_line IS NULL OR btrim(status_line) <> ''::text AND length(status_line) <= 120 AND status_line !~ '[\\x01-\\x1F\\x7F-\\x9F]'::text)"
     },
     {
       "name": "sessions.sessions_transcript_processing_failure_count_check",

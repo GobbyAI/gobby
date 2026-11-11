@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -103,6 +104,11 @@ def _controller() -> tuple[TelegramActionController, MagicMock, MagicMock, Magic
         session_manager,
         mailbox,
     )
+
+
+def _seat_labels(manager: MagicMock, labels: Mapping[str, str]) -> None:
+    """Supply the seat label the manager derives from each session's definition."""
+    manager.session_seat_label.side_effect = lambda session_id: labels.get(session_id)
 
 
 @pytest.mark.parametrize(
@@ -364,9 +370,10 @@ async def test_agent_command_lists_live_agents_and_marks_current_target() -> Non
     controller, manager, sessions, _ = _controller()
     other_id = "44444444-4444-4444-8444-444444444444"
     sessions.list.return_value = [
-        SimpleNamespace(id=SESSION_ID, status="active", title="Assistant", source="claude"),
-        SimpleNamespace(id=other_id, status="paused", title="Lane Developer", source="codex"),
+        SimpleNamespace(id=SESSION_ID, status="active", source="claude"),
+        SimpleNamespace(id=other_id, status="paused", source="codex"),
     ]
+    _seat_labels(manager, {SESSION_ID: "Alpha Seat", other_id: "Lane Bravo"})
     manager.attached_session.return_value = SESSION_ID
 
     consumed = await controller.handle(_channel().name, _message(content="/agent"))
@@ -375,8 +382,8 @@ async def test_agent_command_lists_live_agents_and_marks_current_target() -> Non
     menu = manager.send_message.await_args
     keyboard = menu.kwargs["metadata"]["inline_keyboard"]
     assert [button["text"] for row in keyboard for button in row] == [
-        "✓ Assistant",
-        "Lane Developer",
+        "✓ Alpha Seat",
+        "Lane Bravo",
     ]
     assert all("#" not in button["text"] for row in keyboard for button in row)
     assert menu.kwargs["metadata"]["callback_action"] == "agent_target"
@@ -389,12 +396,12 @@ async def test_agent_menu_fits_ten_agents_without_next_button() -> None:
         SimpleNamespace(
             id=f"00000000-0000-4000-8000-{index:012d}",
             status="active",
-            title=f"Agent {index}",
             source="codex",
         )
         for index in range(10)
     ]
     sessions.list.return_value = agents
+    _seat_labels(manager, {agent.id: f"Agent {index}" for index, agent in enumerate(agents)})
     manager.attached_session.return_value = agents[0].id
 
     await controller.handle(_channel().name, _message(content="/agent list"))
@@ -408,17 +415,13 @@ async def test_agent_menu_fits_ten_agents_without_next_button() -> None:
 
 async def test_agent_menu_shortens_and_disambiguates_duplicate_titles() -> None:
     controller, manager, sessions, _ = _controller()
-    title = "A very long Telegram agent title " * 4
+    label = "A very long Telegram agent label " * 4
+    other_id = "44444444-4444-4444-8444-444444444444"
     sessions.list.return_value = [
-        SimpleNamespace(id=SESSION_ID, seq_num=12, status="active", title=title, source="codex"),
-        SimpleNamespace(
-            id="44444444-4444-4444-8444-444444444444",
-            seq_num=13,
-            status="active",
-            title=title,
-            source="codex",
-        ),
+        SimpleNamespace(id=SESSION_ID, seq_num=12, status="active", source="codex"),
+        SimpleNamespace(id=other_id, seq_num=13, status="active", source="codex"),
     ]
+    _seat_labels(manager, {SESSION_ID: label, other_id: label})
 
     await controller.handle(_channel().name, _message(content="/agent"))
 
@@ -439,19 +442,18 @@ async def test_agent_command_lists_a_real_clear_successor(
         machine_id=None,
         source="codex",
         project_id=sample_project["id"],
-        title="Assistant",
     )
     successor = sessions.register(
         external_id="telegram-clear-successor",
         machine_id=None,
         source="codex",
         project_id=sample_project["id"],
-        title="Lane 4",
         parent_session_id=predecessor.id,
         agent_depth=0,
     )
     controller, manager, _, _ = _controller()
     controller._session_manager = sessions
+    _seat_labels(manager, {successor.id: "Lane 4"})
     manager.attached_session.return_value = successor.id
 
     await controller.handle(_channel().name, _message(content="/agent"))
@@ -467,7 +469,7 @@ async def test_agent_command_lists_a_real_clear_successor(
 def _spawned_seat(
     sessions: SessionManager, project_id: str, external_id: str, definition: str, title: str
 ) -> Session:
-    seat = sessions.register(external_id, None, "codex", project_id, title=title, agent_depth=1)
+    seat = sessions.register(external_id, None, "codex", project_id, agent_depth=1)
     spawner = sessions.register(f"{external_id}-spawner", None, "codex", project_id)
     run = LocalAgentRunManager(sessions.db).create(
         parent_session_id=spawner.id,
@@ -487,11 +489,19 @@ async def test_agent_menu_follows_the_definition_grant_for_spawned_seats(
     seed_seat(temp_db, "plain-worker", capabilities=[])
     sessions = SessionManager(temp_db)
     project_id = sample_project["id"]
-    sessions.register("menu-top-level", None, "codex", project_id, title="Top level terminal")
-    _spawned_seat(sessions, project_id, "menu-granted", "granted-inbox", "Granted seat")
-    _spawned_seat(sessions, project_id, "menu-plain", "plain-worker", "Plain worker")
+    top_level = sessions.register("menu-top-level", None, "codex", project_id)
+    granted = _spawned_seat(sessions, project_id, "menu-granted", "granted-inbox", "Granted seat")
+    plain = _spawned_seat(sessions, project_id, "menu-plain", "plain-worker", "Plain worker")
     controller, manager, _, _ = _controller()
     controller._session_manager = sessions
+    _seat_labels(
+        manager,
+        {
+            top_level.id: "Top level terminal",
+            granted.id: "Granted seat",
+            plain.id: "Plain worker",
+        },
+    )
 
     await controller.handle(_channel().name, _message(content="/agent"))
 
@@ -589,11 +599,10 @@ async def test_agent_button_switches_the_chat_target() -> None:
     manager.edit_message = AsyncMock()
     target_id = "44444444-4444-4444-8444-444444444444"
     sessions.get.side_effect = lambda session_id: SimpleNamespace(
-        id=session_id, status="active", source="codex", title="Lane Developer"
+        id=session_id, status="active", source="codex"
     )
-    sessions.list.return_value = [
-        SimpleNamespace(id=target_id, status="active", source="codex", title="Lane Developer")
-    ]
+    sessions.list.return_value = [SimpleNamespace(id=target_id, status="active", source="codex")]
+    _seat_labels(manager, {target_id: "Lane Bravo"})
     manager.attached_session.return_value = target_id
     source = _source_message()
     source.metadata_json.update(
@@ -618,19 +627,19 @@ async def test_agent_button_switches_the_chat_target() -> None:
     manager.switch_conversation.assert_called_once_with(_channel().name, "dm:chat-1", target_id)
     manager.send_message.assert_awaited_once_with(
         _channel().name,
-        "Active agent: Lane Developer",
+        "Active agent: Lane Bravo",
         session_id=None,
         metadata={"platform_destination": "chat-1"},
     )
     manager.edit_message.assert_awaited_once_with(
         _channel().name,
         "900",
-        "Active agent: Lane Developer\nChoose an agent:",
+        "Active agent: Lane Bravo\nChoose an agent:",
         "chat-1",
         inline_keyboard=[
             [
                 {
-                    "text": "✓ Lane Developer",
+                    "text": "✓ Lane Bravo",
                     "value": json.dumps(
                         {
                             "op": "set",
@@ -649,9 +658,10 @@ async def test_agent_switch_sends_fresh_menu_when_edit_fails() -> None:
     controller, manager, sessions, _ = _controller()
     manager.edit_message = AsyncMock(side_effect=RuntimeError("edit failed"))
     target_id = "44444444-4444-4444-8444-444444444444"
-    target = SimpleNamespace(id=target_id, status="active", source="codex", title="Lane Developer")
+    target = SimpleNamespace(id=target_id, status="active", source="codex")
     sessions.get.return_value = target
     sessions.list.return_value = [target]
+    _seat_labels(manager, {target_id: "Lane Bravo"})
     manager.attached_session.return_value = target_id
     source = _source_message()
     source.metadata_json.update(
@@ -674,7 +684,7 @@ async def test_agent_switch_sends_fresh_menu_when_edit_fails() -> None:
 
     assert manager.send_message.await_count == 2
     assert "inline_keyboard" in manager.send_message.await_args_list[0].kwargs["metadata"]
-    assert "Active agent: Lane Developer" in manager.send_message.await_args_list[1].args[1]
+    assert "Active agent: Lane Bravo" in manager.send_message.await_args_list[1].args[1]
     assert "new menu" in manager.send_message.await_args_list[1].args[1]
 
 

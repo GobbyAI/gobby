@@ -43,7 +43,6 @@ def _seat(
         machine_id=None,
         source="codex",
         project_id=project_id,
-        title=name,
     ).id
     if status != "active":
         session_manager.update_status(seat, status)
@@ -146,7 +145,6 @@ async def test_parent_send_still_wakes_a_parked_seat_without_a_task(
         machine_id=None,
         source="codex",
         project_id=project_id,
-        title="child-seat",
         agent_depth=1,
         parent_session_id=parent,
     ).id
@@ -172,7 +170,6 @@ async def test_agent_send_still_wakes_a_parked_seat_without_a_task(
         machine_id=None,
         source="codex",
         project_id=project_id,
-        title="child-seat",
         agent_depth=1,
         parent_session_id=parent,
     ).id

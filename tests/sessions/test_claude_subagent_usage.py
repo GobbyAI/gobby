@@ -107,7 +107,6 @@ def _register(session_manager: SessionManager, external_id: str, transcript: Pat
         machine_id=LOCAL_MACHINE_ID,
         source="claude",
         project_id=PROJECT_ID,
-        title=external_id,
         transcript_path=str(transcript),
     )
 

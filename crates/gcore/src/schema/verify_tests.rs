@@ -122,3 +122,8 @@ fn sessions_seed_allowlist_omits_the_dropped_heuristic_title() {
     assert!(!is_live_mutable_seed_field("sessions", "heuristic_title"));
     assert!(is_live_mutable_seed_field("sessions", "reasoning_effort"));
 }
+
+#[test]
+fn sessions_seed_allowlist_omits_the_dropped_title_source() {
+    assert!(!is_live_mutable_seed_field("sessions", "title_source"));
+}

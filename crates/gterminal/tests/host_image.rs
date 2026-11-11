@@ -262,14 +262,19 @@ fn host_through(dir: &Path, link: &Path, token: &str) -> host_support::HostProc 
     let mut host = host_support::spawn_host_binary(link, dir, &[], &[], &[]);
     let pid = host.id().to_string();
     let mut exited = None;
-    host_support::wait_until_within("the host starts or exits", host_support::COLD_START, || {
-        exited = host.try_wait().expect("poll host");
-        exited.is_some()
-            || (dir.join(host_support::CONTROL_SOCKET).exists()
-                && dir.join(host_support::FRAMES_SOCKET).exists()
-                && std::fs::read_to_string(dir.join(host_support::PID_FILE))
-                    .is_ok_and(|published| published.trim() == pid))
-    });
+    host_support::wait_until_host_within(
+        dir,
+        "the host starts or exits",
+        host_support::COLD_START,
+        || {
+            exited = host.try_wait().expect("poll host");
+            exited.is_some()
+                || (dir.join(host_support::CONTROL_SOCKET).exists()
+                    && dir.join(host_support::FRAMES_SOCKET).exists()
+                    && std::fs::read_to_string(dir.join(host_support::PID_FILE))
+                        .is_ok_and(|published| published.trim() == pid))
+        },
+    );
     let stderr = std::fs::read_to_string(dir.join("gterm.stderr")).unwrap_or_default();
     assert_eq!(exited, None, "the host exited, stderr: {stderr}");
     assert!(
@@ -336,7 +341,7 @@ fn only_the_socket_owner_prunes() {
     host_support::wait_socket(&control_path);
     let running_hash = sha256_hex(&std::fs::read(host_support::gterm_bin()).expect("binary"));
     let running_pin = images.join(format!("gterm-{running_hash}"));
-    host_support::wait_until("the socket owner prunes stale pins", || {
+    host_support::wait_until_host(&dir, "the socket owner prunes stale pins", || {
         !stale_before.exists()
     });
 

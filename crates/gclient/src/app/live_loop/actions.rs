@@ -209,7 +209,7 @@ pub(super) async fn apply_live_modal_outcome(
         ModalOutcome::RemoveWorktree(worktree_id) => {
             remove_worktree(workspace, chrome, &worktree_id).await?;
         }
-        ModalOutcome::DestroyOrphans(rows) => destroy_orphans(workspace, chrome, rows).await?,
+        ModalOutcome::DestroyOrphans(rows) => destroy_orphans(workspace, outcomes, rows),
         ModalOutcome::Menu { kind, action } => {
             return apply_live_menu_action(workspace, chrome, outcomes, kind, action).await;
         }

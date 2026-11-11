@@ -17,15 +17,17 @@ pub struct RosterEntry {
     #[serde(default)]
     pub project_id: Option<String>,
     pub lifecycle_status: Option<String>,
-    /// Applied seat title, independent of the session's current task title.
-    pub definition_title: Option<String>,
-    /// The seat's definition identity, which the needs-you log names. The display
-    /// title never stands in for it; absent means the default definition.
-    #[serde(default)]
-    pub definition_name: Option<String>,
+    /// The subject's agent definition name (`backend-architect`), raw; the chrome
+    /// renders it beside the session ref and the needs-you log names it. Absent
+    /// means the default definition.
+    pub definition: Option<String>,
     /// Set only while the subject is blocked; the daemon sends `null` otherwise.
     pub attention: Option<Attention>,
     pub task: Option<TaskRef>,
+    /// The session's one-line status about its work, set by the session for
+    /// itself; absent or `null` when it has none.
+    #[serde(default)]
+    pub status_line: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     /// The model's name as its provider prints it (`Claude Fable 5.1`),
@@ -66,6 +68,10 @@ pub struct TaskRef {
     pub reference: Option<String>,
     /// A run's task title, or the title of the open task a session holds.
     pub title: Option<String>,
+    /// True only for the seat whose session holds the claim on this task; the
+    /// other seats sharing the task read false.
+    #[serde(default)]
+    pub claim_holder: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

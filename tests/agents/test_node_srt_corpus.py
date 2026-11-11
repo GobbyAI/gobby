@@ -36,10 +36,8 @@ from gobby.agents.cargo_target import (
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.sandbox_credentials import credential_roots
 from gobby.agents.sandbox_policy import (
-    canonical_path,
     gcode_runtime_write_exceptions,
     prepare_sandbox_run_paths,
-    previous_run_write_paths,
     sensitive_write_roots,
 )
 from gobby.agents.spawn_cache_policy import sandbox_config_for_spawn
@@ -87,7 +85,7 @@ _HOST_ENVIRONMENT = (
     "RTK_TEE_DIR",
     "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
     "GOBBY_PROMPT_FILE",
-    # A checkout-binary test run points this at a build dir; the corpus expects {home}/.gobby/bin.
+    # The seat PATH leads with the managed bin dir, which this override relocates.
     "GOBBY_NATIVE_BIN_DIR",
     "APPDATA",
     "LOCALAPPDATA",
@@ -436,18 +434,6 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
         config, env, agent_name=None, project_config=main_config, resume_metadata_json=None
     )
     assert spawned is not None
-    # The production launch drops grants the run's own roots supersede (srt_runtime's
-    # previous_run_write_paths step), so the oracle drops them before adding run grants.
-    superseded_writes = previous_run_write_paths(env, base=workspace)
-    spawned = spawned.model_copy(
-        update={
-            "extra_write_paths": [
-                path
-                for path in spawned.extra_write_paths
-                if canonical_path(path, base=workspace) not in superseded_writes
-            ]
-        }
-    )
 
     run_paths = prepare_sandbox_run_paths(
         str(inputs["run_id"]),
@@ -725,7 +711,11 @@ def test_corpus_matches_python(
             changed = sorted(
                 key for key in {*env, *expected_env} if env.get(key) != expected_env.get(key)
             )
-            mismatches.append(f"{case['name']}: environment differs at {changed}")
+            mismatches.append(
+                f"{case['name']}: environment differs at {changed}: "
+                f"actual {[env.get(key) for key in changed]!r} "
+                f"expected {[expected_env.get(key) for key in changed]!r}"
+            )
 
     for refusal in corpus["refusals"]:
         message, layout = _refusal(

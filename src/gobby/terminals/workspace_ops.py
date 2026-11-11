@@ -90,6 +90,15 @@ SLOW_WORKSPACE_SNAPSHOT_SECONDS = 1.0
 _KILLABLE_STATES = frozenset({"pending", "live", "orphaned"})
 
 
+def _spawn_size(rows: int | None, cols: int | None) -> tuple[int, int]:
+    """The PTY size a new pane spawns at: the client's viewport, else the default."""
+    if rows is None and cols is None:
+        return PANE_ROWS, PANE_COLS
+    if rows is None or cols is None or rows < 1 or cols < 1:
+        raise WorkspaceOpError("invalid_op", "rows and cols must be positive and given together")
+    return rows, cols
+
+
 class WorkspaceOps(WorkspacePaneIOMixin):
     """Execute ``workspace.*``, ``tab.*``, and ``pane.*`` ops for every surface."""
 
@@ -361,13 +370,17 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         cwd: str | None = None,
         node: str | None = None,
         terminal_theme: dict[str, object] | None = None,
+        rows: int | None = None,
+        cols: int | None = None,
     ) -> LayoutChange:
         """Make a tab whose first pane spawns a shell in the checkout or adopts ``terminal_id``.
 
-        ``terminal_theme`` is the requesting client's colours for a spawned shell.
+        ``terminal_theme`` is the requesting client's colours for a spawned shell. ``rows``
+        and ``cols`` size that shell to the client's viewport; give both or neither.
         """
         if role == "":
             raise WorkspaceOpError("invalid_op", "Pane role must be non-empty")
+        spawn_rows, spawn_cols = _spawn_size(rows, cols)
         target = await self._enter(workspace, node)
         home = _workspace_of(target, workspace)
         source = await self._db(
@@ -386,7 +399,14 @@ class WorkspaceOps(WorkspacePaneIOMixin):
                 role=role,
             )
             pane = await self._fill(
-                target.node, home, change.tabs[0], change.panes[0], source, terminal_theme
+                target.node,
+                home,
+                change.tabs[0],
+                change.panes[0],
+                source,
+                terminal_theme,
+                rows=spawn_rows,
+                cols=spawn_cols,
             )
         finally:
             await self._db(self._workspaces.clear_spawn_in_flight, pane_id)
@@ -476,14 +496,18 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         cwd: str | None = None,
         node: str | None = None,
         terminal_theme: dict[str, object] | None = None,
+        rows: int | None = None,
+        cols: int | None = None,
     ) -> LayoutChange:
         """Split ``pane`` with a new pane that spawns a shell or adopts ``terminal_id``.
 
         The pane row is inserted (terminal NULL, guarded as in flight) before the
         spawn; a failed spawn removes it again and raises ``terminal_failed``.
+        ``rows`` and ``cols`` size a spawned shell to its viewport; give both or neither.
         """
         if role == "":
             raise WorkspaceOpError("invalid_op", "Pane role must be non-empty")
+        spawn_rows, spawn_cols = _spawn_size(rows, cols)
         target = await self._enter(pane, node)
         tab, beside = _pane_of(target, pane)
         source = await self._db(
@@ -515,6 +539,8 @@ class WorkspaceOps(WorkspacePaneIOMixin):
                 change.panes[0],
                 source,
                 terminal_theme,
+                rows=spawn_rows,
+                cols=spawn_cols,
             )
         finally:
             await self._db(self._workspaces.clear_spawn_in_flight, pane_id)
@@ -793,6 +819,9 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         pane: WorkspacePane,
         source: ShellSpawn | Terminal,
         terminal_theme: dict[str, object] | None = None,
+        *,
+        rows: int = PANE_ROWS,
+        cols: int = PANE_COLS,
     ) -> WorkspacePane:
         """Bind a freshly inserted pane to its adopted or newly spawned terminal."""
         if isinstance(source, Terminal):
@@ -813,8 +842,8 @@ class WorkspaceOps(WorkspacePaneIOMixin):
                     runtime=source.runtime,
                     project_id=tab.project_id,
                     session_id=None,
-                    rows=PANE_ROWS,
-                    cols=PANE_COLS,
+                    rows=rows,
+                    cols=cols,
                     cwd=source.cwd,
                     command=list(PANE_SHELL_COMMAND),
                     env=_identity_env(node, workspace, tab, pane),

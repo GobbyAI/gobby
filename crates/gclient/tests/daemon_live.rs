@@ -1791,7 +1791,7 @@ async fn poll_until(limit: Duration, mut ready: impl FnMut() -> bool, on_timeout
         }
     })
     .await
-    .expect(on_timeout);
+    .unwrap_or_else(|_| panic!("timed out after {limit:?} waiting for: {on_timeout}"));
 }
 
 /// The daemon's terminal rows carry the id under two keys.
@@ -1920,6 +1920,8 @@ async fn workspace_attach_op_and_event_round_trip() {
         axis: LayoutAxis::Horizontal,
         terminal_id: None,
         cwd: None,
+        rows: None,
+        cols: None,
         node: None,
     };
     let reply = daemon

@@ -79,8 +79,10 @@ def get_logger() -> logging.Logger:
 
 SYSTEM_SESSION_PROJECT_ID = PERSONAL_PROJECT_ID
 SYSTEM_SESSION_SOURCE = "system"
-SYSTEM_SESSION_TITLE = "_system"
 SESSION_REVIVAL_HORIZON_HOURS = 24
+# The one-line status a session shows about its work; the sessions.status_line CHECK
+# enforces the same cap.
+STATUS_LINE_MAX_LENGTH = 120
 
 
 def system_session_id(machine_id: str | None = None) -> str:
@@ -166,10 +168,10 @@ def ensure_system_session(db: HubDatabase) -> None:
         db.execute(
             """
             INSERT INTO sessions (
-                id, external_id, machine_id, source, project_id, title,
+                id, external_id, machine_id, source, project_id,
                 status, agent_depth
             )
-            VALUES (%s, %s, %s, %s, %s, %s, 'active', 0)
+            VALUES (%s, %s, %s, %s, %s, 'active', 0)
             ON CONFLICT (id) DO NOTHING
             """,
             (
@@ -178,7 +180,6 @@ def ensure_system_session(db: HubDatabase) -> None:
                 machine_id,
                 SYSTEM_SESSION_SOURCE,
                 SYSTEM_SESSION_PROJECT_ID,
-                SYSTEM_SESSION_TITLE,
             ),
         )
 

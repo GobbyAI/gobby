@@ -425,6 +425,61 @@ def test_managed_browser_refuses_foreign_project_paths(
         assert client.request(method, path, json={}).status_code == 403
 
 
+def test_managed_browser_roster_shows_only_its_own_project(
+    sign_in_server: HTTPServer, hub_db: HubDatabase, managed_headers: dict[str, str]
+) -> None:
+    from gobby.servers.app_factory import create_app
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.attention import AttentionStateManager
+    from gobby.storage.projects import LocalProjectManager
+
+    own_project = managed_headers["X-Gobby-Project-Id"]
+    foreign_project = LocalProjectManager(hub_db).create("foreign-roster-project").id
+    sessions = SessionManager(hub_db)
+    runs = LocalAgentRunManager(hub_db)
+    run_ids: dict[str, str] = {}
+    for label, project_id in (("own", own_project), ("foreign", foreign_project)):
+        seat = sessions.register(
+            external_id=f"roster-{label}",
+            machine_id="21000000-0000-4000-8000-000000000001",
+            source="codex",
+            project_id=project_id,
+        )
+        sessions.set_status_line(seat.id, f"{label} status line")
+        run = runs.create(
+            parent_session_id=seat.id,
+            child_session_id=seat.id,
+            provider="codex",
+            prompt="roster scope",
+        )
+        runs.start(run.id)
+        run_ids[label] = f"run:{run.id}"
+    sign_in_server.services.attention_manager = AttentionStateManager(hub_db)
+    app = create_app(sign_in_server)
+    app.router.lifespan_context = FastAPI().router.lifespan_context
+    app.state.server = sign_in_server
+
+    with TestClient(app, base_url="http://127.0.0.1:43210", client=("127.0.0.1", 50000)) as client:
+        operator_cookie, _ = AuthStore(hub_db).create_session(TEST_USER_ID)
+        client.cookies.set("gobby_session", operator_cookie)
+        operator = client.get("/api/attention/roster")
+        assert operator.status_code == 200, operator.text
+        operator_ids = {entry["entry_id"] for entry in operator.json()["entries"]}
+        assert {run_ids["own"], run_ids["foreign"]} <= operator_ids
+        client.cookies.clear()
+
+        link = client.post("/api/auth/sign-in-link", headers=managed_headers).json()["url"]
+        assert client.get(link, follow_redirects=False).status_code == 303
+        response = client.get("/api/attention/roster")
+        assert response.status_code == 200, response.text
+        entries = {entry["entry_id"]: entry for entry in response.json()["entries"]}
+
+    assert entries[run_ids["own"]]["status_line"] == "own status line"
+    assert run_ids["foreign"] not in entries
+    assert {entry["project_id"] for entry in entries.values()} == {own_project}
+    assert "foreign status line" not in json.dumps(response.json())
+
+
 def test_managed_browser_reads_only_its_own_project_usage_ledger(
     sign_in_server: HTTPServer, hub_db: HubDatabase, managed_headers: dict[str, str]
 ) -> None:

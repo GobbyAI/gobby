@@ -32,7 +32,6 @@ function makeSession(overrides: Partial<GobbySession>): GobbySession {
     external_id: "external-1",
     source: "codex",
     project_id: "proj-1",
-    title: "Session",
     status: "active",
     model: "gpt-5.4",
     message_count: 1,
@@ -63,7 +62,6 @@ function terminalMeta(
   return {
     ref: "#52",
     source: "codex",
-    title: "Terminal",
     status: "active",
     model: "gpt-5.4",
     externalId: "term-52",
@@ -478,7 +476,6 @@ describe("useChatPageProviderState", () => {
           mainSessionMeta: {
             ref: "#77",
             source: "claude",
-            title: "Claude Session",
             status: "active",
             model: null,
             externalId: "session-77",
@@ -488,7 +485,6 @@ describe("useChatPageProviderState", () => {
         mainSessionMeta: {
           ref: "#77",
           source: "claude",
-          title: "Claude Session",
           status: "active",
           model: null,
           externalId: "session-77",

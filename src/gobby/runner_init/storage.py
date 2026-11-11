@@ -259,7 +259,6 @@ def open_storage_and_config(
         fetch_revisions=lambda: fetch_persistent_revisions(runner.database),
     )
     runner.session_manager = SessionManager(runner.database)
-    runner.session_manager.normalize_automatic_title_refs()
     runner.task_manager = LocalTaskManager(runner.database)
     runner.session_task_manager = SessionTaskManager(runner.database)
 

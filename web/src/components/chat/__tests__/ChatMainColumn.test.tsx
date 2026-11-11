@@ -63,7 +63,6 @@ function renderColumn(options: {
       projectHasCheckout={options.projectHasCheckout}
       panelVisible={false}
       effectiveSessionRef={null}
-      activeTitle={null}
       mainSessionSource={null}
       messageListRef={createRef<MessageListHandle>()}
       providerState={providerState}

@@ -317,7 +317,6 @@ async def test_operator_registration_releases_on_request_or_session_end(
                 status="expired",
                 transitioned_at=_FIXED_TS,
                 seq_num=1,
-                title="Lane Developer",
                 source="codex",
             )
         )
@@ -419,7 +418,6 @@ async def test_registered_dm_survives_resume_and_daemon_restart(
         machine_id=None,
         source="claude",
         project_id=sample_project["id"],
-        title="Assistant",
     )
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(
@@ -535,7 +533,6 @@ async def test_restore_releases_target_deleted_while_daemon_was_down(
         machine_id=None,
         source="claude",
         project_id=sample_project["id"],
-        title="Lane Developer",
     )
     assistant = (
         sessions.register(
@@ -543,7 +540,6 @@ async def test_restore_releases_target_deleted_while_daemon_was_down(
             machine_id=None,
             source="claude",
             project_id=sample_project["id"],
-            title="Assistant",
         )
         if assistant_available
         else None
@@ -617,7 +613,6 @@ async def test_hard_deleted_session_releases_telegram_target_after_commit(
         machine_id=None,
         source="claude",
         project_id=sample_project["id"],
-        title="Lane Developer",
     )
     assistant = (
         sessions.register(
@@ -625,7 +620,6 @@ async def test_hard_deleted_session_releases_telegram_target_after_commit(
             machine_id=None,
             source="claude",
             project_id=sample_project["id"],
-            title="Assistant",
         )
         if assistant_available
         else None
@@ -714,7 +708,6 @@ def _legacy_delete_target(
         source="claude",
         project_id=project_id,
         terminal_context=context,
-        title="Lane Developer",
     )
     sessions.db.execute("UPDATE sessions SET message_count = 1 WHERE id = %s", (canonical.id,))
     if deletion == "identity":
@@ -764,7 +757,7 @@ def test_identity_delete_invalidates_caches_and_emits_committed_change(
         project_id=holder.project_id,
         session_type=holder.session_type,
     )
-    sessions._session_metadata[holder.id] = {"title": holder.title}
+    sessions._session_metadata[holder.id] = {"seq_num": holder.seq_num}
     key = (canonical.external_id, holder.source, holder.project_id, holder.session_type)
     assert sessions._session_mapping[key] == holder.id
     assert key in sessions._session_mapping_timestamps
@@ -819,7 +812,7 @@ async def test_legacy_delete_releases_telegram_target_after_commit(
         project_id=holder.project_id,
         session_type=holder.session_type,
     )
-    sessions._session_metadata[holder.id] = {"title": holder.title}
+    sessions._session_metadata[holder.id] = {"seq_num": holder.seq_num}
     key = (holder.external_id, holder.source, holder.project_id, holder.session_type)
     assert sessions._session_mapping[key] == holder.id
     assert key in sessions._session_mapping_timestamps
@@ -834,7 +827,6 @@ async def test_legacy_delete_releases_telegram_target_after_commit(
             machine_id=None,
             source="claude",
             project_id=sample_project["id"],
-            title="Assistant",
         )
         if assistant_available
         else None
@@ -923,7 +915,6 @@ async def test_offline_deleted_restore_prefers_same_project_assistant(
         machine_id=None,
         source="claude",
         project_id=sample_project["id"],
-        title="Assistant",
     )
     other_project = LocalProjectManager(temp_db).create(name="Other")
     other = sessions.register(
@@ -931,7 +922,6 @@ async def test_offline_deleted_restore_prefers_same_project_assistant(
         machine_id=None,
         source="claude",
         project_id=other_project.id,
-        title="Assistant",
     )
     _grant_fallback(temp_db, same_project)
     _grant_fallback(temp_db, other)
@@ -1053,7 +1043,6 @@ async def test_resume_during_fallback_does_not_clear_target_or_send_notice(
             status="expired",
             transitioned_at=_FIXED_TS,
             seq_num=1,
-            title="Assistant",
             source="codex",
         )
     )
@@ -2043,7 +2032,6 @@ async def test_send_rejects_a_session_id_without_an_exact_session_row(
         machine_id=None,
         source="codex",
         project_id=sample_project["id"],
-        title="Lane 8",
     )
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(channel_id="44444444-4444-4444-8444-444444444444")
@@ -4219,7 +4207,6 @@ async def test_telegram_target_survives_manager_restart(
         machine_id=None,
         source="codex",
         project_id=sample_project["id"],
-        title="Lane 4",
     )
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
     channel = make_channel(
@@ -4275,7 +4262,6 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
         machine_id=None,
         source="claude",
         project_id=sample_project["id"],
-        title="Lane 3",
         terminal_context=context,
     )
     # An unrelated Assistant must not take precedence over the linked successor.
@@ -4284,7 +4270,6 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
         machine_id=None,
         source="claude",
         project_id=sample_project["id"],
-        title="Assistant",
     )
     _grant_fallback(temp_db, unrelated)
     store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
@@ -4466,21 +4451,18 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
         machine_id=None,
         source="codex",
         project_id=sample_project["id"],
-        title="Lane 4",
     )
     predecessor = sessions.register(
         external_id="telegram-assistant-predecessor",
         machine_id=None,
         source="codex",
         project_id=sample_project["id"],
-        title="Assistant",
     )
     successor = sessions.register(
         external_id="telegram-assistant-successor",
         machine_id=None,
         source="codex",
         project_id=sample_project["id"],
-        title="Lane 4 continued" if linked_successor else "Assistant - Main",
         parent_session_id=target.id if linked_successor else predecessor.id,
         agent_depth=0,
     )
@@ -4521,7 +4503,6 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
             status="deleted" if end == "deleted" else "expired",
             transitioned_at=_FIXED_TS,
             seq_num=target.seq_num,
-            title="Lane 4",
             source="codex",
         )
     )
@@ -4581,7 +4562,6 @@ async def test_ended_target_falls_back_to_live_assistant(
         id="22222222-2222-4222-8222-222222222222",
         status="active",
         source="claude",
-        title="Assistant",
         agent_depth=0,
         agent_run_id=None,
     )
@@ -4616,7 +4596,6 @@ async def test_ended_target_falls_back_to_live_assistant(
             status="expired",
             transitioned_at=_FIXED_TS,
             seq_num=1,
-            title="Lane Developer",
             source="claude",
         )
     )
@@ -4654,7 +4633,6 @@ async def test_ended_target_with_no_assistant_replies_without_switching() -> Non
             status="expired",
             transitioned_at=_FIXED_TS,
             seq_num=1,
-            title="Lane Developer",
             source="claude",
         )
     )
@@ -4678,7 +4656,6 @@ async def test_group_attachment_does_not_fall_back_to_assistant() -> None:
         id="22222222-2222-4222-8222-222222222222",
         status="active",
         source="claude",
-        title="Assistant",
         agent_depth=0,
         agent_run_id=None,
     )
@@ -4700,7 +4677,6 @@ async def test_group_attachment_does_not_fall_back_to_assistant() -> None:
             status="expired",
             transitioned_at=_FIXED_TS,
             seq_num=1,
-            title="Lane 4",
             source="codex",
         )
     )
@@ -4709,16 +4685,24 @@ async def test_group_attachment_does_not_fall_back_to_assistant() -> None:
     assert manager.attached_destination(channel.id, assistant.id) is None
 
 
-async def test_telegram_outbound_names_active_and_other_agent_senders() -> None:
+def _seat_labels(
+    monkeypatch: pytest.MonkeyPatch, manager: CommunicationsManager, labels: dict[str, str]
+) -> None:
+    """Resolve each seat's label from its definition, as its `_agent_type` variable does."""
+    monkeypatch.setattr(manager, "session_seat_label", MagicMock(side_effect=labels.get))
+
+
+async def test_telegram_outbound_names_active_and_other_agent_senders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     channel = make_channel(channel_type="telegram")
     channel.config_json["operator_project_id"] = "project-1"
     sessions = MagicMock()
-    assistant = MagicMock(
+    alpha = MagicMock(
         project_id="project-1",
         id="11111111-1111-4111-8111-111111111111",
         status="active",
         source="claude",
-        title="Assistant",
         ref="gobby#15976",
     )
     lane = MagicMock(
@@ -4726,11 +4710,10 @@ async def test_telegram_outbound_names_active_and_other_agent_senders() -> None:
         id="44444444-4444-4444-8444-444444444444",
         status="active",
         source="codex",
-        title="Lane Developer",
         ref="gobby#16004",
     )
     sessions.get.side_effect = lambda session_id: (
-        assistant if session_id == assistant.id else lane if session_id == lane.id else None
+        alpha if session_id == alpha.id else lane if session_id == lane.id else None
     )
     manager = CommunicationsManager(
         make_config(), make_store([channel]), make_secret_store(), sessions
@@ -4739,10 +4722,11 @@ async def test_telegram_outbound_names_active_and_other_agent_senders() -> None:
     manager._adapters[channel.name] = make_adapter(channel_type="telegram")
     manager._identity_manager = MagicMock()
     manager._identity_manager.get_identity_by_session.return_value = None
-    manager.attach_conversation(channel.name, "dm:99", assistant.id)
+    _seat_labels(monkeypatch, manager, {alpha.id: "Alpha Seat", lane.id: "Lane Bravo"})
+    manager.attach_conversation(channel.name, "dm:99", alpha.id)
 
     active = await manager.send_message(
-        channel.name, "Hello", session_id=assistant.id, metadata={"platform_destination": "99"}
+        channel.name, "Hello", session_id=alpha.id, metadata={"platform_destination": "99"}
     )
     other = await manager.send_message(
         channel.name, "Update", session_id=lane.id, metadata={"platform_destination": "99"}
@@ -4750,11 +4734,11 @@ async def test_telegram_outbound_names_active_and_other_agent_senders() -> None:
 
     assert active.content == "Hello"
     assert other.content == "Update"
-    assert active.metadata_json["telegram_sender_label"] == "Assistant (gobby#15976)"
-    assert other.metadata_json["telegram_sender_label"] == "Lane Developer (gobby#16004)"
+    assert active.metadata_json["telegram_sender_label"] == "Alpha Seat (gobby#15976)"
+    assert other.metadata_json["telegram_sender_label"] == "Lane Bravo (gobby#16004)"
 
 
-async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
+async def test_telegram_stream_edit_keeps_the_agent_name(monkeypatch: pytest.MonkeyPatch) -> None:
     channel = make_channel(channel_type="telegram")
     store = make_store([channel])
     session_id = "11111111-1111-4111-8111-111111111111"
@@ -4762,7 +4746,7 @@ async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
         id="outbound-1",
         channel_id=channel.id,
         direction="outbound",
-        content="Assistant: partial",
+        content="Alpha Seat: partial",
         session_id=session_id,
         created_at=_FIXED_TS,
     )
@@ -4772,9 +4756,10 @@ async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
     )
     sessions = MagicMock()
     sessions.get.return_value = MagicMock(
-        id=session_id, status="active", source="claude", title="Assistant", ref="gobby#15976"
+        id=session_id, status="active", source="claude", ref="gobby#15976"
     )
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    _seat_labels(monkeypatch, manager, {session_id: "Alpha Seat"})
     manager._channel_by_name[channel.name] = channel
     adapter = make_adapter(channel_type="telegram")
     adapter.supports_message_edit = True
@@ -4784,7 +4769,7 @@ async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
     await manager.edit_message(channel.name, "platform-1", "Finished", "99")
 
     adapter.edit_message.assert_awaited_once_with(
-        "platform-1", "Finished", "99", sender_label="Assistant (gobby#15976)"
+        "platform-1", "Finished", "99", sender_label="Alpha Seat (gobby#15976)"
     )
     assert stored_message.content == "Finished"
     store.update_message_content.assert_called_once_with("outbound-1", "Finished")
@@ -4797,24 +4782,28 @@ async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
 @pytest.mark.parametrize(
     ("seat", "content", "keyboard"),
     [
-        ("Assistant", "Explicit post", None),
-        ("Assistant", "Ship?", [[{"text": "Approve", "value": "approve"}]]),
+        ("Alpha Seat", "Explicit post", None),
+        ("Alpha Seat", "Ship?", [[{"text": "Approve", "value": "approve"}]]),
         ("Reporter", "Systems nominal", None),
         ("Watchdog", "Agent stalled", None),
         ("Monitor", "Load alarm", None),
     ],
 )
 async def test_telegram_origin_kinds_share_trusted_heading(
-    seat: str, content: str, keyboard: list[list[dict[str, str]]] | None
+    monkeypatch: pytest.MonkeyPatch,
+    seat: str,
+    content: str,
+    keyboard: list[list[dict[str, str]]] | None,
 ) -> None:
     channel = make_channel(channel_type="telegram")
     sessions = MagicMock()
     sessions.get.return_value = MagicMock(
-        source="codex", title=seat, ref="gobby#42", status="active", transcript_path=None
+        id="origin", source="codex", ref="gobby#42", status="active", transcript_path=None
     )
     manager = CommunicationsManager(
         make_config(), make_store([channel]), make_secret_store(), sessions
     )
+    _seat_labels(monkeypatch, manager, {"origin": seat})
     manager._channel_by_name[channel.name] = channel
     adapter = make_adapter(channel_type="telegram")
     manager._adapters[channel.name] = adapter
@@ -4835,14 +4824,14 @@ async def test_telegram_origin_kinds_share_trusted_heading(
     assert delivered.content == content
 
 
-async def test_telegram_mirror_labels_attached_origin() -> None:
+async def test_telegram_mirror_labels_attached_origin(monkeypatch: pytest.MonkeyPatch) -> None:
     channel = make_channel(channel_type="telegram")
     channel.config_json["operator_project_id"] = "project-1"
     sessions = MagicMock()
     sessions.get.return_value = MagicMock(
+        id="origin",
         project_id="project-1",
         source="claude",
-        title="Assistant",
         ref="gobby#15976",
         status="active",
         transcript_path=None,
@@ -4850,13 +4839,14 @@ async def test_telegram_mirror_labels_attached_origin() -> None:
     store = make_store([channel])
     store.reserve_transcript_message.side_effect = lambda message: (message, True)
     manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    _seat_labels(monkeypatch, manager, {"origin": "Alpha Seat"})
     manager._channel_by_name[channel.name] = channel
     adapter = make_adapter(channel_type="telegram")
     manager._adapters[channel.name] = adapter
     manager.attach_conversation(channel.name, "dm:99", "origin")
     await manager.mirror_session_message("origin", "reply-id", "Completed reply")
     delivered = adapter.send_message.call_args.args[0]
-    assert delivered.metadata_json["telegram_sender_label"] == "Assistant (gobby#15976)"
+    assert delivered.metadata_json["telegram_sender_label"] == "Alpha Seat (gobby#15976)"
     assert delivered.metadata_json["platform_destination"] == "99"
     assert delivered.session_id == "origin"
     assert delivered.content == "Completed reply"
@@ -4879,15 +4869,18 @@ async def test_sessionless_telegram_alarm_is_labeled() -> None:
     )
 
 
-async def test_telegram_button_edit_resolves_origin_instead_of_stale_metadata() -> None:
+async def test_telegram_button_edit_resolves_origin_instead_of_stale_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from gobby.communications.telegram_decisions import _publish
 
     channel = make_channel(channel_type="telegram")
     sessions = MagicMock()
-    sessions.get.return_value = MagicMock(source="claude", title="Assistant", ref="gobby#15976")
+    sessions.get.return_value = MagicMock(id="origin", source="claude", ref="gobby#15976")
     manager = CommunicationsManager(
         make_config(), make_store([channel]), make_secret_store(), sessions
     )
+    _seat_labels(monkeypatch, manager, {"origin": "Alpha Seat"})
     manager._channel_by_name[channel.name] = channel
     adapter = MagicMock(spec=TelegramAdapter)
     adapter.edit_stored_message = AsyncMock()
@@ -4904,24 +4897,20 @@ async def test_telegram_button_edit_resolves_origin_instead_of_stale_metadata() 
     await _publish(manager, adapter, source, "Ship now?", "99", keyboard, 1)
     call = adapter.edit_stored_message.await_args
     assert call.args == (source, "Ship now?", "99")
-    assert call.kwargs["sender_label"] == "Assistant (gobby#15976)"
+    assert call.kwargs["sender_label"] == "Alpha Seat (gobby#15976)"
     assert call.kwargs["inline_keyboard"] == keyboard
     assert call.kwargs["callback_generation"] == 1
 
 
 @pytest.mark.parametrize("source", ["comms", "web-chat", "web_chat", "system"])
-@pytest.mark.parametrize(
-    "title", ["Comms: operator-user", "Comms group: -100123", "Comms topic: -100123/77"]
-)
-def test_telegram_non_seat_sessions_never_label_operator_identity(source: str, title: str) -> None:
+def test_telegram_non_seat_sessions_never_label_operator_identity(source: str) -> None:
     sessions = MagicMock()
-    sessions.get.return_value = MagicMock(source=source, title=title, ref="gobby#42")
+    sessions.get.return_value = MagicMock(source=source, ref="gobby#42")
     manager = CommunicationsManager(make_config(), make_store(), make_secret_store(), sessions)
     channel = make_channel(channel_type="telegram")
     expected = "System (gobby#42)" if source == "system" else "Responder (gobby#42)"
     label = manager.telegram_sender_label(channel, "identity-session")
     assert label == expected
-    assert title not in label
 
 
 async def test_unattached_chat_responder_labels_bot_instead_of_operator() -> None:
@@ -4930,9 +4919,7 @@ async def test_unattached_chat_responder_labels_bot_instead_of_operator() -> Non
 
     channel = make_channel(channel_type="telegram")
     sessions = MagicMock()
-    sessions.get.return_value = MagicMock(
-        source="comms", title="Comms: operator-user", ref="gobby#42", transcript_path=None
-    )
+    sessions.get.return_value = MagicMock(source="comms", ref="gobby#42", transcript_path=None)
     manager = CommunicationsManager(
         make_config(), make_store([channel]), make_secret_store(), sessions
     )

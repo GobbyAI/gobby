@@ -13,7 +13,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 ROOT_ENV = "GOBBY_E2E_EXTERNAL_WRITE_ROOT"
 LOG_ENV = "GOBBY_E2E_EXTERNAL_WRITE_LOG"
-# The one E2E-owned subtree of the real ~/.gobby: fixed, operator-trusted proof folders
+# The one E2E-owned subtree of the real ~/.gobby: fixed proof folders
 # (the handoff proof's project, #25771) live here. No production daemon writes it.
 E2E_OWNED_SUBTREE = "e2e"
 

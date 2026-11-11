@@ -192,26 +192,8 @@ async def test_auto_create_session_when_no_existing():
         machine_id=None,
         source="comms",
         project_id=None,
-        title="Comms: alice",
     )
     assert identity.session_id == "auto-sess-123"
-
-
-@pytest.mark.asyncio
-async def test_auto_create_session_uses_user_id_when_no_username():
-    """Auto-created session title falls back to external_user_id when no username."""
-    store = _store([_channel()])
-    store.get_identity_by_external.return_value = None
-    store.find_identities_by_username.return_value = []
-
-    session_store = _session_store("auto-sess-456")
-    config = _config(auto_create_sessions=True)
-    manager = await _make_manager(store, config=config, session_store=session_store)
-
-    await manager._resolve_identity("chan-1", "ext-user-1", None)
-
-    call_kwargs = session_store.register.call_args[1]
-    assert call_kwargs["title"] == "Comms: ext-user-1"
 
 
 @pytest.mark.asyncio
