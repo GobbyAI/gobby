@@ -150,8 +150,13 @@ def foreground_node_script(pid: int) -> str | None:
     leader = snapshot.get(shell[0]) if shell else None
     if shell is None or leader is None or command_name(leader[1]) != "node":
         return None
+    return node_script(shell[0])
+
+
+def node_script(pid: int) -> str | None:
+    """Return node process ``pid``'s direct absolute script entrypoint, if proven."""
     try:
-        process = psutil.Process(shell[0])
+        process = psutil.Process(pid)
         argv = process.cmdline()
         if command_name(process.exe()) != "node" or len(argv) < 2:
             return None

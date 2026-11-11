@@ -870,7 +870,61 @@ def _srt_pane(
     monkeypatch.setattr(
         gate, "foreground_node_script", lambda pid: str(runner) if pid == SRT_RUNNER_PID else None
     )
+    monkeypatch.setattr(gate, "node_script", lambda pid: None)
     return runner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("script_kind", ["installed", "linked", "declared-package", "missing"])
+@pytest.mark.parametrize("seat", ["own", "impostor", "another-process"])
+async def test_srt_runner_admits_npm_claude_only_as_the_seats_own_provider(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, script_kind: str, seat: str
+) -> None:
+    # Under SRT an npm Claude is node on Claude's script, the runner's child. As in the
+    # plain case the script only names Claude: a retargeted link reads like ``linked``.
+    # What admits is the seat's own recorded provider process, live in the group.
+    installed = tmp_path / "npm" / "claude-code" / "cli.js"
+    _install(monkeypatch, "claude", installed)
+    planted = tmp_path / "planted" / "cli.js"
+    planted.parent.mkdir()
+    planted.write_text("// planted\n")
+    (planted.parent / "package.json").write_text(
+        '{"name":"@anthropic-ai/claude-code","bin":{"claude":"cli.js"}}'
+    )
+    linked = tmp_path / "bin" / "claude"
+    linked.parent.mkdir()
+    linked.symlink_to(installed)
+    script = {
+        "installed": installed,
+        "linked": linked,
+        "declared-package": planted,
+        "missing": tmp_path / "missing" / "cli.js",
+    }[script_kind]
+    _srt_pane(
+        monkeypatch,
+        tmp_path,
+        [_SrtChild(SRT_CHILD_PID, "/opt/homebrew/bin/node")],
+        identity=seat != "impostor",
+    )
+    monkeypatch.setattr(
+        gate, "node_script", lambda pid: str(script) if pid == SRT_CHILD_PID else None
+    )
+    manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"})
+    context = (
+        {**SRT_CONTEXT, "parent_pid": SRT_CHILD_PID + 1}
+        if seat == "another-process"
+        else SRT_CONTEXT
+    )
+
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=context
+    )
+
+    if seat == "own" and script_kind in {"installed", "linked"}:
+        assert refusal is None
+    else:
+        assert isinstance(refusal, gate.SendKeysRefusal)
+        assert refusal.code == "send_keys_target_unconfirmed"
 
 
 @pytest.mark.asyncio

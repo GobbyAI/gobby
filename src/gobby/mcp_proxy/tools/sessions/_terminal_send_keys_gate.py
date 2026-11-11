@@ -28,6 +28,7 @@ from gobby.terminals.foreground import (
     foreground_group,
     foreground_node_script,
     group_and_executable,
+    node_script,
     shell_pid,
 )
 from gobby.terminals.pane_io import clear_composer, composer_reader, live_runtime_pane
@@ -183,20 +184,29 @@ def _node_agent_cli(pid: int, seat: _Seat | None) -> str | None:
     node opened while it named another file, then pointed at the installed one, reads the
     same. What admits is the session's recorded CLI process, live in the foreground. For
     Gobby's installed SRT runner that is the provider it launched, an installed agent CLI
-    build. For the script the daemon's PATH resolves ``claude`` to (an npm install) it is
-    node itself, leading the foreground group. A package's own metadata proves nothing,
-    since any directory can declare itself Claude's package.
+    build, or node on Claude's npm script. For the script the daemon's PATH resolves
+    ``claude`` to (an npm install) it is node itself, leading the foreground group. A
+    package's own metadata proves nothing, since any directory can declare itself Claude's
+    package.
     """
     script = foreground_node_script(pid)
     live = None if seat is None else seat.process()
     if script is None or seat is None or live is None:
         return None
     if _is_installed_srt_runner(script):
-        return _agent_cli(live[1], seat)
-    entrypoint = _on_disk(script)
-    if entrypoint is None or entrypoint != _installed_cli("claude"):
+        cli = _agent_cli(live[1], seat)
+        if cli is None and command_name(live[1]) == "node" and _is_npm_claude(node_script(live[0])):
+            return "claude"
+        return cli
+    if not _is_npm_claude(script):
         return None
     return "claude" if live[0] == seat.foreground_group else None
+
+
+def _is_npm_claude(script: str | None) -> bool:
+    """Whether node's ``script`` is the entrypoint the daemon's PATH resolves ``claude`` to."""
+    entrypoint = None if script is None else _on_disk(script)
+    return entrypoint is not None and entrypoint == _installed_cli("claude")
 
 
 def _detection_registry(terminal_manager: Any) -> DetectionManifestRegistry:
