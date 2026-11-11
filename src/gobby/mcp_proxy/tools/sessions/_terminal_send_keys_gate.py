@@ -9,9 +9,10 @@ screen. Every signal that cannot be read refuses.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
+import shutil
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,12 +20,15 @@ from typing import Any
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, plain_text
 from gobby.agents.srt_runtime import srt_install_root
-from gobby.terminals.composer_ledger import CURSOR_DRAFT_REASON, read_composer
+from gobby.sessions.terminal_kill import process_identity_matches
+from gobby.terminals.composer_ledger import read_composer
 from gobby.terminals.foreground import (
     command_name,
-    foreground_child_executables,
     foreground_executables,
+    foreground_group,
     foreground_node_script,
+    group_and_executable,
+    node_script,
     shell_pid,
 )
 from gobby.terminals.pane_io import clear_composer, composer_reader, live_runtime_pane
@@ -34,10 +38,14 @@ logger = logging.getLogger(__name__)
 SEND_MESSAGE_HINT = "Use gobby-agents:send_message for cross-session communication."
 
 _SHELLS = frozenset({"ash", "bash", "csh", "dash", "fish", "ksh", "sh", "tcsh", "zsh"})
-# Bare command names of the agent CLIs, as SessionSource names them. Any other foreground
-# process, a shell or an editor or interpreter alike, is not a composer to type into.
+# The agent CLIs, as SessionSource names them and the daemon's PATH launches them. Any other
+# foreground process, a shell or an editor or interpreter alike, is not a composer to type into.
 _AGENT_CLIS = frozenset({"agy", "claude", "codex", "droid", "grok"})
-_CLAUDE_VERSION = re.compile(r"\d+(?:\.\d+)+")
+# Versioned builds an installer keeps side by side in the directory its launcher resolves to.
+_VERSIONED_BUILDS = {
+    "claude": re.compile(r"\d+(?:\.\d+)+"),
+    "grok": re.compile(r"grok-\d+(?:\.\d+)+-[a-z0-9_]+-[a-z0-9_]+"),
+}
 _CREDENTIAL_PROMPT = re.compile(
     r"\b(password|passphrase|passcode|pin|api[ _-]?key|token|secret|otp)\b[^\n]*:\s*$",
     re.IGNORECASE,
@@ -81,31 +89,83 @@ def _last_nonblank_line(text: str) -> str:
     return ""
 
 
-def _agent_cli(command: str, executable: str) -> str | None:
-    """The agent CLI a foreground process runs, or None when it runs none.
-
-    A bare name in the allowlist is the CLI itself. The native installer runs a Claude
-    build from ``claude/versions/<version>``, so its command name is a version string;
-    that path counts only when it resolves on disk to such a build.
-    """
-    if command in _AGENT_CLIS:
-        return command
-    return "claude" if _is_versioned_claude(executable) else None
-
-
-def _is_versioned_claude(executable: str) -> bool:
-    path = Path(executable)
-    if not path.is_absolute():
-        return False
+def _on_disk(path: str) -> Path | None:
+    """``path`` resolved through its links, or None when it is relative or missing."""
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        return None
     try:
-        resolved = path.resolve(strict=True)
+        return candidate.resolve(strict=True)
     except (OSError, RuntimeError):
-        return False
-    return (
-        resolved.parent.name == "versions"
-        and resolved.parent.parent.name == "claude"
-        and _CLAUDE_VERSION.fullmatch(resolved.name) is not None
-    )
+        return None
+
+
+def _installed_cli(cli: str) -> Path | None:
+    """The build the daemon's PATH launches for ``cli``, resolved through its links."""
+    located = shutil.which(cli)
+    return None if located is None else _on_disk(located)
+
+
+@dataclass(frozen=True)
+class _Seat:
+    """The target session's recorded CLI process and its terminal's foreground group."""
+
+    terminal_context: Mapping[str, Any]
+    foreground_group: int
+
+    def process(self) -> tuple[int, str] | None:
+        """The session's recorded CLI process as ``(pid, executable)``, live in the foreground.
+
+        Its pid and start time were recorded from the process that ran the session's own
+        hooks, so a process that never started this session cannot match, whatever file
+        it runs or names. The executable is the kernel's, never a path the process chose.
+        """
+        pid = self.terminal_context.get("parent_pid")
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+            return None
+        if not process_identity_matches(pid, self.terminal_context):
+            return None
+        read = group_and_executable(pid)
+        if read is None or read[0] != self.foreground_group:
+            return None
+        return pid, read[1]
+
+    def runs(self, build: Path) -> bool:
+        """Whether the session's recorded CLI process is live in the foreground running ``build``."""
+        live = self.process()
+        return live is not None and _on_disk(live[1]) == build
+
+
+def _agent_cli(executable: str, seat: _Seat | None) -> str | None:
+    """The agent CLI a foreground executable is an installed build of, or None.
+
+    A name proves nothing: any program can be renamed or planted as ``claude``. The
+    executable counts when it resolves to the build the daemon's PATH resolves for that
+    CLI. Claude's and Grok's installers keep each version beside the current one
+    (``claude/versions/<version>``, ``.grok/downloads/grok-<version>-<os>-<arch>``) and a
+    running session keeps its build across an update. A versioned sibling in that
+    installer directory counts only when it is the target session's own recorded CLI
+    process, since anyone who can write the directory can plant a file named like one.
+    """
+    running = _on_disk(executable)
+    if running is None:
+        return None
+    for cli in sorted(_AGENT_CLIS):
+        installed = _installed_cli(cli)
+        if installed is None:
+            continue
+        if running == installed:
+            return cli
+        build = _VERSIONED_BUILDS.get(cli)
+        if (
+            build is not None
+            and running.parent == installed.parent
+            and build.fullmatch(running.name) is not None
+            and seat is not None
+            and seat.runs(running)
+        ):
+            return cli
+    return None
 
 
 def _is_installed_srt_runner(script: str) -> bool:
@@ -117,48 +177,36 @@ def _is_installed_srt_runner(script: str) -> bool:
         return False
 
 
-def _srt_runner_cli(pid: int) -> str | None:
-    """The agent CLI an SRT runner launched, read from its live child in the same group.
+def _node_agent_cli(pid: int, seat: _Seat | None) -> str | None:
+    """Bind a foreground node to the agent CLI it runs, through the session's own process.
 
-    The runner's script names no provider; its child does. The child is classified like
-    any foreground executable, so only an allowlisted CLI name or a versioned Claude
-    build on disk qualifies.
-    """
-    for executable in foreground_child_executables(pid):
-        cli = _agent_cli(command_name(executable), executable)
-        if cli is not None:
-            return cli
-    return None
-
-
-def _node_agent_cli(pid: int) -> str | None:
-    """Bind node's live script to the agent CLI it runs.
-
-    Either the installed Claude package's declared CLI, or Gobby's installed SRT runner
-    with its provider as a live child.
+    node's script is a path read again at check time, so it only names the CLI: a link
+    node opened while it named another file, then pointed at the installed one, reads the
+    same. What admits is the session's recorded CLI process, live in the foreground. For
+    Gobby's installed SRT runner that is the provider it launched, an installed agent CLI
+    build, or node on Claude's npm script. For the script the daemon's PATH resolves
+    ``claude`` to (an npm install) it is node itself, leading the foreground group. A
+    package's own metadata proves nothing, since any directory can declare itself Claude's
+    package.
     """
     script = foreground_node_script(pid)
-    if script is None:
+    live = None if seat is None else seat.process()
+    if script is None or seat is None or live is None:
         return None
     if _is_installed_srt_runner(script):
-        return _srt_runner_cli(pid)
-    try:
-        entrypoint = Path(script).resolve(strict=True)
-        manifest_path = entrypoint.parent / "package.json"
-        if not entrypoint.is_file() or manifest_path.stat().st_size > 65536:
-            return None
-        package = json.loads(manifest_path.read_text())
-        if not isinstance(package, dict) or package.get("name") != "@anthropic-ai/claude-code":
-            return None
-        bins = package.get("bin")
-        relative = bins.get("claude") if isinstance(bins, dict) else None
-        if not isinstance(relative, str):
-            return None
-        if (entrypoint.parent / relative).resolve(strict=True) == entrypoint:
+        cli = _agent_cli(live[1], seat)
+        if cli is None and command_name(live[1]) == "node" and _is_npm_claude(node_script(live[0])):
             return "claude"
-    except (OSError, ValueError):
+        return cli
+    if not _is_npm_claude(script):
         return None
-    return None
+    return "claude" if live[0] == seat.foreground_group else None
+
+
+def _is_npm_claude(script: str | None) -> bool:
+    """Whether node's ``script`` is the entrypoint the daemon's PATH resolves ``claude`` to."""
+    entrypoint = None if script is None else _on_disk(script)
+    return entrypoint is not None and entrypoint == _installed_cli("claude")
 
 
 def _detection_registry(terminal_manager: Any) -> DetectionManifestRegistry:
@@ -166,15 +214,77 @@ def _detection_registry(terminal_manager: Any) -> DetectionManifestRegistry:
     return DetectionManifestRegistry(terminal_manager.db)
 
 
+def _seat(pid: int | None, terminal_context: Mapping[str, Any] | None) -> _Seat | None:
+    """The target session's recorded CLI process, when the session and its shell record one."""
+    if pid is None or terminal_context is None:
+        return None
+    group = foreground_group(pid)
+    return None if group is None else _Seat(terminal_context, group)
+
+
+def _classify(executable: str, pid: int | None, seat: _Seat | None) -> str | None:
+    cli = _agent_cli(executable, seat)
+    if cli is None and command_name(executable) == "node" and pid is not None:
+        cli = _node_agent_cli(pid, seat)
+    return cli
+
+
+async def _foreground_agent_cli(
+    terminal: Any, terminal_context: Mapping[str, Any] | None
+) -> SendKeysRefusal | str:
+    """The agent CLI in the terminal's foreground, or why the process is no agent CLI.
+
+    Process inspection only: nothing here reads what the CLI drew on screen.
+    ``terminal_context`` is the target session's recorded process identity.
+    """
+    pid = shell_pid(terminal)
+    executables = {terminal.id: pid} if pid else {}
+    foreground = await asyncio.to_thread(foreground_executables, executables)
+    executable = foreground.get(terminal.id)
+    if executable is None:
+        return _refuse(
+            "send_keys_target_unconfirmed",
+            "the target's foreground process cannot be read",
+        )
+    command = command_name(executable)
+    if command in _SHELLS:
+        return _refuse("send_keys_target_bare_shell", "the target is a bare shell")
+    seat = await asyncio.to_thread(_seat, pid, terminal_context)
+    cli = await asyncio.to_thread(_classify, executable, pid, seat)
+    if cli is None:
+        return _refuse(
+            "send_keys_target_unconfirmed",
+            f"the foreground process {command} is not an agent CLI",
+        )
+    return cli
+
+
+async def wake_target_refusal(
+    session_id: str, terminal: Any, terminal_context: Mapping[str, Any] | None
+) -> SendKeysRefusal | None:
+    """Return why a live wake must not type into ``terminal``, or ``None``.
+
+    A wake reads no pane text: whether the seat may be typed into is decided by its
+    session row, pane focus and the keystroke composer ledger before this check. Here
+    only the foreground process is confirmed to be an agent CLI, so a wake never types
+    into a bare shell, an editor or a ``sudo`` prompt.
+    """
+    try:
+        found = await _foreground_agent_cli(terminal, terminal_context)
+    except Exception:
+        # Fail closed: an unreadable target never receives keys.
+        logger.warning("wake target check failed for %s", session_id, exc_info=True)
+        return _refuse("send_keys_target_unconfirmed", "the target state could not be confirmed")
+    return found if isinstance(found, SendKeysRefusal) else None
+
+
 async def send_keys_target_refusal(
     session_id: str,
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
     *,
+    terminal_context: Mapping[str, Any] | None,
     clear_held: bool = False,
-    resolved_terminal: Any | None = None,
-    ledger_vouches: bool = False,
-    cursor_draft: bool = False,
 ) -> SendKeysRefusal | ComposerCleared | None:
     """Return why the target cannot take keys, or ``None`` when it shows an idle agent composer.
 
@@ -182,57 +292,22 @@ async def send_keys_target_refusal(
     text, the composer is drained through the pane (recording the drain, so no held
     command is replayed later) and ``ComposerCleared`` is returned; every other
     check still applies.
-
-    ``ledger_vouches`` is set by a live wake. A CLI whose manifest has no composer rules
-    (Grok) has no frame to read, so the ledger's empty verdict confirms its composer; the
-    identity, credential, busy and idle-pane checks still apply. Without it, such a CLI is
-    refused, as send_keys has always refused it.
-
-    ``cursor_draft`` is set by a live wake that found a cursor-only draft. The ledger's draft
-    is not refused then: the frame alone must read as an empty idle composer, and a CLI
-    with no frame reader is refused.
     """
     if terminal_manager is None or terminal_runtime_registry is None:
         return _refuse("send_keys_target_unconfirmed", "the target terminal cannot be inspected")
     try:
-        # A wake passes the terminal it resolved, which may be bound by context id
-        # rather than by session id; the session lookup is the send_keys fallback.
-        terminal = (
-            resolved_terminal
-            if resolved_terminal is not None
-            else terminal_manager.get_live_for_session(session_id)
-        )
+        terminal = terminal_manager.get_live_for_session(session_id)
         if terminal is None:
             return _refuse("send_keys_no_live_terminal", "the target has no live terminal")
 
-        pid = shell_pid(terminal)
-        executables = {terminal.id: pid} if pid else {}
-        foreground = await asyncio.to_thread(foreground_executables, executables)
-        executable = foreground.get(terminal.id)
-        if executable is None:
-            return _refuse(
-                "send_keys_target_unconfirmed",
-                "the target's foreground process cannot be read",
-            )
-        command = command_name(executable)
-        if command in _SHELLS:
-            return _refuse("send_keys_target_bare_shell", "the target is a bare shell")
-        cli = _agent_cli(command, executable)
-        if cli is None and command == "node" and pid is not None:
-            cli = await asyncio.to_thread(_node_agent_cli, pid)
-        if cli is None:
-            return _refuse(
-                "send_keys_target_unconfirmed",
-                f"the foreground process {command} is not an agent CLI",
-            )
+        found = await _foreground_agent_cli(terminal, terminal_context)
+        if isinstance(found, SendKeysRefusal):
+            return found
+        cli = found
 
         composer = read_composer(terminal.id)
         draining = clear_held and composer.state == "held"
-        # A cursor-only draft is confirmed by the frame alone: the frame must read empty below.
-        probing = (
-            cursor_draft and composer.state == "draft" and composer.reason == CURSOR_DRAFT_REASON
-        )
-        if composer.state != "empty" and not draining and not probing:
+        if composer.state != "empty" and not draining:
             return _refuse(
                 "send_keys_composer_not_idle",
                 f"the target composer is {composer.state}, not an idle agent composer",
@@ -242,7 +317,7 @@ async def send_keys_target_refusal(
         registry = _detection_registry(terminal_manager)
         read_frame = composer_reader(registry, cli)
         manifest = registry.for_provider(cli)
-        if manifest is None or (read_frame is None and (probing or not ledger_vouches)):
+        if manifest is None or read_frame is None:
             return _refuse(
                 "send_keys_target_unconfirmed",
                 f"no composer probe is installed for the {cli} agent",

@@ -20,7 +20,6 @@ from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
-from gobby.events.comms_wake import is_operator_comms_wake
 from gobby.events.live_wake import (
     RETRYABLE_WAKE_SKIPS,
     ActivityProbe,
@@ -40,7 +39,7 @@ from gobby.events.wake_active_recovery import (
 )
 from gobby.events.wake_notifications import persist_completion_notification
 from gobby.events.wake_sdk import dispatch_sdk_wake
-from gobby.events.wake_target import settle_cursor_draft, target_gate
+from gobby.events.wake_target import target_gate
 from gobby.events.wake_terminal_resolution import (
     LiveTerminalResolver,
     SessionTerminalRoute,
@@ -753,40 +752,34 @@ class WakeDispatcher:
         method: str,
         handoff_continuation: bool = False,
     ) -> tuple[dict[str, Any] | None, bool]:
-        """Withhold the wake unless the composer ledger admits typing.
+        """Withhold the wake while the pane is focused or the composer ledger refuses typing.
 
         Returns the withheld outcome (``None`` to deliver) and whether the composer
         was confirmed empty; only an unconfirmed delivery keeps the drain.
 
-        ``empty`` alone authorizes typing. A ``held`` composer (daemon text staged
-        and unsubmitted) and a human ``draft`` block, and so does ``unknown``: a
-        blocked or untracked entry (a gap, an interrupt, a provider limit, a tmux
-        pane, a permission or credential prompt) whose composer only a submit or an
-        operator release vouches for again. Its durable messages arrive through hook
-        context on its next tool call instead. A missing probe has no safer read to
-        offer, so it stays on its existing path; a probe *error* withholds and
-        retries. No debounce record is written,
-        so the next wake probes again.
+        No pane text decides a wake (#25901): CLI screens change with every release.
+        The activity probe reads the keystroke ledger and the transcript file, never
+        the screen. An open transcript turn blocks even on an ``empty`` composer: the
+        row was reconciled idle earlier, so a turn that started since then would be
+        steered or cancelled by this write. A probe *error* withholds and retries; a
+        dispatcher without a probe has no safer read and delivers with the drain.
 
-        An open transcript turn blocks even on an ``empty`` composer: the row was
-        reconciled idle earlier, so a turn that started since then would be
-        steered or cancelled by this write.
+        Pane focus stands in for the operator at the keyboard. While a viewer's lease
+        holder reports focus, every wake waits as ``pane_focused``; the hold is recorded
+        for ``release_focus_hold``, which re-dispatches it once the viewer reports focus
+        lost after its idle window. An unfocused pane, or a daemon with no lease
+        registry, takes the wake.
 
-        An operator comms wake meets the same composer rules: it never replaces a
-        ``draft``, ``held`` or ``unknown`` composer, whatever the operator's policy.
-        It also waits while a focused holder of the terminal is typing into it. The
-        hold is recorded for ``release_focus_hold``, which re-dispatches it. The turn
-        checks above run first, so a running turn is never steered, and the hold does
-        not apply to other wakes.
-
-        A gap, an interrupt, or a cursor-only draft the pane does not confirm empty raises
-        the seat's attention item naming ``release_composer``; any other read retires it
-        (``composer_attention``).
+        The ledger still guards text: ``empty`` authorizes typing, a typed ``draft`` or
+        daemon ``held`` text withholds, and a blocked entry (a gap, an interrupt, or a
+        cursor or control key) withholds and raises the seat's attention item naming
+        ``release_composer``. A cursor key may recall history longer than the bounded
+        drain clears, and no pane read proves it gone, so it never rides a wake. No
+        debounce record is written for a withheld wake, so the next wake checks again.
 
         A node terminal's composer is the node's report, read from the hub store.
         Only an empty one passes this check, and target_gate then withholds every
-        node terminal, so no node wake types. The activity probe and turn checks are
-        local-only and do not run for it.
+        node terminal, so no node wake types.
         """
         if terminal is not None and not is_local_machine(terminal.machine_id):
             state = remote_composer_state(str(terminal.id), terminal.machine_id)
@@ -804,32 +797,23 @@ class WakeDispatcher:
         except Exception:
             logger.debug("activity probe failed for session %s", session_id, exc_info=True)
             return composer_unconfirmed_result(session_id, method=method), False
-        composer = await settle_cursor_draft(self, session_id, terminal, activity)
+        composer = activity.composer
         if self._attention_manager is not None:
             await sync_composer_attention(
                 self._attention_manager, self._run_db, session, composer.reason
             )
         if activity.turn_in_flight_fingerprint is not None:
             return composer_unconfirmed_result(session_id, method=method), False
-        if handoff_continuation:
-            if composer.state == "empty":
-                return None, True
-            if composer.state == "draft":
-                return composer_occupied_result(session_id, method=method), False
-            return composer_unconfirmed_result(session_id, method=method), False
-        pending = await self._run_db(self._ism_manager.get_undelivered_wake_messages, session_id)
-        comms_pending = any(is_operator_comms_wake(message) for message in pending)
-        if comms_pending and terminal is not None and self._lease_registry is not None:
+        if terminal is not None and self._lease_registry is not None:
             terminal_id = str(terminal.id)
             if self._lease_registry.focus_held(terminal_id):
                 self._focus_holds.setdefault(terminal_id, set()).add(session_id)
                 return pane_focused_result(session_id, method=method), False
             # The pane is unfocused now, so a hold recorded earlier is stale.
             self._focus_holds.get(terminal_id, set()).discard(session_id)
-        state = composer.state
-        if state == "empty":
+        if composer.state == "empty":
             return None, True
-        if state == "draft":
+        if composer.state == "draft":
             logger.warning(
                 "wake for session %s deferred: composer holds an operator draft", session_id
             )
@@ -876,15 +860,18 @@ class WakeDispatcher:
             )
             if blocked is not None:
                 return blocked
-            refused = await target_gate(self, session_id, terminal)
-            if refused is not None:
-                return refused
             if handoff_attempt_id is not None:
                 _, state_failure = await self._preflight_live_side_effect(
                     session_id, handoff_attempt_id=handoff_attempt_id
                 )
                 if state_failure is not None:
                     return state_failure
+            # Last before the write: no await separates the foreground check from it.
+            refused = await target_gate(
+                session_id, terminal, getattr(session, "terminal_context", None)
+            )
+            if refused is not None:
+                return refused
             if confirmed_empty:
                 # The sender needs the positive proof to settle an old wake latch;
                 # merely opting out of a drain does not supply that proof.

@@ -78,8 +78,12 @@ def command_name(raw: str) -> str:
 def foreground_executables(shell_pids: Mapping[str, int]) -> dict[str, str]:
     """Map each key in ``shell_pids`` to the executable in its terminal's foreground.
 
-    The value is the leader's raw ``ps`` comm: an absolute path on macOS, which
-    :func:`command_name` reduces to a bare name. Keys whose shell is gone, whose
+    The value is the leader's absolute on-disk executable path, which :func:`command_name`
+    reduces to a bare name. ``ps`` reports only the accounting name, a basename cut to 16
+    characters on macOS, so a versioned build (``2.1.322``, ``grok-1.0.77-maco``) cannot be
+    told apart by it; the path can. When the path is unreadable (another user's process),
+    the accounting name stands, which names a program but never proves a versioned build.
+    Keys whose shell is gone, whose
     shell has no controlling terminal, or whose foreground group leader cannot be
     read are absent from the result rather than present with a placeholder, so a
     caller can tell "unknown" from a real name. An idle shell is its own foreground
@@ -98,8 +102,33 @@ def foreground_executables(shell_pids: Mapping[str, int]) -> dict[str, str]:
         leader = snapshot.get(shell[0])
         if leader is None:
             continue
-        resolved[key] = leader[1]
+        resolved[key] = _executable_path(shell[0]) or leader[1]
     return resolved
+
+
+def foreground_group(shell_pid: int) -> int | None:
+    """The foreground process group of the terminal ``shell_pid``'s shell controls, or None."""
+    shell = _process_snapshot().get(shell_pid) if shell_pid > 0 else None
+    return None if shell is None else shell[0]
+
+
+def group_and_executable(pid: int) -> tuple[int, str] | None:
+    """``pid``'s process group and absolute on-disk executable, or None when unreadable."""
+    try:
+        group = os.getpgid(pid)
+    except OSError:
+        return None
+    executable = _executable_path(pid)
+    return None if executable is None else (group, executable)
+
+
+def _executable_path(pid: int) -> str | None:
+    """``pid``'s absolute on-disk executable, or ``None`` when it cannot be read."""
+    try:
+        path = psutil.Process(pid).exe()
+    except (psutil.Error, OSError):
+        return None
+    return path if path and Path(path).is_absolute() else None
 
 
 def foreground_commands(shell_pids: Mapping[str, int]) -> dict[str, str]:
@@ -121,8 +150,13 @@ def foreground_node_script(pid: int) -> str | None:
     leader = snapshot.get(shell[0]) if shell else None
     if shell is None or leader is None or command_name(leader[1]) != "node":
         return None
+    return node_script(shell[0])
+
+
+def node_script(pid: int) -> str | None:
+    """Return node process ``pid``'s direct absolute script entrypoint, if proven."""
     try:
-        process = psutil.Process(shell[0])
+        process = psutil.Process(pid)
         argv = process.cmdline()
         if command_name(process.exe()) != "node" or len(argv) < 2:
             return None
@@ -136,29 +170,6 @@ def foreground_node_script(pid: int) -> str | None:
         return script
     except (psutil.Error, OSError):
         return None
-
-
-def foreground_child_executables(pid: int) -> list[str]:
-    """Executables of ``pid``'s direct children that share its process group.
-
-    A launcher that runs a provider without giving it a group of its own leaves the
-    provider in the launcher's foreground group. Such a child holds the terminal with
-    its parent, and its on-disk executable names the provider, which the group leader's
-    command does not. A child whose lookup fails is dropped, never guessed at.
-    """
-    try:
-        group = os.getpgid(pid)
-        children = psutil.Process(pid).children(recursive=False)
-    except (OSError, psutil.Error):
-        return []
-    executables: list[str] = []
-    for child in children:
-        try:
-            if os.getpgid(child.pid) == group:
-                executables.append(child.exe())
-        except (OSError, psutil.Error):
-            continue
-    return executables
 
 
 def shell_cwds(shell_pids: Mapping[str, int]) -> dict[str, str]:
@@ -214,6 +225,8 @@ __all__ = [
     "command_name",
     "foreground_commands",
     "foreground_executables",
+    "foreground_group",
+    "group_and_executable",
     "process_shell",
     "shell_cwds",
     "shell_pid",
