@@ -24,7 +24,7 @@ from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     SUPPORTED_HOOK_RESPONSE_CAPABILITY,
 )
-from gobby.hooks.session_claimant import Claimant, claim_session_start
+from gobby.hooks.session_claimant import Claimant, SessionStartClaim, claim_session_start
 from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_startup_marks import (
@@ -58,7 +58,13 @@ THREAD = "provider-session-25905-pin"
 
 
 def _started(pid: int) -> float:
-    return psutil.Process(pid).create_time()
+    return float(psutil.Process(pid).create_time())
+
+
+def _mark_pinned_to(db: HubDatabase, pin: StartupPin) -> bool:
+    """Leave THREAD's startup mark and pin ``pin`` to it; return whether the pin took."""
+    record_startup_mark(db, machine_id=TEST_MACHINE_ID, source="claude", external_id=THREAD)
+    return pin_startup(db, machine_id=TEST_MACHINE_ID, source="claude", external_id=THREAD, pin=pin)
 
 
 @pytest.fixture
@@ -224,9 +230,7 @@ def test_a_new_startup_repins_a_thread_whose_pinned_cli_died(
 ) -> None:
     _machine_caller(hook_route)
     identity = _identity(_fresh_workspace(tmp_path, sample_project))
-    mark = {"machine_id": TEST_MACHINE_ID, "source": "claude", "external_id": THREAD}
-    record_startup_mark(temp_db, **mark)
-    assert pin_startup(temp_db, **mark, pin=dead_cli)
+    assert _mark_pinned_to(temp_db, dead_cli)
     me = _claimant(os.getpid())
 
     with _as(me):
@@ -250,10 +254,8 @@ def test_a_reused_pid_with_another_start_time_is_not_the_pinned_cli(
     """The pinned pid now names a later process, so the pin is dead, not this CLI's."""
     _machine_caller(hook_route)
     identity = _identity(_fresh_workspace(tmp_path, sample_project))
-    mark = {"machine_id": TEST_MACHINE_ID, "source": "claude", "external_id": THREAD}
-    record_startup_mark(temp_db, **mark)
     earlier = StartupPin(cli_pid=os.getpid(), cli_create_time=_started(os.getpid()) - 3600)
-    assert pin_startup(temp_db, **mark, pin=earlier)
+    assert _mark_pinned_to(temp_db, earlier)
     me = _claimant(os.getpid())
 
     with _as(me):
@@ -345,16 +347,20 @@ def test_two_new_clis_racing_for_a_dead_owners_row_leave_one_owner(
 ) -> None:
     """The row's owner is swapped by compare-and-swap, so the second claim finds a live owner."""
     _live_row(temp_db, session_manager, sample_project, dead_cli)
-    claim = {
-        "daemon_pid": -1,
-        "external_id": THREAD,
-        "source": "claude",
-        "machine_id": TEST_MACHINE_ID,
-        "start": True,
-    }
 
-    first = claim_session_start(temp_db, claimant=_claimant(os.getpid()), **claim)
-    second = claim_session_start(temp_db, claimant=_claimant(victim_cli), **claim)
+    def claim(pid: int) -> SessionStartClaim:
+        return claim_session_start(
+            temp_db,
+            claimant=_claimant(pid),
+            daemon_pid=-1,
+            external_id=THREAD,
+            source="claude",
+            machine_id=TEST_MACHINE_ID,
+            start=True,
+        )
+
+    first = claim(os.getpid())
+    second = claim(victim_cli)
 
     assert first.refusal is None and first.proven
     assert second.refusal == MISMATCH["code"]

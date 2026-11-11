@@ -71,7 +71,7 @@ OTHER_CLI = Claimant(
 
 def _started(pid: int) -> float:
     """The start time that names live process ``pid``."""
-    return psutil.Process(pid).create_time()
+    return float(psutil.Process(pid).create_time())
 
 
 @pytest.fixture
