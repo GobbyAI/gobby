@@ -22,9 +22,9 @@ def foreign_originator_reason(
     """Return why a Gobby MCP call naming another session as its originator is refused.
 
     A session may originate calls only under its own session_ref: the wrapper session_id
-    names the caller, and the MCP client presents the credential stored for that ref. A
-    ref naming another session, or no session at all, is refused. The variable tools'
-    session_id names their target, and a target inside ``arguments`` is never the caller.
+    names the caller, so a ref naming another session, or no session at all, is refused.
+    The variable tools' session_id names their target, and a target inside ``arguments``
+    is never the caller.
     """
     if event.event_type != HookEventType.BEFORE_TOOL or session_manager is None:
         return None

@@ -201,17 +201,12 @@ def _attach_session_credential(
 ) -> dict[str, Any]:
     """Hand a machine-started session its own token after its hook is persisted.
 
-    Only a hook whose claimant the kernel proved owns the session gets one: a start, or
-    the first activity hook that materializes a deferred startup's row (its claim carries
-    the CLI pid it stores). That row must hold that CLI pid. A managed agent token never
-    reaches this branch, and a run-bound start already holds its own token. A
-    daemon-internal replay and a hook without proof mint nothing.
+    Only a kernel-proven claimant gets one, on a start or on the hook that materializes a
+    deferred startup's row, which must store the claim's CLI pid. A managed or run-bound
+    caller never reaches this branch; a daemon replay or an unproven hook mints nothing.
     """
-    if not claim.proven:
-        return response
-    if claim.cli_pid is None and not is_session_start_hook(
-        payload.get("source"), payload.get("hook_type")
-    ):
+    start = is_session_start_hook(payload.get("source"), payload.get("hook_type"))
+    if not claim.proven or (claim.cli_pid is None and not start):
         return response
     if request.headers.get(AGENT_RUN_ID_HEADER):
         return response
