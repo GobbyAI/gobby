@@ -225,8 +225,8 @@ async def test_seat_continues_after_its_own_handoff(
     verify_binary_set(handoff_admission)
     binary = handoff_admission.providers[provider].path
     clear = scenario == "clear"
-    # The fixed folder must already be trusted (read-only check in the fixture); the proof
-    # never writes provider trust, so an untrusted folder fails fast before the CLI starts.
+    # The proof never reads or writes provider trust. A seat that stops at a trust prompt
+    # fails registration, and its artifact records the last frame's class, never its text.
     command = provider_launch(
         _seat_command(provider, binary, scenario), provider_environment, provider=provider
     )
