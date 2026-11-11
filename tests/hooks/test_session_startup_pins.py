@@ -556,8 +556,37 @@ def test_the_protected_branch_guard_is_not_a_cli_session_claim(
                     "tool_name": "Bash",
                     "tool_input": {"command": "git commit"},
                     "staged_paths": ["README.md"],
-                    "integration_branch": "0.5.0",
+                    "integration_branch": "synthetic-integration",
                 },
+            },
+        )
+
+    assert verdict.status_code == 200, verdict.text
+    assert temp_db.fetchone("SELECT 1 FROM sessions WHERE source = 'git'") is None
+
+
+def test_an_unbound_protected_branch_guard_mints_no_session(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """With no bound session header, the guard resolves no session and never creates one."""
+    _machine_caller(hook_route)
+    identity = _identity(_fresh_workspace(tmp_path, sample_project))
+
+    with _as(_claimant(os.getpid())):
+        verdict = _hook_response(
+            hook_route,
+            hook_type="PreToolUse",
+            source="git",
+            input_data={
+                **identity,
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "tool_input": {"command": "git commit"},
+                "staged_paths": ["README.md"],
+                "integration_branch": "synthetic-integration",
             },
         )
 

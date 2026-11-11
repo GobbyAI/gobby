@@ -18,7 +18,12 @@ from gobby.hooks.codex_seat import (
     codex_seat_available,
 )
 from gobby.hooks.event_handlers._session_start.terminal_runtime import bind_discovered_terminal
-from gobby.hooks.events import HookEvent, HookEventType, require_hook_machine_id
+from gobby.hooks.events import (
+    HookEvent,
+    HookEventType,
+    SessionSource,
+    require_hook_machine_id,
+)
 from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
 from gobby.hooks.session_binding import bound_session
 from gobby.hooks.session_types import HookSessionManager
@@ -500,6 +505,9 @@ class SessionLookupService:
 
         if platform_session_id or event.event_type == HookEventType.SESSION_START:
             return platform_session_id
+        if event.source == SessionSource.GIT:
+            # The protected-branch guard only names a committing session; it never mints one.
+            return None
 
         with self._session_coordinator.get_lookup_lock(external_id, event.source.value):
             platform_session_id = self._session_manager.get_session_id(
