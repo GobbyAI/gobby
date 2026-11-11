@@ -1344,6 +1344,39 @@ class TestAcpHandlerEdgeCases:
 
         assert response.decision == "allow"
 
+    @pytest.mark.parametrize(("source", "resumes"), [("agy", True), ("codex", False)])
+    def test_before_model_resumes_turn_except_codex(
+        self, mock_dependencies: dict[str, Any], source: str, resumes: bool
+    ) -> None:
+        """Codex PreModelRequest is observe-only and must never reopen a finished turn."""
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.BEFORE_MODEL,
+            source=source,
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        with patch.object(handlers, "_resume_turn_lifecycle") as resume:
+            response = handlers.handle_before_model(event)
+
+        assert response.decision == "allow"
+        assert resume.called is resumes
+
+    def test_codex_after_model_writes_no_usage(self, mock_dependencies: dict[str, Any]) -> None:
+        """Codex model-request usage stays with the transcript ledger."""
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_MODEL,
+            source="codex",
+            data={"response": {"usageMetadata": {"promptTokenCount": 10}}},
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        response = handlers.handle_after_model(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_manager"].update_usage.assert_not_called()
+
     def test_before_model_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test BEFORE_MODEL handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)

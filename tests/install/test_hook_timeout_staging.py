@@ -71,16 +71,14 @@ def test_codex_template_keeps_session_end_enqueue_only() -> None:
     assert set(_timeout_values(template)) == {3, 120}
 
 
-def test_codex_model_request_hooks_order_pre_and_enqueue_post() -> None:
+@pytest.mark.parametrize("event", ["PreModelRequest", "PostModelRequest"])
+def test_codex_model_request_hooks_are_enqueue_only(event: str) -> None:
     template = json.loads(Path("src/gobby/install/codex/hooks-template.json").read_text())
-    pre = template["hooks"]["PreModelRequest"][0]["hooks"][0]
-    post = template["hooks"]["PostModelRequest"][0]["hooks"][0]
+    handler = template["hooks"][event][0]["hooks"][0]
 
-    # PreModelRequest marks the turn as working, so it must finish before the turn's Stop.
-    assert "--enqueue-only" not in pre["command"]
-    assert pre["timeout"] == 120
-    assert post["command"].endswith("--type=PostModelRequest --enqueue-only")
-    assert post["timeout"] == 3
+    # Observe-only events add no daemon round trip to each model request.
+    assert handler["command"].endswith(f"--type={event} --enqueue-only")
+    assert handler["timeout"] == 3
 
 
 def test_claude_model_switch_timeout_outlasts_ghook_window() -> None:

@@ -140,8 +140,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ghook --gobby-owned --cli=codex --type=PreModelRequest",
-            "timeout": 120
+            "command": "ghook --gobby-owned --cli=codex --type=PreModelRequest --enqueue-only",
+            "timeout": 3
           }
         ]
       }

@@ -182,23 +182,32 @@ class MiscEventHandlerMixin(EventHandlersBase):
         return HookResponse(decision="allow")
 
     def handle_before_model(self, event: HookEvent) -> HookResponse:
-        """Handle BEFORE_MODEL events for ACP-style providers."""
+        """Handle BEFORE_MODEL events.
+
+        Antigravity's later PreInvocations resume the turn. Codex PreModelRequest is
+        observed only: it arrives fire-and-forget and may fire outside a prompt-to-Stop
+        bracket, so it must never reopen a finished turn.
+        """
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:
             self.logger.debug("BEFORE_MODEL: session %s", session_id)
-            self._resume_turn_lifecycle(event)
+            if event.source is not SessionSource.CODEX:
+                self._resume_turn_lifecycle(event)
         else:
             self.logger.debug("BEFORE_MODEL")
 
         return HookResponse(decision="allow")
 
     def handle_after_model(self, event: HookEvent) -> HookResponse:
-        """Handle AFTER_MODEL events for ACP-style providers."""
+        """Handle AFTER_MODEL events.
+
+        Codex PostModelRequest is observed only; its usage stays with the transcript ledger.
+        """
         session_id = event.metadata.get("_platform_session_id")
         input_data = event.data
 
-        if session_id:
+        if session_id and event.source is not SessionSource.CODEX:
             self.logger.debug("AFTER_MODEL: session %s", session_id)
 
             # Extract usage metadata from response

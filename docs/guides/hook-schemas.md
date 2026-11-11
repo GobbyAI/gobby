@@ -253,10 +253,10 @@ be an alias. Claude blocks the switch when a `PreModelSwitch` hook times out,
 so the installed 120-second timeout sits outside ghook's 30-second transport
 window: a slow daemon fails open and `/model` proceeds.
 
-Codex `PreModelRequest` is synchronous so it orders before the turn's `Stop`;
-it marks the turn as working. `PostModelRequest` is fire-and-forget
-(`--enqueue-only`). Codex treats both outputs as diagnostic only, so the adapter
-returns `{}`. Token usage stays with the transcript ledger.
+Codex `PreModelRequest` and `PostModelRequest` are fire-and-forget
+(`--enqueue-only`) and observe only: a Codex `before_model` never reopens a
+turn, and token usage stays with the transcript ledger. Codex treats both
+outputs as diagnostic only, so the adapter returns `{}`.
 
 Codex `PreToolUse` and `Stop` responses use `systemMessage` for context; Codex
 does not accept `additionalContext` for those hooks.
