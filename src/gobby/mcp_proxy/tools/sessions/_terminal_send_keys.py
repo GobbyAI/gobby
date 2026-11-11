@@ -161,10 +161,12 @@ def register_send_keys_tool(
         resolved_key: str,
     ) -> dict[str, Any]:
         """Gate the target's terminal, then write keys through the coordinator."""
+        target_session = session_manager.get(resolved_session_id)
         refusal = await send_keys_target_refusal(
             resolved_session_id,
             terminal_manager,
             terminal_runtime_registry,
+            terminal_context=getattr(target_session, "terminal_context", None),
             clear_held=clear_held,
         )
         if isinstance(refusal, ComposerCleared):
@@ -177,7 +179,6 @@ def register_send_keys_tool(
                 "recovery": refusal.recovery,
                 "idempotency_key": resolved_key,
             }
-        target_session = session_manager.get(resolved_session_id)
         if (
             write_coordinator is not None
             and terminal_manager is not None

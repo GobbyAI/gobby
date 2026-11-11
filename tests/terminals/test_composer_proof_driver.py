@@ -40,11 +40,12 @@ async def test_owned_termination_requires_public_ack_and_exited_readback(
     send, wait = AsyncMock(), AsyncMock(return_value={"success": True})
     seat = cast(Seat, SimpleNamespace(surface=own, ws=SimpleNamespace(send=send, wait_for=wait)))
     proof.seats = [seat]
-    row = {"session_id": own.session_id, "state": "exited" if exited else "live"}
+    # validate() binds the live seat first; the exited readback reads the row directly,
+    # since an exited row releases its session binding.
+    readback = {"session_id": own.session_id, "state": "exited" if exited else "live"}
     with (
-        patch.object(proof, "validate", AsyncMock(return_value=row)),
-        # The exited readback rereads the terminal row without validate().
-        patch.object(proof, "terminal", AsyncMock(return_value=row)),
+        patch.object(proof, "validate", AsyncMock(return_value={"state": "live"})),
+        patch.object(proof, "terminal", AsyncMock(return_value=readback)),
     ):
         if not exited:
             with pytest.raises(ProofRefused, match="termination"):
@@ -216,10 +217,11 @@ def test_setup_requires_the_isolated_project_and_e2e_home(tmp_path: Path) -> Non
 @pytest.mark.parametrize("field", ["id", "session_id", "project_id", "epoch", "host_socket"])
 async def test_rebound_surface_receives_zero_editor_input(tmp_path: Path, field: str) -> None:
     own = Surface("codex", str(uuid4()), str(uuid4()), "proof-epoch", str(uuid4()))
+    # Terminal rows carry no project; the bound session's record names it.
+    project = str(uuid4()) if field == "project_id" else own.project_id
     row: dict[str, object] = {
         "id": own.terminal_id,
         "session_id": own.session_id,
-        "project_id": own.project_id,
         "backend": "native",
         "attach": {
             "backend": "native",
@@ -239,7 +241,7 @@ async def test_rebound_surface_receives_zero_editor_input(tmp_path: Path, field:
             "host_socket": "/foreign/control.sock",
             "host_terminal_id": own.terminal_id,
         }
-    else:
+    elif field != "project_id":
         row[field] = str(uuid4())
 
     def respond(request: httpx.Request) -> httpx.Response:
@@ -252,10 +254,12 @@ async def test_rebound_surface_receives_zero_editor_input(tmp_path: Path, field:
     )
     write = AsyncMock()
     seat = cast(Seat, SimpleNamespace(surface=own, ws=SimpleNamespace(write=write)))
-    # The seat's project comes from its session record, which follows the row.
-    session = AsyncMock(return_value={"project_id": row["project_id"]})
+    session = AsyncMock(return_value={"project_id": project})
     try:
-        with patch.object(proof, "call", session), pytest.raises(ProofRefused, match="binding"):
+        with (
+            patch.object(proof, "call", session),
+            pytest.raises(ProofRefused, match="binding"),
+        ):
             await proof.edit(seat, "R2_22915_CODEX_DRAFT_ABCD_EFGH")
         write.assert_not_awaited()
     finally:

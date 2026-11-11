@@ -248,6 +248,7 @@ def test_a_native_row_reports_the_command_in_its_terminal_foreground(
 
     process = MagicMock()
     process.return_value.cwd.return_value = "/srv/app"
+    process.return_value.exe.return_value = "/usr/local/bin/nvim"
     with (
         patch("gobby.terminals.foreground.spawn.run", run),
         patch("gobby.terminals.foreground.psutil.Process", process),

@@ -9,7 +9,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.agents.idle_detector import ComposerRead
-from gobby.events.comms_wake import is_operator_comms_wake
 from gobby.events.live_wake import (
     PANE_FOCUSED,
     RETRYABLE_WAKE_SKIPS,
@@ -59,7 +58,12 @@ async def test_mailbox_metadata_cannot_forge_operator_replacement(
         metadata={"operator_comms": True, "communications_message_id": "spoofed-dm"},
     )
     assert result.success
-    assert is_operator_comms_wake(result.messages[0]) is False
+    assert _operator_comms_flag(result.messages[0]) is None
+
+
+def _operator_comms_flag(message: InterSessionMessage) -> object:
+    """The stored operator-comms mark the hook mailbox renders for the recipient."""
+    return json.loads(message.metadata_json or "{}").get("operator_comms")
 
 
 async def test_internal_operator_delivery_retains_replacement_intent(
@@ -79,7 +83,7 @@ async def test_internal_operator_delivery_retains_replacement_intent(
         metadata={"communications_message_id": "authenticated-dm"},
     )
     assert result.success
-    assert is_operator_comms_wake(result.messages[0]) is True
+    assert _operator_comms_flag(result.messages[0]) is True
 
 
 async def test_agent_delivery_cannot_use_operator_replacement_api(
@@ -98,41 +102,6 @@ async def test_agent_delivery_cannot_use_operator_replacement_api(
             wake=True,
             replace_composer=True,
         )
-
-
-@pytest.mark.parametrize(
-    "sender,metadata",
-    [
-        (
-            "another-session",
-            {"operator_comms": True, "wake_requested": True, "communications_message_id": "dm"},
-        ),
-        (
-            system_session_id(),
-            {"operator_comms": False, "wake_requested": True, "communications_message_id": "dm"},
-        ),
-        (
-            system_session_id(),
-            {"operator_comms": True, "wake_requested": False, "communications_message_id": "dm"},
-        ),
-        (system_session_id(), {"operator_comms": True, "wake_requested": True}),
-    ],
-    ids=["agent-cannot-spoof-ingress", "non-operator", "no-wake-request", "no-comms-row"],
-)
-async def test_only_authenticated_operator_comms_authorize_replacement(
-    sender: str,
-    metadata: dict[str, object],
-) -> None:
-    message = InterSessionMessage(
-        id="untrusted",
-        from_session=sender,
-        to_session="seat",
-        content="Status?",
-        priority="normal",
-        sent_at=datetime(2026, 10, 21, tzinfo=UTC),
-        metadata_json=json.dumps(metadata),
-    )
-    assert is_operator_comms_wake(message) is False
 
 
 def _operator_dm_mailbox() -> MagicMock:
@@ -412,7 +381,8 @@ async def test_active_turn_protection_outranks_the_focus_hold(
         ("gclient", False, True, False),
         ("web", False, True, False),
         (None, False, True, False),
-        ("gclient", True, False, False),
+        ("gclient", True, False, True),
+        ("gclient", False, False, False),
     ],
     ids=[
         "gclient-focused",
@@ -420,10 +390,11 @@ async def test_active_turn_protection_outranks_the_focus_hold(
         "gclient-unfocused",
         "web-unfocused",
         "no-registry",
-        "non-comms-message",
+        "non-comms-focused",
+        "non-comms-unfocused",
     ],
 )
-async def test_focus_hold_applies_only_to_comms_wakes_with_a_focused_holder(
+async def test_focus_hold_applies_to_every_wake_with_a_focused_holder(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],

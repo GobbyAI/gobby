@@ -196,23 +196,14 @@ class ComposerLedger:
     def cursor_mark(self, terminal_id: str) -> int | None:
         """The human input mark of a cursor-only draft; ``None`` for any other composer state.
 
-        The mark is the draft's last human input. Input after it moves the mark, so a
-        confirmation taken against an older mark cannot clear text the frame never showed.
+        The mark is the draft's last human input. A wake's drain keys clear a cursor-only
+        draft before it types, so this is the one draft a wake may type over.
         """
         with self._lock:
             entry = self._entries.get(terminal_id)
             if entry is None or not _cursor_only(entry):
                 return None
             return entry.human_seq
-
-    def confirm_empty(self, terminal_id: str, mark: int) -> bool:
-        """Clear the cursor-only draft ``mark`` names, once an idle empty frame confirmed it."""
-        with self._lock:
-            entry = self._entries.get(terminal_id)
-            if entry is None or entry.human_seq != mark or not _cursor_only(entry):
-                return False
-            entry.clean_seq = self._next()
-            return True
 
     def record_spawn(self, terminal_id: str, epoch: str) -> None:
         """A terminal committed on host ``epoch`` starts with an empty composer.
@@ -542,8 +533,15 @@ def _close_wait(entry: _Entry, outcome: WaitOutcome) -> bool:
 
 
 def _cursor_only(entry: _Entry) -> bool:
-    """A draft that no typed text has reached since the composer was last clean."""
-    return _read(entry).state == "draft" and entry.typed_seq <= entry.clean_seq
+    """A draft that neither typed text nor held daemon text has reached since it was clean.
+
+    Held daemon text under a cursor key is still daemon text, which no wake replaces.
+    """
+    return (
+        _read(entry).state == "draft"
+        and entry.typed_seq <= entry.clean_seq
+        and entry.pending_seq <= entry.clean_seq
+    )
 
 
 def _read(entry: _Entry) -> LedgerRead:
@@ -580,7 +578,8 @@ def read_composer(terminal_id: str) -> ComposerRead:
     """The bound ledger's composer read; blocked, untracked and unbound read ``unknown``.
 
     A blocked or untracked entry carries its block reason; an unbound ledger has none. A
-    cursor-only draft reads ``draft`` with the cursor reason, which a wake may probe.
+    cursor-only draft reads ``draft`` with the cursor reason, which withholds a wake and
+    raises the seat's attention item.
     """
     if _bound is None:
         return ComposerRead("unknown")
@@ -590,16 +589,6 @@ def read_composer(terminal_id: str) -> ComposerRead:
     if read.state == "draft" and _bound.cursor_mark(terminal_id) is not None:
         return ComposerRead("draft", reason=CURSOR_DRAFT_REASON)
     return ComposerRead(read.state, read.pending)
-
-
-def cursor_draft_mark(terminal_id: str) -> int | None:
-    """The bound ledger's cursor-only draft mark; ``None`` when unbound or not cursor-only."""
-    return None if _bound is None else _bound.cursor_mark(terminal_id)
-
-
-def confirm_cursor_draft(terminal_id: str, mark: int) -> bool:
-    """Clear the bound ledger's cursor-only draft ``mark`` names; whether it cleared."""
-    return _bound is not None and _bound.confirm_empty(terminal_id, mark)
 
 
 def composer_drain_keys(terminal_id: str, cli_source: str | None) -> tuple[NamedKey, ...]:
