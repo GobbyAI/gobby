@@ -86,6 +86,8 @@ class HookCapability:
     context_channel: ContextChannel = ContextChannel.NONE
     reason_format: ReasonFormat = ReasonFormat.PASSTHROUGH
     supported_response_fields: frozenset[str] = field(default_factory=frozenset)
+    # The adapter starts the session from this hook although its event is not SESSION_START.
+    starts_session: bool = False
 
     @property
     def unsupported_response_fields(self) -> frozenset[str]:
@@ -272,6 +274,8 @@ CODEX_EVENT_MAP: dict[str, HookEventType] = {
     "Stop": HookEventType.STOP,
     "Interrupt": HookEventType.INTERRUPT,
     "SessionEnd": HookEventType.SESSION_END,
+    "PreModelRequest": HookEventType.BEFORE_MODEL,
+    "PostModelRequest": HookEventType.AFTER_MODEL,
 }
 
 CODEX_ADDITIONAL_CONTEXT_HOOKS = frozenset(
@@ -310,6 +314,8 @@ def _codex_capabilities() -> ProviderCapabilities:
             "UserPromptSubmit",
             "PostToolUse",
             "Interrupt",
+            "PreModelRequest",
+            "PostModelRequest",
         }:
             decision_style = ProviderDecisionStyle.NONE
 
@@ -440,7 +446,7 @@ def _agy_capabilities() -> ProviderCapabilities:
             extra_fields.extend(["permission_decision", "auto_approve", "modified_input"])
         elif hook_name == "Stop":
             decision_style = ProviderDecisionStyle.HARD_STOP
-        elif hook_name in {"PreInvocation", "PostInvocation"}:
+        elif hook_name in {"SessionStart", "PreInvocation", "PostInvocation"}:
             context_channel = ContextChannel.INJECT_STEPS
 
         events[hook_name] = HookCapability(
@@ -452,6 +458,9 @@ def _agy_capabilities() -> ProviderCapabilities:
                 *extra_fields,
                 context_channel=context_channel,
             ),
+            # SessionStart starts a new conversation; AgyAdapter.handle_native dispatches a
+            # synthetic SESSION_START per PreInvocation for resumed ones.
+            starts_session=hook_name in {"SessionStart", "PreInvocation"},
         )
 
     return ProviderCapabilities(

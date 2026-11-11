@@ -135,6 +135,31 @@ def test_claude_2_1_226_hook_capabilities_are_declared() -> None:
     assert directory.decision_style is ProviderDecisionStyle.IGNORE_BLOCK
 
 
+def test_model_switch_and_model_request_hooks_are_declared() -> None:
+    claude = get_provider_capabilities("claude")
+    pre_switch = claude.get_hook("PreModelSwitch")
+    post_switch = claude.get_hook("PostModelSwitch")
+
+    assert pre_switch is not None
+    assert pre_switch.event_type is HookEventType.PRE_MODEL_SWITCH
+    assert pre_switch.decision_style is ProviderDecisionStyle.TOP_LEVEL_BLOCK
+    assert post_switch is not None
+    assert post_switch.event_type is HookEventType.POST_MODEL_SWITCH
+    assert post_switch.decision_style is ProviderDecisionStyle.IGNORE_BLOCK
+    assert post_switch.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+
+    codex = get_provider_capabilities("codex")
+    pre_request = codex.get_hook("PreModelRequest")
+    post_request = codex.get_hook("PostModelRequest")
+
+    assert pre_request is not None
+    assert pre_request.event_type is HookEventType.BEFORE_MODEL
+    assert pre_request.decision_style is ProviderDecisionStyle.NONE
+    assert post_request is not None
+    assert post_request.event_type is HookEventType.AFTER_MODEL
+    assert post_request.decision_style is ProviderDecisionStyle.NONE
+
+
 def test_agy_hook_capabilities_have_no_live_transport_claims() -> None:
     """AGY supports hook install parity only; live runtime transport stays unavailable."""
     capabilities = get_provider_capabilities("agy")

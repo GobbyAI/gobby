@@ -100,6 +100,8 @@ class TestHookTypeEnum:
             "ELICITATION_RESULT",
             "BEFORE_MODEL",
             "AFTER_MODEL",
+            "PRE_MODEL_SWITCH",
+            "POST_MODEL_SWITCH",
             "PERMISSION_REQUEST",
             "PERMISSION_DENIED",
         }
@@ -126,6 +128,8 @@ class TestHookTypeEnum:
         assert HookType.DIRECTORY_ADDED.value == "directory-added"
         assert HookType.BEFORE_MODEL.value == "before-model"
         assert HookType.AFTER_MODEL.value == "after-model"
+        assert HookType.PRE_MODEL_SWITCH.value == "pre-model-switch"
+        assert HookType.POST_MODEL_SWITCH.value == "post-model-switch"
         assert HookType.PERMISSION_REQUEST.value == "permission-request"
 
 

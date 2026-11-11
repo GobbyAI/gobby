@@ -341,43 +341,16 @@ def _seat() -> gate._Seat:
     ],
     ids=["installed", "older-sibling", "unversioned", "look-alike-tree", "wrong-dir"],
 )
-def test_only_the_installed_grok_or_the_seats_own_sibling_build_is_an_agent_cli(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, parts: tuple[str, ...], expected: str | None
+def test_only_the_installed_grok_or_a_sibling_build_beside_it_is_an_agent_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, parts: tuple[str, ...], expected: str | None
 ) -> None:
     # A renamed shell at /tmp/.grok/downloads/grok-<v>-<os>-<arch> has the installer's
-    # shape but not its directory, so it is no agent CLI, even as the seat's process.
+    # shape but not its directory, so it is no agent CLI.
     _install(monkeypatch, "grok", tmp_path / ".grok" / "downloads" / "grok-1.0.78-macos-aarch64")
     build = _file(tmp_path.joinpath(*parts))
-    _seat_process(monkeypatch, build)
 
-    assert gate._agent_cli(str(build), _seat()) == expected
-    assert gate._agent_cli(str(tmp_path / "missing" / build.name), _seat()) is None
-
-
-@pytest.mark.parametrize(
-    "seat",
-    ["none", "identity-mismatch", "background-group", "runs-the-current-build", "unreadable"],
-)
-def test_a_planted_versioned_sibling_is_no_agent_cli(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, seat: str
-) -> None:
-    # Anyone who can write the installer directory can copy a shell there under a version
-    # name. It counts only as the session's recorded CLI process in the foreground.
-    installed = tmp_path / ".grok" / "downloads" / "grok-1.0.78-macos-aarch64"
-    _install(monkeypatch, "grok", installed)
-    planted = _file(tmp_path / ".grok" / "downloads" / "grok-9.9.9-macos-aarch64")
-    if seat == "identity-mismatch":
-        _seat_process(monkeypatch, planted, identity=False)
-    elif seat == "background-group":
-        _seat_process(monkeypatch, planted, group=FOREGROUND_GROUP + 1)
-    elif seat == "runs-the-current-build":
-        _seat_process(monkeypatch, installed)
-    else:
-        _seat_process(monkeypatch, planted)
-    if seat == "unreadable":
-        monkeypatch.setattr(gate, "group_and_executable", lambda pid: None)
-
-    assert gate._agent_cli(str(planted), None if seat == "none" else _seat()) is None
+    assert gate._agent_cli(str(build)) == expected
+    assert gate._agent_cli(str(tmp_path / "missing" / build.name)) is None
 
 
 @pytest.mark.parametrize("cli", sorted(gate._AGENT_CLIS))
@@ -391,10 +364,10 @@ def test_a_program_named_like_an_agent_cli_is_not_one(
     linked.parent.mkdir()
     linked.symlink_to(planted)
 
-    assert gate._agent_cli(str(tmp_path / "installed" / cli), None) == cli
-    assert gate._agent_cli(str(planted), None) is None
-    assert gate._agent_cli(str(linked), None) is None
-    assert gate._agent_cli(cli, None) is None
+    assert gate._agent_cli(str(tmp_path / "installed" / cli)) == cli
+    assert gate._agent_cli(str(planted)) is None
+    assert gate._agent_cli(str(linked)) is None
+    assert gate._agent_cli(cli) is None
 
 
 @pytest.mark.asyncio
@@ -428,10 +401,12 @@ async def test_missing_manager_or_registry_refuses(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("via_symlink", [False, True], ids=["direct", "symlink"])
-async def test_admits_an_idle_composer_on_the_seats_own_versioned_claude_build(
+async def test_admits_an_idle_composer_on_a_superseded_claude_build(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, via_symlink: bool
 ) -> None:
     # The session still runs 2.1.314 after the installer moved the launcher to 2.1.320.
+    # A Claude background-job seat's pane runs its front-end while its hooks record the
+    # worker, so the recorded process never leads the pane: the build's place decides.
     _install(monkeypatch, "claude", tmp_path / "claude" / "versions" / "2.1.320")
     build = _file(tmp_path / "claude" / "versions" / "2.1.314")
     executable = build
@@ -439,21 +414,12 @@ async def test_admits_an_idle_composer_on_the_seats_own_versioned_claude_build(
         executable = tmp_path / "bin" / "cli"
         executable.parent.mkdir()
         executable.symlink_to(build)
-    _seat_process(monkeypatch, executable)
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: str(executable)})
 
     assert (
-        await gate.send_keys_target_refusal(
-            SESSION_ID, manager, object(), terminal_context=SEAT_CONTEXT
-        )
+        await gate.send_keys_target_refusal(SESSION_ID, manager, object(), terminal_context=None)
         is None
     )
-    # Without the session's recorded process, the superseded build proves nothing.
-    refusal = await gate.send_keys_target_refusal(
-        SESSION_ID, manager, object(), terminal_context=None
-    )
-    assert isinstance(refusal, gate.SendKeysRefusal)
-    assert refusal.code == "send_keys_target_unconfirmed"
 
 
 @pytest.mark.asyncio

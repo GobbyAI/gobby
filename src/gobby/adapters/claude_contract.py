@@ -213,6 +213,19 @@ CLAUDE_HOOK_CONTRACTS: tuple[ClaudeHookContract, ...] = (
         event_type=HookEventType.POST_COMPACT,
     ),
     ClaudeHookContract(
+        native_name="pre-model-switch",
+        hook_event_name="PreModelSwitch",
+        event_type=HookEventType.PRE_MODEL_SWITCH,
+        decision_style=ClaudeDecisionStyle.TOP_LEVEL_BLOCK,
+    ),
+    ClaudeHookContract(
+        native_name="post-model-switch",
+        hook_event_name="PostModelSwitch",
+        event_type=HookEventType.POST_MODEL_SWITCH,
+        decision_style=ClaudeDecisionStyle.IGNORE_BLOCK,
+        allows_additional_context=True,
+    ),
+    ClaudeHookContract(
         native_name="session-end",
         hook_event_name="SessionEnd",
         event_type=HookEventType.SESSION_END,

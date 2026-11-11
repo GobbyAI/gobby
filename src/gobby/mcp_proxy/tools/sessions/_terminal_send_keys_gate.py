@@ -130,22 +130,17 @@ class _Seat:
             return None
         return pid, read[1]
 
-    def runs(self, build: Path) -> bool:
-        """Whether the session's recorded CLI process is live in the foreground running ``build``."""
-        live = self.process()
-        return live is not None and _on_disk(live[1]) == build
 
-
-def _agent_cli(executable: str, seat: _Seat | None) -> str | None:
+def _agent_cli(executable: str) -> str | None:
     """The agent CLI a foreground executable is an installed build of, or None.
 
     A name proves nothing: any program can be renamed or planted as ``claude``. The
     executable counts when it resolves to the build the daemon's PATH resolves for that
     CLI. Claude's and Grok's installers keep each version beside the current one
     (``claude/versions/<version>``, ``.grok/downloads/grok-<version>-<os>-<arch>``) and a
-    running session keeps its build across an update. A versioned sibling in that
-    installer directory counts only when it is the target session's own recorded CLI
-    process, since anyone who can write the directory can plant a file named like one.
+    running session keeps its build across an update, so a version-named sibling in the
+    installed build's own directory counts too. Planting one there grants nothing: whoever
+    can write that directory can already replace the installed build itself.
     """
     running = _on_disk(executable)
     if running is None:
@@ -161,8 +156,6 @@ def _agent_cli(executable: str, seat: _Seat | None) -> str | None:
             build is not None
             and running.parent == installed.parent
             and build.fullmatch(running.name) is not None
-            and seat is not None
-            and seat.runs(running)
         ):
             return cli
     return None
@@ -194,7 +187,7 @@ def _node_agent_cli(pid: int, seat: _Seat | None) -> str | None:
     if script is None or seat is None or live is None:
         return None
     if _is_installed_srt_runner(script):
-        cli = _agent_cli(live[1], seat)
+        cli = _agent_cli(live[1])
         if cli is None and command_name(live[1]) == "node" and _is_npm_claude(node_script(live[0])):
             return "claude"
         return cli
@@ -223,7 +216,7 @@ def _seat(pid: int | None, terminal_context: Mapping[str, Any] | None) -> _Seat 
 
 
 def _classify(executable: str, pid: int | None, seat: _Seat | None) -> str | None:
-    cli = _agent_cli(executable, seat)
+    cli = _agent_cli(executable)
     if cli is None and command_name(executable) == "node" and pid is not None:
         cli = _node_agent_cli(pid, seat)
     return cli

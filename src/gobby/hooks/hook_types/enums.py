@@ -109,6 +109,12 @@ class HookType(str, Enum):
     AFTER_MODEL = "after-model"
     """Triggered after model inference"""
 
+    PRE_MODEL_SWITCH = "pre-model-switch"
+    """Triggered before a requested model switch is applied; can block it"""
+
+    POST_MODEL_SWITCH = "post-model-switch"
+    """Triggered after the session's model changes"""
+
     PERMISSION_REQUEST = "permission-request"
     """Triggered when permission is requested (Claude only)"""
 

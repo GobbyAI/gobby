@@ -3026,6 +3026,8 @@ class TestCodexHooksAdapterTranslateToHookEvent:
             ("PreCompact", HookEventType.PRE_COMPACT),
             ("PostCompact", HookEventType.POST_COMPACT),
             ("SessionEnd", HookEventType.SESSION_END),
+            ("PreModelRequest", HookEventType.BEFORE_MODEL),
+            ("PostModelRequest", HookEventType.AFTER_MODEL),
         ],
     )
     def test_translate_new_codex_hook_events(
@@ -3064,6 +3066,8 @@ class TestCodexHooksAdapterTranslateToHookEvent:
             "Stop",
             "Interrupt",
             "SessionEnd",
+            "PreModelRequest",
+            "PostModelRequest",
         }
         assert set(CodexHooksAdapter.EVENT_MAP.keys()) == expected
 
@@ -3270,6 +3274,21 @@ class TestCodexHooksAdapterTranslateFromHookResponse:
         assert "decision" not in result
         assert "reason" not in result
         assert "hookSpecificOutput" not in result
+
+    @pytest.mark.parametrize("hook_type", ["PreModelRequest", "PostModelRequest"])
+    def test_model_request_output_is_empty(self, hook_type: str) -> None:
+        """Codex treats model-request hook output as diagnostic, so Gobby emits none."""
+        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+        response = HookResponse(
+            decision="block",
+            reason="ignored",
+            context="ignored",
+            system_message="ignored",
+        )
+        result = CodexHooksAdapter().translate_from_hook_response(response, hook_type=hook_type)
+
+        assert result == {}
 
     def test_pre_tool_use_block_uses_permission_decision(self) -> None:
         """PreToolUse blocks must use Codex permissionDecision, not continue=false."""

@@ -75,6 +75,8 @@ NON_MATERIALIZING_EVENTS: frozenset[HookEventType] = frozenset(
         HookEventType.DIRECTORY_ADDED,
         HookEventType.MESSAGE_DISPLAY,
         HookEventType.TEAMMATE_IDLE,
+        HookEventType.PRE_MODEL_SWITCH,
+        HookEventType.POST_MODEL_SWITCH,
     }
 )
 
