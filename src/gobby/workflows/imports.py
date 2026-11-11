@@ -33,7 +33,6 @@ from gobby.workflows.definitions import (
     validate_workflow_definition_data,
 )
 from gobby.workflows.pipeline_loader import detect_override_conflict
-from gobby.workflows.rule_authority import refuse_protected_rule_import
 from gobby.workflows.sync_rules import PROJECT_IMPORT_TAG, sync_rule_file
 
 logger = logging.getLogger(__name__)
@@ -127,7 +126,6 @@ def _upsert_rule(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
     body = prepare_rule_definition_for_persist(name, body)
     existing = manager.get_by_name(name, project_id=project_id)
     target = existing if existing is not None and existing.project_id == project_id else None
-    refuse_protected_rule_import(manager, name, target, body)
     fields = {
         "definition_json": body,
         "description": data.get("description", ""),

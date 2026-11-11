@@ -557,8 +557,6 @@ class RuleDefinitionBody(BaseModel):
     agent_scope: list[str] | None = None  # Only active for these agent types
     # Active for every definition; no rule_selectors include or exclude removes it.
     mandatory: bool = False
-    # Seats cannot toggle, edit or delete a protected rule; the operator principal still can.
-    protected: bool = False
     # Same-tool retry escalation: evaluated first on before_tool; its block preempts the rest.
     retry_limit: bool = False
     # Closure rules only: record_attestation refuses evidence this shape can never accept.

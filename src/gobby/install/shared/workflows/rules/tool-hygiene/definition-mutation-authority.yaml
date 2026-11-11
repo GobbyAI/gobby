@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "1.1.0"
 tags: [gobby, default, tool-hygiene]
 
 rules:
@@ -49,3 +49,24 @@ rules:
           operator's terminal. toggle_rule, update_rule and delete_rule also accept
           manage_rule_enforcement. Ask an authorized session to make the change;
           list, get and evaluate tools remain available for inspection.
+
+  rule-mutation-http-authority:
+    description: Require rule authority for direct HTTP calls to the rules routes
+    event: before_tool
+    enabled: true
+    mandatory: true
+    priority: 5
+    when: >
+      not (operator_session(event.metadata.get('_platform_session_id'))
+      or session_has_capability(
+        event.metadata.get('_platform_session_id'), 'manage_workflow_definitions')
+      or session_has_capability(
+        event.metadata.get('_platform_session_id'), 'manage_rule_enforcement'))
+    effects:
+      - type: block
+        tools: [Bash]
+        command_pattern: '(?:^|[\s;&|(`])(?:[^\s;&|]*/)?(?:curl|wget|http|https|xh)\b[^\n;&|]*/api/rules\b'
+        reason: >-
+          Direct HTTP calls to the rules routes require manage_workflow_definitions,
+          manage_rule_enforcement or the operator's terminal. Use the governed MCP
+          tools; list_rules and get_rule remain available for inspection.

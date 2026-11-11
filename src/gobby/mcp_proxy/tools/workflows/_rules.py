@@ -26,12 +26,7 @@ from gobby.workflows.delivery_disposition import (
     prepare_rule_definition_for_persist,
 )
 from gobby.workflows.reserved_variables import is_reserved_workflow_variable
-from gobby.workflows.rule_authority import (
-    ProtectedRuleError,
-    is_operator_rule_change,
-    protected_flag_error,
-    protected_rule_error,
-)
+from gobby.workflows.rule_authority import is_operator_rule_change
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +76,6 @@ def _reserved_rule_mutation_error(row: RuleDefinitionRow) -> str | None:
         return None
 
 
-def _protected_rule_error(row: RuleDefinitionRow) -> str | None:
-    """Protected rules admit only the operator principal; seats cannot toggle, edit or delete them."""
-    return protected_rule_error(row.name, row.definition_json)
-
-
 @contextmanager
 def _locked_rule(
     manager: RuleDefinitionManager, definition_id: str
@@ -108,16 +98,12 @@ def update_rule_fields(
             raise DefinitionNotFoundError(f"Rule '{definition_id}' not found")
         if error := _reserved_rule_mutation_error(row):
             raise ReservedRuleMutationError(error)
-        if error := _protected_rule_error(row):
-            raise ProtectedRuleError(error)
         if "definition_json" in fields:
             body = fields["definition_json"]
             if isinstance(body, str):
                 body = json.loads(body)
             if error := _reserved_writer_error(body):
                 raise ReservedRuleMutationError(error)
-            if error := protected_flag_error(row.name, body):
-                raise ProtectedRuleError(error)
         preserve_bundled_tag(row.tags, fields)
         return manager.update(row.id, **fields)
 
@@ -316,8 +302,6 @@ def toggle_rule(
             return {"success": False, "error": f"Rule '{name}' not found"}
         if reserved_error := _reserved_rule_mutation_error(row):
             return {"success": False, "error": reserved_error}
-        if protected_error := _protected_rule_error(row):
-            return {"success": False, "error": protected_error}
         try:
             updated = def_manager.update(row.id, enabled=enabled)
         except ValueError as exc:
@@ -448,8 +432,6 @@ def create_rule(
         definition = prepare_rule_definition_for_persist(name, definition)
         if reserved_error := _reserved_writer_error(definition):
             return {"success": False, "error": reserved_error}
-        if protected_error := protected_flag_error(name, definition):
-            return {"success": False, "error": protected_error}
     except ValidationError as e:
         return {"success": False, "error": f"Validation failed: {e}"}
     except DispositionAmbiguousError as e:
@@ -533,8 +515,6 @@ def delete_rule(
             return {"success": False, "error": f"Rule '{name}' not found"}
         if reserved_error := _reserved_rule_mutation_error(row):
             return {"success": False, "error": reserved_error}
-        if protected_error := _protected_rule_error(row):
-            return {"success": False, "error": protected_error}
         if "gobby" in (row.tags or []) and not force:
             return {
                 "success": False,

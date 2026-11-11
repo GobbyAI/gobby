@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -52,21 +51,6 @@ _UPDATE_FIELDS = frozenset(
 # Template sync may re-scope a row when its YAML moves between the global and a
 # project rules directory; interactive updates never change ownership.
 _SYNC_FIELDS = _UPDATE_FIELDS | {"project_id"}
-
-
-def rule_definition_protected(definition_json: Any) -> bool:
-    """Whether a stored rule body is protected; an unreadable body fails closed."""
-    body = definition_json
-    if isinstance(body, str):
-        try:
-            body = json.loads(body)
-        except json.JSONDecodeError:
-            return True
-    return not isinstance(body, dict) or body.get("protected") is True
-
-
-def _protected(row: RuleDefinitionRow) -> bool:
-    return rule_definition_protected(row.definition_json)
 
 
 def _lock_live_row(txn: Transaction, definition_id: str) -> RuleDefinitionRow:
@@ -416,23 +400,16 @@ class RuleDefinitionManager:
     def list_effective(self, project_id: str | None) -> list[RuleDefinitionRow]:
         """Resolve project overrides before callers filter events or enabled state.
 
-        A project row displaces a same-name global row unless the global row is
-        protected; a protected rule changes only through the operator.
+        A project row displaces a same-name global row.
         """
         by_name: dict[str, RuleDefinitionRow] = {}
         for row in self.list_all(project_id=project_id):
             if row.project_id not in (None, project_id):
                 continue
-            current = by_name.get(row.name)
-            if current is None:
+            if row.project_id == project_id:
                 by_name[row.name] = row
-            elif row.project_id is None:
-                if _protected(row):
-                    by_name[row.name] = row
-            elif row.project_id == project_id and not (
-                current.project_id is None and _protected(current)
-            ):
-                by_name[row.name] = row
+            else:
+                by_name.setdefault(row.name, row)
         return sorted(by_name.values(), key=lambda row: (row.priority, row.name, row.id))
 
     def list_by_event(

@@ -33,14 +33,12 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("authenticated_http_requ
 
 @pytest.mark.parametrize("operator", [False, True])
 @pytest.mark.parametrize("operation", ["update", "bulk-toggle", "toggle", "delete"])
-@pytest.mark.parametrize("guard", ["reserved-writer", "protected"])
 def test_guarded_rule_routes_use_authenticated_operator_identity(
     client: TestClient,
     def_manager: RuleDefinitionManager,
     monkeypatch: pytest.MonkeyPatch,
     operator: bool,
     operation: str,
-    guard: str,
 ) -> None:
     from gobby.servers.auth_service import AuthService
     from gobby.utils.local_token import AgentApiTokenClaims
@@ -52,34 +50,22 @@ def test_guarded_rule_routes_use_authenticated_operator_identity(
     monkeypatch.setattr(
         AuthService, "_verified_agent_claims_for_token", lambda _self, _request, _token: claims
     )
-    if guard == "protected":
-        body: dict[str, Any] = {
-            "event": "turn_start",
-            "protected": True,
-            "effects": [{"type": "set_variable", "variable": "ordinary", "value": 1}],
-        }
-        replacement: dict[str, Any] = {
-            "event": "turn_start",
-            "protected": True,
-            "effects": [{"type": "set_variable", "variable": "ordinary", "value": 2}],
-        }
-    else:
-        body = {
-            "event": "turn_start",
-            "effects": [
-                {
-                    "type": "set_variable",
-                    "variable": "project_policy",
-                    "value": {"security_paths": ["src/**"]},
-                }
-            ],
-        }
-        replacement = {
-            "event": "turn_start",
-            "effects": [{"type": "set_variable", "variable": "ordinary", "value": 1}],
-        }
+    body: dict[str, Any] = {
+        "event": "turn_start",
+        "effects": [
+            {
+                "type": "set_variable",
+                "variable": "project_policy",
+                "value": {"security_paths": ["src/**"]},
+            }
+        ],
+    }
+    replacement: dict[str, Any] = {
+        "event": "turn_start",
+        "effects": [{"type": "set_variable", "variable": "ordinary", "value": 1}],
+    }
     row = def_manager.create(
-        name="synthetic-protected-policy", definition_json=body, source="installed"
+        name="synthetic-reserved-policy", definition_json=body, source="installed"
     )
     headers = {"Authorization": "Bearer synthetic-agent-token"}
     if operation == "update":

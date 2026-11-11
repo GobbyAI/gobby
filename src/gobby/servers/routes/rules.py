@@ -30,7 +30,7 @@ from gobby.workflows.delivery_disposition import (
     prepare_rule_definition_for_persist,
 )
 from gobby.workflows.pipeline_loader import _is_bundled_template
-from gobby.workflows.rule_authority import ProtectedRuleError, operator_rule_changes
+from gobby.workflows.rule_authority import operator_rule_changes
 from gobby.workflows.rule_validation import validate_rule
 
 if TYPE_CHECKING:
@@ -381,7 +381,7 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             principal = await server.run_db(server.auth_service.request_principal, http_request)
             with operator_rule_changes() if principal is None else nullcontext():
                 updated = await server.run_db(update_rule_fields, manager, row.id, fields)
-        except (ReservedRuleMutationError, ProtectedRuleError) as e:
+        except ReservedRuleMutationError as e:
             raise HTTPException(status_code=403, detail=str(e)) from e
         except DefinitionNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e

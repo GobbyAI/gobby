@@ -1,11 +1,10 @@
-version: "5.0.0"
+version: "5.1.0"
 tags: [task-security]
 
 rules:
   closure-requires-security-policy-provenance:
     event: task_close
     priority: 36
-    protected: true
     when: &security_provenance >-
       reason == 'done' and
       (facts.get('project_policy_available') != True or
@@ -18,7 +17,6 @@ rules:
   landing-requires-security-policy-provenance:
     event: task_land
     priority: 36
-    protected: true
     when: *security_provenance
     effects:
       - type: block
@@ -28,7 +26,6 @@ rules:
     description: Security-labeled work needs an independent authorized approval for the exact candidate.
     event: task_close
     priority: 35
-    protected: true
     when: &security_required >-
       not holds_capability(caller.get('capabilities', []), 'waive_review_gates') and
       reason == 'done' and
@@ -57,7 +54,6 @@ rules:
     description: Preserve task-specific security approval before integration as well as closure.
     event: task_land
     priority: 35
-    protected: true
     when: *security_required
     effects:
       - type: block

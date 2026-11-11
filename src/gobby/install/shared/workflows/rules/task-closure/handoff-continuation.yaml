@@ -1,4 +1,4 @@
-version: "1.1.0"
+version: "1.2.0"
 tags: [task-closure-general]
 
 # Candidates that change the handoff continuation surface land and close only with
@@ -10,7 +10,6 @@ rules:
     description: Handoff continuation changes need a passing real-provider e2e run on the exact candidate before landing.
     event: task_land
     priority: 37
-    protected: true
     when: >-
       paths_match(facts.get('candidate_paths', []), [
         'src/gobby/hooks/compaction_ownership.py',
@@ -43,7 +42,6 @@ rules:
     description: Closing a handoff continuation candidate also needs the exact-SHA e2e pass.
     event: task_close
     priority: 37
-    protected: true
     when: >-
       reason == 'done' and
       paths_match(facts.get('candidate_paths', []), [
