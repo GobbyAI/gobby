@@ -18,13 +18,13 @@
     }
   },
   "response": {
-    "status": 403,
+    "status": 401,
     "headers": {
       "content-type": "application/json"
     },
     "body": {
-      "error": "Session selection requires a credential bound to that session",
-      "code": "session_requires_bound_credential"
+      "error": "Request rejected",
+      "code": "forged_identity"
     }
   },
   "mask": []
