@@ -57,13 +57,14 @@ def _payload(
     workspace: str,
     conversation_id: str = CONVERSATION,
     hint: str | None = None,
+    hook_type: str = "PreInvocation",
     **extra: Any,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "source": "agy",
-        "hook_type": "PreInvocation",
+        "hook_type": hook_type,
         "input_data": {
-            "hookEventName": "PreInvocation",
+            "hookEventName": hook_type,
             "conversationId": conversation_id,
             "cwd": workspace,
             "workspacePaths": [workspace],
@@ -172,6 +173,43 @@ class TestResolveOrAdoptOrRegister:
         assert session.machine_id == LOCAL_MACHINE_ID
         assert session.source == "agy"
 
+    def test_session_start_defers_the_row_to_the_first_invocation(
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        """No row exists until the first prompt, as for every CLI's startup (#25918)."""
+        project_id = _project(isolated_checkout_factory, temp_db, "deferred")
+        workspace = _workspace(tmp_path, "ws", project_id)
+        manager = _hook_manager(temp_db)
+        start = _payload(workspace=workspace, hook_type="SessionStart")
+
+        assert preflight_agy_startup_claim(start, manager) is None
+        assert _rows_for_conversation(temp_db, CONVERSATION) == []
+        assert "_gobby_startup_claim" not in start
+        assert "_gobby_session_hint_error" not in start
+
+        lease = preflight_agy_startup_claim(_payload(workspace=workspace), manager)
+        assert lease is not None
+        assert [row["id"] for row in _rows_for_conversation(temp_db, CONVERSATION)] == [
+            lease.session_id
+        ]
+
+    def test_session_start_with_a_dangling_hint_starts_nothing(
+        self,
+        isolated_checkout_factory: IsolatedCheckoutFactory,
+        temp_db: HubDatabase,
+        tmp_path: Path,
+    ) -> None:
+        project_id = _project(isolated_checkout_factory, temp_db, "dangling")
+        workspace = _workspace(tmp_path, "ws", project_id)
+        start = _payload(workspace=workspace, hint=str(uuid4()), hook_type="SessionStart")
+
+        assert preflight_agy_startup_claim(start, _hook_manager(temp_db)) is None
+        assert start["_gobby_session_hint_error"] == "session hint names no session"
+        assert _rows_for_conversation(temp_db, CONVERSATION) == []
+
     def test_repeated_event_is_idempotent(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
@@ -226,11 +264,13 @@ class TestResolveOrAdoptOrRegister:
             lease.session_id, lease.generation, lease.owner_token
         )
 
+    @pytest.mark.parametrize("hook_type", ["PreInvocation", "SessionStart"])
     def test_pre_created_child_adopts_the_hint_and_binds_conversation(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         tmp_path: Path,
+        hook_type: str,
     ) -> None:
         project_id = _project(isolated_checkout_factory, temp_db, "child")
         workspace = _workspace(tmp_path, "ws", project_id)
@@ -244,7 +284,8 @@ class TestResolveOrAdoptOrRegister:
         )
 
         lease = preflight_agy_startup_claim(
-            _payload(workspace=workspace, hint=child.id), _hook_manager(temp_db)
+            _payload(workspace=workspace, hint=child.id, hook_type=hook_type),
+            _hook_manager(temp_db),
         )
 
         assert lease is not None
@@ -295,12 +336,14 @@ class TestResolveOrAdoptOrRegister:
                 lease.session_id, lease.generation, lease.owner_token
             )
 
+    @pytest.mark.parametrize("hook_type", ["PreInvocation", "SessionStart"])
     def test_mismatched_hint_falls_through_without_mutating_the_hinted_row(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
+        hook_type: str,
     ) -> None:
         project_a = _project(isolated_checkout_factory, temp_db, "hint-a")
         project_b = _project(isolated_checkout_factory, temp_db, "hint-b")
@@ -316,7 +359,7 @@ class TestResolveOrAdoptOrRegister:
         )
         before = sessions.get(hinted.id)
         assert before is not None
-        payload = _payload(workspace=workspace_b, hint=hinted.id)
+        payload = _payload(workspace=workspace_b, hint=hinted.id, hook_type=hook_type)
 
         with caplog.at_level(logging.WARNING, logger="gobby.hooks.startup_claim_preflight"):
             lease = preflight_agy_startup_claim(payload, _hook_manager(temp_db))
@@ -340,12 +383,15 @@ class TestResolveOrAdoptOrRegister:
         )
         assert "_gobby_startup_claim" not in payload
 
-    def test_mismatched_hint_for_another_conversation_registers_fresh_row(
+    @pytest.mark.parametrize("hook_type", ["PreInvocation", "SessionStart"])
+    def test_mismatched_hint_for_another_conversation_leaves_the_hinted_row(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         temp_db: HubDatabase,
         tmp_path: Path,
+        hook_type: str,
     ) -> None:
+        """PreInvocation registers the conversation's own row; SessionStart defers it."""
         project_a = _project(isolated_checkout_factory, temp_db, "other-a")
         project_b = _project(isolated_checkout_factory, temp_db, "other-b")
         workspace_a = _workspace(tmp_path, "ws-a", project_a)
@@ -360,17 +406,22 @@ class TestResolveOrAdoptOrRegister:
         )
         before = sessions.get(hinted.id)
         assert before is not None
-        payload = _payload(workspace=workspace_b, hint=hinted.id)
+        payload = _payload(workspace=workspace_b, hint=hinted.id, hook_type=hook_type)
 
         lease = preflight_agy_startup_claim(payload, _hook_manager(temp_db))
 
-        assert lease is not None
-        assert lease.session_id != hinted.id
         after = sessions.get(hinted.id)
         assert after is not None
         assert after.updated_at == before.updated_at
         assert after.external_id == "agy-conversation-other"
         assert after.startup_claim_state == "idle"
+        assert hinted.id in payload["_gobby_session_hint_error"]
+        if hook_type == "SessionStart":
+            assert lease is None
+            assert _rows_for_conversation(temp_db, CONVERSATION) == []
+            return
+        assert lease is not None
+        assert lease.session_id != hinted.id
         registered = sessions.get(lease.session_id)
         assert registered is not None
         assert registered.project_id == project_b

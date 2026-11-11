@@ -25,7 +25,7 @@ from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_RESPONSE_CAPABILITY,
 )
 from gobby.hooks.session_claimant import Claimant, SessionStartClaim, claim_session_start
-from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD
+from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD, is_session_start_hook
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_startup_marks import (
     StartupPin,
@@ -458,3 +458,65 @@ def test_the_replay_of_a_refused_hook_gives_the_row_to_the_pinned_cli(
     assert foreign_resume.status_code == 403
     assert own_resume.status_code == 200, own_resume.text
     assert SESSION_CREDENTIAL_FIELD in own_resume.json()
+
+
+AGY_THREAD = "provider-session-25916-agy"
+
+
+def _agy_invocation(route: HookRoute, identity: dict[str, Any]) -> Any:
+    return _hook_response(
+        route,
+        hook_type="PreInvocation",
+        source="agy",
+        input_data={**identity, "hook_event_name": "PreInvocation", "prompt": "go"},
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "hook_type", "starts"),
+    [
+        ("agy", "PreInvocation", True),
+        ("agy", "PostInvocation", False),
+        ("agy", "PreToolUse", False),
+        ("agy", "Stop", False),
+        ("claude", "session-start", True),
+        ("claude", "user-prompt-submit", False),
+        ("codex", "SessionStart", True),
+    ],
+)
+def test_the_provider_decides_which_hook_starts_its_session(
+    source: str, hook_type: str, starts: bool
+) -> None:
+    assert is_session_start_hook(source, hook_type) is starts
+
+
+def test_an_antigravity_first_invocation_starts_and_pins_its_session(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    victim_cli: int,
+) -> None:
+    """Antigravity has no SessionStart hook: its first PreInvocation is the start."""
+    _machine_caller(hook_route)
+    identity = _identity(_fresh_workspace(tmp_path, sample_project), thread=AGY_THREAD)
+
+    with _as(_claimant(victim_cli)):
+        first = _agy_invocation(hook_route, identity)
+        next_turn = _agy_invocation(hook_route, identity)
+    with _as(_claimant(os.getpid())):
+        foreign = _agy_invocation(hook_route, identity)
+
+    assert first.status_code == 200, first.text
+    assert next_turn.status_code == 200, next_turn.text
+    assert foreign.status_code == 403
+    assert foreign.json() == MISMATCH
+    row = temp_db.fetchone(
+        "SELECT terminal_context FROM sessions "
+        "WHERE external_id = %s AND source = 'agy' AND session_type = 'terminal'",
+        (AGY_THREAD,),
+    )
+    assert row is not None
+    context = parse_terminal_context_value(row["terminal_context"])
+    assert context is not None
+    assert context["parent_pid"] == victim_cli

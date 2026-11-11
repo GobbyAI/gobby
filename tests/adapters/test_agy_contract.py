@@ -24,6 +24,7 @@ pytestmark = pytest.mark.unit
 
 def test_agy_hook_contract_maps_supported_events() -> None:
     assert AGY_HOOK_NAMES == (
+        "SessionStart",
         "PreInvocation",
         "PreToolUse",
         "PostToolUse",
@@ -31,12 +32,26 @@ def test_agy_hook_contract_maps_supported_events() -> None:
         "Stop",
     )
     assert AGY_EVENT_MAP == {
+        "SessionStart": HookEventType.SESSION_START,
         "PreInvocation": HookEventType.BEFORE_AGENT,
         "PreToolUse": HookEventType.BEFORE_TOOL,
         "PostToolUse": HookEventType.AFTER_TOOL,
         "PostInvocation": HookEventType.AFTER_AGENT,
         "Stop": HookEventType.STOP,
     }
+
+
+def test_agy_session_start_injects_startup_context_as_steps() -> None:
+    from gobby.adapters.agy import AgyAdapter
+    from gobby.hooks.events import HookResponse
+
+    result = AgyAdapter().translate_from_hook_response(
+        HookResponse(decision="allow", context="Startup packet"), hook_type="SessionStart"
+    )
+
+    # SessionStartHookResult carries only inject_steps, and AGY rejects unknown fields.
+    assert set(result) == {"injectSteps"}
+    assert "Startup packet" in result["injectSteps"][0]["ephemeralMessage"]
 
 
 def test_agy_pre_tool_contract_blocks_tool_calls() -> None:

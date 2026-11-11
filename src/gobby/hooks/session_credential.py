@@ -52,11 +52,12 @@ _HOSTED_LIVE_ROW = """
 
 
 def is_session_start_hook(source: object, hook_type: object) -> bool:
-    """Return whether `hook_type` is `source`'s own spelling of SessionStart.
+    """Return whether `hook_type` starts `source`'s session.
 
     Each provider names the hook its own way (Claude ``session-start``, Codex and Droid
-    ``SessionStart``, Grok either), so the provider's capability registry decides. An
-    unknown source or hook is not a start.
+    ``SessionStart``, Grok either), so the provider's capability registry decides. A
+    provider with no start hook marks the hook its adapter starts the session from
+    (Antigravity's ``PreInvocation``). An unknown source or hook is not a start.
     """
     if not isinstance(source, str) or not isinstance(hook_type, str):
         return False
@@ -64,7 +65,9 @@ def is_session_start_hook(source: object, hook_type: object) -> bool:
         capability = get_provider_capabilities(source).get_hook(hook_type)
     except ValueError:
         return False
-    return capability is not None and capability.event_type == HookEventType.SESSION_START
+    return capability is not None and (
+        capability.starts_session or capability.event_type == HookEventType.SESSION_START
+    )
 
 
 def settle_claim(

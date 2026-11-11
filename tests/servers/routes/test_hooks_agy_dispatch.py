@@ -84,16 +84,18 @@ def _rewrite_marker(processed_dir: Path, envelope_id: str, **updates: object) ->
     marker_path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _agy_pre_invocation_envelope(*, conversation_id: str = _SESSION_UUID) -> dict[str, Any]:
+def _agy_pre_invocation_envelope(
+    *, conversation_id: str = _SESSION_UUID, hook_type: str = "PreInvocation"
+) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "enqueued_at": "2026-06-24T12:00:00Z",
         "critical": False,
         "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
-        "hook_type": "PreInvocation",
+        "hook_type": hook_type,
         "source": "agy",
         "input_data": {
-            "hookEventName": "PreInvocation",
+            "hookEventName": hook_type,
             "conversationId": conversation_id,
             "workspacePaths": ["/tmp/agy-ws"],
             "cwd": "/tmp/agy-ws",
@@ -239,9 +241,12 @@ def test_execute_hook_unsupported_source_lists_agy(
 
 
 class TestAgyStartupClaimPreflight:
+    # SessionStart is a guarded start too (#25918): the same preflight runs first.
+    @pytest.mark.parametrize("hook_type", ["PreInvocation", "SessionStart"])
     def test_preinvocation_claims_startup_context_before_adapter_runs(
         self,
         session_storage: SessionManager,
+        hook_type: str,
     ) -> None:
         server = create_http_server(
             port=60887,
@@ -297,7 +302,7 @@ class TestAgyStartupClaimPreflight:
 
             response = client.post(
                 "/api/hooks/execute",
-                json=_agy_pre_invocation_envelope(),
+                json=_agy_pre_invocation_envelope(hook_type=hook_type),
                 headers={"X-Gobby-Session-Id": "sess-preflight-1"},
             )
 
@@ -307,6 +312,50 @@ class TestAgyStartupClaimPreflight:
         assert "_gobby_startup_claim" not in body
         assert "owner_token" not in body
         assert "startup_claim_generation" not in body
+
+    def test_new_conversation_session_start_registers_no_row(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        """An idle new conversation has no row until its first prompt (#25918)."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mock_sessions = MagicMock()
+        mock_sessions.db = session_storage.db
+        mock_hook_manager = MagicMock()
+        mock_hook_manager.shutdown_async = AsyncMock()
+        mock_hook_manager.session_manager = mock_sessions
+        mock_hook_manager._session_manager = mock_sessions
+        server.app.state.hook_manager = mock_hook_manager
+        captured: dict[str, Any] = {}
+
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.agy.AgyAdapter") as mock_adapter_cls,
+        ):
+            mock_adapter = MagicMock()
+
+            def handle_native(payload: dict[str, Any], _hook_manager: object) -> dict[str, str]:
+                captured.update(payload)
+                return {}
+
+            mock_adapter.handle_native.side_effect = handle_native
+            mock_adapter_cls.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json=_agy_pre_invocation_envelope(hook_type="SessionStart"),
+            )
+
+        assert response.status_code == 200
+        mock_adapter.handle_native.assert_called_once()
+        assert captured.get("_gobby_startup_claim") is None
+        assert captured.get("_gobby_session_hint_error") is None
+        mock_sessions.register.assert_not_called()
+        mock_sessions.find_by_external_id.assert_not_called()
 
     def test_durable_preinvocation_stages_startup_claim_without_committing(
         self,
@@ -388,10 +437,12 @@ class TestAgyStartupClaimPreflight:
         assert context.get("session_id") == _SESSION_UUID
         assert context.get("owner_token")
 
+    @pytest.mark.parametrize("hook_type", ["PreInvocation", "SessionStart"])
     def test_mismatching_session_hint_is_rejected_without_claim_or_mutation(
         self,
         session_storage: SessionManager,
         caplog: pytest.LogCaptureFixture,
+        hook_type: str,
     ) -> None:
         server = create_http_server(
             port=60887,
@@ -450,7 +501,7 @@ class TestAgyStartupClaimPreflight:
 
             response = client.post(
                 "/api/hooks/execute",
-                json=_agy_pre_invocation_envelope(),
+                json=_agy_pre_invocation_envelope(hook_type=hook_type),
                 headers={"X-Gobby-Session-Id": "sess-wrong"},
             )
 

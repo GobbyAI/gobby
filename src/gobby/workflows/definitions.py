@@ -141,6 +141,8 @@ class RuleTriggerEvent(str, Enum):
     POST_TOOL_BATCH = "post_tool_batch"
     BEFORE_MODEL = "before_model"
     AFTER_MODEL = "after_model"
+    PRE_MODEL_SWITCH = "pre_model_switch"
+    POST_MODEL_SWITCH = "post_model_switch"
     PRE_COMPACT = "pre_compact"
     POST_COMPACT = "post_compact"
     SUBAGENT_START = "subagent_start"

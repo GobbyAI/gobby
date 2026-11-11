@@ -1344,6 +1344,127 @@ class TestAcpHandlerEdgeCases:
 
         assert response.decision == "allow"
 
+    @pytest.mark.parametrize(("source", "resumes"), [("agy", True), ("codex", False)])
+    def test_before_model_resumes_turn_except_codex(
+        self, mock_dependencies: dict[str, Any], source: str, resumes: bool
+    ) -> None:
+        """Codex PreModelRequest is observe-only and must never reopen a finished turn."""
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.BEFORE_MODEL,
+            source=source,
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        with patch.object(handlers, "_resume_turn_lifecycle") as resume:
+            response = handlers.handle_before_model(event)
+
+        assert response.decision == "allow"
+        assert resume.called is resumes
+
+    def test_codex_after_model_records_its_model_and_writes_no_usage(
+        self, mock_dependencies: dict[str, Any], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """PostModelRequest names the request's model; its per-attempt usage is not totals."""
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_MODEL,
+            source="codex",
+            data={
+                "model": "gpt-5.5-codex",
+                "turn_id": "turn-7",
+                "status": "failed",
+                "error": "stream disconnected",
+                "token_usage": {"input_tokens": 10, "output_tokens": 2},
+                "response": {"usageMetadata": {"promptTokenCount": 10}},
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        with caplog.at_level(logging.INFO):
+            response = handlers.handle_after_model(event)
+
+        assert response.decision == "allow"
+        session_manager = mock_dependencies["session_manager"]
+        session_manager.update.assert_called_once_with("sess-123", model="gpt-5.5-codex")
+        session_manager.update_usage.assert_not_called()
+        assert any(
+            "failed" in record.getMessage() and "turn-7" in record.getMessage()
+            for record in caplog.records
+        )
+
+    def test_codex_before_model_records_its_model(self, mock_dependencies: dict[str, Any]) -> None:
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.BEFORE_MODEL,
+            source="codex",
+            data={"model": "gpt-5.5-codex", "turn_id": "turn-7"},
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        handlers.handle_before_model(event)
+
+        mock_dependencies["session_manager"].update.assert_called_once_with(
+            "sess-123", model="gpt-5.5-codex"
+        )
+
+    def test_native_subagent_model_never_overwrites_its_parent(
+        self, mock_dependencies: dict[str, Any]
+    ) -> None:
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.AFTER_MODEL,
+            source="codex",
+            data={"model": "gpt-5.5-codex-mini", "status": "completed"},
+            metadata={"_platform_session_id": "sess-123", "_native_subagent_binding": True},
+        )
+
+        handlers.handle_after_model(event)
+
+        mock_dependencies["session_manager"].update.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("to_model", "written"),
+        [
+            ("claude-sonnet-5-5", "claude-sonnet-5-5"),
+            ("opus", "claude-opus-5-5"),
+            ("opusplan-unknown", "opusplan-unknown"),
+            ("default", None),
+        ],
+    )
+    def test_post_model_switch_records_the_canonical_model(
+        self, mock_dependencies: dict[str, Any], to_model: str, written: str | None
+    ) -> None:
+        """An alias resolves through the catalog; an unresolved bare alias is never stored."""
+        handlers = EventHandlers(**mock_dependencies)
+        catalog = {"opus": "claude-opus-5-5"}
+        resolver = SimpleNamespace(
+            find_model=lambda _provider, model: (
+                SimpleNamespace(canonical_model=catalog[model]) if model in catalog else None
+            )
+        )
+        event = make_event(
+            HookEventType.POST_MODEL_SWITCH,
+            source="claude",
+            data={
+                "from_model": "claude-opus-5-5",
+                "to_model": to_model,
+                "requested_model": to_model,
+                "source": "user",
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        with patch("gobby.agents.reasoning._get_capability_resolver", return_value=resolver):
+            response = handlers.handle_post_model_switch(event)
+
+        assert response.decision == "allow"
+        update = mock_dependencies["session_manager"].update
+        if written is None:
+            update.assert_not_called()
+        else:
+            update.assert_called_once_with("sess-123", model=written)
+
     def test_before_model_no_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test BEFORE_MODEL handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)

@@ -5,7 +5,7 @@ This module defines all Claude Code hook types and their associated input/output
 using Pydantic for validation. Each hook type has specific input and output schemas
 that ensure type safety and validation across the hook execution pipeline.
 
-Hook Types (33 total):
+Hook Types (35 total):
 1. session-start: Triggered when a Claude Code session starts
 2. session-end: Triggered when a session ends
 3. user-prompt-submit: Triggered before user prompt is submitted
@@ -39,6 +39,8 @@ Hook Types (33 total):
 31. post-tool-batch: Triggered after a batch of tool calls completes
 32. message-display: Triggered while Claude renders assistant output
 33. directory-added: Triggered after a working directory is added
+34. pre-model-switch: Triggered before a requested model switch; can block it
+35. post-model-switch: Triggered after the session's model changes
 
 Example:
     ```python
@@ -86,6 +88,10 @@ from .environment import (
     InstructionsLoadedOutput,
     NotificationInput,
     NotificationOutput,
+    PostModelSwitchInput,
+    PostModelSwitchOutput,
+    PreModelSwitchInput,
+    PreModelSwitchOutput,
     WorktreeCreateInput,
     WorktreeCreateOutput,
     WorktreeRemoveInput,
@@ -178,6 +184,10 @@ __all__ = [
     "NotificationInput",
     "NotificationOutput",
     "NotificationSeverity",
+    "PostModelSwitchInput",
+    "PostModelSwitchOutput",
+    "PreModelSwitchInput",
+    "PreModelSwitchOutput",
     "PermissionDeniedInput",
     "PermissionDeniedOutput",
     "PermissionRequestInput",
