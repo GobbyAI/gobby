@@ -41,6 +41,7 @@ from gobby.sessions.handoff import (
 )
 from gobby.sessions.transcript_cursor import (
     CodexRolloutCursor,
+    DroidTranscriptCursor,
     TranscriptObservationError,
     TranscriptTailCursor,
 )
@@ -120,8 +121,8 @@ async def _wait_for_compact_boundary(
     *,
     timeout_seconds: float | None = None,
     command: str | None = None,
-    codex_cursor: CodexRolloutCursor | None = None,
-    on_codex_boundary: Callable[[], bool] | None = None,
+    compact_cursor: CodexRolloutCursor | DroidTranscriptCursor | None = None,
+    on_compact_record: Callable[[], bool] | None = None,
     on_claude_boundary: Callable[[], object] | None = None,
 ) -> str | None:
     """Return an error or wait for one boundary within this delivery operation."""
@@ -130,19 +131,19 @@ async def _wait_for_compact_boundary(
     )
     claude_boundary_seen = False
     while not waiter.event.is_set():
-        if codex_cursor is not None:
+        if compact_cursor is not None:
             try:
-                if await asyncio.to_thread(codex_cursor.saw_fresh_compacted):
-                    if on_codex_boundary is not None:
+                if await asyncio.to_thread(compact_cursor.saw_fresh_compacted):
+                    if on_compact_record is not None:
                         try:
-                            await asyncio.to_thread(on_codex_boundary)
+                            await asyncio.to_thread(on_compact_record)
                         except Exception:
                             logger.warning(
-                                "Failed settling Codex rollout compact boundary", exc_info=True
+                                "Failed settling transcript compact boundary", exc_info=True
                             )
             except TranscriptObservationError:
-                logger.warning("Codex compact rollout observation ended", exc_info=True)
-                codex_cursor = None
+                logger.warning("Transcript compact observation ended", exc_info=True)
+                compact_cursor = None
         error, boundary = (
             await asyncio.to_thread(_fresh_claude_compact_records, cursor)
             if cursor
@@ -242,15 +243,22 @@ async def deliver_staged_compact_handoff(
     waiter = register_compact_boundary_waiter(
         session_id, attempt_id, handoff_record_id, getattr(session, "terminal_context", None)
     )
-    codex_cursor: CodexRolloutCursor | None = None
+    compact_cursor: CodexRolloutCursor | DroidTranscriptCursor | None = None
 
+    # Codex and Droid record their compact only in the transcript: neither sends PostCompact,
+    # and Droid /compress keeps its session id, so no compact SessionStart follows either.
     def command_submitting() -> None:
-        nonlocal codex_cursor
-        if source == "codex":
+        nonlocal compact_cursor
+        transcript_path = getattr(session, "transcript_path", None)
+        if source in ("codex", "droid"):
             try:
-                codex_cursor = CodexRolloutCursor.at_eof(getattr(session, "transcript_path", None))
+                compact_cursor = (
+                    CodexRolloutCursor.at_eof(transcript_path)
+                    if source == "codex"
+                    else DroidTranscriptCursor.at_eof(transcript_path)
+                )
             except TranscriptObservationError:
-                logger.warning("Codex compact rollout is unavailable for session %s", session_id)
+                logger.warning("Compact transcript is unavailable for session %s", session_id)
         arm_compact_boundary_waiter(session_id, attempt_id)
 
     continuation_pending = False
@@ -314,8 +322,8 @@ async def deliver_staged_compact_handoff(
                 before_command,
                 cursor,
                 command=command,
-                codex_cursor=codex_cursor,
-                on_codex_boundary=continue_after_boundary,
+                compact_cursor=compact_cursor,
+                on_compact_record=continue_after_boundary,
                 on_claude_boundary=continue_after_boundary,
             )
             if (

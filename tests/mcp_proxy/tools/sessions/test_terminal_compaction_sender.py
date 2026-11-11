@@ -21,11 +21,12 @@ from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _send_terminal_compaction_command,
 )
 from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
+    _COMPACT_BOUNDARY_TIMEOUT_REASON,
     _wait_for_compact_boundary,
     deliver_staged_compact_handoff,
 )
 from gobby.sessions.compact_continuation import CompactBoundaryWaiter
-from gobby.sessions.transcript_cursor import CodexRolloutCursor
+from gobby.sessions.transcript_cursor import CodexRolloutCursor, DroidTranscriptCursor
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.pane_io import ComposerReader, RuntimePaneIO
@@ -282,8 +283,8 @@ async def _codex_boundary_wait(
         None,
         None,
         timeout_seconds=timeout_seconds,
-        codex_cursor=cursor,
-        on_codex_boundary=receive_boundary,
+        compact_cursor=cursor,
+        on_compact_record=receive_boundary,
     )
     return result, calls
 
@@ -306,6 +307,65 @@ async def test_codex_boundary_observed_past_deadline_is_not_a_timeout(tmp_path: 
 
     assert result is None
     assert calls == ["compacted"]
+
+
+async def _droid_boundary_wait(
+    tmp_path: Path, *, record_before_cursor: bool
+) -> tuple[str | None, list[str]]:
+    import asyncio
+
+    transcript = tmp_path / "droid-session.jsonl"
+    compaction = '{"type":"compaction_state","id":"c1","summaryText":"summary"}\n'
+    transcript.write_text(
+        '{"type":"session_start","id":"droid-session"}\n'
+        + (compaction if record_before_cursor else "")
+    )
+    cursor = DroidTranscriptCursor.at_eof(transcript)
+    if not record_before_cursor:
+        with transcript.open("a") as stream:
+            stream.write(compaction)
+    waiter = CompactBoundaryWaiter(
+        "attempt", "handoff", None, asyncio.Event(), asyncio.get_running_loop()
+    )
+    calls: list[str] = []
+
+    def receive_boundary() -> bool:
+        calls.append("compaction_state")
+        waiter.loop.call_soon_threadsafe(waiter.event.set)
+        return True
+
+    result = await _wait_for_compact_boundary(
+        waiter,
+        _ComposerPane(),
+        None,
+        None,
+        timeout_seconds=0.1,
+        compact_cursor=cursor,
+        on_compact_record=receive_boundary,
+    )
+    return result, calls
+
+
+@pytest.mark.asyncio
+async def test_droid_in_place_compaction_record_completes_wait_without_postcompact_hook(
+    tmp_path: Path,
+) -> None:
+    # Droid /compress keeps its session id and has no PostCompact hook; the compaction_state
+    # record it appends is the only boundary evidence.
+    result, calls = await _droid_boundary_wait(tmp_path, record_before_cursor=False)
+
+    assert result is None
+    assert calls == ["compaction_state"]
+
+
+@pytest.mark.asyncio
+async def test_droid_compaction_record_before_the_command_is_not_this_boundary(
+    tmp_path: Path,
+) -> None:
+    result, calls = await _droid_boundary_wait(tmp_path, record_before_cursor=True)
+
+    assert result == _COMPACT_BOUNDARY_TIMEOUT_REASON
+    assert calls == []
 
 
 @pytest.mark.asyncio
