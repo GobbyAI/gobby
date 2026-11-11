@@ -86,6 +86,8 @@ class HookCapability:
     context_channel: ContextChannel = ContextChannel.NONE
     reason_format: ReasonFormat = ReasonFormat.PASSTHROUGH
     supported_response_fields: frozenset[str] = field(default_factory=frozenset)
+    # The adapter starts the session from this hook although its event is not SESSION_START.
+    starts_session: bool = False
 
     @property
     def unsupported_response_fields(self) -> frozenset[str]:
@@ -452,6 +454,8 @@ def _agy_capabilities() -> ProviderCapabilities:
                 *extra_fields,
                 context_channel=context_channel,
             ),
+            # AgyAdapter.handle_native dispatches a synthetic SESSION_START per PreInvocation.
+            starts_session=hook_name == "PreInvocation",
         )
 
     return ProviderCapabilities(
