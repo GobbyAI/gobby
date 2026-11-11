@@ -87,6 +87,8 @@ _HOST_ENVIRONMENT = (
     "RTK_TEE_DIR",
     "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
     "GOBBY_PROMPT_FILE",
+    # A checkout-binary test run points this at a build dir; the corpus expects {home}/.gobby/bin.
+    "GOBBY_NATIVE_BIN_DIR",
     "APPDATA",
     "LOCALAPPDATA",
 )
