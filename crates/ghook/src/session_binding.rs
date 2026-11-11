@@ -104,12 +104,23 @@ fn is_session_start(envelope: &Envelope) -> bool {
     normalized_hook_type(&envelope.hook_type) == "sessionstart"
 }
 
+/// The provider session keys the daemon's session claim accepts, in its order.
+/// Antigravity names its session `conversationId`.
+const PROVIDER_SESSION_KEYS: [&str; 4] = [
+    "session_id",
+    "sessionId",
+    "conversationId",
+    "conversation_id",
+];
+
 fn provider_session_id(envelope: &Envelope) -> Option<&str> {
-    envelope
-        .input_data
-        .get("session_id")
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
+    PROVIDER_SESSION_KEYS.iter().find_map(|key| {
+        envelope
+            .input_data
+            .get(*key)
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+    })
 }
 
 #[cfg(test)]
