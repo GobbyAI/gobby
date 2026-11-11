@@ -1892,14 +1892,21 @@ def cli_events(daemon_instance: DaemonInstance) -> Generator[CLIEventSimulator]:
 # --- MCP Client Helpers ---
 
 
-def _session_bound_headers(gobby_home: Path, session: Mapping[str, Any]) -> dict[str, str]:
-    """Headers a session's own caller sends: its session-bound bearer and selectors.
+def _session_bound_headers(
+    gobby_home: Path, session: Mapping[str, Any], agent_run_id: str | None = None
+) -> dict[str, str]:
+    """Headers a session's own caller sends: its bound bearer and selectors.
 
     The machine bearer may not select a session (#25855). A SessionStart hands its
-    caller a token bound to that one session; this mints the same token with the
-    isolated daemon's signing key so a test acts as the session it names.
+    caller a token bound to that one session, and a spawned run gets one bound to its
+    run; this mints the same token with the isolated daemon's signing key so a test
+    acts as the session, or the run, it names.
     """
-    from gobby.utils.local_token import issue_session_api_token, read_managed_signing_key
+    from gobby.utils.local_token import (
+        issue_agent_api_token,
+        issue_session_api_token,
+        read_managed_signing_key,
+    )
 
     signing_key = read_managed_signing_key(gobby_home / "bootstrap.yaml")
     if signing_key is None:
@@ -1907,12 +1914,19 @@ def _session_bound_headers(gobby_home: Path, session: Mapping[str, Any]) -> dict
     session_id = str(session["id"])
     project_id = str(session["project_id"])
     machine_id = session.get("machine_id")
-    token = issue_session_api_token(
-        signing_key,
-        session_id=session_id,
-        project_id=project_id,
-        machine_id=str(machine_id) if machine_id else None,
-    )
+    machine = str(machine_id) if machine_id else None
+    if agent_run_id:
+        token = issue_agent_api_token(
+            signing_key,
+            agent_run_id=agent_run_id,
+            session_id=session_id,
+            project_id=project_id,
+            machine_id=machine,
+        )
+    else:
+        token = issue_session_api_token(
+            signing_key, session_id=session_id, project_id=project_id, machine_id=machine
+        )
     return {
         "Authorization": f"Bearer {token}",
         "X-Gobby-Session-Id": session_id,
@@ -1929,7 +1943,8 @@ class MCPTestClient:
     the session selector, which tools like ``gobby-tasks.create_task`` require.
     With ``gobby_home`` the client presents a credential bound to the session, as
     the session's own caller does; the machine bearer alone may not select one.
-    Set ``agent_run_id`` when the session belongs to an active agent run.
+    Set ``agent_run_id`` when the session belongs to an active agent run; the bound
+    credential is then the run's own.
     """
 
     def __init__(self, daemon_url: str, token: str, gobby_home: Path | None = None):
@@ -1942,25 +1957,27 @@ class MCPTestClient:
         )
         self.session_id: str | None = None
         self.agent_run_id: str | None = None
-        self._bound: tuple[str, dict[str, str]] | None = None
+        self._bound: tuple[tuple[str, str | None], dict[str, str]] | None = None
 
     def close(self) -> None:
         """Close the HTTP client."""
         self.client.close()
 
-    def _bound_headers(self, session_id: str) -> dict[str, str]:
-        if self._bound is None or self._bound[0] != session_id:
+    def _bound_headers(self, session_id: str, agent_run_id: str | None) -> dict[str, str]:
+        key = (session_id, agent_run_id)
+        if self._bound is None or self._bound[0] != key:
             assert self.gobby_home is not None
             response = self.client.get(f"/api/sessions/{session_id}")
             response.raise_for_status()
             session = cast(dict[str, Any], response.json()["session"])
-            self._bound = (session_id, _session_bound_headers(self.gobby_home, session))
+            headers = _session_bound_headers(self.gobby_home, session, agent_run_id)
+            self._bound = (key, headers)
         return dict(self._bound[1])
 
     def _session_headers(self) -> dict[str, str]:
         headers: dict[str, str] = {}
-        if self.session_id and self.gobby_home is not None and not self.agent_run_id:
-            headers.update(self._bound_headers(self.session_id))
+        if self.session_id and self.gobby_home is not None:
+            headers.update(self._bound_headers(self.session_id, self.agent_run_id))
         elif self.session_id:
             headers["X-Gobby-Session-Id"] = self.session_id
         if self.agent_run_id:

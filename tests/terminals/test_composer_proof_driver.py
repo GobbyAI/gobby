@@ -17,6 +17,7 @@ import pytest
 
 from gobby.storage.sessions._constants import ALLOWED_SESSION_STATUSES
 from gobby.terminals.frame_client import FrameClient
+from gobby.terminals.host_protocol import frames_socket_path
 from tests.e2e.composer_proof import ProofRefused, ProofScope, Surface, require_private_root
 from tests.e2e.composer_proof_frames import ProofFrame
 from tests.e2e.composer_proof_live import Frames, LiveProof, Seat
@@ -39,10 +40,11 @@ async def test_owned_termination_requires_public_ack_and_exited_readback(
     send, wait = AsyncMock(), AsyncMock(return_value={"success": True})
     seat = cast(Seat, SimpleNamespace(surface=own, ws=SimpleNamespace(send=send, wait_for=wait)))
     proof.seats = [seat]
+    row = {"session_id": own.session_id, "state": "exited" if exited else "live"}
     with (
-        patch.object(
-            proof, "validate", AsyncMock(return_value={"state": "exited" if exited else "live"})
-        ),
+        patch.object(proof, "validate", AsyncMock(return_value=row)),
+        # The exited readback rereads the terminal row without validate().
+        patch.object(proof, "terminal", AsyncMock(return_value=row)),
     ):
         if not exited:
             with pytest.raises(ProofRefused, match="termination"):
@@ -222,7 +224,9 @@ async def test_rebound_surface_receives_zero_editor_input(tmp_path: Path, field:
         "attach": {
             "backend": "native",
             "frame_host_epoch": own.host_epoch,
-            "host_socket": "/proof/control.sock",
+            # The owned binding names the private root's frames socket, so only the
+            # parametrized change below can refuse the edit.
+            "host_socket": str(frames_socket_path(tmp_path / "h")),
             "host_terminal_id": own.terminal_id,
         },
     }
@@ -248,8 +252,10 @@ async def test_rebound_surface_receives_zero_editor_input(tmp_path: Path, field:
     )
     write = AsyncMock()
     seat = cast(Seat, SimpleNamespace(surface=own, ws=SimpleNamespace(write=write)))
+    # The seat's project comes from its session record, which follows the row.
+    session = AsyncMock(return_value={"project_id": row["project_id"]})
     try:
-        with pytest.raises(ProofRefused, match="binding"):
+        with patch.object(proof, "call", session), pytest.raises(ProofRefused, match="binding"):
             await proof.edit(seat, "R2_22915_CODEX_DRAFT_ABCD_EFGH")
         write.assert_not_awaited()
     finally:
