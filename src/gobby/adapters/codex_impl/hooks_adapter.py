@@ -479,6 +479,9 @@ class CodexHooksAdapter(BaseAdapter):
             if response.system_message:
                 return {"systemMessage": response.system_message}
             return {}
+        if hook_event_name in ("PreModelRequest", "PostModelRequest"):
+            # Codex treats model-request hook output as diagnostic only.
+            return {}
 
         normalized_reason = (
             None

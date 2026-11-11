@@ -291,6 +291,43 @@ fn response_credential_is_stored_for_this_cli_only_and_stripped() {
     );
 }
 
+fn agy_envelope(hook_type: &str, conversation_id: &str) -> Envelope {
+    Envelope::new(
+        false,
+        hook_type.into(),
+        json!({"conversationId": conversation_id}),
+        "agy".into(),
+        BTreeMap::new(),
+    )
+}
+
+#[test]
+fn antigravity_conversation_id_binds_the_minted_credential() {
+    let home = machine_key_home();
+    let body = json!({
+        "continue": true,
+        SESSION_CREDENTIAL_FIELD: {
+            "token": TOKEN,
+            "session_id": SESSION_UUID,
+            "project_id": "22222222-2222-4222-8222-222222222222"
+        }
+    })
+    .to_string();
+
+    isolated(home.path(), || {
+        remember_response_credential(&agy_envelope("PreInvocation", "conv-1"), &body);
+
+        let cli = current_cli_pid().expect("the parent CLI process is readable");
+        let stored = session_credential::load(home.path(), &cli_pid_key(cli))
+            .expect("Antigravity's minted credential is stored under its CLI");
+        assert_eq!(stored.provider_session_id, "conv-1");
+        match caller_for(&agy_envelope("PreToolUse", "conv-1")) {
+            Caller::Bound(credential) => assert_eq!(credential.token, TOKEN),
+            other => panic!("expected the stored credential, got {other:?}"),
+        }
+    });
+}
+
 #[test]
 fn a_session_start_replaces_the_old_record_after_key_activation() {
     let home = machine_key_home();

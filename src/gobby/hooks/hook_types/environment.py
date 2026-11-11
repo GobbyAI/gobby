@@ -74,6 +74,40 @@ class ConfigChangeOutput(HookOutput):
     pass
 
 
+class PreModelSwitchInput(HookInput):
+    """Input model for pre-model-switch hook."""
+
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
+    from_model: str | None = Field(default=None, description="Model before the switch")
+    to_model: str = Field(..., min_length=1, description="Requested model")
+    requested_model: str | None = Field(default=None, description="Model as the user named it")
+    source: str | None = Field(default=None, description="What initiated the switch")
+    machine_id: str | None = Field(default=None, description="Unique machine identifier")
+
+
+class PreModelSwitchOutput(HookOutput):
+    """Output model for pre-model-switch hook."""
+
+    pass
+
+
+class PostModelSwitchInput(HookInput):
+    """Input model for post-model-switch hook."""
+
+    external_id: str = Field(..., min_length=1, description="Unique session identifier")
+    from_model: str | None = Field(default=None, description="Model before the switch")
+    to_model: str = Field(..., min_length=1, description="Model now in use")
+    requested_model: str | None = Field(default=None, description="Model as the user named it")
+    source: str | None = Field(default=None, description="What initiated the switch")
+    machine_id: str | None = Field(default=None, description="Unique machine identifier")
+
+
+class PostModelSwitchOutput(HookOutput):
+    """Output model for post-model-switch hook."""
+
+    pass
+
+
 class CwdChangedInput(HookInput):
     """Input model for cwd-changed hook."""
 

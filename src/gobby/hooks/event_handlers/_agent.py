@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 import psycopg
 
 from gobby.hooks.event_handlers._base import EventHandlersBase
+from gobby.hooks.event_handlers._model_observation import record_reported_model
 from gobby.hooks.events import ContextPart, HookEvent, HookResponse, SessionSource
 from gobby.hooks.session_types import has_prior_session_activity
 from gobby.hooks.terminal_handoff_delivery import schedule_staged_handoff_on_stop
@@ -159,6 +160,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                         self._session_manager.update(session_id, reasoning_effort=effort)
                 except (psycopg.Error, KeyError, TypeError, ValueError) as e:
                     self.logger.warning("Failed to persist session prompt metadata: %s", e)
+            record_reported_model(self, event, input_data.get("model"))
 
             # A new parent turn cannot inherit live subagents from the previous
             # turn. Reset both values together to recover from missed stop hooks.

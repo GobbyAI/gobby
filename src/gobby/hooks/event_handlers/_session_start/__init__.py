@@ -55,10 +55,14 @@ class SessionStartMixin(EventHandlersBase):
         )
 
     def handle_session_start(self, event: HookEvent) -> HookResponse:
-        """Handle SESSION_START event."""
+        """Handle SESSION_START event, then record the model its payload reports."""
+        from gobby.hooks.event_handlers._model_observation import record_reported_model
+
         from .flow import handle_session_start
 
-        return handle_session_start(self, event)
+        response = handle_session_start(self, event)
+        record_reported_model(self, event, event.data.get("model"))
+        return response
 
     def _activate_materialized_session(
         self,

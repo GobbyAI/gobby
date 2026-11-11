@@ -117,6 +117,8 @@ class TestEventMap:
             ("notification", HookEventType.NOTIFICATION),
             ("message-display", HookEventType.MESSAGE_DISPLAY),
             ("directory-added", HookEventType.DIRECTORY_ADDED),
+            ("pre-model-switch", HookEventType.PRE_MODEL_SWITCH),
+            ("post-model-switch", HookEventType.POST_MODEL_SWITCH),
         ],
     )
     def test_event_map_entry(self, hook_type: str, expected_event_type: HookEventType) -> None:
@@ -152,6 +154,8 @@ class TestHookEventNameMap:
             ("notification", "Notification"),
             ("message-display", "MessageDisplay"),
             ("directory-added", "DirectoryAdded"),
+            ("pre-model-switch", "PreModelSwitch"),
+            ("post-model-switch", "PostModelSwitch"),
         ],
     )
     def test_hook_event_name(self, hook_type: str, expected_name: str) -> None:
@@ -567,6 +571,29 @@ class TestTranslateToHookEvent:
                     "session_id": "sess-directory",
                     "directory": "/tmp/repo",
                     "source": "register_repo_root",
+                },
+            ),
+            (
+                "pre-model-switch",
+                HookEventType.PRE_MODEL_SWITCH,
+                {
+                    "session_id": "sess-switch",
+                    "from_model": "claude-opus-5-5",
+                    "to_model": "claude-sonnet-5-5",
+                    "requested_model": "sonnet",
+                    "source": "command",
+                    "context_tokens": 41000,
+                },
+            ),
+            (
+                "post-model-switch",
+                HookEventType.POST_MODEL_SWITCH,
+                {
+                    "session_id": "sess-switch",
+                    "from_model": "claude-opus-5-5",
+                    "to_model": "claude-sonnet-5-5",
+                    "requested_model": "sonnet",
+                    "source": "command",
                 },
             ),
         ],
@@ -1201,6 +1228,37 @@ class TestTranslateFromHookResponse:
         response = HookResponse(decision="allow")
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
         assert "hookSpecificOutput" not in result
+
+    @pytest.mark.parametrize("hook_type", ["pre-model-switch", "PreModelSwitch"])
+    def test_pre_model_switch_block_refuses_the_switch(self, hook_type: str) -> None:
+        result = ClaudeCodeAdapter().translate_from_hook_response(
+            HookResponse(decision="block", reason="Stay on the reviewed model"),
+            hook_type=hook_type,
+        )
+
+        assert result["decision"] == "block"
+        assert result["reason"] == "Stay on the reviewed model"
+
+    def test_pre_model_switch_allow_is_neutral(self) -> None:
+        result = ClaudeCodeAdapter().translate_from_hook_response(
+            HookResponse(decision="allow"), hook_type="pre-model-switch"
+        )
+
+        assert "decision" not in result
+
+    def test_post_model_switch_ignores_block_and_keeps_context(self) -> None:
+        result = ClaudeCodeAdapter().translate_from_hook_response(
+            HookResponse(decision="block", reason="ignored", context="Model changed"),
+            hook_type="post-model-switch",
+        )
+
+        assert result == {
+            "continue": True,
+            "hookSpecificOutput": {
+                "hookEventName": "PostModelSwitch",
+                "additionalContext": "Model changed",
+            },
+        }
 
     def test_setup_context_ignores_block(self) -> None:
         result = ClaudeCodeAdapter().translate_from_hook_response(

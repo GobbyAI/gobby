@@ -128,7 +128,7 @@ class AgyAdapter(ACPHookAdapter):
         native_event: dict[str, Any],
         hook_manager: HookManager,
     ) -> dict[str, Any]:
-        """Dispatch synthetic SESSION_START then the original PreInvocation."""
+        """Start the session from SessionStart, or synthesize it ahead of PreInvocation."""
         hook_type = str(native_event.get("hook_type") or "")
         if not hook_type:
             input_data = native_event.get("input_data")
@@ -141,7 +141,7 @@ class AgyAdapter(ACPHookAdapter):
                     native_event.get("hook_event_name") or native_event.get("hookEventName") or ""
                 )
         contract = get_agy_contract(hook_type)
-        if contract is None or contract.hook_event_name != "PreInvocation":
+        if contract is None or contract.hook_event_name not in {"SessionStart", "PreInvocation"}:
             return super().handle_native(native_event, hook_manager)
 
         original = self.translate_to_hook_event(native_event)
@@ -149,6 +149,18 @@ class AgyAdapter(ACPHookAdapter):
         if isinstance(claim, dict):
             original.metadata["_gobby_startup_claim"] = claim
         self._hook_manager = hook_manager
+        if contract.hook_event_name == "SessionStart":
+            # A help first prompt starts nothing here; its PreInvocation answers the help.
+            # A hint the preflight could not adopt starts nothing either: the flow
+            # would otherwise adopt the hinted row, and PreInvocation registers the
+            # conversation's own row instead.
+            if native_event.get("_gobby_session_hint_error") or gobby_help_prefix(
+                original.data.get("prompt")
+            ):
+                return {}
+            return self.translate_from_hook_response(
+                hook_manager.handle(original), hook_type="SessionStart"
+            )
         if original.event_type == HookEventType.BEFORE_AGENT and gobby_help_prefix(
             original.data.get("prompt")
         ):
@@ -215,7 +227,7 @@ class AgyAdapter(ACPHookAdapter):
             logger=logger,
         )
 
-        if event_name in {"PreInvocation", "PostInvocation"}:
+        if event_name in {"SessionStart", "PreInvocation", "PostInvocation"}:
             steps: list[dict[str, str]] = []
             # Always page: a step with nothing fresh still carries the queued remainder.
             context = page_context_for_adapter(

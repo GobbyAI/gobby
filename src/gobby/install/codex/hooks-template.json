@@ -134,6 +134,28 @@
           }
         ]
       }
+    ],
+    "PreModelRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=codex --type=PreModelRequest --enqueue-only",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostModelRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "ghook --gobby-owned --cli=codex --type=PostModelRequest --enqueue-only",
+            "timeout": 3
+          }
+        ]
+      }
     ]
   }
 }

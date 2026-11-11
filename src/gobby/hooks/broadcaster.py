@@ -62,6 +62,8 @@ EVENT_TYPE_TO_HOOK_TYPE: dict[str, HookType] = {
     "elicitation_result": HookType.ELICITATION_RESULT,
     "before_model": HookType.BEFORE_MODEL,
     "after_model": HookType.AFTER_MODEL,
+    "pre_model_switch": HookType.PRE_MODEL_SWITCH,
+    "post_model_switch": HookType.POST_MODEL_SWITCH,
     "permission_request": HookType.PERMISSION_REQUEST,
     "permission_denied": HookType.PERMISSION_DENIED,
 }

@@ -27,6 +27,10 @@ from .environment import (
     InstructionsLoadedOutput,
     NotificationInput,
     NotificationOutput,
+    PostModelSwitchInput,
+    PostModelSwitchOutput,
+    PreModelSwitchInput,
+    PreModelSwitchOutput,
     WorktreeCreateInput,
     WorktreeCreateOutput,
     WorktreeRemoveInput,
@@ -116,6 +120,8 @@ HOOK_INPUT_MODELS: dict[HookType, type[HookInput]] = {
     HookType.ELICITATION_RESULT: ElicitationResultInput,
     HookType.BEFORE_MODEL: BeforeModelInput,
     HookType.AFTER_MODEL: AfterModelInput,
+    HookType.PRE_MODEL_SWITCH: PreModelSwitchInput,
+    HookType.POST_MODEL_SWITCH: PostModelSwitchInput,
     HookType.PERMISSION_REQUEST: PermissionRequestInput,
     HookType.PERMISSION_DENIED: PermissionDeniedInput,
 }
@@ -153,6 +159,8 @@ HOOK_OUTPUT_MODELS: dict[HookType, type[HookOutput]] = {
     HookType.ELICITATION_RESULT: ElicitationResultOutput,
     HookType.BEFORE_MODEL: BeforeModelOutput,
     HookType.AFTER_MODEL: AfterModelOutput,
+    HookType.PRE_MODEL_SWITCH: PreModelSwitchOutput,
+    HookType.POST_MODEL_SWITCH: PostModelSwitchOutput,
     HookType.PERMISSION_REQUEST: PermissionRequestOutput,
     HookType.PERMISSION_DENIED: PermissionDeniedOutput,
 }

@@ -315,6 +315,28 @@
         ]
       }
     ],
+    "PreModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+          "command": "ghook --gobby-owned --cli=claude --type=pre-model-switch",
+          "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PostModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+          "command": "ghook --gobby-owned --cli=claude --type=post-model-switch",
+          "timeout": 120
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "hooks": [
