@@ -1,4 +1,4 @@
-// upstream: none (Gobby's machine axis; herdr runs on one machine)
+// upstream: none (Gobby's machine axis)
 //! The machines section: the hub (this machine) first, the other machines
 //! nested under it, each a state dot (the most urgent of its agents) and
 //! the machine's name. The highlighted rows are the machines the agents

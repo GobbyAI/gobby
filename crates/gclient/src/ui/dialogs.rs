@@ -77,7 +77,7 @@ impl CloseTarget {
     }
 }
 
-/// herdr's confirm-close scope line: how much the close destroys.
+/// The confirm-close scope line: how much the close destroys.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseScope {
     Panes(usize),
@@ -550,7 +550,7 @@ pub fn render_rename(
 }
 
 /// ` value` with a block cursor at `cursor` (a char index; past the end
-/// appends the block, herdr style).
+/// appends the block).
 fn input_line(value: &str, cursor: usize) -> Line<'static> {
     let cursor = cursor.min(value.chars().count());
     let before: String = value.chars().take(cursor).collect();

@@ -2,28 +2,28 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : subtext0/dim+b*120
-01 |                                                                                                                        |
-01 : text/panel_bg*120
-02 | Machines                  ⍾ alpha    │ ⍾ second   │ +                                                                  |
-02 : text/surface0*1 subtext0/surface0+b*8 text/surface0*16 text/panel_bg*1 text/selection+b*1 yellow/selection+b*1 text/selection+b*10 line/surface0*1 subtext0/surface0*1 yellow/surface0*1 subtext0/surface0*10 line/surface0*1 overlay1/surface0*3 text/surface0*65
-03 | ⍾ ⍾1 scripted            ┌ ⍾ term-alpha ───────────────────────────────┐┌   term-beta · Focused ──────────────────────┐|
-03 : text/selection*1 yellow/selection*4 overlay0/selection+d*1 text/selection+b*8 text/selection*11 text/panel_bg*1 yellow/panel_bg*47 accent/panel_bg*1 accent/panel_bg+b*23 accent/panel_bg*23
-04 |                          │                                             ││                                             │|
-04 : text/panel_bg*26 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
-05 | Projects                 │                                             ││                                             │|
-05 : text/surface0*1 subtext0/surface0+b*8 text/surface0*16 text/panel_bg*1 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
-06 | ⍾ ⍾1 alpha             ▸ │                                             ││                                             │|
-06 : text/selection*1 yellow/selection*4 overlay0/selection+d*1 accent/selection+b*5 text/selection*13 accent/selection*1 text/panel_bg*1 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
-07 |   beta (~)               │                                             ││                                             │|
-07 : text/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 accent/panel_bg+b*4 subtext0/panel_bg*2 identifier/panel_bg*1 subtext0/panel_bg*1 text/panel_bg*15 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
-08 |                          │                                             ││                                             │|
-08 : text/panel_bg*26 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
-09 | Agents                   │                                             ││                                             │|
-09 : text/surface0*1 subtext0/surface0+b*6 text/surface0*18 text/panel_bg*1 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
-10 | alpha ────────────────── │                                             ││                                             │|
-10 : text/panel_bg*1 accent/panel_bg+b*5 overlay0/panel_bg*19 text/panel_bg*1 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
-11 | ⍾ Unknown                │                                             ││                                             │|
-11 : text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*24 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+01 | Machines                  ⍾ alpha    │ ⍾ second   │ +                                                                  |
+01 : text/surface0*1 subtext0/surface0+b*8 text/surface0*16 text/panel_bg*1 text/selection+b*1 yellow/selection+b*1 text/selection+b*10 line/surface0*1 subtext0/surface0*1 yellow/surface0*1 subtext0/surface0*10 line/surface0*1 overlay1/surface0*3 text/surface0*65
+02 | ⍾1 scripted              ┌ ⍾ term-alpha ───────────────────────────────┐┌   term-beta · Focused ──────────────────────┐|
+02 : text/selection*1 yellow/selection*2 overlay0/selection+d*1 text/selection+b*8 text/selection*13 text/panel_bg*1 yellow/panel_bg*47 accent/panel_bg*1 accent/panel_bg+b*23 accent/panel_bg*23
+03 |                          │                                             ││                                             │|
+03 : text/panel_bg*26 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+04 | Projects                 │                                             ││                                             │|
+04 : text/surface0*1 subtext0/surface0+b*8 text/surface0*16 text/panel_bg*1 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+05 | ⍾1 alpha (main ↑2 ↓1)  ▸ │                                             ││                                             │|
+05 : text/selection*1 yellow/selection*2 overlay0/selection+d*1 accent/selection+b*5 text/selection*2 identifier/selection*4 green/selection*3 text/selection*6 accent/selection*1 text/panel_bg*1 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+06 |   beta (~)               │                                             ││                                             │|
+06 : text/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 accent/panel_bg+b*4 subtext0/panel_bg*2 identifier/panel_bg*1 subtext0/panel_bg*1 text/panel_bg*15 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+07 |                          │                                             ││                                             │|
+07 : text/panel_bg*26 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+08 | Agents                   │                                             ││                                             │|
+08 : text/surface0*1 subtext0/surface0+b*6 text/surface0*18 text/panel_bg*1 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+09 | alpha ────────────────── │                                             ││                                             │|
+09 : text/panel_bg*1 accent/panel_bg+b*5 overlay0/panel_bg*19 text/panel_bg*1 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+10 | ⍾ default                │                                             ││                                             │|
+10 : text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*24 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+11 |                          │                                             ││                                             │|
+11 : text/panel_bg*26 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 12 |                          │                                             ││                                             │|
 12 : text/panel_bg*26 yellow/panel_bg*1 text/unfocused*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 13 |                          │                                             ││                                             │|

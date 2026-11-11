@@ -1,7 +1,6 @@
 // upstream: herdr v0.8.0 src/client/shell/overlay_input.rs
 //! The project dialogs: new/open project, new worktree,
-//! open worktree, and remove worktree (herdr's
-//! `render_worktree_remove_overlay`).
+//! open worktree, and remove worktree.
 
 use std::fs;
 use std::path::Path;

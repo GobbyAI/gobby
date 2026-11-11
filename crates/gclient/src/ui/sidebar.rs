@@ -3,7 +3,7 @@
 //! one-row band.
 //!
 //! The sidebar sits on the ground with no fill and no separator
-//! glyph; herdr's edge column stays reserved as the drag lane of a pinned
+//! glyph; its edge column stays reserved as the drag lane of a pinned
 //! sidebar. Each section's height is derived from its rows (machines take up
 //! to `MACHINES_MAX_ROWS`, projects what their cards need within the top
 //! half, agents and terminals share the rest) until a divider drag pins it;
@@ -67,8 +67,8 @@ pub struct SidebarHits {
     /// Scrollbar lane beside each section that overflowed, by
     /// `SidebarSection::index`.
     pub scrollbars: [Option<Rect>; 4],
-    /// The gap row under each section that a divider drag can resize, by
-    /// `SidebarSection::index`; `None` where no divider lies.
+    /// The label band of each section that a drag can resize, by
+    /// `SidebarSection::index`; `None` where no handle lies.
     pub dividers: [Option<Rect>; 3],
 }
 
@@ -262,13 +262,13 @@ pub fn render_sidebar<W: WorkspaceView>(
     projects::render_projects(frame, layout.sections[1], &projects, chrome, &mut hits);
     agents::render_agents(frame, layout.sections[2], &agents, chrome, &mut hits);
     terminals::render_terminals(frame, layout.sections[3], &terminals, chrome, &mut hits);
-    // The blank row a section leaves under itself divides it from the section
-    // below, when both are drawn tall enough to trade rows.
+    // A section's label band is the handle that trades its rows with the
+    // section below, when both are drawn tall enough to trade; the blank row
+    // under it is inert.
     for index in 0..hits.dividers.len() {
         let section = layout.sections[index];
         if section.height >= 3 && layout.sections[index + 1].height > 0 {
-            hits.dividers[index] =
-                Some(Rect::new(section.x, section.bottom() - 1, section.width, 1));
+            hits.dividers[index] = Some(Rect::new(section.x, section.y, section.width, BAND_ROWS));
         }
     }
     hits

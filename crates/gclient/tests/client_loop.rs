@@ -38,7 +38,7 @@ use gobby_client::ui::chrome::{Mode, RowState};
 use gobby_client::ui::dialogs::orphans::row_summary;
 use gobby_client::ui::dialogs::{CloseScope, CloseTarget, Dialog, OrphanRow, WorktreeChoice};
 use gobby_client::ui::hit::{hit_test, Hit};
-use gobby_client::ui::keymap::{Keymap, HERDR_PREFIX};
+use gobby_client::ui::keymap::{Keymap, DEFAULT_PREFIX};
 use gobby_client::ui::navigator::navigator_rows;
 use gobby_client::ui::pane_chrome::pane_address;
 use gobby_client::ui::pane_layout::{metrics_for, pane_inner_rect, scrollbar_gutter};
@@ -416,7 +416,7 @@ fn live_entry_connects_before_running() {
             host: None,
             host_notice: None,
             prefs: gobby_client::ui::settings::ClientPrefs::default(),
-            keymap: Keymap::defaults(HERDR_PREFIX),
+            keymap: Keymap::defaults(DEFAULT_PREFIX),
             nested: false,
             in_pane: false,
             gobby_home: std::path::PathBuf::new(),
@@ -2849,7 +2849,7 @@ async fn select_spawn_attach_terminate_loop() {
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
         chrome.keymap =
-            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", DEFAULT_PREFIX)
                 .expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(32);
 
@@ -3045,7 +3045,7 @@ async fn select_spawn_attach_terminate_loop() {
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
         chrome.keymap =
-            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", DEFAULT_PREFIX)
                 .expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(16);
 
@@ -3165,7 +3165,7 @@ async fn select_spawn_attach_terminate_loop() {
         // `new_terminal` ships without a chord (`prefix+shift+n` adds a
         // project); the loop under test spawns through an override.
         chrome.keymap =
-            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", DEFAULT_PREFIX)
                 .expect("test keymap");
         let (input_tx, input_rx) = mpsc::channel(8);
         let driver = async {
@@ -4443,7 +4443,7 @@ async fn a_key_the_overlay_passes_on_rolls_it_up() {
     let band: String = (0..34)
         .map(|x| next_frame.backend().buffer()[(x, 1)].symbol().to_string())
         .collect();
-    assert!(!band.contains("Machines"), "row 2 is the tab bar: {band:?}");
+    assert!(!band.contains("Machines"), "row 1 is the tab bar: {band:?}");
     mock.shutdown().await;
 }
 
@@ -4497,14 +4497,14 @@ async fn prefix_b_opens_the_overlay_or_unpins_the_column() {
         let sidebar = chrome.view.sidebar_rect;
         let terminal_area = chrome.view.terminal_area;
         let band: String = (0..sidebar.width.max(9))
-            .map(|x| next_frame.backend().buffer()[(x, 2)].symbol().to_string())
+            .map(|x| next_frame.backend().buffer()[(x, 1)].symbol().to_string())
             .collect();
         if pinned_before {
             assert!(!chrome.sidebar.pinned, "prefix+b unpins the column");
             assert!(!chrome.sidebar.overlay, "unpinning opens no overlay");
             assert_eq!(sidebar.width, 0, "a hidden sidebar takes no columns");
             assert_eq!(terminal_area.x, 0, "the panes start at the left edge");
-            assert!(!band.contains("Machines"), "row 2 is the tab bar: {band:?}");
+            assert!(!band.contains("Machines"), "row 1 is the tab bar: {band:?}");
         } else {
             assert!(!chrome.sidebar.pinned, "the overlay leaves the pin alone");
             assert!(chrome.sidebar.overlay, "prefix+b opens the overlay");
@@ -4513,7 +4513,7 @@ async fn prefix_b_opens_the_overlay_or_unpins_the_column() {
             assert_eq!(terminal_area.x, 0, "the panes keep their place under it");
             assert!(
                 band.contains("Machines"),
-                "row 2 draws the first band over the tab bar: {band:?}"
+                "row 1 draws the first band over the tab bar: {band:?}"
             );
         }
         mock.shutdown().await;
@@ -4809,7 +4809,7 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
 /// sending the first notch before any ceiling is known and clamped to the
 /// depth the daemon then reports; the scrollbar track jumps and the thumb
 /// drags to the offsets the scrollbar math gives; a pane on its alternate
-/// screen gets arrow keys instead (herdr alternate-scroll).
+/// screen gets arrow keys instead.
 #[tokio::test]
 async fn wheel_and_scrollbar_drive_scrollback() {
     const MAX_ROWS: u32 = 10;
@@ -5640,7 +5640,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
     let mut chrome = Chrome::dark();
     chrome.keymap = Keymap::from_toml(
         "[bindings]\nlast_pane = \"prefix+i\"\nnext_attention = \"prefix+f\"\n",
-        HERDR_PREFIX,
+        DEFAULT_PREFIX,
     )
     .expect("test keymap");
     chrome.notify(Toast {
@@ -7281,7 +7281,7 @@ async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() 
     assert!(tab.is_local());
     assert!(tab.layout.set_ratio_at(&[], 0.3));
     assert!(tab.layout.set_ratio_at(&[true], 0.7));
-    chrome.keymap = Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+    chrome.keymap = Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", DEFAULT_PREFIX)
         .expect("test keymap");
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let (input_tx, input_rx) = mpsc::channel(8);
@@ -7436,7 +7436,7 @@ async fn a_split_typed_while_a_local_tab_adopts_is_refused_not_orphaned() {
     assert!(tab.is_local());
     assert!(tab.layout.set_ratio_at(&[], 0.3));
     assert!(tab.layout.set_ratio_at(&[true], 0.7));
-    chrome.keymap = Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+    chrome.keymap = Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", DEFAULT_PREFIX)
         .expect("test keymap");
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
     let (input_tx, input_rx) = mpsc::channel(8);
@@ -7517,7 +7517,7 @@ async fn local_bare_tab_migration_refusals_restore_the_original_view() {
         assert!(tab.layout.set_ratio_at(&[], 0.3));
         assert!(tab.layout.set_ratio_at(&[true], 0.7));
         chrome.keymap =
-            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", DEFAULT_PREFIX)
                 .expect("test keymap");
         let original_tab = chrome.active_tab().expect("local tab").id.clone();
         let original_panes: std::collections::HashSet<_> = workspace

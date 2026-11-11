@@ -1,4 +1,4 @@
-//! herdr `src/ui/tabs.rs` (5) keep-set render tests.
+//! upstream `src/ui/tabs.rs` (5) keep-set render tests.
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::{
@@ -19,7 +19,7 @@ use serde_json::json;
 use super::fixtures::{cell, draw, rect_rows, render, terminal};
 use super::token_map::{palette, theme};
 
-/// herdr `Workspace::test_new("test")`: one auto-named tab. gclient keeps tabs
+/// upstream `Workspace::test_new("test")`: one auto-named tab. gclient keeps tabs
 /// on `Chrome`, with an empty title marking a tab as auto-named.
 fn chrome_with_one_tab() -> Chrome {
     let mut chrome = Chrome::new(theme());
@@ -33,7 +33,7 @@ fn zoom_tab(chrome: &mut Chrome, idx: usize) {
     chrome.viewer.zoomed.insert(id);
 }
 
-/// herdr `ws.test_add_tab(Some(name))`: returns the new tab's index.
+/// upstream `ws.test_add_tab(Some(name))`: returns the new tab's index.
 fn add_tab(chrome: &mut Chrome, name: Option<&str>) -> usize {
     let idx = chrome.tabs().tabs.len();
     chrome
@@ -43,7 +43,6 @@ fn add_tab(chrome: &mut Chrome, name: Option<&str>) -> usize {
     idx
 }
 
-/// herdr `tabs[i].set_custom_name(name)`.
 fn set_custom_name(chrome: &mut Chrome, idx: usize, name: &str) {
     chrome.tabs_mut().tabs[idx].title = name.to_string();
 }
@@ -70,7 +69,7 @@ fn draw_tab_bar(chrome: &Chrome, rect: Rect) -> (Terminal<TestBackend>, TabBarHi
     (term, hits)
 }
 
-/// herdr `buffer_row_text`: the row inside `area`, trailing spaces trimmed.
+/// upstream `buffer_row_text`: the row inside `area`, trailing spaces trimmed.
 fn buffer_row_text(term: &Terminal<TestBackend>, area: Rect, row: u16) -> String {
     let rows = rect_rows(term, Rect::new(area.x, row, area.width, 1));
     rows.into_iter()
@@ -130,17 +129,17 @@ parity_tests! {
 
         fn tab_width_uses_display_width_for_cjk_labels() {
             let mut chrome = chrome_with_one_tab();
-            set_custom_name(&mut chrome, 0, "提交 herdr 的反馈");
+            set_custom_name(&mut chrome, 0, "提交 gobby 的反馈");
 
             let (_, hits) = draw_tab_bar(&chrome, Rect::new(0, 0, 50, 1));
-            let expected = tab_width(&["提交 herdr 的反馈".into()], 0);
-            assert_eq!(expected, display_width_u16("提交 herdr 的反馈") + 4);
+            let expected = tab_width(&["提交 gobby 的反馈".into()], 0);
+            assert_eq!(expected, display_width_u16("提交 gobby 的反馈") + 4);
             assert_eq!(hits.tabs[0].1.width, expected);
         }
 
         fn tab_bar_renders_trailing_cjk_character() {
             let mut chrome = chrome_with_one_tab();
-            set_custom_name(&mut chrome, 0, "提交 herdr 的反馈");
+            set_custom_name(&mut chrome, 0, "提交 gobby 的反馈");
 
             let tab_bar_rect = Rect::new(0, 0, 30, 1);
             let (term, _) = draw_tab_bar(&chrome, tab_bar_rect);
@@ -241,7 +240,7 @@ fn every_tab_carries_the_rolled_up_state_of_its_agents() {
 }
 
 // Plan 2.2 tab bar mouse: gclient tests driving `route_mouse` over the drawn
-// tab bar, kept outside the `parity_tests!` block so the herdr inventory
+// tab bar, kept outside the `parity_tests!` block so the upstream inventory
 // stays exact.
 
 #[test]
@@ -509,7 +508,7 @@ fn tab_bar_clicks_activate_new_tab_and_scroll() {
     );
     assert_eq!(chrome.gesture, None, "the button starts no drag");
 
-    // herdr `wheel_over_tab_bar_switches_tabs`: down = next, up = previous,
+    // upstream `wheel_over_tab_bar_switches_tabs`: down = next, up = previous,
     // wrapping at both ends.
     let bar = chrome.view.tab_bar_rect.expect("tab bar drawn");
     let wheel = |chrome: &mut Chrome, kind, col| {

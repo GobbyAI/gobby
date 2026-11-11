@@ -1,6 +1,5 @@
 //! Mouse reports for panes whose app tracks the mouse: the bytes the app
-//! asked for (herdr `encode_mouse_button`, `encode_mouse_motion`,
-//! `encode_mouse_wheel`) and the routing that hands them to the pane under
+//! asked for and the routing that hands them to the pane under
 //! the pointer or to the pane that captured the button.
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -131,8 +130,7 @@ pub(super) fn report<W: WorkspaceView>(
 /// A press at pane cell `cell` of a pane that tracks the mouse: `slot`
 /// captures the button so the drags and the release go to this pane wherever
 /// the pointer travels, and the press is forwarded, after focusing the pane
-/// when it is not the focused one (herdr
-/// `captured_left_press_focuses_target_before_forwarding`). `None` when the
+/// when it is not the focused one. `None` when the
 /// pane does not track the mouse, so the caller gives the press its plain
 /// meaning.
 pub(super) fn press<W: WorkspaceView>(

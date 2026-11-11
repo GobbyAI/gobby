@@ -2,28 +2,28 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : subtext0/dim+bd*120
-01 |  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  |
-01 : text/panel_bg+d*2 accent/panel_bg*116 text/panel_bg+d*2
-02 | M│Keybinds                                                                                                esc Close │  |
-02 : text/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*1 text/panel_bg+b*8 text/panel_bg*95 panel_bg/accent+b*11 accent/panel_bg*1 text/surface0+d*2
-03 | ⍾│ press / to filter by command or shortcut                                                                         │─┐|
-03 : text/selection+d*1 yellow/selection+d*1 accent/panel_bg*1 overlay0/panel_bg*41 text/panel_bg*73 accent/panel_bg*1 accent/panel_bg+d*2
-04 |  │                                                                                                                  │ │|
-04 : text/panel_bg+d*2 accent/panel_bg*1 text/panel_bg*114 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
-05 | P│ Legend                                                                                                          ▐│ │|
-05 : text/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*1 text/panel_bg+b*7 text/panel_bg*106 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
-06 | ⍾│   state            means                                                                                        ▐│ │|
-06 : text/selection+d*1 yellow/selection+d*1 accent/panel_bg*1 overlay1/panel_bg*25 text/panel_bg*88 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+01 | M┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  |
+01 : text/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*116 text/surface0+d*2
+02 | ⍾│Keybinds                                                                                                esc Close │─┐|
+02 : text/selection+d*1 yellow/selection+d*1 accent/panel_bg*1 text/panel_bg+b*8 text/panel_bg*95 panel_bg/accent+b*11 accent/panel_bg*1 accent/panel_bg+d*2
+03 |  │ press / to filter by command or shortcut                                                                         │ │|
+03 : text/panel_bg+d*2 accent/panel_bg*1 overlay0/panel_bg*41 text/panel_bg*73 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+04 | P│                                                                                                                  │ │|
+04 : text/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*1 text/panel_bg*114 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+05 | ⍾│ Legend                                                                                                          ▐│ │|
+05 : text/selection+d*1 yellow/selection+d*1 accent/panel_bg*1 text/panel_bg+b*7 text/panel_bg*106 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+06 |  │   state            means                                                                                        ▐│ │|
+06 : text/panel_bg+d*1 overlay0/panel_bg+d*1 accent/panel_bg*1 overlay1/panel_bg*25 text/panel_bg*88 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 07 |  │ ⍾ needs you        waiting on you: a question, a plan approval or a permission prompt                           ▐│ │|
-07 : text/panel_bg+d*1 overlay0/panel_bg+d*1 accent/panel_bg*1 text/panel_bg*1 yellow/panel_bg*2 text/panel_bg*17 subtext0/panel_bg*66 text/panel_bg*27 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
-08 |  │ ▶ active           mid-turn, or between turns while waiting on a child run it started                           ▐│ │|
-08 : text/panel_bg+d*2 accent/panel_bg*1 text/panel_bg*1 accent/panel_bg*2 text/panel_bg*17 subtext0/panel_bg*66 text/panel_bg*27 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
-09 | A│ ‖ paused           alive but not active: between turns, paused on purpose or interrupted by you                 ▐│ │|
-09 : text/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*1 text/panel_bg*1 overlay1/panel_bg*2 text/panel_bg*17 subtext0/panel_bg*76 text/panel_bg*17 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
-10 | a│ ✕ no live agents   agents are assigned but all are dead, or the machine's daemon is unreachable                 ▐│ │|
-10 : text/panel_bg+d*1 accent/panel_bg+bd*1 accent/panel_bg*1 text/panel_bg*1 red/panel_bg*2 text/panel_bg*17 subtext0/panel_bg*76 text/panel_bg*17 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
-11 | ⍾│   blank            nothing is assigned                                                                          ▐│ │|
-11 : text/panel_bg+d*1 yellow/panel_bg+d*1 accent/panel_bg*1 text/panel_bg*1 overlay0/panel_bg*2 text/panel_bg*17 subtext0/panel_bg*19 text/panel_bg*74 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+07 : text/panel_bg+d*2 accent/panel_bg*1 text/panel_bg*1 yellow/panel_bg*2 text/panel_bg*17 subtext0/panel_bg*66 text/panel_bg*27 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+08 | A│ ▶ active           mid-turn, or between turns while waiting on a child run it started                           ▐│ │|
+08 : text/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*1 text/panel_bg*1 accent/panel_bg*2 text/panel_bg*17 subtext0/panel_bg*66 text/panel_bg*27 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+09 | a│ ‖ paused           alive but not active: between turns, paused on purpose or interrupted by you                 ▐│ │|
+09 : text/panel_bg+d*1 accent/panel_bg+bd*1 accent/panel_bg*1 text/panel_bg*1 overlay1/panel_bg*2 text/panel_bg*17 subtext0/panel_bg*76 text/panel_bg*17 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+10 | ⍾│ ✕ no live agents   agents are assigned but all are dead, or the machine's daemon is unreachable                 ▐│ │|
+10 : text/panel_bg+d*1 yellow/panel_bg+d*1 accent/panel_bg*1 text/panel_bg*1 red/panel_bg*2 text/panel_bg*17 subtext0/panel_bg*76 text/panel_bg*17 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+11 |  │   blank            nothing is assigned                                                                          ▐│ │|
+11 : text/panel_bg+d*2 accent/panel_bg*1 text/panel_bg*1 overlay0/panel_bg*2 text/panel_bg*17 subtext0/panel_bg*19 text/panel_bg*74 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 12 |  │                                                                                                                 ▐│ │|
 12 : text/panel_bg+d*2 accent/panel_bg*1 text/panel_bg*113 overlay1/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 13 |  │ ctrl+b             Enter prefix mode (prefix)                                                                   ▐│ │|

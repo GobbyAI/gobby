@@ -5,8 +5,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use gobby_client::app::sidebar_model::{
-    build, provider_label, rollup, worktree_focus_target, AgentEntry, SandboxState, SidebarInputs,
-    SidebarModel,
+    build, rollup, worktree_focus_target, AgentEntry, SandboxState, SidebarInputs, SidebarModel,
 };
 use gobby_client::app::Workspace;
 use gobby_client::app::{Backend, Pane, PaneId};
@@ -674,10 +673,10 @@ fn build_carries_definition_name_and_task_title() {
     assert_eq!(claude_code_row.task_title, None);
     assert_eq!(
         claude_code_row.definition_label(),
-        "Claude Code",
-        "a session with no run falls back to its provider label"
+        "default",
+        "a session the roster names no definition for runs the default definition"
     );
-    assert_eq!(model.agents[2].definition_label(), "Claude");
+    assert_eq!(model.agents[2].definition_label(), "default");
 }
 
 #[test]
@@ -792,7 +791,7 @@ fn a_refresh_that_clears_the_status_line_clears_the_agent_row() {
     ws.reconcile_subscribe_first().expect("claim a task");
     let tasked = sidebar_text(&ws, &mut chrome);
     assert!(
-        tasked.contains("Working task") && !tasked.contains("Reviewing the ticker"),
+        tasked.contains("Task ") && !tasked.contains("Reviewing the ticker"),
         "a held task must take line three over the status line:\n{tasked}"
     );
 }
@@ -818,34 +817,6 @@ fn a_seat_is_named_by_its_definition_beside_its_ref() {
     assert_eq!(joined.agents[0].session_ref.as_deref(), Some("#14069"));
     let unjoined = model(&SidebarRows::default(), &[seat], &[]);
     assert_eq!(unjoined.agents[0].definition_label(), "Lane 1 Worker");
-}
-
-#[test]
-fn build_marks_only_the_claim_holder_among_seats_sharing_a_task() {
-    let holder: RosterEntry = serde_json::from_value(json!({
-        "entry_id": "session:sess-h",
-        "session_id": "sess-h",
-        "task": {"id": "task-uuid", "ref": "#25485", "title": "Remove stored titles", "claim_holder": true},
-        "terminal": {"terminal_id": "terminal-h", "backend": "native"}
-    }))
-    .expect("a roster entry with a claim-holder task should deserialize");
-    let reviewer: RosterEntry = serde_json::from_value(json!({
-        "entry_id": "session:sess-r",
-        "session_id": "sess-r",
-        "task": {"id": "task-uuid", "ref": "#25485", "title": "Remove stored titles", "claim_holder": false},
-        "terminal": {"terminal_id": "terminal-r", "backend": "native"}
-    }))
-    .expect("a roster entry with a non-holder task should deserialize");
-
-    let model = model(&SidebarRows::default(), &[holder, reviewer], &[]);
-
-    assert_eq!(model.agents[0].task_ref.as_deref(), Some("#25485"));
-    assert_eq!(model.agents[1].task_ref.as_deref(), Some("#25485"));
-    assert!(
-        model.agents[0].task_claim_held,
-        "the claim holder is marked"
-    );
-    assert!(!model.agents[1].task_claim_held, "the other seat is not");
 }
 
 /// A parked session's ref shows, and a seat moved onto a successor session
@@ -911,13 +882,6 @@ fn model_slug_lowercases_hyphenates_and_appends_effort() {
         "the raw model stands in for a missing display name"
     );
     assert_eq!(agent(None, None, None).model_slug(), "");
-}
-
-#[test]
-fn agy_sessions_are_labelled_antigravity() {
-    assert_eq!(provider_label("agy"), "Antigravity");
-    assert_eq!(provider_label(" AGY "), "Antigravity");
-    assert_eq!(provider_label("codex"), "Codex");
 }
 
 /// Rows for one project with the given worktrees (path `/w/<id>`) and

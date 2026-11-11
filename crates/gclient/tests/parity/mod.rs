@@ -1,6 +1,6 @@
-//! herdr keep-set render-test parity harness (plan 4.1).
+//! upstream keep-set render-test parity harness (plan 4.1).
 //!
-//! Every module below ports the render tests of one or more herdr source files
+//! Every module below ports the render tests of one or more upstream source files
 //! at the pinned fork commit with their row-text expectations unchanged.
 //! `upstream_tests.txt` is the completeness oracle: a deterministic extraction
 //! of the pinned tree whose digest is asserted before any comparison, so the
@@ -11,16 +11,16 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use sha2::{Digest, Sha256};
 
-/// Registers ported herdr tests.
+/// Registers ported upstream tests.
 ///
-/// Each block names the herdr source path its tests came from. Every `fn`
+/// Each block names the upstream source path its tests came from. Every `fn`
 /// becomes a plain `#[test]` (so nextest lists it individually) and a
 /// `CASES` entry keyed by `<source_path>::<test_name>`, which the harness
-/// compares against `upstream_tests.txt`. Herdr `#[tokio::test]` cases are
+/// compares against `upstream_tests.txt`. Upstream `#[tokio::test]` cases are
 /// ported as sync fns that build a runtime inside the body.
 ///
 /// A `#[deferred = "TODO(#N): why"]` marker before a `fn` keeps the identity
-/// ported with its herdr expectations verbatim while the surface it needs
+/// ported with its upstream expectations verbatim while the surface it needs
 /// waits on task `#N`: nextest ignores it with that reason,
 /// `keep_set_render_tests_all_pass` skips it, and
 /// `deferred_cases_are_still_red` fails as soon as it passes, so landing the
@@ -42,7 +42,7 @@ macro_rules! parity_tests {
     } )*) => {
         $( $( parity_tests!(@test $( $reason )? ; $name $body); )* )*
 
-        /// `(herdr identity, test, deferral reason)` registered by this module.
+        /// `(upstream identity, test, deferral reason)` registered by this module.
         pub const CASES: &[(&str, fn(), Option<&str>)] = &[
             $( $( (
                 concat!($path, "::", stringify!($name)),
@@ -64,7 +64,7 @@ mod sidebar;
 mod status;
 mod tabs;
 
-/// herdr commit the keep-set was extracted from (fork point, see UPSTREAM.md).
+/// upstream commit the keep-set was extracted from (fork point, see UPSTREAM.md).
 const UPSTREAM_COMMIT: &str = "346411fa21afd297f5ed3b3fa56f9e3fbf7654b7";
 const INVENTORY: &str = include_str!("upstream_tests.txt");
 const INVENTORY_LINES: usize = 98;
@@ -133,7 +133,7 @@ fn ported_set_matches_upstream_inventory() {
     let digest = format!("{:x}", Sha256::digest(INVENTORY.as_bytes()));
     assert_eq!(
         digest, INVENTORY_SHA256,
-        "upstream_tests.txt is not the pinned extraction of herdr {UPSTREAM_COMMIT}"
+        "upstream_tests.txt is not the pinned extraction of upstream {UPSTREAM_COMMIT}"
     );
     assert!(INVENTORY.ends_with('\n'), "inventory is newline-terminated");
     let lines: Vec<&str> = INVENTORY.lines().collect();

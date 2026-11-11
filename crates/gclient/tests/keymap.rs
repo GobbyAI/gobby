@@ -1,10 +1,10 @@
-//! 3.1.6 / 3.1.7: herdr defaults, client-local overrides, collisions.
+//! 3.1.6 / 3.1.7: default bindings, client-local overrides, collisions.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use gobby_client::startup::{keymap_override_path, load_keymap, StartupError};
 use gobby_client::ui::keymap::{
     default_override_path, default_prefix, Action, Keymap, KeymapError, Trigger, BINDINGS,
-    HERDR_PREFIX,
+    DEFAULT_PREFIX,
 };
 use gobby_client::ui::settings::ClientPrefs;
 use std::collections::HashSet;
@@ -32,9 +32,9 @@ fn chords_by_name(keymap: &Keymap) -> Vec<(&'static str, Vec<Trigger>)> {
 
 #[test]
 fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
-    let defaults = Keymap::defaults(HERDR_PREFIX);
+    let defaults = Keymap::defaults(DEFAULT_PREFIX);
 
-    // herdr v0.8.0 map, spot-checked against config/model.rs KeysConfig::default().
+    // The default map, spot-checked.
     assert!(defaults.is_prefix(&key(KeyCode::Char('b'), KeyModifiers::CONTROL)));
     assert!(!defaults.is_prefix(&key(KeyCode::Char('a'), KeyModifiers::CONTROL)));
     let prefix_map = [
@@ -137,7 +137,7 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
         assert!(defaults.binding(name).is_none(), "{name}");
         let err = Keymap::from_toml(
             &format!("[bindings]\n{name} = \"prefix+shift+g\"\n"),
-            HERDR_PREFIX,
+            DEFAULT_PREFIX,
         )
         .unwrap_err();
         assert_eq!(err, KeymapError::UnknownAction(name.to_string()));
@@ -147,7 +147,7 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("keymap.toml");
     fs::write(&path, "[bindings]\nhelp = \"prefix+f1\"\n").unwrap();
-    let merged = Keymap::load_overrides(&path, HERDR_PREFIX).unwrap();
+    let merged = Keymap::load_overrides(&path, DEFAULT_PREFIX).unwrap();
     assert_eq!(
         merged.lookup_prefix(&key(KeyCode::F(1), KeyModifiers::NONE)),
         Some(Action::Help)
@@ -174,7 +174,7 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
         "prefix = \"ctrl+a\"\n[bindings]\nnext_tab = [\"prefix+n\", \"ctrl+alt+]\"]\n",
     )
     .unwrap();
-    let merged = Keymap::load_overrides(&path, HERDR_PREFIX).unwrap();
+    let merged = Keymap::load_overrides(&path, DEFAULT_PREFIX).unwrap();
     assert!(merged.is_prefix(&key(KeyCode::Char('a'), KeyModifiers::CONTROL)));
     assert!(!merged.is_prefix(&key(KeyCode::Char('b'), KeyModifiers::CONTROL)));
     assert_eq!(merged.lookup_prefix(&ch('n')), Some(Action::NextTab));
@@ -185,13 +185,13 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
         )),
         Some(Action::NextTab)
     );
-    let missing = Keymap::load_overrides(&dir.path().join("absent.toml"), HERDR_PREFIX).unwrap();
+    let missing = Keymap::load_overrides(&dir.path().join("absent.toml"), DEFAULT_PREFIX).unwrap();
     assert_eq!(chords_by_name(&missing), chords_by_name(&defaults));
 
     // Reserved actions stay non-dispatchable and hidden even when named.
     let err = Keymap::from_toml(
         "[bindings]\ncustom_command = \"prefix+shift+m\"\n",
-        HERDR_PREFIX,
+        DEFAULT_PREFIX,
     )
     .unwrap_err();
     assert_eq!(
@@ -210,11 +210,11 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
 
     // Malformed input is a parse error, not a panic.
     assert!(matches!(
-        Keymap::from_toml("[bindings\nhelp = 1", HERDR_PREFIX),
+        Keymap::from_toml("[bindings\nhelp = 1", DEFAULT_PREFIX),
         Err(KeymapError::Parse(_))
     ));
     assert_eq!(
-        Keymap::from_toml("[bindings]\nhelp = \"prefix+\"\n", HERDR_PREFIX).unwrap_err(),
+        Keymap::from_toml("[bindings]\nhelp = \"prefix+\"\n", DEFAULT_PREFIX).unwrap_err(),
         KeymapError::InvalidChord {
             action: "help".to_string(),
             chord: "prefix+".to_string()
@@ -224,8 +224,11 @@ fn overrides_preserve_defaults_and_cannot_activate_deferred_actions() {
 
 #[test]
 fn colliding_override_is_rejected_and_defaults_survive() {
-    let err =
-        Keymap::from_toml("[bindings]\nsplit_vertical = \"prefix+x\"\n", HERDR_PREFIX).unwrap_err();
+    let err = Keymap::from_toml(
+        "[bindings]\nsplit_vertical = \"prefix+x\"\n",
+        DEFAULT_PREFIX,
+    )
+    .unwrap_err();
     assert_eq!(
         err,
         KeymapError::Collision {
@@ -238,7 +241,7 @@ fn colliding_override_is_rejected_and_defaults_survive() {
     for needle in ["prefix+x", "split_vertical", "close_pane"] {
         assert!(message.contains(needle), "{message}");
     }
-    let defaults = Keymap::defaults(HERDR_PREFIX);
+    let defaults = Keymap::defaults(DEFAULT_PREFIX);
     assert_eq!(defaults.lookup_prefix(&ch('x')), Some(Action::ClosePane));
     assert_eq!(
         defaults.lookup_prefix(&ch('v')),
@@ -248,7 +251,7 @@ fn colliding_override_is_rejected_and_defaults_survive() {
     // Two overrides in one file colliding with each other.
     let err = Keymap::from_toml(
         "[bindings]\nzoom = \"prefix+f2\"\nresize_mode = \"prefix+f2\"\n",
-        HERDR_PREFIX,
+        DEFAULT_PREFIX,
     )
     .unwrap_err();
     assert!(
@@ -256,7 +259,8 @@ fn colliding_override_is_rejected_and_defaults_survive() {
         "{err:?}"
     );
     // A direct chord collides too.
-    let err = Keymap::from_toml("[bindings]\nnavigate_down = \"up\"\n", HERDR_PREFIX).unwrap_err();
+    let err =
+        Keymap::from_toml("[bindings]\nnavigate_down = \"up\"\n", DEFAULT_PREFIX).unwrap_err();
     assert_eq!(
         err,
         KeymapError::Collision {
@@ -269,7 +273,7 @@ fn colliding_override_is_rejected_and_defaults_survive() {
     // Moving the displaced action in the same file is accepted.
     let ok = Keymap::from_toml(
         "[bindings]\nsplit_vertical = \"prefix+x\"\nclose_pane = \"prefix+f3\"\n",
-        HERDR_PREFIX,
+        DEFAULT_PREFIX,
     )
     .unwrap();
     assert_eq!(ok.lookup_prefix(&ch('x')), Some(Action::SplitVertical));
@@ -280,7 +284,7 @@ fn colliding_override_is_rejected_and_defaults_survive() {
     assert_eq!(ok.lookup_prefix(&ch('v')), None);
 
     // A chord owned only by a reserved action is free to take.
-    let ok = Keymap::from_toml("[bindings]\nzoom = \"prefix+m\"\n", HERDR_PREFIX).unwrap();
+    let ok = Keymap::from_toml("[bindings]\nzoom = \"prefix+m\"\n", DEFAULT_PREFIX).unwrap();
     assert_eq!(ok.lookup_prefix(&ch('m')), Some(Action::Zoom));
     assert_eq!(ok.lookup_prefix(&ch('z')), None);
 
@@ -297,7 +301,7 @@ fn colliding_override_is_rejected_and_defaults_survive() {
 /// `edit_scrollback` is gone, and `custom_command` is the only reserved one.
 #[test]
 fn default_bindings_cover_every_action_except_reserved() {
-    let defaults = Keymap::defaults(HERDR_PREFIX);
+    let defaults = Keymap::defaults(DEFAULT_PREFIX);
     for spec in BINDINGS {
         let action = Action::from_name(spec.name, spec.indexed.then_some(1))
             .unwrap_or_else(|| panic!("{} names no Action", spec.name));
@@ -318,8 +322,11 @@ fn default_bindings_cover_every_action_except_reserved() {
     assert_eq!(Action::from_name("edit_scrollback", None), None);
     assert!(defaults.binding("edit_scrollback").is_none());
     assert_eq!(defaults.lookup_prefix(&ch('e')), None, "prefix+e is free");
-    let err = Keymap::from_toml("[bindings]\nedit_scrollback = \"prefix+e\"\n", HERDR_PREFIX)
-        .unwrap_err();
+    let err = Keymap::from_toml(
+        "[bindings]\nedit_scrollback = \"prefix+e\"\n",
+        DEFAULT_PREFIX,
+    )
+    .unwrap_err();
     assert_eq!(
         err,
         KeymapError::UnknownAction("edit_scrollback".to_string())
@@ -372,7 +379,7 @@ fn override_chord_replaces_default_chord() {
     let keymap = load_keymap(&prefs, home.path(), false).unwrap();
     assert_eq!(
         chords_by_name(&keymap),
-        chords_by_name(&Keymap::defaults(HERDR_PREFIX))
+        chords_by_name(&Keymap::defaults(DEFAULT_PREFIX))
     );
 
     // A rejected file names its resolved path and the keymap error.
@@ -390,12 +397,12 @@ fn override_chord_replaces_default_chord() {
 
 /// 4.3.1: an outer tmux eats `ctrl+b`, so the default prefix shifts to
 /// `ctrl+]` while nested and the whole prefix table stays reachable behind
-/// it; a `prefix` key in the override file wins, and without nesting herdr's
+/// it; a `prefix` key in the override file wins, and without nesting
 /// `ctrl+b` stands.
 #[test]
 fn nested_tmux_shifts_the_prefix_unless_overridden() {
     let ctrl = |c: char| key(KeyCode::Char(c), KeyModifiers::CONTROL);
-    assert_eq!(default_prefix(false), HERDR_PREFIX);
+    assert_eq!(default_prefix(false), DEFAULT_PREFIX);
     assert_eq!(default_prefix(true), "ctrl+]");
 
     let nested = Keymap::defaults(default_prefix(true));
@@ -417,7 +424,7 @@ fn nested_tmux_shifts_the_prefix_unless_overridden() {
     }
     assert_eq!(
         chords_by_name(&nested),
-        chords_by_name(&Keymap::defaults(HERDR_PREFIX)),
+        chords_by_name(&Keymap::defaults(DEFAULT_PREFIX)),
         "only the prefix moves"
     );
 

@@ -1,6 +1,5 @@
 //! The link under a ctrl+click: the OSC 8 target the cell carries, otherwise
-//! the bare `http://` or `https://` run around the column (herdr
-//! `url_at_pane_cell` and `url_at_column`). Only web URLs resolve: terminal
+//! the bare `http://` or `https://` run around the column. Only web URLs resolve: terminal
 //! content is untrusted, so a `file:` or custom-scheme target never reaches
 //! the opener.
 
@@ -43,8 +42,7 @@ fn is_web_url(uri: &str) -> bool {
 
 /// The bare URL whose run covers `col`: the maximal run of non-blank cells
 /// that starts with `http://` or `https://`, minus a trailing tail of quotes,
-/// `.,;:!?>` and closing brackets nothing inside the URL opened (herdr
-/// `url_spans` and `trim_url_edges`). `None` when `col` lands outside every
+/// `.,;:!?>` and closing brackets nothing inside the URL opened. `None` when `col` lands outside every
 /// URL, trimmed tail included.
 fn bare_url(cells: &[CellData], col: usize) -> Option<String> {
     let mut start = 0;
@@ -206,7 +204,7 @@ mod tests {
         assert_eq!(url_at("see https://example.com/x. next", ". next"), None);
         assert_eq!(url_at("see https://example.com/x. next", "next"), None);
         assert_eq!(url_at("ftp://example.com/x", "example"), None);
-        // herdr scans every column, so a glued prefix still yields the URL.
+        // Every column is scanned, so a glued prefix still yields the URL.
         assert_eq!(
             url_at("nothttps://example.com/x", "example").as_deref(),
             Some("https://example.com/x")

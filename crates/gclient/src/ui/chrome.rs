@@ -1,5 +1,5 @@
 // upstream: herdr v0.8.0 src/ui.rs
-//! UI view-state (herdr `AppState` chrome parts + `compute_view`), owned by
+//! UI view-state, owned by
 //! the run loop and read by every render module.
 
 use crate::app::project_tabs::{first_slot, ProjectTabs, TabSet};
@@ -14,7 +14,7 @@ use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
 use crate::ui::hit::Hit;
 use crate::ui::keybind_help::KeybindHelpState;
-use crate::ui::keymap::{Keymap, HERDR_PREFIX};
+use crate::ui::keymap::{Keymap, DEFAULT_PREFIX};
 use crate::ui::navigator::NavigatorState;
 use crate::ui::pane_chrome;
 use crate::ui::pane_layout;
@@ -193,14 +193,11 @@ impl Tab {
     }
 }
 
-/// Computed frame geometry (herdr `ViewState`).
+/// Computed frame geometry.
 #[derive(Clone, Default)]
 pub struct ViewState {
     /// Row 0 across the whole frame, reserved for the menu bar.
     pub menu_bar_rect: Rect,
-    /// Row 1 across the whole frame: a bare row of theme ground under the
-    /// menu bar.
-    pub menu_bar_line: Rect,
     /// Menu bar title cells, by index into `MenuBarMenu::ALL`.
     pub menu_title_hit_areas: Vec<(usize, Rect)>,
     /// Zero-width unless the sidebar is pinned.
@@ -262,7 +259,7 @@ pub struct ViewState {
 
 impl ViewState {
     /// Record the rects the renderers drew this frame so `hit_test` sees the
-    /// frame the user saw (herdr wrote them back from `render`).
+    /// frame the user saw.
     pub fn apply_hits(&mut self, hits: ChromeHits) {
         let ChromeHits {
             menu_bar,
@@ -344,7 +341,7 @@ pub struct Chrome {
     /// Command a ctrl+click hands a link to: `DEFAULT_LINK_OPENER` unless a
     /// test points it elsewhere.
     pub link_opener: String,
-    /// Pane focus last left, for `LastPane` (herdr `previous_pane_focus`).
+    /// Pane focus last left, for `LastPane`.
     pub last_focused: Option<PaneId>,
     /// Mouse-capture state the settings toggle asked for; the live loop
     /// applies it to the terminal guard after the current event.
@@ -399,7 +396,7 @@ impl Chrome {
             toasts: Vec::new(),
             alert_log: Vec::new(),
             view: ViewState::default(),
-            keymap: Keymap::defaults(HERDR_PREFIX),
+            keymap: Keymap::defaults(DEFAULT_PREFIX),
             nested: false,
             selection: None,
             gesture: None,
@@ -709,7 +706,7 @@ impl Chrome {
         }
     }
 
-    /// Sidebar width for the current frame (herdr `compute_view` clamp); a
+    /// Sidebar width for the current frame; a
     /// sidebar that is not pinned takes no columns.
     pub fn sidebar_width(&self, area: Rect) -> u16 {
         if !self.sidebar.pinned {
@@ -737,7 +734,7 @@ impl Chrome {
         self.view.apply_hits(hits);
     }
 
-    /// Recompute `view` for `area` (herdr `compute_view`): the menu bar row,
+    /// Recompute `view` for `area`: the menu bar row,
     /// the status row, and between them the sidebar column beside the tab
     /// bar row and terminal area, plus pane rects and split borders.
     pub fn compute_view<W: WorkspaceView>(&mut self, ws: &W, area: Rect) {
@@ -749,15 +746,15 @@ impl Chrome {
         if self.mode == Mode::Terminal {
             self.sidebar.overlay = false;
         }
+        // The menu bar sits flush on the row below it: its own fill steps off
+        // the band and the ground, so no gap row separates them.
         let bands = Layout::vertical([
-            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
         .split(area);
-        let (menu_bar_rect, menu_bar_line, middle, status_rect) =
-            (bands[0], bands[1], bands[2], bands[3]);
+        let (menu_bar_rect, middle, status_rect) = (bands[0], bands[1], bands[2]);
         let (sidebar_rect, content) = self.sidebar.layout(middle, self.sidebar_width(middle));
         let surface = crate::ui::tab_surface::compute_tab_surface(content, self.show_tab_bar());
         let tab_bar_rect = (surface.tabs.height > 0).then_some(surface.tabs);
@@ -772,7 +769,7 @@ impl Chrome {
             ),
             None => (Vec::new(), Vec::new()),
         };
-        // herdr resolved the scrollbar lane in `compute_view`, so hit tests
+        // The scrollbar lane is resolved in `compute_view`, so hit tests
         // over `view.pane_infos` see the column the renderer draws into. Only
         // panes reachable through the roster are read: `WorkspaceView::pane`
         // panics on an unknown id.
@@ -817,7 +814,6 @@ impl Chrome {
             title_travel.max(sidebar::title_travel(ws, self, &sidebar_section_rects));
         self.view = ViewState {
             menu_bar_rect,
-            menu_bar_line,
             sidebar_rect,
             tab_bar_rect,
             terminal_area,

@@ -1,4 +1,4 @@
-// upstream: none (herdr src/client/shell/sidebar.rs workspace cards)
+// upstream: none
 //! The projects section of the expanded sidebar: a heading, one one-line
 //! card per listed project with the expanded card's worktree rows under
 //! it, and the variable-height scroll metrics the lists need. Which

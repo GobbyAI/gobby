@@ -109,7 +109,6 @@ pub fn state_label(state: RowState) -> &'static str {
     }
 }
 
-/// herdr `state_label_color`.
 pub fn state_label_color(state: RowState, p: &Palette) -> Color {
     state_dot(state, p).1
 }
@@ -178,7 +177,7 @@ fn toast_size(toast: &Toast) -> (u16, u16) {
     (content_width.saturating_add(2), content_height + 2)
 }
 
-/// herdr `toast_notification_rect`, moved to the top-right corner of `area`
+/// The top-right corner of `area`
 /// (the pane area, D3): the rect of a lone toast.
 pub fn toast_notification_rect(area: Rect, toast: &Toast) -> Option<Rect> {
     toast_stack_rects(area, [toast]).pop()
@@ -203,7 +202,7 @@ pub fn toast_stack_rects<'a>(area: Rect, toasts: impl IntoIterator<Item = &'a To
     rects
 }
 
-/// herdr `render_toast_notification` over the stack: every active toast is
+/// Every active toast is
 /// drawn top-down; returns the union of the drawn rects as the hit area.
 pub fn render_toast_notification(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option<Rect> {
     let toasts = chrome.toasts.iter().map(|active| &active.toast);
@@ -257,7 +256,7 @@ fn render_one_toast(frame: &mut Frame, toast_area: Rect, toast: &Toast, p: &Pale
     }
 }
 
-/// herdr `copy_feedback_rect`, bottom-centre.
+/// The copy-feedback rect, bottom-centre.
 pub fn copy_feedback_rect(area: Rect, message: &str) -> Rect {
     if area.width == 0 || area.height == 0 {
         return Rect::default();
@@ -271,7 +270,6 @@ pub fn copy_feedback_rect(area: Rect, message: &str) -> Rect {
     Rect::new(x, y, width, height)
 }
 
-/// herdr `render_copy_feedback`.
 pub fn render_copy_feedback(frame: &mut Frame, area: Rect, chrome: &Chrome, message: &str) {
     let p = &chrome.palette;
     let feedback_area = copy_feedback_rect(area, message);

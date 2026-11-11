@@ -1,5 +1,5 @@
-// upstream: none (Gobby hit map over `ViewState`; herdr keeps this in its input loop)
-//! Pure hit test over the last drawn frame (herdr `handle_mouse` order).
+// upstream: none (Gobby hit map over `ViewState`)
+//! Pure hit test over the last drawn frame.
 //!
 //! `ViewState` keeps the rects each renderer drew; `hit_test` maps a cell to
 //! the chrome element under it without touching the workspace, so the input
@@ -68,8 +68,8 @@ pub enum Hit {
     GroupToggle(String),
     /// The `│` column between sidebar and content.
     SidebarDivider,
-    /// The blank row under a sidebar section, which drags its height against
-    /// the section below; `index` is the section above, `SidebarSection::index`.
+    /// A sidebar section's label band, which drags its height against the
+    /// section below; `index` is that section, `SidebarSection::index`.
     SidebarSectionDivider {
         index: usize,
     },
@@ -140,10 +140,6 @@ pub fn hit_test(view: &ViewState, column: u16, row: u16) -> Hit {
     if view.menu_bar_rect.contains(at) {
         return find_at(&view.menu_title_hit_areas, at)
             .map_or(Hit::MenuBarEmpty, |(index, _)| Hit::MenuTitle(*index));
-    }
-    // The gap under the menu bar is that bar's bare area.
-    if view.menu_bar_line.contains(at) {
-        return Hit::MenuBarEmpty;
     }
     // Before the tab bar: the overlay lies over it.
     if view.sidebar_rect.contains(at) {
@@ -218,8 +214,8 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
     if view.sidebar_divider_x == Some(at.x) {
         return Hit::SidebarDivider;
     }
-    // A section divider is a blank row no row or lane covers, so it is tested
-    // before them without stealing a click from one.
+    // A section's label band is its resize handle; no row or lane covers a
+    // band, so it is tested before them without stealing a click from one.
     if let Some(index) = view
         .sidebar_section_divider_hit_areas
         .iter()
@@ -267,8 +263,7 @@ pub fn sidebar_section_at(view: &ViewState, row: u16) -> SidebarSection {
 
 /// Split divider under `at`: the divider column (or row) and, in gapped
 /// layouts, the gap cell before it, but never a cell a pane draws content or
-/// its scrollbar gutter into (herdr `find_border_at`, derived from the pane
-/// rects instead of the prefs).
+/// its scrollbar gutter into.
 fn split_border_at(view: &ViewState, at: Position) -> Option<usize> {
     let inside_pane = view
         .pane_infos

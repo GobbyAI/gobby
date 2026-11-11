@@ -13,8 +13,7 @@ pub struct TabSurfaceLayout {
     pub body: Rect,
 }
 
-/// Split `area` into the tab bar row and the body under it (herdr
-/// `compute_tab_surface`). Without a tab bar, `tabs` is an empty rect on
+/// Split `area` into the tab bar row and the body under it. Without a tab bar, `tabs` is an empty rect on
 /// the top edge.
 pub fn compute_tab_surface(area: Rect, show_tab_bar: bool) -> TabSurfaceLayout {
     if !show_tab_bar || area.height == 0 {

@@ -1,4 +1,4 @@
-//! herdr `src/ui/panes.rs` (15) keep-set render tests.
+//! upstream `src/ui/panes.rs` (15) keep-set render tests.
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::{route_mouse, MouseGesture, MouseOutcome, PaneId as AppPaneId, Workspace};
@@ -20,7 +20,7 @@ use std::future::Future;
 use super::fixtures::{cell, render};
 use super::token_map::{palette, theme};
 
-/// herdr `#[tokio::test]` bodies run on a current-thread runtime.
+/// upstream `#[tokio::test]` bodies run on a current-thread runtime.
 fn block_on(future: impl Future<Output = ()>) {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -29,9 +29,9 @@ fn block_on(future: impl Future<Output = ()>) {
         .block_on(future);
 }
 
-/// herdr `AppState::test_new()`: shared dividers (`pane_gaps: false`),
+/// upstream `AppState::test_new()`: shared dividers (`pane_gaps: false`),
 /// borders and scrollbars on. gclient's default prefs gap panes, so the
-/// fixture pins herdr's default; a test that sets `pane_gaps` keeps its own
+/// fixture pins upstream's default; a test that sets `pane_gaps` keeps its own
 /// line.
 fn chrome() -> Chrome {
     let mut chrome = Chrome::new(theme());
@@ -39,17 +39,17 @@ fn chrome() -> Chrome {
     chrome
 }
 
-/// herdr's border title ignores focus; gclient's focus ring (`FocusRing`,
+/// upstream's border title ignores focus; gclient's focus ring (`FocusRing`,
 /// `.impeccable.md`) prefixes the focused pane's title with a marker so
 /// focus never rides on colour alone. The fixture reserves the marker's
-/// width and strips it, so herdr's title text stays verbatim.
+/// width and strips it, so upstream's title text stays verbatim.
 fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<String> {
     // gclient draws no focus marker (V18: the state glyph leads the title),
-    // so the focused title reads as herdr's with its marker stripped.
+    // so the focused title reads as upstream's with its marker stripped.
     panes::pane_border_title(label, pane_width)
 }
 
-/// herdr `Workspace::test_new("test")` as a gclient tab: one slot showing
+/// upstream `Workspace::test_new("test")` as a gclient tab: one slot showing
 /// workspace pane `first`. Returns the tab and its root slot.
 fn test_tab(first: AppPaneId) -> (Tab, PaneId) {
     let tab = Tab::new("test", first);
@@ -57,7 +57,7 @@ fn test_tab(first: AppPaneId) -> (Tab, PaneId) {
     (tab, root)
 }
 
-/// herdr `Workspace::test_split(direction)`: split `focus`; the new slot
+/// upstream `Workspace::test_split(direction)`: split `focus`; the new slot
 /// shows `pane`. Focus lives on the viewer, so the caller moves it when the
 /// upstream test focused the new slot.
 fn test_split(tab: &mut Tab, focus: PaneId, direction: Direction, pane: AppPaneId) -> PaneId {
@@ -66,7 +66,7 @@ fn test_split(tab: &mut Tab, focus: PaneId, direction: Direction, pane: AppPaneI
     slot
 }
 
-/// herdr `AppState` with one active `Workspace::test_new("test")`: a
+/// upstream `AppState` with one active `Workspace::test_new("test")`: a
 /// scripted gclient workspace whose first terminal fills the chrome's only
 /// tab. Returns the chrome, the workspace, and the root slot.
 fn app_with_workspace() -> (Chrome, Workspace, PaneId) {
@@ -80,7 +80,7 @@ fn app_with_workspace() -> (Chrome, Workspace, PaneId) {
     (chrome, ws, root)
 }
 
-/// herdr `TerminalRuntime::test_with_scrollback_bytes(_, rows, _, bytes)`
+/// upstream `TerminalRuntime::test_with_scrollback_bytes(_, rows, _, bytes)`
 /// installed on a slot: gclient panes carry the daemon-reported scrollback
 /// depth instead of a local grid, so the fixture reports the rows `bytes`
 /// pushes above a `rows`-high viewport.
@@ -90,7 +90,7 @@ fn install_runtime(ws: &mut Workspace, chrome: &Chrome, slot: PaneId, rows: u16,
     ws.apply_scroll_applied(pane, 0, lines.saturating_sub(u32::from(rows)));
 }
 
-/// herdr `compute_pane_infos(app, runtimes, area, false, cell_size)`:
+/// upstream `compute_pane_infos(app, runtimes, area, false, cell_size)`:
 /// gclient splits it into `pane_geometry` (rects, borders, stable gutter)
 /// and the renderer's per-pane scrollbar resolution from live metrics;
 /// this glue is the same three calls `render_panes` makes.
@@ -115,7 +115,7 @@ fn compute_pane_infos(chrome: &Chrome, ws: &Workspace, area: Rect) -> Vec<PaneIn
     infos
 }
 
-/// herdr `Selection::range(pane, row, start_col, end_col, None)`: the same
+/// upstream `Selection::range(pane, row, start_col, end_col, None)`: the same
 /// dragging selection through `gobby_terminal`'s public anchor + drag pair
 /// (`range` is crate-private there).
 fn selection_range(pane_id: PaneId, row: u16, start_col: u16, end_col: u16) -> Selection {
@@ -125,7 +125,7 @@ fn selection_range(pane_id: PaneId, row: u16, start_col: u16, end_col: u16) -> S
     selection
 }
 
-/// A pane info with only the fields herdr's border tests set.
+/// A pane info with only the fields upstream's border tests set.
 fn pane_info(id: u32, rect: Rect, borders: Borders, is_focused: bool) -> PaneInfo {
     PaneInfo {
         id: PaneId::from_raw(id),
@@ -170,7 +170,7 @@ parity_tests! {
         fn pane_border_renderer_places_adjacent_cjk_by_display_width() {
             let chrome = chrome();
             let pane_infos = vec![pane_info(1, Rect::new(0, 0, 12, 3), Borders::ALL, false)];
-            // herdr labels the terminal (`set_manual_label`); gclient's
+            // upstream labels the terminal (`set_manual_label`); gclient's
             // renderer hands each pane's title in beside its info.
             let titles = vec![Some("1 模块组织（已定）".to_string())];
 
@@ -393,7 +393,7 @@ fn gapped_pane_focus_does_not_color_neighbor_border() {
 
         fn selection_highlight_uses_one_uniform_style() {
             let palette = palette();
-            // herdr `automatic_selection_style(&palette, host_theme)` mixes
+            // upstream `automatic_selection_style(&palette, host_theme)` mixes
             // the probed host background in; gclient hosts terminals on its
             // own token map, so the palette alone fixes the style.
             let expected_style = selection_style(&palette);
@@ -439,7 +439,7 @@ fn gapped_pane_focus_does_not_color_neighbor_border() {
         }
 
         fn automatic_selection_background_uses_host_background() {
-            // herdr probes the host terminal (`Palette::terminal()` plus a
+            // upstream probes the host terminal (`Palette::terminal()` plus a
             // dark `TerminalTheme`); gclient's hosted terminals run on the
             // theme's own terminal theme, whose background is `panel_bg`.
             let host_theme = theme().terminal_theme();
@@ -514,13 +514,13 @@ fn frame_colour_follows_focus_attention_and_exit() {
     assert_eq!(at(exited, glyph).symbol(), "✕");
 }
 
-// gclient-only mouse coverage for the pane surface: herdr drives its split
+// gclient-only mouse coverage for the pane surface: upstream drives its split
 // drag through `MouseAction::SetSplitRatio`, gclient through `route_mouse`
 // against a drawn frame. Outside the keep-set macro so the upstream
 // inventory stays exact.
 #[test]
 fn split_border_drag_sets_ratio() {
-    // herdr `PaneSplit` drag (`SetSplitRatio`): the pointer position
+    // upstream `PaneSplit` drag (`SetSplitRatio`): the pointer position
     // inside the split's area, along its direction, becomes the first
     // pane's share, clamped to `0.1..=0.9`; both panes re-lay out on
     // the next draw and the release ends the gesture.

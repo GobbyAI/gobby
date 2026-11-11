@@ -1,4 +1,4 @@
-//! herdr `src/ui/status.rs` (4) keep-set render tests.
+//! upstream `src/ui/status.rs` (4) keep-set render tests.
 
 use gobby_client::daemon::{DaemonError, Generation, RunRow, SidebarRows};
 use gobby_client::ui::chrome::{Mode, RowState};
@@ -18,13 +18,13 @@ use serde_json::json;
 use super::fixtures::{cell, rect_rows, render};
 use super::token_map::palette;
 
-// herdr `ToastKind::Finished` / `ToastKind::NeedsAttention` map onto gclient's
+// upstream `ToastKind::Finished` / `ToastKind::NeedsAttention` map onto gclient's
 // generic kinds: a finished run is a success, a prompt waiting on input is a
 // warning. The kind only picks the cue, never the geometry rule under test.
 const FINISHED: ToastKind = ToastKind::Success;
 const NEEDS_ATTENTION: ToastKind = ToastKind::Warning;
 
-// herdr `CopyFeedback { message }` is a bare `&str` in gclient.
+// upstream `CopyFeedback { message }` is a bare `&str` in gclient.
 const COPY_FEEDBACK: &str = "copied to clipboard";
 
 fn toast() -> Toast {
@@ -36,7 +36,7 @@ fn toast() -> Toast {
     }
 }
 
-/// herdr sizes a toast as `max(title, context) + 6`: a 2-cell `● ` kind mark,
+/// upstream sizes a toast as `max(title, context) + 6`: a 2-cell `● ` kind mark,
 /// 2 cells of padding, 2 border cells. gclient's kind cue is the fixed
 /// `<glyph> <label>  ` (rule 3) in place of the 2-cell mark, and the body row
 /// is indented 2 cells under it, so the same padding and borders wrap the
@@ -53,9 +53,9 @@ parity_tests! {
     "src/ui/status.rs" => {
         fn state_dots_use_aligned_static_workspace_marks() {
             let palette = palette();
-            // herdr (AgentState) pairs map onto gclient RowState:
+            // upstream (AgentState) pairs map onto gclient RowState:
             // Blocked -> Attention, Working -> Working, Idle (seen or
-            // unseen) -> Blank, orphaned -> NoLive. herdr's `●` in three
+            // unseen) -> Blank, orphaned -> NoLive. upstream's `●` in three
             // colours is gclient's one distinct glyph per state: `⍾` needs
             // you (warning), `▶` active (accent), `‖` paused (overlay1),
             // `✕` no live agents (destructive), and blank otherwise.
@@ -76,7 +76,7 @@ parity_tests! {
             let area = Rect::new(10, 20, 100, 40);
             let toast = toast();
 
-            // herdr iterates its four configurable corners; gclient has no
+            // upstream iterates its four configurable corners; gclient has no
             // toast position setting and pins the top-right corner of the
             // pane area (D3), so that is the one corner asserted here.
             let top_right = toast_notification_rect(area, &toast).expect("toast rect");
@@ -89,7 +89,7 @@ parity_tests! {
             let toast = Toast {
                 kind: NEEDS_ATTENTION,
                 title: "重构用户认证模块".to_string(),
-                body: Some("提交 herdr 的反馈".to_string()),
+                body: Some("提交 gobby 的反馈".to_string()),
                 target: None,
             };
 
@@ -104,7 +104,7 @@ parity_tests! {
             let area = Rect::new(10, 20, 100, 40);
             let feedback = COPY_FEEDBACK;
 
-            // herdr iterates its configurable clipboard positions; gclient has
+            // upstream iterates its configurable clipboard positions; gclient has
             // no such setting and pins bottom-centre, so that is the one
             // position asserted here.
             let bottom_center = copy_feedback_rect(area, feedback);

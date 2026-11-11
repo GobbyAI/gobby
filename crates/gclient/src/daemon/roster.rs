@@ -68,10 +68,6 @@ pub struct TaskRef {
     pub reference: Option<String>,
     /// A run's task title, or the title of the open task a session holds.
     pub title: Option<String>,
-    /// True only for the seat whose session holds the claim on this task; the
-    /// other seats sharing the task read false.
-    #[serde(default)]
-    pub claim_holder: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

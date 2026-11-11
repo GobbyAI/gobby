@@ -58,21 +58,20 @@ pub(super) fn overlay<W: WorkspaceView>(
 /// A wheel notch over `hit`.
 ///
 /// Inside a pane whose app tracks the mouse the notch is reported to the app,
-/// any of the four directions, unless shift is held (herdr
-/// `forward_pane_reported_wheel`). Everything below is for vertical notches;
+/// any of the four directions, unless shift is held. Everything below is for vertical notches;
 /// a horizontal one over anything else is left alone.
 ///
 /// Over the tab bar a notch switches tabs, up = previous and down = next,
-/// wrapping at either end (herdr's tab-bar wheel), and focuses the new tab's
+/// wrapping at either end, and focuses the new tab's
 /// pane the way a click would. Over the sidebar it scrolls the list under
-/// the pointer by `MOUSE_SCROLL_LINES` rows (herdr `scroll_workspace_list`):
+/// the pointer by `MOUSE_SCROLL_LINES` rows:
 /// a row or scrollbar names its list, anything else goes by the section
 /// rules above the pointer. A list that fits stays put.
 ///
 /// Over a pane that was not reported to, its border or its scrollbar, the
-/// notch goes by the pane's modes (herdr `forward_pane_wheel`): an
-/// alternate-screen pane gets `MOUSE_SCROLL_LINES` arrow keys, up or down
-/// (herdr alternate-scroll), delivered where a key would be; any other
+/// notch goes by the pane's modes: an
+/// alternate-screen pane gets `MOUSE_SCROLL_LINES` arrow keys, up or down,
+/// delivered where a key would be; any other
 /// native pane scrolls its scrollback `MOUSE_SCROLL_LINES` rows, up into
 /// history and down toward the live edge, clamped to the depth the daemon
 /// has confirmed so far, and a notch that would not move it is consumed. A

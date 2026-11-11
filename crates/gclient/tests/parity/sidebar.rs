@@ -1,16 +1,16 @@
-//! herdr `src/ui/sidebar.rs` (30) and `src/ui/sidebar/tokens.rs` (6) keep-set
+//! upstream `src/ui/sidebar.rs` (30) and `src/ui/sidebar/tokens.rs` (6) keep-set
 //! render tests.
 //!
-//! State mapping: a herdr workspace card is a gclient project card (one
+//! State mapping: an upstream workspace card is a gclient project card (one
 //! line, `glyph name (branch ↑a ↓b)`, worktree rows under the one expanded
-//! card); a herdr agent-panel entry is a sessions row (one terminal, two
-//! lines); a herdr attention state is the row's attention entry. herdr's
+//! card); an upstream agent-panel entry is a sessions row (one terminal, two
+//! lines); an upstream attention state is the row's attention entry. upstream's
 //! configurable multi-row token layouts collapse to gclient's fixed `glyph
 //! title` line (only a needs-you row carries a trailing word) over a
 //! `provider · model · task · tab · machine` line, where the detected agent
 //! kind becomes the provider token. Per-token style overrides are a dropped
 //! surface; their fixtures map to the fixed rows and each adapted assertion
-//! carries the herdr original in a comment. The sidebar has no draggable
+//! carries the upstream original in a comment. The sidebar has no draggable
 //! section rules: `sidebar_layout` sizes the machines and projects sections
 //! by their rows and the sessions section takes the rest.
 
@@ -50,14 +50,14 @@ use serde_json::json;
 use super::fixtures::{cell, render, rows};
 use super::token_map::{palette, theme};
 
-/// herdr fixtures name the product; gclient's rows name gobby (rule 3).
+/// upstream fixtures name the product; gclient's rows name gobby (rule 3).
 const PRODUCT: &str = "gobby";
-/// Pane backend for terminals whose herdr entry has no detected agent.
+/// Pane backend for terminals whose upstream entry has no detected agent.
 const DEFAULT_BACKEND: &str = "native";
-/// The board's own machine id: where herdr's local agents run.
+/// The board's own machine id: where upstream's local agents run.
 const LOCAL_MACHINE: &str = "local";
 
-/// herdr `AppState` + `Workspace::test_new` stand-in: each herdr workspace
+/// upstream `AppState` + `Workspace::test_new` stand-in: each upstream workspace
 /// is one project card and one terminal attached to one pane, listed as an
 /// agent row through its `agent:<name>` entry.
 struct Board {
@@ -88,12 +88,12 @@ impl Board {
     }
 
     /// Adds a workspace: a project card and a terminal whose `agent` is the
-    /// herdr detected agent kind, listed as the row's provider.
+    /// upstream detected agent kind, listed as the row's provider.
     fn add(&mut self, name: &str, agent: &str) -> PaneId {
         self.add_on(name, name, agent, LOCAL_MACHINE)
     }
 
-    /// herdr's remote agent: a terminal of `project` running on `machine`.
+    /// upstream's remote agent: a terminal of `project` running on `machine`.
     fn add_remote(&mut self, project: &str, name: &str, machine: &str) -> PaneId {
         if !self.sidebar.machines.iter().any(|known| known == machine) {
             self.sidebar.machines.push(machine.to_string());
@@ -104,7 +104,7 @@ impl Board {
 
     fn add_on(&mut self, project: &str, name: &str, agent: &str, machine: &str) -> PaneId {
         let id = PaneId(self.panes.len() as u32 + 1);
-        // herdr names its rows; the board's `name` is that name, not a UUID,
+        // upstream names its rows; the board's `name` is that name, not a UUID,
         // and it reaches the row as the terminal id these panes are keyed by.
         let pane = Pane::new(id, name, Backend::parse(DEFAULT_BACKEND), "epoch");
         self.panes.push(pane);
@@ -151,7 +151,7 @@ impl Board {
             .expect("known project")
     }
 
-    /// herdr's worktree child under the `project` card; the row id is the
+    /// upstream's worktree child under the `project` card; the row id is the
     /// branch without its `worktree/` prefix.
     fn add_worktree(&mut self, project: &str, branch: &str, task_ref: Option<&str>) {
         let id = branch.strip_prefix("worktree/").unwrap_or(branch);
@@ -164,7 +164,7 @@ impl Board {
         });
     }
 
-    /// herdr's cached git branch on the workspace card.
+    /// upstream's cached git branch on the workspace card.
     fn set_branch(&mut self, name: &str, branch: &str) {
         self.project_mut(name).branch = Some(branch.to_string());
     }
@@ -173,7 +173,7 @@ impl Board {
         self.pane_for_terminal(name).expect("known terminal")
     }
 
-    /// herdr `terminal.state = ...` for the pane behind `name`.
+    /// upstream `terminal.state = ...` for the pane behind `name`.
     fn set_state(&mut self, name: &str, state: RowState) {
         match state {
             RowState::Attention => {
@@ -196,7 +196,7 @@ impl Board {
                 pane.live = true;
                 let agent = self.agent_mut(name);
                 agent.state = RowState::Working;
-                // A working herdr agent is a running gobby run.
+                // A working upstream agent is a running gobby run.
                 agent.lifecycle_status = Some("running".to_string());
             }
             RowState::Blank => {}
@@ -262,9 +262,9 @@ impl WorkspaceView for Board {
     }
 }
 
-/// herdr's agent panel spans every workspace; gclient's agents section
+/// upstream's agent panel spans every workspace; gclient's agents section
 /// lists the focused project's local agents until the filter is `all`.
-/// herdr's sidebar is always on screen, so gclient's is pinned.
+/// upstream's sidebar is always on screen, so gclient's is pinned.
 fn chrome() -> Chrome {
     let mut chrome = Chrome::new(theme());
     chrome.sidebar.pinned = true;
@@ -274,7 +274,7 @@ fn chrome() -> Chrome {
     chrome
 }
 
-/// herdr `app.active = Some(ws_idx)`: focus the workspace's project card
+/// upstream `app.active = Some(ws_idx)`: focus the workspace's project card
 /// and its terminal's pane.
 fn focus(chrome: &mut Chrome, board: &mut Board, name: &str) {
     chrome.open_tab(board.pane_id(name), name);
@@ -295,7 +295,7 @@ fn draw_sidebar(
     (terminal, hits)
 }
 
-/// herdr's `row_text`: the first `width` cells, trailing blanks trimmed.
+/// upstream's `row_text`: the first `width` cells, trailing blanks trimmed.
 fn row_str(terminal: &Terminal<TestBackend>, y: u16, width: u16) -> String {
     (0..width)
         .map(|x| cell(terminal, x, y).symbol())
@@ -319,7 +319,7 @@ fn style_at(terminal: &Terminal<TestBackend>, x: u16, y: u16) -> Style {
     cell(terminal, x, y).style()
 }
 
-/// The list body of `section` (herdr's workspace-list or agent-panel body):
+/// The list body of `section`:
 /// the section's rect under its band, as `sidebar_layout` sizes it from the
 /// board's rows.
 fn section_body<W: WorkspaceView>(
@@ -360,7 +360,7 @@ fn plain_row(label: &str, state: RowState, tokens: &[&str]) -> SidebarRow {
     }
 }
 
-/// gclient state glyph for a herdr `AgentState` (distinct glyph/label pairs).
+/// gclient state glyph for an upstream `AgentState` (distinct glyph/label pairs).
 fn dot(state: RowState) -> &'static str {
     state_dot(state, &palette()).0
 }
@@ -381,15 +381,15 @@ parity_tests! {
             let first = row_str(&terminal, body.y, 25);
             let second = row_str(&terminal, body.y + 1, 25);
             let third = row_str(&terminal, body.y + 2, 25);
-            assert_eq!(first, format!(" {} pi", dot(RowState::Working)));
+            assert_eq!(first, format!(" {} default", dot(RowState::Working)));
             assert!(third.trim().is_empty(), "{third:?}");
-            // herdr: `!contains("working")`; gclient's working glyph is the
+            // upstream: `!contains("working")`; gclient's working glyph is the
             // whole indicator, so no line carries the word.
             assert!(!first.contains("working"));
             assert!(!second.contains("working"));
             assert!(!third.contains("working"));
 
-            let workspace_x = find_symbol_x(&terminal, body.y, body.width, "p");
+            let workspace_x = find_symbol_x(&terminal, body.y, body.width, "d");
             let workspace_style = style_at(&terminal, workspace_x, body.y);
             assert_eq!(workspace_style.fg, Some(p.selection_ink.ink(p.text)));
             assert!(workspace_style.add_modifier.contains(Modifier::BOLD));
@@ -402,7 +402,7 @@ parity_tests! {
         }
 
         fn occurrence_false_removes_default_workspace_bold_and_agent_dim() {
-            // herdr configures `{ token = "workspace", bold = false },
+            // upstream configures `{ token = "workspace", bold = false },
             // { token = "agent", dim = false }`; gclient has no per-token
             // style overrides, so the un-emphasised row is the unfocused one.
             let mut board = Board::new(&[]);
@@ -414,7 +414,7 @@ parity_tests! {
             let p = palette();
             let project_body = section_body(&board, &chrome, area, SidebarSection::Projects);
             let project = style_at(&terminal, find_symbol_x(&terminal, project_body.y, project_body.width, "o"), project_body.y);
-            let agent = style_at(&terminal, find_symbol_x(&terminal, body.y, body.width, "p"), body.y);
+            let agent = style_at(&terminal, find_symbol_x(&terminal, body.y, body.width, "d"), body.y);
 
             // #23280 Option B: a project name is bold accent whatever its
             // state, and an unfocused agent's definition is plain text.
@@ -451,12 +451,12 @@ parity_tests! {
             assert_eq!(inactive.fg, Some(p.accent));
             assert!(inactive.add_modifier.contains(Modifier::BOLD));
             assert!(!inactive.add_modifier.contains(Modifier::DIM));
-            // herdr: `Color::Reset`; the sidebar sits on the terminal's ground.
+            // upstream: `Color::Reset`; the sidebar sits on the terminal's ground.
             assert_eq!(inactive.bg, Some(Color::Reset));
         }
 
         fn space_occurrence_style_applies_without_styling_separator() {
-            // herdr styles a custom `$hype` token (`HI`, fg #abcdef, bold);
+            // upstream styles a custom `$hype` token (`HI`, fg #abcdef, bold);
             // The active definition is bold text, shown only once.
             let mut board = Board::new(&["HI"]);
             board.agent_mut("HI").agent_definition_name = Some("HI".into());
@@ -472,7 +472,7 @@ parity_tests! {
             assert!(!row_str(&terminal, row, 25).contains('·'));
 
             for style in [h, i] {
-                // herdr: the configured `#abcdef`.
+                // upstream: the configured `#abcdef`.
                 assert_eq!(style.fg, Some(p.selection_ink.ink(p.text)));
                 assert!(style.add_modifier.contains(Modifier::BOLD));
                 assert!(!style.add_modifier.contains(Modifier::DIM));
@@ -481,7 +481,7 @@ parity_tests! {
         }
 
         fn occurrence_foreground_flattens_composite_git_status_colors() {
-            // herdr colours a `git_status` token (`↑2 ↓1`) with a configured
+            // upstream colours a `git_status` token (`↑2 ↓1`) with a configured
             // fg; gclient's agent rows have no git tokens, so the composite
             // is two text tokens carrying one override colour (`mauve` for
             // `#123456`).
@@ -496,7 +496,7 @@ parity_tests! {
             );
 
             assert_eq!(spans_text(&spans), "↑2 ↓1");
-            // herdr: every span, separator included; gclient keeps its
+            // upstream: every span, separator included; gclient keeps its
             // separator style on the blank between the tokens.
             assert!(spans
                 .iter()
@@ -523,10 +523,10 @@ parity_tests! {
 
             assert_eq!(metrics.viewport_rows, 1);
             assert_eq!(metrics.max_offset_from_bottom, 1);
-            // herdr: `" pi"` / `" claude"` (agent-only rows); gclient leads
+            // upstream: `" pi"` / `" claude"` (agent-only rows); gclient leads
             // with the state glyph and title on every other row.
             let first = row_str(&terminal, body.y, body.width);
-            assert!(first.contains(" pi"), "rendered row: {first:?}");
+            assert!(first.contains(" default"), "rendered row: {first:?}");
             assert_eq!(hits.agents.len(), 1);
             assert_eq!(hits.agents[0].0, "agent:pi");
             assert_eq!(hits.agents[0].1.height, 3);
@@ -563,7 +563,7 @@ parity_tests! {
         }
 
         fn variable_agent_heights_pack_the_bottom_and_reveal_targets() {
-            // herdr's first agent spans three rows (agent + two custom
+            // upstream's first agent spans three rows (agent + two custom
             // tokens) in a six-row panel; gclient agent rows are two lines
             // each, so three agents in a four-row body carry the same
             // geometry with no Terminals band.
@@ -575,7 +575,7 @@ parity_tests! {
 
             let metrics = project_list_metrics(&[3, 3, 3], body.height, 0);
             assert_eq!(metrics.max_offset_from_bottom, 2);
-            // herdr: `agent_panel_scroll_for_target(&app, area, 0, 2) == 1`;
+            // upstream: `agent_panel_scroll_for_target(&app, area, 0, 2) == 1`;
             // scrolling one row reveals the target row the packed layout hid.
             chrome.sidebar.set_scroll(SidebarSection::Agents, 2);
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
@@ -584,7 +584,7 @@ parity_tests! {
         }
 
         fn oversized_space_layout_is_clipped_to_the_section_body() {
-            // herdr's six-row space cards overflow a one-row body; gclient's
+            // upstream's six-row space cards overflow a one-row body; gclient's
             // one-line cards overflow the one-row body an eleven-row sidebar
             // leaves the projects section: the top half holds the machines
             // band, one machine, its blank row, the projects band and one
@@ -632,7 +632,7 @@ parity_tests! {
         }
 
         fn priority_agent_panel_sort_uses_attention_then_space_order() {
-            // herdr: priority sort yields `["four", "two", "one", "three"]`
+            // upstream: priority sort yields `["four", "two", "one", "three"]`
             // and grouped sort the space order.
             let mut board = Board::new(&["one", "two", "three", "four"]);
             board.set_state("one", RowState::Working);
@@ -641,7 +641,7 @@ parity_tests! {
             board.set_state("three", RowState::Working);
             board.set_state("four", RowState::Attention);
             let mut chrome = chrome();
-            // herdr's panel spans every workspace; gclient lists every
+            // upstream's panel spans every workspace; gclient lists every
             // project's rows while no project is focused, and the open tab
             // leads the grouped order.
             chrome.open_tab(board.pane_id("one"), "one");
@@ -659,7 +659,7 @@ parity_tests! {
         }
 
         fn all_workspaces_agent_panel_entries_use_live_root_runtime_cwd_for_workspace_label() {
-            // herdr spawns a shell runtime and reads its live cwd; gclient
+            // upstream spawns a shell runtime and reads its live cwd; gclient
             // labels a project card with the daemon's project name, so the
             // live checkout name arrives as the name itself.
             tokio::runtime::Builder::new_current_thread()
@@ -703,7 +703,7 @@ parity_tests! {
 
         fn all_workspaces_agent_panel_entries_prefer_agent_names_for_agent_identity() {
             let mut board = Board::new(&[]);
-            // herdr `set_agent_name("planner")` on a pi agent.
+            // upstream `set_agent_name("planner")` on a pi agent.
             board.add("bridge", "planner");
             let mut chrome = chrome();
             focus(&mut chrome, &mut board, "bridge");
@@ -713,7 +713,7 @@ parity_tests! {
         }
 
         fn expanded_sidebar_sections_handle_tiny_heights() {
-            // herdr's 0.9 ratio of five rows is a four-row projects request;
+            // upstream's 0.9 ratio of five rows is a four-row projects request;
             // gclient has no ratio: the top half of five rows (two) goes to
             // the machines band and its row, nothing is left for the
             // projects; with no bare terminal Agents takes the other three.
@@ -741,7 +741,7 @@ parity_tests! {
         }
 
         fn sidebar_section_divider_is_hidden_for_tiny_heights() {
-            // herdr `sidebar_section_divider_rect(20x5, 0.5) == Rect::default()`:
+            // upstream `sidebar_section_divider_rect(20x5, 0.5) == Rect::default()`:
             // gclient's sidebar draws bands instead of rules.
             let area = Rect::new(0, 0, 20, 5);
             let board = Board::new(&["one"]);
@@ -750,13 +750,13 @@ parity_tests! {
         }
 
         fn grouped_child_label_keeps_custom_workspace_name() {
-            // herdr `grouped_child_display_label("renamed issue", branch, true)`.
+            // upstream `grouped_child_display_label("renamed issue", branch, true)`.
             let board = Board::new(&["renamed issue"]);
             assert_eq!(project_rows(&board, &chrome())[0].label, "renamed issue");
         }
 
         fn grouped_child_label_uses_short_branch_for_auto_named_workspace() {
-            // herdr shortens an auto-named worktree child to `issue-137`;
+            // upstream shortens an auto-named worktree child to `issue-137`;
             // gclient's worktree row is its branch without `worktree/`, and
             // it lists once its card is expanded.
             let mut board = Board::new(&["main"]);
@@ -771,13 +771,13 @@ parity_tests! {
 
         fn workspace_list_truncates_cjk_branch_without_panic() {
             let mut board = Board::new(&["repo"]);
-            // herdr's cached git branch is the card's parenthetical.
+            // upstream's cached git branch is the card's parenthetical.
             board.set_branch("repo", "feature/中文-分支-644");
             let mut chrome = chrome();
             focus(&mut chrome, &mut board, "repo");
             chrome.mode = Mode::Terminal;
 
-            // herdr draws the list straight into a 15x6 rect; gclient's
+            // upstream draws the list straight into a 15x6 rect; gclient's
             // one-line card drops the parenthetical whole when it does not
             // fit beside the name, and shows it once the sidebar is wide.
             let (terminal, hits) = draw_sidebar(&board, &chrome, 15, 16);
@@ -805,7 +805,7 @@ parity_tests! {
 
             assert_eq!(main.0, "main");
             assert_eq!(issue.0, "issue");
-            // herdr: `cards[1].indented`; gclient indents the worktree row's
+            // upstream: `cards[1].indented`; gclient indents the worktree row's
             // text under its card and keeps both hit rects at one column.
             assert_eq!(issue.1.x, main.1.x);
             assert_eq!(issue.1.y, main.1.y + main.1.height);
@@ -827,7 +827,7 @@ parity_tests! {
         }
 
         fn workspace_scroll_metrics_count_display_entries_not_raw_workspaces() {
-            // herdr collapses `issue` under `main`, leaving two display
+            // upstream collapses `issue` under `main`, leaving two display
             // entries (one-line cards) in a one-entry viewport.
             let metrics = project_list_metrics(&[1, 1], 1, 0);
 
@@ -837,7 +837,7 @@ parity_tests! {
         }
 
         fn workspace_scroll_offset_applies_to_group_children() {
-            // herdr hides the collapsed child `issue`; the display entries
+            // upstream hides the collapsed child `issue`; the display entries
             // are `main` and `notes` in the one-card body an eleven-row
             // sidebar leaves the projects.
             let board = Board::new(&["main", "notes"]);
@@ -871,7 +871,7 @@ parity_tests! {
         }
 
         fn workspace_list_entries_do_not_auto_attach_normal_git_workspace_to_group() {
-            // herdr: `[main, issue (indented), scratch]`; a project that is
+            // upstream: `[main, issue (indented), scratch]`; a project that is
             // no worktree of `main` stays its own card in list order.
             let board = Board::new(&["main", "scratch", "issue"]);
             let (_, hits) = draw_sidebar(&board, &chrome(), 30, 24);
@@ -902,7 +902,7 @@ parity_tests! {
             board.add_worktree("main", "worktree/issue", None);
             let mut chrome = chrome();
 
-            // herdr: `["main"]` once the child is inactive; gclient folds
+            // upstream: `["main"]` once the child is inactive; gclient folds
             // every card until its group toggle expands it, one at a time.
             let (_, hits) = draw_sidebar(&board, &chrome, 30, 20);
             let ids: Vec<&str> = hits.projects.iter().map(|(id, _)| id.as_str()).collect();
@@ -939,7 +939,7 @@ parity_tests! {
     }
     "src/ui/sidebar/tokens.rs" => {
         fn missing_custom_tokens_elide_rows_and_separators() {
-            // herdr: rows `[state_icon, $missing]`, `[$missing]`, `[agent]`
+            // upstream: rows `[state_icon, $missing]`, `[$missing]`, `[agent]`
             // resolve to two rows; gclient elides the empty second line and
             // every separator: a working row is its glyph and title.
             let chrome = chrome();
@@ -952,7 +952,7 @@ parity_tests! {
         }
 
         fn state_text_and_arbitrary_values_are_independent_tokens() {
-            // herdr: `[state_text, $summary]` resolve independently; the
+            // upstream: `[state_text, $summary]` resolve independently; the
             // state text (only a needs-you row carries one) stays on the
             // first line and the value is a third-line token.
             let chrome = chrome();
@@ -960,17 +960,17 @@ parity_tests! {
 
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} repo", dot(RowState::Attention)));
-            assert_eq!(third_text(&row, 60, &chrome), "   Working task 1 reviewing auth");
+            assert_eq!(third_text(&row, 60, &chrome), "   Task 1: reviewing auth");
             let working = plain_row("repo", RowState::Working, &["reviewing auth"]);
             assert_eq!(
                 line_text(&working, 60, &chrome),
                 format!(" {} repo", dot(RowState::Working))
             );
-            assert_eq!(third_text(&working, 60, &chrome), "   Working task 1 reviewing auth");
+            assert_eq!(third_text(&working, 60, &chrome), "   Task 1: reviewing auth");
         }
 
         fn terminal_title_builtins_are_distinct_from_custom_tokens() {
-            // herdr: raw title `⠋ raw title`, stripped `raw title`, custom
+            // upstream: raw title `⠋ raw title`, stripped `raw title`, custom
             // `custom title`; gclient's title is the row label and the custom
             // value is a third-line token.
             let chrome = chrome();
@@ -979,11 +979,11 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert!(!text.contains('⠋'));
             assert_eq!(text, format!(" {} raw title", dot(RowState::Working)));
-            assert_eq!(third_text(&row, 60, &chrome), "   Working task 1 custom title");
+            assert_eq!(third_text(&row, 60, &chrome), "   Task 1: custom title");
         }
 
         fn known_agent_override_replaces_default_rows() {
-            // herdr: `rows_by_agent["pi"]` wins while `entry.agent` is `Pi`
+            // upstream: `rows_by_agent["pi"]` wins while `entry.agent` is `Pi`
             // and the default rows return once it is `None`; gclient's row
             // keeps the roster's name once its pane is gone, and only the
             // state changes.
@@ -1001,7 +1001,7 @@ parity_tests! {
         }
 
         fn grouped_children_suppress_all_builtin_git_details() {
-            // herdr: `[state_icon, workspace("feature")]` with the branch and
+            // upstream: `[state_icon, workspace("feature")]` with the branch and
             // `↑2 ↓1` suppressed; gclient agent rows never carry git details.
             let chrome = chrome();
             let row = plain_row("feature", RowState::Blank, &[]);
@@ -1013,20 +1013,20 @@ parity_tests! {
         }
 
         fn workspace_custom_token_can_replace_git_specific_details() {
-            // herdr: `[$jj_status]` resolves to `2 changes`.
+            // upstream: `[$jj_status]` resolves to `2 changes`.
             let chrome = chrome();
             let row = plain_row("repo", RowState::Blank, &["2 changes"]);
 
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} repo", dot(RowState::Blank)));
             let third = third_text(&row, 60, &chrome);
-            assert_eq!(third, "   Working task 1 2 changes");
+            assert_eq!(third, "   Task 1: 2 changes");
             assert!(!third.contains('↑') && !third.contains('↓'));
         }
     }
 }
 
-// herdr `src/app/input/mouse.rs` sidebar rows: the mouse on the agent rows,
+// upstream `src/app/input/mouse.rs` sidebar rows: the mouse on the agent rows,
 // project cards, toggle, edge, section rule and list scrollbars, routed
 // through `route_mouse` against a drawn frame.
 
@@ -1306,9 +1306,9 @@ fn agent_rows_follow_project_and_machine_filter() {
 
 #[test]
 fn sidebar_drags_reorder_resize_and_scroll() {
-    // herdr workspace-list drag reorder, `set_manual_sidebar_width`,
+    // upstream workspace-list drag reorder, `set_manual_sidebar_width`,
     // `scroll_workspace_list` and the list scrollbar's thumb drag and track
-    // jump; herdr's `set_sidebar_section_split` has no gclient counterpart
+    // jump; upstream's `set_sidebar_section_split` has no gclient counterpart
     // since the sections size themselves.
     // Eighteen cards overflow the projects section by more than a wheel
     // notch; five agent rows and eleven bare terminals exercise both
@@ -1430,8 +1430,8 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     draw_with_hits(&ws, &mut chrome, area);
 
     // The sections size themselves: the machines and projects sections stop
-    // at the top half of the sidebar and Agents and Terminals share the rest, so a
-    // press on a band's title starts no gesture.
+    // at the top half of the sidebar and Agents and Terminals share the rest. A
+    // band is its section's resize handle; the blank row under it is inert.
     let sections = chrome.view.sidebar_section_rects;
     // Every row of the column goes to the sections.
     let rows = sidebar.height;
@@ -1441,20 +1441,40 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         "the cards fill the top half"
     );
     assert_eq!(sections[2].height + sections[3].height, rows - rows / 2);
-    let projects_band = sections[SidebarSection::Projects.index()].y;
+    let projects = sections[SidebarSection::Projects.index()];
+    let projects_band = projects.y;
+    let band_end = sidebar.x + sidebar.width - 2;
+    for col in [sidebar.x + 1, band_end] {
+        assert_eq!(
+            route(&ws, &mut chrome, LEFT_DOWN, col, projects.y),
+            MouseOutcome::Handled
+        );
+        assert!(
+            matches!(
+                chrome.gesture,
+                Some(MouseGesture::SidebarSectionDrag { index: 1, .. })
+            ),
+            "the Projects band starts its resize: {:?}",
+            chrome.gesture
+        );
+        assert_eq!(
+            route(&ws, &mut chrome, LEFT_UP, col, projects.y),
+            MouseOutcome::Handled
+        );
+        assert_eq!(chrome.gesture, None);
+    }
     assert_eq!(
-        route(&ws, &mut chrome, LEFT_DOWN, sidebar.x + 1, projects_band),
-        MouseOutcome::Ignore
+        route(
+            &ws,
+            &mut chrome,
+            LEFT_DOWN,
+            sidebar.x + 1,
+            projects.bottom() - 1
+        ),
+        MouseOutcome::Ignore,
+        "the blank row under a section is no handle"
     );
     assert_eq!(chrome.gesture, None);
-    // The bands hold no controls: their far ends are as inert as the title.
-    let band_end = sidebar.x + sidebar.width - 2;
-    for band in [projects_band, sections[SidebarSection::Agents.index()].y] {
-        assert_eq!(
-            route(&ws, &mut chrome, LEFT_DOWN, band_end, band),
-            MouseOutcome::Ignore
-        );
-    }
     assert!(chrome.menu.is_none());
 
     // A wheel notch moves the list under the pointer three entries, clamped.
@@ -1806,7 +1826,7 @@ mod project_rows_focus_toggle_and_reorder {
 
     #[test]
     fn project_card_click_focuses_it_and_swaps_the_tab_set() {
-        // herdr `FocusWorkspace` from a workspace-card click, over gclient's
+        // upstream `FocusWorkspace` from a workspace-card click, over gclient's
         // project cards: the press asks the loop to focus the project and swaps
         // the tab bar to that project's set at once; a release without movement
         // is the click.

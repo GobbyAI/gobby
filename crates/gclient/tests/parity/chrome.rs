@@ -1,4 +1,4 @@
-//! herdr `src/ui.rs` (29), `src/ui/keybind_help.rs` (2), `src/ui/tab_surface.rs`
+//! upstream `src/ui.rs` (29), `src/ui/keybind_help.rs` (2), `src/ui/tab_surface.rs`
 //! (2), and `src/ui/text.rs` (2) keep-set render tests.
 
 use std::borrow::Cow;
@@ -17,7 +17,7 @@ use gobby_client::ui::chrome_render::{
 use gobby_client::ui::dialogs::Dialog;
 use gobby_client::ui::hit::{hit_test, Hit, SidebarSection};
 use gobby_client::ui::keybind_help::{filter_help_entries, help_lines};
-use gobby_client::ui::keymap::{HelpEntry, Keymap, HERDR_PREFIX};
+use gobby_client::ui::keymap::{HelpEntry, Keymap, DEFAULT_PREFIX};
 use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::pane_layout;
 use gobby_client::ui::scrollbar::{
@@ -48,41 +48,40 @@ use super::fixtures::{cell, rect_rows, render, screen};
 use super::token_map::{palette, theme};
 
 /// gclient reserves the frame's last row for its status line (control state,
-/// focused terminal, mode); herdr had no such row, so every herdr
+/// focused terminal, mode); upstream had no such row, so every upstream
 /// terminal-area height below is one row taller than gclient's for it.
 const STATUS_ROWS: u16 = 1;
 
-/// gclient holds row 0 for its menu bar and row 1 for the line under it;
-/// herdr had neither row.
-const MENU_BAR_ROWS: u16 = 2;
+/// gclient holds row 0 for its menu bar; upstream had no such row.
+const MENU_BAR_ROWS: u16 = 1;
 
-/// gclient draws all four edges of every pane, a lone one included; herdr
+/// gclient draws all four edges of every pane, a lone one included; upstream
 /// left a lone pane bare, so its runtime was this much taller and wider.
 const PANE_EDGES: u16 = 2;
 
-/// gclient names the mode in its lowercase status line; herdr drew an
+/// gclient names the mode in its lowercase status line; upstream drew an
 /// uppercase `PREFIX` badge in the tab-bar row or as a terminal overlay.
 const PREFIX_INDICATOR: &str = "prefix";
 
-/// gclient marks the selected roster row with `▸` (a non-colour cue); herdr's
+/// gclient marks the selected roster row with `▸` (a non-colour cue); upstream's
 /// selected workspace card left that column blank.
 const SELECTED_MARK: &str = "▸";
 
 /// gclient's blank roster state draws no glyph: a quiet, unassigned workspace
-/// leaves its state cell empty; herdr's fresh workspace showed `·`.
+/// leaves its state cell empty; upstream's fresh workspace showed `·`.
 const BLANK_DOT: &str = " ";
 
-/// gclient joins multiple chords with `", "`; herdr's help used `" / "`.
+/// gclient joins multiple chords with `", "`; upstream's help used `" / "`.
 const CHORD_SEPARATOR: &str = ", ";
 
-/// herdr `PRODUCT_ANNOUNCEMENT_MODAL_SIZE`. Release notes are dropped, so the
+/// upstream `PRODUCT_ANNOUNCEMENT_MODAL_SIZE`. Release notes are dropped, so the
 /// announcement stands in as gclient's respond dialog (64x10 with no options).
 const ANNOUNCEMENT_MODAL_SIZE: (u16, u16) = (64, 10);
-/// The respond dialog's free text sits at inner row 2 (`popup.y + 3`); herdr's
+/// The respond dialog's free text sits at inner row 2 (`popup.y + 3`); upstream's
 /// announcement title sat at `popup.y + 1`.
 const ANNOUNCEMENT_TITLE_ROW: u16 = 3;
 
-/// herdr `ToastNotification { kind: Finished, title, context }`: gclient's
+/// upstream `ToastNotification { kind: Finished, title, context }`: gclient's
 /// `Success` kind with the context as the body.
 fn finished_toast(title: &str, context: &str) -> Toast {
     Toast {
@@ -93,7 +92,7 @@ fn finished_toast(title: &str, context: &str) -> Toast {
     }
 }
 
-/// herdr `Workspace::test_new(name)` per name: a roster terminal attached to
+/// upstream `Workspace::test_new(name)` per name: a roster terminal attached to
 /// one pane each.
 fn scripted(names: &[&str]) -> Workspace {
     let mut ws = Workspace::scripted();
@@ -104,7 +103,7 @@ fn scripted(names: &[&str]) -> Workspace {
     ws
 }
 
-/// herdr `Workspace::test_new(name)` carried a git checkout: one project per
+/// upstream `Workspace::test_new(name)` carried a git checkout: one project per
 /// scripted terminal, named after it and checked out on `main`, the first
 /// one focused.
 fn with_projects(mut ws: Workspace) -> Workspace {
@@ -145,8 +144,8 @@ fn with_projects(mut ws: Workspace) -> Workspace {
     ws
 }
 
-/// herdr `AppState::test_new()` with `active` pointing at `terminal`: one
-/// auto-named tab showing that terminal's pane. herdr's sidebar is always on
+/// upstream `AppState::test_new()` with `active` pointing at `terminal`: one
+/// auto-named tab showing that terminal's pane. upstream's sidebar is always on
 /// screen, so gclient's is pinned.
 fn chrome_for(ws: &Workspace, terminal: &str) -> Chrome {
     let mut chrome = Chrome::new(theme());
@@ -156,14 +155,14 @@ fn chrome_for(ws: &Workspace, terminal: &str) -> Chrome {
     chrome
 }
 
-/// herdr `Workspace::test_add_tab(Some(name))`: a new tab over the same pane.
+/// upstream `Workspace::test_add_tab(Some(name))`: a new tab over the same pane.
 fn add_tab(chrome: &mut Chrome, name: &str) -> usize {
     let pane = chrome.focused_pane().expect("focused pane");
     chrome.open_tab(pane, name);
     chrome.tabs().tabs.len() - 1
 }
 
-/// herdr `buffer_row_text`: one row of `area`, trailing spaces trimmed.
+/// upstream `buffer_row_text`: one row of `area`, trailing spaces trimmed.
 fn buffer_row_text(terminal: &Terminal<TestBackend>, area: Rect, row: u16) -> String {
     rect_rows(terminal, Rect::new(area.x, row, area.width, 1))
         .pop()
@@ -179,14 +178,14 @@ fn render_full(ws: &Workspace, chrome: &Chrome, area: Rect) -> Terminal<TestBack
     })
 }
 
-/// herdr read the mode badge from the tab-bar row or the last terminal row;
+/// upstream read the mode badge from the tab-bar row or the last terminal row;
 /// gclient shows the mode in the status line below the terminal area.
 fn mode_row(chrome: &Chrome) -> Rect {
     chrome.view.status_rect
 }
 
 /// Bounding box of every cell drawn in `fg`: the copy-feedback box has a
-/// `green` border, so this recovers herdr's `copy_feedback_rect`.
+/// `green` border, so this recovers upstream's `copy_feedback_rect`.
 fn drawn_rect(terminal: &Terminal<TestBackend>, fg: Color) -> Rect {
     let buffer = terminal.backend().buffer();
     let mut bounds: Option<(u16, u16, u16, u16)> = None;
@@ -205,8 +204,8 @@ fn drawn_rect(terminal: &Terminal<TestBackend>, fg: Color) -> Rect {
     Rect::new(x0, y0, x1 - x0 + 1, y1 - y0 + 1)
 }
 
-/// herdr `ViewState` tab geometry rebuilt from gclient's `TabBarHits`: gclient
-/// stores only visible tabs, herdr kept one rect per tab (zero-width when
+/// upstream `ViewState` tab geometry rebuilt from gclient's `TabBarHits`: gclient
+/// stores only visible tabs, upstream kept one rect per tab (zero-width when
 /// scrolled out) and an empty rect for each absent control.
 struct TabView {
     tab_hit_areas: Vec<Rect>,
@@ -240,7 +239,7 @@ fn tab_view(ws: &Workspace, chrome: &Chrome, area: Rect) -> TabView {
     }
 }
 
-/// herdr `TerminalRuntime::current_size()` for a background tab: the rows and
+/// upstream `TerminalRuntime::current_size()` for a background tab: the rows and
 /// columns its pane would be given in this chrome's terminal area.
 fn runtime_size(chrome: &Chrome, tab_idx: usize) -> (u16, u16) {
     let tab = &chrome.tabs().tabs[tab_idx];
@@ -255,7 +254,7 @@ fn runtime_size(chrome: &Chrome, tab_idx: usize) -> (u16, u16) {
     (inner.height, inner.width)
 }
 
-/// herdr `frame_digest` over gclient's rendered cells: symbol, colours, and
+/// upstream `frame_digest` over gclient's rendered cells: symbol, colours, and
 /// modifiers of every cell, row-major.
 fn frame_digest(terminal: &Terminal<TestBackend>) -> String {
     let mut hasher = Sha256::new();
@@ -266,7 +265,7 @@ fn frame_digest(terminal: &Terminal<TestBackend>) -> String {
     format!("{:x}", hasher.finalize())
 }
 
-/// herdr help label for a gclient action: herdr's workspace/agent nouns are
+/// upstream help label for a gclient action: upstream's workspace/agent nouns are
 /// gclient's terminal/attention nouns (UPSTREAM.md keymap provenance).
 fn upstream_help_label(name: &str) -> Option<&'static str> {
     Some(match name {
@@ -287,8 +286,8 @@ fn upstream_help_label(name: &str) -> Option<&'static str> {
 
 type HelpRow = (String, Cow<'static, str>);
 
-/// herdr `keybind_help_groups`: gclient's flat help table regrouped under
-/// herdr's headings by action name. gclient has no custom commands
+/// upstream `keybind_help_groups`: gclient's flat help table regrouped under
+/// upstream's headings by action name. gclient has no custom commands
 /// (`custom_command` is reserved and hidden), so that group is always empty.
 fn keybind_help_groups(chrome: &Chrome) -> Vec<(&'static str, Vec<HelpRow>)> {
     const GROUPS: &[(&str, &[&str])] = &[
@@ -348,7 +347,7 @@ fn keybind_help_groups(chrome: &Chrome) -> Vec<(&'static str, Vec<HelpRow>)> {
         .collect()
 }
 
-/// herdr `keybind_help_lines(&app)` flattened to text.
+/// upstream `keybind_help_lines(&app)` flattened to text.
 fn rendered_help_text(chrome: &Chrome) -> String {
     help_lines(chrome)
         .into_iter()
@@ -364,7 +363,7 @@ fn help_entry(key: &'static str, label: &'static str) -> (&'static str, &'static
     (key, label)
 }
 
-/// herdr `filter_keybind_help_groups` over gclient's flat
+/// upstream `filter_keybind_help_groups` over gclient's flat
 /// `filter_help_entries`: each group's rows filter as help entries, empty
 /// groups drop, and headings never match (gclient has none to match).
 fn filter_keybind_help_groups(groups: Vec<HelpGroup>, query: &str) -> Vec<HelpGroup> {
@@ -399,7 +398,7 @@ parity_tests! {
             let feedback = "copied to clipboard";
             let toast = finished_toast("pi finished", "workspace · 1");
             let chrome = Chrome::new(theme());
-            // gclient draws copy feedback bottom-centre only; the rect herdr
+            // gclient draws copy feedback bottom-centre only; the rect upstream
             // computed for the `TopCenter` / `BottomCenter` positions is read
             // back from the frame.
             let drawn = render(area.width, area.height, |frame| {
@@ -462,7 +461,7 @@ parity_tests! {
                 .clone();
 
             // The app shell paints each pane's grid and places the cursor
-            // for the focused pane only; herdr's runtimes did that per pane.
+            // for the focused pane only; upstream's runtimes did that per pane.
             let mut terminal = render(80, 20, |frame| {
                 let mut content = |frame: &mut Frame, rect: Rect, id: PaneId| {
                     let text = if id == first_pane { "left" } else { "r\nb" };
@@ -527,7 +526,7 @@ parity_tests! {
             let ws = scripted(&["one"]);
             let mut chrome = chrome_for(&ws, "one");
             chrome.prefs.hide_tab_bar_when_single_tab = true;
-            // herdr also set `tab_bar_position = Bottom`; gclient has no
+            // upstream also set `tab_bar_position = Bottom`; gclient has no
             // position and hides the single-tab bar regardless.
             chrome.mode = Mode::Prefix;
 
@@ -550,9 +549,9 @@ parity_tests! {
                 .build()
                 .expect("runtime")
                 .block_on(async {
-                    // herdr resized every workspace's background runtimes;
+                    // upstream resized every workspace's background runtimes;
                     // gclient sizes a pane from the geometry its own chrome
-                    // computes, so each herdr workspace is one chrome here.
+                    // computes, so each upstream workspace is one chrome here.
                     let one_ws = scripted(&["one"]);
                     let mut one_tab_workspace = chrome_for(&one_ws, "one");
                     one_tab_workspace.prefs.hide_tab_bar_when_single_tab = true;
@@ -585,7 +584,7 @@ parity_tests! {
             let ws = scripted(&["one"]);
             let mut chrome = chrome_for(&ws, "one");
             chrome.mode = Mode::Respond;
-            // herdr's announcement modal (release notes, dropped) stands in
+            // upstream's announcement modal (release notes, dropped) stands in
             // as the respond dialog carrying the announcement title.
             chrome.dialog = Some(Dialog::Respond {
                 entry_id: "keybinding-v2".into(),
@@ -594,7 +593,7 @@ parity_tests! {
                 selected: 0,
                 text: String::new(),
             });
-            // herdr's config-diagnostic bar is gone (D3); the warning is a
+            // upstream's config-diagnostic bar is gone (D3); the warning is a
             // toast under the modal.
             chrome.notify(Toast::warning(
                 "unsafe direct keybinding: keys.new_workspace = \"n\"",
@@ -643,7 +642,7 @@ parity_tests! {
         }
 
         fn expanded_sidebar_workspace_rows_show_state_before_name_without_numbers() {
-            // herdr's workspace carried a git checkout on `main`; gclient's
+            // upstream's workspace carried a git checkout on `main`; gclient's
             // one-line project card shows the branch in its parenthetical.
             let ws = with_projects(scripted(&["one"]));
             let mut chrome = chrome_for(&ws, "one");
@@ -653,7 +652,7 @@ parity_tests! {
             chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
             let terminal = render_full(&ws, &chrome, Rect::new(0, 0, 80, 20));
 
-            // herdr `workspace_card_areas[0]`: the first card sits below the
+            // upstream `workspace_card_areas[0]`: the first card sits below the
             // projects band, left of the separator column.
             let sidebar = chrome.view.sidebar_rect;
             let projects = SidebarSection::Projects;
@@ -811,7 +810,7 @@ parity_tests! {
             assert!(tabs.tab_hit_areas[last_idx].width > 0);
             let clamped_scroll = chrome.tab_scroll;
 
-            // herdr `scroll_tabs_right`; gclient has no tab-scroll action yet,
+            // upstream `scroll_tabs_right`; gclient has no tab-scroll action yet,
             // so the saturating step stands in for it.
             chrome.tab_scroll = chrome.tab_scroll.saturating_add(1);
             let tabs = tab_view(&ws, &chrome, area);
@@ -841,7 +840,7 @@ parity_tests! {
                 .block_on(async {
                     let mut ws = scripted(&["test"]);
                     let pane_id = ws.pane_for_terminal("test").expect("pane");
-                    // herdr fed five lines into a four-row runtime; gclient's
+                    // upstream fed five lines into a four-row runtime; gclient's
                     // daemon reports the resulting scrollback instead.
                     ws.apply_scroll_applied(pane_id, 0, 1);
                     let mut chrome = chrome_for(&ws, "test");
@@ -928,7 +927,7 @@ parity_tests! {
             let ws = scripted(&["one"]);
             let mut chrome = chrome_for(&ws, "one");
             chrome.mode = Mode::Prefix;
-            // herdr `render_prefix_overlay` over the terminal area; gclient
+            // upstream `render_prefix_overlay` over the terminal area; gclient
             // shows the mode in the status line.
             let area = Rect::new(0, 0, 60, 4);
             let terminal = render(60, 4, |frame| {
@@ -988,11 +987,11 @@ parity_tests! {
                 .any(|(key, label)| key == "prefix+l" && label.as_ref() == "focus pane right"));
         }
 
-        // TODO(#20201): herdr binds two custom commands here (`prefix+alt+g`
+        // TODO(#20201): upstream binds two custom commands here (`prefix+alt+g`
         // -> lazygit described "open lazygit", `prefix+alt+h` -> a shell
         // command with no description, labelled "custom command"). gclient
         // reserves `custom_command` and hides it from help until the
-        // plugin-menu plan lands a way to bind them; the herdr expectations
+        // plugin-menu plan lands a way to bind them; the upstream expectations
         // below stay verbatim for that day.
         #[deferred = "TODO(#20201): custom_command help is hidden until the plugin-menu plan lands"]
         fn keybind_help_shows_custom_command_descriptions() {
@@ -1024,7 +1023,7 @@ parity_tests! {
 switch_tab = ["prefix+1..9", "alt+1..9"]
 switch_project = "ctrl+1..9"
 "#,
-                HERDR_PREFIX,
+                DEFAULT_PREFIX,
             )
             .expect("config parses");
 
@@ -1083,7 +1082,7 @@ switch_project = "ctrl+1..9"
                 .build()
                 .expect("runtime")
                 .block_on(async {
-                    // herdr's workspace name lives on the sidebar; gclient's
+                    // upstream's workspace name lives on the sidebar; gclient's
                     // counterpart is the project id.
                     let mut ws = scripted(&["left", "right"]);
                     ws.select_project("shell-workspace");
@@ -1189,7 +1188,7 @@ switch_project = "ctrl+1..9"
                     terminal
                         .backend_mut()
                         .assert_cursor_position((focused.x + 4, focused.y));
-                    // herdr pinned its own frame bytes; gclient's frame is
+                    // upstream pinned its own frame bytes; gclient's frame is
                     // characterized the same way against its own render.
                     // Rehashed when the status line gained the transport
                     // field, again when the control indicator became a
@@ -1249,7 +1248,7 @@ switch_project = "ctrl+1..9"
                     // moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "134ecd40175b891d2d7493a9100df78fe848b8d36147d3d4c51f2faa4cf8e20e",
+                        "ff55add4cfdcdc143b51decadb080f20f60761a22c0e8bef3e89e64184c57154",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );
@@ -1258,9 +1257,9 @@ switch_project = "ctrl+1..9"
     }
     "src/ui/text.rs" => {
         fn truncate_end_uses_display_width() {
-            let text = truncate_end("提交 herdr 的反馈", 16);
+            let text = truncate_end("提交 gobby 的反馈", 16);
 
-            assert_eq!(text, "提交 herdr 的反…");
+            assert_eq!(text, "提交 gobby 的反…");
             assert!(display_width(&text) <= 16);
         }
 
@@ -1289,10 +1288,9 @@ fn hidden_sidebar_uses_full_width_terminal_area() {
     let view = &chrome.view;
     assert_eq!(view.sidebar_rect.width, 0);
     assert_eq!(view.menu_bar_rect, Rect::new(0, 0, 80, 1));
-    assert_eq!(view.menu_bar_line, Rect::new(0, 1, 80, 1));
     assert_eq!(view.status_rect, Rect::new(0, 19, 80, 1));
-    assert_eq!(view.tab_bar_rect, Some(Rect::new(0, 2, 80, 1)));
-    assert_eq!(view.terminal_area, Rect::new(0, 3, 80, 16));
+    assert_eq!(view.tab_bar_rect, Some(Rect::new(0, 1, 80, 1)));
+    assert_eq!(view.terminal_area, Rect::new(0, 2, 80, 17));
 }
 
 #[test]
@@ -1311,7 +1309,7 @@ fn overlay_covers_34_columns_without_moving_panes() {
     chrome.sidebar.overlay = true;
     chrome.mode = Mode::Navigate;
     let terminal = render_with_hits(&ws, &mut chrome, area);
-    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 2, 34, 17));
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 1, 34, 18));
     assert_eq!(chrome.view.terminal_area, rolled_up);
     assert_eq!(
         chrome.view.sidebar_divider_x, None,
@@ -1325,7 +1323,7 @@ fn overlay_covers_34_columns_without_moving_panes() {
 
     chrome.sidebar.side = SidebarSide::Right;
     let terminal = render_with_hits(&ws, &mut chrome, area);
-    assert_eq!(chrome.view.sidebar_rect, Rect::new(46, 2, 34, 17));
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(46, 1, 34, 18));
     assert_eq!(chrome.view.terminal_area, rolled_up);
     assert_eq!(cell(&terminal, 46, 5).symbol(), " ");
 
@@ -1333,14 +1331,14 @@ fn overlay_covers_34_columns_without_moving_panes() {
     chrome.sidebar.overlay = false;
     chrome.sidebar.pinned = true;
     chrome.compute_view(&ws, area);
-    assert_eq!(chrome.view.sidebar_rect, Rect::new(54, 2, 26, 17));
-    assert_eq!(chrome.view.tab_bar_rect, Some(Rect::new(0, 2, 54, 1)));
-    assert_eq!(chrome.view.terminal_area, Rect::new(0, 3, 54, 16));
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(54, 1, 26, 18));
+    assert_eq!(chrome.view.tab_bar_rect, Some(Rect::new(0, 1, 54, 1)));
+    assert_eq!(chrome.view.terminal_area, Rect::new(0, 2, 54, 17));
     assert_eq!(chrome.view.sidebar_divider_x, Some(54));
     chrome.sidebar.side = SidebarSide::Left;
     chrome.compute_view(&ws, area);
-    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 2, 26, 17));
-    assert_eq!(chrome.view.terminal_area, Rect::new(26, 3, 54, 16));
+    assert_eq!(chrome.view.sidebar_rect, Rect::new(0, 1, 26, 18));
+    assert_eq!(chrome.view.terminal_area, Rect::new(26, 2, 54, 17));
     assert_eq!(chrome.view.sidebar_divider_x, Some(25));
 }
 
@@ -1438,7 +1436,7 @@ fn overlay_rolls_up_once_the_terminal_takes_the_keys() {
 
 // ------------------------------------------------------- gclient hit map
 //
-// gclient-only: herdr wrote its hit rects back from `render`; gclient carries
+// gclient-only: upstream wrote its hit rects back from `render`; gclient carries
 // them through `ChromeHits` into `ViewState::apply_hits`. These pin the rects
 // to the cells the renderers actually drew.
 
@@ -1630,7 +1628,7 @@ fn rendered_hits_match_drawn_cells() {
     let (entry, rect) = view.agent_hit_areas.first().expect("agent row");
     assert_eq!(entry, "run:term-alpha");
     let text = hit_text(&terminal, *rect);
-    assert!(text.contains("Unknown"), "agent row at {rect:?}: {text:?}");
+    assert!(text.contains("default"), "agent row at {rect:?}: {text:?}");
     // The cards and the bare terminal rows overflow their sections;
     // the one agent and machine row do not.
     assert_eq!(
@@ -1695,7 +1693,7 @@ fn rendered_settings_hits_match_drawn_rows() {
     }
 }
 
-/// herdr's `groups()` fixture for the keybind-help filter tests.
+/// upstream's `groups()` fixture for the keybind-help filter tests.
 fn groups() -> Vec<HelpGroup> {
     vec![
         (
@@ -1794,31 +1792,18 @@ fn tab_bar_raises_the_active_tab_in_every_theme() {
     assert_eq!(chrome.view.terminal_area.y, active.y + 1);
 }
 
-// Josh chose divider_tinted (#22986): the row under the menu bar draws no
-// rule. It is the theme's ground, so System shows the host's own.
+// No gap row separates the menu bar from the chrome under it: the bar's own
+// fill steps off the band, so the next row starts the sidebar and tab bar.
 #[test]
-fn menu_bar_gap_is_bare_theme_ground() {
+fn the_menu_bar_sits_flush_on_the_row_below() {
     let ws = scripted(&["test"]);
     let mut chrome = chrome_for(&ws, "test");
-    let area = Rect::new(0, 0, 80, 20);
-    chrome.compute_view(&ws, area);
-    let gap = chrome.view.menu_bar_line;
-    let assert_gap = |chrome: &Chrome, ground: Color| {
-        let terminal = render_full(&ws, chrome, area);
-        for x in gap.x..gap.right() {
-            let gap_cell = cell(&terminal, x, gap.y);
-            assert_eq!(gap_cell.symbol(), " ", "column {x}");
-            assert_eq!(gap_cell.bg, ground, "column {x}");
-        }
-    };
-
-    assert_gap(&chrome, palette().panel_bg);
-
-    chrome.prefs.theme = "light".to_string();
-    chrome.set_theme(gobby_client::theme::ThemeKind::Light);
-    assert_ne!(chrome.palette.panel_bg, palette().panel_bg);
-    assert_gap(&chrome, chrome.palette.panel_bg);
-
-    chrome.prefs.theme = "system".to_string();
-    assert_gap(&chrome, Color::Reset);
+    chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
+    let below = chrome.view.menu_bar_rect.bottom();
+    assert_eq!(below, 1);
+    assert!(
+        chrome.view.sidebar_rect.y == below
+            || chrome.view.tab_bar_rect.is_some_and(|bar| bar.y == below),
+        "the row under the menu bar starts the chrome"
+    );
 }

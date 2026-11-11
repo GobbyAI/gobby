@@ -117,7 +117,7 @@ impl SidebarState {
         self.expanded_project.as_deref() == Some(project_id)
     }
 
-    /// herdr `set_manual_sidebar_width`: the pointer column becomes the
+    /// The pointer column becomes the
     /// sidebar's edge column, within the width bounds.
     pub fn set_width_from_column(&mut self, area: Rect, column: u16) {
         let width = match self.side {

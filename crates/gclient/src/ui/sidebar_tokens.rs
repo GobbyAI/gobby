@@ -1,9 +1,9 @@
 // upstream: herdr v0.8.0 src/ui/sidebar/tokens.rs
 //! Token-usage column: compact formatting of Gobby session token stats.
 //!
-//! herdr's `tokens.rs` resolves configured sidebar row tokens; Gobby keeps
+//! Sidebar rows keep
 //! the separator rule (`" "` after a glyph, `" · "` elsewhere, see
-//! `sidebar_rows`) and adds the compact count column herdr never had.
+//! `sidebar_rows`) and add a compact count column.
 
 use crate::ui::text::display_width;
 
@@ -15,7 +15,7 @@ pub struct TokenStats {
     pub context_limit: u64,
 }
 
-/// herdr compact count formatting (`1.2k`, `34k`, `1.5m`).
+/// Compact count formatting (`1.2k`, `34k`, `1.5m`).
 pub fn format_compact(count: u64) -> String {
     const UNITS: [(u64, &str); 3] = [(1_000_000_000, "g"), (1_000_000, "m"), (1_000, "k")];
     for (base, suffix) in UNITS {

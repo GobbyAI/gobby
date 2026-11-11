@@ -36,27 +36,25 @@ use super::{
 /// asks `links::resolve` for a URL under the pointer and opens that instead,
 /// whichever pane has focus. Then a pane whose app tracks the mouse gets the
 /// press (`forward::press`), after being focused when it was not, unless
-/// shift is held (herdr `shift_bypasses_mouse_reporting`). Alt is an ordinary
+/// shift is held. Alt is an ordinary
 /// modifier there, reported with its bit. Otherwise a left press focuses the
-/// pane (herdr `FocusPane`) or starts a selection on the pane that already
+/// pane or starts a selection on the pane that already
 /// has focus (`select::down`). A slot whose pane has left the roster is stale
 /// until the next chrome sync, so it is ignored.
 ///
-/// On the tab bar it activates the tab and focuses its pane (herdr
-/// `FocusTab`), starting the drag that `up` may finish as a reorder; a
+/// On the tab bar it activates the tab and focuses its pane, starting the drag that `up` may finish as a reorder; a
 /// scroll arrow moves the bar one tab and stops it following the active tab;
 /// the new-tab button asks for a spawn placed in a fresh tab.
 ///
-/// In the sidebar a project card focuses its project (herdr
-/// `FocusWorkspace`) and starts the drag `up` may finish as a reorder; a
+/// In the sidebar a project card focuses its project and starts the drag `up` may finish as a reorder; a
 /// worktree row asks for a shell in that worktree; a card's group toggle
 /// folds its worktree rows; an agent row reveals its terminal and asks for
 /// that entry's prompt; the edge starts its resize drag and applies the
-/// press at once (herdr resizes on the press too); a scrollbar thumb starts
+/// press at once; a scrollbar thumb starts
 /// a thumb drag and the track beside it jumps the list there.
 ///
-/// A split border starts the drag that resizes the panes either side of it
-/// (herdr `SetSplitRatio`); a pane scrollbar thumb starts a thumb drag and
+/// A split border starts the drag that resizes the panes either side of it;
+/// a pane scrollbar thumb starts a thumb drag and
 /// the track beside it jumps the scrollback there.
 ///
 /// Every other region is ignored until its section
@@ -251,7 +249,9 @@ pub(super) fn down<W: WorkspaceView>(
                 .set_width_from_column(sidebar_area, mouse.column);
             MouseOutcome::Handled
         }
-        Hit::SidebarSectionDivider { index } => super::sidebar_divider::press(chrome, index),
+        Hit::SidebarSectionDivider { index } => {
+            super::sidebar_divider::press(chrome, index, mouse.row)
+        }
         Hit::SidebarScrollbar { section, row } => {
             let Some(track) = scrollbar_track(chrome, section) else {
                 return MouseOutcome::Ignore;
@@ -310,8 +310,8 @@ pub(super) fn down<W: WorkspaceView>(
 
 /// The right button went down at pane cell `cell` of `pane`. It passes
 /// through to the pane's app when the configured passthrough modifier is
-/// held, exactly, or the pane's own flag is set and no modifier is held
-/// (herdr `handle_right_click_passthrough`); the modifier is hidden from the
+/// held, exactly, or the pane's own flag is set and no modifier is held;
+/// the modifier is hidden from the
 /// app, and a pane whose app does not track the mouse gets nothing. Any other
 /// right-click opens the pane's context menu at the pointer.
 fn right_down<W: WorkspaceView>(
@@ -346,7 +346,7 @@ fn right_down<W: WorkspaceView>(
 /// a scrollbar thumb, sidebar or pane, keeps the row it was
 /// grabbed by under the pointer; a split border follows the pointer along
 /// its split, the first pane taking the share of the split's area the
-/// pointer sits at, clamped to `0.1..=0.9` (herdr `SetSplitRatio`); a
+/// pointer sits at, clamped to `0.1..=0.9`; a
 /// selection extends to the pointer; a captured button reports the drag to
 /// the pane holding it (`forward::captured`), which also takes the release.
 pub(super) fn drag<W: WorkspaceView>(
@@ -378,9 +378,13 @@ pub(super) fn drag<W: WorkspaceView>(
                 .set_width_from_column(sidebar_area, mouse.column);
             MouseOutcome::Handled
         }
-        Some(MouseGesture::SidebarSectionDrag { index, top, rows }) => {
-            let (index, top, rows) = (*index, *top, *rows);
-            super::sidebar_divider::drag(chrome, index, top, rows, mouse.row);
+        Some(MouseGesture::SidebarSectionDrag {
+            index,
+            press_row,
+            rows,
+        }) => {
+            let (index, press_row, rows) = (*index, *press_row, *rows);
+            super::sidebar_divider::drag(chrome, index, press_row, rows, mouse.row);
             MouseOutcome::Handled
         }
         Some(MouseGesture::SidebarScrollbarDrag {
@@ -440,7 +444,7 @@ pub(super) fn drag<W: WorkspaceView>(
 
 /// A button came up; `released` is the gesture the press started, already
 /// taken off the chrome. A moved tab dropped on another tab takes that tab's
-/// place (herdr `MoveTab`) and stays active, and one dropped on the new-tab
+/// place and stays active, and one dropped on the new-tab
 /// cells after the last drawn tab takes that tab's place; a moved project
 /// card dropped on another card takes its place in the sidebar's project
 /// order, which `prefs.toml` keeps; released anywhere else either stays
@@ -560,7 +564,7 @@ pub(super) fn up<W: WorkspaceView>(
 }
 
 /// Move `tabs[from]` to `to`, sliding the tabs between them one step so every
-/// other tab keeps its order (herdr's remove-and-insert `move_tab`).
+/// other tab keeps its order.
 fn move_tab(tabs: &mut [Tab], from: usize, to: usize) {
     if from < to {
         for index in from..to {
@@ -574,8 +578,7 @@ fn move_tab(tabs: &mut [Tab], from: usize, to: usize) {
 }
 
 /// The projects as displayed with `moved` dropped where `target` sits, every
-/// card between them sliding one step (herdr's remove-and-insert workspace
-/// reorder). None when either card has left the sidebar or both are the
+/// card between them sliding one step. None when either card has left the sidebar or both are the
 /// same card.
 fn reordered_projects<W: WorkspaceView>(
     ws: &W,

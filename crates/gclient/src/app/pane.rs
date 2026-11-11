@@ -181,7 +181,7 @@ pub struct Pane {
     pub search_buffer: String,
     pub copy_search: bool,
     /// Every right-click in this pane goes to its app instead of the pane
-    /// menu (herdr's per-pane passthrough, toggled from that menu).
+    /// menu.
     pub right_click_passthrough: bool,
     pub(super) frame_source: Option<PaneFrameSource>,
     /// The direct locator the installed stream attached on, remembered for a

@@ -3,7 +3,7 @@
 use super::*;
 use gobby_client::app::{build_menu, sync_live_chrome, ArrangeTarget, ContextMenuKind, Submenu};
 use gobby_client::ui::dialogs::Dialog;
-use gobby_client::ui::keymap::{Keymap, HERDR_PREFIX};
+use gobby_client::ui::keymap::{Keymap, DEFAULT_PREFIX};
 use gobby_client::ui::Mode;
 
 const FIRST_SHELL: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -21,7 +21,7 @@ fn action_chrome() -> Chrome {
     chrome.prefs.confirm_close = false;
     chrome.keymap = Keymap::from_toml(
         "[bindings]\nnew_terminal = \"prefix+i\"\nnew_tab = \"prefix+c\"\n",
-        HERDR_PREFIX,
+        DEFAULT_PREFIX,
     )
     .expect("lifecycle test bindings");
     chrome

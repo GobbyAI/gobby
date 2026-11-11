@@ -46,7 +46,7 @@ fn tab_is_auto_named(tab: &Tab) -> bool {
     tab.title.trim().is_empty()
 }
 
-/// herdr `tab_width`: the chrome label plus padding, never under `MIN_TAB_WIDTH`.
+/// The chrome label plus padding, never under `MIN_TAB_WIDTH`.
 pub fn tab_width(labels: &[String], tab_idx: usize) -> u16 {
     labels
         .get(tab_idx)
@@ -56,7 +56,7 @@ pub fn tab_width(labels: &[String], tab_idx: usize) -> u16 {
         .max(MIN_TAB_WIDTH)
 }
 
-/// herdr `tab_display_name`: the custom title, or the 1-based position for an
+/// The custom title, or the 1-based position for an
 /// auto-named tab. `None` past the end of the strip. The zoom marker is chrome
 /// (see `tab_chrome_label`) and never part of the name.
 pub fn tab_display_name(tabs: &[Tab], tab_idx: usize) -> Option<String> {

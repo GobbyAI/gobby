@@ -1,4 +1,4 @@
-//! herdr `src/ui/dialogs.rs` (4) keep-set render tests.
+//! upstream `src/ui/dialogs.rs` (4) keep-set render tests.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::{
@@ -66,16 +66,15 @@ fn worktree_delete_refusal_wraps_until_recovery_is_visible() {
     }
 }
 
-/// herdr's confirm-close acts on the sidebar's selected workspace. gclient's
+/// upstream's confirm-close acts on the sidebar's selected workspace. gclient's
 /// sidebar rows are roster terminals, so its close scope is the terminal.
 const CLOSE_TARGET: CloseTarget = CloseTarget::Terminal(PaneId(1));
 
-/// herdr `confirm_close_overlay_text(app, runtimes) -> (title, detail)`.
 ///
 /// gclient derives no dialog text from workspace state: `Dialog::ConfirmClose`
 /// carries the selected row's name as a caller-supplied `title` and its pane
 /// count, and the renderer writes `Close <noun>?` over `<title> — <n> panes`.
-/// herdr's display-name precedence (custom name, then live runtime cwd, then
+/// upstream's display-name precedence (custom name, then live runtime cwd, then
 /// terminal cwd, then identity cwd) therefore maps onto the name passed
 /// here, and both rows are read back from the rendered popup.
 fn confirm_close_overlay_text(name: &str, panes: usize) -> (String, String) {
@@ -113,9 +112,9 @@ fn confirm_close_overlay_text_for(
 parity_tests! {
     "src/ui/dialogs.rs" => {
         fn confirm_close_text_uses_live_workspace_cwd_label() {
-            // herdr: no custom name, identity cwd `/projects/original`, and the
+            // upstream: no custom name, identity cwd `/projects/original`, and the
             // attached terminal's live cwd `/projects/current`; the live cwd's
-            // basename names the workspace. herdr's `workspace` noun is
+            // basename names the workspace. upstream's `workspace` noun is
             // gclient's `terminal` (plan 3.1 keymap/noun mapping).
             let (title, detail) = confirm_close_overlay_text("current", 1);
 
@@ -129,7 +128,7 @@ parity_tests! {
                 .build()
                 .expect("current-thread runtime")
                 .block_on(async {
-                    // herdr spawns a `/bin/sh` runtime in `<tmp>/current` while
+                    // upstream spawns a `/bin/sh` runtime in `<tmp>/current` while
                     // the terminal record still says `<tmp>/original`; the
                     // runtime's cwd wins. gclient terminals run in the daemon,
                     // so there is no local runtime to spawn.
@@ -140,7 +139,7 @@ parity_tests! {
         }
 
         fn confirm_close_text_uses_selected_custom_name_instead_of_active_workspace_cwd() {
-            // herdr: workspace `active` is active, workspace `selected` is the
+            // upstream: workspace `active` is active, workspace `selected` is the
             // sidebar selection with terminal cwd `/projects/current`; the
             // selected workspace's custom name wins over both.
             let (_, detail) = confirm_close_overlay_text("selected", 1);
@@ -148,7 +147,7 @@ parity_tests! {
             assert_eq!(detail, "selected — 1 pane");
         }
 
-        // herdr's `main` is the repo checkout of a worktree space whose linked
+        // upstream's `main` is the repo checkout of a worktree space whose linked
         // worktree `issue` is also open, so closing the parent closes the
         // group and the dialog reports the group's scope. gclient: a project
         // with a worktree child closes as `CloseTarget::WorktreeGroup` (plan

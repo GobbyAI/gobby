@@ -1,7 +1,7 @@
-//! Gobby terminal token map from `.impeccable.md`, applied through
-//! herdr's `terminal_theme` mechanism in `gobby_terminal`.
+//! Gobby terminal token map from `.impeccable.md`, applied through the
+//! `terminal_theme` mechanism in `gobby_terminal`.
 //!
-//! One design-contract palette replaces herdr's named themes: dark is the
+//! One design-contract palette serves every theme: dark is the
 //! default, light is an equal peer. Brand accent sits at hue 125; neutrals
 //! carry a faint hue-125 tint; state colours are info 250 / warning 75 /
 //! destructive 350 / success 125 by lightness. State is never carried by
@@ -101,7 +101,7 @@ pub const IDENTIFIER_HUE: u16 = 315;
 /// Neutrals tint toward the brand hue at chroma 0.005-0.008.
 pub const NEUTRAL_CHROMA: f32 = 0.006;
 
-/// Neutral ramp with herdr's surface names. Dark runs low to high
+/// Neutral ramp by surface name. Dark runs low to high
 /// lightness from `panel_bg` to `text`; light mirrors it.
 #[derive(Debug, Clone, Copy)]
 pub struct Neutrals {
@@ -420,7 +420,7 @@ impl Theme {
     }
 }
 
-/// herdr's palette names, resolved to design-contract tokens.
+/// Palette names, resolved to design-contract tokens.
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
     pub accent: Color,
@@ -673,7 +673,7 @@ fn bar_for(theme: &Theme, ground: (u8, u8, u8)) -> Option<Token> {
 const LINE: Token = Token::neutral("line", 0.08);
 
 impl Palette {
-    /// Every herdr palette name paired with the token it resolves to.
+    /// Every palette name paired with the token it resolves to.
     /// `mauve` is a neutral (the violet is `identifier`); `red` is the
     /// magenta-pink destructive token; `teal` and `blue` are both info.
     pub fn entries(theme: &Theme) -> [(&'static str, Token); 24] {

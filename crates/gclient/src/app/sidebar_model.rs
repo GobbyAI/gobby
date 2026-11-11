@@ -131,8 +131,6 @@ pub struct AgentEntry {
     pub task_id: Option<String>,
     /// The roster task's title: a run's task, or the open task a session holds.
     pub task_title: Option<String>,
-    /// True when this seat's session holds the claim on its task.
-    pub task_claim_held: bool,
     /// The session's one-line status, drawn on line three while no task is held.
     pub status_line: Option<String>,
     /// The joined session's `ref`, `#12217`, when the entry is session keyed.
@@ -192,11 +190,11 @@ impl SandboxState {
 }
 
 impl AgentEntry {
-    /// The agent definition name, else the provider label a seat with no definition shows.
+    /// The agent definition name; a seat the roster names no definition for runs `default`.
     pub fn definition_label(&self) -> String {
         self.agent_definition_name
             .clone()
-            .unwrap_or_else(|| provider_label(&self.provider).to_string())
+            .unwrap_or_else(|| "default".to_string())
     }
 
     /// `claude-fable-5.1-xhigh`: the display name (else the raw model) lowercased,
@@ -230,37 +228,16 @@ impl AgentEntry {
             }
             slug.push_str(effort);
         }
-        let provider = self.provider.trim().to_lowercase();
+        let mut provider = self.provider.trim().to_lowercase();
+        // The display calls the agy source Antigravity; the identifier stays internal.
+        if provider == "agy" {
+            provider = "antigravity".to_string();
+        }
         if !provider.is_empty() && !slug.is_empty() {
             slug = format!("{provider}/{slug}");
         }
         slug
     }
-}
-
-/// The provider labels a seat with no agent definition shows, kept in step with the daemon.
-const PROVIDER_LABELS: [(&str, &str); 9] = [
-    ("agy", "Antigravity"),
-    ("claude", "Claude"),
-    ("claude_code", "Claude Code"),
-    ("codex", "Codex"),
-    ("droid", "Droid"),
-    ("grok", "Grok"),
-    ("pipeline", "Pipeline"),
-    ("system", "System"),
-    ("unknown", "Unknown"),
-];
-
-/// A blank provider is `Unknown`; an unlisted one shows as written.
-pub fn provider_label(provider: &str) -> &str {
-    let provider = provider.trim();
-    if provider.is_empty() {
-        return "Unknown";
-    }
-    PROVIDER_LABELS
-        .iter()
-        .find(|(source, _)| source.eq_ignore_ascii_case(provider))
-        .map_or(provider, |(_, label)| *label)
 }
 
 /// Everything `build` reads, borrowed from the workspace or a test.
@@ -425,7 +402,6 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 task_ref: entry.task.as_ref().and_then(|task| task.reference.clone()),
                 task_id: entry.task.as_ref().map(|task| task.id.clone()),
                 task_title: entry.task.as_ref().and_then(|task| task.title.clone()),
-                task_claim_held: entry.task.as_ref().is_some_and(|task| task.claim_holder),
                 status_line: entry.status_line.clone(),
                 session_ref: session.and_then(|(_, session)| session.reference.clone()),
                 session_id: entry

@@ -13,7 +13,7 @@ use gobby_client::startup::{
 };
 use gobby_client::teardown::{ModeBackend, RecordingBackend, TerminalGuard};
 use gobby_client::theme::ThemeName;
-use gobby_client::ui::keymap::{default_prefix, Action, Keymap, HERDR_PREFIX};
+use gobby_client::ui::keymap::{default_prefix, Action, Keymap, DEFAULT_PREFIX};
 use gobby_client::ui::settings::{
     render_settings, AgentSort, ClientPrefs, PassthroughModifier, TitleScrolling,
 };
@@ -1444,7 +1444,7 @@ fn keymap_overrides_load_or_fail_loud() {
     assert_eq!(ready.keymap.lookup_prefix(&ch('?')), Some(Action::Help));
     assert_eq!(
         ready.keymap.active_chords(),
-        Keymap::defaults(HERDR_PREFIX).active_chords()
+        Keymap::defaults(DEFAULT_PREFIX).active_chords()
     );
 
     // The client-local file rebinds help and new_project; the replaced

@@ -83,7 +83,7 @@ fn move_to_tab_items(chrome: &Chrome, pane: PaneId) -> Vec<MenuItem> {
         .collect()
 }
 
-/// herdr `ContextMenu::items` for a pane, in its order: rename, clear the
+/// A pane's context menu items, in order: rename, clear the
 /// label it has, swap with the focused pane when it is another pane, the
 /// splits, zoom or unzoom by the active tab, respond while an attention entry
 /// blocks on it, copy mode, the right-click passthrough flip, close.
@@ -146,7 +146,7 @@ pub(super) fn tab_items(chrome: &Chrome, index: usize) -> Vec<MenuItem> {
     ]
 }
 
-/// herdr `ContextMenu::items` for a workspace card: rename and close for
+/// A project card's context menu items: rename and close for
 /// every project, the worktree items when the daemon reports its branch (a
 /// git checkout), and the fold item by its collapsed state when it has
 /// worktree rows.

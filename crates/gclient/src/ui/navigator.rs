@@ -1,10 +1,10 @@
 // upstream: herdr v0.8.0 src/ui/navigator.rs
 //! Session navigator: fuzzy filter over roster rows and attention prompts.
 //!
-//! herdr's popup arithmetic is kept: margins of `max(width / 16, 2)` and
+//! Popup arithmetic: margins of `max(width / 16, 2)` and
 //! `max(height / 10, 1)`, a one-row search line, a rule, the row body, a
 //! detail row, and a footer. Rows are flat (no workspace tree): every row
-//! sits at depth zero, so herdr's [`tree_prefix`] arithmetic yields `"  "`.
+//! sits at depth zero, so the [`tree_prefix`] arithmetic yields `"  "`.
 
 use crate::app::PaneId;
 use crate::ui::chrome::{
@@ -237,8 +237,7 @@ fn render_search<W: WorkspaceView>(frame: &mut Frame, area: Rect, ws: &W, chrome
             spans.push(Span::styled(query.to_string(), Style::default().fg(p.text)));
         }
     }
-    // herdr pads with `width - 16` (its own placeholder widths); measure the
-    // leading spans instead so the count right-aligns inside the popup.
+    // Measure the leading spans so the count right-aligns inside the popup.
     let suffix = " terminals";
     let leading: usize = spans.iter().map(|span| display_width(&span.content)).sum();
     let width = usize::from(area.width).saturating_sub(leading + display_width(suffix));
@@ -413,7 +412,6 @@ fn render_navigator_scrollbar(frame: &mut Frame, body: Rect, line_count: usize, 
     render_scrollbar(frame, metrics, track, Some(p.surface_dim), p.overlay0, "▕");
 }
 
-/// herdr `metadata_width`.
 fn metadata_width(width: u16) -> u16 {
     if width >= 90 {
         28

@@ -111,10 +111,7 @@ fn seat_sidebar_renders_live_claim_from_roster_without_run_task_binding() {
         })
         .unwrap();
     let text = screen(&terminal);
-    assert!(
-        text.contains("Working task 24638 Live claim label"),
-        "{text}"
-    );
+    assert!(text.contains("Task 24638: Live claim label"), "{text}");
     assert!(!text.contains("No assigned task"), "{text}");
 }
 
@@ -352,7 +349,7 @@ fn without_pins_the_layout_is_the_derived_one() {
 }
 
 #[test]
-fn each_gap_row_above_a_visible_section_is_a_divider() {
+fn each_label_band_above_a_visible_section_is_a_resize_handle() {
     let ws = scripted_workspace();
     let chrome = current_project_chrome();
     let area = Rect::new(0, 0, 26, 40);
@@ -361,14 +358,14 @@ fn each_gap_row_above_a_visible_section_is_a_divider() {
     terminal
         .draw(|frame| hits = render_sidebar(frame, area, &ws, &chrome))
         .unwrap();
-    // The blank row under Machines, Projects and Agents. Terminals has no gap,
-    // it is the last section.
+    // The Machines, Projects and Agents label bands. Terminals has no section
+    // below it to trade with.
     assert_eq!(
         hits.dividers,
         [
-            Some(Rect::new(0, 2, 25, 1)),
-            Some(Rect::new(0, 5, 25, 1)),
-            Some(Rect::new(0, 22, 25, 1)),
+            Some(Rect::new(0, 0, 25, 1)),
+            Some(Rect::new(0, 3, 25, 1)),
+            Some(Rect::new(0, 6, 25, 1)),
         ]
     );
 }
@@ -389,7 +386,7 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     // The machines band opens the column.
     assert_eq!(lines[0], " Machines");
     // The hub row carries its blocked agent's state and its name, no mark.
-    assert!(lines[1].starts_with(" ⍾ "), "{:?}", lines[1]);
+    assert!(lines[1].starts_with(" ⍾1 "), "{:?}", lines[1]);
     assert!(!lines[1].contains('·'), "{:?}", lines[1]);
     // A blank row above the projects and agents bands.
     assert!(blank(lines[2]), "{:?}", lines[2]);
@@ -397,12 +394,12 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     assert_eq!(lines[3], " Projects");
     // `working` lists only alpha, folded, on one line with its counts.
     // The needs-you count takes the branch detail's room on this narrow row.
-    assert_eq!(lines[4], " ⍾ ⍾1 alpha             ▸");
+    assert_eq!(lines[4], " ⍾1 alpha (main ↑2 ↓1)  ▸");
     assert!(!text.contains("beta (~)"), "{text}");
     assert!(!text.contains("feature"), "{text}");
     assert!(blank(lines[5]), "{:?}", lines[5]);
     assert_eq!(lines[6], " Agents");
-    assert_eq!(lines[7], " ⍾ Codex");
+    assert_eq!(lines[7], " ⍾ default");
     assert_eq!(lines[8], "   codex/gpt-6-sol");
     assert!(blank(lines[9]), "{:?}", lines[9]);
     assert!(blank(lines[22]), "{:?}", lines[22]);

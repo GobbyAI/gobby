@@ -83,7 +83,7 @@ fn tokens_match_design_contract_and_survive_monochrome() {
             "success is lightness/chroma differentiated brand hue"
         );
 
-        // Every herdr palette name resolves to a contract token.
+        // Every palette name resolves to a contract token.
         let entries = Palette::entries(theme);
         assert_eq!(entries.len(), 24);
         for (name, token) in entries {

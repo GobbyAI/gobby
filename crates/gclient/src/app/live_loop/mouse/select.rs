@@ -1,7 +1,6 @@
 //! Pointer selection inside a pane: press, drag and release copies; a click
 //! that never moves clears; a double-click takes the token under the pointer
-//! and a triple-click the row (herdr `copy_on_select`, word and line
-//! selection).
+//! and a triple-click the row.
 //!
 //! Terminal mode arrives through `pointer::down` on the focused pane; copy
 //! mode arrives through `copy_mode::route_mouse_selection`. Both drive the
@@ -42,7 +41,7 @@ pub struct ClickRun {
 
 /// Left button down on the focused pane, at `col`/`row` inside `slot`'s
 /// inner rect. A pane that reports the mouse keeps the press for forwarding
-/// unless shift is held (herdr `shift_bypasses_mouse_reporting`). Otherwise
+/// unless shift is held. Otherwise
 /// the first press of a run anchors a drag selection, the second selects the
 /// token under the pointer and the third the row; those two are finalized at
 /// once, so the loop copies them.

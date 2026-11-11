@@ -29,7 +29,7 @@ pub fn metrics_for(offset: u32, max: u32, viewport_rows: u16) -> ScrollMetrics {
     }
 }
 
-/// Inner rect of a pane drawn with `borders` (herdr `pane_inner_rect`).
+/// Inner rect of a pane drawn with `borders`.
 pub fn pane_inner_rect(area: Rect, borders: Borders) -> Rect {
     if borders.is_empty() {
         area
@@ -60,7 +60,7 @@ pub fn lone_pane_inner_rect(area: Rect, pane_scrollbars: bool) -> Rect {
 }
 
 /// The reserved gutter as a visible scrollbar lane, only while scrollback
-/// exists (herdr `stable_scrollbar_gutter`).
+/// exists.
 pub fn scrollbar_gutter(
     pane_inner: Rect,
     pane_scrollbars: bool,
@@ -106,7 +106,7 @@ fn pane_below<'a>(info: &PaneInfo, panes: &'a [PaneInfo]) -> Option<&'a PaneInfo
     })
 }
 
-/// Apply the border rule to raw BSP rects (herdr `apply_pane_chrome`): every
+/// Apply the border rule to raw BSP rects: every
 /// pane, a lone one included, draws all four edges; with gaps off a right or
 /// below neighbour takes the shared edge, so each divider is drawn once.
 pub fn apply_pane_chrome(panes: Vec<PaneInfo>, pane_gaps: bool) -> Vec<PaneInfo> {
@@ -130,8 +130,7 @@ pub fn apply_pane_chrome(panes: Vec<PaneInfo>, pane_gaps: bool) -> Vec<PaneInfo>
 }
 
 /// Pane rects and split borders for `tab` inside `area`, honouring
-/// `prefs.pane_gaps` / `pane_scrollbars` and the tab's zoom (herdr
-/// `panes::compute_pane_infos`). `scrollbar_rect` stays `None`: the renderer
+/// `prefs.pane_gaps` / `pane_scrollbars` and the tab's zoom. `scrollbar_rect` stays `None`: the renderer
 /// resolves it per pane from live scroll metrics.
 pub fn pane_geometry(
     tab: &Tab,

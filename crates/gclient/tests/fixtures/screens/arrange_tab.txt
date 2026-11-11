@@ -2,28 +2,28 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : subtext0/dim+b*120
-01 |                                                                                                                        |
-01 : text/panel_bg*120
-02 | build      │ ┌───────────────┐                                                                                         |
-02 : text/selection+b*12 line/surface0*1 subtext0/surface0*1 surface0/panel_bg*17 text/surface0*89
-03 |┌   term-alpha│ New tab       │────────────────────────────┐┌   term-beta · Focused ───────────────────────────────────┐|
-03 : overlay0/panel_bg*14 surface0/panel_bg*1 text/panel_bg*15 surface0/panel_bg*1 overlay0/panel_bg*29 accent/panel_bg*1 accent/panel_bg+b*23 accent/panel_bg*36
-04 |│             │ Rename tab    │┌─────────────────┐         ││                                                          │|
-04 : overlay0/panel_bg*1 text/unfocused*13 surface0/panel_bg*1 text/panel_bg*15 surface0/panel_bg*20 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-05 |│             │ Arrange ▸     ││ Even horizontal │         ││                                                          │|
-05 : overlay0/panel_bg*1 text/unfocused*13 surface0/panel_bg*1 accent/panel_bg+bv*15 surface0/panel_bg*2 accent/panel_bg+bv*17 surface0/panel_bg*1 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-06 |│             │ Sort tabs A–Z ││ Even vertical   │         ││                                                          │|
-06 : overlay0/panel_bg*1 text/unfocused*13 surface0/panel_bg*1 overlay0/panel_bg+d*15 surface0/panel_bg*2 text/panel_bg*17 surface0/panel_bg*1 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-07 |│             │ Close tab     ││ Main horizontal │         ││                                                          │|
-07 : overlay0/panel_bg*1 text/unfocused*13 surface0/panel_bg*1 text/panel_bg*15 surface0/panel_bg*2 text/panel_bg*17 surface0/panel_bg*1 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-08 |│             └───────────────┘│ Main vertical   │         ││                                                          │|
-08 : overlay0/panel_bg*1 text/unfocused*13 surface0/panel_bg*18 text/panel_bg*17 surface0/panel_bg*1 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-09 |│                              │ Tiled           │         ││                                                          │|
+01 | build      │ ┌───────────────┐                                                                                         |
+01 : text/selection+b*12 line/surface0*1 subtext0/surface0*1 surface0/panel_bg*17 text/surface0*89
+02 |┌   term-alpha│ New tab       │────────────────────────────┐┌   term-beta · Focused ───────────────────────────────────┐|
+02 : overlay0/panel_bg*14 surface0/panel_bg*1 text/panel_bg*15 surface0/panel_bg*1 overlay0/panel_bg*29 accent/panel_bg*1 accent/panel_bg+b*23 accent/panel_bg*36
+03 |│             │ Rename tab    │┌─────────────────┐         ││                                                          │|
+03 : overlay0/panel_bg*1 text/unfocused*13 surface0/panel_bg*1 text/panel_bg*15 surface0/panel_bg*20 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+04 |│             │ Arrange ▸     ││ Even horizontal │         ││                                                          │|
+04 : overlay0/panel_bg*1 text/unfocused*13 surface0/panel_bg*1 accent/panel_bg+bv*15 surface0/panel_bg*2 accent/panel_bg+bv*17 surface0/panel_bg*1 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+05 |│             │ Sort tabs A–Z ││ Even vertical   │         ││                                                          │|
+05 : overlay0/panel_bg*1 text/unfocused*13 surface0/panel_bg*1 overlay0/panel_bg+d*15 surface0/panel_bg*2 text/panel_bg*17 surface0/panel_bg*1 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+06 |│             │ Close tab     ││ Main horizontal │         ││                                                          │|
+06 : overlay0/panel_bg*1 text/unfocused*13 surface0/panel_bg*1 text/panel_bg*15 surface0/panel_bg*2 text/panel_bg*17 surface0/panel_bg*1 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+07 |│             └───────────────┘│ Main vertical   │         ││                                                          │|
+07 : overlay0/panel_bg*1 text/unfocused*13 surface0/panel_bg*18 text/panel_bg*17 surface0/panel_bg*1 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+08 |│                              │ Tiled           │         ││                                                          │|
+08 : overlay0/panel_bg*1 text/unfocused*30 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+09 |│                              │ New grid…       │         ││                                                          │|
 09 : overlay0/panel_bg*1 text/unfocused*30 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-10 |│                              │ New grid…       │         ││                                                          │|
-10 : overlay0/panel_bg*1 text/unfocused*30 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-11 |│                              └─────────────────┘         ││                                                          │|
-11 : overlay0/panel_bg*1 text/unfocused*30 surface0/panel_bg*19 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+10 |│                              └─────────────────┘         ││                                                          │|
+10 : overlay0/panel_bg*1 text/unfocused*30 surface0/panel_bg*19 text/unfocused*9 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+11 |│                                                          ││                                                          │|
+11 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 12 |│                                                          ││                                                          │|
 12 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 13 |│                                                          ││                                                          │|

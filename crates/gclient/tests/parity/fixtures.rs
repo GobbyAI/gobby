@@ -1,8 +1,8 @@
 //! Shared render helpers for the parity suite.
 //!
-//! herdr's tests render into a `TestBackend` and assert row text. These
+//! upstream's tests render into a `TestBackend` and assert row text. These
 //! helpers keep that shape: build a terminal, draw once, read rows or cells
-//! back. State mapping from herdr (agent -> roster entry / terminal row,
+//! back. State mapping from upstream (agent -> roster entry / terminal row,
 //! workspace -> gclient workspace, attention -> attention prompt) also lives
 //! here so every module builds gclient state the same way.
 
@@ -15,7 +15,7 @@ use ratatui::buffer::Cell;
 use ratatui::layout::Rect;
 use ratatui::{Frame, Terminal};
 
-/// herdr commit the keep-set was extracted from.
+/// upstream commit the keep-set was extracted from.
 pub const UPSTREAM_COMMIT: &str = "346411fa21afd297f5ed3b3fa56f9e3fbf7654b7";
 
 /// A test terminal of the given size.

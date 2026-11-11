@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 # The one source of the attach-history default the terminal host and the
-# proxy relay share. 500 matches herdr's default bound. The cost model behind it is measured by
+# proxy relay share. The cost model behind it is measured by
 # web/tests/history-perf.spec.ts and recorded on the field below.
 ATTACH_HISTORY_LINES = 500
 

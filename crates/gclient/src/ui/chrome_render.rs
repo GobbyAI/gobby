@@ -1,5 +1,5 @@
 // upstream: herdr v0.8.0 src/ui.rs
-//! Frame composition (herdr `render`): the splash alone until the first
+//! Frame composition: the splash alone until the first
 //! frame lands, else menu bar, tab bar, tab surface or empty state,
 //! sidebar and notifications; then the mode overlay on either.
 
@@ -193,7 +193,7 @@ pub fn render_workspace<W: WorkspaceView>(
     render_workspace_with(frame, ws, chrome, &mut none)
 }
 
-/// herdr `render_navigation_chrome`: the sidebar, pinned as a column or as
+/// The sidebar, pinned as a column or as
 /// the overlay. Hit areas are returned by the sidebar; the run loop stores
 /// them.
 fn render_navigation_chrome<W: WorkspaceView>(
@@ -234,7 +234,7 @@ fn render_content_column<W: WorkspaceView>(
     tab_surface::render_tab_surface(frame, surface, ws, chrome, content)
 }
 
-/// herdr `render_notifications`: the toast stack over the terminal area.
+/// The toast stack over the terminal area.
 /// Returns the union of the toasts it drew, when it drew any.
 fn render_notifications(frame: &mut Frame, chrome: &Chrome) -> Option<Rect> {
     // Toasts sit over the pane area (D3); the frame stands in before a
@@ -264,7 +264,7 @@ fn render_dialog_overlay(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<
     dialogs::render_dialog(frame, area, chrome)
 }
 
-/// herdr `dim_background`: DIM modifier over `area`.
+/// DIM modifier over `area`.
 pub fn dim_background(frame: &mut Frame, area: Rect) {
     let buf = frame.buffer_mut();
     let area = area.intersection(buf.area);
@@ -276,7 +276,7 @@ pub fn dim_background(frame: &mut Frame, area: Rect) {
     }
 }
 
-/// herdr `copy_feedback_offset_for_toast`: rows the copy-feedback box lifts
+/// Rows the copy-feedback box lifts
 /// by so it clears a toast it would otherwise overlap; `base_offset` when the
 /// two rects are apart.
 pub fn copy_feedback_offset_for_toast(
@@ -291,7 +291,6 @@ pub fn copy_feedback_offset_for_toast(
     }
 }
 
-/// herdr `rects_overlap`.
 pub fn rects_overlap(a: Rect, b: Rect) -> bool {
     a.x < b.x.saturating_add(b.width)
         && b.x < a.x.saturating_add(a.width)
@@ -323,7 +322,7 @@ mod tests {
             "edge-adjacent on y"
         );
         assert!(!rects_overlap(a, Rect::new(10, 10, 1, 1)));
-        // herdr semantics: a zero-size rect strictly inside another overlaps
+        // A zero-size rect strictly inside another overlaps
         // it; two zero-size rects never do.
         assert!(rects_overlap(a, Rect::new(1, 1, 0, 0)));
         assert!(!rects_overlap(Rect::new(0, 0, 0, 0), Rect::new(0, 0, 0, 0)));

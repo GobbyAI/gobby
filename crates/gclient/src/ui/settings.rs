@@ -23,7 +23,7 @@ pub const SETTINGS_POPUP_HEIGHT: u16 = 23;
 const VALUE_COLUMN: usize = 30;
 
 /// Modifier that sends a right-click to the pane's app instead of the pane
-/// menu (herdr `right_click_passthrough_modifier`); `None` leaves every
+/// menu; `None` leaves every
 /// right-click to the menu unless the pane's own flag is set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -57,7 +57,7 @@ impl PassthroughModifier {
     }
 }
 
-/// Order of the sidebar's agent rows (herdr `agent_sort`): `grouped` keeps
+/// Order of the sidebar's agent rows: `grouped` keeps
 /// the tab order, `priority` puts the most urgent row first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

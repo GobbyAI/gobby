@@ -15,7 +15,7 @@ use gobby_client::daemon::LiveDaemon;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::chrome::Mode;
 use gobby_client::ui::dialogs::{Dialog, OrphanRow, RenameKind, WorktreeChoice};
-use gobby_client::ui::keymap::{Keymap, HERDR_PREFIX};
+use gobby_client::ui::keymap::{Keymap, DEFAULT_PREFIX};
 use gobby_client::ui::{render_workspace, Chrome};
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
@@ -118,7 +118,7 @@ async fn idle_expiry_reports_focus_lost_and_activity_restores_it() {
     let (mut workspace, _home) = single_terminal_loop(&mock, "native").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
-    chrome.keymap = Keymap::defaults(HERDR_PREFIX);
+    chrome.keymap = Keymap::defaults(DEFAULT_PREFIX);
     chrome.prefs.focus_hold_seconds = 1;
     let (input_tx, input_rx) = mpsc::channel(256);
 
@@ -583,7 +583,7 @@ async fn a_timed_out_request_names_itself_and_keeps_the_pane() {
     let (mut workspace, _home) = single_terminal_loop(&mock, "native").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
-    chrome.keymap = Keymap::defaults(HERDR_PREFIX);
+    chrome.keymap = Keymap::defaults(DEFAULT_PREFIX);
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {
@@ -666,7 +666,7 @@ async fn a_deferred_attach_retries_after_the_backoff() {
     let (mut workspace, _home) = single_terminal_loop(&mock, "native").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
-    chrome.keymap = Keymap::defaults(HERDR_PREFIX);
+    chrome.keymap = Keymap::defaults(DEFAULT_PREFIX);
     let (input_tx, input_rx) = mpsc::channel(256);
 
     let driver = async {

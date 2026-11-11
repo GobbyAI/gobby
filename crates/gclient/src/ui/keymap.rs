@@ -1,11 +1,11 @@
 // upstream: herdr v0.8.0 src/config/keybinds.rs
-//! Keymap: herdr's v0.8.0 default bindings for the keep-set, Gobby's
+//! Keymap: the default bindings, Gobby's
 //! control bindings, and client-local overrides from
 //! `~/.gobby/client/keymap.toml`, merged by action name and rejected on any
 //! chord collision. The prefix chord comes from the caller (see the `prefix`
 //! module) unless the override file's `prefix` key names another.
 //!
-//! Chord grammar (herdr): `prefix+<key>` binds inside prefix mode, anything
+//! Chord grammar: `prefix+<key>` binds inside prefix mode, anything
 //! else binds directly; modifiers `ctrl`, `alt`, `shift`, `super`, `hyper`,
 //! `meta`; names `space`, `enter`, `esc`, `tab`, `backspace`, `left`,
 //! `right`, `up`, `down`, `minus`, `f1`..`f12`; indexed actions take a
@@ -29,7 +29,7 @@ mod names;
 pub mod prefix;
 
 pub use names::{Action, BindingSpec, BINDINGS};
-pub use prefix::{default_prefix, HERDR_PREFIX};
+pub use prefix::{default_prefix, DEFAULT_PREFIX};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Trigger {
@@ -41,7 +41,7 @@ pub enum Trigger {
 pub struct Chord {
     pub trigger: Trigger,
     pub action: Action,
-    /// herdr label (`prefix+shift+n`), for help and diagnostics.
+    /// Chord label (`prefix+shift+n`), for help and diagnostics.
     pub label: String,
 }
 
@@ -118,7 +118,7 @@ pub struct Keymap {
 }
 
 impl Keymap {
-    /// herdr v0.8.0 defaults for the keep-set plus Gobby's control bindings,
+    /// The default bindings plus Gobby's control bindings,
     /// behind `prefix` (one of the `prefix` module's chords).
     pub fn defaults(prefix: &str) -> Self {
         // The static table is validated by tests/keymap.rs; a bad default
@@ -271,7 +271,7 @@ enum ParsedChord {
     Range(Vec<(Trigger, String)>),
 }
 
-/// herdr `parse_binding_string`: `prefix+` selects prefix mode; a `1..9`
+/// `prefix+` selects prefix mode; a `1..9`
 /// body expands to nine digit chords.
 fn parse_binding_string(raw: &str) -> Option<ParsedChord> {
     let trimmed = raw.trim();
@@ -351,7 +351,7 @@ fn expand_chords(spec: &BindingSpec, raws: &[&str]) -> Result<Vec<Chord>, Keymap
     Ok(chords)
 }
 
-/// herdr `indexed_label`: nine consecutive digit chords collapse to `1..9`.
+/// Nine consecutive digit chords collapse to `1..9`.
 fn keys_label(chords: &[Chord]) -> String {
     if chords.is_empty() {
         return "unset".to_string();
@@ -383,7 +383,6 @@ fn indexed_range_prefix<'a>(labels: &[&'a str]) -> Option<&'a str> {
     Some(prefix)
 }
 
-/// herdr `parse_key_combo`.
 pub fn parse_key_combo(s: &str) -> Option<KeyCombo> {
     let parts: Vec<&str> = s.split('+').collect();
     let mut modifiers = KeyModifiers::empty();
@@ -487,7 +486,6 @@ fn parse_range_modifiers(s: &str) -> Option<KeyModifiers> {
     saw_range.then_some(modifiers)
 }
 
-/// herdr `format_key_combo`.
 pub fn format_key_combo(binding: KeyCombo) -> String {
     let (code, modifiers) = binding;
     let mut parts = Vec::new();
@@ -546,7 +544,6 @@ fn super_modifier_label() -> &'static str {
     }
 }
 
-/// herdr `normalize_key_combo`.
 pub fn normalize_key_combo(combo: KeyCombo) -> KeyCombo {
     let (mut code, mut modifiers) = combo;
     if matches!(code, KeyCode::Tab) && modifiers.contains(KeyModifiers::SHIFT) {
@@ -570,7 +567,6 @@ pub fn normalize_key_combo(combo: KeyCombo) -> KeyCombo {
     (code, modifiers)
 }
 
-/// herdr `key_event_matches_combo`.
 pub fn key_event_matches_combo(key: &KeyEvent, combo: KeyCombo) -> bool {
     let (actual_code, actual_modifiers) = normalize_key_combo((key.code, key.modifiers));
     let (expected_code, expected_modifiers) = normalize_key_combo(combo);
@@ -639,7 +635,7 @@ fn legacy_shifted_ascii_letter_matches(
         && actual_modifiers | KeyModifiers::SHIFT == expected_modifiers
 }
 
-/// herdr `shifted_char_matches_expected` for a `KeyEvent`, which carries no
+/// Shifted-character matching for a `KeyEvent`, which carries no
 /// shifted codepoint: shifted punctuation matches with or without SHIFT.
 fn shifted_char_matches_expected(actual_code: KeyCode, expected_code: KeyCode) -> bool {
     let KeyCode::Char(expected) = expected_code else {
@@ -660,7 +656,7 @@ mod tests {
     fn indexed_override_takes_single_chords_in_order() {
         let keymap = Keymap::from_toml(
             "[bindings]\nswitch_project = [\"prefix+f5\", \"prefix+f6\"]\n",
-            HERDR_PREFIX,
+            DEFAULT_PREFIX,
         )
         .unwrap();
         let chords = &keymap.binding("switch_project").unwrap().chords;
@@ -673,14 +669,14 @@ mod tests {
         let unset = help.iter().find(|e| e.name == "last_pane").unwrap();
         assert_eq!(unset.keys, "unset");
         assert!(matches!(
-            Keymap::from_toml("[bindings]\nzoom = \"prefix+1..9\"\n", HERDR_PREFIX),
+            Keymap::from_toml("[bindings]\nzoom = \"prefix+1..9\"\n", DEFAULT_PREFIX),
             Err(KeymapError::InvalidChord { .. })
         ));
     }
 
     #[test]
     fn shifted_digit_binding_accepts_terminal_punctuation() {
-        let keymap = Keymap::defaults(HERDR_PREFIX);
+        let keymap = Keymap::defaults(DEFAULT_PREFIX);
         let key = KeyEvent::new(KeyCode::Char('!'), KeyModifiers::SHIFT);
         assert_eq!(keymap.lookup_prefix(&key), Some(Action::MovePaneToTab(1)));
         let legacy = KeyEvent::new(KeyCode::Char('!'), KeyModifiers::NONE);

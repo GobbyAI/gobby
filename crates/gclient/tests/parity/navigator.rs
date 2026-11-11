@@ -1,11 +1,11 @@
-//! herdr `src/ui/navigator.rs` (5) keep-set render tests.
+//! upstream `src/ui/navigator.rs` (5) keep-set render tests.
 
 use gobby_client::ui::chrome::RowState;
 use gobby_client::ui::navigator::{
     has_following_sibling_at_depth, tree_prefix, NavigatorRow, NavigatorTarget,
 };
 
-/// herdr's `row(depth, is_workspace)` fixture. gclient's navigator has no
+/// upstream's `row(depth, is_workspace)` fixture. gclient's navigator has no
 /// workspace targets, labels, or seen/current/tab/match flags, so the row
 /// carries an inert terminal target and an idle roster state; only `depth`,
 /// `is_workspace`, and `expanded` feed the tree-prefix arithmetic.

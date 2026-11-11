@@ -1,6 +1,6 @@
-//! 4.1.3: colour normalisation for ported herdr assertions.
+//! 4.1.3: colour normalisation for ported upstream assertions.
 //!
-//! herdr tests compare cell colours against `Palette::catppuccin()` roles
+//! upstream tests compare cell colours against `Palette::catppuccin()` roles
 //! (`palette.red`, `palette.overlay0`, ...). gclient keeps those role names on
 //! `theme::Palette` but fills them from the `.impeccable.md` tokens, so a
 //! ported assertion keeps its role verbatim and takes the value from
@@ -64,7 +64,7 @@ fn toast_title_row(kind: ThemeKind) -> (String, Color, Color) {
 }
 
 /// Theme values are the only allowed divergence between a ported test and
-/// its herdr original.
+/// its upstream original.
 ///
 /// A glyph or alignment change fails the ported tests; a theme value change
 /// does not, because every colour assertion takes its expectation from

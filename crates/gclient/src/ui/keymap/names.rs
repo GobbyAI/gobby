@@ -1,9 +1,9 @@
 // upstream: herdr v0.8.0 src/config/keybinds.rs
-//! The keymap's tables: the `Action` enum, its table names, and herdr's
-//! v0.8.0 default chords for the keep-set plus Gobby's control bindings.
+//! The keymap's tables: the `Action` enum, its table names, and the
+//! default chords plus Gobby's control bindings.
 //! `keymap.rs` builds the `Keymap` over these.
 
-/// Dispatchable actions. herdr's keep-set names are kept verbatim except that
+/// Dispatchable actions. The fork's names are kept verbatim except that
 /// its `workspace` noun becomes Gobby's `project` (a sidebar card) where the
 /// action walks the sidebar and `terminal` where it acts on a pane, and its
 /// `agent` noun becomes `attention`. `CustomCommand` is reserved for the
@@ -76,7 +76,7 @@ pub enum Action {
     CustomCommand,
 }
 
-/// One row of the binding table: an action name, its herdr default chords,
+/// One row of the binding table: an action name, its default chords,
 /// and whether it is reserved (non-dispatchable, hidden from help).
 #[derive(Debug, Clone, Copy)]
 pub struct BindingSpec {
@@ -115,7 +115,7 @@ const fn indexed(
     }
 }
 
-/// herdr v0.8.0 `KeysConfig::default()` for the keep-set, plus Gobby's
+/// The default bindings, plus Gobby's
 /// control bindings. Repository-checkout and mobile bindings are absent by design.
 pub const BINDINGS: &[BindingSpec] = &[
     spec("help", "Open keybinding help", &["prefix+?"]),

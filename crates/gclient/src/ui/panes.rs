@@ -158,9 +158,7 @@ pub fn render_panes<W: WorkspaceView>(
 }
 
 /// One uniform style for every selected cell, so the selection reads the
-/// same over whatever the terminal drew there (herdr
-/// `automatic_selection_style`). herdr mixes the probed host background in;
-/// gclient hosts terminals on its own token map, so the palette alone fixes
+/// same over whatever the terminal drew there. gclient hosts terminals on its own token map, so the palette alone fixes
 /// it: `text` on `surface1` is a contract-checked AA pair.
 pub fn selection_style(p: &Palette) -> Style {
     Style::reset().fg(p.text).bg(p.surface1)

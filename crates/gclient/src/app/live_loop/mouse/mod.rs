@@ -54,13 +54,13 @@ pub enum MouseGesture {
     SplitDrag { border: usize },
     /// The sidebar edge is being dragged to resize the sidebar.
     SidebarDrag,
-    /// A sidebar section divider is being dragged. `index` is the section
-    /// above it (`SidebarSection::index`); `top` is that section's first row
-    /// and `rows` the pair's heights as the press drew them, so the drag
-    /// trades within a sum that stays put.
+    /// A sidebar section's label band is being dragged. `index` is that
+    /// section (`SidebarSection::index`); `press_row` is the row the press
+    /// landed on and `rows` the pair's heights as the press drew them, so the
+    /// drag trades within a sum that stays put.
     SidebarSectionDrag {
         index: usize,
-        top: u16,
+        press_row: u16,
         rows: [u16; 2],
     },
     /// A sidebar section's scrollbar thumb is being dragged.
@@ -152,15 +152,14 @@ pub enum MouseOutcome {
     Ignore,
 }
 
-/// Columns a pressed tab travels before its drag becomes a move. herdr moves
-/// on 1; one more keeps a click with a hair of jitter a click.
+/// Columns a pressed tab travels before its drag becomes a move: two
+/// keeps a click with a hair of jitter a click.
 pub const TAB_DRAG_THRESHOLD: u16 = 2;
 
-/// Rows a pressed project card travels before its drag becomes a reorder
-/// (herdr `WORKSPACE_DRAG_THRESHOLD`).
+/// Rows a pressed project card travels before its drag becomes a reorder.
 pub const PROJECT_DRAG_THRESHOLD: u16 = 1;
 
-/// Rows one wheel notch moves a sidebar list (herdr `scroll_workspace_list`).
+/// Rows one wheel notch moves a sidebar list.
 pub const MOUSE_SCROLL_LINES: usize = 3;
 
 /// Route one mouse event against the last drawn chrome.
@@ -231,8 +230,7 @@ pub fn route_mouse<W: WorkspaceView>(
 
 /// The pointer while a menu is open: motion over a row selects it, a left
 /// press on a row activates it, and a press anywhere else closes the menu
-/// and goes no further (herdr: the closing click never reaches what is
-/// under it). Releases and wheel notches are swallowed.
+/// and goes no further. Releases and wheel notches are swallowed.
 fn menu_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome {
     let mut hit = chrome
         .menu

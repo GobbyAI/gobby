@@ -273,7 +273,7 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
     let rows = agent_rows(&ws, &chrome);
 
     assert_eq!(rows[0].height(), 3);
-    assert_eq!(rows[0].definition, "Codex");
+    assert_eq!(rows[0].definition, "default");
     assert_eq!(rows[0].reference, "#77");
     assert_eq!(rows[0].model_slug, "codex/gpt-5-high");
     // The model sits under the title, the task status below it (#24895).
@@ -380,8 +380,8 @@ fn model_slug_reads_provider_model_effort_and_skips_absent_segments() {
             Some("Gemini 3.8 Flash (High)"),
             None
         ),
-        "agy/gemini-3.8-flash-high",
-        "a parenthesized effort joins the model like every other effort"
+        "antigravity/gemini-3.8-flash-high",
+        "a parenthesized effort joins the model, and the agy source reads Antigravity"
     );
     assert_eq!(
         slug(Some("gpt-6-sol"), None, Some("xhigh")),
@@ -525,7 +525,7 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     assert_eq!(line_text(&row_second_line(&row, 60, &chrome)), "   gpt-5");
     assert_eq!(
         line_text(&row_third_line(&row, 60, &chrome)),
-        "   Working task 123 Review auth"
+        "   Task 123: Review auth"
     );
     let idle = SidebarRow {
         state: RowState::Blank,
@@ -549,7 +549,7 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     );
     assert_eq!(
         line_text(&row_third_line(&nested, 60, &chrome)),
-        " │    Working task 123 Review auth"
+        " │    Task 123: Review auth"
     );
     let descendant = SidebarRow {
         ancestor_branches: vec![true],
@@ -566,7 +566,7 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     );
     assert_eq!(
         line_text(&row_third_line(&descendant, 60, &chrome)),
-        " │       Working task 123 Review auth"
+        " │       Task 123: Review auth"
     );
     let last = SidebarRow {
         last_child: true,
@@ -574,7 +574,7 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
     };
     assert_eq!(
         line_text(&row_third_line(&last, 60, &chrome)),
-        "      Working task 123 Review auth"
+        "      Task 123: Review auth"
     );
     for width in 0..12 {
         for line in [
@@ -593,28 +593,19 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
 }
 
 #[test]
-fn the_claim_holder_marks_its_task_line_and_no_other_seat_does() {
+fn the_task_line_reads_task_number_colon_title_with_no_glyph() {
     let chrome = Chrome::dark();
-    let holder = SidebarRow {
+    let row = SidebarRow {
         id: "session:holder".into(),
         definition: "Architect".into(),
         reference: "#25485".into(),
         task: Some(("#25485".into(), "Remove stored titles".into())),
-        claim_mark: Some("\u{f084}"),
         kind: RowKind::Agent,
         ..SidebarRow::default()
     };
     assert_eq!(
-        line_text(&row_third_line(&holder, 60, &chrome)),
-        "   Working task 25485 \u{f084} Remove stored titles"
-    );
-    let reviewer = SidebarRow {
-        claim_mark: None,
-        ..holder
-    };
-    assert_eq!(
-        line_text(&row_third_line(&reviewer, 60, &chrome)),
-        "   Working task 25485 Remove stored titles"
+        line_text(&row_third_line(&row, 60, &chrome)),
+        "   Task 25485: Remove stored titles"
     );
 }
 
@@ -712,43 +703,43 @@ fn every_overflowing_row_uses_the_selected_scroll_direction() {
         kind: RowKind::Agent,
         ..SidebarRow::default()
     };
-    assert_eq!(row_travel(&row, 24), 4);
+    assert_eq!(row_travel(&row, 17), 4);
     assert_eq!(row_travel(&row, 60), 0);
     // A plain row scrolls like the active one.
     assert_eq!(
-        line_text(&row_third_line(&row, 24, &chrome)),
-        "   Working task 1 cdefgh"
+        line_text(&row_third_line(&row, 17, &chrome)),
+        "   Task 1: cdefgh"
     );
     // Beside a longer title it reads the same clock, then parks at its
     // end while the longer one walks on.
     chrome.view.title_travel = 10;
     assert_eq!(
-        line_text(&row_third_line(&row, 24, &chrome)),
-        "   Working task 1 cdefgh"
+        line_text(&row_third_line(&row, 17, &chrome)),
+        "   Task 1: cdefgh"
     );
     chrome.ticker = (TICKER_PAUSE + 8) * TICKER_STEP;
     assert_eq!(
-        line_text(&row_third_line(&row, 24, &chrome)),
-        "   Working task 1 efghij"
+        line_text(&row_third_line(&row, 17, &chrome)),
+        "   Task 1: efghij"
     );
     // Off truncates like any other title.
     chrome.prefs.title_scrolling = TitleScrolling::Off;
     assert_eq!(
-        line_text(&row_third_line(&row, 24, &chrome)),
-        "   Working task 1 abcde…"
+        line_text(&row_third_line(&row, 17, &chrome)),
+        "   Task 1: abcde…"
     );
 
     // Right uses the same clock in the opposite direction.
     chrome.prefs.title_scrolling = TitleScrolling::Right;
     chrome.ticker = 0;
     assert_eq!(
-        line_text(&row_third_line(&row, 24, &chrome)),
-        "   Working task 1 efghij"
+        line_text(&row_third_line(&row, 17, &chrome)),
+        "   Task 1: efghij"
     );
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
     assert_eq!(
-        line_text(&row_third_line(&row, 24, &chrome)),
-        "   Working task 1 cdefgh"
+        line_text(&row_third_line(&row, 17, &chrome)),
+        "   Task 1: cdefgh"
     );
 }
 
@@ -763,12 +754,12 @@ fn the_working_task_lead_stays_fixed_while_only_the_title_scrolls() {
         kind: RowKind::Agent,
         ..SidebarRow::default()
     };
-    let first = line_text(&row_third_line(&row, 40, &chrome));
+    let first = line_text(&row_third_line(&row, 33, &chrome));
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
-    let later = line_text(&row_third_line(&row, 40, &chrome));
-    assert_eq!(first, "   Working task 13936 修复 workspace chr");
-    assert_eq!(later, "   Working task 13936 复 workspace chrom");
-    assert!(row_travel(&row, 40) > 0);
+    let later = line_text(&row_third_line(&row, 33, &chrome));
+    assert_eq!(first, "   Task 13936: 修复 workspace chr");
+    assert_eq!(later, "   Task 13936: 复 workspace chrom");
+    assert!(row_travel(&row, 33) > 0);
 }
 
 #[test]
@@ -784,7 +775,7 @@ fn a_title_that_fits_beside_the_lead_does_not_scroll() {
     };
     let first = line_text(&row_third_line(&row, 40, &chrome));
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
-    assert_eq!(first, "   Working task 25480 short");
+    assert_eq!(first, "   Task 25480: short");
     assert_eq!(line_text(&row_third_line(&row, 40, &chrome)), first);
     assert_eq!(row_travel(&row, 40), 0);
 }
@@ -801,10 +792,10 @@ fn a_lead_wider_than_the_row_truncates_and_drops_the_title() {
         ..SidebarRow::default()
     };
     assert_eq!(
-        line_text(&row_third_line(&row, 20, &chrome)),
-        "   Working task 254…"
+        line_text(&row_third_line(&row, 14, &chrome)),
+        "   Task 25480…"
     );
-    assert_eq!(row_travel(&row, 20), 0);
+    assert_eq!(row_travel(&row, 14), 0);
 }
 
 #[test]
@@ -1001,8 +992,8 @@ fn a_seat_line_one_is_its_definition_beside_its_ref() {
     assert_eq!(line_one("sess-named"), "   #77: Architect");
     assert_eq!(
         line_one("sess-bare-ref"),
-        "   #78: Codex",
-        "a seat with no definition names its provider"
+        "   #78: default",
+        "a seat with no definition reads default"
     );
     assert_eq!(
         line_one("sess-suffix"),
@@ -1128,7 +1119,7 @@ fn sidebar_rows_paint_the_option_b_roles() {
         let second = row_second_line(&agent, 30, &chrome);
         assert_role(&second, "claude-opus-5.5-high", p.model, false, case);
         let third = row_third_line(&agent, 30, &chrome);
-        assert_role(&third, "Working task 23280 ", p.text, false, case);
+        assert_role(&third, "Task 23280: ", p.text, false, case);
         assert_role(&third, "gclient", p.subtext0, false, case);
 
         let idle = SidebarRow {
@@ -1212,7 +1203,7 @@ fn sidebar_rows_paint_the_option_b_roles() {
 }
 
 /// The task line keeps its two roles while it scrolls: the cells from
-/// `Working task N` stay text and the title's cells stay subtext0.
+/// `Task N:` stay text and the title's cells stay subtext0.
 #[test]
 fn a_scrolling_task_line_keeps_text_and_subtext_roles() {
     let mut chrome = Chrome::dark();
@@ -1226,9 +1217,9 @@ fn a_scrolling_task_line_keeps_text_and_subtext_roles() {
         ..SidebarRow::default()
     };
     chrome.ticker = (TICKER_PAUSE + 2) * TICKER_STEP;
-    let line = row_third_line(&row, 40, &chrome);
-    assert_eq!(line_text(&line), "   Working task 13936 复 workspace chrom");
-    assert_role(&line, "Working task 13936 ", p.text, false, "scrolled");
+    let line = row_third_line(&row, 33, &chrome);
+    assert_eq!(line_text(&line), "   Task 13936: 复 workspace chrom");
+    assert_role(&line, "Task 13936: ", p.text, false, "scrolled");
     assert_role(&line, "复 workspace chrom", p.subtext0, false, "scrolled");
 }
 
@@ -1342,7 +1333,7 @@ fn a_task_takes_line_three_over_the_status_line() {
     };
     assert_eq!(
         line_text(&row_third_line(&row, 40, &chrome)),
-        "   Working task 24895 gclient sidebar"
+        "   Task 24895: gclient sidebar"
     );
 }
 
@@ -1363,7 +1354,7 @@ fn an_agent_puts_the_model_on_line_two_and_the_task_on_line_three() {
     );
     assert_eq!(
         line_text(&row_third_line(&row, 40, &chrome)),
-        "   Working task 24895 gclient sidebar"
+        "   Task 24895: gclient sidebar"
     );
 }
 

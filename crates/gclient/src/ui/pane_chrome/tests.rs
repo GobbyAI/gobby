@@ -78,17 +78,17 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
 
     // The session ref, not the task: the task title lives on the Agents row.
     let focused = pane_corners(&ws, &chrome, ws.pane(pane_id), true);
-    assert_eq!(focused.title, "  #1742: Codex · Focused");
+    assert_eq!(focused.title, "  #1742: default · Focused");
     assert_eq!(focused.address, "0:0:1:2");
     let unfocused = pane_corners(&ws, &chrome, ws.pane(pane_id), false);
-    assert_eq!(unfocused.title, "  #1742: Codex");
+    assert_eq!(unfocused.title, "  #1742: default");
 
     // The project leads the ref only where every project's rows mix.
     chrome.sidebar.all_sessions = true;
     chrome.prefs.agent_sort = AgentSort::Priority;
     assert_eq!(
         pane_corners(&ws, &chrome, ws.pane(pane_id), false).title,
-        "  gobby#1742: Codex"
+        "  gobby#1742: default"
     );
     chrome.sidebar.all_sessions = false;
 
@@ -116,7 +116,7 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
     ws.reconcile_subscribe_first().unwrap();
     assert_eq!(
         pane_corners(&ws, &chrome, ws.pane(pane_id), false).title,
-        "  Codex"
+        "  default"
     );
 
     let mut fallback = Pane::new(PaneId(99), "term-fallback", Backend::Native, "epoch");
@@ -131,7 +131,7 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
 }
 
 #[test]
-fn a_seat_without_a_definition_names_its_provider() {
+fn a_seat_without_a_definition_reads_default() {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1", "seq": 1,
@@ -145,7 +145,7 @@ fn a_seat_without_a_definition_names_its_provider() {
     let pane = ws.open_terminal("term-orphan", "native", "epoch").unwrap();
     assert_eq!(
         pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
-        "  Claude Code · Focused"
+        "  default · Focused"
     );
 }
 
@@ -216,8 +216,8 @@ fn a_defined_seat_header_leads_with_its_ref_then_its_definition() {
     let (ws, pane) = definition_seat(None);
     assert_eq!(
         pane_corners(&ws, &Chrome::dark(), ws.pane(pane), false).title,
-        "  #14069: Claude",
-        "a seat with no definition leads with its ref and provider"
+        "  #14069: default",
+        "a seat with no definition leads with its ref and the default definition"
     );
 }
 
@@ -261,13 +261,13 @@ fn a_seat_that_needs_you_reads_in_the_attention_tone() {
     let unfocused = pane_corners(&ws, &chrome, ws.pane(pane), false);
     assert_eq!(
         (unfocused.title.as_str(), unfocused.tone),
-        ("⍾ Codex", MetadataTone::Attention)
+        ("⍾ default", MetadataTone::Attention)
     );
     // Focus outranks the ask in the hue; the glyph still says it.
     let focused = pane_corners(&ws, &chrome, ws.pane(pane), true);
     assert_eq!(
         (focused.title.as_str(), focused.tone),
-        ("⍾ Codex · Focused", MetadataTone::Focused)
+        ("⍾ default · Focused", MetadataTone::Focused)
     );
 }
 

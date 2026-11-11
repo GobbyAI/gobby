@@ -109,18 +109,35 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(at(view, new_tab.x, new_tab.y), Hit::NewTab);
     assert_eq!(at(view, bar.right() - 1, bar.y), Hit::TabBarEmpty);
 
-    // Sidebar: divider column, headings, rows, then bare cells. A heading
-    // carries no control, so its whole row is bare sidebar.
+    // Sidebar: divider column, headings, rows, then bare cells. A heading is
+    // its section's resize handle while the section can trade rows with the
+    // one below, and bare sidebar otherwise; the gap row under it is bare.
     let sidebar = view.sidebar_rect;
     let divider_x = view.sidebar_divider_x.expect("sidebar divider");
     assert_eq!(at(view, divider_x, sidebar.y), Hit::SidebarDivider);
-    for (section, rect) in SidebarSection::ALL.iter().zip(view.sidebar_section_rects) {
+    for (index, (section, rect)) in SidebarSection::ALL
+        .iter()
+        .zip(view.sidebar_section_rects)
+        .enumerate()
+    {
         assert!(rect.height > 0, "{section:?} drawn");
+        let band = match view.sidebar_section_divider_hit_areas.get(index) {
+            Some(Some(_)) => Hit::SidebarSectionDivider { index },
+            _ => Hit::SidebarEmpty,
+        };
         for x in rect.x..rect.right() {
-            assert_eq!(at(view, x, rect.y), Hit::SidebarEmpty, "{section:?} band");
+            assert_eq!(at(view, x, rect.y), band, "{section:?} band");
+        }
+        if band != Hit::SidebarEmpty {
+            let gap = rect.bottom() - 1;
+            assert_eq!(
+                at(view, rect.x, gap),
+                Hit::SidebarEmpty,
+                "{section:?} gap row"
+            );
         }
     }
-    // Each drawn divider is its section's gap row, and the drag claims it
+    // Each drawn handle is its section's label band, and the drag claims it
     // ahead of any row or band near it.
     assert!(
         view.sidebar_section_divider_hit_areas
@@ -151,7 +168,11 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(entry, "run:term-alpha");
     assert_eq!(at(view, rect.x, rect.y), Hit::Agent(entry.clone()));
     assert_eq!(at(view, rect.x, rect.y + 1), Hit::Agent(entry.clone()));
-    assert_eq!(at(view, sidebar.x, sidebar.y), Hit::SidebarEmpty);
+    // The sidebar's first row is the Machines band, its resize handle.
+    assert_eq!(
+        at(view, sidebar.x, sidebar.y),
+        Hit::SidebarSectionDivider { index: 0 }
+    );
 
     // Panes: content offsets, the hidden gutter, the frame, the split, and the
     // focused pane's scrollbar lane.
@@ -212,8 +233,6 @@ fn hit_test_covers_split_live_layout() {
         assert_eq!(at(view, rect.right() - 1, rect.y), Hit::MenuTitle(*index));
     }
     assert_eq!(at(view, WIDTH - 1, 0), Hit::MenuBarEmpty);
-    assert_eq!(view.menu_bar_line, Rect::new(0, 1, WIDTH, 1));
-    assert_eq!(at(view, 0, 1), Hit::MenuBarEmpty);
     // The menu bar is tested before the tab bar: a tab bar reaching row 0
     // still yields the title and the bare bar there.
     let mut overlapped = view.clone();
@@ -244,7 +263,7 @@ fn sidebar_scrollbar_lane_hits_by_section() {
     // of the four sections.
     let lanes = [
         (SidebarSection::Machines, Rect::new(24, 2, 1, 2)),
-        (SidebarSection::Projects, Rect::new(24, 7, 1, 3)),
+        (SidebarSection::Projects, Rect::new(24, 6, 1, 2)),
         (SidebarSection::Agents, Rect::new(24, 14, 1, 3)),
         (SidebarSection::Terminals, Rect::new(24, 30, 1, 3)),
     ];

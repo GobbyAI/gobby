@@ -480,7 +480,7 @@ async fn focus_live_neighbour(
     Ok(())
 }
 
-/// herdr keeps navigate mode across a directional focus made from it.
+/// Navigate mode survives a directional focus made from it.
 async fn navigate_live_neighbour(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -492,7 +492,7 @@ async fn navigate_live_neighbour(
 }
 
 /// Exchange the focused slot with its neighbour; focus stays on the same
-/// pane at its new position (herdr `swap_exact`).
+/// pane at its new position.
 async fn swap_live_neighbour(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,

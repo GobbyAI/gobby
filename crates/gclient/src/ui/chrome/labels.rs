@@ -12,7 +12,7 @@ use crate::app::{short_terminal_id, PaneId};
 use crate::ui::chrome::WorkspaceView;
 use crate::ui::sidebar::agent_label;
 
-/// herdr `AgentState`, mapped onto Gobby roster rows.
+/// The state a roster row draws in.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum RowState {
     /// The session waits on the operator: a question, a plan approval or a permission prompt.

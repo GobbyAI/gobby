@@ -17,7 +17,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-/// herdr's modal is 76x22; the flat gclient table needs more room, so the
+/// The flat keymap table needs more room than a fixed 76x22 modal, so the
 /// modal grows with the frame up to these caps.
 const HELP_MAX_WIDTH: u16 = 120;
 const HELP_MAX_HEIGHT: u16 = 40;
@@ -36,7 +36,7 @@ pub fn filtered_entries(keymap: &Keymap, query: &str) -> Vec<HelpEntry> {
     filter_help_entries(keymap.help_entries(), query)
 }
 
-/// herdr `filter_keybind_help_groups` on one flat list: keep the entries whose
+/// Keep the entries whose
 /// name, description, or keys contain `query`, case-insensitively.
 pub fn filter_help_entries(entries: Vec<HelpEntry>, query: &str) -> Vec<HelpEntry> {
     let query = query.to_lowercase();
@@ -491,11 +491,11 @@ fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::keymap::HERDR_PREFIX;
+    use crate::ui::keymap::DEFAULT_PREFIX;
 
     #[test]
     fn filter_matches_name_description_and_keys_case_insensitively() {
-        let keymap = Keymap::defaults(HERDR_PREFIX);
+        let keymap = Keymap::defaults(DEFAULT_PREFIX);
         let by_name = filtered_entries(&keymap, "SPLIT_VERT");
         assert_eq!(by_name.len(), 1);
         assert_eq!(by_name[0].name, "split_vertical");

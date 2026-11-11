@@ -71,7 +71,7 @@ mod menu_bar;
 #[path = "outage_direct_input.rs"]
 mod outage_direct_input;
 
-// 4.1: herdr keep-set render-test parity suite. The harness lives in `parity/mod.rs`, so
+// 4.1: upstream keep-set render-test parity suite. The harness lives in `parity/mod.rs`, so
 // nextest lists every ported test as `parity::<module>::<name>`.
 #[path = "parity/mod.rs"]
 mod parity;

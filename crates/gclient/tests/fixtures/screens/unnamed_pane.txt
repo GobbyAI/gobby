@@ -2,12 +2,12 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : subtext0/dim+b*120
-01 |                                                                                                                        |
-01 : text/panel_bg*120
-02 | alpha      │ +                                                                                                         |
-02 : text/selection+b*12 line/surface0*1 overlay1/surface0*3 text/surface0*104
-03 |┌   zsh · Focused ─────────────────────────────────────────────────────────────────────────────────────────────────────┐|
-03 : accent/panel_bg*1 accent/panel_bg+b*17 accent/panel_bg*102
+01 | alpha      │ +                                                                                                         |
+01 : text/selection+b*12 line/surface0*1 overlay1/surface0*3 text/surface0*104
+02 |┌   zsh · Focused ─────────────────────────────────────────────────────────────────────────────────────────────────────┐|
+02 : accent/panel_bg*1 accent/panel_bg+b*17 accent/panel_bg*102
+03 |│                                                                                                                      │|
+03 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 04 |│                                                                                                                      │|
 04 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 05 |│                                                                                                                      │|

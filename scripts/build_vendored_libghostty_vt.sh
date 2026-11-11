@@ -50,8 +50,7 @@ fi
 zig_tgt=$(zig_target "$rust_triple")
 version_string=$(tr -d '[:space:]' < "$VENDORED_DIR/VERSION")
 
-# Native builds omit -Dtarget so Zig links the host libSystem (herdr's helper
-# does the same). Cross builds pass GTERM_TARGET and get the mapped Zig triple.
+# Native builds omit -Dtarget so Zig links the host libSystem. Cross builds pass GTERM_TARGET and get the mapped Zig triple.
 build_args=(
   build
   -Demit-lib-vt

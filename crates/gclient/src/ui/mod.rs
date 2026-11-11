@@ -1,4 +1,4 @@
-//! Imported herdr v0.8.0 UI chrome, rewired to Gobby roster and attention.
+//! The client UI chrome, wired to the Gobby roster and attention.
 //!
 //! `chrome::Chrome` is the UI view-state the run loop owns; `render_workspace`
 //! composes the imported modules from a `WorkspaceView` plus that state.

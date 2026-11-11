@@ -43,7 +43,7 @@ pub enum Resolution {
     /// A bound action.
     Action(Action),
     /// Nothing bound: the focused pane receives the key. Inside prefix mode
-    /// the prefix chord itself resolves here (herdr's `ctrl+b ctrl+b`), so a
+    /// the prefix chord itself resolves here, so a
     /// held pane can still be sent the literal prefix.
     Unbound,
 }
@@ -88,7 +88,7 @@ pub fn text_bytes(event: &RawInputEvent) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::keymap::HERDR_PREFIX;
+    use crate::ui::keymap::DEFAULT_PREFIX;
     use crossterm::event::{KeyCode, KeyModifiers, MouseEvent, MouseEventKind};
     use gobby_terminal::input::TerminalKey;
 
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn armed_prefix_mode_ignores_direct_and_prefix_chords_alike() {
-        let keymap = Keymap::defaults(HERDR_PREFIX);
+        let keymap = Keymap::defaults(DEFAULT_PREFIX);
         let up = key_input(
             &key(KeyCode::Up, KeyModifiers::NONE),
             KeyboardProtocol::Legacy,
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn terminal_mode_leaves_every_direct_chord_to_the_pane() {
-        let keymap = Keymap::defaults(HERDR_PREFIX);
+        let keymap = Keymap::defaults(DEFAULT_PREFIX);
         // Every bare key the default keymap binds. In a focused terminal each
         // one is an ordinary character or cursor key the shell must receive.
         for (code, action) in [
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn terminal_mode_still_arms_the_prefix() {
-        let keymap = Keymap::defaults(HERDR_PREFIX);
+        let keymap = Keymap::defaults(DEFAULT_PREFIX);
         let prefix = key_input(
             &key(KeyCode::Char('b'), KeyModifiers::CONTROL),
             KeyboardProtocol::Legacy,

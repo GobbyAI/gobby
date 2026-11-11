@@ -199,7 +199,7 @@ async fn a_held_terminal_create_keeps_direct_loop_frames_input_and_ticks_live_th
     chrome.open_pane(existing, "local shell");
     chrome.keymap = crate::ui::keymap::Keymap::from_toml(
         "[bindings]\nnew_terminal = \"prefix+i\"\n",
-        crate::ui::keymap::HERDR_PREFIX,
+        crate::ui::keymap::DEFAULT_PREFIX,
     )
     .expect("test keymap");
     // Exercise the legacy terminal_create branch with a real running loop.

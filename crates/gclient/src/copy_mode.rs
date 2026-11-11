@@ -308,7 +308,7 @@ pub fn route_paste_event(
     Ok(true)
 }
 
-/// herdr 0.8.0 `paste_payload`: one bracketed unit when the child asked for it.
+/// One bracketed unit when the child asked for it.
 pub fn paste_payload(text: &str, bracketed: bool) -> String {
     if bracketed {
         format!("\u{1b}[200~{text}\u{1b}[201~")

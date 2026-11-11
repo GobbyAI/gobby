@@ -642,7 +642,7 @@ fn render(ws: &Workspace, chrome: &mut Chrome) -> Terminal<TestBackend> {
 }
 
 /// `Palette::entries` resolved to the colours the render actually paints
-/// with, then the chrome's own fields no herdr name covers: the inks on the
+/// with, then the chrome's own fields no palette name covers: the inks on the
 /// header and selection fills, the unfocused pane fill, the line and the
 /// wordmark. Those come after the entries, so where one repeats a token (an
 /// ink is usually the theme's own `text`) the capture keeps naming the
@@ -862,7 +862,7 @@ fn agent_rows_golden() {
         .expect("agent definition row");
     assert!(rows[agent + 1].contains("gpt-5"), "{:?}", rows[agent + 1]);
     assert!(
-        rows[agent + 2].contains("Working task 123 Implement"),
+        rows[agent + 2].contains("Task 123: Implement"),
         "{:?}",
         rows[agent + 2]
     );
@@ -929,7 +929,7 @@ fn projects_agents_golden() {
         "menu-bar row"
     );
     let machines = row_containing(" Machines");
-    assert_eq!(machines, 2, "the machines band tops the sidebar");
+    assert_eq!(machines, 1, "the machines band tops the sidebar");
     let projects = row_containing(" Projects");
     assert_eq!(
         rows[projects].trim_end(),
@@ -938,10 +938,10 @@ fn projects_agents_golden() {
     );
     assert!(machines < projects, "the machines sit above the projects");
     // alpha carries the most urgent state of its bound agents: needs you.
-    let alpha = row_containing("⍾ ⍾1 alpha");
+    let alpha = row_containing("⍾1 alpha");
     assert_eq!(alpha, projects + 1, "the card follows the one-row band");
     assert!(
-        rows[alpha].starts_with(" ⍾ ⍾1 alpha") && rows[alpha].trim_end().ends_with('▸'),
+        rows[alpha].starts_with(" ⍾1 alpha") && rows[alpha].trim_end().ends_with('▸'),
         "folded card: {:?}",
         rows[alpha]
     );
@@ -960,14 +960,14 @@ fn projects_agents_golden() {
         "a blank row separates the cards from the agents band"
     );
     assert!(rows[sessions].starts_with(" Agents "));
-    let entry = row_containing("Unknown");
+    let entry = row_containing("default");
     assert_eq!(
         entry,
         sessions + 2,
         "the project heading precedes the attention entry"
     );
     assert!(
-        rows[entry].contains("⍾ Unknown"),
+        rows[entry].contains("⍾ default"),
         "an attention row carries its state glyph: {:?}",
         rows[entry]
     );

@@ -3,7 +3,7 @@
 //! rows, agent rows and terminal rows, plus the line builders the sidebar
 //! and navigator share.
 //!
-//! Ported from herdr `resolved_token_spans`: a state glyph plus text tokens
+//! A state glyph plus text tokens
 //! joined by `" "` after the glyph and `" · "` elsewhere; trailing tokens
 //! drop from the right before the title truncates. Project cards are one
 //! line: the name, then the branch and git counts in parentheses, dropped
@@ -81,15 +81,11 @@ pub struct SidebarRow {
     pub has_children: bool,
     pub selected: bool,
     /// A project card: the focused project. An agent row: the focused pane
-    /// of the active tab shows its terminal (herdr "active workspace": bold
-    /// `text` title on `surface_dim`).
+    /// of the active tab shows its terminal.
     pub active: bool,
     /// An agent row's sandbox lock, resolved from its session's sandbox state
     /// and the nerd-glyph pref; `None` for an unrestricted agent.
     pub sandbox_mark: Option<&'static str>,
-    /// An agent row's claim mark on its task line, set only on the seat whose
-    /// session holds the claim; `None` for every other seat.
-    pub claim_mark: Option<&'static str>,
     /// An agent row's one-line status, drawn on line three while it holds no task.
     pub status_line: Option<String>,
     /// A project or machine row's agents that need the operator, drawn beside
@@ -499,13 +495,20 @@ pub(crate) fn row_line_with_scrolling<'a>(
 }
 
 /// A project or machine glyph with its counts beside it, each left off at
-/// zero: one active agent beside two dead ones reads `▶ ✕2`.
+/// zero: one active agent beside two dead ones reads `▶ ✕2`. A count whose mark
+/// is the rolled-up glyph itself takes the glyph's place, so one row needing you
+/// reads `⍾1`, never `⍾ ⍾1`.
 fn counted_glyph(glyph: &str, row: &SidebarRow) -> String {
     let mut text = glyph.to_string();
     for (count, mark) in [(row.needs_you, "⍾"), (row.no_live, "✕")] {
-        if count > 0 {
-            text = format!("{text} {mark}{count}");
+        if count == 0 {
+            continue;
         }
+        text = if text == mark {
+            format!("{mark}{count}")
+        } else {
+            format!("{text} {mark}{count}")
+        };
     }
     text
 }
@@ -605,28 +608,14 @@ fn pinned_width(row: &SidebarRow) -> usize {
     }
 }
 
-/// An agent's second line, `Working task 22944` then ` Title`: the number
-/// is the task ref after its last `#`. The whole line tickers as one string
-/// and each part keeps its own role.
+/// An agent's task line, `Task 22944: ` then `Title`: the number is the task
+/// ref after its last `#`. The whole line tickers as one string and each part
+/// keeps its own role.
 fn task_line(row: &SidebarRow) -> Option<(String, String)> {
     let (reference, title) = row.task.as_ref()?;
     let number = reference.rsplit('#').next().unwrap_or(reference);
-    // The claim mark sits between the number and the title, one cell from each.
-    let mark = row
-        .claim_mark
-        .map_or_else(String::new, |mark| format!("{mark} "));
     // The lead keeps its trailing space, so a scrolled title never runs into it.
-    Some((format!("Working task {number} {mark}"), title.clone()))
-}
-
-/// The claim-holder mark on a task line: the key glyph with nerd glyphs, else the
-/// word `claim`. Only the seat whose session holds the claim carries it.
-pub fn claim_mark(holds_claim: bool, nerd_glyphs: bool) -> Option<&'static str> {
-    match (holds_claim, nerd_glyphs) {
-        (true, true) => Some("\u{f084}"),
-        (true, false) => Some("claim"),
-        (false, _) => None,
-    }
+    Some((format!("Task {number}: "), title.clone()))
 }
 
 /// The agent's status line for line three when it holds no task. Control
@@ -841,7 +830,7 @@ pub(crate) fn row_third_line_with_travel<'a>(
     Line::from(spans)
 }
 
-/// herdr `resolved_token_spans`, reduced to the glyph + title + trailing
+/// Token spans reduced to the glyph + title + trailing
 /// shape: `" "` after the glyph, `" · "` between text tokens. Trailing tokens
 /// are kept from the left while they fit beside the whole title and dropped
 /// from the right otherwise; the title truncates only once it stands alone.

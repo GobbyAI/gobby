@@ -1,4 +1,4 @@
-// upstream: none (Gobby's menu bar; herdr has no menu row)
+// upstream: none (Gobby's menu bar)
 //! The menu bar on row 0: seven titles, each opening its menu under itself.
 //!
 //! [`MenuBarMenu::ALL`] is the one definition of the title set and its

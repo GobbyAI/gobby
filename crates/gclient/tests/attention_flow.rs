@@ -408,7 +408,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         screen.contains("#12217: Architect"),
         "rendered UI: {screen:?}"
     );
-    assert!(screen.contains("  Unknown"), "rendered UI: {screen:?}");
+    assert!(screen.contains("  default"), "rendered UI: {screen:?}");
     let sidebar: String = terminal
         .backend()
         .buffer()
