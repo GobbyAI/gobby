@@ -167,29 +167,6 @@ def foreground_node_script(pid: int) -> str | None:
         return None
 
 
-def foreground_child_executables(pid: int) -> list[str]:
-    """Executables of ``pid``'s direct children that share its process group.
-
-    A launcher that runs a provider without giving it a group of its own leaves the
-    provider in the launcher's foreground group. Such a child holds the terminal with
-    its parent, and its on-disk executable names the provider, which the group leader's
-    command does not. A child whose lookup fails is dropped, never guessed at.
-    """
-    try:
-        group = os.getpgid(pid)
-        children = psutil.Process(pid).children(recursive=False)
-    except (OSError, psutil.Error):
-        return []
-    executables: list[str] = []
-    for child in children:
-        try:
-            if os.getpgid(child.pid) == group:
-                executables.append(child.exe())
-        except (OSError, psutil.Error):
-            continue
-    return executables
-
-
 def shell_cwds(shell_pids: Mapping[str, int]) -> dict[str, str]:
     """Map each key in ``shell_pids`` to its shell's working directory.
 

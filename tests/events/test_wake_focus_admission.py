@@ -220,6 +220,7 @@ async def test_a_bare_shell_foreground_is_never_typed_into(
 
 
 LEADER_PID = 8642
+PROVIDER_PID = 8643
 
 # Each supported CLI as the kernel reports it: the 16-character accounting name ``ps`` shows,
 # and the on-disk build (relative to a temp home) the process actually executes.
@@ -266,7 +267,20 @@ async def test_every_supported_cli_gets_the_wake(
     runner = tmp_path / "runner.mjs"
     monkeypatch.setattr(gate, "foreground_node_script", lambda _pid: str(runner))
     monkeypatch.setattr(gate, "_is_installed_srt_runner", lambda script: script == str(runner))
-    monkeypatch.setattr(gate, "foreground_child_executables", lambda _pid: [str(build)])
+    # Under SRT the seat records the provider the runner launched, which ran its hooks.
+    context = seat.session.terminal_context
+    assert isinstance(context, dict)
+    context.update(parent_pid=PROVIDER_PID, parent_create_time=1.0, parent_name=comm)
+    monkeypatch.setattr(
+        gate,
+        "process_identity_matches",
+        lambda pid, context: pid == PROVIDER_PID == context.get("parent_pid"),
+    )
+    monkeypatch.setattr(
+        gate,
+        "group_and_executable",
+        lambda pid: (LEADER_PID, str(build)) if pid == PROVIDER_PID else None,
+    )
 
     result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
 

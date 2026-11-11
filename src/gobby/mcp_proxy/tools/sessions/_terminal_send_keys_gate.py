@@ -24,7 +24,6 @@ from gobby.sessions.terminal_kill import process_identity_matches
 from gobby.terminals.composer_ledger import read_composer
 from gobby.terminals.foreground import (
     command_name,
-    foreground_child_executables,
     foreground_executables,
     foreground_group,
     foreground_node_script,
@@ -113,19 +112,27 @@ class _Seat:
     terminal_context: Mapping[str, Any]
     foreground_group: int
 
-    def runs(self, build: Path) -> bool:
-        """Whether the session's recorded CLI process is live in the foreground running ``build``.
+    def process(self) -> tuple[int, str] | None:
+        """The session's recorded CLI process as ``(pid, executable)``, live in the foreground.
 
         Its pid and start time were recorded from the process that ran the session's own
-        hooks, so a planted file that never started this session cannot match.
+        hooks, so a process that never started this session cannot match, whatever file
+        it runs or names. The executable is the kernel's, never a path the process chose.
         """
         pid = self.terminal_context.get("parent_pid")
         if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
-            return False
+            return None
         if not process_identity_matches(pid, self.terminal_context):
-            return False
+            return None
         read = group_and_executable(pid)
-        return read is not None and read[0] == self.foreground_group and _on_disk(read[1]) == build
+        if read is None or read[0] != self.foreground_group:
+            return None
+        return pid, read[1]
+
+    def runs(self, build: Path) -> bool:
+        """Whether the session's recorded CLI process is live in the foreground running ``build``."""
+        live = self.process()
+        return live is not None and _on_disk(live[1]) == build
 
 
 def _agent_cli(executable: str, seat: _Seat | None) -> str | None:
@@ -169,33 +176,27 @@ def _is_installed_srt_runner(script: str) -> bool:
         return False
 
 
-def _srt_runner_cli(pid: int, seat: _Seat | None) -> str | None:
-    """The agent CLI an SRT runner launched, read from its live child in the same group.
-
-    The runner's script names no provider; its child does. The child is classified like
-    any foreground executable, so only an installed agent CLI build qualifies.
-    """
-    for executable in foreground_child_executables(pid):
-        cli = _agent_cli(executable, seat)
-        if cli is not None:
-            return cli
-    return None
-
-
 def _node_agent_cli(pid: int, seat: _Seat | None) -> str | None:
-    """Bind node's live script to the agent CLI it runs.
+    """Bind a foreground node to the agent CLI it runs, through the session's own process.
 
-    Either the script the daemon's PATH resolves ``claude`` to (an npm install), or
-    Gobby's installed SRT runner with its provider as a live child. A package's own
-    metadata proves nothing, since any directory can declare itself Claude's package.
+    node's script is a path read again at check time, so it only names the CLI: a link
+    node opened while it named another file, then pointed at the installed one, reads the
+    same. What admits is the session's recorded CLI process, live in the foreground. For
+    Gobby's installed SRT runner that is the provider it launched, an installed agent CLI
+    build. For the script the daemon's PATH resolves ``claude`` to (an npm install) it is
+    node itself, leading the foreground group. A package's own metadata proves nothing,
+    since any directory can declare itself Claude's package.
     """
     script = foreground_node_script(pid)
-    if script is None:
+    live = None if seat is None else seat.process()
+    if script is None or seat is None or live is None:
         return None
     if _is_installed_srt_runner(script):
-        return _srt_runner_cli(pid, seat)
+        return _agent_cli(live[1], seat)
     entrypoint = _on_disk(script)
-    return "claude" if entrypoint is not None and entrypoint == _installed_cli("claude") else None
+    if entrypoint is None or entrypoint != _installed_cli("claude"):
+        return None
+    return "claude" if live[0] == seat.foreground_group else None
 
 
 def _detection_registry(terminal_manager: Any) -> DetectionManifestRegistry:
