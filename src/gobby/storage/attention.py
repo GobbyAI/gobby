@@ -188,6 +188,8 @@ class AttentionRosterRow:
     machine_id: str | None = None
     project_id: str | None = None
     status_line: str | None = None
+    # The session that spawned this seat, so every descendant nests under it.
+    parent_session_id: str | None = None
 
     @classmethod
     def from_row(cls, row: Row) -> AttentionRosterRow:
@@ -231,6 +233,9 @@ class AttentionRosterRow:
             machine_id=str(row["machine_id"]) if row.get("machine_id") is not None else None,
             project_id=str(row["project_id"]) if row.get("project_id") is not None else None,
             status_line=_activity_line(row.get("status_line"), row.get("last_message")),
+            parent_session_id=(
+                str(row["parent_session_id"]) if row.get("parent_session_id") is not None else None
+            ),
         )
 
 
@@ -356,7 +361,9 @@ class AttentionStateManager:
                          THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END
                 ) AS definition,
                 run.machine_id::text AS machine_id,
-                COALESCE(child.project_id, parent.project_id)::text AS project_id
+                COALESCE(child.project_id, parent.project_id)::text AS project_id,
+                COALESCE(run.parent_session_id, child.parent_session_id)::text
+                    AS parent_session_id
             FROM eligible_runs eligible
             JOIN agent_runs run ON run.id = eligible.id
             LEFT JOIN sessions child ON child.id = run.child_session_id
@@ -406,7 +413,8 @@ class AttentionStateManager:
                 CASE WHEN jsonb_typeof(seat.variables->'_agent_type') = 'string'
                      THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END AS definition,
                 session.machine_id::text AS machine_id,
-                session.project_id::text AS project_id
+                session.project_id::text AS project_id,
+                session.parent_session_id::text AS parent_session_id
             FROM eligible_sessions eligible
             JOIN sessions session ON session.id = eligible.id
             LEFT JOIN session_variables seat ON seat.session_id = session.id

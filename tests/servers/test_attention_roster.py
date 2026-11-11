@@ -1578,3 +1578,49 @@ def test_roster_rows_without_a_status_line_carry_the_last_message_line(
     assert _live_roster_entry(temp_db, f"run:{run.id}")["status_line"] == (
         "Running the focused tests now."
     )
+
+
+def test_roster_rows_carry_the_spawning_session(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    """Every descendant names its spawner, however old its run is among the project's runs."""
+    spawner = session_manager.register(
+        external_id="roster-parent-spawner",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    seat = session_manager.register(
+        external_id="roster-parent-seat",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+        parent_session_id=spawner.id,
+    )
+    worker = session_manager.register(
+        external_id="roster-parent-worker",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(
+        parent_session_id=seat.id,
+        child_session_id=worker.id,
+        provider="codex",
+        prompt="test",
+        agent_name="fixture-worker",
+    )
+    manager.start(run.id)
+
+    rows = AttentionStateManager(temp_db).load_roster_rows(
+        live_session_statuses=LIVE_SESSION_STATUS_ORDER
+    )
+    parents = {(row.kind, row.session_id): row.parent_session_id for row in rows}
+
+    assert parents[("session", spawner.id)] is None
+    assert parents[("session", seat.id)] == spawner.id
+    assert parents[("run", worker.id)] == seat.id
+    assert _live_roster_entry(temp_db, f"run:{run.id}")["parent_session_id"] == seat.id

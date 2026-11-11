@@ -408,8 +408,12 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     .session_id
                     .clone()
                     .or_else(|| run.and_then(|(_, run)| run.child_session_id.clone())),
-                parent_session_id: run
-                    .and_then(|(_, run)| run.parent_session_id.clone())
+                // The roster names every seat's spawner; the fetched run and
+                // session lists cover only each project's newest rows.
+                parent_session_id: entry
+                    .parent_session_id
+                    .clone()
+                    .or_else(|| run.and_then(|(_, run)| run.parent_session_id.clone()))
                     .or_else(|| session.and_then(|(_, session)| session.parent_session_id.clone())),
                 effort: run
                     .and_then(|(_, run)| run.reasoning_effort().map(str::to_owned))

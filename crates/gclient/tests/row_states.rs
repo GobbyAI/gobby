@@ -278,6 +278,26 @@ fn dead_child_run_does_not_keep_its_parent_active() {
     assert_eq!(agent_entry(&model, "run:child").state, RowState::NoLive);
 }
 
+/// A seat whose run fell out of the fetched newest-runs window still nests:
+/// the roster itself names its spawner.
+#[test]
+fn a_roster_named_spawner_nests_its_seat_without_fetched_rows() {
+    let parent = running("parent", "s-parent", "t-parent");
+    let child = RosterEntry {
+        parent_session_id: Some("s-parent".to_string()),
+        ..running("run:child", "s-child", "t-child")
+    };
+    let rows = rows_with(vec![], vec![]);
+    let model = build_model(&rows, &[parent, child], &[]);
+    assert_eq!(
+        agent_entry(&model, "run:child")
+            .parent_session_id
+            .as_deref(),
+        Some("s-parent")
+    );
+    assert_eq!(agent_entry(&model, "parent").parent_session_id, None);
+}
+
 /// A project rolls up to its most urgent agent and counts the dead ones, so
 /// one active agent beside two dead ones reads as active with two no-live.
 #[test]

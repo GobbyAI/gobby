@@ -28,6 +28,9 @@ pub struct RosterEntry {
     /// itself; absent or `null` when it has none.
     #[serde(default)]
     pub status_line: Option<String>,
+    /// The session that spawned this seat; its row nests under that session's.
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     /// The model's name as its provider prints it (`Claude Fable 5.1`),
