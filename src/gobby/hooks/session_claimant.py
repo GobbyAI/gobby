@@ -155,8 +155,8 @@ def claim_session_start(
 
     A daemon-internal replay has no proof and mints nothing. An unresolved claimant is
     refused. A Codex start from the shared app-server is proven as a shared-host start and
-    records no CLI pid. An existing session is refused unless its stored CLI pid is the
-    claimant's.
+    records no CLI pid, but only for a session with no live seat; naming a live seat is
+    refused. An existing session is refused unless its stored CLI pid is the claimant's.
     A new session is proven by its claimant's CLI pid, which the handler records. That is
     the stabilized pid the live check compares, not the raw parent of a Droid exec backend.
     """
@@ -164,12 +164,14 @@ def claim_session_start(
         return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
     if claimant.pid == daemon_pid:
         return SessionStartClaim()
-    if claimant.shared_host and source == "codex":
+    live = _live_terminal(db, external_id=external_id, source=source, machine_id=machine_id)
+    if claimant.shared_host and source == "codex" and live is None:
         # Codex's shared app-server runs this hook for the thread its body names. No CLI pid
         # tells its seats apart, so the credential is keyed by the seat's own session refs
-        # and the hook gate lets a session originate calls only under its own ref.
+        # and the hook gate lets a session originate calls only under its own ref. The host
+        # attests no thread, so it binds only a session no live seat holds: a body naming
+        # a live seat's thread falls through to the refusal below and mints nothing.
         return SessionStartClaim(proven=True, shared_host=True)
-    live = _live_terminal(db, external_id=external_id, source=source, machine_id=machine_id)
     if claimant.cli_pid is None:
         # No single CLI attests this start: never mint, and never touch a live row.
         if live:

@@ -7,6 +7,7 @@ import os
 import queue
 import socket
 import subprocess
+import sys
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -734,27 +735,44 @@ def test_codex_resume_under_the_shared_app_server_mints_a_session_ref_credential
     assert claims.session_id == expired_codex_session.id
 
 
-def test_codex_start_under_the_shared_app_server_does_not_refuse_its_live_seat(
+def test_shared_host_start_naming_a_live_session_is_refused_and_mints_nothing(
     hook_route: HookRoute,
     temp_db: HubDatabase,
     expired_codex_session: Any,
 ) -> None:
+    """The shared host attests no thread, so a start naming a live seat cannot take it over.
+
+    Any process the app-server parents can put another live thread's id in its body. The
+    host proves nothing about which thread it runs, so the start is refused before its
+    handler touches the live row, and no credential for that seat is minted.
+    """
     _machine_caller(hook_route)
     temp_db.execute(
-        "UPDATE sessions SET status = 'active' WHERE id = %s", (expired_codex_session.id,)
+        "UPDATE sessions SET status = 'active', terminal_context = %s::jsonb WHERE id = %s",
+        (json.dumps({"parent_pid": CODEX_TUI_PID}), expired_codex_session.id),
     )
 
     with _hook_socket_in(_codex_shared_host_tree()):
-        body = _post_session_start(
+        response = _session_start_response(
             hook_route,
             source="codex",
             hook_type="SessionStart",
             session_id=CODEX_PROVIDER_SESSION,
             start_source="resume",
+            terminal_context={"parent_pid": CODEX_SHARED_HOST_PID},
         )
 
-    assert body[SESSION_CREDENTIAL_FIELD]["session_id"] == expired_codex_session.id
-    assert body[SESSION_CREDENTIAL_FIELD]["shared_host"] is True
+    assert response.status_code == 403
+    assert response.json() == {"code": "claimant_unverified"}
+    assert SESSION_CREDENTIAL_FIELD not in response.text
+    row = temp_db.fetchone(
+        "SELECT status, terminal_context FROM sessions WHERE id = %s",
+        (expired_codex_session.id,),
+    )
+    assert row is not None
+    assert row["status"] == "active"
+    context = parse_terminal_context_value(row["terminal_context"]) or {}
+    assert context["parent_pid"] == CODEX_TUI_PID
 
 
 def test_a_cli_attested_credential_is_not_marked_shared(
@@ -920,10 +938,30 @@ class _FrontDoor:
         self.server.server_close()
 
 
+def _codex_shared_host_launcher(directory: Path) -> list[str]:
+    """A process the kernel names `codex`, run as `--managed-daemon`, that parents its command.
+
+    It stands in for Codex's shared app-server launching gmcp as its MCP client: gmcp sees a
+    parent named codex with the managed-daemon flag, as under the real host.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    host = directory / "codex"
+    host.symlink_to(sys.executable)
+    relay = "import subprocess, sys; sys.exit(subprocess.call(sys.argv[2:]))"
+    return [str(host), "-c", relay, "--managed-daemon"]
+
+
 def _gmcp_call(
-    gmcp: Path, environment: dict[str, str], cwd: Path, session_id: str | None = None
+    gmcp: Path,
+    environment: dict[str, str],
+    cwd: Path,
+    session_id: str | None = None,
+    launcher: list[str] | None = None,
 ) -> dict[str, Any]:
-    """Make one MCP tool call through the real gmcp binary and return its JSON-RPC reply."""
+    """Make one MCP tool call through the real gmcp binary and return its JSON-RPC reply.
+
+    `launcher` runs gmcp as its child; without one this test process is gmcp's parent.
+    """
     arguments: dict[str, Any] = {
         "server_name": "example",
         "tool_name": "echo",
@@ -933,7 +971,7 @@ def _gmcp_call(
     if session_id is not None:
         arguments["session_id"] = session_id
     process = subprocess.Popen(
-        [str(gmcp)],
+        [*(launcher or []), str(gmcp)],
         cwd=cwd,
         env=environment,
         stdin=subprocess.PIPE,
@@ -989,8 +1027,14 @@ def _gmcp_call(
         )
         return reply(2)
     finally:
-        process.kill()
-        process.wait(timeout=10)
+        # gmcp exits when its input ends, so a launcher's child does not outlive the call.
+        assert process.stdin is not None
+        process.stdin.close()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=10)
 
 
 @pytest.mark.integration
@@ -1102,10 +1146,11 @@ def test_codex_shared_host_credential_reaches_gmcp_only_through_the_seats_own_re
 ) -> None:
     """End to end on real binaries under Codex's shared app-server.
 
-    This test process plays the shared app-server: the parent of the real ghook and the
-    real gmcp, as the managed daemon is for every seat it serves. ghook keeps the seat's
+    This test process plays the shared app-server for the real ghook, and a launcher the
+    kernel names `codex --managed-daemon` parents the real gmcp. ghook keeps the seat's
     credential under its session refs and never under the host's pid. gmcp presents it only
-    for a call naming that seat's own session, and refuses a call that names none.
+    for a call naming that seat's own session, refuses a call that names none, and a gmcp
+    the host did not launch never selects a record by ref.
     """
     ghook = _checkout_binary("ghook")
     gmcp = _checkout_binary("gmcp")
@@ -1175,13 +1220,19 @@ def test_codex_shared_host_credential_reaches_gmcp_only_through_the_seats_own_re
         stored = load_record(gobby_home, session_ref_key(own_ref))
         assert stored is not None
 
+        host = _codex_shared_host_launcher(tmp_path / "host-bin")
+
         # A call naming no session finds no credential and is refused before it is sent.
-        refused = _gmcp_call(gmcp, environment, workspace)
+        refused = _gmcp_call(gmcp, environment, workspace, launcher=host)
+        assert "session_credential_unbound" in json.dumps(refused), refused
+        # A gmcp the shared host did not launch, as from a seat's shell, never selects a
+        # record by the ref it names: its calls are not hook-gated to the caller's own ref.
+        refused = _gmcp_call(gmcp, environment, workspace, session_id=own_ref)
         assert "session_credential_unbound" in json.dumps(refused), refused
         assert not [path for _, path, _ in front_door.requests if path.startswith("/api/mcp/")]
 
         # A call naming the seat's own session presents that seat's credential.
-        reply = _gmcp_call(gmcp, environment, workspace, session_id=own_ref)
+        reply = _gmcp_call(gmcp, environment, workspace, session_id=own_ref, launcher=host)
         assert reply.get("error") is None, reply
         tool_calls = [
             headers

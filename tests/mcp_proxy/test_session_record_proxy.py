@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,6 +14,7 @@ from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.utils.session_credential_record import (
     STORE_DIR,
     cli_pid_key,
+    parent_is_codex_shared_host,
     record_path,
     session_ref_key,
 )
@@ -105,9 +107,72 @@ async def test_unmanaged_request_without_a_record_refuses_before_any_request(
     machine_key.assert_not_called()
 
 
+def _parent_process(name: str, argv: list[str]) -> SimpleNamespace:
+    return SimpleNamespace(name=lambda: name, cmdline=lambda: list(argv))
+
+
+@pytest.mark.parametrize(
+    ("name", "argv", "expected"),
+    [
+        ("codex", ["codex", "app-server", "--managed-daemon"], True),
+        ("codex", ["codex", "resume", "--no-daemon", "thread"], False),
+        ("zsh", ["zsh", "-c", "gmcp --managed-daemon"], False),
+        ("bash", ["bash", "-lc", "codex app-server --managed-daemon"], False),
+    ],
+)
+def test_only_a_proxy_the_shared_app_server_launched_counts_as_under_it(
+    name: str, argv: list[str], expected: bool
+) -> None:
+    """A proxy a seat starts from its shell has a shell parent, so it is never the host's."""
+    with (
+        patch("gobby.utils.session_credential_record.os.getppid", return_value=CLI_PID),
+        patch(
+            "gobby.utils.session_credential_record.psutil.Process",
+            return_value=_parent_process(name, argv),
+        ),
+    ):
+        assert parent_is_codex_shared_host() is expected
+
+
+@pytest.fixture
+def under_shared_host() -> Iterator[None]:
+    with patch(
+        "gobby.utils.session_credential_record.parent_is_codex_shared_host", return_value=True
+    ):
+        yield
+
+
+@pytest.mark.asyncio
+async def test_a_proxy_outside_the_shared_host_never_selects_a_ref_record(
+    unmanaged: Path,
+) -> None:
+    """A shell-started proxy naming any session ref presents no credential and sends nothing.
+
+    Only the MCP client the shared app-server launched gets hook-gated calls, so only it may
+    find a seat's record by the ref its call names.
+    """
+    _store_record(unmanaged, session_ref_key("#7"), {"token": TOKEN, "session_id": SESSION_ID})
+    client = _client()
+
+    with (
+        patch(
+            "gobby.utils.session_credential_record.parent_is_codex_shared_host",
+            return_value=False,
+        ),
+        patch("gobby.mcp_proxy.stdio_proxy.daemon_auth_headers") as machine_key,
+        patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient", return_value=client),
+    ):
+        proxy = DaemonProxy(60887)
+        result = await proxy._request("POST", "/api/mcp/tools/call", json={}, session_id="#7")
+
+    assert result["error_code"] == "session_credential_unbound"
+    client.request.assert_not_awaited()
+    machine_key.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_unmanaged_request_without_a_cli_record_speaks_for_its_own_session_ref(
-    unmanaged: Path,
+    unmanaged: Path, under_shared_host: None
 ) -> None:
     """Under a shared host no record is kept per CLI; the call's own session ref finds it."""
     _store_record(unmanaged, session_ref_key("#7"), {"token": TOKEN, "session_id": SESSION_ID})
