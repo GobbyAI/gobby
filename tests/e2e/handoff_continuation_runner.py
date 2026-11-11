@@ -22,6 +22,7 @@ from tests.e2e.test_terminal_client_stack import _ws_create
 # Rules a provider's detection manifest names for a screen that waits on the operator.
 _PROMPT_RULES = (("trust_prompt", "trust_prompt"), ("approval_prompt", "approval_prompt"))
 _FRAME_READ_SECONDS = 5
+_FRAME_CLOSE_SECONDS = 2
 # What reading an unregistered seat's frame can raise: the proof's refusals, the frame and
 # host clients' protocol, epoch and adoption errors (all RuntimeError), socket and decode
 # failures, and the terminal readback's HTTP errors. Any of them means "unreadable".
@@ -59,31 +60,40 @@ async def unregistered_frame_class(proof: LiveProof, provider: str, terminal_id:
 
     Returns ``unreadable`` when the native frame cannot be read; never raises.
     """
-    client: FrameClient | None = None
-    frames: Frames | None = None
+    # One deadline covers the readback, connect, handshake, attach and first frame, so a
+    # host that accepts and then stays silent cannot delay the registration evidence.
+    held: list[FrameClient | Frames] = []
     try:
-        locator = proof.locator(await proof.terminal(terminal_id))
-        if locator.host_socket is None:
-            return "unreadable"
-        socket_dir = Path(locator.host_socket).parent
-        reader, writer = await asyncio.open_unix_connection(frames_socket_path(socket_dir))
-        client = FrameClient(reader, writer)
-        await client.handshake(locator, local_token=daemon_token(socket_dir))
-        await client.attach_terminal(locator)
-        frames = Frames(client)
-        frame = await frames.wait_for(lambda _: True, timeout=_FRAME_READ_SECONDS)
-        manifest = proof.detection_registry.for_provider(provider)
-        return classify_frame(
-            manifest, IdleDetector(proof.detection_registry, provider), frame.ansi
-        )
+        async with asyncio.timeout(_FRAME_READ_SECONDS):
+            return await _read_frame_class(proof, provider, terminal_id, held)
     except _UNREADABLE_FRAME_ERRORS:
         return "unreadable"
     finally:
+        # Cleanup is bounded too: closing a stuck reader must not stall the evidence either.
         with suppress(*_UNREADABLE_FRAME_ERRORS):
-            if frames is not None:
-                await frames.close()
-            elif client is not None:
-                await client.close()
+            async with asyncio.timeout(_FRAME_CLOSE_SECONDS):
+                if held:
+                    await held[-1].close()
+
+
+async def _read_frame_class(
+    proof: LiveProof, provider: str, terminal_id: str, held: list[FrameClient | Frames]
+) -> str:
+    locator = proof.locator(await proof.terminal(terminal_id))
+    if locator.host_socket is None:
+        return "unreadable"
+    socket_dir = Path(locator.host_socket).parent
+    reader, writer = await asyncio.open_unix_connection(frames_socket_path(socket_dir))
+    client = FrameClient(reader, writer)
+    held.append(client)
+    await client.handshake(locator, local_token=daemon_token(socket_dir))
+    await client.attach_terminal(locator)
+    # Frames owns the client from here; closing it closes the client.
+    frames = Frames(client)
+    held.append(frames)
+    frame = await frames.wait_for(lambda _: True, timeout=_FRAME_READ_SECONDS)
+    manifest = proof.detection_registry.for_provider(provider)
+    return classify_frame(manifest, IdleDetector(proof.detection_registry, provider), frame.ansi)
 
 
 async def adopt(proof: LiveProof, provider: str, command: list[str]) -> Seat:

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
 import tempfile
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -80,23 +81,36 @@ async def test_terminal_readback_failure_records_unreadable(
         assert await unregistered_frame_class(proof, "grok", "t") == "unreadable"
 
 
+Handler = Callable[[asyncio.StreamReader, asyncio.StreamWriter], Awaitable[None]]
+
+
+@asynccontextmanager
+async def _frames_host(handler: Handler) -> AsyncIterator[Path]:
+    """A real frames socket in the sandbox-writable default temp dir (short for AF_UNIX)."""
+    with tempfile.TemporaryDirectory(prefix="fc") as root:
+        host = Path(root) / "h"
+        host.mkdir()
+        server = await asyncio.start_unix_server(handler, path=str(frames_socket_path(host)))
+        try:
+            yield host
+        finally:
+            server.close()
+            await server.wait_closed()
+
+
 @pytest.mark.parametrize("failure", _FAILURES, ids=lambda exc: type(exc).__name__)
 async def test_frame_client_failure_records_unreadable_and_closes(failure: Exception) -> None:
     # A real frames socket accepts the connection; only the frame handshake fails.
-    root = Path(tempfile.mkdtemp(prefix="fc", dir="/tmp"))
-    host = root / "h"
-    host.mkdir()
     connected = asyncio.Event()
 
     async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         connected.set()
         writer.close()
 
-    server = await asyncio.start_unix_server(accept, path=str(frames_socket_path(host)))
     proof = LiveProof.__new__(LiveProof)
-    locator = SimpleNamespace(host_socket=str(host / "control.sock"))
     client = SimpleNamespace(handshake=AsyncMock(side_effect=failure), close=AsyncMock())
-    try:
+    async with _frames_host(accept) as host:
+        locator = SimpleNamespace(host_socket=str(host / "control.sock"))
         with (
             patch.object(proof, "terminal", AsyncMock(return_value={"id": "t"})),
             patch.object(proof, "locator", MagicMock(return_value=locator)),
@@ -106,13 +120,40 @@ async def test_frame_client_failure_records_unreadable_and_closes(failure: Excep
             assert await unregistered_frame_class(proof, "agy", "t") == "unreadable"
         # The classifier reached the seat's real frames socket before the handshake failed.
         await asyncio.wait_for(connected.wait(), 5)
-    finally:
-        server.close()
-        await server.wait_closed()
-        shutil.rmtree(root)
+    assert client.handshake.await_args is not None
     assert client.handshake.await_args.args == (locator,)
     assert client.handshake.await_args.kwargs == {"local_token": "local"}
     client.close.assert_awaited_once()
+
+
+async def test_silent_host_is_bounded_and_its_connection_closed() -> None:
+    """A host that accepts and never answers the handshake cannot stall the evidence."""
+    closed = asyncio.Event()
+
+    async def silent(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read()  # never answers; returns only once the classifier hangs up
+        closed.set()
+        writer.close()
+
+    proof = LiveProof.__new__(LiveProof)
+    loop = asyncio.get_running_loop()
+    async with _frames_host(silent) as host:
+        locator = SimpleNamespace(
+            host_socket=str(host / "control.sock"),
+            frame_host_epoch="epoch",
+            host_terminal_id="t",
+        )
+        with (
+            patch.object(proof, "terminal", AsyncMock(return_value={"id": "t"})),
+            patch.object(proof, "locator", MagicMock(return_value=locator)),
+            patch(f"{_RUNNER}.daemon_token", return_value="local"),
+            patch(f"{_RUNNER}._FRAME_READ_SECONDS", 0.3),
+        ):
+            started = loop.time()
+            assert await unregistered_frame_class(proof, "grok", "t") == "unreadable"
+            elapsed = loop.time() - started
+        await asyncio.wait_for(closed.wait(), 5)
+    assert elapsed < 3, f"silent host held the diagnostic for {elapsed:.1f}s"
 
 
 def test_a_visible_composer_is_named_composer() -> None:
