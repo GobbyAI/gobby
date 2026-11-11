@@ -201,11 +201,15 @@ def _attach_session_credential(
 ) -> dict[str, Any]:
     """Hand a machine-started session its own token after its hook is persisted.
 
-    Only a start whose claimant the kernel proved owns the session gets one. A managed
-    agent token never reaches this branch, and a run-bound start already holds its own
-    token. A daemon-internal replay and a start without proof mint nothing.
+    Only a hook whose claimant the kernel proved owns the session gets one: a start, or
+    the first activity hook that materializes a deferred startup's row (its claim carries
+    the CLI pid it stores). That row must hold that CLI pid. A managed agent token never
+    reaches this branch, and a run-bound start already holds its own token. A
+    daemon-internal replay and a hook without proof mint nothing.
     """
-    if not claim.proven or not is_session_start_hook(
+    if not claim.proven:
+        return response
+    if claim.cli_pid is None and not is_session_start_hook(
         payload.get("source"), payload.get("hook_type")
     ):
         return response
@@ -226,7 +230,7 @@ def _attach_session_credential(
             external_id=external_id,
             source=source,
             machine_id=identity.machine_id,
-            shared_host=claim.shared_host,
+            owner_cli_pid=claim.cli_pid,
         )
     except Exception as exc:
         logger.warning("Session credential mint failed: %s", type(exc).__name__)

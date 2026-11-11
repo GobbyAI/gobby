@@ -42,9 +42,6 @@ pub struct Dialer {
     environment_session: Option<String>,
     terminal_context: String,
     has_tmux_pane: bool,
-    /// Whether Codex's shared app-server launched this client, so a call's own session ref
-    /// may select the seat's credential.
-    pub(crate) shared_host: bool,
     agent: ureq::Agent,
     state: Mutex<CachedState>,
     tool_timeouts: Mutex<Option<BTreeMap<String, Duration>>>,
@@ -101,8 +98,6 @@ impl Dialer {
             has_tmux_pane: terminal
                 .get("tmux_pane")
                 .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty())),
-            shared_host: !session_credential::is_managed_environment()
-                && session_binding::parent_is_codex_shared_host(),
             // No idle pool: a kept-alive socket can outlive its daemon process, and a
             // request sent on it after a restart fails (ureq 2's pool liveness peek even
             // surfaces the reset as an error). Loopback connects are cheap.
@@ -211,7 +206,7 @@ impl Dialer {
         // An unspawned client sends only its own session's credential. Without one it
         // refuses locally, before any connection, so the machine key never travels for it.
         let managed = session_credential::is_managed_environment();
-        let binding = session_binding::binding_for(options.session_id, self.shared_host);
+        let binding = session_binding::cli_binding();
         if !managed && binding.is_none() {
             return Ok(Answer::Final(unbound_refusal()));
         }
@@ -437,7 +432,7 @@ fn unbound_refusal() -> Value {
     json!({
         "success": false,
         "error_code": "session_credential_unbound",
-        "error": "this session has no session-bound credential, so the request was not sent; start the session from its CLI so its SessionStart hook stores one. A seat on Codex's shared app-server is bound by its own session: pass your own session_id on the call",
+        "error": "this session has no session-bound credential, so the request was not sent; start the session from its CLI so its SessionStart hook stores one. A Codex TUI attached to Codex's shared app-server daemon cannot be bound to one session: relaunch it with `codex resume --no-daemon <session id>` (or `codex --no-daemon`)",
     })
 }
 

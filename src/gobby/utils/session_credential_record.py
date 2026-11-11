@@ -16,7 +16,7 @@ from pathlib import Path
 
 import psutil
 
-from gobby.hooks.terminal_context import _is_codex_shared_host, _stable_cli_process
+from gobby.hooks.terminal_context import _stable_cli_process
 from gobby.paths import get_gobby_home
 
 RECORD_NAMESPACE = uuid.UUID("25855c0de00040008000000025855001")
@@ -34,11 +34,6 @@ class SessionCredentialRecord:
 
 def cli_pid_key(pid: int) -> str:
     return f"cli-pid:{pid}"
-
-
-def session_ref_key(session_ref: str) -> str:
-    """Key of a seat's record under one of its own session refs (a shared-host seat)."""
-    return f"session-ref:{session_ref}"
 
 
 def record_path(home: Path, key: str) -> Path:
@@ -77,31 +72,9 @@ def stable_cli_pid() -> int | None:
         return None
 
 
-def parent_is_codex_shared_host() -> bool:
-    """Return whether Codex's shared app-server launched this process as its MCP client.
-
-    Only that client's calls arrive as hook-gated tool calls, which the gate holds to the
-    caller's own session ref. A proxy a seat starts from its shell has a shell parent.
-    """
-    try:
-        return _is_codex_shared_host(psutil.Process(os.getppid()))
-    except (psutil.Error, OSError):
-        return False
-
-
-def bound_session_credential(
-    home: Path | None = None, session_ref: str | None = None
-) -> SessionCredentialRecord | None:
-    """Return the session credential bound to this process's CLI, or None when unbound.
-
-    A CLI that attested itself keeps its record whatever ref a call names. Without one, a
-    seat on a shared host is found by the session ref its call names, and only when the
-    shared host launched this proxy: the hook gate refuses that client's calls naming any
-    session other than the caller's own, while a shell-started proxy is not gated.
-    """
-    root = home if home is not None else get_gobby_home()
+def bound_session_credential(home: Path | None = None) -> SessionCredentialRecord | None:
+    """Return the session credential bound to this process's CLI, or None when unbound."""
     pid = stable_cli_pid()
-    record = load_record(root, cli_pid_key(pid)) if pid is not None else None
-    if record is None and session_ref and session_ref.strip() and parent_is_codex_shared_host():
-        record = load_record(root, session_ref_key(session_ref.strip()))
-    return record
+    if pid is None:
+        return None
+    return load_record(home if home is not None else get_gobby_home(), cli_pid_key(pid))
