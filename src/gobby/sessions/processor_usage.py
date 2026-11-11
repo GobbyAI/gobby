@@ -68,7 +68,8 @@ class ProcessorUsageMixin:
                 (
                     effort
                     for msg in reversed(messages)
-                    if (effort := observed_reasoning_effort(msg.raw_json)) is not None
+                    if (effort := msg.reasoning_effort or observed_reasoning_effort(msg.raw_json))
+                    is not None
                 ),
                 None,
             )
@@ -428,7 +429,8 @@ class ProcessorUsageMixin:
             (
                 effort
                 for msg in reversed(messages)
-                if (effort := observed_reasoning_effort(msg.raw_json)) is not None
+                if (effort := msg.reasoning_effort or observed_reasoning_effort(msg.raw_json))
+                is not None
             ),
             None,
         )
