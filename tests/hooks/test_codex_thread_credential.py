@@ -18,13 +18,16 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.storage.codex_thread_hosts import ThreadHost, register_thread_host
+from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD
+from gobby.storage.codex_thread_hosts import ThreadHost, register_thread_host, thread_host
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_startup_marks import StartupPin, pin_startup, record_startup_mark
 from gobby.storage.sessions import SessionManager
 from gobby.utils.local_token import verify_agent_api_token
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 from tests.hooks.test_session_credential import (
     CODEX_GMCP_PID,
+    CODEX_HOOK_PID,
     CODEX_OTHER_HOST_PID,
     CODEX_OTHER_THREAD,
     CODEX_PROVIDER_SESSION,
@@ -36,9 +39,11 @@ from tests.hooks.test_session_credential import (
     HookRoute,
     _codex_no_daemon_tree,
     _codex_shared_host_tree,
+    _hook_socket_in,
     _local_machine_identity,
     _machine_caller,
     _process_tree,
+    _session_start_response,
     hook_route,
 )
 
@@ -277,3 +282,103 @@ def test_a_registered_thread_with_no_row_yet_is_refused(
 
     assert response.status_code == 403
     assert response.json() == UNBOUND
+
+
+# A Gobby-launched `--no-daemon` seat and, beside it, the operator's shared worker whose
+# command child (here a ghook-shaped process) names the seat's thread id (Grok, round 5).
+def _seat_beside_worker() -> Any:
+    return _process_tree(
+        (CODEX_SHARED_HOST_PID, "codex", ["codex", "app-server", "--managed-daemon"], None),
+        (CODEX_TUI_PID, "codex", ["codex", "--no-daemon"], None),
+        (CODEX_HOOK_PID, "ghook", ["ghook", "--cli=codex"], CODEX_SHARED_HOST_PID),
+    )
+
+
+def _worker_child_start(route: HookRoute, start_source: str = "resume") -> Any:
+    return _session_start_response(
+        route,
+        source="codex",
+        hook_type="SessionStart",
+        session_id=CODEX_PROVIDER_SESSION,
+        start_source=start_source,
+    )
+
+
+def _pinned_seat_mark(temp_db: HubDatabase) -> None:
+    key = {"machine_id": TEST_MACHINE_ID, "source": "codex", "external_id": CODEX_PROVIDER_SESSION}
+    record_startup_mark(temp_db, **key)
+    assert pin_startup(temp_db, **key, pin=StartupPin(CODEX_TUI_PID, FAKE_PROCESS_START))
+
+
+def _refused_without_registration(response: Any, temp_db: HubDatabase) -> None:
+    assert response.status_code == 403
+    assert response.json() == {"code": "session_claimant_mismatch"}
+    assert SESSION_CREDENTIAL_FIELD not in response.text
+    assert (
+        thread_host(temp_db, machine_id=TEST_MACHINE_ID, external_id=CODEX_PROVIDER_SESSION) is None
+    )
+
+
+def test_a_worker_child_cannot_claim_a_live_seats_pinned_thread(
+    hook_route: HookRoute, temp_db: HubDatabase
+) -> None:
+    """The seat's start pinned its own CLI and its row is still deferred."""
+    _machine_caller(hook_route)
+    _pinned_seat_mark(temp_db)
+
+    with _hook_socket_in(_seat_beside_worker()):
+        response = _worker_child_start(hook_route, start_source="startup")
+
+    _refused_without_registration(response, temp_db)
+
+
+def test_a_worker_child_cannot_mint_for_a_live_seat_row(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    """The seat's row is live and owned by its CLI; no worker ever registered the thread."""
+    _machine_caller(hook_route)
+    seat = _thread_session(
+        temp_db, session_manager, sample_project, CODEX_PROVIDER_SESSION, host=None
+    )
+
+    with _hook_socket_in(_seat_beside_worker()):
+        response = _worker_child_start(hook_route)
+
+    _refused_without_registration(response, temp_db)
+    owner = temp_db.fetchone(
+        "SELECT terminal_context->>'parent_pid' AS pid FROM sessions WHERE id = %s", (seat.id,)
+    )
+    assert owner is not None
+    assert owner["pid"] == str(CODEX_TUI_PID)
+
+
+def test_a_seats_own_start_drops_a_registration_a_worker_child_raced_in(
+    hook_route: HookRoute, temp_db: HubDatabase
+) -> None:
+    """A child registered the thread before the seat's start; that start takes it back."""
+    _machine_caller(hook_route)
+    record_startup_mark(
+        temp_db, machine_id=TEST_MACHINE_ID, source="codex", external_id=CODEX_PROVIDER_SESSION
+    )
+    with _hook_socket_in(_seat_beside_worker()):
+        raced = _worker_child_start(hook_route, start_source="startup")
+    assert raced.status_code == 200, raced.text
+    assert SESSION_CREDENTIAL_FIELD not in raced.text
+
+    with _hook_socket_in(_codex_no_daemon_tree()):
+        own = _session_start_response(
+            hook_route,
+            source="codex",
+            hook_type="SessionStart",
+            session_id=CODEX_PROVIDER_SESSION,
+            start_source="startup",
+        )
+    assert own.status_code == 200, own.text
+
+    with _hook_socket_in(_seat_beside_worker()):
+        response = _worker_child_start(hook_route)
+
+    _refused_without_registration(response, temp_db)

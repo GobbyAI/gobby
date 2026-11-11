@@ -92,6 +92,14 @@ def register_thread_host(
     return thread_host(db, machine_id=machine_id, external_id=external_id) == host
 
 
+def unregister_thread_host(db: HubDatabase, *, machine_id: str, external_id: str) -> None:
+    """Forget the thread's worker: a CLI proved it runs the thread's hooks itself."""
+    db.execute(
+        "DELETE FROM codex_thread_hosts WHERE machine_id = %s AND external_id = %s",
+        (machine_id, external_id),
+    )
+
+
 def prune_thread_hosts(db: HubDatabase, *, max_age_hours: int = THREAD_HOST_MAX_AGE_HOURS) -> int:
     """Delete registrations no hook has refreshed for ``max_age_hours``."""
     cursor = db.execute(

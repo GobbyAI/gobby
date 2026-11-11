@@ -332,22 +332,38 @@ def _claim_shared_host(
 ) -> SessionStartClaim:
     """Register a hand-started Codex thread to the live shared worker that runs its hooks.
 
-    The registry, not the row, decides: the row records the seat's TUI, which is the
-    worker's client rather than its child. A start registers the thread, which is when it
-    is assigned its id and ref, and mints. The first worker to register a thread stands;
-    another replaces it only once the registered worker is proven dead, and only on a
-    start. Other hooks from a worker the thread is not registered to run without a token.
-    A command child of the same worker can name a sibling thread; that stays within the
-    operator's own authority (sandboxed seats run with ``--no-daemon``, off this worker).
+    A thread a CLI runs its own hooks for (a ``--no-daemon`` seat) is never the worker's:
+    its start pinned that CLI, and its row was created without a registration. A child of
+    the shared worker naming such a thread is refused while the pinned CLI lives, and a
+    live row the thread was never registered for is refused too, so the child neither
+    rewrites the row nor mints for it. The row records the seat's TUI, which is the
+    worker's client rather than its child, so the registry decides for the worker's own
+    threads. A start registers the thread, which is when it is assigned its id and ref
+    (before its deferred row exists), and mints. The first worker to register a thread
+    stands; another replaces it only once the registered worker is proven dead, and only
+    on a start. Other hooks from a worker the thread is not registered to run without a
+    token. A command child of the same worker can name a sibling thread registered to
+    that worker; that stays within the operator's own authority (#25911).
     """
     if source != "codex" or claimant.parent_pid is None or claimant.create_time is None:
         return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
     host = ThreadHost(claimant.parent_pid, claimant.create_time)
+    mark = startup_mark(db, machine_id=machine_id, source=source, external_id=external_id)
+    pin = None if mark is None else mark.pin
+    if pin is not None and not process_is_dead(pin.cli_pid, pin.cli_create_time):
+        return _refuse(SESSION_CLAIMANT_MISMATCH, "a live CLI pinned it", source, external_id)
     stored = thread_host(db, machine_id=machine_id, external_id=external_id)
     if stored is not None and stored.pid == host.pid:
         if create_time_matches(stored.create_time, host.create_time):
             return SessionStartClaim(proven=start, host=host)
     if stored is None:
+        if _live_terminal(db, external_id=external_id, source=source, machine_id=machine_id):
+            return _refuse(
+                SESSION_CLAIMANT_MISMATCH,
+                "its live row was never registered to a worker",
+                source,
+                external_id,
+            )
         return SessionStartClaim(proven=start, host=host)
     if process_is_dead(stored.pid, stored.create_time):
         return SessionStartClaim(proven=start, host=host, displaced_host=stored)

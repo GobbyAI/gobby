@@ -9,7 +9,7 @@ from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.hooks.events import HookEventType
 from gobby.hooks.session_claimant import SessionStartClaim
 from gobby.sessions.terminal_kill import create_time_matches
-from gobby.storage.codex_thread_hosts import register_thread_host
+from gobby.storage.codex_thread_hosts import register_thread_host, unregister_thread_host
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_startup_marks import pin_startup
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
@@ -79,6 +79,9 @@ def settle_claim(
     if pin is None:
         return None
     if start:
+        # The thread's own CLI runs its hooks, so no shared worker's child registered
+        # it before this start keeps a registration that could mint for it.
+        unregister_thread_host(db, machine_id=machine_id, external_id=external_id)
         pin_startup(
             db,
             machine_id=machine_id,
