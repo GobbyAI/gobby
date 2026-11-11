@@ -275,7 +275,8 @@ async def test_list_names_the_native_foreground_command(
     assert by_id[promoted.id]["command"] == "nvim"
     assert by_id[pane.id]["cwd"] is None
     assert by_id[promoted.id]["cwd"] == "/srv/app"
-    process.assert_called_once_with(4242)
+    # The foreground process names the command by its on-disk executable; the shell gives the cwd.
+    assert [entry.args for entry in process.call_args_list] == [(5150,), (4242,)]
 
 
 async def test_list_falls_back_to_the_spawn_shell_for_a_native_row(
