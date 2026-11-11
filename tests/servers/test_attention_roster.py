@@ -1528,3 +1528,53 @@ def test_roster_session_rows_carry_the_status_line_or_null(
 
     assert lines[with_line.id] == "Idle until review lands"
     assert lines[bare.id] is None
+
+
+def test_roster_rows_without_a_status_line_carry_the_last_message_line(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    talking = session_manager.register(
+        external_id="roster-activity-talking",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    stated = session_manager.register(
+        external_id="roster-activity-stated",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    message = "Reading the roster query.\n\n  Running the focused tests now.  \n\n"
+    session_manager.update_stats(talking.id, last_assistant_content=message)
+    session_manager.update_stats(stated.id, last_assistant_content=message)
+    session_manager.set_status_line(stated.id, "Waiting on review")
+    worker = session_manager.register(
+        external_id="roster-activity-worker",
+        machine_id=require_machine_id(),
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    session_manager.update_stats(worker.id, last_assistant_content=message)
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(
+        parent_session_id=worker.id,
+        child_session_id=worker.id,
+        provider="codex",
+        prompt="test",
+        agent_name="fixture-worker",
+    )
+    manager.start(run.id)
+
+    rows = AttentionStateManager(temp_db).load_roster_rows(
+        live_session_statuses=LIVE_SESSION_STATUS_ORDER
+    )
+    lines = {row.session_id: row.status_line for row in rows if row.kind == "session"}
+
+    assert lines[talking.id] == "Running the focused tests now."
+    assert lines[stated.id] == "Waiting on review"
+    assert _live_roster_entry(temp_db, f"run:{run.id}")["status_line"] == (
+        "Running the focused tests now."
+    )

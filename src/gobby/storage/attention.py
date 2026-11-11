@@ -230,8 +230,18 @@ class AttentionRosterRow:
             definition=(str(row["definition"]) if row.get("definition") is not None else None),
             machine_id=str(row["machine_id"]) if row.get("machine_id") is not None else None,
             project_id=str(row["project_id"]) if row.get("project_id") is not None else None,
-            status_line=(str(row["status_line"]) if row.get("status_line") is not None else None),
+            status_line=_activity_line(row.get("status_line"), row.get("last_message")),
         )
+
+
+def _activity_line(status_line: object, last_message: object) -> str | None:
+    """The seat's own status line, else the last non-blank line of its latest message."""
+    if status_line is not None:
+        return str(status_line)
+    if last_message is None:
+        return None
+    lines = [line.strip() for line in str(last_message).splitlines()]
+    return next((line for line in reversed(lines) if line), None)
 
 
 def _timestamp(value: object) -> str | None:
@@ -339,6 +349,7 @@ class AttentionStateManager:
                 task.title AS task_title,
                 (claimed.id IS NOT NULL) AS task_claim_held,
                 child.status_line AS status_line,
+                child.last_assistant_content AS last_message,
                 COALESCE(
                     NULLIF(BTRIM(run.agent_name), ''),
                     CASE WHEN jsonb_typeof(seat.variables->'_agent_type') = 'string'
@@ -391,6 +402,7 @@ class AttentionStateManager:
                 claimed.title AS task_title,
                 (claimed.id IS NOT NULL) AS task_claim_held,
                 session.status_line AS status_line,
+                session.last_assistant_content AS last_message,
                 CASE WHEN jsonb_typeof(seat.variables->'_agent_type') = 'string'
                      THEN NULLIF(BTRIM(seat.variables->>'_agent_type'), '') END AS definition,
                 session.machine_id::text AS machine_id,
