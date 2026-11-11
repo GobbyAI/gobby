@@ -112,7 +112,11 @@ async def handoff_fixture(
     host = root / "h"
     host.mkdir(mode=0o700)
     scope = ProofScope(
-        root, _PROJECT, frozenset(map(str, spec.excluded_identities)), spec.reviewed_commit
+        root,
+        _PROJECT,
+        frozenset(map(str, spec.excluded_identities)),
+        spec.reviewed_commit,
+        providers=frozenset(spec.providers),
     )
     trace = ProofTrace(scope, root / "trace.sock")
     barrier = HandoffBarrier(root / "hold.sock")
