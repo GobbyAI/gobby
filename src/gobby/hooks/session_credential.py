@@ -7,11 +7,14 @@ from typing import Any
 
 from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.hooks.events import HookEventType
-from gobby.hooks.session_claimant import SessionStartClaim
+from gobby.hooks.session_claimant import SessionStartClaim, process_is_dead
 from gobby.sessions.terminal_kill import create_time_matches
-from gobby.storage.codex_thread_hosts import register_thread_host, unregister_thread_host
+from gobby.storage.codex_thread_hosts import (
+    ThreadHost,
+    unregister_thread_host,
+)
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.session_startup_marks import pin_startup
+from gobby.storage.session_startup_marks import pin_startup, startup_mark
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.terminal_context import parse_terminal_context_value
 from gobby.utils.local_token import issue_session_api_token
@@ -19,6 +22,33 @@ from gobby.utils.local_token import issue_session_api_token
 logger = logging.getLogger(__name__)
 
 SESSION_CREDENTIAL_FIELD = "_gobby_session_credential"
+
+_LIVE_ROW = """
+    SELECT s.id, s.project_id, s.terminal_context FROM sessions s
+    WHERE s.external_id = %s AND s.source = %s AND s.machine_id = %s
+      AND s.session_type = 'terminal' AND s.status = ANY(%s)
+    ORDER BY s.created_at DESC, s.id
+    LIMIT 1
+"""
+# The thread's live row, read only while it is registered to the given worker and no CLI
+# has pinned its startup, in one statement.
+_HOSTED_LIVE_ROW = """
+    SELECT s.id, s.project_id, s.terminal_context FROM sessions s
+    WHERE s.external_id = %s AND s.source = %s AND s.machine_id = %s
+      AND s.session_type = 'terminal' AND s.status = ANY(%s)
+      AND EXISTS (
+        SELECT 1 FROM codex_thread_hosts h
+        WHERE h.machine_id = %s AND h.external_id = %s
+          AND h.host_pid = %s AND h.host_create_time = %s
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM session_startup_marks m
+        WHERE m.machine_id = %s AND m.source = %s AND m.external_id = %s
+          AND m.cli_pid IS NOT NULL
+      )
+    ORDER BY s.created_at DESC, s.id
+    LIMIT 1
+"""
 
 
 def is_session_start_hook(source: object, hook_type: object) -> bool:
@@ -51,25 +81,22 @@ def settle_claim(
 
     A start pins its CLI to the mark its deferred row left, first writer winning, or
     replaces a pin proven dead. It mints once a row exists. The hook that creates a
-    deferred startup's row mints for the CLI pinned to it. A shared-host Codex start
-    registers its thread to its worker and mints. Every mint names only a row that stores
+    deferred startup's row mints for the CLI pinned to it. A shared-host Codex start,
+    whose claim registered its thread to its worker, mints. Every mint names only a row that stores
     the proven owner, so a claimant that lost a race gets nothing.
+
+    The claim was decided before the hook's handler ran, so a CLI may have pinned the
+    thread since. A CLI's start therefore pins before it drops any worker registration,
+    and a worker re-reads the pin after it registers and withdraws while a live CLI
+    holds it. Whichever order the two run in, no registration outlives the pin, and the
+    worker's mint reads the row only while its registration stands and no pin does.
     """
     if not claim.proven:
         return None
     if claim.host is not None:
-        registered = register_thread_host(
+        return _settle_shared_host(
             db,
-            machine_id=machine_id,
-            external_id=external_id,
-            host=claim.host,
-            displaced=claim.displaced_host,
-        )
-        if not registered:
-            logger.warning("Codex thread %s is registered to another worker", external_id)
-            return None
-        return mint_session_credential(
-            db,
+            claim.host,
             signing_key=signing_key,
             external_id=external_id,
             source=source,
@@ -79,9 +106,6 @@ def settle_claim(
     if pin is None:
         return None
     if start:
-        # The thread's own CLI runs its hooks, so no shared worker's child registered
-        # it before this start keeps a registration that could mint for it.
-        unregister_thread_host(db, machine_id=machine_id, external_id=external_id)
         pin_startup(
             db,
             machine_id=machine_id,
@@ -90,6 +114,9 @@ def settle_claim(
             pin=pin,
             displaced=claim.displaced,
         )
+        # The thread's own CLI runs its hooks, so a registration a shared worker's child
+        # wrote before this pin could otherwise mint for it.
+        unregister_thread_host(db, machine_id=machine_id, external_id=external_id)
     elif not claim.creates_row:
         return None
     return mint_session_credential(
@@ -103,6 +130,37 @@ def settle_claim(
     )
 
 
+def _settle_shared_host(
+    db: HubDatabase,
+    host: ThreadHost,
+    *,
+    signing_key: bytes | None,
+    external_id: str,
+    source: str,
+    machine_id: str,
+) -> dict[str, Any] | None:
+    """Withdraw the claim's registration if a live CLI pinned the thread since, else mint.
+
+    The claim registered the thread before the handler ran; settle writes no registration,
+    so none can appear after the claim's own re-check.
+    """
+    key = {"machine_id": machine_id, "external_id": external_id}
+    mark = startup_mark(db, source=source, **key)
+    pin = None if mark is None else mark.pin
+    if pin is not None and not process_is_dead(pin.cli_pid, pin.cli_create_time):
+        unregister_thread_host(db, **key, host=host)
+        logger.warning("Codex thread %s was pinned by a live CLI; worker withdrew", external_id)
+        return None
+    return mint_session_credential(
+        db,
+        signing_key=signing_key,
+        external_id=external_id,
+        source=source,
+        machine_id=machine_id,
+        host=host,
+    )
+
+
 def mint_session_credential(
     db: HubDatabase,
     *,
@@ -112,6 +170,7 @@ def mint_session_credential(
     machine_id: str,
     owner_cli_pid: int | None = None,
     owner_create_time: float | None = None,
+    host: ThreadHost | None = None,
 ) -> dict[str, Any] | None:
     """Mint a token bound to the live terminal session this provider thread names.
 
@@ -119,21 +178,20 @@ def mint_session_credential(
     refused or unknown start hands back nothing. The token names only that session.
     ``owner_cli_pid`` and ``owner_create_time`` are the CLI a claim proved: the row must
     store that process, so a concurrent claimant whose row creation lost the race gets
-    nothing.
+    nothing. ``host`` is the shared worker a claim proved: the same read that finds the
+    row requires the thread still registered to that worker and pinned to no CLI, so a
+    CLI that pinned the thread after the worker's checks leaves it nothing to name.
     """
     if signing_key is None:
         logger.warning("Session credential not minted: managed signing key unavailable")
         return None
-    row = db.fetchone(
-        """
-        SELECT id, project_id, terminal_context FROM sessions
-        WHERE external_id = %s AND source = %s AND machine_id = %s
-          AND session_type = 'terminal' AND status = ANY(%s)
-        ORDER BY created_at DESC, id
-        LIMIT 1
-        """,
-        (external_id, source, machine_id, list(LIVE_SESSION_STATUSES)),
-    )
+    live = (external_id, source, machine_id, list(LIVE_SESSION_STATUSES))
+    if host is None:
+        row = db.fetchone(_LIVE_ROW, live)
+    else:
+        hosted = (machine_id, external_id, host.pid, host.create_time)
+        unpinned = (machine_id, source, external_id)
+        row = db.fetchone(_HOSTED_LIVE_ROW, (*live, *hosted, *unpinned))
     if row is None:
         return None
     if owner_cli_pid is not None:

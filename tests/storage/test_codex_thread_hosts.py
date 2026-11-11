@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, TypedDict
+
 import pytest
 
 from gobby.storage.codex_thread_hosts import (
@@ -12,12 +14,21 @@ from gobby.storage.codex_thread_hosts import (
     thread_host,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
 MACHINE = "machine-25905"
 THREAD = "01a1c86f-0000-7000-8000-000000025905"
-KEY = {"machine_id": MACHINE, "external_id": THREAD}
+
+
+class ThreadKey(TypedDict):
+    machine_id: str
+    external_id: str
+
+
+KEY: ThreadKey = {"machine_id": MACHINE, "external_id": THREAD}
 WORKER = ThreadHost(pid=78147, create_time=1_794_000_000.5)
 OTHER_WORKER = ThreadHost(pid=78148, create_time=1_794_000_100.0)
 
@@ -46,7 +57,10 @@ def test_a_dead_worker_is_replaced_only_by_compare_and_swap(temp_db: HubDatabase
 
 
 def test_pruning_drops_only_registrations_no_hook_refreshed(temp_db: HubDatabase) -> None:
-    quiet = {**KEY, "external_id": "01a1c86f-0000-7000-8000-000000025906"}
+    quiet: ThreadKey = {
+        "machine_id": MACHINE,
+        "external_id": "01a1c86f-0000-7000-8000-000000025906",
+    }
     register_thread_host(temp_db, **KEY, host=WORKER)
     register_thread_host(temp_db, **quiet, host=WORKER)
     temp_db.execute(
@@ -62,3 +76,21 @@ def test_pruning_drops_only_registrations_no_hook_refreshed(temp_db: HubDatabase
     assert prune_thread_hosts(temp_db) == 1
     assert thread_host(temp_db, **KEY) == WORKER
     assert thread_host(temp_db, **quiet) is None
+
+
+def test_pruning_keeps_a_quiet_registration_whose_thread_is_still_live(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    machine = require_machine_id()
+    live: ThreadKey = {"machine_id": machine, "external_id": THREAD}
+    session_manager.register(
+        external_id=THREAD, machine_id=machine, source="codex", project_id=sample_project["id"]
+    )
+    register_thread_host(temp_db, **live, host=WORKER)
+    temp_db.execute(
+        "UPDATE codex_thread_hosts SET seen_at = clock_timestamp() - make_interval(hours => %s)",
+        (THREAD_HOST_MAX_AGE_HOURS + 1,),
+    )
+
+    assert prune_thread_hosts(temp_db) == 0
+    assert thread_host(temp_db, **live) == WORKER

@@ -26,7 +26,12 @@ import psutil
 
 from gobby.hooks.terminal_context import _is_codex_shared_host, _stable_cli_process
 from gobby.sessions.terminal_kill import create_time_matches
-from gobby.storage.codex_thread_hosts import ThreadHost, thread_host
+from gobby.storage.codex_thread_hosts import (
+    ThreadHost,
+    register_thread_host,
+    thread_host,
+    unregister_thread_host,
+)
 from gobby.storage.session_startup_marks import StartupPin, startup_mark
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.terminal_context import parse_terminal_context_value
@@ -63,8 +68,8 @@ class SessionStartClaim:
 
     ``proven`` hooks run with their CLI stamped as the row's owner. A start mints, and so
     does the hook that creates a deferred startup's row (``creates_row``). ``displaced``
-    is the dead pin a start replaces; ``host`` and ``displaced_host`` are the shared
-    worker a Codex thread registers to and the dead one it replaces.
+    is the dead pin a start replaces; ``host`` is the shared worker a Codex thread is
+    registered to.
     """
 
     refusal: str | None = None
@@ -74,7 +79,6 @@ class SessionStartClaim:
     creates_row: bool = False
     displaced: StartupPin | None = None
     host: ThreadHost | None = None
-    displaced_host: ThreadHost | None = None
 
     @property
     def pin(self) -> StartupPin | None:
@@ -352,21 +356,69 @@ def _claim_shared_host(
     pin = None if mark is None else mark.pin
     if pin is not None and not process_is_dead(pin.cli_pid, pin.cli_create_time):
         return _refuse(SESSION_CLAIMANT_MISMATCH, "a live CLI pinned it", source, external_id)
+    key = {"external_id": external_id, "source": source, "machine_id": machine_id}
     stored = thread_host(db, machine_id=machine_id, external_id=external_id)
-    if stored is not None and stored.pid == host.pid:
-        if create_time_matches(stored.create_time, host.create_time):
-            return SessionStartClaim(proven=start, host=host)
+    displaced: ThreadHost | None = None
+    if (
+        stored is not None
+        and stored.pid == host.pid
+        and create_time_matches(stored.create_time, host.create_time)
+    ):
+        # The registered worker itself, its start time stored at the precision it was read.
+        host = stored
     if stored is None:
-        if _live_terminal(db, external_id=external_id, source=source, machine_id=machine_id):
+        if _live_terminal(db, **key):
             return _refuse(
                 SESSION_CLAIMANT_MISMATCH,
                 "its live row was never registered to a worker",
                 source,
                 external_id,
             )
-        return SessionStartClaim(proven=start, host=host)
-    if process_is_dead(stored.pid, stored.create_time):
-        return SessionStartClaim(proven=start, host=host, displaced_host=stored)
-    return _refuse(
-        SESSION_CLAIMANT_MISMATCH, "another live worker registered it", source, external_id
+    elif stored != host:
+        if not process_is_dead(stored.pid, stored.create_time):
+            return _refuse(
+                SESSION_CLAIMANT_MISMATCH, "another live worker registered it", source, external_id
+            )
+        displaced = stored
+    if not start:
+        return SessionStartClaim(host=host)
+    return _register_shared_host(db, host, displaced=displaced, new=stored is None, **key)
+
+
+def _register_shared_host(
+    db: Any,
+    host: ThreadHost,
+    *,
+    displaced: ThreadHost | None,
+    new: bool,
+    external_id: str,
+    source: str,
+    machine_id: str,
+) -> SessionStartClaim:
+    """Register a start's thread before its handler runs, then check again what it wrote.
+
+    The checks above ran before this write, so a ``--no-daemon`` seat may have pinned the
+    thread, or pinned it and created its row, in between. The seat's start drops any
+    registration after it pins, so a write that lands first is removed; one that lands
+    later finds the live pin, or the seat's row on a thread that had no registration, and
+    withdraws. Settle writes nothing, so no registration appears after these checks.
+    """
+    registered = register_thread_host(
+        db, machine_id=machine_id, external_id=external_id, host=host, displaced=displaced
     )
+    if not registered:
+        return _refuse(
+            SESSION_CLAIMANT_MISMATCH, "another worker registered it first", source, external_id
+        )
+    mark = startup_mark(db, machine_id=machine_id, source=source, external_id=external_id)
+    pin = None if mark is None else mark.pin
+    seat_pinned = pin is not None and not process_is_dead(pin.cli_pid, pin.cli_create_time)
+    seat_row = new and _live_terminal(
+        db, external_id=external_id, source=source, machine_id=machine_id
+    )
+    if seat_pinned or seat_row:
+        unregister_thread_host(db, machine_id=machine_id, external_id=external_id, host=host)
+        return _refuse(
+            SESSION_CLAIMANT_MISMATCH, "a CLI took the thread meanwhile", source, external_id
+        )
+    return SessionStartClaim(proven=True, host=host)
