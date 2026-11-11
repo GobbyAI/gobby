@@ -28,6 +28,20 @@ from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.fixture(autouse=True)
+def _no_deferred_startup_mark(request: pytest.FixtureRequest) -> Any:
+    """No deferred startup left a mark: these mocked databases answer every query alike.
+
+    Marks and their pins are covered against the real hub in test_session_startup_pins.
+    """
+    if "temp_db" in request.fixturenames:
+        yield None
+        return
+    with patch("gobby.hooks.session_lookup.startup_marks.startup_mark", return_value=None) as mark:
+        yield mark
+
+
 _REAL_MACHINE_ID = "21000000-0000-4000-8000-000000000009"
 
 

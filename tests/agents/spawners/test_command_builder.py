@@ -57,9 +57,27 @@ class TestBuildCliCommand:
         with pytest.raises(ValueError, match="Unsupported CLI: unsupported"):
             build_cli_command("unsupported", prompt="hello")
 
+    def test_interactive_codex_runs_off_the_shared_app_server(self) -> None:
+        """#25905: a seat's own server parents its hooks and gmcp; `codex exec` has no flag."""
+        fresh, _env = build_cli_command("codex", mode="terminal")
+        resumed, _env = build_cli_command("codex", mode="terminal", resume_session_id="t-1")
+        headless, _env = build_cli_command(
+            "codex",
+            mode="headless",
+            auto_approve=True,
+            external_sandbox_enforced=True,
+            resume_session_id="t-1",
+            prompt="go",
+        )
+
+        assert fresh[:2] == ["codex", "--no-daemon"]
+        assert resumed[:3] == ["codex", "resume", "--no-daemon"]
+        assert resumed[-1] == "t-1"
+        assert "--no-daemon" not in headless
+
     def test_codex_basic(self) -> None:
         cmd, _env = build_cli_command("codex", prompt="hello")
-        assert cmd == ["codex", *_CODEX_MANAGED_TAIL, "hello"]
+        assert cmd == ["codex", "--no-daemon", *_CODEX_MANAGED_TAIL, "hello"]
 
     def test_codex_spawn_keeps_code_mode_host_enabled(self) -> None:
         # gpt-5.6 models are tool_mode=code_mode_only: Codex's code-mode host is
@@ -82,6 +100,7 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("codex", auto_approve=True, prompt="hello")
         assert cmd == [
             "codex",
+            "--no-daemon",
             "--ask-for-approval",
             "never",
             "--disable",
@@ -149,6 +168,7 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("codex", working_directory="/tmp", prompt="hello")
         assert cmd == [
             "codex",
+            "--no-daemon",
             "-C",
             "/tmp",
             *_CODEX_MANAGED_TAIL,
@@ -159,6 +179,7 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("codex", model="gpt-4", prompt="hello")
         assert cmd == [
             "codex",
+            "--no-daemon",
             "--model",
             "gpt-4",
             *_CODEX_MANAGED_TAIL,
@@ -174,6 +195,7 @@ class TestBuildCliCommand:
         )
         assert cmd == [
             "codex",
+            "--no-daemon",
             "--oss",
             "--local-provider",
             "ollama",
@@ -187,6 +209,7 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("codex", reasoning_effort="xhigh", prompt="hello")
         assert cmd == [
             "codex",
+            "--no-daemon",
             "-c",
             'model_reasoning_effort="xhigh"',
             *_CODEX_MANAGED_TAIL,
@@ -205,6 +228,7 @@ class TestBuildCliCommand:
         )
         assert cmd == [
             "codex",
+            "--no-daemon",
             "-c",
             'mcp_servers.gobby.command="uv"',
             "-c",
@@ -452,6 +476,7 @@ class TestBuildCliCommand:
                 [
                     "codex",
                     "resume",
+                    "--no-daemon",
                     "--model",
                     "model-x",
                     "-c",

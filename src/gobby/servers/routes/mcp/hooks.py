@@ -7,7 +7,6 @@ Extracted from base.py as part of Strangler Fig decomposition.
 
 import asyncio
 import logging
-import os
 import time
 from typing import TYPE_CHECKING, Any, Final
 
@@ -19,7 +18,6 @@ from gobby.adapters.agy_contract import (
     strip_unbudgeted_force_continue,
 )
 from gobby.config.hooks import HookTimeoutConfig
-from gobby.hooks import session_claimant
 from gobby.hooks.adapter_execution import HOOK_ADAPTER_MAX_WORKERS as _HOOK_ADAPTER_MAX_WORKERS
 from gobby.hooks.adapter_execution import (
     AdapterHookCancelled,
@@ -54,12 +52,6 @@ from gobby.hooks.runtime_compat import (
     envelope_has_hook_response_capability,
 )
 from gobby.hooks.session_claimant import SessionStartClaim
-from gobby.hooks.session_credential import (
-    SESSION_CREDENTIAL_FIELD,
-    is_session_start_hook,
-    mint_for_claim,
-)
-from gobby.hooks.session_startup_pins import startup_pins
 from gobby.hooks.startup_claim_preflight import (
     StartupClaimLease,
     StartupClaimPreflightTimeout,
@@ -79,6 +71,11 @@ from gobby.servers.routes.mcp.hook_responses import (
     _normalize_hold_open_hook_type,
     _result_encodes_denial,
 )
+from gobby.servers.routes.mcp.session_claim import (
+    PROVIDER_SESSION_KEYS,
+    attach_session_credential,
+    claim_hook,
+)
 from gobby.sessions.clear_run_lineage import current_run_session_id, earlier_clear_session_id
 from gobby.telemetry.instruments import inc_counter
 from gobby.utils.machine_id import get_machine_id
@@ -92,9 +89,6 @@ logger = logging.getLogger(__name__)
 
 HOOK_ADAPTER_MAX_WORKERS = _HOOK_ADAPTER_MAX_WORKERS
 SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "codex", "droid", "agy", "git")
-
-
-_PROVIDER_SESSION_KEYS: Final = ("session_id", "sessionId", "conversationId", "conversation_id")
 
 
 def _run_bound_platform_session(
@@ -121,7 +115,7 @@ def _run_bound_platform_session(
         return header_session_id
     provider_ids = input_data if isinstance(input_data, dict) else {}
     conversation_ids = [
-        value for key in _PROVIDER_SESSION_KEYS if isinstance(value := provider_ids.get(key), str)
+        value for key in PROVIDER_SESSION_KEYS if isinstance(value := provider_ids.get(key), str)
     ]
     if not conversation_ids:
         return current_session_id
@@ -133,110 +127,6 @@ def _run_bound_platform_session(
         external_ids=conversation_ids,
     )
     return current_session_id if earlier_session_id is None else earlier_session_id
-
-
-def _provider_session_id(input_data: Any) -> str | None:
-    if not isinstance(input_data, dict):
-        return None
-    return next(
-        (
-            value
-            for key in _PROVIDER_SESSION_KEYS
-            if isinstance(value := input_data.get(key), str) and value
-        ),
-        None,
-    )
-
-
-def _claim_session_start(
-    server: "HTTPServer", request: Request, payload: dict[str, Any]
-) -> SessionStartClaim:
-    """Attest every machine-bearer hook's kernel-proven claimant before its handler runs.
-
-    The claimant's proven CLI pid becomes the stored parent pid of a new session, in place of
-    the body's own parent pid, which is never proof.
-    """
-    if request.headers.get(AGENT_RUN_ID_HEADER):
-        return SessionStartClaim()
-    identity = server.auth_service.verified_front_door_identity(request)
-    input_data = payload.get("input_data")
-    source = payload.get("source")
-    external_id = _provider_session_id(input_data)
-    db = getattr(getattr(server, "services", None), "database", None)
-    if (
-        identity is None
-        or not isinstance(input_data, dict)
-        or not isinstance(source, str)
-        or external_id is None
-        or db is None
-    ):
-        return SessionStartClaim()
-    claimant = session_claimant.front_door_claimant(
-        request.headers, daemon_port=server.bootstrap_config.daemon_port
-    )
-    claim = session_claimant.claim_session_start(
-        db,
-        claimant=claimant,
-        daemon_pid=os.getpid(),
-        external_id=external_id,
-        source=source,
-        machine_id=identity.machine_id,
-        pinned_cli_pid=startup_pins(server).pinned((identity.machine_id, source, external_id)),
-    )
-    if claim.refusal is None and claim.cli_pid is not None:
-        terminal_context = input_data.get("terminal_context")
-        input_data["terminal_context"] = {
-            **(terminal_context if isinstance(terminal_context, dict) else {}),
-            "parent_pid": claim.cli_pid,
-        }
-    return claim
-
-
-def _attach_session_credential(
-    server: "HTTPServer",
-    request: Request,
-    payload: dict[str, Any],
-    response: dict[str, Any],
-    *,
-    db: Any,
-    claim: SessionStartClaim,
-) -> dict[str, Any]:
-    """Hand a machine-started session its own token after its hook is persisted.
-
-    Only a kernel-proven claimant gets one, on a start or on the hook that creates a
-    deferred startup's row from the CLI that startup pinned (mint_for_claim). A managed or
-    run-bound caller never reaches this branch; a daemon replay or unproven hook mints none.
-    """
-    start = is_session_start_hook(payload.get("source"), payload.get("hook_type"))
-    if not claim.proven or (claim.cli_pid is None and not start):
-        return response
-    if request.headers.get(AGENT_RUN_ID_HEADER):
-        return response
-    identity = server.auth_service.verified_front_door_identity(request)
-    input_data = payload.get("input_data")
-    source = payload.get("source")
-    if identity is None or not isinstance(input_data, dict) or not isinstance(source, str):
-        return response
-    external_id = _provider_session_id(input_data)
-    if external_id is None or db is None:
-        return response
-    try:
-        credential = mint_for_claim(
-            db,
-            startup_pins(server),
-            signing_key=server.auth_service.managed_signing_key(),
-            external_id=external_id,
-            source=source,
-            machine_id=identity.machine_id,
-            start=start,
-            cli_pid=claim.cli_pid,
-        )
-    except Exception as exc:
-        logger.warning("Session credential mint failed: %s", type(exc).__name__)
-        return response
-    if credential is None:
-        return response
-    return {**response, SESSION_CREDENTIAL_FIELD: credential}
 
 
 def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -420,7 +310,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         envelope_id,
                         exc,
                     )
-                response = _attach_session_credential(
+                response = attach_session_credential(
                     server,
                     request,
                     payload,
@@ -442,7 +332,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         envelope_id,
                         exc,
                     )
-            response = _attach_session_credential(
+            response = attach_session_credential(
                 server,
                 request,
                 payload,
@@ -549,7 +439,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             if _envelope_machine_mismatch(server, request, payload["input_data"]):
                 return JSONResponse(status_code=403, content={"code": "hook_machine_mismatch"})
 
-            session_claim = await asyncio.to_thread(_claim_session_start, server, request, payload)
+            session_claim = await asyncio.to_thread(claim_hook, server, request, payload)
             if session_claim.refusal is not None:
                 return JSONResponse(status_code=403, content={"code": session_claim.refusal})
 

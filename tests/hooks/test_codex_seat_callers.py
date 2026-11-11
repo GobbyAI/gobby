@@ -37,6 +37,7 @@ from gobby.hooks.session_lookup import SessionLookupService
 from gobby.hooks.session_materialize import activate_deferred_session, build_synthetic_session_start
 from gobby.hooks.terminal_context import clear_codex_seat_index, enrich_terminal_context_with_cwd
 from gobby.storage.session_models import Session
+from gobby.storage.session_startup_marks import StartupMark
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
 pytestmark = pytest.mark.unit
@@ -320,7 +321,9 @@ def test_uncached_registration(stored: str, marked: bool) -> None:
 
     with (
         _enrichments(_LOOKUP) as recorded,
-        patch(f"{_MARKS}.startup_mark_exists", return_value=marked) as exists,
+        patch(
+            f"{_MARKS}.startup_mark", return_value=StartupMark(pin=None) if marked else None
+        ) as exists,
         patch(f"{_MARKS}.delete_startup_mark") as consume,
     ):
         assert (

@@ -270,16 +270,20 @@ class TestSessionLifecycleManager:
         manager.session_manager.cleanup_expired_session_state.return_value = None
 
         assert callable(getattr(lifecycle_mod, "prune_startup_marks", None))
+        assert callable(getattr(lifecycle_mod, "prune_thread_hosts", None))
         with (
             patch.object(lifecycle_mod, "retire_expired_session_hook_effects"),
             patch.object(lifecycle_mod, "prune_startup_marks", return_value=2) as prune,
+            patch.object(lifecycle_mod, "prune_thread_hosts", return_value=3) as prune_hosts,
         ):
             count = await manager._expire_stale_sessions(
                 manager._capture_active().session_lifecycle
             )
 
         prune.assert_called_once_with(manager.session_manager.db)
-        # Marks are not sessions, so the expiry count leaves them out.
+        # #25905: a Codex thread no hook refreshed for a week drops its worker registration.
+        prune_hosts.assert_called_once_with(manager.session_manager.db)
+        # Marks and registrations are not sessions, so the expiry count leaves them out.
         assert count == 0
 
     @pytest.mark.asyncio

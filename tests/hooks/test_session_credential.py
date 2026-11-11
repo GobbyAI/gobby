@@ -33,6 +33,7 @@ from gobby.hooks.runtime_compat import (
 from gobby.hooks.session_claimant import Claimant, claim_session_start, resolve_claimant
 from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD, mint_session_credential
 from gobby.servers.http import HTTPServer
+from gobby.storage.codex_thread_hosts import ThreadHost, register_thread_host, thread_host
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.terminal_context import parse_terminal_context_value
@@ -59,8 +60,18 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 HOOK_PID = 5151
-CLI_PID = 4242
+# The session's CLI is a live process, so a claim by another CLI is a refusal, not a takeover.
+CLI_PID = os.getppid()
 OTHER_CLI_PID = 5555
+FAKE_PROCESS_START = 1_794_336_237.0
+OTHER_CLI = Claimant(
+    pid=HOOK_PID, parent_pid=OTHER_CLI_PID, cli_pid=OTHER_CLI_PID, create_time=FAKE_PROCESS_START
+)
+
+
+def _started(pid: int) -> float:
+    """The start time that names live process ``pid``."""
+    return psutil.Process(pid).create_time()
 
 
 @pytest.fixture
@@ -83,7 +94,9 @@ def started_session(
 @pytest.fixture
 def cli_claimant() -> Iterator[Claimant]:
     """The machine caller's hook process, whose parent is the session's CLI."""
-    claimant = Claimant(pid=HOOK_PID, parent_pid=CLI_PID, cli_pid=CLI_PID)
+    claimant = Claimant(
+        pid=HOOK_PID, parent_pid=CLI_PID, cli_pid=CLI_PID, create_time=_started(CLI_PID)
+    )
     with patch("gobby.hooks.session_claimant.resolve_claimant", return_value=claimant):
         yield claimant
 
@@ -96,7 +109,9 @@ def live_cli_claimant() -> Iterator[Claimant]:
     table, and a mint for that row requires it.
     """
     cli_pid = os.getpid()
-    claimant = Claimant(pid=HOOK_PID, parent_pid=cli_pid, cli_pid=cli_pid)
+    claimant = Claimant(
+        pid=HOOK_PID, parent_pid=cli_pid, cli_pid=cli_pid, create_time=_started(cli_pid)
+    )
     with patch("gobby.hooks.session_claimant.resolve_claimant", return_value=claimant):
         yield claimant
 
@@ -196,6 +211,13 @@ class HookRoute:
 @pytest.fixture
 def hook_route(temp_db: HubDatabase) -> Iterator[HookRoute]:
     """The daemon's real hook route over a real HookManager on the test hub."""
+    with daemon_route(temp_db) as route:
+        yield route
+
+
+@contextmanager
+def daemon_route(temp_db: HubDatabase) -> Iterator[HookRoute]:
+    """One daemon process's hook route; a second one over the same hub is a restart."""
     sessions = SessionManager(temp_db)
     server = authenticate_test_server(
         HTTPServer(
@@ -297,9 +319,7 @@ def _machine_caller(route: HookRoute) -> None:
 
 
 @pytest.mark.parametrize("hook_type", ["pre-tool-use", "stop", "session-end"])
-@pytest.mark.parametrize(
-    "claimant", [None, Claimant(pid=HOOK_PID, parent_pid=OTHER_CLI_PID, cli_pid=OTHER_CLI_PID)]
-)
+@pytest.mark.parametrize("claimant", [None, OTHER_CLI])
 def test_machine_non_start_cannot_select_another_clis_body_session(
     hook_route: HookRoute,
     started_session: Any,
@@ -338,7 +358,7 @@ def test_machine_start_naming_a_session_owned_by_another_cli_is_refused(
     hook_route: HookRoute, started_session: Any, temp_db: HubDatabase
 ) -> None:
     _machine_caller(hook_route)
-    other_cli = Claimant(pid=HOOK_PID, parent_pid=OTHER_CLI_PID, cli_pid=OTHER_CLI_PID)
+    other_cli = OTHER_CLI
 
     with patch("gobby.hooks.session_claimant.resolve_claimant", return_value=other_cli):
         response = _session_start_response(hook_route, terminal_context={"parent_pid": CLI_PID})
@@ -489,7 +509,8 @@ DROID_PROVIDER_SESSION = "provider-session-droid"
 def _droid_claimant(*, backend_pid: int, cli_pid: int) -> Claimant:
     # Droid runs each hook through an exec backend whose parent is the TUI. The hook's
     # parent is the backend, and the stabilized CLI pid is the TUI.
-    return Claimant(pid=HOOK_PID, parent_pid=backend_pid, cli_pid=cli_pid)
+    started = _started(cli_pid) if cli_pid == DROID_TUI_PID else FAKE_PROCESS_START
+    return Claimant(pid=HOOK_PID, parent_pid=backend_pid, cli_pid=cli_pid, create_time=started)
 
 
 def _stored_parent_pid(temp_db: HubDatabase, external_id: str) -> tuple[Any, int | None]:
@@ -592,6 +613,8 @@ CODEX_OLD_TUI_PID = 4_000_002
 CODEX_TUI_PID = 4_000_003
 CODEX_SHARED_HOST_PID = 4_000_004
 CODEX_GMCP_PID = 4_000_005
+CODEX_OTHER_HOST_PID = 4_000_006
+CODEX_OTHER_THREAD = "01a1b24d-0000-7000-8000-000000025906"
 
 
 @dataclass
@@ -603,6 +626,8 @@ class _FakeProcess:
     argv: list[str]
     parent_pid: int | None
     table: dict[int, _FakeProcess]
+    started: float = FAKE_PROCESS_START
+    uid: int = os.getuid()
 
     def name(self) -> str:
         return self.proc_name
@@ -614,7 +639,10 @@ class _FakeProcess:
         return None if self.parent_pid is None else self.table[self.parent_pid]
 
     def create_time(self) -> float:
-        return 1_794_336_237.0
+        return self.started
+
+    def uids(self) -> SimpleNamespace:
+        return SimpleNamespace(real=self.uid, effective=self.uid, saved=self.uid)
 
     def environ(self) -> dict[str, str]:
         # An operator-launched seat carries no Gobby launch variables.
@@ -711,18 +739,24 @@ def _gmcp_lookup_pid(tree: Any) -> int | None:
         return stable_cli_pid()
 
 
-def test_codex_resume_under_the_shared_app_server_mints_nothing_and_says_why(
+SHARED_WORKER = ThreadHost(CODEX_SHARED_HOST_PID, FAKE_PROCESS_START)
+
+
+def _registered_worker(temp_db: HubDatabase, thread: str = CODEX_PROVIDER_SESSION) -> Any:
+    return thread_host(temp_db, machine_id=TEST_MACHINE_ID, external_id=thread)
+
+
+def test_a_shared_host_resume_registers_its_thread_to_the_worker_and_mints(
     hook_route: HookRoute,
+    temp_db: HubDatabase,
     expired_codex_session: Any,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    """Josh's design: the thread is registered to its live worker when it is assigned its id."""
     _machine_caller(hook_route)
     tree = _codex_shared_host_tree()
 
-    with (
-        _hook_socket_in(tree),
-        caplog.at_level("WARNING", logger="gobby.hooks.session_claimant"),
-    ):
+    with _hook_socket_in(tree), caplog.at_level("WARNING"):
         body = _post_session_start(
             hook_route,
             source="codex",
@@ -732,75 +766,118 @@ def test_codex_resume_under_the_shared_app_server_mints_nothing_and_says_why(
             terminal_context={"parent_pid": CODEX_SHARED_HOST_PID},
         )
 
-    assert SESSION_CREDENTIAL_FIELD not in body
-    warnings = [record.getMessage() for record in caplog.records]
     # The synthetic tree is complete enough that the SessionStart handler itself ran cleanly.
-    assert not any("Event handler" in message for message in warnings), warnings
-    assert any(
-        CODEX_PROVIDER_SESSION in message
-        and "shared host" in message
-        and str(CODEX_SHARED_HOST_PID) in message
-        for message in warnings
-    ), warnings
-    # gmcp on the shared server would look under the server's pid, which no seat owns.
-    assert _gmcp_lookup_pid(tree) == CODEX_SHARED_HOST_PID
+    assert not [m for m in caplog.messages if "Event handler" in m]
+    assert _registered_worker(temp_db) == SHARED_WORKER
+    assert body[SESSION_CREDENTIAL_FIELD]["session_id"] == expired_codex_session.id
 
 
-def test_shared_host_start_naming_a_live_session_is_refused_and_mints_nothing(
-    hook_route: HookRoute,
-    temp_db: HubDatabase,
-    expired_codex_session: Any,
+def test_a_client_under_the_shared_worker_reads_no_cli_record() -> None:
+    """The worker's pid names no thread, so its record is never read (gmcp, stdio proxy)."""
+    assert _gmcp_lookup_pid(_codex_shared_host_tree()) is None
+    assert _gmcp_lookup_pid(_codex_no_daemon_tree()) == CODEX_TUI_PID
+
+
+def test_a_thread_registered_to_another_live_worker_is_refused(
+    hook_route: HookRoute, temp_db: HubDatabase, expired_codex_session: Any
 ) -> None:
-    """Every child of the shared host can name any thread, so naming a live seat proves nothing.
-
-    The start is refused before its handler touches the live row, and nothing is minted.
-    """
     _machine_caller(hook_route)
-    temp_db.execute(
-        "UPDATE sessions SET status = 'active', terminal_context = %s::jsonb WHERE id = %s",
-        (json.dumps({"parent_pid": CODEX_TUI_PID}), expired_codex_session.id),
+    other = ThreadHost(CODEX_OTHER_HOST_PID, FAKE_PROCESS_START)
+    register_thread_host(
+        temp_db, machine_id=TEST_MACHINE_ID, external_id=CODEX_PROVIDER_SESSION, host=other
+    )
+    tree = _process_tree(
+        (CODEX_SHARED_HOST_PID, "codex", ["codex", "app-server", "--managed-daemon"], None),
+        (CODEX_OTHER_HOST_PID, "codex", ["codex", "app-server", "--managed-daemon"], None),
+        (CODEX_HOOK_PID, "ghook", ["ghook", "--cli=codex"], CODEX_SHARED_HOST_PID),
     )
 
-    with _hook_socket_in(_codex_shared_host_tree()):
+    with _hook_socket_in(tree):
         response = _session_start_response(
             hook_route,
             source="codex",
             hook_type="SessionStart",
             session_id=CODEX_PROVIDER_SESSION,
             start_source="resume",
-            terminal_context={"parent_pid": CODEX_SHARED_HOST_PID},
         )
 
     assert response.status_code == 403
-    assert response.json() == {"code": "claimant_unverified"}
-    assert SESSION_CREDENTIAL_FIELD not in response.text
-    row = temp_db.fetchone(
-        "SELECT status, terminal_context FROM sessions WHERE id = %s",
-        (expired_codex_session.id,),
+    assert response.json() == {"code": "session_claimant_mismatch"}
+    assert _registered_worker(temp_db) == other
+
+
+def test_a_restarted_worker_re_registers_only_on_a_start(
+    hook_route: HookRoute, temp_db: HubDatabase, expired_codex_session: Any
+) -> None:
+    """The pid survived but its start time moved: the registered worker is dead."""
+    _machine_caller(hook_route)
+    earlier = ThreadHost(CODEX_SHARED_HOST_PID, FAKE_PROCESS_START - 600)
+    register_thread_host(
+        temp_db, machine_id=TEST_MACHINE_ID, external_id=CODEX_PROVIDER_SESSION, host=earlier
     )
-    assert row is not None
-    assert row["status"] == "active"
-    context = parse_terminal_context_value(row["terminal_context"]) or {}
-    assert context["parent_pid"] == CODEX_TUI_PID
+    identity = {"session_id": CODEX_PROVIDER_SESSION, "machine_id": TEST_MACHINE_ID}
+
+    with _hook_socket_in(_codex_shared_host_tree()):
+        activity = _hook_response(
+            hook_route,
+            hook_type="UserPromptSubmit",
+            source="codex",
+            input_data={**identity, "hook_event_name": "UserPromptSubmit", "prompt": "go"},
+        )
+        registered_after_activity = _registered_worker(temp_db)
+        start = _post_session_start(
+            hook_route,
+            source="codex",
+            hook_type="SessionStart",
+            session_id=CODEX_PROVIDER_SESSION,
+            start_source="resume",
+        )
+
+    assert activity.status_code == 200, activity.text
+    assert SESSION_CREDENTIAL_FIELD not in activity.text
+    assert registered_after_activity == earlier
+    assert _registered_worker(temp_db) == SHARED_WORKER
+    assert SESSION_CREDENTIAL_FIELD in start
 
 
-def test_shared_host_start_naming_a_never_seen_thread_mints_nothing(
+def test_a_shared_host_startup_registers_a_new_thread_before_its_row_exists(
     hook_route: HookRoute, temp_db: HubDatabase
 ) -> None:
-    """A foreign child of the shared host can name a thread before its own seat starts."""
     _machine_caller(hook_route)
-    unseen = "01a1b24d-0000-7000-8000-0000000259ff"
 
     with _hook_socket_in(_codex_shared_host_tree()):
         body = _post_session_start(
             hook_route,
             source="codex",
             hook_type="SessionStart",
-            session_id=unseen,
+            session_id=CODEX_OTHER_THREAD,
             start_source="startup",
         )
 
+    # The row is deferred to the first prompt, so there is no session to mint for yet;
+    # gmcp exchanges the thread for its token once the row exists.
     assert SESSION_CREDENTIAL_FIELD not in body
+    assert _registered_worker(temp_db, CODEX_OTHER_THREAD) == SHARED_WORKER
+
+
+def test_a_shared_host_owned_by_another_user_proves_nothing(
+    hook_route: HookRoute, temp_db: HubDatabase, expired_codex_session: Any
+) -> None:
+    _machine_caller(hook_route)
+    tree = _codex_shared_host_tree()
+    tree.Process(CODEX_SHARED_HOST_PID).uid = os.getuid() + 1
+
+    with _hook_socket_in(tree):
+        response = _session_start_response(
+            hook_route,
+            source="codex",
+            hook_type="SessionStart",
+            session_id=CODEX_PROVIDER_SESSION,
+            start_source="resume",
+        )
+
+    assert SESSION_CREDENTIAL_FIELD not in response.text
+    assert _registered_worker(temp_db) is None
 
 
 def _hook_response(
@@ -874,7 +951,7 @@ def test_fresh_startup_receives_its_credential_on_the_hook_that_materializes_it(
     assert claims is not None
     assert claims.session_id == row["id"]
 
-    other_cli = Claimant(pid=HOOK_PID, parent_pid=OTHER_CLI_PID, cli_pid=OTHER_CLI_PID)
+    other_cli = OTHER_CLI
     with patch("gobby.hooks.session_claimant.resolve_claimant", return_value=other_cli):
         foreign = _hook_response(
             hook_route,
@@ -925,7 +1002,7 @@ def test_a_foreign_cli_cannot_create_a_deferred_startups_row(
         input_data={**identity, "hook_event_name": "SessionStart", "source": "startup"},
     )
 
-    other_cli = Claimant(pid=HOOK_PID, parent_pid=OTHER_CLI_PID, cli_pid=OTHER_CLI_PID)
+    other_cli = OTHER_CLI
     with patch("gobby.hooks.session_claimant.resolve_claimant", return_value=other_cli):
         foreign = _activity(hook_route, identity)
 
@@ -941,28 +1018,6 @@ def test_a_foreign_cli_cannot_create_a_deferred_startups_row(
     row = temp_db.fetchone(row_query, (external_id,))
     assert row is not None
     assert own.json()[SESSION_CREDENTIAL_FIELD]["session_id"] == row["id"]
-
-
-def test_a_first_activity_with_no_pinned_startup_mints_nothing(
-    hook_route: HookRoute,
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    tmp_path: Path,
-    live_cli_claimant: Claimant,
-) -> None:
-    """Without a deferred startup's pin, no proof binds the thread to this CLI."""
-    _machine_caller(hook_route)
-    workspace = _fresh_workspace(tmp_path, sample_project)
-    identity = {
-        "session_id": "provider-session-never-started",
-        "cwd": str(workspace),
-        "machine_id": TEST_MACHINE_ID,
-    }
-
-    response = _activity(hook_route, identity)
-
-    assert response.status_code == 200, response.text
-    assert SESSION_CREDENTIAL_FIELD not in response.json()
 
 
 def test_an_attested_activity_hook_on_a_live_session_mints_nothing(

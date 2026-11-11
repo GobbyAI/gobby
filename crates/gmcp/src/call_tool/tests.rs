@@ -45,7 +45,7 @@ fn removed_wait_returns_tool_removed_with_python_contract_text() -> anyhow::Resu
             let input = json!({"server_name": "gobby-workflows",
                 "tool_name": "wait_for_completion", "arguments": {"completion_id": "run-1"}});
             let result: Value =
-                runtime.block_on(call(dialer, input, None::<fn(Value) -> Ready<()>>));
+                runtime.block_on(call(dialer, input, None::<fn(Value) -> Ready<()>>, None));
             assert_eq!(result["success"], false);
             assert_eq!(result["error_code"], "TOOL_REMOVED");
             assert_eq!(result["server_name"], "gobby-workflows");

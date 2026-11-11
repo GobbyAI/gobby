@@ -882,8 +882,9 @@ class TestExecuteSpawn:
             command = spawn_kwargs["command"]
             assert command[0] == "codex"
             assert "resume" not in command
-            assert command[1:3] == ["--ask-for-approval", "never"]
-            assert command[3:5] == ["--disable", "guardian_approval"]
+            assert command[1] == "--no-daemon"
+            assert command[2:4] == ["--ask-for-approval", "never"]
+            assert command[4:6] == ["--disable", "guardian_approval"]
             gmcp = tmp_path / "gobby-home" / "bin" / native_bin_name("gmcp")
             assert f"mcp_servers.gobby.command={json.dumps(str(gmcp))}" in command
             assert "mcp_servers.gobby.args=[]" in command
@@ -1043,8 +1044,9 @@ class TestExecuteSpawn:
         mock_prepare.assert_not_called()
         assert request.is_local is True
         command = _spawn_kwargs(request)["command"]
-        assert command[:6] == [
+        assert command[:7] == [
             "codex",
+            "--no-daemon",
             "--oss",
             "--local-provider",
             "ollama",

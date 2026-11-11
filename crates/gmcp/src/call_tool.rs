@@ -165,7 +165,12 @@ fn python_repr(value: &Value) -> String {
 }
 
 /// Run the prepared request through the shared daemon dialer.
-pub async fn call<P, PF>(dialer: Arc<Dialer>, input: Value, progress: Option<P>) -> Value
+pub async fn call<P, PF>(
+    dialer: Arc<Dialer>,
+    input: Value,
+    progress: Option<P>,
+    thread: Option<String>,
+) -> Value
 where
     P: FnMut(Value) -> PF + Send + 'static,
     PF: Future<Output = ()> + Send,
@@ -191,18 +196,20 @@ where
                     .iter()
                     .map(|(key, value)| (key.as_str(), value.as_str()))
                     .collect();
-                dialer.request(
-                    "POST",
-                    &request.path,
-                    Some(&request.body),
-                    RequestOptions {
-                        project_id: request.project_id.as_deref(),
-                        session_id: request.session_id.as_deref(),
-                        timeout,
-                        preflight: request.preflight,
-                        params: &params,
-                    },
-                )
+                crate::daemon::for_thread(thread, || {
+                    dialer.request(
+                        "POST",
+                        &request.path,
+                        Some(&request.body),
+                        RequestOptions {
+                            project_id: request.project_id.as_deref(),
+                            session_id: request.session_id.as_deref(),
+                            timeout,
+                            preflight: request.preflight,
+                            params: &params,
+                        },
+                    )
+                })
             })
             .await
             {
