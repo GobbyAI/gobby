@@ -100,8 +100,7 @@ def _mint(
         external_id=THREAD,
         source="codex",
         machine_id=TEST_MACHINE_ID,
-        owner_cli_pid=None if owner is None else owner.cli_pid,
-        owner_create_time=None if owner is None else owner.cli_create_time,
+        owner=owner,
         host=host,
     )
 

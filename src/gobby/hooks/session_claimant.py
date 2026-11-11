@@ -187,14 +187,14 @@ def process_is_dead(pid: int, create_time: float | None) -> bool:
 
 
 def _same_process(pid: int, create_time: float | None, other: int, other_time: Any) -> bool:
-    if pid != other:
-        return False
-    if create_time is None or isinstance(other_time, bool):
-        return False
-    if not isinstance(other_time, (int, float)):
-        # A row stored before start times were recorded names its CLI by pid alone.
-        return other_time is None
-    return create_time_matches(create_time, float(other_time))
+    """A pid is reused, so only the pid together with its start time names a process."""
+    return (
+        pid == other
+        and create_time is not None
+        and isinstance(other_time, (int, float))
+        and not isinstance(other_time, bool)
+        and create_time_matches(create_time, float(other_time))
+    )
 
 
 def _live_terminal(

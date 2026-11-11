@@ -14,7 +14,7 @@ from gobby.storage.codex_thread_hosts import (
     unregister_thread_host,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.session_startup_marks import pin_startup, startup_mark
+from gobby.storage.session_startup_marks import StartupPin, pin_startup, startup_mark
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.terminal_context import parse_terminal_context_value
 from gobby.utils.local_token import issue_session_api_token
@@ -125,8 +125,7 @@ def settle_claim(
         external_id=external_id,
         source=source,
         machine_id=machine_id,
-        owner_cli_pid=pin.cli_pid,
-        owner_create_time=pin.cli_create_time,
+        owner=pin,
     )
 
 
@@ -168,16 +167,15 @@ def mint_session_credential(
     external_id: str,
     source: str,
     machine_id: str,
-    owner_cli_pid: int | None = None,
-    owner_create_time: float | None = None,
+    owner: StartupPin | None = None,
     host: ThreadHost | None = None,
 ) -> dict[str, Any] | None:
     """Mint a token bound to the live terminal session this provider thread names.
 
     Returns None when no live session matches or no signing key is available, so a
     refused or unknown start hands back nothing. The token names only that session.
-    ``owner_cli_pid`` and ``owner_create_time`` are the CLI a claim proved: the row must
-    store that process, so a concurrent claimant whose row creation lost the race gets
+    ``owner`` is the CLI a claim proved: the row must store that process's pid and start
+    time, so a concurrent claimant whose row creation lost the race gets
     nothing. ``host`` is the shared worker a claim proved: the same read that finds the
     row requires the thread still registered to that worker and pinned to no CLI, so a
     CLI that pinned the thread after the worker's checks leaves it nothing to name.
@@ -194,14 +192,14 @@ def mint_session_credential(
         row = db.fetchone(_HOSTED_LIVE_ROW, (*live, *hosted, *unpinned))
     if row is None:
         return None
-    if owner_cli_pid is not None:
+    if owner is not None:
         context = parse_terminal_context_value(row["terminal_context"]) or {}
         stored_time = context.get("parent_create_time")
-        if context.get("parent_pid") != owner_cli_pid or (
-            owner_create_time is not None
-            and isinstance(stored_time, (int, float))
-            and not isinstance(stored_time, bool)
-            and not create_time_matches(float(stored_time), owner_create_time)
+        if (
+            context.get("parent_pid") != owner.cli_pid
+            or not isinstance(stored_time, (int, float))
+            or isinstance(stored_time, bool)
+            or not create_time_matches(float(stored_time), owner.cli_create_time)
         ):
             logger.warning("Session credential not minted: the session's CLI is not the claimant")
             return None

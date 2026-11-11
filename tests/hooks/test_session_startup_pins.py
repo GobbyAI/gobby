@@ -367,6 +367,36 @@ def test_two_new_clis_racing_for_a_dead_owners_row_leave_one_owner(
     assert _owner(temp_db) == os.getpid()
 
 
+def test_a_live_row_that_names_its_cli_by_pid_alone_proves_no_claimant(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    victim_cli: int,
+) -> None:
+    """Any process holding a reused pid matches a bare pid, so the claim needs its start time."""
+    session = _live_row(
+        temp_db, session_manager, sample_project, StartupPin(victim_cli, _started(victim_cli))
+    )
+    temp_db.execute(
+        "UPDATE sessions SET terminal_context = %s::jsonb WHERE id = %s",
+        (json.dumps({"parent_pid": victim_cli}), session.id),
+    )
+
+    claim = claim_session_start(
+        temp_db,
+        claimant=_claimant(victim_cli),
+        daemon_pid=-1,
+        external_id=THREAD,
+        source="claude",
+        machine_id=TEST_MACHINE_ID,
+        start=True,
+    )
+
+    assert not claim.proven
+    assert claim.refusal == MISMATCH["code"]
+    assert _owner(temp_db) == victim_cli
+
+
 def test_a_daemon_replay_never_stores_the_pid_its_body_names(
     hook_route: HookRoute,
     temp_db: HubDatabase,

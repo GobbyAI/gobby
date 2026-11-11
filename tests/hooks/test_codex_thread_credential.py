@@ -19,7 +19,12 @@ from unittest.mock import patch
 import pytest
 
 from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD
-from gobby.storage.codex_thread_hosts import ThreadHost, register_thread_host, thread_host
+from gobby.storage.codex_thread_hosts import (
+    ThreadHost,
+    hold_thread_for_cli,
+    register_thread_host,
+    thread_host,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_startup_marks import (
     StartupPin,
@@ -399,3 +404,39 @@ def test_a_seats_own_start_drops_a_registration_a_worker_child_raced_in(
         response = _worker_child_start(hook_route)
 
     _refused_without_registration(response, temp_db)
+
+
+@pytest.mark.parametrize("take_over", ["hold", "pin"])
+def test_a_cli_that_takes_the_thread_after_the_workers_check_gets_no_token_minted(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    take_over: str,
+) -> None:
+    """The worker check and the mint are one read, so a CLI's hold or pin between them wins.
+
+    The exchange's earlier registry read is pinned to the worker it saw before the CLI
+    took the thread over.
+    """
+    _machine_caller(hook_route)
+    _thread_session(temp_db, session_manager, sample_project, CODEX_PROVIDER_SESSION)
+    if take_over == "pin":
+        _pinned_seat_mark(temp_db)
+    else:
+        hold_thread_for_cli(
+            temp_db,
+            machine_id=TEST_MACHINE_ID,
+            external_id=CODEX_PROVIDER_SESSION,
+            cli=ThreadHost(CODEX_TUI_PID, FAKE_PROCESS_START),
+        )
+    stale_check = patch(
+        "gobby.servers.routes.mcp.codex_thread_credential.thread_host", return_value=WORKER
+    )
+
+    with _gmcp_in(_codex_shared_host_tree()), stale_check:
+        response = _exchange(hook_route, CODEX_PROVIDER_SESSION)
+
+    assert response.status_code == 403
+    assert response.json() == UNBOUND
+    assert SESSION_CREDENTIAL_FIELD not in response.text

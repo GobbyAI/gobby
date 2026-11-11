@@ -71,6 +71,7 @@ def _exchange(server: HTTPServer, request: Request, thread_id: Any) -> dict[str,
         external_id=thread_id,
         source="codex",
         machine_id=identity.machine_id,
+        host=host,
     )
 
 

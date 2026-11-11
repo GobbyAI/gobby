@@ -35,6 +35,7 @@ from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD, mint_sessio
 from gobby.servers.http import HTTPServer
 from gobby.storage.codex_thread_hosts import ThreadHost, register_thread_host, thread_host
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_startup_marks import StartupPin
 from gobby.storage.sessions import SessionManager
 from gobby.terminal_context import parse_terminal_context_value
 from gobby.utils.local_token import (
@@ -86,7 +87,10 @@ def started_session(
     )
     temp_db.execute(
         "UPDATE sessions SET terminal_context = %s::jsonb WHERE id = %s",
-        (json.dumps({"parent_pid": CLI_PID}), session.id),
+        (
+            json.dumps({"parent_pid": CLI_PID, "parent_create_time": _started(CLI_PID)}),
+            session.id,
+        ),
     )
     return session
 
@@ -180,10 +184,33 @@ def test_mint_for_a_claimed_cli_requires_the_row_to_store_that_cli(
         machine_id=TEST_MACHINE_ID,
     )
 
-    assert mint(owner_cli_pid=OTHER_CLI_PID) is None
-    owned = mint(owner_cli_pid=CLI_PID)
+    assert mint(owner=StartupPin(OTHER_CLI_PID, _started(CLI_PID))) is None
+    assert mint(owner=StartupPin(CLI_PID, FAKE_PROCESS_START)) is None
+    owned = mint(owner=StartupPin(CLI_PID, _started(CLI_PID)))
     assert owned is not None
     assert owned["session_id"] == started_session.id
+
+
+def test_mint_for_a_claimed_cli_refuses_a_row_that_names_its_cli_by_pid_alone(
+    temp_db: HubDatabase, started_session: Any
+) -> None:
+    """A pid is reused; only the pid with its start time names the CLI that owns the row."""
+    temp_db.execute(
+        "UPDATE sessions SET terminal_context = %s::jsonb WHERE id = %s",
+        (json.dumps({"parent_pid": CLI_PID}), started_session.id),
+    )
+
+    assert (
+        mint_session_credential(
+            temp_db,
+            signing_key=SIGNING_KEY,
+            external_id=PROVIDER_SESSION,
+            source="claude",
+            machine_id=TEST_MACHINE_ID,
+            owner=StartupPin(CLI_PID, _started(CLI_PID)),
+        )
+        is None
+    )
 
 
 def test_mint_issues_nothing_without_a_signing_key(
@@ -1394,7 +1421,10 @@ def test_each_providers_own_session_start_spelling_mints_a_credential(
     )
     temp_db.execute(
         "UPDATE sessions SET terminal_context = %s::jsonb WHERE id = %s",
-        (json.dumps({"parent_pid": CODEX_TUI_PID}), session.id),
+        (
+            json.dumps({"parent_pid": CODEX_TUI_PID, "parent_create_time": FAKE_PROCESS_START}),
+            session.id,
+        ),
     )
     tree = _process_tree(
         (CODEX_TUI_PID, source, [source], None),
