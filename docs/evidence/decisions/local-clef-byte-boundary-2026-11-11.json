@@ -1,0 +1,30 @@
+{
+  "scope": "Ollama text and schema byte limit, separate from token context",
+  "byte_limit": 65536,
+  "context_tokens": 16384,
+  "probes": [
+    {
+      "probe": "under-64KiB",
+      "request_model": "clef:27b",
+      "state_chars": 65000,
+      "status": 200,
+      "response_model": "clef:27b",
+      "usage": {
+        "input_tokens": 11965,
+        "output_tokens": 0
+      },
+      "chars_per_token": 5.4325114918512325
+    },
+    {
+      "probe": "over-64KiB",
+      "request_model": "clef:27b",
+      "state_chars": 66000,
+      "status": 413,
+      "finding": "http_status: 413",
+      "response_error": {
+        "content_type": "application/json; charset=utf-8",
+        "body": "{\"error\":\"text and schema must not exceed 64 KiB\"}"
+      }
+    }
+  ]
+}
