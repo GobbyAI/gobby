@@ -215,7 +215,7 @@ class AgyAdapter(ACPHookAdapter):
             logger=logger,
         )
 
-        if event_name in {"PreInvocation", "PostInvocation"}:
+        if event_name in {"SessionStart", "PreInvocation", "PostInvocation"}:
             steps: list[dict[str, str]] = []
             # Always page: a step with nothing fresh still carries the queued remainder.
             context = page_context_for_adapter(

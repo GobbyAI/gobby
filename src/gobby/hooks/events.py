@@ -457,6 +457,7 @@ EVENT_TYPE_CLI_SUPPORT[HookEventType.PRE_COMPACT]["droid"] = "PreCompact"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["droid"] = "PreToolUse"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["droid"] = "PostToolUse"
 
+EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["agy"] = "SessionStart"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_AGENT]["agy"] = "PreInvocation"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["agy"] = "PreToolUse"
 EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["agy"] = "PostToolUse"

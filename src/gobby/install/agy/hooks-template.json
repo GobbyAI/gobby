@@ -1,5 +1,13 @@
 {
   "gobby": {
+    "SessionStart": [
+      {
+        "name": "gobby-session-start",
+        "type": "command",
+        "command": "__GOBBY_HOOK_COMMAND__",
+        "timeout": 45
+      }
+    ],
     "PreInvocation": [
       {
         "name": "gobby-pre-invocation",

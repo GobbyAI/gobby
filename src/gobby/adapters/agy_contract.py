@@ -22,6 +22,7 @@ class AgyHookContract:
 
 
 AGY_HOOK_NAMES: tuple[str, ...] = (
+    "SessionStart",
     "PreInvocation",
     "PreToolUse",
     "PostToolUse",
@@ -109,6 +110,12 @@ AGY_PAYLOAD_ALIASES: dict[str, str] = {
 
 
 AGY_HOOK_CONTRACTS: dict[str, AgyHookContract] = {
+    # Fires only when a conversation starts, never on resume, so PreInvocation stays
+    # start-capable. Both dispatch the same idempotent SESSION_START.
+    "SessionStart": AgyHookContract(
+        hook_event_name="SessionStart",
+        event_type=HookEventType.SESSION_START,
+    ),
     "PreInvocation": AgyHookContract(
         hook_event_name="PreInvocation",
         event_type=HookEventType.BEFORE_AGENT,
@@ -139,6 +146,7 @@ AGY_EVENT_MAP: dict[str, HookEventType] = {
 
 
 AGY_HOOK_ALIASES: dict[str, str] = {
+    "session_start": "SessionStart",
     "before_agent": "PreInvocation",
     "after_agent": "PostInvocation",
     "pre_tool_use": "PreToolUse",
