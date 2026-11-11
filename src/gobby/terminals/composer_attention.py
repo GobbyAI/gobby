@@ -1,8 +1,8 @@
-"""The attention item for a seat whose wake waits on a gap- or interrupt-blocked composer.
+"""The attention item for a seat whose wake waits on a blocked composer.
 
-A host event gap or an interrupt blocks every automatic composer write until a
-provider submit or the operator's ``release_composer`` vouches for the composer
-again. An idle seat never submits, so the withheld wake raises one item on the
+A host event gap, an interrupt, or a cursor or control key blocks every automatic
+composer write until a provider submit or the operator's ``release_composer``
+vouches for the composer again. An idle seat never submits, so the withheld wake raises one item on the
 seat's session entry naming the seat and that valve, and retires it once the
 ledger no longer blocks. A usage limit raises its own provider item, and an
 untracked seat (a tmux pane) is vouched for only by ``release_composer``.
@@ -21,10 +21,11 @@ from gobby.storage.attention import (
 from gobby.terminals.composer_ledger import read_composer
 
 COMPOSER_BLOCKED_REASON = "composer_blocked"
-# A cursor-only draft is no block: the wake's drain keys clear it (#25901).
-ATTENTION_BLOCKS = frozenset({"gap", "interrupt"})
+# A cursor key may recall history the bounded drain cannot clear, so it blocks too (#25901).
+ATTENTION_BLOCKS = frozenset({"cursor", "gap", "interrupt"})
 
 _CAUSES = {
+    "cursor": "a cursor or control key",
     "gap": "a terminal host event gap",
     "interrupt": "an interrupt",
 }

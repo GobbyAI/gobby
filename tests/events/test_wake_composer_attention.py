@@ -220,8 +220,9 @@ async def test_native_input_effect_controls_following_wake(
         )
     )
     result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
-    assert result["delivered"] is (effect != "edit")
-    if effect != "edit":
+    # A cursor effect may have recalled history, so only a control effect leaves the wake free.
+    assert result["delivered"] is (effect == "control")
+    if effect == "control":
         seat.pane_sender.assert_awaited_once()
     else:
         assert result["decline_reason"] == "composer_occupied"
@@ -283,23 +284,26 @@ async def test_operator_draft_still_withholds_wake_for_each_cli(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("payload", ["\x1b[A", "\x1bOD", "\x15"])
-async def test_cursor_or_control_draft_is_delivered_with_the_drain(
+async def test_cursor_or_control_draft_withholds_the_wake_until_released(
     seat: Seat,
     composer_ledger: ComposerLedger,
     agent_target: Callable[..., None],
     payload: str,
 ) -> None:
-    # Up and Down may recall history and control keys may rewrite the composer, but no
-    # typed text reached it: the wake's drain keys clear whatever they recalled before it
-    # types. The pane is never read, so even a frame showing text does not hold the wake.
+    # Up and Down may recall history and control keys may rewrite the composer. The drain
+    # is bounded and the pane is never read, so nothing proves the recalled text gone:
+    # the wake waits, and a submit releases it.
     composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
     composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload=payload)
     agent_target(foreground="claude", snapshot=CLAUDE_TEXT_DRAFT)
     result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["skipped"] == "composer_occupied"
+    seat.pane_sender.assert_not_awaited()
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="key", payload="enter")
+    composer_ledger.record_submit(TERMINAL_ID)
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
     assert result["delivered"] is True
     seat.pane_sender.assert_awaited_once()
-    assert seat.pane_sender.await_args is not None
-    assert seat.pane_sender.await_args.kwargs["clear_before_submit"] is True
 
 
 @pytest.mark.asyncio

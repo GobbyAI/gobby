@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -34,11 +35,14 @@ logger = logging.getLogger(__name__)
 SEND_MESSAGE_HINT = "Use gobby-agents:send_message for cross-session communication."
 
 _SHELLS = frozenset({"ash", "bash", "csh", "dash", "fish", "ksh", "sh", "tcsh", "zsh"})
-# Bare command names of the agent CLIs, as SessionSource names them. Any other foreground
-# process, a shell or an editor or interpreter alike, is not a composer to type into.
+# The agent CLIs, as SessionSource names them and the daemon's PATH launches them. Any other
+# foreground process, a shell or an editor or interpreter alike, is not a composer to type into.
 _AGENT_CLIS = frozenset({"agy", "claude", "codex", "droid", "grok"})
-_CLAUDE_VERSION = re.compile(r"\d+(?:\.\d+)+")
-_GROK_BUILD = re.compile(r"grok-\d+(?:\.\d+)+-[a-z0-9_]+-[a-z0-9_]+")
+# Versioned builds an installer keeps side by side in the directory its launcher resolves to.
+_VERSIONED_BUILDS = {
+    "claude": re.compile(r"\d+(?:\.\d+)+"),
+    "grok": re.compile(r"grok-\d+(?:\.\d+)+-[a-z0-9_]+-[a-z0-9_]+"),
+}
 _CREDENTIAL_PROMPT = re.compile(
     r"\b(password|passphrase|passcode|pin|api[ _-]?key|token|secret|otp)\b[^\n]*:\s*$",
     re.IGNORECASE,
@@ -82,54 +86,50 @@ def _last_nonblank_line(text: str) -> str:
     return ""
 
 
-def _agent_cli(command: str, executable: str) -> str | None:
-    """The agent CLI a foreground process runs, or None when it runs none.
-
-    A bare name in the allowlist is the CLI itself. The native installer runs a Claude
-    build from ``claude/versions/<version>``, so its command name is a version string;
-    that path counts only when it resolves on disk to such a build.
-    """
-    if command in _AGENT_CLIS:
-        return command
-    if _is_versioned_claude(executable):
-        return "claude"
-    return "grok" if _is_versioned_grok(executable) else None
-
-
-def _is_versioned_grok(executable: str) -> bool:
-    """Whether ``executable`` resolves to a Grok build its installer downloaded.
-
-    The installer links ``~/.grok/bin/grok`` to ``~/.grok/downloads/grok-<version>-<os>-<arch>``,
-    so a running Grok reports that versioned name. Like a versioned Claude build, the path
-    counts only when it resolves on disk inside such a downloads directory.
-    """
-    path = Path(executable)
-    if not path.is_absolute():
-        return False
+def _on_disk(path: str) -> Path | None:
+    """``path`` resolved through its links, or None when it is relative or missing."""
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        return None
     try:
-        resolved = path.resolve(strict=True)
+        return candidate.resolve(strict=True)
     except (OSError, RuntimeError):
-        return False
-    return (
-        resolved.parent.name == "downloads"
-        and resolved.parent.parent.name == ".grok"
-        and _GROK_BUILD.fullmatch(resolved.name) is not None
-    )
+        return None
 
 
-def _is_versioned_claude(executable: str) -> bool:
-    path = Path(executable)
-    if not path.is_absolute():
-        return False
-    try:
-        resolved = path.resolve(strict=True)
-    except (OSError, RuntimeError):
-        return False
-    return (
-        resolved.parent.name == "versions"
-        and resolved.parent.parent.name == "claude"
-        and _CLAUDE_VERSION.fullmatch(resolved.name) is not None
-    )
+def _installed_cli(cli: str) -> Path | None:
+    """The build the daemon's PATH launches for ``cli``, resolved through its links."""
+    located = shutil.which(cli)
+    return None if located is None else _on_disk(located)
+
+
+def _agent_cli(executable: str) -> str | None:
+    """The agent CLI a foreground executable is an installed build of, or None.
+
+    A name proves nothing: any program can be renamed or planted as ``claude``. The
+    executable counts only when it resolves to the build the daemon's PATH resolves for
+    that CLI. Claude's and Grok's installers keep each version beside the current one
+    (``claude/versions/<version>``, ``.grok/downloads/grok-<version>-<os>-<arch>``) and a
+    running session keeps its build across an update, so a versioned sibling in that same
+    installer directory counts too.
+    """
+    running = _on_disk(executable)
+    if running is None:
+        return None
+    for cli in sorted(_AGENT_CLIS):
+        installed = _installed_cli(cli)
+        if installed is None:
+            continue
+        if running == installed:
+            return cli
+        build = _VERSIONED_BUILDS.get(cli)
+        if (
+            build is not None
+            and running.parent == installed.parent
+            and build.fullmatch(running.name) is not None
+        ):
+            return cli
+    return None
 
 
 def _is_installed_srt_runner(script: str) -> bool:
@@ -145,11 +145,10 @@ def _srt_runner_cli(pid: int) -> str | None:
     """The agent CLI an SRT runner launched, read from its live child in the same group.
 
     The runner's script names no provider; its child does. The child is classified like
-    any foreground executable, so only an allowlisted CLI name or a versioned Claude
-    build on disk qualifies.
+    any foreground executable, so only an installed agent CLI build qualifies.
     """
     for executable in foreground_child_executables(pid):
-        cli = _agent_cli(command_name(executable), executable)
+        cli = _agent_cli(executable)
         if cli is not None:
             return cli
     return None
@@ -207,7 +206,7 @@ async def _foreground_agent_cli(terminal: Any) -> SendKeysRefusal | str:
     command = command_name(executable)
     if command in _SHELLS:
         return _refuse("send_keys_target_bare_shell", "the target is a bare shell")
-    cli = _agent_cli(command, executable)
+    cli = _agent_cli(executable)
     if cli is None and command == "node" and pid is not None:
         cli = await asyncio.to_thread(_node_agent_cli, pid)
     if cli is None:

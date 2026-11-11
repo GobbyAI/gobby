@@ -52,7 +52,6 @@ from gobby.sessions.continuation_retry import continuation_write_refusal
 from gobby.sessions.handoff import PENDING_HANDOFF_VARIABLE, build_handoff_continue_prompt
 from gobby.sessions.transcript_cursor import TURN_SETTLED_SOURCES
 from gobby.terminals.composer_attention import sync_composer_attention
-from gobby.terminals.composer_ledger import CURSOR_DRAFT_REASON
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.utils.datetime import utc_now
 from gobby.workflows.reserved_variables import HANDOFF_TURN_END_PENDING_VARIABLE
@@ -772,11 +771,11 @@ class WakeDispatcher:
         registry, takes the wake.
 
         The ledger still guards text: ``empty`` authorizes typing, a typed ``draft`` or
-        daemon ``held`` text withholds, and a blocked entry (a gap or an interrupt)
-        withholds and raises the seat's attention item naming ``release_composer``. A
-        cursor-only draft holds no typed text, so it is delivered with the drain that
-        clears whatever the keys recalled. No debounce record is written for a withheld
-        wake, so the next wake checks again.
+        daemon ``held`` text withholds, and a blocked entry (a gap, an interrupt, or a
+        cursor or control key) withholds and raises the seat's attention item naming
+        ``release_composer``. A cursor key may recall history longer than the bounded
+        drain clears, and no pane read proves it gone, so it never rides a wake. No
+        debounce record is written for a withheld wake, so the next wake checks again.
 
         A node terminal's composer is the node's report, read from the hub store.
         Only an empty one passes this check, and target_gate then withholds every
@@ -799,13 +798,9 @@ class WakeDispatcher:
             logger.debug("activity probe failed for session %s", session_id, exc_info=True)
             return composer_unconfirmed_result(session_id, method=method), False
         composer = activity.composer
-        cursor_only = composer.state == "draft" and composer.reason == CURSOR_DRAFT_REASON
         if self._attention_manager is not None:
             await sync_composer_attention(
-                self._attention_manager,
-                self._run_db,
-                session,
-                None if cursor_only else composer.reason,
+                self._attention_manager, self._run_db, session, composer.reason
             )
         if activity.turn_in_flight_fingerprint is not None:
             return composer_unconfirmed_result(session_id, method=method), False
@@ -818,8 +813,6 @@ class WakeDispatcher:
             self._focus_holds.get(terminal_id, set()).discard(session_id)
         if composer.state == "empty":
             return None, True
-        if cursor_only and not handoff_continuation:
-            return None, False
         if composer.state == "draft":
             logger.warning(
                 "wake for session %s deferred: composer holds an operator draft", session_id

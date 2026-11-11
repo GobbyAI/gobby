@@ -189,20 +189,22 @@ async def test_a_typed_draft_still_withholds_an_unfocused_wake(
     seat.pane_sender.assert_not_awaited()
 
 
-async def test_a_cursor_only_draft_is_sent_with_the_drain(
+async def test_a_cursor_only_draft_withholds_an_unfocused_wake(
     seat: Seat, composer_ledger: ComposerLedger, no_pane_reads: list[str]
 ) -> None:
+    # Up may recall history longer than the bounded drain clears; no pane read proves it gone.
     composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x1b[A")
+    await _viewer(seat.dispatcher, focused=False)
 
     result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
 
-    assert result["delivered"] is True
-    seat.pane_sender.assert_awaited_once()
-    assert seat.pane_sender.await_args is not None
-    assert seat.pane_sender.await_args.kwargs["clear_before_submit"] is True
+    assert result["skipped"] == "composer_occupied"
+    seat.pane_sender.assert_not_awaited()
     assert no_pane_reads == []
     item = seat.attention.get(seat.entry_id)
-    assert item is None or item.state is None
+    assert item is not None
+    assert item.state == "blocked"
+    assert item.fingerprint == "composer_blocked:cursor"
 
 
 async def test_a_bare_shell_foreground_is_never_typed_into(
@@ -249,6 +251,7 @@ async def test_every_supported_cli_gets_the_wake(
     build = tmp_path / relative
     build.parent.mkdir(parents=True)
     build.write_bytes(b"")
+    monkeypatch.setattr(gate, "_installed_cli", lambda name: build if name == cli else None)
     node = tmp_path / "node"
     leader_comm, leader_exe = (comm, build) if launch == "plain" else ("node", node)
     monkeypatch.setattr(gate, "foreground_executables", foreground.foreground_executables)

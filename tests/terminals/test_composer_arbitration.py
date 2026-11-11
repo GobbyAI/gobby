@@ -518,12 +518,14 @@ async def test_grok_compacted_seat_refuses_keys_fail_closed_and_consumes_handoff
     # The gate reads the installed grok composer manifest from the hub database.
     store.db = temp_db
     sync_bundled_detection_manifests(temp_db)
-    # The memory terminal has no process tree; report the grok CLI as the foreground agent.
+    # The memory terminal has no process tree; report the installed grok CLI as the foreground
+    # agent (the suite's agent_target fixture installs it).
+    grok = str(send_keys_gate._installed_cli("grok"))
     monkeypatch.setattr(send_keys_gate, "shell_pid", lambda _terminal: 4321)
     monkeypatch.setattr(
         send_keys_gate,
         "foreground_executables",
-        lambda pids: dict.fromkeys(pids, "grok"),
+        lambda pids: dict.fromkeys(pids, grok),
     )
     registry = create_session_messages_registry(
         session_manager=session_manager,

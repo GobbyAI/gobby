@@ -36,11 +36,11 @@ takes the wake. The foreground process must be an agent CLI, so a bare shell or 
 program is never typed into. An active turn takes no typed input at any priority; its
 message arrives through the hook mailbox on its next tool call. No wake replaces typed
 composer text, operator comms included: a typed draft, held daemon text, or a blocked
-composer (a gap or an interrupt), and an interrupted, input-, approval-, or
-handoff-waiting seat, take no typed input, so the message stays queued until the seat
-is safe to wake. A blocked composer raises an attention item that names the seat and
-the reason. A composer whose only change is a cursor or control key, with no typed
-text, is cleared by the wake's drain keys before it types. The one handoff exception is
+composer (a gap, an interrupt, or a cursor or control key that may have recalled
+history), and an interrupted, input-, approval-, or handoff-waiting seat, take no typed
+input, so the message stays queued until the seat is safe to wake. A blocked composer
+raises an attention item that names the seat and the reason; a submit or
+`release_composer` clears it. The one handoff exception is
 the `get_handoff` continuation of an awaiting-handoff terminal with a confirmed compact
 boundary and an empty composer. Otherwise `project` fanout stays queued without live
 wakes, and `wake=false` queues any target without a live wake.

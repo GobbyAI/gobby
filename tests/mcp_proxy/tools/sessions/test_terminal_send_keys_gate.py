@@ -26,6 +26,7 @@ from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.terminal_scene import install_agent_clis
 
 pytestmark = pytest.mark.unit
 
@@ -114,6 +115,17 @@ def _terminal(pgid: int | None = 4321) -> SimpleNamespace:
     return SimpleNamespace(id=TERMINAL_ID, process={} if pgid is None else {"pgid": pgid})
 
 
+@pytest.fixture(autouse=True)
+def _installed_clis(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    install_agent_clis(monkeypatch, tmp_path)
+
+
+def _installed_executable(name: str) -> str:
+    """An agent CLI name as the build the gate's PATH lookup finds; anything else as given."""
+    installed = gate._installed_cli(name) if name in gate._AGENT_CLIS else None
+    return name if installed is None else str(installed)
+
+
 def _scene(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> _Manager:
     """Install an idle agent CLI in the foreground, then apply ``overrides``."""
     scene: dict[str, Any] = {
@@ -125,9 +137,11 @@ def _scene(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> _Manager:
         "lookup_error": None,
     } | overrides
     pane = _Pane(scene["snapshot"]) if scene["pane"] else None
-    monkeypatch.setattr(
-        gate, "foreground_executables", lambda pids: scene["foreground"] if pids else {}
-    )
+    foreground = {
+        terminal_id: _installed_executable(name)
+        for terminal_id, name in scene["foreground"].items()
+    }
+    monkeypatch.setattr(gate, "foreground_executables", lambda pids: foreground if pids else {})
     if scene["composer"] is not None:  # None reads the bound composer ledger
         monkeypatch.setattr(
             gate, "read_composer", lambda _id: SimpleNamespace(state=scene["composer"])
@@ -245,25 +259,57 @@ async def test_admits_a_target_showing_an_idle_agent_composer(
     assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
 
 
+def _install(monkeypatch: pytest.MonkeyPatch, cli: str, build: Path) -> None:
+    """Make ``build`` the one installed build the gate's PATH lookup finds, for ``cli`` only."""
+    build.parent.mkdir(parents=True, exist_ok=True)
+    build.write_bytes(b"")
+    monkeypatch.setattr(gate, "_installed_cli", lambda name: build if name == cli else None)
+
+
+def _file(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"")
+    return path
+
+
 @pytest.mark.parametrize(
     ("parts", "expected"),
     [
+        ((".grok", "downloads", "grok-1.0.78-macos-aarch64"), "grok"),
         ((".grok", "downloads", "grok-1.0.77-macos-aarch64"), "grok"),
         ((".grok", "downloads", "grok-macos-aarch64"), None),
-        (("elsewhere", "downloads", "grok-1.0.77-macos-aarch64"), None),
+        (("tmp", ".grok", "downloads", "grok-1.0.77-macos-aarch64"), None),
         ((".grok", "bin", "grok-1.0.77-macos-aarch64"), None),
     ],
-    ids=["versioned-download", "unversioned", "wrong-root", "wrong-dir"],
+    ids=["installed", "older-sibling", "unversioned", "look-alike-tree", "wrong-dir"],
 )
-def test_only_an_installed_versioned_grok_build_is_an_agent_cli(
-    tmp_path: Path, parts: tuple[str, ...], expected: str | None
+def test_only_the_installed_grok_or_its_sibling_build_is_an_agent_cli(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, parts: tuple[str, ...], expected: str | None
 ) -> None:
-    build = tmp_path.joinpath(*parts)
-    build.parent.mkdir(parents=True)
-    build.write_bytes(b"")
+    # A renamed shell at /tmp/.grok/downloads/grok-<v>-<os>-<arch> has the installer's
+    # shape but not its directory, so it is no agent CLI.
+    _install(monkeypatch, "grok", tmp_path / ".grok" / "downloads" / "grok-1.0.78-macos-aarch64")
+    build = _file(tmp_path.joinpath(*parts))
 
-    assert gate._agent_cli(build.name, str(build)) == expected
-    assert gate._agent_cli(build.name, str(tmp_path / "missing" / build.name)) is None
+    assert gate._agent_cli(str(build)) == expected
+    assert gate._agent_cli(str(tmp_path / "missing" / build.name)) is None
+
+
+@pytest.mark.parametrize("cli", sorted(gate._AGENT_CLIS))
+def test_a_program_named_like_an_agent_cli_is_not_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cli: str
+) -> None:
+    # A shell copied or linked to ``<cli>`` anywhere but the installed build is never typed into.
+    _install(monkeypatch, cli, tmp_path / "installed" / cli)
+    planted = _file(tmp_path / "planted" / cli)
+    linked = tmp_path / "linked" / cli
+    linked.parent.mkdir()
+    linked.symlink_to(planted)
+
+    assert gate._agent_cli(str(tmp_path / "installed" / cli)) == cli
+    assert gate._agent_cli(str(planted)) is None
+    assert gate._agent_cli(str(linked)) is None
+    assert gate._agent_cli(cli) is None
 
 
 @pytest.mark.asyncio
@@ -293,9 +339,9 @@ async def test_missing_manager_or_registry_refuses(monkeypatch: pytest.MonkeyPat
 async def test_admits_an_idle_composer_on_a_versioned_claude_build(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, via_symlink: bool
 ) -> None:
-    build = tmp_path / "claude" / "versions" / "2.1.314"
-    build.parent.mkdir(parents=True)
-    build.touch()
+    # The session still runs 2.1.314 after the installer moved the launcher to 2.1.320.
+    _install(monkeypatch, "claude", tmp_path / "claude" / "versions" / "2.1.320")
+    build = _file(tmp_path / "claude" / "versions" / "2.1.314")
     executable = build
     if via_symlink:
         executable = tmp_path / "bin" / "cli"
@@ -309,15 +355,14 @@ async def test_admits_an_idle_composer_on_a_versioned_claude_build(
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "relative",
-    ["other/versions/2.1.314", "claude/versions/helper"],
-    ids=["other-tree", "non-version-name"],
+    ["other/versions/2.1.314", "claude/versions/helper", "tmp/claude/versions/2.1.314"],
+    ids=["other-tree", "non-version-name", "look-alike-tree"],
 )
 async def test_refuses_an_unknown_versioned_binary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, relative: str
 ) -> None:
-    build = tmp_path / relative
-    build.parent.mkdir(parents=True)
-    build.touch()
+    _install(monkeypatch, "claude", tmp_path / "claude" / "versions" / "2.1.320")
+    build = _file(tmp_path / relative)
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: str(build)})
 
     refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
@@ -330,6 +375,7 @@ async def test_refuses_an_unknown_versioned_binary(
 async def test_refuses_a_versioned_path_that_does_not_exist(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    _install(monkeypatch, "claude", tmp_path / "claude" / "versions" / "2.1.320")
     missing = tmp_path / "claude" / "versions" / "2.1.314"
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: str(missing)})
 
@@ -675,10 +721,10 @@ class _SrtRunner:
         return self._children
 
 
-def _native_build(tmp_path: Path) -> Path:
+def _native_build(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Install a native Claude build as the one the gate's PATH lookup finds."""
     build = tmp_path / "share" / "claude" / "versions" / "2.1.318"
-    build.parent.mkdir(parents=True)
-    build.touch()
+    _install(monkeypatch, "claude", build)
     return build
 
 
@@ -708,7 +754,7 @@ def _srt_pane(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, children: list[_S
 async def test_srt_runner_admits_an_idle_composer_on_its_native_claude_child(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    build = _native_build(tmp_path)
+    build = _native_build(monkeypatch, tmp_path)
     _srt_pane(monkeypatch, tmp_path, [_SrtChild(SRT_CHILD_PID, str(build))])
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"})
 
@@ -716,17 +762,17 @@ async def test_srt_runner_admits_an_idle_composer_on_its_native_claude_child(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("child", ["none", "shell", "node", "unknown-build", "left-group"])
+@pytest.mark.parametrize("child", ["none", "shell", "node", "foreign-build", "left-group"])
 async def test_srt_runner_refuses_without_a_live_agent_cli_child(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, child: str
 ) -> None:
-    build = _native_build(tmp_path)
+    build = _native_build(monkeypatch, tmp_path)
     children = {
         "none": [],
         "shell": [_SrtChild(SRT_CHILD_PID, "/bin/sh")],
         "node": [_SrtChild(SRT_CHILD_PID, "/opt/homebrew/bin/node")],
-        "unknown-build": [
-            _SrtChild(SRT_CHILD_PID, str(tmp_path / "share/claude/versions/2.1.999"))
+        "foreign-build": [
+            _SrtChild(SRT_CHILD_PID, str(_file(tmp_path / "elsewhere/claude/versions/2.1.999")))
         ],
         "left-group": [_SrtChild(SRT_CHILD_PID, str(build), group=9999)],
     }[child]
@@ -743,7 +789,7 @@ async def test_srt_runner_refuses_without_a_live_agent_cli_child(
 async def test_a_runner_copy_outside_the_installed_root_admits_nothing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    build = _native_build(tmp_path)
+    build = _native_build(monkeypatch, tmp_path)
     _srt_pane(monkeypatch, tmp_path, [_SrtChild(SRT_CHILD_PID, str(build))])
     copy = tmp_path / "elsewhere" / "runner.mjs"
     copy.parent.mkdir()
@@ -771,7 +817,7 @@ async def test_a_runner_copy_outside_the_installed_root_admits_nothing(
 async def test_srt_admission_leaves_the_composer_checks_in_force(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, overrides: dict[str, Any], code: str
 ) -> None:
-    build = _native_build(tmp_path)
+    build = _native_build(monkeypatch, tmp_path)
     _srt_pane(monkeypatch, tmp_path, [_SrtChild(SRT_CHILD_PID, str(build))])
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"}, **overrides)
 
