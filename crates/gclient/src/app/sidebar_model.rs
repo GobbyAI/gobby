@@ -485,8 +485,8 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
         .collect()
 }
 
-/// A blank agent waiting on a child run it started stays active while that
-/// run works; a chain of waiting parents follows its working leaf. Other
+/// An agent between turns waiting on a child run it started stays active while
+/// that run works; a chain of waiting parents follows its working leaf. Other
 /// states hold, so an operator pause or a needs-you prompt is not overridden.
 fn with_child_activity(agents: &mut [AgentEntry]) {
     loop {
@@ -501,7 +501,9 @@ fn with_child_activity(agents: &mut [AgentEntry]) {
                 .session_id
                 .as_ref()
                 .is_some_and(|id| parents_of_working.contains(id));
-            if agent.state == RowState::Blank && waiting {
+            let between_turns =
+                agent.state == RowState::Paused && !is_held(agent.lifecycle_status.as_deref());
+            if between_turns && waiting {
                 agent.state = RowState::Working;
                 changed = true;
             }
@@ -727,16 +729,24 @@ fn resolve_state(blocked: bool, orphaned: bool, lifecycle_status: Option<&str>) 
     if orphaned {
         return RowState::NoLive;
     }
-    // Held: an operator pause or a user interrupt only. A routine turn end, with or
-    // without an armed wait, is "idle" or "waiting" and draws as blank. Human input and
-    // approval above are attention even before a screen detector finds a prompt.
-    if matches!(lifecycle_status, Some("paused" | "interrupted")) {
-        return RowState::Paused;
-    }
     if lifecycle_status.is_some_and(|status| matches!(status, "running" | "active")) {
         return RowState::Working;
     }
-    RowState::Blank
+    // A live agent that is neither working nor waiting on a human is paused: an
+    // operator hold, a user interrupt, or a routine turn end ("idle", "waiting").
+    // The daemon gives every live session and run a status, so an entry without
+    // one carries no agent state, such as a bare shell, and stays blank.
+    if lifecycle_status.is_some() {
+        RowState::Paused
+    } else {
+        RowState::Blank
+    }
+}
+
+/// An operator pause or a user interrupt, as opposed to a routine turn end; a
+/// child run's activity never overrides a hold.
+fn is_held(lifecycle_status: Option<&str>) -> bool {
+    matches!(lifecycle_status, Some("paused" | "interrupted"))
 }
 
 /// Roster and attention reads a live event asks for. Applying the event only

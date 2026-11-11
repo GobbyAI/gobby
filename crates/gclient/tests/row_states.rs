@@ -212,24 +212,38 @@ fn agent_state_maps_each_roster_signal_to_one_of_the_five_states() {
         agent_state(&with_lifecycle(base.clone(), "active")),
         RowState::Working
     );
-    // Between turns with nothing running is not being worked: blank.
-    assert_eq!(
-        agent_state(&with_lifecycle(base.clone(), "completed")),
-        RowState::Blank
-    );
-    assert_eq!(
-        agent_state(&with_lifecycle(base, "waiting")),
-        RowState::Blank
-    );
+    // Alive but not active, between turns: paused. Blank is for nothing assigned.
+    for status in ["completed", "waiting", "idle"] {
+        assert_eq!(
+            agent_state(&with_lifecycle(base.clone(), status)),
+            RowState::Paused,
+            "{status}"
+        );
+    }
 }
 
-/// Output on a pane is not a state: an idle agent with a streaming pane is blank.
+/// Output on a pane is not a state: an idle agent with a streaming pane is paused.
 #[test]
 fn pane_output_does_not_make_an_agent_active() {
     let entry = with_lifecycle(running("e", "s", "t"), "completed");
     let rows = rows_with(vec![], vec![]);
     let model = build_model(&rows, &[entry], &[pane(1, "t", true, true)]);
-    assert_eq!(agent_entry(&model, "e").state, RowState::Blank);
+    assert_eq!(agent_entry(&model, "e").state, RowState::Paused);
+}
+
+/// An operator pause holds even while a child run the agent started works.
+#[test]
+fn operator_paused_agent_stays_paused_while_its_child_works() {
+    let parent = with_lifecycle(running("parent", "s-parent", "t-parent"), "paused");
+    let child = running("run:child", "s-child", "t-child");
+    let sessions = vec![SessionRow {
+        id: "s-child".to_string(),
+        parent_session_id: Some("s-parent".to_string()),
+        ..Default::default()
+    }];
+    let rows = rows_with(vec![], sessions);
+    let model = build_model(&rows, &[parent, child], &[]);
+    assert_eq!(agent_entry(&model, "parent").state, RowState::Paused);
 }
 
 /// An agent waiting on a child run it started stays active while that run works.
@@ -260,7 +274,7 @@ fn dead_child_run_does_not_keep_its_parent_active() {
     }];
     let rows = rows_with(vec![], sessions);
     let model = build_model(&rows, &[parent, child], &[]);
-    assert_eq!(agent_entry(&model, "parent").state, RowState::Blank);
+    assert_eq!(agent_entry(&model, "parent").state, RowState::Paused);
     assert_eq!(agent_entry(&model, "run:child").state, RowState::NoLive);
 }
 
@@ -295,15 +309,29 @@ fn worktree_rolls_up_its_bound_agents_and_is_blank_when_empty() {
             worktree_path: "/wt/empty".to_string(),
             ..Default::default()
         },
+        WorktreeRow {
+            id: "w-idle".to_string(),
+            project_id: PROJECT.to_string(),
+            worktree_path: "/wt/idle".to_string(),
+            ..Default::default()
+        },
     ];
-    let sessions = vec![SessionRow {
-        id: "s-busy".to_string(),
-        worktree_id: Some("w-busy".to_string()),
-        ..Default::default()
-    }];
+    let sessions = vec![
+        SessionRow {
+            id: "s-busy".to_string(),
+            worktree_id: Some("w-busy".to_string()),
+            ..Default::default()
+        },
+        SessionRow {
+            id: "s-idle".to_string(),
+            worktree_id: Some("w-idle".to_string()),
+            ..Default::default()
+        },
+    ];
     let rows = rows_with(worktrees, sessions);
     let busy = with_lifecycle(running("busy", "s-busy", "t-busy"), "awaiting_approval");
-    let model = build_model(&rows, &[busy], &[]);
+    let idle = with_lifecycle(running("idle", "s-idle", "t-idle"), "waiting");
+    let model = build_model(&rows, &[busy, idle], &[]);
     let project = &model.projects[0];
     let state_of = |id: &str| {
         project
@@ -315,6 +343,8 @@ fn worktree_rolls_up_its_bound_agents_and_is_blank_when_empty() {
     };
     assert_eq!(state_of("w-busy"), RowState::Attention);
     assert_eq!(state_of("w-empty"), RowState::Blank);
+    // Alive between turns is paused; only a tree with nothing assigned is blank.
+    assert_eq!(state_of("w-idle"), RowState::Paused);
 }
 
 /// An epic's integration tree counts its team's live lead as assigned, even
@@ -493,13 +523,13 @@ fn epic_rows() -> SidebarRows {
 }
 
 /// A dead previous lead does not hold the tree at no live: the tree shows the
-/// live lead's state, here blank.
+/// live lead's state, here paused between turns.
 #[test]
 fn epic_tree_shows_its_live_lead_past_a_dead_previous_lead() {
     let previous = dead(task_lead("previous"));
     let current = with_lifecycle(task_lead("current"), "completed");
     let model = build_model(&epic_rows(), &[previous, current], &[]);
-    assert_eq!(epic_tree_state(&model), RowState::Blank);
+    assert_eq!(epic_tree_state(&model), RowState::Paused);
 }
 
 #[test]
@@ -530,7 +560,7 @@ fn counters_exclude_superseded_leads_but_keep_dead_worktree_assignments() {
 }
 
 #[test]
-fn superseded_lead_does_not_leave_no_live_on_an_unassigned_rollup() {
+fn superseded_lead_does_not_leave_no_live_on_the_rollup() {
     let previous = dead(task_lead("previous"));
     let current = with_lifecycle(task_lead("current"), "completed");
     let model = build_model(&epic_rows(), &[previous, current], &[]);
@@ -538,10 +568,11 @@ fn superseded_lead_does_not_leave_no_live_on_an_unassigned_rollup() {
         model: &model,
         reachable: true,
     };
-    assert_eq!(epic_tree_state(&model), RowState::Blank);
-    assert_eq!(model.projects[0].state, RowState::Blank);
+    // The live lead is between turns: paused at every level, never no live.
+    assert_eq!(epic_tree_state(&model), RowState::Paused);
+    assert_eq!(model.projects[0].state, RowState::Paused);
     assert_eq!(model.projects[0].no_live, 0);
-    assert_eq!(local_machine_state(&model, true), RowState::Blank);
+    assert_eq!(local_machine_state(&model, true), RowState::Paused);
     assert_eq!(agent_counts(&view).no_live, 0);
 }
 

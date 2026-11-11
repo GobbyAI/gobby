@@ -16,7 +16,7 @@ from pathlib import Path
 
 import psutil
 
-from gobby.hooks.terminal_context import _stable_cli_process
+from gobby.hooks.terminal_context import _is_codex_shared_host, _stable_cli_process
 from gobby.paths import get_gobby_home
 
 RECORD_NAMESPACE = uuid.UUID("25855c0de00040008000000025855001")
@@ -65,9 +65,16 @@ def load_record(home: Path, key: str) -> SessionCredentialRecord | None:
 
 
 def stable_cli_pid() -> int | None:
-    """Return the CLI process that owns this process, stabilized as the hooks stabilize it."""
+    """Return the CLI process that owns this process, stabilized as the hooks stabilize it.
+
+    Codex's shared app-server worker runs every hand-started thread, so its pid names no
+    one session and its record would hand this client another thread's token: None.
+    """
     try:
-        return int(_stable_cli_process(psutil.Process(os.getppid())).pid)
+        parent = psutil.Process(os.getppid())
+        if _is_codex_shared_host(parent):
+            return None
+        return int(_stable_cli_process(parent).pid)
     except (psutil.Error, OSError):
         return None
 

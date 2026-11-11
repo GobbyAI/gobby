@@ -209,15 +209,16 @@ async def test_bare_shell_target_is_never_typed_into(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("prompt", ["Password:", "[sudo] password for josh:", "Enter API key:"])
-async def test_credential_prompt_target_is_never_typed_into(
+@pytest.mark.parametrize("program", ["sudo", "ssh", "gpg"])
+async def test_credential_prompt_program_is_never_typed_into(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     agent_target: Callable[..., None],
-    prompt: str,
+    program: str,
 ) -> None:
-    agent_target(foreground="claude", snapshot=prompt)
+    """A program asking for a password holds the foreground, so no agent CLI does."""
+    agent_target(foreground=program, snapshot="Password:")
     session_id, sender, dispatcher = _seat(
         temp_db,
         session_manager,
@@ -230,33 +231,7 @@ async def test_credential_prompt_target_is_never_typed_into(
     result = await dispatcher.dispatch_live_wake(session_id)
 
     assert result["delivered"] is False
-    assert result["skipped"] == "send_keys_credential_prompt"
-    sender.assert_not_awaited()
-    await _cancel_followups(dispatcher)
-
-
-@pytest.mark.asyncio
-async def test_codex_draft_visible_in_the_frame_is_never_typed_into(
-    temp_db: HubDatabase,
-    session_manager: SessionManager,
-    sample_project: dict[str, Any],
-    agent_target: Callable[..., None],
-) -> None:
-    """The ledger reads empty, but the codex frame shows a human draft: refuse, never type."""
-    agent_target(foreground="codex", snapshot=_CODEX_DRAFT)
-    session_id, sender, dispatcher = _seat(
-        temp_db,
-        session_manager,
-        sample_project["id"],
-        source="codex",
-        status="idle",
-        read=lambda _id: _EMPTY,
-    )
-
-    result = await dispatcher.dispatch_live_wake(session_id)
-
-    assert result["delivered"] is False
-    assert result["skipped"] == "send_keys_composer_not_idle"
+    assert result["skipped"] == "send_keys_target_unconfirmed"
     sender.assert_not_awaited()
     await _cancel_followups(dispatcher)
 

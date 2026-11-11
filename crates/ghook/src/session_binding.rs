@@ -1,7 +1,7 @@
 //! Caller identity for hook requests, decided per envelope.
 //!
 //! A spawned managed run keeps its managed token and headers. An unspawned session
-//! presents the credential the daemon minted for it at SessionStart. Without one it
+//! presents the credential the daemon minted for its CLI process. Without one it
 //! sends the machine key and no session selector, because the daemon refuses a
 //! machine-bearer request that names a session.
 
@@ -45,7 +45,10 @@ pub fn is_session_selector(name: &str) -> bool {
 /// Decide how the envelope's request authenticates.
 ///
 /// Every SessionStart reattests the CLI through the machine path and receives a fresh
-/// credential, including after activation invalidates a cached provider token.
+/// credential, including after activation invalidates a cached provider token. Any other
+/// hook presents only the record stored for this hook's own CLI process, which the kernel
+/// names. The session the body names never selects a record; it is only checked against
+/// the one this CLI holds.
 pub fn caller_for(envelope: &Envelope) -> Caller {
     if session_credential::is_managed_environment() {
         return Caller::Managed;
@@ -56,55 +59,40 @@ pub fn caller_for(envelope: &Envelope) -> Caller {
     let Some(provider_session_id) = provider_session_id(envelope) else {
         return Caller::Unbound;
     };
-    let Ok(home) = gobby_core::gobby_home() else {
+    let (Ok(home), Some(cli)) = (gobby_core::gobby_home(), current_cli_pid()) else {
         return Caller::Unbound;
     };
-    match session_credential::bound_for_provider(&home, provider_session_id) {
-        Some(credential) => Caller::Bound(credential),
-        None => Caller::Unbound,
+    match session_credential::load(&home, &cli_pid_key(cli)) {
+        Some(credential) if credential.provider_session_id == provider_session_id => {
+            Caller::Bound(credential)
+        }
+        _ => Caller::Unbound,
     }
 }
 
-/// Keep the credential a SessionStart response carries; return the body without it.
+/// Keep the credential a hook response carries; return the body without it.
 ///
-/// The record goes under the provider's session id and under the CLI process that
-/// owns this hook, which the MCP client derives from its own parent. A failed write
-/// is reported without the token.
+/// The daemon mints on a SessionStart or on the first hook that creates a deferred
+/// session's row. The record goes only under the CLI process that owns this hook, which
+/// the MCP client derives from its own parent, and names the provider session it is for.
+/// A failed write is reported without the token.
 pub fn remember_response_credential<'a>(envelope: &Envelope, body: &'a str) -> Cow<'a, str> {
     let (stripped, credential) = session_credential::extract(body);
     let Some(mut credential) = credential else {
         return stripped;
     };
-    let Some(provider_session_id) = provider_session_id(envelope) else {
+    let (Some(provider_session_id), Some(cli)) = (provider_session_id(envelope), current_cli_pid())
+    else {
         return stripped;
     };
     credential.provider_session_id = provider_session_id.to_string();
-    let mut keys = vec![session_credential::provider_key(provider_session_id)];
-    keys.extend(current_cli_pid().map(cli_pid_key));
-    store_credential(&keys, &credential);
+    store_credential(cli, &credential);
     stripped
 }
 
-/// Keep a bound SessionStart's credential under this CLI as well.
-///
-/// A restarted CLI has a new pid but the same provider session, so its MCP client
-/// finds the credential it was already bound to. Only a bound SessionStart the daemon
-/// accepted qualifies; a minted or unbound request has no credential to keep here.
-pub fn remember_bound_credential(envelope: &Envelope, caller: &Caller) {
-    let Caller::Bound(credential) = caller else {
-        return;
-    };
-    if !is_session_start(envelope) {
-        return;
-    }
-    if let Some(cli) = current_cli_pid() {
-        store_credential(&[cli_pid_key(cli)], credential);
-    }
-}
-
-fn store_credential(keys: &[String], credential: &SessionCredential) {
+fn store_credential(cli: u32, credential: &SessionCredential) {
     let stored = gobby_core::gobby_home()
-        .and_then(|home| session_credential::store(&home, keys, credential));
+        .and_then(|home| session_credential::store(&home, &[cli_pid_key(cli)], credential));
     if let Err(error) = stored {
         crate::output::stderr(format_args!(
             "ghook: could not keep the session credential: {error}\n"

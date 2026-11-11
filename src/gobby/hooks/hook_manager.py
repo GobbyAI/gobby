@@ -40,6 +40,7 @@ from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_activation import reconcile_session_activation
 from gobby.hooks.session_materialize import activate_deferred_session, has_deferred_help_activation
+from gobby.hooks.session_ref_resolution import foreign_originator_reason
 from gobby.hooks.session_summary_wiring import build_session_summary_dispatcher
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.subagent_boundary import subagent_boundary_signal
@@ -509,6 +510,8 @@ class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
         # The hook has project context; the MCP server doesn't. Resolve here so
         # downstream tools get unambiguous UUIDs.
         self._resolve_session_refs_in_tool_input(event)
+        if originator_refusal := foreign_originator_reason(event, self._session_manager):
+            return HookResponse(decision="block", reason=originator_refusal)
         self._recheck_pending_transcript(event)
 
         if (

@@ -105,6 +105,8 @@ impl ServerHandler for WrapperServer {
         let dialer = Arc::clone(&self.dialer);
         let name = request.name.into_owned();
         let arguments = request.arguments.unwrap_or_default();
+        // Under Codex's shared worker only the call's `_meta` names its thread.
+        let thread = crate::session_binding::codex_thread_id(&context.meta);
         if name == "call_tool" {
             let peer = context.peer;
             let progress = context.meta.get_progress_token().map(|token| {
@@ -122,12 +124,15 @@ impl ServerHandler for WrapperServer {
                     }
                 }
             });
-            let answer = crate::call_tool::call(dialer, Value::Object(arguments), progress).await;
+            let answer =
+                crate::call_tool::call(dialer, Value::Object(arguments), progress, thread).await;
             return Ok(CallToolResponse::from(tools::envelope(answer)));
         }
-        let answer = tokio::task::spawn_blocking(move || tools::call(&dialer, &name, &arguments))
-            .await
-            .map_err(|error| ErrorData::internal_error(error.to_string(), None))??;
+        let answer = tokio::task::spawn_blocking(move || {
+            crate::daemon::for_thread(thread, || tools::call(&dialer, &name, &arguments))
+        })
+        .await
+        .map_err(|error| ErrorData::internal_error(error.to_string(), None))??;
         Ok(CallToolResponse::from(tools::envelope(answer)))
     }
 }

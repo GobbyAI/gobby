@@ -1,4 +1,4 @@
-//! Sidebar states must preserve deliberate pauses and user interrupts.
+//! Sidebar states: a live agent that is not active and not needs-you is paused.
 
 use std::collections::BTreeMap;
 
@@ -23,7 +23,7 @@ fn seat(status: &str) -> RosterEntry {
 }
 
 #[test]
-fn waiting_seat_is_non_held_idle_in_agents_projects_and_task_worktrees() {
+fn waiting_seat_is_paused_in_agents_projects_and_task_worktrees() {
     let mut entry = seat(ROUTINE_TURN_END);
     entry.run_id = Some("run-1".into());
     entry.terminal = Some(TerminalRef {
@@ -70,19 +70,19 @@ fn waiting_seat_is_non_held_idle_in_agents_projects_and_task_worktrees() {
     });
 
     assert_eq!(model.agents.len(), 1);
-    assert_eq!(model.agents[0].state, RowState::Blank);
+    assert_eq!(model.agents[0].state, RowState::Paused);
     let project = model
         .projects
         .iter()
         .find(|p| p.project_id == "project-1")
         .unwrap();
-    assert_eq!(project.state, RowState::Blank);
+    assert_eq!(project.state, RowState::Paused);
     assert_eq!(project.worktrees[0].task_ref.as_deref(), Some("#25240"));
-    assert_eq!(project.worktrees[0].state, RowState::Blank);
+    assert_eq!(project.worktrees[0].state, RowState::Paused);
 }
 
 #[test]
-fn help_names_a_child_run_wait_under_active_and_blank_as_nothing_worked() {
+fn help_names_a_child_run_wait_under_active_and_blank_as_nothing_assigned() {
     let chrome = Chrome::dark();
     let legend: Vec<String> = legend_groups(&chrome, u16::MAX)
         .iter()
@@ -108,34 +108,31 @@ fn help_names_a_child_run_wait_under_active_and_blank_as_nothing_worked() {
         .find(|row| row.contains("blank"))
         .expect("the legend has a blank row");
     assert!(
-        blank.contains("nothing is assigned or being worked"),
-        "blank help must say nothing is being worked: {blank:?}"
+        blank.contains("nothing is assigned"),
+        "blank help must say nothing is assigned: {blank:?}"
     );
 }
 
+/// Alive but not active is one state: a hold, an interrupt and a routine turn
+/// end all draw paused, never the blank of a row with nothing assigned.
 #[test]
-fn explicit_pause_keeps_a_distinct_state_and_glyph() {
+fn pause_interrupt_and_turn_end_all_draw_paused() {
     let palette = Chrome::dark().palette;
-    let paused = agent_state(&seat("paused"));
-    let idle = agent_state(&seat("completed"));
-
-    assert_eq!(paused, RowState::Paused);
-    assert_ne!(paused, idle);
-    assert_ne!(state_dot(paused, &palette).0, state_dot(idle, &palette).0);
-}
-
-#[test]
-fn user_interrupt_has_a_distinct_state_and_glyph_from_normal_idle() {
-    let palette = Chrome::dark().palette;
-    let interrupted = agent_state(&seat("interrupted"));
-    let idle = agent_state(&seat("completed"));
-
-    assert_ne!(interrupted, idle, "a user interrupt must remain visible");
-    assert_ne!(
-        state_dot(interrupted, &palette).0,
-        state_dot(idle, &palette).0,
-        "the interrupt needs a distinct glyph, independent of color"
-    );
+    for status in [
+        "paused",
+        "interrupted",
+        "completed",
+        "idle",
+        ROUTINE_TURN_END,
+    ] {
+        let state = agent_state(&seat(status));
+        assert_eq!(state, RowState::Paused, "{status}");
+        assert_ne!(
+            state_dot(state, &palette).0,
+            state_dot(RowState::Blank, &palette).0,
+            "{status} needs a glyph, independent of color"
+        );
+    }
 }
 
 #[test]

@@ -85,7 +85,7 @@ pub struct ActiveToast {
 /// Glyph plus colour for a roster row state, one shape per state so the
 /// rows read without colour: `⍾` needs you (warning), `▶` active (accent),
 /// `‖` paused, `✕` no live agents (destructive), and a blank cell for nothing
-/// assigned or being worked.
+/// assigned.
 pub fn state_dot(state: RowState, p: &Palette) -> (&'static str, Color) {
     match state {
         RowState::Attention => ("⍾", p.peach),

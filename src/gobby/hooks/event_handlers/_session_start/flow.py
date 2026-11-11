@@ -48,7 +48,7 @@ from .materialize import (
     _consume_pending_handoff_compact_continuation,
     _reset_agent_context_injection,
     _schedule_tmux_window_rename_for_session,
-    record_deferred_codex_startup,
+    record_deferred_startup,
     session_start_should_defer,
 )
 from .profile import seed_user_profile_content
@@ -349,7 +349,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     if session_start_should_defer(
         event, resolution.session, session_source, reported_source=reported_source
     ):
-        record_deferred_codex_startup(handler, event, reported_source)
+        record_deferred_startup(handler, event, reported_source)
         return HookResponse(decision="allow")
     parent_session_id = input_data.get("parent_session_id")
 

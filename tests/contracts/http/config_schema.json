@@ -21,6 +21,16 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "agent_build.build_root": {
+          "type": "string",
+          "namespace": "agent_build",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "restart_required",
+          "machineExport": false,
+          "default": "",
+          "description": "Absolute, canonical, existing directory that holds agent Cargo build folders. Empty uses the Gobby cache. Takes effect at daemon startup."
+        },
         "agent_sandbox.allow_git_network": {
           "type": "boolean",
           "namespace": "agent_sandbox",

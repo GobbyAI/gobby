@@ -24,6 +24,7 @@ from gobby.config.runtime import RuntimeActiveBundle
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.handoff_shutdown import HANDOFF_IN_FLIGHT_MINUTES
 from gobby.sessions.transcript_processing import TranscriptProcessingMixin
+from gobby.storage.codex_thread_hosts import prune_thread_hosts
 from gobby.storage.hook_receipts import retire_expired_session_hook_effects
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_startup_marks import prune_startup_marks
@@ -342,6 +343,10 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
             prune_startup_marks(self.session_manager.db)
         except psycopg.Error:
             logger.warning("Failed to prune unconsumed session startup marks", exc_info=True)
+        try:
+            prune_thread_hosts(self.session_manager.db)
+        except psycopg.Error:
+            logger.warning("Failed to prune stale Codex thread registrations", exc_info=True)
 
         # Zero-message sessions created by spurious SESSION_START events can be
         # cleaned up much faster than the normal 24h stale-session sweep.

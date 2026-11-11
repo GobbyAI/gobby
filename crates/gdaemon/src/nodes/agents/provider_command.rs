@@ -127,6 +127,9 @@ fn codex_argv(
     if resume.is_some() {
         argv.push("resume".into());
     }
+    // The seat runs its own app-server, never Codex's shared worker, so its hooks and gmcp
+    // are its own children and bind to its own run (#25905).
+    argv.push("--no-daemon".into());
     match non_empty(&payload.codex_oss_provider) {
         Some(provider) => {
             argv.extend(["--oss".into(), "--local-provider".into(), provider.into()]);

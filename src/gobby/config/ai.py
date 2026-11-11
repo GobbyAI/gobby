@@ -525,6 +525,16 @@ class DecisionOverrides(BaseModel):
     score: DecisionEndpointConfig | None = None
     box: DecisionEndpointConfig | None = None
 
+    @model_validator(mode="after")
+    def drop_unset_entries(self) -> DecisionOverrides:
+        # The config registry projects every leaf of an optional entry, so an
+        # unconfigured type arrives as an all-default entry, which means no entry.
+        unset = DecisionEndpointConfig()
+        for kind in DECISION_KINDS:
+            if getattr(self, kind) == unset:
+                setattr(self, kind, None)
+        return self
+
     def endpoint(self, kind: DecisionKind) -> DecisionEndpointConfig | None:
         match kind:
             case "choice":

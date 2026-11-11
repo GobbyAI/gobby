@@ -1,17 +1,25 @@
-"""Kernel-attested claimant of a machine-bearer SessionStart.
+"""Kernel-attested claimant of a machine-bearer hook (#25905).
 
-The machine-wide bearer names no session, so a SessionStart that would mint a session
-credential must come from the CLI process that owns that session. The daemon reads the
-local TCP socket of the request from the kernel socket table: its owner is the hook
-process, and the stabilized parent of that process is the CLI. A session with a live
-terminal row keeps its stored CLI pid, and a claimant with another CLI pid is refused
-before the handler runs. A new session stores the proven CLI pid. The body's own
-parent pid is never proof.
+The machine-wide bearer names no session, so a hook that would create a session's row or
+mint its credential must come from the CLI process that owns that session. The daemon
+reads the request's local TCP socket from the kernel socket table: its owner is the hook
+process, and the stabilized parent of that process is the CLI, named by pid and start
+time. The body's own parent pid is never proof.
+
+Ownership is durable. A live terminal row stores its CLI. A deferred startup's mark pins
+its CLI, and only that CLI's hook creates the row (session_startup_marks). A thread run by
+Codex's shared app-server is registered to that worker (codex_thread_hosts). The first
+owner stands: another may replace it only after proving it dead, by pid and start time,
+and the replacement is a compare-and-swap, so of two racers one wins. A Codex CLI's
+proven start holds its thread in that registry from its claim to its settle, so no
+worker child registers or mints the thread while the CLI's handler revives its row.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -19,12 +27,23 @@ from typing import Any
 import psutil
 
 from gobby.hooks.terminal_context import _is_codex_shared_host, _stable_cli_process
+from gobby.sessions.terminal_kill import create_time_matches
+from gobby.storage.codex_thread_hosts import (
+    ThreadHost,
+    hold_thread_for_cli,
+    refresh_thread_host,
+    register_thread_host,
+    thread_host,
+    unregister_thread_host,
+)
+from gobby.storage.session_startup_marks import StartupPin, startup_mark
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.terminal_context import parse_terminal_context_value
 
 logger = logging.getLogger(__name__)
 
 SESSION_CLAIMANT_MISMATCH = "session_claimant_mismatch"
+SESSION_STARTUP_UNPINNED = "session_startup_unpinned"
 CLAIMANT_UNVERIFIED = "claimant_unverified"
 
 _PROCESS_ERRORS = (psutil.Error, OSError)
@@ -32,31 +51,52 @@ _PROCESS_ERRORS = (psutil.Error, OSError)
 
 @dataclass(frozen=True)
 class Claimant:
-    """The process that opened a request's TCP socket, with its proven CLI pid.
+    """The process that opened a request's TCP socket, with the CLI it proves.
 
-    ``cli_pid`` is None when no single session can be attested through the parent: it is a
-    shared host that serves several sessions (``shared_host``), or it has no parent or
-    cannot be inspected.
+    ``cli_pid`` and ``create_time`` name the proven CLI. Under Codex's shared app-server
+    (``shared_host``) no CLI names one thread: ``parent_pid`` and ``create_time`` then name
+    that worker, which runs as this daemon's user. ``cli_pid`` is None when the parent is
+    missing or cannot be inspected.
     """
 
     pid: int
     parent_pid: int | None
     cli_pid: int | None
     shared_host: bool = False
+    create_time: float | None = None
 
 
 @dataclass(frozen=True)
 class SessionStartClaim:
-    """Decision for a machine-bearer SessionStart: refuse, mint, or run without a token."""
+    """What a machine-bearer hook may do once its handler has run.
+
+    ``proven`` hooks run with their CLI stamped as the row's owner. A start mints, and so
+    does the hook that creates a deferred startup's row (``creates_row``). ``displaced``
+    is the dead pin a start replaces; ``host`` is the shared worker a Codex thread is
+    registered to.
+    """
 
     refusal: str | None = None
     proven: bool = False
     cli_pid: int | None = None
+    create_time: float | None = None
+    creates_row: bool = False
+    displaced: StartupPin | None = None
+    host: ThreadHost | None = None
+
+    @property
+    def pin(self) -> StartupPin | None:
+        """The proven CLI as a startup pin."""
+        if self.cli_pid is None or self.create_time is None:
+            return None
+        return StartupPin(self.cli_pid, self.create_time)
 
 
 @dataclass(frozen=True)
 class _LiveTerminal:
+    session_id: str
     parent_pid: int | None
+    raw_create_time: Any
 
 
 def _socket_owner(*, client_port: int, server_port: int) -> int | None:
@@ -86,7 +126,7 @@ PEER_PORT_HEADER = "X-Gobby-Peer-Port"
 
 
 def front_door_claimant(headers: Mapping[str, str], *, daemon_port: int) -> Claimant | None:
-    """Resolve the CLI behind a front-door hook from the peer port gdaemon observed.
+    """Resolve the CLI behind a front-door request from the peer port gdaemon observed.
 
     Behind gdaemon the backend's own client port is always 0, so it never sees the hook's
     socket. gdaemon injects the accepted socket's port under PEER_PORT_HEADER and strips any
@@ -107,16 +147,54 @@ def resolve_claimant(*, client_port: int, server_port: int) -> Claimant | None:
     pid = _socket_owner(client_port=client_port, server_port=server_port)
     if pid is None:
         return None
+    unverified = Claimant(pid=pid, parent_pid=None, cli_pid=None)
     try:
         parent = psutil.Process(pid).parent()
         if parent is None:
-            return Claimant(pid=pid, parent_pid=None, cli_pid=None)
+            return unverified
         if _is_codex_shared_host(parent):
-            return Claimant(pid=pid, parent_pid=parent.pid, cli_pid=None, shared_host=True)
+            # The worker is the operator's own; another user's worker proves nothing.
+            if parent.uids().real != os.getuid():
+                return unverified
+            return Claimant(
+                pid=pid,
+                parent_pid=parent.pid,
+                cli_pid=None,
+                shared_host=True,
+                create_time=parent.create_time(),
+            )
         cli = _stable_cli_process(parent)
+        started = cli.create_time()
     except _PROCESS_ERRORS:
-        return Claimant(pid=pid, parent_pid=None, cli_pid=None)
-    return Claimant(pid=pid, parent_pid=parent.pid, cli_pid=cli.pid)
+        return unverified
+    return Claimant(pid=pid, parent_pid=parent.pid, cli_pid=cli.pid, create_time=started)
+
+
+def process_is_dead(pid: int, create_time: float | None) -> bool:
+    """Whether the process recorded as ``pid`` started at ``create_time`` is provably gone.
+
+    A missing pid is gone, and so is a pid whose process started at another time: the pid
+    was reused. A process that cannot be inspected, or a record with no start time, is
+    treated as alive, so nothing is ever taken from a CLI that may still run.
+    """
+    try:
+        started = psutil.Process(pid).create_time()
+    except psutil.NoSuchProcess:
+        return True
+    except _PROCESS_ERRORS:
+        return False
+    return create_time is not None and not create_time_matches(started, create_time)
+
+
+def _same_process(pid: int, create_time: float | None, other: int, other_time: Any) -> bool:
+    """A pid is reused, so only the pid together with its start time names a process."""
+    return (
+        pid == other
+        and create_time is not None
+        and isinstance(other_time, (int, float))
+        and not isinstance(other_time, bool)
+        and create_time_matches(create_time, float(other_time))
+    )
 
 
 def _live_terminal(
@@ -124,7 +202,7 @@ def _live_terminal(
 ) -> _LiveTerminal | None:
     row = db.fetchone(
         """
-        SELECT terminal_context FROM sessions
+        SELECT id, terminal_context FROM sessions
         WHERE external_id = %s AND source = %s AND machine_id = %s
           AND session_type = 'terminal' AND status = ANY(%s)
         ORDER BY created_at DESC, id
@@ -138,7 +216,38 @@ def _live_terminal(
     parent_pid = context.get("parent_pid")
     if isinstance(parent_pid, bool) or not isinstance(parent_pid, int):
         parent_pid = None
-    return _LiveTerminal(parent_pid=parent_pid)
+    return _LiveTerminal(
+        session_id=str(row["id"]),
+        parent_pid=parent_pid,
+        raw_create_time=context.get("parent_create_time"),
+    )
+
+
+def _take_over_row(db: Any, live: _LiveTerminal, *, cli_pid: int, create_time: float) -> bool:
+    """Swap a dead owner's row to the proven CLI; return whether this caller won the swap."""
+    cursor = db.execute(
+        """
+        UPDATE sessions
+        SET terminal_context = (COALESCE(terminal_context, '{}'::jsonb) - 'parent_name')
+            || jsonb_build_object('parent_pid', %s::int, 'parent_create_time', %s::float8)
+        WHERE id = %s
+          AND terminal_context -> 'parent_pid' = to_jsonb(%s::int)
+          AND (terminal_context -> 'parent_create_time') IS NOT DISTINCT FROM %s::jsonb
+        """,
+        (
+            cli_pid,
+            create_time,
+            live.session_id,
+            live.parent_pid,
+            None if live.raw_create_time is None else json.dumps(live.raw_create_time),
+        ),
+    )
+    return bool(cursor.rowcount)
+
+
+def _refuse(reason: str, message: str, source: str, external_id: str) -> SessionStartClaim:
+    logger.warning("Machine hook refused for %s session %s: %s", source, external_id, message)
+    return SessionStartClaim(refusal=reason)
 
 
 def claim_session_start(
@@ -149,39 +258,197 @@ def claim_session_start(
     external_id: str,
     source: str,
     machine_id: str,
+    start: bool,
 ) -> SessionStartClaim:
-    """Decide what a machine-bearer SessionStart may do for its kernel-attested claimant.
+    """Decide what a machine-bearer hook may do for its kernel-attested claimant.
 
-    A daemon-internal replay has no proof and mints nothing. An unresolved claimant is
-    refused. An existing session is refused unless its stored CLI pid is the claimant's.
-    A new session is proven by its claimant's CLI pid, which the handler records. That is
-    the stabilized pid the live check compares, not the raw parent of a Droid exec backend.
+    A daemon-internal replay proves nothing and mints nothing. An unresolved claimant is
+    refused. A live row's owner proceeds; a start from a new CLI takes over a row whose
+    owner is proven dead; anyone else is refused. With no row, a start from any CLI may
+    pin the thread unless a live CLI already holds the pin, and only the pinned CLI's
+    hook may create the row. A hook with no pin creates nothing.
     """
     if claimant is None:
         return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
     if claimant.pid == daemon_pid:
         return SessionStartClaim()
-    live = _live_terminal(db, external_id=external_id, source=source, machine_id=machine_id)
-    if claimant.cli_pid is None:
-        # No single CLI attests this start: never mint, and never touch a live row.
-        if live:
-            return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
-        reason = (
-            "its hook runs under a shared host that cannot attest one session"
-            if claimant.shared_host
-            else "its hook's parent process is missing or could not be inspected"
+    key = {"external_id": external_id, "source": source, "machine_id": machine_id}
+    if claimant.shared_host:
+        return _claim_shared_host(db, claimant, start=start, **key)
+    claim = _claim_cli(db, claimant, start=start, **key)
+    if start and claim.proven and source == "codex" and claim.cli_pid and claim.create_time:
+        # Hold the thread before the handler runs: a resume or take-over revives the row
+        # before settle drops any worker registration, and a worker child must not mint
+        # it in between. Settle drops the hold; a handler that raises leaves it, which
+        # refuses worker children until a start displaces this CLI once it is dead.
+        hold_thread_for_cli(
+            db,
+            machine_id=machine_id,
+            external_id=external_id,
+            cli=ThreadHost(claim.cli_pid, claim.create_time),
         )
+    return claim
+
+
+def _claim_cli(
+    db: Any,
+    claimant: Claimant,
+    *,
+    external_id: str,
+    source: str,
+    machine_id: str,
+    start: bool,
+) -> SessionStartClaim:
+    """Decide a hook whose claimant is a CLI process rather than a shared worker."""
+    live = _live_terminal(db, external_id=external_id, source=source, machine_id=machine_id)
+    cli_pid, started = claimant.cli_pid, claimant.create_time
+    if cli_pid is None or started is None:
+        # No CLI attests this hook: never mint, and never touch a live row.
+        if live is not None:
+            return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
         logger.warning(
-            "SessionStart for %s session %s mints no session credential: %s (parent pid %s)",
+            "Hook for %s session %s mints nothing: its parent is missing or not inspectable",
             source,
             external_id,
-            reason,
-            claimant.parent_pid,
         )
         return SessionStartClaim()
-    if live is None:
-        return SessionStartClaim(proven=True, cli_pid=claimant.cli_pid)
-    if live.parent_pid != claimant.cli_pid:
-        logger.warning("Machine SessionStart claimant does not own the live session")
-        return SessionStartClaim(refusal=SESSION_CLAIMANT_MISMATCH)
-    return SessionStartClaim(proven=True)
+    proven = SessionStartClaim(proven=True, cli_pid=cli_pid, create_time=started)
+    if live is not None:
+        if live.parent_pid is None:
+            # A replay stored this row with no proven owner: its hooks run, and it never mints.
+            return SessionStartClaim()
+        if _same_process(cli_pid, started, live.parent_pid, live.raw_create_time):
+            return proven
+        owner_dead = process_is_dead(
+            live.parent_pid,
+            live.raw_create_time if isinstance(live.raw_create_time, (int, float)) else None,
+        )
+        if start and owner_dead and _take_over_row(db, live, cli_pid=cli_pid, create_time=started):
+            logger.info("%s session %s rebound from its dead CLI", source, external_id)
+            return proven
+        return _refuse(SESSION_CLAIMANT_MISMATCH, "another CLI owns the row", source, external_id)
+    mark = startup_mark(db, machine_id=machine_id, source=source, external_id=external_id)
+    pin = None if mark is None else mark.pin
+    if pin is not None and _same_process(cli_pid, started, pin.cli_pid, pin.cli_create_time):
+        return SessionStartClaim(
+            proven=True, cli_pid=cli_pid, create_time=started, creates_row=not start
+        )
+    if not start:
+        if pin is None:
+            return _refuse(
+                SESSION_STARTUP_UNPINNED, "no startup pinned its CLI", source, external_id
+            )
+        return _refuse(
+            SESSION_CLAIMANT_MISMATCH, "its startup pinned another CLI", source, external_id
+        )
+    if pin is None:
+        return proven
+    if process_is_dead(pin.cli_pid, pin.cli_create_time):
+        return SessionStartClaim(proven=True, cli_pid=cli_pid, create_time=started, displaced=pin)
+    return _refuse(SESSION_CLAIMANT_MISMATCH, "a live CLI holds its pin", source, external_id)
+
+
+def _claim_shared_host(
+    db: Any,
+    claimant: Claimant,
+    *,
+    external_id: str,
+    source: str,
+    machine_id: str,
+    start: bool,
+) -> SessionStartClaim:
+    """Register a hand-started Codex thread to the live shared worker that runs its hooks.
+
+    A thread a CLI runs its own hooks for (a ``--no-daemon`` seat) is never the worker's:
+    its start pinned that CLI, and its row was created without a registration. A child of
+    the shared worker naming such a thread is refused while the pinned CLI lives, and a
+    live row the thread was never registered for is refused too, so the child neither
+    rewrites the row nor mints for it. The row records the seat's TUI, which is the
+    worker's client rather than its child, so the registry decides for the worker's own
+    threads. A start registers the thread, which is when it is assigned its id and ref
+    (before its deferred row exists), and mints. The first worker to register a thread
+    stands; another replaces it only once the registered worker is proven dead, and only
+    on a start. Other hooks from a worker the thread is not registered to run without a
+    token. A command child of the same worker can name a sibling thread registered to
+    that worker; that stays within the operator's own authority (#25911).
+    """
+    if source != "codex" or claimant.parent_pid is None or claimant.create_time is None:
+        return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
+    host = ThreadHost(claimant.parent_pid, claimant.create_time)
+    mark = startup_mark(db, machine_id=machine_id, source=source, external_id=external_id)
+    pin = None if mark is None else mark.pin
+    if pin is not None and not process_is_dead(pin.cli_pid, pin.cli_create_time):
+        return _refuse(SESSION_CLAIMANT_MISMATCH, "a live CLI pinned it", source, external_id)
+    key = {"external_id": external_id, "source": source, "machine_id": machine_id}
+    stored = thread_host(db, machine_id=machine_id, external_id=external_id)
+    displaced: ThreadHost | None = None
+    if (
+        stored is not None
+        and stored.pid == host.pid
+        and create_time_matches(stored.create_time, host.create_time)
+    ):
+        # The registered worker itself, its start time stored at the precision it was read.
+        host = stored
+    if stored is None:
+        if _live_terminal(db, **key):
+            return _refuse(
+                SESSION_CLAIMANT_MISMATCH,
+                "its live row was never registered to a worker",
+                source,
+                external_id,
+            )
+    elif stored != host:
+        if not process_is_dead(stored.pid, stored.create_time):
+            return _refuse(
+                SESSION_CLAIMANT_MISMATCH,
+                "another live worker or CLI holds it",
+                source,
+                external_id,
+            )
+        displaced = stored
+    if not start:
+        return SessionStartClaim(host=host)
+    return _register_shared_host(db, host, displaced=displaced, new=stored is None, **key)
+
+
+def _register_shared_host(
+    db: Any,
+    host: ThreadHost,
+    *,
+    displaced: ThreadHost | None,
+    new: bool,
+    external_id: str,
+    source: str,
+    machine_id: str,
+) -> SessionStartClaim:
+    """Register a start's thread before its handler runs, then check again what it wrote.
+
+    The checks above ran before this write, so a ``--no-daemon`` seat may have pinned the
+    thread, or pinned it and created its row, in between. The seat's start drops any
+    registration after it pins, so a write that lands first is removed; one that lands
+    later finds the live pin, or the seat's row on a thread that had no registration, and
+    withdraws. A worker the thread was already registered to only refreshes that entry,
+    so a registration a seat dropped since the read above stays dropped. Settle writes
+    nothing, so no registration appears after these checks.
+    """
+    thread = {"machine_id": machine_id, "external_id": external_id}
+    if new or displaced is not None:
+        registered = register_thread_host(db, **thread, host=host, displaced=displaced)
+    else:
+        registered = refresh_thread_host(db, **thread, host=host)
+    if not registered:
+        return _refuse(
+            SESSION_CLAIMANT_MISMATCH, "another worker registered it first", source, external_id
+        )
+    mark = startup_mark(db, machine_id=machine_id, source=source, external_id=external_id)
+    pin = None if mark is None else mark.pin
+    seat_pinned = pin is not None and not process_is_dead(pin.cli_pid, pin.cli_create_time)
+    seat_row = new and _live_terminal(
+        db, external_id=external_id, source=source, machine_id=machine_id
+    )
+    if seat_pinned or seat_row:
+        unregister_thread_host(db, machine_id=machine_id, external_id=external_id, host=host)
+        return _refuse(
+            SESSION_CLAIMANT_MISMATCH, "a CLI took the thread meanwhile", source, external_id
+        )
+    return SessionStartClaim(proven=True, host=host)

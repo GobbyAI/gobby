@@ -11,6 +11,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import httpx
+import psutil
 import pytest
 from fastapi.testclient import TestClient
 
@@ -38,6 +39,8 @@ from tests.servers.conftest import create_http_server
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
+# The test process stands in for the session's CLI, so the row names its real start time.
+_STARTED = psutil.Process(os.getpid()).create_time()
 
 
 @pytest.mark.parametrize("in_tmux", [False, True])
@@ -83,7 +86,7 @@ async def test_minted_token_completes_mcp_and_hook_without_machine_credentials(
     )
     temp_db.execute(
         "UPDATE sessions SET terminal_context = %s::jsonb WHERE id = %s",
-        (json.dumps({"parent_pid": os.getpid()}), session.id),
+        (json.dumps({"parent_pid": os.getpid(), "parent_create_time": _STARTED}), session.id),
     )
     server = create_http_server(
         database=temp_db,
@@ -143,7 +146,12 @@ async def test_minted_token_completes_mcp_and_hook_without_machine_credentials(
         start_client = stack.enter_context(TestClient(server.app))
         with patch(
             "gobby.hooks.session_claimant.front_door_claimant",
-            return_value=Claimant(pid=os.getpid() + 1, parent_pid=os.getpid(), cli_pid=os.getpid()),
+            return_value=Claimant(
+                pid=os.getpid() + 1,
+                parent_pid=os.getpid(),
+                cli_pid=os.getpid(),
+                create_time=_STARTED,
+            ),
         ):
             start = start_client.post(
                 "/api/hooks/execute",

@@ -169,13 +169,13 @@ fn help_opens_on_the_attention_legend_and_a_search_hides_it() {
         ),
         (
             "‖ paused",
-            "alive but stopped: paused on purpose or interrupted by you",
+            "alive but not active: between turns, paused on purpose or interrupted by you",
         ),
         (
             "✕ no live agents",
             "agents are assigned but all are dead, or the machine's daemon is unreachable",
         ),
-        ("  blank", "nothing is assigned or being worked"),
+        ("  blank", "nothing is assigned"),
     ];
     assert_eq!(legend.len(), 2 + states.len() + 1, "{legend:?}");
     for ((state, means), row) in states.iter().zip(&legend[2..]) {

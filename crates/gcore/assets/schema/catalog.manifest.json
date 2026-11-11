@@ -1297,6 +1297,26 @@
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
     },
     {
+      "name": "codex_thread_hosts.external_id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "codex_thread_hosts.host_create_time",
+      "definition": "double precision|float8|NO||NEVER"
+    },
+    {
+      "name": "codex_thread_hosts.host_pid",
+      "definition": "integer|int4|NO||NEVER"
+    },
+    {
+      "name": "codex_thread_hosts.machine_id",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "codex_thread_hosts.seen_at",
+      "definition": "timestamp with time zone|timestamptz|NO|clock_timestamp()|NEVER"
+    },
+    {
       "name": "comms_attachments.content_type",
       "definition": "text|text|NO|'application/octet-stream'::text|NEVER"
     },
@@ -3627,6 +3647,14 @@
     {
       "name": "session_skills.skill_name",
       "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "session_startup_marks.cli_create_time",
+      "definition": "double precision|float8|YES||NEVER"
+    },
+    {
+      "name": "session_startup_marks.cli_pid",
+      "definition": "integer|int4|YES||NEVER"
     },
     {
       "name": "session_startup_marks.created_at",
@@ -6167,6 +6195,14 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
+      "name": "codex_thread_hosts.codex_thread_hosts_host_pid_check",
+      "definition": "CHECK (host_pid > 0)"
+    },
+    {
+      "name": "codex_thread_hosts.codex_thread_hosts_pkey",
+      "definition": "PRIMARY KEY (machine_id, external_id)"
+    },
+    {
       "name": "comms_attachments.comms_attachments_machine_id_fkey",
       "definition": "FOREIGN KEY (machine_id) REFERENCES machines(id)"
     },
@@ -6961,6 +6997,10 @@
     {
       "name": "session_skills.session_skills_session_id_fkey",
       "definition": "FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE"
+    },
+    {
+      "name": "session_startup_marks.session_startup_marks_pin_complete",
+      "definition": "CHECK (cli_pid IS NULL AND cli_create_time IS NULL OR cli_pid > 0 AND cli_create_time IS NOT NULL)"
     },
     {
       "name": "session_startup_marks.session_startup_marks_pkey",
@@ -8081,6 +8121,14 @@
     {
       "name": "code_symbols_search_bm25",
       "definition": "CREATE INDEX code_symbols_search_bm25 ON $schema.code_symbols USING bm25 (id, name, qualified_name, signature, docstring, summary) WITH (key_field=id)"
+    },
+    {
+      "name": "codex_thread_hosts_pkey",
+      "definition": "CREATE UNIQUE INDEX codex_thread_hosts_pkey ON $schema.codex_thread_hosts USING btree (machine_id, external_id)"
+    },
+    {
+      "name": "codex_thread_hosts_seen_at",
+      "definition": "CREATE INDEX codex_thread_hosts_seen_at ON $schema.codex_thread_hosts USING btree (seen_at)"
     },
     {
       "name": "comms_attachments_pkey",

@@ -76,6 +76,8 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         ("gdaemon", "0.4.153"),
         # gclient, gterm: the outage toast and the one-suite test layout changed in #25825 under 0.1.122, 0.1.28.
         ("gclient", "0.1.123"),
+        # gclient: live idle and waiting agents draw paused, not blank, changed in #25903 under 0.1.123.
+        ("gclient", "0.1.124"),
         ("gterm", "0.1.29"),
         ("ghook", "0.9.52"),
         ("ghook", "0.9.75"),

@@ -11,11 +11,13 @@ from unittest.mock import patch
 import psutil
 import pytest
 
+from gobby.terminals import foreground
 from gobby.terminals.foreground import (
+    _executable_path,
     _process_snapshot,
     command_name,
-    foreground_child_executables,
     foreground_commands,
+    foreground_executables,
     foreground_node_script,
     process_shell,
     shell_cwds,
@@ -23,6 +25,15 @@ from gobby.terminals.foreground import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _no_real_executables(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scripted ``ps`` tables name fake pids; never resolve them against this machine.
+
+    The module-level ``_executable_path`` import keeps the real function for its own tests.
+    """
+    monkeypatch.setattr(foreground, "_executable_path", lambda _pid: None)
 
 
 @pytest.mark.parametrize(
@@ -200,61 +211,37 @@ def test_an_unreadable_or_unstarted_shell_has_no_working_directory() -> None:
         assert shell_cwds({"gone": 54321}) == {}
 
 
-@dataclass
-class _Child:
-    pid: int
-    path: str
-    error: Exception | None = None
-
-    def exe(self) -> str:
-        if self.error is not None:
-            raise self.error
-        return self.path
-
-
-def test_child_executables_keep_direct_children_that_share_the_launchers_group() -> None:
-    claude = "/Users/josh/.local/share/claude/versions/2.1.318"
-    groups = {20: 20, 31: 20, 32: 99, 33: 20, 34: 20}
-    children = [
-        _Child(31, claude),
-        _Child(32, "/bin/sh"),  # left the launcher's group
-        _Child(33, "/bin/zsh", error=psutil.AccessDenied(pid=33)),
-        _Child(34, "/bin/zsh"),  # exited before its group was read
-    ]
-
-    def getpgid(pid: int) -> int:
-        if pid == 34:
-            raise ProcessLookupError(pid)
-        return groups[pid]
-
-    with (
-        patch("gobby.terminals.foreground.os.getpgid", side_effect=getpgid),
-        patch("gobby.terminals.foreground.psutil.Process") as process,
-    ):
-        process.return_value.children.return_value = children
-
-        assert foreground_child_executables(20) == [claude]
-
-    process.assert_called_once_with(20)
-    process.return_value.children.assert_called_once_with(recursive=False)
+def test_the_leaders_on_disk_executable_names_a_versioned_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ps`` cuts ``grok-1.0.77-macos-aarch64`` to 16 characters; the path keeps it whole."""
+    build = "/Users/u/.grok/downloads/grok-1.0.77-macos-aarch64"
+    table = "37904 86413 zsh\n86413 86413 grok-1.0.77-maco\n"
+    monkeypatch.setattr(foreground, "_executable_path", lambda pid: build if pid == 86413 else None)
+    with patch("gobby.terminals.foreground.spawn.run", return_value=_ps(table)):
+        assert foreground_executables({"seat": 37904}) == {"seat": build}
 
 
-def test_child_executables_are_empty_when_the_launcher_is_gone() -> None:
-    with (
-        patch("gobby.terminals.foreground.os.getpgid", return_value=20),
-        patch(
-            "gobby.terminals.foreground.psutil.Process",
-            side_effect=psutil.NoSuchProcess(pid=20),
-        ),
-    ):
-        assert foreground_child_executables(20) == []
+def test_an_unreadable_executable_falls_back_to_the_accounting_name() -> None:
+    with patch("gobby.terminals.foreground.spawn.run", return_value=_ps(PS_TABLE)):
+        assert foreground_executables({"busy": 83724}) == {"busy": "claude"}
 
 
-def test_child_executables_are_empty_when_the_launchers_group_is_unreadable() -> None:
-    with (
-        patch("gobby.terminals.foreground.os.getpgid", side_effect=ProcessLookupError(20)),
-        patch("gobby.terminals.foreground.psutil.Process") as process,
-    ):
-        assert foreground_child_executables(20) == []
+def test_executable_path_reads_the_process_image() -> None:
+    with patch("gobby.terminals.foreground.psutil.Process") as process:
+        process.return_value.exe.return_value = "/opt/homebrew/bin/codex"
+        assert _executable_path(4242) == "/opt/homebrew/bin/codex"
+        process.assert_called_once_with(4242)
 
-    process.assert_not_called()
+
+@pytest.mark.parametrize(
+    "outcome",
+    [psutil.AccessDenied(4242), psutil.NoSuchProcess(4242), OSError("gone"), "", "codex"],
+)
+def test_executable_path_is_none_when_no_absolute_image_is_readable(outcome: object) -> None:
+    with patch("gobby.terminals.foreground.psutil.Process") as process:
+        if isinstance(outcome, BaseException):
+            process.return_value.exe.side_effect = outcome
+        else:
+            process.return_value.exe.return_value = outcome
+        assert _executable_path(4242) is None

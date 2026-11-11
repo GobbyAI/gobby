@@ -319,7 +319,6 @@ pub fn post_and_cleanup(
     match req.send_string(&body) {
         Ok(resp) if (200..300).contains(&resp.status()) => {
             let status_code = Some(resp.status());
-            session_binding::remember_bound_credential(envelope, &caller);
             // The session credential is recorded and removed from the body here, so
             // the report that reaches diagnostics and response mapping never holds it.
             let response_body = resp.into_string().ok().map(|raw| {

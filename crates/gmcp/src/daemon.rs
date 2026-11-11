@@ -2,9 +2,10 @@
 
 use crate::{contract::WRAPPER_CONTRACT, session_binding, terminal_context};
 use anyhow::Context;
-use gobby_core::session_credential::{self, SESSION_ID_HEADER};
+use gobby_core::session_credential::{self, SESSION_ID_HEADER, SessionCredential};
 use gobby_core::{daemon_url::daemon_url, local_token, project};
 use serde_json::{Map, Value, json};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::io;
@@ -45,6 +46,36 @@ pub struct Dialer {
     agent: ureq::Agent,
     state: Mutex<CachedState>,
     tool_timeouts: Mutex<Option<BTreeMap<String, Duration>>>,
+    /// Credentials the daemon handed out for Codex threads under the shared worker.
+    thread_credentials: Mutex<BTreeMap<String, SessionCredential>>,
+}
+
+thread_local! {
+    /// The Codex thread the tool call running on this OS thread was made for.
+    static CALL_THREAD: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Restores the previous call thread when a `for_thread` scope ends, even on panic.
+struct CallThreadScope(Option<String>);
+
+impl Drop for CallThreadScope {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        CALL_THREAD.with(|thread| *thread.borrow_mut() = previous);
+    }
+}
+
+/// Run `body` as a tool call Codex made for `thread`, so its requests bind to that thread.
+///
+/// The thread is scoped to the call, not kept on the dialer: one client under the shared
+/// worker can serve concurrent calls from different threads.
+pub fn for_thread<R>(thread: Option<String>, body: impl FnOnce() -> R) -> R {
+    let _scope = CallThreadScope(CALL_THREAD.with(|current| current.replace(thread)));
+    body()
+}
+
+pub(crate) fn call_thread() -> Option<String> {
+    CALL_THREAD.with(|thread| thread.borrow().clone())
 }
 
 pub struct RequestOptions<'a> {
@@ -106,6 +137,7 @@ impl Dialer {
                 .max_idle_connections(0)
                 .build(),
             tool_timeouts: Mutex::new(None),
+            thread_credentials: Mutex::new(BTreeMap::new()),
             state: Mutex::new(CachedState {
                 // Only a managed run carries the machine key; an unspawned client never
                 // reads it.
@@ -196,6 +228,21 @@ impl Dialer {
             .map_err(|_| anyhow::anyhow!("dialer cache lock poisoned"))
     }
 
+    /// The credential for `thread`, cached or exchanged from the daemon. None until the
+    /// thread's start has registered it to this worker and its session row exists.
+    fn thread_binding(&self, base: &str, thread: &str) -> Option<SessionCredential> {
+        if let Some(credential) = self.thread_credentials.lock().ok()?.get(thread) {
+            return Some(credential.clone());
+        }
+        let machine_key = local_token::read_api_key().ok()?;
+        let credential = exchange_thread_credential(&self.agent, base, &machine_key, thread)?;
+        self.thread_credentials
+            .lock()
+            .ok()?
+            .insert(thread.to_owned(), credential.clone());
+        Some(credential)
+    }
+
     fn request_inner(
         &self,
         method: &str,
@@ -206,12 +253,19 @@ impl Dialer {
         // An unspawned client sends only its own session's credential. Without one it
         // refuses locally, before any connection, so the machine key never travels for it.
         let managed = session_credential::is_managed_environment();
-        let binding = session_binding::cli_binding();
+        // A restart may change the port; resolve the endpoint on every request.
+        let base = daemon_url()?.trim_end_matches('/').to_owned();
+        let mut binding = session_binding::cli_binding();
+        let mut bound_thread = None;
+        if binding.is_none() && session_binding::under_shared_host() {
+            bound_thread = call_thread();
+            binding = bound_thread
+                .as_deref()
+                .and_then(|thread| self.thread_binding(&base, thread));
+        }
         if !managed && binding.is_none() {
             return Ok(Answer::Final(unbound_refusal()));
         }
-        // A restart may change the port; resolve the endpoint on every request.
-        let base = daemon_url()?.trim_end_matches('/').to_owned();
         if options.preflight {
             let recent = self
                 .cached()?
@@ -339,6 +393,13 @@ impl Dialer {
             }
         };
         let status = response.status();
+        if status == 401
+            && let Some(thread) = &bound_thread
+            && let Ok(mut credentials) = self.thread_credentials.lock()
+        {
+            // The session ended or the key rotated; the next call exchanges again.
+            credentials.remove(thread);
+        }
         let text = match response.into_string() {
             Ok(text) => text,
             Err(error) if is_timeout(&error) => {
@@ -426,13 +487,52 @@ fn auth_headers() -> anyhow::Result<Headers> {
     Ok(headers)
 }
 
+/// The daemon route that binds a client under Codex's shared worker to one thread.
+pub const CODEX_THREAD_CREDENTIAL_PATH: &str = "/api/hooks/codex-thread-credential";
+
+/// Exchange `thread` for its session credential. The daemon checks, from the kernel
+/// socket table, that this client's parent is the live worker the thread registered
+/// from. The machine key travels only on this exchange, never on a tool call.
+pub fn exchange_thread_credential(
+    agent: &ureq::Agent,
+    base: &str,
+    machine_key: &str,
+    thread: &str,
+) -> Option<SessionCredential> {
+    let response = agent
+        .post(&format!("{base}{CODEX_THREAD_CREDENTIAL_PATH}"))
+        .timeout(Duration::from_secs(5))
+        .set(
+            "Authorization",
+            &local_token::authorization_bearer(machine_key),
+        )
+        .send_json(json!({"thread_id": thread}))
+        .ok()?;
+    let answer: Value = response.into_json().ok()?;
+    if answer["success"] != true {
+        return None;
+    }
+    let field = |name: &str| {
+        answer[name]
+            .as_str()
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+    };
+    Some(SessionCredential {
+        token: field("token")?,
+        session_id: field("session_id")?,
+        project_id: field("project_id")?,
+        provider_session_id: thread.to_owned(),
+    })
+}
+
 /// The local answer for an unspawned client with no session-bound credential. Nothing
 /// was sent, so nothing ran.
 fn unbound_refusal() -> Value {
     json!({
         "success": false,
         "error_code": "session_credential_unbound",
-        "error": "this session has no session-bound credential, so the request was not sent; start the session from its CLI so its SessionStart hook stores one. A Codex TUI attached to Codex's shared app-server daemon cannot be bound to one session: relaunch it with `codex resume --no-daemon <session id>` (or `codex --no-daemon`)",
+        "error": "this session has no session-bound credential, so the request was not sent; start the session from its CLI so its SessionStart hook stores one. A Codex thread on Codex's shared app-server binds once its start has registered it to that worker and its session exists; if it still cannot, relaunch it with `codex resume --no-daemon <session id>` (or `codex --no-daemon`)",
     })
 }
 

@@ -11,6 +11,7 @@ The composer read is the ledger's, so the probe a test scripts remains the compo
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
@@ -34,15 +35,32 @@ class ScriptedPane:
         return self._text
 
 
+def install_agent_clis(monkeypatch: pytest.MonkeyPatch, root: Path) -> Callable[[str], str]:
+    """Install every agent CLI as a build under ``root`` that the gate's PATH lookup finds.
+
+    Returns the foreground executable for a name: an installed CLI's build path, or the
+    name itself for anything else (a shell, an editor), which the gate never resolves.
+    """
+    bin_dir = root / "installed-clis"
+    bin_dir.mkdir(exist_ok=True)
+    for cli in gate._AGENT_CLIS:
+        (bin_dir / cli).write_bytes(b"")
+    monkeypatch.setattr(gate, "_installed_cli", lambda cli: bin_dir / cli)
+    return lambda name: str(bin_dir / name) if name in gate._AGENT_CLIS else name
+
+
 @pytest.fixture(autouse=True)
-def agent_target(monkeypatch: pytest.MonkeyPatch) -> Callable[..., None]:
+def agent_target(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[..., None]:
     """Script the gate's process, pane, ledger and manifest reads for one terminal."""
+    executable = install_agent_clis(monkeypatch, tmp_path)
 
     def install(*, foreground: str, snapshot: str) -> None:
         pane = ScriptedPane(snapshot)
         monkeypatch.setattr(gate, "shell_pid", lambda _row: SHELL_PID)
         monkeypatch.setattr(
-            gate, "foreground_executables", lambda pids: dict.fromkeys(pids, foreground)
+            gate,
+            "foreground_executables",
+            lambda pids: dict.fromkeys(pids, executable(foreground)),
         )
         monkeypatch.setattr(gate, "read_composer", lambda _id: SimpleNamespace(state="empty"))
         monkeypatch.setattr(gate, "live_runtime_pane", lambda *_args: pane)

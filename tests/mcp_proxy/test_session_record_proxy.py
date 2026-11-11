@@ -100,6 +100,30 @@ async def test_unmanaged_request_without_a_record_refuses_before_any_request(
     machine_key.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_the_session_a_call_names_never_selects_a_credential(unmanaged: Path) -> None:
+    """Only this CLI's own record speaks for it; a call naming another session finds none.
+
+    A record kept under any other key, such as a session ref, is never selected by the
+    session_id a call carries, wherever the proxy was launched from.
+    """
+    for key in ("session-ref:#7", f"session-ref:{SESSION_ID}"):
+        _store_record(unmanaged, key, {"token": TOKEN, "session_id": SESSION_ID})
+    client = _client()
+
+    with (
+        patch("gobby.mcp_proxy.stdio_proxy.daemon_auth_headers") as machine_key,
+        patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient", return_value=client),
+    ):
+        proxy = DaemonProxy(60887)
+        for named in ("#7", SESSION_ID):
+            result = await proxy._request("POST", "/api/mcp/tools/call", json={}, session_id=named)
+            assert result["error_code"] == "session_credential_unbound"
+
+    client.request.assert_not_awaited()
+    machine_key.assert_not_called()
+
+
 def test_unmanaged_constructor_never_reads_the_machine_key(unmanaged: Path) -> None:
     with patch(
         "gobby.mcp_proxy.stdio_proxy.daemon_auth_headers",
