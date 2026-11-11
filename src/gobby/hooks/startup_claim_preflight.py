@@ -1,4 +1,8 @@
-"""Pre-submission startup-context claim lifecycle for AGY PreInvocation.
+"""Pre-submission startup-context claim lifecycle for AGY SessionStart and PreInvocation.
+
+Either hook may start the session: SessionStart opens a new conversation, and
+PreInvocation opens every turn, resumed conversations included. Both pass through
+the same hint checks, so neither can rebind a hinted row to another conversation.
 
 The preflight resolves the canonical session for an AGY turn before the adapter
 runs and allocates the startup-context generation on it: a validated
@@ -26,7 +30,10 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
 
-_PREINVOCATION_HOOKS = frozenset({"preinvocation", "pre_invocation"})
+_SESSION_OPENING_HOOKS = frozenset(
+    {"sessionstart", "session_start", "preinvocation", "pre_invocation"}
+)
+_SESSION_START_HOOKS = frozenset({"sessionstart", "session_start"})
 _PRIVATE_RESPONSE_KEYS = frozenset(
     {
         "_gobby_startup_claim",
@@ -57,10 +64,10 @@ class StartupClaimLease:
     owner_token: str
 
 
-def is_agy_pre_invocation(source: str | None, hook_type: str | None) -> bool:
-    """Return whether this envelope is AGY PreInvocation."""
+def is_agy_session_opening(source: str | None, hook_type: str | None) -> bool:
+    """Return whether this envelope is an AGY hook that may start its session."""
     return (source or "") == AGY_SESSION_SOURCE and (hook_type or "").casefold() in (
-        _PREINVOCATION_HOOKS
+        _SESSION_OPENING_HOOKS
     )
 
 
@@ -74,10 +81,15 @@ def preflight_timeout_seconds(adapter_timeout: float) -> float:
     return max(0.0, min(STARTUP_CLAIM_PREFLIGHT_TIMEOUT_SECONDS, float(adapter_timeout)))
 
 
-def _payload_is_agy_pre_invocation(payload: dict[str, Any]) -> bool:
+def _payload_hook_key(payload: dict[str, Any]) -> str:
+    hook_type = payload.get("hook_type")
+    return hook_type.casefold() if isinstance(hook_type, str) else ""
+
+
+def _payload_is_agy_session_opening(payload: dict[str, Any]) -> bool:
     source = payload.get("source")
     hook_type = payload.get("hook_type")
-    return is_agy_pre_invocation(
+    return is_agy_session_opening(
         source if isinstance(source, str) else None,
         hook_type if isinstance(hook_type, str) else None,
     )
@@ -95,7 +107,7 @@ async def preflight_agy_startup_claim_bounded(
     lease it eventually returns is compare-and-invalidated so no generation
     stays claimed by a request that already exited.
     """
-    if not _payload_is_agy_pre_invocation(payload):
+    if not _payload_is_agy_session_opening(payload):
         return None
     worker = asyncio.ensure_future(
         asyncio.to_thread(preflight_agy_startup_claim, payload, hook_manager)
@@ -144,7 +156,7 @@ def preflight_agy_startup_claim(
     hook_manager: Any,
 ) -> StartupClaimLease | None:
     """Resolve, adopt, or register the canonical session and claim startup context."""
-    if not _payload_is_agy_pre_invocation(payload):
+    if not _payload_is_agy_session_opening(payload):
         return None
 
     from gobby.sessions.transcripts.agy import read_current_user_prompt
@@ -171,6 +183,14 @@ def preflight_agy_startup_claim(
 
     conversation_id = _conversation_id(payload)
     session_id, rejected_hint = _adopt_hinted_session(session_manager, payload, conversation_id)
+    if session_id is None and _payload_hook_key(payload) in _SESSION_START_HOOKS:
+        # Every CLI's startup defers its row to the first prompt, so SessionStart
+        # registers nothing: the first PreInvocation creates the row and delivers the
+        # startup context. It starts only a validated pre-created row; a hint that
+        # names no row for this conversation dispatches nothing.
+        if _payload_field(payload, "_platform_session_id") and not rejected_hint:
+            payload["_gobby_session_hint_error"] = "session hint names no session"
+        return None
     if session_id is None:
         session_id = _resolve_or_register_session(
             session_manager,

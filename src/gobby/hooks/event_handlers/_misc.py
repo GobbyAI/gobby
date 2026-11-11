@@ -14,6 +14,7 @@ from gobby.app_context import get_app_context
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
 from gobby.hooks.checkout_reads import node_origin
 from gobby.hooks.event_handlers._base import EventHandlersBase
+from gobby.hooks.event_handlers._model_observation import record_reported_model
 from gobby.hooks.event_handlers._session_start.in_place_compact import (
     apply_in_place_compact_context_loss,
 )
@@ -182,16 +183,17 @@ class MiscEventHandlerMixin(EventHandlersBase):
         return HookResponse(decision="allow")
 
     def handle_before_model(self, event: HookEvent) -> HookResponse:
-        """Handle BEFORE_MODEL events.
+        """Handle BEFORE_MODEL events and record the model the request names.
 
-        Antigravity's later PreInvocations resume the turn. Codex PreModelRequest is
-        observed only: it arrives fire-and-forget and may fire outside a prompt-to-Stop
+        Antigravity's later PreInvocations resume the turn. Codex PreModelRequest
+        never does: it arrives fire-and-forget and may fire outside a prompt-to-Stop
         bracket, so it must never reopen a finished turn.
         """
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:
             self.logger.debug("BEFORE_MODEL: session %s", session_id)
+            record_reported_model(self, event, event.data.get("model"))
             if event.source is not SessionSource.CODEX:
                 self._resume_turn_lifecycle(event)
         else:
@@ -199,15 +201,42 @@ class MiscEventHandlerMixin(EventHandlersBase):
 
         return HookResponse(decision="allow")
 
+    def handle_post_model_switch(self, event: HookEvent) -> HookResponse:
+        """Record the model a Claude ``/model`` switch (or resume restore) landed on.
+
+        ``to_model`` is the setting the switch applied, which can be an alias the
+        catalog resolves. ``requested_model`` (what was typed), ``source`` and the
+        cache-cost estimate (``context_tokens``, ``prompt_cache_warm``, ``cache_ttl``,
+        ``estimated_cache_write_usd``, ``pricing``) describe the switch, not the
+        session, so they stay on the event only.
+        """
+        record_reported_model(self, event, event.data.get("to_model"))
+        return HookResponse(decision="allow")
+
     def handle_after_model(self, event: HookEvent) -> HookResponse:
         """Handle AFTER_MODEL events.
 
-        Codex PostModelRequest is observed only; its usage stays with the transcript ledger.
+        Codex PostModelRequest records the request's model. Its ``token_usage`` is one
+        attempt's usage, retries included, while the session's usage columns hold
+        absolute totals that the transcript ledger owns, so it is not written. A
+        failed or cancelled attempt is logged: Codex may retry it, and the watchdog
+        raises the terminal provider error from the transcript.
         """
         session_id = event.metadata.get("_platform_session_id")
         input_data = event.data
 
-        if session_id and event.source is not SessionSource.CODEX:
+        if session_id and event.source is SessionSource.CODEX:
+            record_reported_model(self, event, input_data.get("model"))
+            status = input_data.get("status")
+            if status in {"failed", "cancelled"}:
+                self.logger.info(
+                    "Codex model request %s for session %s (turn %s): %s",
+                    status,
+                    session_id,
+                    input_data.get("turn_id"),
+                    input_data.get("error"),
+                )
+        elif session_id:
             self.logger.debug("AFTER_MODEL: session %s", session_id)
 
             # Extract usage metadata from response

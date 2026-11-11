@@ -169,7 +169,7 @@ class EventHandlers(
             HookEventType.BEFORE_MODEL: self.handle_before_model,
             HookEventType.AFTER_MODEL: self.handle_after_model,
             HookEventType.PRE_MODEL_SWITCH: self.handle_neutral,
-            HookEventType.POST_MODEL_SWITCH: self.handle_neutral,
+            HookEventType.POST_MODEL_SWITCH: self.handle_post_model_switch,
             HookEventType.PERMISSION_REQUEST: self.handle_permission_request,
             HookEventType.PERMISSION_DENIED: self.handle_permission_denied,
             HookEventType.STOP: self.handle_stop,

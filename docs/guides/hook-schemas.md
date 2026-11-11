@@ -217,14 +217,20 @@ passes kebab-case hook types to the daemon.
 
 Antigravity hooks are installed to `~/.gemini/config/hooks.json`, which is the Antigravity
 vendor config path. These are its six native events; Antigravity does not expose
-`UserPromptSubmit`. `SessionStart` is observed only, as `setup`: `PreInvocation` alone
-starts the session, behind the startup-claim preflight and its hint checks, and
-dispatches an idempotent `session_start` first. Gobby separately supports managed spawning and web chat through Antigravity's
-custom stream-json subprocess transport on 1.1.18+.
+`UserPromptSubmit`. `SessionStart` fires only for a new conversation, never on resume. Like
+every CLI's startup, it pins the conversation and defers its session row to the first
+prompt: the first `PreInvocation` registers the row, dispatches an idempotent
+`session_start`, and delivers the startup context as `injectSteps`. `SessionStart` starts
+a session itself only for a validated pre-created row (a spawned seat), and a hint the
+preflight rejects starts nothing. Both hooks pass the startup-claim preflight and its hint
+checks before the adapter runs. Every
+Antigravity hook names the live model (`modelName`); Gobby records it on session start
+and on each invocation. Gobby separately supports managed spawning and web chat through
+Antigravity's custom stream-json subprocess transport on 1.1.18+.
 
 | Native Hook | Raw Workflow Event | Semantic Event |
 | --- | --- | --- |
-| `SessionStart` | `setup` | `setup` |
+| `SessionStart` | `session_start` | `session_start` |
 | `PreInvocation` | `before_agent` | `turn_start` |
 | `PostInvocation` | `after_agent` | `turn_end` |
 | `PreToolUse` | `before_tool` | `before_tool` |
@@ -250,16 +256,24 @@ integration, but they are not the installed terminal hook contract.
 | `PostModelRequest` | `after_model` | `after_model` |
 | `Stop` | `stop` | `turn_end` |
 
-Claude `PreModelSwitch` and `PostModelSwitch` are observed and allowed. The
-session's model label still comes from the transcript, because `to_model` can
-be an alias. Claude blocks the switch when a `PreModelSwitch` hook times out,
+Claude `PreModelSwitch` is allowed by default and a rule can block it.
+`PostModelSwitch` records `to_model` as the session's model, resolving an alias
+through the provider catalog; an alias the catalog cannot resolve is not stored.
+`requested_model`, `source` and the cache-cost estimate (`context_tokens`,
+`prompt_cache_warm`, `cache_ttl`, `estimated_cache_write_usd`, `pricing`) describe
+the switch, not the session. Claude blocks the switch when a `PreModelSwitch` hook times out,
 so the installed 120-second timeout sits outside ghook's 30-second transport
 window: a slow daemon fails open and `/model` proceeds.
 
 Codex `PreModelRequest` and `PostModelRequest` are fire-and-forget
-(`--enqueue-only`) and observe only: a Codex `before_model` never reopens a
-turn, and token usage stays with the transcript ledger. Codex treats both
-outputs as diagnostic only, so the adapter returns `{}`.
+(`--enqueue-only`). Both record the request's `model` on the session; a native
+subagent's request never overwrites its parent's model. A Codex `before_model` never
+reopens a turn. `PostModelRequest`'s `token_usage` is one attempt's usage, retries
+included, while the session's usage columns are absolute totals the transcript ledger
+owns, so it is not written. A `failed` or `cancelled` `status` is logged with its
+`turn_id` and `error`; the watchdog raises the terminal provider error from the
+transcript, since Codex may retry. Codex treats both outputs as diagnostic only, so
+the adapter returns `{}`.
 
 Codex `PreToolUse` and `Stop` responses use `systemMessage` for context; Codex
 does not accept `additionalContext` for those hooks.

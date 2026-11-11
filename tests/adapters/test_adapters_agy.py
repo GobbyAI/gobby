@@ -325,30 +325,66 @@ def test_handle_native_uses_agy_source_and_compact_response() -> None:
     assert hook_event.event_type is HookEventType.BEFORE_TOOL
 
 
-def test_session_start_is_observed_and_never_starts_a_session() -> None:
-    """SessionStart must not bypass PreInvocation's startup-claim preflight (#25918).
+def test_session_start_starts_the_session_with_its_preflight_claim() -> None:
+    """SessionStart is a guarded start (#25918): it carries the preflight's claim.
 
-    A start here would reach the generic handler, which adopts a GOBBY_SESSION_ID-hinted
-    row and rewrites its external_id to the new conversation without the hint checks.
+    The preflight's hint checks run first, so the start reaches the session-start
+    handler holding the claim the preflight resolved, never an unchecked hint.
     """
     from gobby.hooks.session_credential import is_session_start_hook
-    from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS
 
     hook_manager = MagicMock()
     hook_manager.handle.return_value = HookResponse(decision="allow", context="Startup packet")
+    claim = {"session_id": "sess-1", "generation": 1, "owner_token": "tok"}
     native_event = {
         "hook_type": "SessionStart",
         "source": "agy",
-        "input_data": {"hook_event_name": "SessionStart", "conversationId": "conv-new"},
+        "_gobby_startup_claim": claim,
+        "input_data": {
+            "hook_event_name": "SessionStart",
+            "conversationId": "conv-new",
+            "modelName": "gemini-3-flash-agent",
+        },
     }
 
     result = AgyAdapter().handle_native(native_event, hook_manager)
 
-    dispatched = [call.args[0].event_type for call in hook_manager.handle.call_args_list]
-    assert dispatched == [HookEventType.SETUP]
-    assert HookEventType.SETUP in NON_MATERIALIZING_EVENTS
-    assert is_session_start_hook("agy", "SessionStart") is False
+    events = [call.args[0] for call in hook_manager.handle.call_args_list]
+    assert [event.event_type for event in events] == [HookEventType.SESSION_START]
+    assert events[0].metadata["_gobby_startup_claim"] == claim
+    assert events[0].data["model"] == "gemini-3-flash-agent"
+    assert is_session_start_hook("agy", "SessionStart") is True
     assert is_session_start_hook("agy", "PreInvocation") is True
+    assert set(result) == {"injectSteps"}
+    assert "Startup packet" in result["injectSteps"][0]["ephemeralMessage"]
+
+
+@pytest.mark.parametrize(
+    ("event_extra", "input_extra"),
+    [
+        ({}, {"prompt": "/gobby help"}),
+        ({"_gobby_session_hint_error": "session hint names no session"}, {}),
+    ],
+    ids=["help-prompt", "rejected-hint"],
+)
+def test_session_start_starts_nothing_for_help_or_a_rejected_hint(
+    event_extra: dict[str, Any], input_extra: dict[str, Any]
+) -> None:
+    hook_manager = MagicMock()
+    native_event: dict[str, Any] = {
+        "hook_type": "SessionStart",
+        "source": "agy",
+        "input_data": {
+            "hook_event_name": "SessionStart",
+            "conversationId": "conv-new",
+            **input_extra,
+        },
+        **event_extra,
+    }
+
+    result = AgyAdapter().handle_native(native_event, hook_manager)
+
+    hook_manager.handle.assert_not_called()
     assert result == {}
 
 

@@ -446,7 +446,7 @@ def _agy_capabilities() -> ProviderCapabilities:
             extra_fields.extend(["permission_decision", "auto_approve", "modified_input"])
         elif hook_name == "Stop":
             decision_style = ProviderDecisionStyle.HARD_STOP
-        elif hook_name in {"PreInvocation", "PostInvocation"}:
+        elif hook_name in {"SessionStart", "PreInvocation", "PostInvocation"}:
             context_channel = ContextChannel.INJECT_STEPS
 
         events[hook_name] = HookCapability(
@@ -458,8 +458,9 @@ def _agy_capabilities() -> ProviderCapabilities:
                 *extra_fields,
                 context_channel=context_channel,
             ),
-            # AgyAdapter.handle_native dispatches a synthetic SESSION_START per PreInvocation.
-            starts_session=hook_name == "PreInvocation",
+            # SessionStart starts a new conversation; AgyAdapter.handle_native dispatches a
+            # synthetic SESSION_START per PreInvocation for resumed ones.
+            starts_session=hook_name in {"SessionStart", "PreInvocation"},
         )
 
     return ProviderCapabilities(
