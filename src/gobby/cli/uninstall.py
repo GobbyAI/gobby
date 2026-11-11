@@ -9,7 +9,6 @@ import psycopg
 
 from gobby.cli.exposure_config import read_exposure_config
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
-from gobby.config.bootstrap_io import bootstrap_path as default_bootstrap_path
 from gobby.paths import get_gobby_home
 from gobby.ui_exposure import UiExposeError, disable_mcp_exposure, disable_tailscale_ui
 
@@ -34,7 +33,7 @@ def _teardown_ui_exposure() -> None:
     """
     try:
         bootstrap = load_bootstrap(resolve_database_url=False)
-        ui_config, mcp_config = read_exposure_config(default_bootstrap_path())
+        ui_config, mcp_config = read_exposure_config()
     except (BootstrapConfigError, RuntimeError, psycopg.Error) as exc:
         click.echo(f"Warning: could not read Tailscale exposure intent: {exc}", err=True)
         return

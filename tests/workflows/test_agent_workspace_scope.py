@@ -265,16 +265,15 @@ def _register(
     session_id = str(uuid4())
     db.execute(
         """
-        INSERT INTO sessions (id, external_id, machine_id, source, project_id, title,
+        INSERT INTO sessions (id, external_id, machine_id, source, project_id,
                               status, agent_depth, seq_num)
-        VALUES (%s, %s, %s, 'test', %s, %s, %s, 0, %s)
+        VALUES (%s, %s, %s, 'test', %s, %s, 0, %s)
         """,
         (
             session_id,
             f"ext-{session_id}",
             require_machine_id(),
             project_id,
-            agent_type,
             status,
             seq,
         ),

@@ -476,7 +476,7 @@ async def test_a_focused_native_pane_without_the_lease_holds_the_comms_wake(
 
         assert result.get("skipped") == PANE_FOCUSED
         seat.pane_sender.assert_not_awaited()
-        assert seat.dispatcher._focus_holds == {TERMINAL_ID: {seat.session.id: "normal"}}
+        assert seat.dispatcher._focus_holds == {TERMINAL_ID: {seat.session.id}}
     finally:
         _cancel_background(seat.dispatcher)
 

@@ -2757,13 +2757,9 @@ def _deferred_start_event(
 # materialize by binding to a parent session. This matrix only ever sends orphans, and
 # a second guard in ``SessionLookupService`` refuses to auto-register those, so here
 # they behave as non-materializing without belonging to the production frozenset.
-# Automatic compaction hooks are held by ``CompactionOwnership`` until the next main-thread
-# event, so a first compaction hook also reaches no handler and materializes nothing.
 _ORPHAN_NON_MATERIALIZING_EVENTS = NON_MATERIALIZING_EVENTS | {
     HookEventType.SUBAGENT_START,
     HookEventType.SUBAGENT_STOP,
-    HookEventType.PRE_COMPACT,
-    HookEventType.POST_COMPACT,
 }
 
 # A PostCompact and an auto PreCompact wait for a main-thread event, then materialize.

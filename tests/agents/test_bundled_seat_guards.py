@@ -54,7 +54,7 @@ def test_spawner_guard_admits_only_callers_holding_a_listed_capability(path: Pat
         return
     for caller_path in _bundled_files():
         caller = _body(caller_path)
-        holds = bool(set(caller.capabilities) & set(guard.spawner_capabilities))
+        holds = any(caller.holds(required) for required in guard.spawner_capabilities)
         assert guard.admits_spawner(caller.capabilities) is holds, caller_path.stem
 
 

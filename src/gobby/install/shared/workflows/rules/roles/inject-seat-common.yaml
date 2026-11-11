@@ -1,4 +1,4 @@
-version: "4.1.0"
+version: "4.1.1"
 tags: [roles, runbook, enforcement, gobby]
 
 rules:
@@ -15,18 +15,18 @@ rules:
           ## Seat Guidance
           Operator runs this fleet.
           - Follow _agent_type; refer out-of-role work to Orchestrator through Triage.
-          - Messages: gobby-agents:send_message. Only Assistant and Triage message Orchestrator; others report to Triage or their Dev Team Lead. When terminal policy permits send_keys, use it for stalled-session resume only, never steering. No seat may enter credentials or type into a password or credential prompt.
-          - No spawns except Assistant and Orchestrator. A team manager spawns and resumes its own team's seats via spawn_agent within the team's scope. Runbooks start seats.
-          - Only Orchestrator launches pipelines/runbooks (Assistant if down), except that an epic's Dev Team Lead runs dev-team itself for its own leaves (parent_team_id) and relaunches (team_id). Only Orchestrator and Assistant create/register projects on operator GO; others request via Orchestrator.
-          - The daemon announces its own restarts and cutovers: a waking hold notice before it stops and DAEMON BACK once healthy. Never send these by hand; a restart needs no acknowledgements. Honor quiet hours and coordinate operations that can kill agent panes.
+          - Messages: gobby-agents:send_message. Only Assistant and Triage message Orchestrator; others report to Triage or their Dev Team Lead. send_keys, where policy permits, only resumes stalled sessions. No seat may enter credentials or type into a password or credential prompt.
+          - Only Assistant, Orchestrator, and a team manager (its own team's seats, via spawn_agent) spawn or resume seats. Runbooks start seats.
+          - Only Orchestrator launches pipelines/runbooks (Assistant if down), except that an epic's Dev Team Lead runs dev-team itself for its own leaves (parent_team_id) and relaunches (team_id). Only Orchestrator and Assistant create/register projects, on operator GO.
+          - The daemon announces its own restarts and cutovers (hold notice, then DAEMON BACK); never send these by hand, and none needs acks. Honor quiet hours; coordinate operations that can kill agent panes.
           - During a restart or cutover hold, `gobby-sessions:get_handoff` is always allowed and required. Do not wait for DAEMON BACK to consume it. `gobby-agents:wait_for_coordination` and `gobby-agents:send_message` stay allowed, and `set_handoff` stays allowed until shutdown admission closes; other task work stays paused.
           - Push: operator approves exact SHA; Orchestrator alone runs/directs it.
           - Work: claimed task, stop gate, handoff; no native goals.
-          - Status line: keep your session's one-line status current with gobby-sessions:set_status_line (a short phrase for what you are doing now). Set it when your focus changes and clear it with an empty value when you finish or stop. The sidebar shows it while you hold no task.
+          - Status line: gobby-sessions:set_status_line with a short phrase when your focus changes; an empty value when you finish.
           - Operator text: #NNNNN needs title/phrase; healthy="Systems nominal".
           - Combine aligned tasks. Assistant sends decision links/buttons once, plans as attachments; never nag/echo operator.
           - Definitions never name terminal backends.
-          - Orchestrator edits tasks; Assistant only on operator request; other seats request edits via Orchestrator, including their own.
+          - Orchestrator edits tasks; Assistant only on operator request; others request edits, own included, via Orchestrator.
       - type: set_variable
         delivery: on_receipt
         variable: _seat_common_injected

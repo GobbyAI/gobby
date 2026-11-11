@@ -149,7 +149,6 @@ class TestProjectResolutionEndpoints:
                     "machine_id": "21000000-0000-4000-8000-000000000002",
                     "source": "claude",
                     "cwd": str(temp_dir),
-                    "title": "Persistence Test Session",
                 },
             )
 
@@ -165,7 +164,6 @@ class TestProjectResolutionEndpoints:
         assert get_data["status"] == "success"
         assert get_data["session"]["external_id"] == "persist-test-key"
         assert get_data["session"]["id"] == session_id
-        assert get_data["session"]["title"] == "Persistence Test Session"
 
     def test_register_with_invalid_project_path(
         self,

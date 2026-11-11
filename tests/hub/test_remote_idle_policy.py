@@ -294,27 +294,12 @@ async def test_node_run_failed_after_max_reprompts(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("idle", "terminal_reason"),
-    [
-        pytest.param(
-            _idle(status="idle", quota={"provider": "claude", "reset_time": None}),
-            "provider_quota_exhausted",
-            id="reported-quota",
-        ),
-        pytest.param(_idle(status="context_full"), None, id="context-full"),
-    ],
-)
-async def test_quota_and_context_full_fail_node_run(
-    temp_db: HubDatabase,
-    node: _Node,
-    monkeypatch: pytest.MonkeyPatch,
-    idle: dict[str, Any],
-    terminal_reason: str | None,
+async def test_context_full_fails_node_run(
+    temp_db: HubDatabase, node: _Node, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     terminal = _terminal(REMOTE)
     harness = _Harness(temp_db, monkeypatch, terminal)
-    _report(_Entry(terminal, idle))
+    _report(_Entry(terminal, _idle(status="context_full")))
     harness.idle_long_ago(terminal)
     node.replies = [{"stopped": True}]
 
@@ -325,7 +310,26 @@ async def test_quota_and_context_full_fail_node_run(
     assert node.texts(terminal) == []
     harness.cleanup_agent.assert_awaited_once()
     assert harness.cleanup_agent.await_args is not None
-    assert harness.cleanup_agent.await_args.kwargs.get("terminal_reason") == terminal_reason
+    assert harness.cleanup_agent.await_args.kwargs.get("terminal_reason") is None
+
+
+@pytest.mark.asyncio
+async def test_reported_pane_quota_never_fails_node_run(
+    temp_db: HubDatabase, node: _Node, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A node's pane-read quota is a capacity hint; only a verified transcript error fails."""
+    terminal = _terminal(REMOTE)
+    harness = _Harness(temp_db, monkeypatch, terminal)
+    quota = {"provider": "claude", "reset_time": None}
+    _report(_Entry(terminal, _idle(status="idle", quota=quota)))
+    harness.idle_long_ago(terminal)
+
+    handled = await harness.handler._handle_idle_check(harness.run(terminal))
+
+    assert handled == 1
+    assert node.cancels(terminal) == []
+    assert node.texts(terminal) == [IdleDetector.REPROMPT_MESSAGE]
+    harness.cleanup_agent.assert_not_awaited()
 
 
 @pytest.mark.asyncio

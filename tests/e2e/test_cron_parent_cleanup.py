@@ -50,9 +50,8 @@ def e2e_pre_daemon_setup(
         )
         postgres_db.execute(
             "INSERT INTO sessions (id, external_id, machine_id, project_id, source, "
-            "status, title, parent_session_id, created_at, updated_at) "
-            "VALUES (%s, %s, %s, %s, 'cron', 'active', 'cron:isolated-status-report', "
-            "%s, NOW(), NOW())",
+            "status, parent_session_id, created_at, updated_at) "
+            "VALUES (%s, %s, %s, %s, 'cron', 'active', %s, NOW(), NOW())",
             (
                 parent_id,
                 f"cron-{job.id}-{run_id}-isolated-status-report",

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.config.app import McpExposureConfig, UiExposureConfig
 from gobby.releases import activation
 
 
@@ -27,6 +28,17 @@ def isolate_cli_runtime_database(monkeypatch: pytest.MonkeyPatch) -> None:
         yield database
 
     monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
+
+
+@pytest.fixture(autouse=True)
+def no_recorded_exposure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The isolated hub records no Tailscale exposure; tests that need one stub their own."""
+
+    def unrecorded() -> tuple[UiExposureConfig, McpExposureConfig]:
+        return UiExposureConfig(), McpExposureConfig()
+
+    for module in ("daemon_start", "exposure_config", "uninstall", "ui"):
+        monkeypatch.setattr(f"gobby.cli.{module}.read_exposure_config", unrecorded)
 
 
 @pytest.fixture(autouse=True)

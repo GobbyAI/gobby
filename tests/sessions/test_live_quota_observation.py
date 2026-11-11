@@ -431,7 +431,6 @@ def test_audit_publishes_no_live_quota(
             machine_id=_AUDIT_MACHINE_ID,
             source="codex",
             project_id=_AUDIT_PROJECT_ID,
-            title="codex-audit-quota",
             transcript_path=str(transcript),
         )
 

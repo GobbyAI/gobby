@@ -35,6 +35,7 @@ def _assert_gobby_droid_command(command: str, hook_type: str) -> None:
 @pytest.mark.asyncio
 async def test_droid_isolation_hooks_written_from_template(tmp_path: Path) -> None:
     target_path = tmp_path / "worktree"
+    target_path.mkdir()
 
     await _copy_cli_hooks(
         source_path=str(tmp_path / "source"),
@@ -110,6 +111,7 @@ async def test_droid_isolation_hooks_merge_existing_entries(tmp_path: Path) -> N
 @pytest.mark.asyncio
 async def test_droid_isolation_hooks_are_idempotent(tmp_path: Path) -> None:
     target_path = tmp_path / "worktree"
+    target_path.mkdir()
 
     await _copy_cli_hooks(
         source_path=str(tmp_path / "source"),

@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from pathlib import Path
 
 import click
 from pydantic import ValidationError
 
 from gobby.cli.config_writes import apply_cas_config_patch
+from gobby.cli.runtime import require_cli_database
 from gobby.config.app import DaemonConfig, McpExposureConfig, UiExposureConfig
-from gobby.config.bootstrap_io import bootstrap_path as default_bootstrap_path
 from gobby.storage.config_mutations import ConfigPatch
 from gobby.storage.config_repository import ConfigReadSnapshot
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.hub.runtime import runtime_hub_database
 from gobby.ui_exposure import UiExposeResult, get_exposure_status
 
 
@@ -45,16 +43,15 @@ def validate_exposure_pair(ui: UiExposureConfig, mcp: McpExposureConfig) -> None
     DaemonConfig(ui_exposure=ui, mcp_exposure=mcp)
 
 
-def read_exposure_config(bootstrap_path: Path) -> tuple[UiExposureConfig, McpExposureConfig]:
-    """Read the recorded exposure choices from the hub database."""
-    with runtime_hub_database(str(bootstrap_path), apply_migrations=False) as database:
-        snapshot = ConfigStore(database).read_snapshot()
+def read_exposure_config() -> tuple[UiExposureConfig, McpExposureConfig]:
+    """Read the recorded exposure choices through the invocation's hub database."""
+    snapshot = ConfigStore(require_cli_database(apply_migrations=False)).read_snapshot()
     return exposure_from_values(snapshot.values)
 
 
 def exposure_status_lines(daemon_port: int) -> list[str]:
     """Describe the recorded Web UI and /mcp exposures, with their Funnel state."""
-    ui_config, mcp_config = read_exposure_config(default_bootstrap_path())
+    ui_config, mcp_config = read_exposure_config()
     ui_result, mcp_result = get_exposure_status(daemon_port, ui=ui_config, mcp=mcp_config)
     return [
         _describe_exposure("Web UI", ui_config.mode, ui_result),
@@ -75,7 +72,6 @@ def _describe_exposure(label: str, mode: str, result: UiExposeResult) -> str:
 
 
 def record_exposure(
-    bootstrap_path: Path,
     *,
     ui: UiExposureConfig | None = None,
     mcp: McpExposureConfig | None = None,
@@ -109,10 +105,9 @@ def record_exposure(
             values["mcp_exposure.port"] = mcp.port
         return ConfigPatch(values=values)
 
-    with runtime_hub_database(str(bootstrap_path), apply_migrations=False) as database:
-        store = ConfigStore(database)
-        apply_cas_config_patch(
-            read_snapshot=store.read_snapshot,
-            build_patch=build_patch,
-            patch=store.patch,
-        )
+    store = ConfigStore(require_cli_database(apply_migrations=False))
+    apply_cas_config_patch(
+        read_snapshot=store.read_snapshot,
+        build_patch=build_patch,
+        patch=store.patch,
+    )

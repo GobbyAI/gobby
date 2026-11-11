@@ -85,6 +85,8 @@ _HOST_ENVIRONMENT = (
     "RTK_TEE_DIR",
     "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",
     "GOBBY_PROMPT_FILE",
+    # The seat PATH leads with the managed bin dir, which this override relocates.
+    "GOBBY_NATIVE_BIN_DIR",
     "APPDATA",
     "LOCALAPPDATA",
 )
@@ -709,7 +711,11 @@ def test_corpus_matches_python(
             changed = sorted(
                 key for key in {*env, *expected_env} if env.get(key) != expected_env.get(key)
             )
-            mismatches.append(f"{case['name']}: environment differs at {changed}")
+            mismatches.append(
+                f"{case['name']}: environment differs at {changed}: "
+                f"actual {[env.get(key) for key in changed]!r} "
+                f"expected {[expected_env.get(key) for key in changed]!r}"
+            )
 
     for refusal in corpus["refusals"]:
         message, layout = _refusal(

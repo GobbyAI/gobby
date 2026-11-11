@@ -3,17 +3,22 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
+import click
 import pytest
 from click.testing import CliRunner
 from pydantic import ValidationError
 
 from gobby import ui_exposure
 from gobby.cli import exposure_config
+from gobby.cli.runtime import CliRuntime
 from gobby.cli.ui import ui
 from gobby.config.app import DaemonConfig, McpExposureConfig, UiExposureConfig
 from gobby.config.bootstrap import BootstrapConfigError, bootstrap_from_mapping
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.ui_exposure import UiExposeError
 
 pytestmark = pytest.mark.unit
@@ -300,7 +305,7 @@ def test_status_lines_name_both_exposures_and_funnel_state(
     monkeypatch.setattr(
         exposure_config,
         "read_exposure_config",
-        lambda _path: (
+        lambda: (
             UiExposureConfig(mode="tailnet", port=8443),
             McpExposureConfig(mode="funnel", port=443),
         ),
@@ -366,10 +371,33 @@ def test_status_line_says_funnel_unknown_when_tailscale_cannot_be_read(
     monkeypatch.setattr(
         exposure_config,
         "read_exposure_config",
-        lambda _path: (UiExposureConfig(), McpExposureConfig(mode="funnel", port=443)),
+        lambda: (UiExposureConfig(), McpExposureConfig(mode="funnel", port=443)),
     )
 
     assert exposure_config.exposure_status_lines(DAEMON_PORT) == [
         "Web UI exposure: off",
         "MCP exposure: funnel (degraded: tailscale is unavailable; Funnel unknown)",
     ]
+
+
+def test_recorded_exposure_round_trips_through_the_invocation_hub(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Record and read borrow the CLI invocation's hub; neither opens its own pool."""
+
+    @contextmanager
+    def invocation_hub(*_args: object, **_kwargs: object) -> Iterator[HubDatabase]:
+        yield temp_db
+
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", invocation_hub)
+    runtime = CliRuntime(config_file=None)
+    with click.Context(ui, obj=runtime):
+        exposure_config.record_exposure(ui=UiExposureConfig(mode="tailnet", port=8443))
+        exposure_config.record_exposure(mcp=McpExposureConfig(mode="funnel", port=443))
+        recorded = exposure_config.read_exposure_config()
+    runtime.close()
+
+    assert recorded == (
+        UiExposureConfig(mode="tailnet", port=8443),
+        McpExposureConfig(mode="funnel", port=443),
+    )

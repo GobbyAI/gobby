@@ -70,7 +70,6 @@ def _register(
         machine_id=LOCAL_MACHINE_ID,
         source=source,
         project_id=PROJECT_ID,
-        title=external_id,
         transcript_path=str(transcript_path) if transcript_path else None,
     )
 

@@ -501,7 +501,7 @@ def test_reconcile_exposures_reports_restored_urls(
 ) -> None:
     monkeypatch.setattr(
         "gobby.cli.daemon_start.read_exposure_config",
-        lambda _path: (UiExposureConfig(mode="tailnet", port=8443), McpExposureConfig()),
+        lambda: (UiExposureConfig(mode="tailnet", port=8443), McpExposureConfig()),
     )
     monkeypatch.setattr(
         "gobby.cli.daemon_start.reconcile_exposures",
@@ -518,7 +518,7 @@ def test_reconcile_exposures_warns_on_degraded_result(
 ) -> None:
     monkeypatch.setattr(
         "gobby.cli.daemon_start.read_exposure_config",
-        lambda _path: (UiExposureConfig(mode="tailnet", port=443), McpExposureConfig()),
+        lambda: (UiExposureConfig(mode="tailnet", port=443), McpExposureConfig()),
     )
     monkeypatch.setattr(
         "gobby.cli.daemon_start.reconcile_exposures",
@@ -541,7 +541,7 @@ def test_reconcile_exposures_warns_on_degraded_result(
 def test_reconcile_exposures_warns_when_hub_intent_is_unreadable(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], error: Exception
 ) -> None:
-    def unreadable(_path: object) -> None:
+    def unreadable() -> None:
         raise error
 
     monkeypatch.setattr("gobby.cli.daemon_start.read_exposure_config", unreadable)
@@ -2091,7 +2091,7 @@ class TestRestartCommand:
 
             result = runner.invoke(cli, ["restart", "--full"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 0, result.output
             assert "Starting Gobby daemon" in result.output
             mock_stop_daemon.assert_called_once()
             mock_setup_logging.assert_not_called()

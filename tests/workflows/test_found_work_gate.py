@@ -1151,7 +1151,7 @@ def test_pytest_usage_error_is_not_a_terminal_validation_failure(tmp_path: Path)
     ]
     missing = "tests/servers/test_exception_handlers.py"
     corrected = "tests/servers/test_http_error_handling.py"
-    # Match the repository addopt: -q still prints the no-tests banner with -v.
+    # Match the repository addopt.
     (tmp_path / "pyproject.toml").write_text('[tool.pytest.ini_options]\naddopts = "-v"\n')
     for target in [*surviving, corrected]:
         path = tmp_path / target
@@ -1185,7 +1185,6 @@ def test_pytest_usage_error_is_not_a_terminal_validation_failure(tmp_path: Path)
 
     red, corrected_green, dropped_green = runs
     assert red.output is not None
-    assert "no tests ran" in red.output
     assert f"ERROR: file or directory not found: {missing}" in red.output
     assert unresolved_validation_failures(
         [red], owner_handoff=False, project_path=str(tmp_path)

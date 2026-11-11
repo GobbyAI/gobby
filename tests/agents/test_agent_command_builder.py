@@ -165,7 +165,7 @@ async def test_vllm_spawn_env_key_transport() -> None:
     )
     assert studio.codex_oss_provider == "lmstudio"
     assert studio.codex_config_overrides == ()
-    assert studio_cmd[:4] == ["codex", "--oss", "--local-provider", "lmstudio"]
+    assert studio_cmd[:5] == ["codex", "--no-daemon", "--oss", "--local-provider", "lmstudio"]
 
 
 def test_spawn_auto_reasoning_emits_resolved_effort_flag(
