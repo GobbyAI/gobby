@@ -205,6 +205,43 @@ def _hook_candidates(
     return [home.joinpath(*Path(relative).parts)]
 
 
+_HOOK_BIND_RECENT_DAYS = 90
+
+
+def hook_transcript_is_bound(
+    source: str,
+    reported: str,
+    external_id: str,
+    *,
+    cwd: str | None,
+) -> bool:
+    """Return True when a hook-reported transcript is this session's own layout.
+
+    Hook payloads are untrusted, so only the provider's layout for ``external_id``
+    counts: its bounded hook candidates, or, for a provider without a hook layout,
+    its recovery answer. Codex has no path layout and is bound by its rollout header
+    instead, so its recovery is never consulted here.
+    """
+    spec = _SPECS_BY_SOURCE.get(source)
+    if spec is None or not external_id or "/" in external_id or "\\" in external_id:
+        return False
+    home = Path.home()
+    expected = _hook_candidates(
+        spec,
+        home=home,
+        external_id=external_id,
+        session_id=external_id,
+        cwd=cwd,
+    )
+    if not expected and spec.recover is not None and source != "codex":
+        recovered = spec.recover(
+            home, external_id, glob_escape(external_id), _HOOK_BIND_RECENT_DAYS
+        )
+        expected = [Path(recovered)] if recovered else []
+    target = os.path.realpath(os.path.expanduser(reported))
+    return any(os.path.realpath(str(candidate)) == target for candidate in expected)
+
+
 def _claude_hook_candidates(
     *,
     home: Path,

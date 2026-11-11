@@ -29,6 +29,9 @@ Gobby is designed as a local-first daemon:
 - Hub data is stored locally in PostgreSQL, reached through bootstrap/keyring
   `database_url` settings
 - No data is sent to external servers unless explicitly configured
+- The bundled Qdrant container runs with anonymous usage statistics disabled
+  (`QDRANT__TELEMETRY_DISABLED=true` in `docker-compose.services.yml`), so it sends no
+  anonymous usage statistics. Existing stacks gain this setting on the next `gobby install`.
 - MCP proxy connections are user-configured
 
 ### API Keys and Credentials

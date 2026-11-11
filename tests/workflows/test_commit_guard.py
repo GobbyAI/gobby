@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import psycopg
 import pytest
+import yaml
 from psycopg_pool import PoolTimeout
 
 from gobby.hooks._normalization_tools import normalize_tool_fields
@@ -56,6 +57,7 @@ from gobby.workflows.git_operation_ownership import (
 )
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.sync_rules import get_bundled_rules_paths
 from gobby.workflows.task_tool_bindings import TaskToolBindings
 from gobby.workflows.worktree_shell_attribution import (
     OVERLAPS_VARIABLE,
@@ -1092,25 +1094,30 @@ class GuardHarness:
         session: Session | None = None,
         checkout: Path | None = None,
         workdir: Path | None = None,
+        source: SessionSource | None = None,
     ) -> HookEvent:
         selected_session = session or self.current_session
         selected_checkout = checkout or self.repo
-        tool_input = {"cmd": command}
+        selected_source = source or (
+            SessionSource.CODEX
+            if selected_session.id == self.current_session.id
+            else SessionSource.CLAUDE
+        )
+        if source is SessionSource.CLAUDE:
+            tool_name, tool_input = "Bash", {"command": command}
+        else:
+            tool_name, tool_input = "functions.exec_command", {"cmd": command}
         if workdir is not None:
             tool_input["workdir"] = str(workdir)
         return HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id=selected_session.external_id,
-            source=(
-                SessionSource.CODEX
-                if selected_session.id == self.current_session.id
-                else SessionSource.CLAUDE
-            ),
+            source=selected_source,
             timestamp=datetime.now(UTC),
             cwd=str(selected_checkout),
             project_id=self.project.id,
             data={
-                "tool_name": "functions.exec_command",
+                "tool_name": tool_name,
                 "tool_input": tool_input,
             },
             metadata={
@@ -4249,28 +4256,63 @@ def test_dirty_edit_refusal_names_only_remedies_that_exist() -> None:
     assert "gobby-agents:send_message" in reason
 
 
-@pytest.mark.asyncio
-async def test_session_sets_aside_and_restores_only_its_own_edits(
-    guard_harness: GuardHarness, tmp_path: Path
-) -> None:
-    h = guard_harness
+def _set_aside_patches(h: GuardHarness) -> tuple[Path, Path]:
+    """Dirty both files, record only the owned edit, and write each file's diff as a patch."""
     (h.repo / "owned.txt").write_text("own change\n", encoding="utf-8")
     (h.repo / "foreign.txt").write_text("foreign change\n", encoding="utf-8")
     SessionVariableManager(h.db).merge_variables(
         h.current_session.id, _content_ledger(h, h.current_task, ["owned.txt"])
     )
-    workspace = tmp_path / "workspace"
+    # The hook reads a set-aside patch only inside the checkout it applies to.
+    workspace = h.repo / ".set-aside"
     workspace.mkdir()
     own_patch = workspace / "own.patch"
     own_patch.write_text(_git(h.repo, "diff", "--", "owned.txt") + "\n", encoding="utf-8")
     foreign_patch = workspace / "foreign.patch"
     foreign_patch.write_text(_git(h.repo, "diff", "--", "foreign.txt") + "\n", encoding="utf-8")
+    return own_patch, foreign_patch
 
-    set_aside = await h.handler._evaluate_rules(h.event("git checkout -- owned.txt"))
+
+def _install_bundled_rules_reading(db: HubDatabase, marker: str) -> int:
+    """Install every bundled rule whose condition reads ``marker``; return how many."""
+    installed = 0
+    for root in get_bundled_rules_paths():
+        for yaml_file in sorted(root.rglob("*.yaml")):
+            if "deprecated" in yaml_file.relative_to(root).parts:
+                continue
+            document = yaml.safe_load(yaml_file.read_text(encoding="utf-8")) or {}
+            for name, definition in (document.get("rules") or {}).items():
+                if marker in str(definition.get("when", "")):
+                    body = dict(definition)
+                    description = body.pop("description", None)
+                    enabled = body.pop("enabled", True)
+                    priority = body.pop("priority", 100)
+                    RuleDefinitionManager(db).create(
+                        name,
+                        body,
+                        description=description,
+                        enabled=enabled,
+                        priority=priority,
+                        tags=list(document.get("tags") or []),
+                    )
+                    installed += 1
+    return installed
+
+
+@pytest.mark.asyncio
+async def test_rewriting_session_sets_aside_and_restores_only_its_own_edits(
+    guard_harness: GuardHarness,
+) -> None:
+    """A provider whose input the hook rewrites applies only validated, owned patch bytes."""
+    h = guard_harness
+    own_patch, foreign_patch = _set_aside_patches(h)
+    claude = SessionSource.CLAUDE
+
+    set_aside = await h.handler._evaluate_rules(h.event("git checkout -- owned.txt", source=claude))
     _git(h.repo, "checkout", "--", "owned.txt")
-    restore = h.event(f"git apply {own_patch}")
+    restore = h.event(f"git apply {own_patch}", source=claude)
     restored = await h.handler._evaluate_rules(restore)
-    foreign = h.event(f"git apply {foreign_patch}")
+    foreign = h.event(f"git apply {foreign_patch}", source=claude)
     refused = await h.handler._evaluate_rules(foreign)
 
     assert set_aside.decision == "allow", set_aside.reason
@@ -4280,6 +4322,28 @@ async def test_session_sets_aside_and_restores_only_its_own_edits(
     assert refused.decision == "block"
     assert refused.reason is not None
     assert "foreign.txt" in refused.reason
+
+
+@pytest.mark.asyncio
+async def test_non_rewriting_session_patch_apply_fails_closed(
+    guard_harness: GuardHarness,
+) -> None:
+    """Without input rewrite, a patch apply has unknown scope and the installed rules refuse it."""
+    h = guard_harness
+    own_patch, foreign_patch = _set_aside_patches(h)
+    marker = "canonical_repo_mutation_scope_unknown"
+    assert _install_bundled_rules_reading(h.db, marker) > 0
+
+    restore = h.event(f"git apply {own_patch}")
+    restored = await h.handler._evaluate_rules(restore)
+    foreign = h.event(f"git apply {foreign_patch}")
+    refused = await h.handler._evaluate_rules(foreign)
+
+    assert restore.source is SessionSource.CODEX
+    assert restore.data.get(marker) is True
+    assert foreign.data.get(marker) is True
+    assert restored.decision == "block"
+    assert refused.decision == "block"
 
 
 def _as(h: GuardHarness, session: Session) -> GuardHarness:

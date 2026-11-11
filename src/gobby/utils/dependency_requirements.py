@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -106,6 +107,25 @@ IMPECCABLE_RELEASE = ImpeccableRelease(
     lockfile_sha256="a0aa57fb46ee4cbeb348e60f55df54c76eacc16fc8acc163a2b58c6b686d7ed6",
 )
 IMPECCABLE_NODE_MIN_VERSION = "22.12.0"
+OCR_PACKAGE = "@alibaba-group/open-code-review"
+OCR_VERSION = "1.13.5"
+# SHA-256 of every file the npm launcher runs, from the registry tarball of OCR_PACKAGE@OCR_VERSION.
+# Status checks these bytes and never executes OCR, so a PATH binary cannot self-report a pin.
+OCR_LAUNCHER_SHA256: dict[str, str] = {
+    "package.json": "81bdad965e1a3781ca63a96e4d49712f4d812e924c6564461acd4e05b571873b",
+    "bin/ocr.js": "7668ea8933d987357da1e1815bd9bc32739a8ed57b53a033df47a3164d13e502",
+    "scripts/install.js": "6397a105ddfdab65bb6740f827962989f49a3f9b0807ef950c620479310bad2b",
+    "scripts/platform.js": "19ad16acdba0fdd204ba2a8deb2651576907c070eb69c859dfbabad2c37ee3bb",
+    "scripts/update.js": "62bf6d5d3076d775a681bffd65f1c556b759b59695bbc7fb4431e8df0b184cc5",
+    "scripts/version.js": "51cd30899641cca504e68d876005e922d6a6ac6a065c3b41a91f201aedd23bac",
+}
+# SHA-256 of the native binary each platform package ships, keyed by Node's `platform-arch`.
+OCR_NATIVE_SHA256: dict[str, str] = {
+    "darwin-arm64": "539e7b6477b676b38f07038751ee3660d96e23d5a4a86c219a0fc33b77efb13d",
+    "darwin-x64": "521676efd8189f595f03162a3e6d584f99f95be0e1f6285e96ea6da590cd4446",
+    "linux-arm64": "fe10babbd1e30c6fad2b3d33381de034c6b1bc67ed046e15f18782ad22e0d8ad",
+    "linux-x64": "f9d918dd8b461719be975430e0f7396b4e642b465ffa490d651ace0d8c989171",
+}
 
 
 @dataclass(frozen=True)
@@ -250,6 +270,7 @@ def collect_dependency_report(
     *,
     managed_services: bool,
     include_srt: bool,
+    include_ocr: bool = False,
     deadline: float | None = None,
 ) -> DependencyReport:
     """Collect every shared dependency contract and service runtime version.
@@ -269,6 +290,8 @@ def collect_dependency_report(
     probes["node"] = node_dependency_status
     if include_srt:
         probes["srt"] = srt_dependency_status
+    if include_ocr:
+        probes["ocr"] = ocr_dependency_status
     probes["impeccable"] = impeccable_dependency_status
     probes["docker_compose"] = lambda: _command_status(
         name="Docker Compose",
@@ -299,7 +322,9 @@ def collect_dependency_report(
     }
     docker_running = running.collect()
     required = {
-        name: statuses[name] for name in ("git", "node", "srt", "impeccable") if name in statuses
+        name: statuses[name]
+        for name in ("git", "node", "srt", "ocr", "impeccable")
+        if name in statuses
     }
     compose = statuses["docker_compose"]
     if managed_services:
@@ -539,6 +564,138 @@ def srt_dependency_status() -> DependencyStatus:
         path=str(installation.root),
         error=None,
     )
+
+
+_OCR_ARCHITECTURES = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x64", "amd64": "x64"}
+
+
+def _ocr_platform_key() -> str | None:
+    """Node's `platform-arch` key for this host, when an OCR build is pinned for it."""
+    arch = _OCR_ARCHITECTURES.get(platform.machine().lower())
+    key = f"{sys.platform}-{arch}"
+    return key if key in OCR_NATIVE_SHA256 else None
+
+
+def _sha256_file(path: Path) -> str | None:
+    try:
+        with path.open("rb") as handle:
+            return hashlib.file_digest(handle, "sha256").hexdigest()
+    except OSError:
+        return None
+
+
+def _ocr_package_root(launcher: Path) -> Path | None:
+    """The package directory when `launcher` is the npm entry `bin/ocr.js`."""
+    if launcher.name != "ocr.js" or launcher.parent.name != "bin":
+        return None
+    return launcher.parent.parent
+
+
+def _ocr_package_identity(package_root: Path) -> tuple[str, str] | None:
+    """The (name, version) recorded in package.json, or None when unreadable."""
+    try:
+        metadata = json.loads((package_root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(metadata, dict):
+        return None
+    name, version = metadata.get("name"), metadata.get("version")
+    if not isinstance(name, str) or not isinstance(version, str):
+        return None
+    return name, version
+
+
+def _ocr_native_binary(package_root: Path, platform_key: str) -> Path | None:
+    """The binary scripts/platform.js runs: the platform package first, then the legacy bin."""
+    platform_binary = f"ocr-{platform_key}/bin/opencodereview"
+    for candidate in (
+        package_root / "node_modules" / "@alibaba-group" / platform_binary,
+        package_root.parent / platform_binary,
+        package_root / "bin" / "opencodereview",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _ocr_release_mismatch(package_root: Path, platform_key: str) -> str | None:
+    """The first pinned file or binary that is missing or differs, or None when all match."""
+    for relative, digest in OCR_LAUNCHER_SHA256.items():
+        if _sha256_file(package_root / relative) != digest:
+            return f"{relative} is missing or does not match the pinned OCR release"
+    binary = _ocr_native_binary(package_root, platform_key)
+    if binary is None:
+        return f"no opencodereview binary for {platform_key}"
+    if _sha256_file(binary) != OCR_NATIVE_SHA256[platform_key]:
+        return f"{binary} does not match the pinned OCR build"
+    return None
+
+
+def _ocr_status(
+    state: DependencyState,
+    *,
+    path: str | None,
+    installed_version: str | None = None,
+    error: str | None = None,
+) -> DependencyStatus:
+    return DependencyStatus(
+        state=state,
+        installed_version=installed_version,
+        minimum_version=None,
+        expected_version=OCR_VERSION,
+        path=path,
+        error=error,
+    )
+
+
+def _ocr_invalid(path: str, reason: str) -> DependencyStatus:
+    return _ocr_status(
+        "invalid",
+        path=path,
+        error=(
+            f"OCR at {path} is invalid: {reason}; requires =={OCR_VERSION}. "
+            "Run `gobby install` to repair it."
+        ),
+    )
+
+
+def ocr_dependency_status() -> DependencyStatus:
+    """Verify the OCR CLI on PATH against pinned npm bytes. This never executes OCR."""
+    raw_path = shutil.which("ocr")
+    if raw_path is None:
+        return _ocr_status(
+            "missing",
+            path=None,
+            error=f"OCR is missing; requires =={OCR_VERSION}. Run `gobby install` to install it.",
+        )
+    launcher = Path(raw_path).resolve(strict=False)
+    path = str(launcher)
+    package_root = _ocr_package_root(launcher)
+    if package_root is None:
+        return _ocr_invalid(path, f"not the bin/ocr.js launcher of {OCR_PACKAGE}")
+    identity = _ocr_package_identity(package_root)
+    if identity is None:
+        return _ocr_invalid(path, "package.json is unreadable")
+    name, installed = identity
+    if name != OCR_PACKAGE:
+        return _ocr_invalid(path, f"package.json names {name}, not {OCR_PACKAGE}")
+    if installed != OCR_VERSION:
+        return _ocr_status(
+            "outdated",
+            path=path,
+            installed_version=installed,
+            error=(
+                f"OCR is {installed} at {path}; requires =={OCR_VERSION}. "
+                "Run `gobby install` to update it."
+            ),
+        )
+    platform_key = _ocr_platform_key()
+    if platform_key is None:
+        return _ocr_invalid(path, f"no pinned OCR build for {sys.platform}")
+    mismatch = _ocr_release_mismatch(package_root, platform_key)
+    if mismatch is not None:
+        return _ocr_invalid(path, mismatch)
+    return _ocr_status("healthy", path=path, installed_version=installed)
 
 
 def impeccable_dependency_status() -> DependencyStatus:

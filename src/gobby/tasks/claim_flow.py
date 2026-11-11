@@ -46,6 +46,25 @@ def _is_team_manager(db: HubDatabase, agent: str, project_id: str) -> bool:
     )
 
 
+def _session_ended(db: HubDatabase, session_id: str | None) -> bool:
+    """Whether ``session_id`` names no live session: none recorded, or a session that ended."""
+    if session_id is None:
+        return True
+    session = SessionManager(db).get(session_id)
+    return session is None or session.status not in LIVE_SESSION_STATUSES
+
+
+def _dead_team_seat(db: HubDatabase, session_id: str, team_id: str) -> bool:
+    """Whether ``session_id`` is a seat of team ``team_id`` whose session has ended."""
+    from gobby.agents.team_lifecycle import seat_team
+
+    session = SessionManager(db).get(session_id)
+    if session is None or session.status in LIVE_SESSION_STATUSES:
+        return False
+    seat = seat_team(db, session_id)
+    return seat is not None and seat.team_id == team_id
+
+
 def _reference_key(item: TaskAttestation) -> tuple[str, str] | None:
     if item.reference is None:
         return None
@@ -335,14 +354,17 @@ def advance_claim_flow(
 ) -> ClaimFlowStall | None:
     """Only the holder's current stage can move the claim; a failed move rolls back evidence.
 
+    A live stage seat takes the claim from a dead seat of its team, as a relaunch leaves it.
     Returns the stall when the holder's stage can never complete and the claim stays put.
     """
-    if task.claimed_by_session_id != record.session_id:
-        return None
     from gobby.agents.team_lifecycle import seat_team
 
+    holder = task.claimed_by_session_id
     team = seat_team(db, record.session_id)
     if team is None:
+        return None
+    takeover = holder != record.session_id
+    if takeover and (holder is None or not _dead_team_seat(db, holder, team.team_id)):
         return None
     executions = LocalPipelineExecutionManager(db, task.project_id)
     execution = executions.get_execution(team.team_id)
@@ -415,8 +437,13 @@ def advance_claim_flow(
                 for sid, (member, run_task) in seated.items()
                 if member and member.team_id == team.team_id
             }
-            # A pod launches no manager seat; its parent team's manager holds that stage.
-            if not live and child is None and _is_team_manager(db, agent, task.project_id):
+            # A pod launches no manager seat, and a relaunched team's manager output can name an
+            # ended session; the parent team's live manager holds that stage in both cases.
+            if (
+                not live
+                and _session_ended(db, child)
+                and _is_team_manager(db, agent, task.project_id)
+            ):
                 from gobby.agents.team_admission_records import team_binding
 
                 binding = team_binding(db, team.team_id)
@@ -474,6 +501,13 @@ def advance_claim_flow(
                 definition, name, str(marked), record, records, stage_agents, task.category
             )
     stage = definition.claim_flow[name]
+    if takeover:
+        # Only the live seat that holds this stage takes a dead holder's claim.
+        if stage_session(name) != record.session_id or author.status not in LIVE_SESSION_STATUSES:
+            return None
+        LocalTaskManager(db).claim_task_for_agent(
+            task.id, record.session_id, expected_owner=holder, handed=True
+        )
     superseded = {item.supersedes_id for item in records if item.supersedes_id}
     active = {
         item.kind: item

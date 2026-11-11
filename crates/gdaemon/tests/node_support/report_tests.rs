@@ -226,6 +226,7 @@ fn record(home: &Path, id: &str) -> WorkspaceRecord {
         base_branch: Some("main".into()),
         source_root: home.join("source"),
         reused: false,
+        created: true,
     }
 }
 
@@ -794,7 +795,10 @@ async fn non_200_success_keeps_exits_until_200() -> Result<()> {
     let retained = persisted_state(f.home.path())?;
     assert!(retained.exits.is_empty());
     assert!(!retained.runs.contains_key("exit-0000"));
-    assert_eq!(retained.removals.get("exit-0000"), Some(&workspace));
+    assert!(
+        retained.removals.is_empty(),
+        "an acknowledged exit keeps its tree on disk for its completion owner"
+    );
     Ok(())
 }
 
@@ -828,10 +832,9 @@ async fn unlaunched_recovery_reports_no_workspace() -> Result<()> {
     retry.finish().await?;
     let retained = persisted_state(f.home.path())?;
     assert!(retained.exits.is_empty());
-    assert_eq!(
-        retained.removals.get("prepare-0000"),
-        Some(&workspace),
-        "the preparation record survives the acknowledged exit"
+    assert!(
+        retained.removals.is_empty(),
+        "an acknowledged unlaunched exit keeps its tree on disk for its completion owner"
     );
     Ok(())
 }
@@ -878,6 +881,9 @@ async fn pending_exit_recovery_keeps_launched_workspace() -> Result<()> {
     let retained = persisted_state(f.home.path())?;
     assert!(retained.exits.is_empty());
     assert!(!retained.runs.contains_key("prepare-0001"));
-    assert_eq!(retained.removals.get("prepare-0001"), Some(&workspace));
+    assert!(
+        retained.removals.is_empty(),
+        "an acknowledged launched exit keeps its tree on disk for its completion owner"
+    );
     Ok(())
 }

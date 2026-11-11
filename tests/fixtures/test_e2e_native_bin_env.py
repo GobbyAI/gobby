@@ -1,6 +1,7 @@
 """Native binary dir selection for e2e daemons, kept outside the e2e autouse-fixture subtree."""
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 import pytest
@@ -15,26 +16,26 @@ GTERM = native_bin_name("gterm")
 
 
 @pytest.mark.parametrize("pinned", [False, True], ids=["default-bin", "explicit-pin"])
-def test_installed_daemon_bin_and_locks_are_isolated(
-    installed_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pinned: bool
+def test_daemon_bin_dir_is_isolated_and_locks_are_private(
+    checkout_gdaemon: Path,
+    installed_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    pinned: bool,
 ) -> None:
     from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 
     home = tmp_path / "home"
     home.mkdir()
-    monkeypatch.setattr("gobby.utils.native_bin.native_bin_dir", lambda: installed_dir)
-    base = {"GOBBY_TEST_GDAEMON": "installed"}
+    base: dict[str, str] = {}
     if pinned:
         base[NATIVE_BIN_DIR_ENV] = str(installed_dir)
     env = e2e_fixtures.prepare_daemon_env(base, home_dir=home)
     isolated = Path(env[NATIVE_BIN_DIR_ENV])
     assert isolated.is_relative_to(home)
-    assert (isolated / IDENTITY_STAMP_NAME).read_bytes() == (
-        installed_dir / IDENTITY_STAMP_NAME
-    ).read_bytes()
-    for binary in (GDAEMON, GTERM):
-        assert (isolated / binary).read_bytes() == (installed_dir / binary).read_bytes()
-        assert not os.path.samefile(isolated / binary, installed_dir / binary)
+    assert (isolated / GDAEMON).resolve() == checkout_gdaemon.resolve()
+    assert (isolated / GTERM).read_bytes() == (installed_dir / GTERM).read_bytes()
+    assert not os.path.samefile(isolated / GTERM, installed_dir / GTERM)
     monkeypatch.setenv(NATIVE_BIN_DIR_ENV, str(isolated))
     lock = try_acquire_native_bin_lock("gdaemon", bin_dir=isolated)
     assert lock is not None
@@ -55,12 +56,11 @@ def _executable(path: Path) -> Path:
 
 @pytest.fixture
 def checkout_gdaemon(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, installed_dir: Path) -> Path:
+    """Stand in for the checkout build the harness would produce, so no cargo runs here."""
     binary = _executable(tmp_path / "checkout" / "target" / "debug" / GDAEMON)
-
-    def select(_root: Path, env: dict[str, str], _name: str) -> Path | None:
-        return binary if env.get("GOBBY_TEST_GDAEMON") == "checkout" else None
-
-    monkeypatch.setattr("tests.fixtures.gdaemon_binary.select_test_gdaemon", select)
+    monkeypatch.setattr(
+        "tests.fixtures.gdaemon_binary.build_checkout_gdaemon", lambda *_args: binary
+    )
     monkeypatch.setattr("gobby.utils.native_bin.native_bin_dir", lambda: installed_dir)
     return binary
 
@@ -74,22 +74,27 @@ def installed_dir(tmp_path: Path) -> Path:
     return bin_dir
 
 
-def test_checkout_selection_precedes_child_cache_cleanup(
-    installed_dir: Path, tmp_path: Path
+def test_checkout_build_precedes_child_cache_cleanup(
+    installed_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     target = tmp_path / "cargo-output"
     binary = _executable(target / "debug" / GDAEMON)
+    seen: list[Mapping[str, str]] = []
+
+    def build(_root: Path, env: Mapping[str, str], _name: str) -> Path:
+        seen.append(env)
+        return binary
+
+    monkeypatch.setattr("tests.fixtures.gdaemon_binary.build_checkout_gdaemon", build)
+    monkeypatch.setattr("gobby.utils.native_bin.native_bin_dir", lambda: installed_dir)
     home = tmp_path / "home"
     home.mkdir()
     env = e2e_fixtures.prepare_daemon_env(
-        {
-            "GOBBY_TEST_GDAEMON": "checkout",
-            "CARGO_TARGET_DIR": str(target),
-            NATIVE_BIN_DIR_ENV: str(installed_dir),
-        },
+        {"CARGO_TARGET_DIR": str(target), NATIVE_BIN_DIR_ENV: str(installed_dir)},
         home_dir=home,
     )
 
+    assert seen[0]["CARGO_TARGET_DIR"] == str(target)
     assert (Path(env[NATIVE_BIN_DIR_ENV]) / GDAEMON).resolve() == binary.resolve()
     assert "CARGO_TARGET_DIR" not in env
 
@@ -102,7 +107,7 @@ def test_checkout_gdaemon_survives_pinned_gterm_dir(
     environ_before = dict(os.environ)
     home = tmp_path / "home"
     home.mkdir()
-    base = {"GOBBY_TEST_GDAEMON": "checkout", NATIVE_BIN_DIR_ENV: str(installed_dir)}
+    base = {NATIVE_BIN_DIR_ENV: str(installed_dir)}
 
     first = Path(e2e_fixtures.prepare_daemon_env(base, home_dir=home)[NATIVE_BIN_DIR_ENV])
     second = Path(e2e_fixtures.prepare_daemon_env(base, home_dir=home)[NATIVE_BIN_DIR_ENV])
@@ -131,7 +136,7 @@ def test_pinned_files_are_copied_with_their_modes(
     backup = _executable(installed_dir / ".gcode.bak-v435")
     home = tmp_path / "home"
     home.mkdir()
-    base = {"GOBBY_TEST_GDAEMON": "checkout", NATIVE_BIN_DIR_ENV: str(installed_dir)}
+    base = {NATIVE_BIN_DIR_ENV: str(installed_dir)}
 
     bin_dir = Path(e2e_fixtures.prepare_daemon_env(base, home_dir=home)[NATIVE_BIN_DIR_ENV])
 
@@ -145,38 +150,22 @@ def test_pinned_files_are_copied_with_their_modes(
     assert not (bin_dir / IDENTITY_STAMP_NAME).exists()
 
 
-@pytest.mark.parametrize(
-    ("selector", "pinned", "expected"),
-    [
-        ("checkout", False, "checkout"),
-        ("checkout", True, "checkout"),
-        ("installed", True, "installed"),
-    ],
-    ids=["checkout-unpinned", "checkout-pinned-to-checkout", "installed-pinned"],
-)
-def test_unconflicted_selection_is_isolated_under_test_home(
+@pytest.mark.parametrize("pinned_to", ["none", "checkout", "installed"])
+def test_checkout_gdaemon_is_isolated_under_test_home(
     checkout_gdaemon: Path,
     installed_dir: Path,
     tmp_path: Path,
-    selector: str,
-    pinned: bool,
-    expected: str,
+    pinned_to: str,
 ) -> None:
     """Even an unconflicted pin must isolate all native-set writes."""
     dirs = {"checkout": checkout_gdaemon.parent, "installed": installed_dir}
-    base = {"GOBBY_TEST_GDAEMON": selector}
-    if pinned:
-        base[NATIVE_BIN_DIR_ENV] = str(dirs[expected])
+    base: dict[str, str] = {}
+    if pinned_to != "none":
+        base[NATIVE_BIN_DIR_ENV] = str(dirs[pinned_to])
 
     env = e2e_fixtures.prepare_daemon_env(base, home_dir=tmp_path)
 
     isolated = Path(env[NATIVE_BIN_DIR_ENV])
     assert isolated.is_relative_to(tmp_path)
-    if selector == "checkout":
-        assert (isolated / GDAEMON).resolve() == checkout_gdaemon.resolve()
-        assert not (isolated / IDENTITY_STAMP_NAME).exists()
-    else:
-        assert (isolated / GDAEMON).read_bytes() == (installed_dir / GDAEMON).read_bytes()
-        assert (isolated / IDENTITY_STAMP_NAME).read_bytes() == (
-            installed_dir / IDENTITY_STAMP_NAME
-        ).read_bytes()
+    assert (isolated / GDAEMON).resolve() == checkout_gdaemon.resolve()
+    assert not (isolated / IDENTITY_STAMP_NAME).exists()

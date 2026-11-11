@@ -72,7 +72,7 @@ Evidence was checked on 2026-10-22 against 0.5.0 `81f6a1fe80` and #24797's branc
 - `src/gobby/tasks/close_invariants.py` passes `linked_commits` with a linked commit or a close reason in `NO_WORK_CLOSE_REASONS` (`moot`, `superseded`, `wont_do`) and fails `children_closed` while any child is open.
 - `src/gobby/storage/tasks/_close.py` closes each ancestor whose last open child just closed, using that child's close reason. It stops at an ancestor that is claimed, carries a hold label, or is a non-epic with its own validation criteria.
 - `src/gobby/config/tasks.py::TaskClosePolicyConfig` defaults `review_categories` to `["code", "docs"]` and validates against `VALID_CATEGORIES`, which includes `research`.
-- `.gobby/project.json` sets `task_close_policy.enforce_step_records: true`, so the default change applies to Gobby.
+- `.gobby/project.json` no longer carries `task_close_policy`; #25705 removed it because nothing read it. The default change applies to Gobby only as the default.
 - `src/gobby/storage/tasks/_queries.py::_external_blocker_exists_sql` feeds `projected_task_state_sql`; `src/gobby/storage/tasks/_blocking.py::_fetch_active_blocker_map` is the hydration site.
 - `claim_task` does not refuse blocked tasks, and the spawn guard `active_task_response_if_blocked` concerns active runs, not dependency state.
 - The `rules/tdd-enforcement/` directory is gone, so workspace helper scripts face no TDD gate.

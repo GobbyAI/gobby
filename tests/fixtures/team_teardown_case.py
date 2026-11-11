@@ -13,8 +13,8 @@ import pytest
 
 from gobby.agents.recovery_state import is_daemon_stop_parked
 from gobby.agents.team_admission_records import TeamBinding
-from gobby.agents.team_teardown import TEARDOWN_KEY, TeamTreeDeleter, reconcile_team_teardowns
-from gobby.runner_maintenance.isolation import team_run_terminator, team_tree_deleter
+from gobby.agents.team_teardown import TEARDOWN_KEY, reconcile_team_teardowns
+from gobby.runner_maintenance.isolation import team_run_terminator
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
 from gobby.storage.hub.protocol import HubDatabase
@@ -175,13 +175,10 @@ def daemon(db: HubDatabase, *, initialized: bool = True) -> GobbyRunner:
     )
 
 
-async def teardown_pass(
-    db: HubDatabase, runner: GobbyRunner, at: datetime, delete: TeamTreeDeleter | None = None
-) -> int:
+async def teardown_pass(db: HubDatabase, runner: GobbyRunner, at: datetime) -> int:
     return await reconcile_team_teardowns(
         db,
         terminate=team_run_terminator(runner),
-        delete=delete or team_tree_deleter(db, None),
         now=at,
     )
 

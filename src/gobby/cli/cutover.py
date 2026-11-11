@@ -7,7 +7,7 @@ import json
 import os
 import subprocess
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import click
@@ -30,6 +30,7 @@ from gobby.install.bin_set_coherence import (
     probe_set_member_identity,
     promote_workspace_binary_set,
 )
+from gobby.install.version_probe import probe_native_bin_version
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.storage.schema_identity_pin import SchemaIdentityError, validate_identity
 from gobby.utils.native_bin import (
@@ -47,6 +48,13 @@ _BINARY_NAMES = ("gcode", "gdaemon", "ghook")
 # gclient shares gobby-core with the set but is promoted separately, outside the stamp.
 _CLIENT_PACKAGE = "gobby-client"
 _CLIENT_NAME = "gclient"
+# gmcp and gterm ship from this workspace too. Each is built on its own, with the
+# arguments `gobby install` uses, so a gterm (Zig) failure cannot cost the others.
+_COMPANION_SELECTIONS: dict[str, tuple[str, ...]] = {
+    "gmcp": ("-p", "gobby-mcp"),
+    "gterm": ("-p", "gobby-terminal", "--features", "vt-engine"),
+}
+_BUILD_TIMEOUT_SECONDS = 1800
 _PIN_PATH = Path("src/gobby/storage/schema_expected_identity.json")
 _INSTALL_METHOD = "workspace-cutover"
 _SCHEMA_INPUTS = (
@@ -115,6 +123,15 @@ class _Client:
 class _Build:
     artifacts: dict[str, Path]
     client: _Client | str  # the built gclient, or why there is none
+    companions: dict[str, _Client] = field(default_factory=dict)  # gmcp and gterm
+
+
+@dataclass(frozen=True)
+class CutoverOutcome:
+    """What happened after the set went live: binaries replaced, and why any were not."""
+
+    promoted: tuple[str, ...] = ()
+    failures: dict[str, str] = field(default_factory=dict)
 
 
 def _build_artifacts(root: Path) -> _Build:
@@ -122,6 +139,7 @@ def _build_artifacts(root: Path) -> _Build:
 
     gclient stays outside the coherent set: when the shared run fails, the set is
     rebuilt alone (reusing the crates the shared run finished) and only gclient is lost.
+    gmcp and gterm build afterwards, and either failing refuses the cutover before stop.
     """
     args = ["cargo", "build", "--release", "--locked"]
     for package in _PACKAGES:
@@ -129,22 +147,49 @@ def _build_artifacts(root: Path) -> _Build:
     client_failure = None
     try:
         client_source = workspace_source_identity(root, _CLIENT_NAME)
-        _run([*args, "-p", _CLIENT_PACKAGE], cwd=root, label="release build", timeout=1800)
+        _run(
+            [*args, "-p", _CLIENT_PACKAGE],
+            cwd=root,
+            label="release build",
+            timeout=_BUILD_TIMEOUT_SECONDS,
+        )
     except (CutoverError, BinaryReleaseVersionError, OSError, ValueError) as exc:
         client_failure = str(exc)
-        _run(args, cwd=root, label="release build", timeout=1800)
+        _run(args, cwd=root, label="release build", timeout=_BUILD_TIMEOUT_SECONDS)
 
     release_dir = cargo_release_dir(root, cwd=root)
     artifacts = {name: release_dir / native_bin_name(name) for name in _BINARY_NAMES}
     missing = [str(path) for path in artifacts.values() if not path.is_file()]
     if missing:
         raise CutoverError("release build omitted required artifacts: " + ", ".join(missing))
+    companions = _build_companions(root, release_dir)
     if client_failure is not None:
-        return _Build(artifacts, client_failure)
+        return _Build(artifacts, client_failure, companions)
     client = release_dir / native_bin_name(_CLIENT_NAME)
     if not client.is_file():
-        return _Build(artifacts, f"release build omitted {client}")
-    return _Build(artifacts, _Client(client, client_source))
+        return _Build(artifacts, f"release build omitted {client}", companions)
+    return _Build(artifacts, _Client(client, client_source), companions)
+
+
+def _build_companions(root: Path, release_dir: Path) -> dict[str, _Client]:
+    """Build gmcp and gterm one at a time; a failure refuses before anything stops."""
+    built: dict[str, _Client] = {}
+    for name, selection in _COMPANION_SELECTIONS.items():
+        try:
+            source = workspace_source_identity(root, name)
+        except (BinaryReleaseVersionError, OSError, ValueError) as exc:
+            raise CutoverError(f"refusing to promote: {name} source identity: {exc}") from exc
+        _run(
+            ["cargo", "build", "--release", "--locked", *selection],
+            cwd=root,
+            label=f"{name} release build",
+            timeout=_BUILD_TIMEOUT_SECONDS,
+        )
+        artifact = release_dir / native_bin_name(name)
+        if not artifact.is_file():
+            raise CutoverError(f"{name} release build omitted {artifact}")
+        built[name] = _Client(artifact, source)
+    return built
 
 
 def _dirty_schema_inputs(root: Path) -> list[str]:
@@ -280,24 +325,30 @@ def run_cutover(
     stop_daemon: Callable[[], bool],
     start_daemon: Callable[[], None],
     start_refusal: Callable[[Path], str | None],
-) -> str | None:
+) -> CutoverOutcome:
     """Build and prove the candidate, stop, then promote and start the new set.
 
-    gclient is promoted after the daemon is back; returns why it was not, or None.
+    gmcp, gterm and gclient are promoted after the daemon is back. gmcp and gterm
+    pass the same release preflight as the set before anything stops, so a changed
+    source under an unbumped version refuses the cutover instead of leaving them stale.
     """
     try:
         sources = {name: workspace_source_identity(root, name) for name in _BINARY_NAMES}
         build = _build_artifacts(root)
         artifacts = build.artifacts
+        companion_sources = {name: built.source for name, built in build.companions.items()}
         preflight_binary_promotions(
-            artifacts, bin_dir=bin_dir, workspace_root=root, source_identities=sources
+            {**artifacts, **{name: built.artifact for name, built in build.companions.items()}},
+            bin_dir=bin_dir,
+            workspace_root=root,
+            source_identities={**sources, **companion_sources},
         )
     except BinaryReleaseVersionError as exc:
         raise CutoverError(f"refusing to promote: {exc}") from exc
     if refusal := start_refusal(artifacts["gdaemon"]):
         raise CutoverError(f"refusing to promote: {refusal}")
     _prove_catalog_freshness(root, artifacts["gdaemon"])
-    _require_unchanged_sources(root, sources)
+    _require_unchanged_sources(root, {**sources, **companion_sources})
     # Only the actual stop proves that the running route accepts shutdown and
     # that the old process exited. Never replace its binaries before that proof.
     if not stop_daemon():
@@ -335,19 +386,54 @@ def run_cutover(
         raise CutoverError(
             f"refusing to promote: {activation_refusal}; restarted the unchanged daemon"
         )
+    promoted: list[str] = []
+    failures: dict[str, str] = {}
+    for name, companion in build.companions.items():
+        try:
+            if _promote_companion(root, bin_dir, name, companion) == "promoted":
+                promoted.append(name)
+        except _POST_START_ERRORS as exc:
+            failures[name] = str(exc)
     if isinstance(build.client, str):
-        return build.client
-    try:
-        _promote_client(root, bin_dir, build.client)
-    except (
-        CutoverError,
-        BinarySetCoherenceError,
-        BinaryReleaseVersionError,
-        OSError,
-        ValueError,
-    ) as exc:
-        return str(exc)
-    return None
+        failures[_CLIENT_NAME] = build.client
+    else:
+        try:
+            _promote_client(root, bin_dir, build.client)
+        except _POST_START_ERRORS as exc:
+            failures[_CLIENT_NAME] = str(exc)
+    return CutoverOutcome(tuple(promoted), failures)
+
+
+_POST_START_ERRORS = (
+    CutoverError,
+    BinarySetCoherenceError,
+    BinaryReleaseVersionError,
+    OSError,
+    ValueError,
+)
+
+
+def _promote_companion(root: Path, bin_dir: Path, name: str, companion: _Client) -> str:
+    """Promote gmcp or gterm when stale; returns "promoted" or "current"."""
+    from gobby.cli import install_setup
+
+    promote, write_stamp = {
+        "gmcp": (
+            install_setup._promote_gmcp_workspace_artifact,
+            install_setup._write_gmcp_version_stamp,
+        ),
+        "gterm": (
+            install_setup._promote_gterm_workspace_artifact,
+            install_setup._write_gterm_version_stamp,
+        ),
+    }[name]
+    _require_unchanged_sources(root, {name: companion.source})
+    outcome = promote(companion.artifact, bin_dir, root)
+    if outcome is None:
+        raise CutoverError(f"{name}: native binary update is already in progress")
+    if version := probe_native_bin_version(bin_dir / native_bin_name(name)):
+        write_stamp(bin_dir, version)
+    return outcome
 
 
 def _promote_client(root: Path, bin_dir: Path, client: _Client) -> None:
@@ -427,7 +513,7 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
             )
         expected_identity = read_workspace_pin(root)
         runtime = get_cli_runtime(ctx)
-        client_failure = run_cutover(
+        outcome = run_cutover(
             root,
             bin_dir,
             stop_daemon=stop_daemon,
@@ -441,12 +527,18 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
         )
     except CutoverError as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo("Cutover complete: gcode, gdaemon, ghook, schema pin, and daemon agree.")
-    if client_failure is None:
-        click.echo("gclient matches this build.")
+    agreement = "gcode, gdaemon, ghook, schema pin, and daemon agree."
+    if outcome.failures:
+        click.echo(f"Cutover set is live: {agreement}")
     else:
+        click.echo(f"Cutover complete: {agreement}")
+    if outcome.promoted:
+        click.echo("Promoted: " + ", ".join(outcome.promoted) + ".")
+    if _CLIENT_NAME not in outcome.failures:
+        click.echo("gclient matches this build.")
+    for name, failure in outcome.failures.items():
         _report(
-            f"gclient was not promoted: {client_failure}. The daemon set is live; "
-            "after resolving this, run `uv run gobby install gclient`.",
+            f"{name} was not promoted: {failure}. The daemon set is live; "
+            f"after resolving this, run `uv run gobby install {name}`.",
             error=True,
         )

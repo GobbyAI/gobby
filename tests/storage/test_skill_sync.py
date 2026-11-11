@@ -9,7 +9,7 @@ import pytest
 from gobby.storage.config_mutations import ConfigPatch
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase, Transaction
-from gobby.storage.skills import LocalSkillManager, Skill, SkillFile, SkillScopeConflictError
+from gobby.storage.skills import LocalSkillManager, Skill, SkillFile
 
 
 def _write_bundled_router(root: Path) -> None:
@@ -899,7 +899,7 @@ class TestSourceTaxonomy:
         assert moved.source == "project"
         assert moved.project_id == project_id
 
-    def test_move_to_project_rejects_soft_deleted_name_collision(
+    def test_move_to_project_accepts_soft_deleted_name_collision(
         self, storage: LocalSkillManager, project_id: str
     ) -> None:
         target = storage.create_skill(
@@ -908,8 +908,8 @@ class TestSourceTaxonomy:
         storage.delete_skill(target.id)
         source = storage.create_skill(name="collision", description="Source", content="# Source")
 
-        with pytest.raises(SkillScopeConflictError, match="already exists in project"):
-            storage.move_to_project(source.id, project_id)
+        moved = storage.move_to_project(source.id, project_id)
+        assert moved.project_id == project_id
 
     def test_move_to_installed(self, storage: LocalSkillManager, project_id: str) -> None:
         """move_to_installed changes source back to 'installed'."""
@@ -925,7 +925,7 @@ class TestSourceTaxonomy:
         assert moved.source == "installed"
         assert moved.project_id is None
 
-    def test_move_to_installed_rejects_soft_deleted_name_collision(
+    def test_move_to_installed_accepts_soft_deleted_name_collision(
         self, storage: LocalSkillManager, project_id: str
     ) -> None:
         target = storage.create_skill(name="collision", description="Target", content="# Target")
@@ -934,8 +934,8 @@ class TestSourceTaxonomy:
             name="collision", description="Source", content="# Source", project_id=project_id
         )
 
-        with pytest.raises(SkillScopeConflictError, match="already exists globally"):
-            storage.move_to_installed(source.id)
+        moved = storage.move_to_installed(source.id)
+        assert moved.project_id is None
 
     def test_list_skills_source_filter(self, storage: LocalSkillManager, project_id: str) -> None:
         """list_skills source param filters by exact source value."""

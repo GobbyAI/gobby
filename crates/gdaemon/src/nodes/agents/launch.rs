@@ -14,14 +14,17 @@ use super::{
     workspace,
 };
 use crate::node_commands::{ExitReason, ReportExit, SpawnPayload};
-use gobby_terminals::control::{EventCursor, HostEventKind, SpawnRequest};
+use gobby_terminals::control::{ControlError, EventCursor, HostEventKind, SpawnRequest};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, OpenOptions, Permissions},
     io::{ErrorKind, Write},
     os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::task::JoinHandle;
@@ -52,6 +55,8 @@ pub struct LaunchContext {
 pub struct LaunchFailure {
     pub reason: ExitReason,
     pub detail: String,
+    /// The host may have started the child, so its tree is kept for the completion owner.
+    pub maybe_launched: bool,
 }
 
 impl LaunchFailure {
@@ -59,6 +64,7 @@ impl LaunchFailure {
         Self {
             reason,
             detail: detail.into(),
+            maybe_launched: false,
         }
     }
 }
@@ -147,15 +153,19 @@ pub(super) async fn start_planned(
     let host_terminal_id = start_child(agents, payload, run_id, cwd, argv, env).await?;
     match record_launched(agents, run_id, &host_terminal_id).await {
         Ok(true) => Ok(()),
-        // A cancel committed while the commit was in flight; the committed child must not run.
-        Ok(false) => Err(abort_cancelled(agents, &host_terminal_id).await),
+        // A cancel landed while the commit was in flight. The commit launched the child and the run
+        // is recorded as launched, so the cancel's own turn stops it with the requested signal.
+        Ok(false) => Err(cancelled_failure()),
         Err(error) => {
-            // The child is live but unrecorded, so it is killed rather than left unowned.
+            // The child is live but unrecorded, so it is killed rather than left unowned. The
+            // commit already launched it, so its tree is kept for its owner.
             let abort = abort_child(agents, &host_terminal_id).await;
-            Err(LaunchFailure::new(
+            let mut failure = LaunchFailure::new(
                 ExitReason::LaunchFailed,
                 format!("record launch: {error}{abort}"),
-            ))
+            );
+            failure.maybe_launched = true;
+            Err(failure)
         }
     }
 }
@@ -349,17 +359,21 @@ async fn start_child(
         ));
     }
     let (terminal_id, spawn_key) = (payload.terminal_id.clone(), run_id.to_owned());
+    // The host client retries a commit whose reply was lost, so count the requests sent.
+    let sent = Arc::new(AtomicUsize::new(0));
     let committed = agents
         .host
         .call(|client| {
             let agents = Arc::clone(agents);
             let (terminal_id, spawn_key) = (terminal_id.clone(), spawn_key.clone());
+            let sent = Arc::clone(&sent);
             Box::pin(async move {
                 // Read with the host client held, so a cancel committed while the launch waited
                 // for the host stops the commit before the host acts.
                 if agents.state.lock().await.cancelled.contains_key(&spawn_key) {
                     return Ok(false);
                 }
+                sent.fetch_add(1, Ordering::SeqCst);
                 client
                     .spawn_commit(&terminal_id, &spawn_key, Some(COMMIT_DEADLINE_MS))
                     .await
@@ -369,13 +383,25 @@ async fn start_child(
         .await;
     match committed {
         Ok(true) => Ok(host_terminal_id),
-        Ok(false) => Err(abort_cancelled(agents, &host_terminal_id).await),
+        Ok(false) => {
+            // A cancel that stops a retry sends nothing, but an earlier request whose reply was
+            // lost may have launched the child, so its tree is kept for its owner.
+            let mut failure = abort_cancelled(agents, &host_terminal_id).await;
+            failure.maybe_launched = sent.load(Ordering::SeqCst) > 0;
+            Err(failure)
+        }
         Err(error) => {
+            // A refusal to the only request names a commit the host never made. A retry, or any
+            // other failure, may have launched the child, so its tree is kept for its owner.
+            let refused =
+                sent.load(Ordering::SeqCst) == 1 && matches!(error, ControlError::Host { .. });
             let abort = abort_child(agents, &host_terminal_id).await;
-            Err(LaunchFailure::new(
+            let mut failure = LaunchFailure::new(
                 ExitReason::LaunchFailed,
                 format!("spawn commit: {error}{abort}"),
-            ))
+            );
+            failure.maybe_launched = !refused && sent.load(Ordering::SeqCst) > 0;
+            Err(failure)
         }
     }
 }
@@ -417,17 +443,16 @@ async fn record_host(
 }
 
 /// Marks the run launched with its host terminal id, durably, before the in-memory state moves.
-/// Answers `false` and records nothing when a cancel was committed meanwhile, so the run settles
-/// unlaunched.
+/// Records the committed child as the run's launch even when a cancel landed meanwhile: the host
+/// already runs the child, so the run owns it. Answers `false` for such a cancel, so the caller
+/// reports the run cancelled and the cancel's own turn stops the launched child.
 async fn record_launched(
     agents: &NodeAgents,
     run_id: &str,
     host_terminal_id: &str,
 ) -> Result<bool, String> {
     let mut state = agents.state.lock().await;
-    if state.cancelled.contains_key(run_id) {
-        return Ok(false);
-    }
+    let cancelled = state.cancelled.contains_key(run_id);
     let mut next = state.clone();
     let run = next
         .runs
@@ -443,19 +468,34 @@ async fn record_launched(
     next.commit(&agents.home, &agents.changed)
         .map_err(|error| format!("{error:#}"))?;
     *state = next;
-    Ok(true)
+    Ok(!cancelled)
 }
 
 /// Records a failed launch as the run's exit, so a launch that returned never leaves its run
 /// owned. The workspace leaves disk before the exit commits, so an observed exit means it is
 /// gone; a failed removal stays queued for `retry_removals`. A failed commit reports the
-/// unrecorded exit beside the launch failure.
+/// unrecorded exit beside the launch failure. A run whose commit returned a child is launched:
+/// its exit settles it and keeps the tree, so nothing is rolled back here.
 pub(super) async fn record_failure(
     agents: &NodeAgents,
     run_id: &str,
     failure: LaunchFailure,
 ) -> LaunchFailure {
-    let queued = {
+    let launched = agents
+        .state
+        .lock()
+        .await
+        .runs
+        .get(run_id)
+        .is_some_and(|run| matches!(run.phase, RunPhase::Launched | RunPhase::Exited));
+    if launched {
+        return failure;
+    }
+    // A commit whose outcome is unknown may have launched the child, so its tree is never queued
+    // for removal. The run settles as launched and its tree stays with the completion owner.
+    let queued = if failure.maybe_launched {
+        None
+    } else {
         let mut state = agents.state.lock().await;
         let mut next = state.clone();
         let queued = next.to_removals(run_id);
@@ -480,7 +520,14 @@ pub(super) async fn record_failure(
     };
     let mut state = agents.state.lock().await;
     let mut next = state.clone();
-    settle(&mut next, run_id, failure.reason, false, None, now_ms());
+    settle(
+        &mut next,
+        run_id,
+        failure.reason,
+        failure.maybe_launched,
+        None,
+        now_ms(),
+    );
     if removed {
         next.removals.remove(run_id);
     }

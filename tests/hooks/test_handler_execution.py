@@ -432,6 +432,12 @@ class TestStaleTranscriptPathRecheck:
     ) -> None:
         """Claude relocates the transcript with the cwd; the row follows it."""
         monkeypatch.setattr(manager_with_mocks, "get_machine_id", lambda: LOCAL_MACHINE_ID)
+        # The fixture path is unbound to this session's layout; pin the binding check
+        # (covered in tests/hooks/test_transcript_path_derivation.py) so the recheck runs.
+        monkeypatch.setattr(
+            "gobby.hooks.event_handlers._session_start.transcripts.hook_transcript_is_bound",
+            lambda *_args, **_kwargs: True,
+        )
         moved = tmp_path / "moved.jsonl"
         moved.write_text("{}\n", encoding="utf-8")
         session = SimpleNamespace(

@@ -28,6 +28,7 @@ pub struct FakeGterm {
     requests: Arc<Mutex<Vec<(Value, tokio::time::Instant)>>>,
     drop_next_list: Arc<AtomicBool>,
     reject_next_commit: Arc<AtomicBool>,
+    lose_commit_reply: Arc<AtomicBool>,
     events: broadcast::Sender<Value>,
     exit_before_commit: Arc<AtomicBool>,
     disconnect_after_exit: Arc<AtomicBool>,
@@ -94,6 +95,7 @@ impl FakeGterm {
         let writes = Arc::new(WriteGate::default());
         let drop_next_list = Arc::new(AtomicBool::new(false));
         let reject_next_commit = Arc::new(AtomicBool::new(false));
+        let lose_commit_reply = Arc::new(AtomicBool::new(false));
         let (events, _) = broadcast::channel(16);
         let exit_before_commit = Arc::new(AtomicBool::new(false));
         let disconnect_after_exit = Arc::new(AtomicBool::new(false));
@@ -119,6 +121,7 @@ impl FakeGterm {
             let requests = requests.clone();
             let drop_next_list = drop_next_list.clone();
             let reject_next_commit = reject_next_commit.clone();
+            let lose_commit_reply = lose_commit_reply.clone();
             let events = events.clone();
             let exit_before_commit = exit_before_commit.clone();
             let disconnect_after_exit = disconnect_after_exit.clone();
@@ -142,6 +145,7 @@ impl FakeGterm {
                             let writes = writes.clone();
                             let drop_next_list = drop_next_list.clone();
                             let reject_next_commit = reject_next_commit.clone();
+                            let lose_commit_reply = lose_commit_reply.clone();
                             let emit_events = events.clone();
                             let mut events = events.subscribe();
                             let exit_before_commit = exit_before_commit.clone();
@@ -256,6 +260,10 @@ impl FakeGterm {
                                         gate.held.notify_one();
                                         gate.release.notified().await;
                                     }
+                                    if method == "spawn_commit" && lose_commit_reply.swap(false, Ordering::SeqCst) {
+                                        reject_next_commit.store(true, Ordering::SeqCst);
+                                        return;
+                                    }
                                     reply["id"] = request["id"].clone();
                                     if send(&mut writer, &reply).await.is_err() { return }
                                 }
@@ -274,6 +282,7 @@ impl FakeGterm {
             requests,
             drop_next_list,
             reject_next_commit,
+            lose_commit_reply,
             events,
             exit_before_commit,
             disconnect_after_exit,
@@ -394,6 +403,11 @@ impl FakeGterm {
 
     pub fn reject_next_commit(&self) {
         self.reject_next_commit.store(true, Ordering::SeqCst);
+    }
+
+    /// The next commit runs, but its reply is lost. The client's retry is then refused.
+    pub fn lose_next_commit_reply(&self) {
+        self.lose_commit_reply.store(true, Ordering::SeqCst);
     }
 
     pub fn terminal_exited(&self) -> Result<()> {

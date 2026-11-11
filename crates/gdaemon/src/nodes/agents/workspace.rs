@@ -2,6 +2,7 @@
 
 use super::{
     NodeAgents,
+    removal_lock::RemovalLock,
     repair::{self, RepairEnv},
     state::{RunPhase, WorkspaceRecord},
 };
@@ -53,6 +54,7 @@ pub fn plan_workspace(
         base_branch: Some(base_branch),
         source_root: source_root.to_owned(),
         reused: false,
+        created: false,
     }))
 }
 
@@ -81,9 +83,26 @@ pub async fn prepare(
     checkpoint(cancel, "before create")?;
     if !record.reused {
         create(record).await?;
+        mark_created(agents, run_id).await?;
     }
     checkpoint(cancel, "before repair")?;
     repair::repair(&record.source_root, &record.path, provider, env).await
+}
+
+/// Records in the run's state that its create made the tree, so a removal may retire it.
+async fn mark_created(agents: &NodeAgents, run_id: &str) -> Result<()> {
+    let mut state = agents.state.lock().await;
+    let run = state
+        .runs
+        .get_mut(run_id)
+        .with_context(|| format!("run {run_id} is not accepted"))?;
+    let workspace = run
+        .workspace
+        .as_mut()
+        .context("run has no workspace to mark created")?;
+    workspace.created = true;
+    state.commit(&agents.home, &agents.changed)?;
+    Ok(())
 }
 
 fn checkpoint(cancel: &(dyn Fn() -> bool + Sync), step: &str) -> Result<()> {
@@ -93,10 +112,18 @@ fn checkpoint(cancel: &(dyn Fn() -> bool + Sync), step: &str) -> Result<()> {
 
 /// Removes a workspace and its branch. A missing path or branch counts as removed.
 pub async fn remove(record: &WorkspaceRecord) -> Result<()> {
+    // Held for the whole removal, so a deletion of the same tree in Python reads it as busy and
+    // never as half-removed. A busy lock keeps the caller's record for a later retry.
+    let _lock = RemovalLock::acquire(&record.path)?.with_context(|| {
+        format!(
+            "removal of {} is already in progress",
+            record.path.display()
+        )
+    })?;
     match record.mode {
         WorkspaceMode::Worktree => remove_worktree(record).await,
         WorkspaceMode::Clone => {
-            if record.path.exists() {
+            if record.created && record.path.exists() {
                 fs::remove_dir_all(&record.path)
                     .with_context(|| format!("remove clone {}", record.path.display()))?;
             }
@@ -174,6 +201,7 @@ fn existing_record(
         base_branch: None,
         source_root: source_root.to_owned(),
         reused: true,
+        created: false,
     })
 }
 
@@ -232,7 +260,11 @@ async fn create(record: &WorkspaceRecord) -> Result<()> {
 
 async fn remove_worktree(record: &WorkspaceRecord) -> Result<()> {
     let path = path_str(&record.path)?;
-    if record.path.exists()
+    // Only the tree and branch this record's create made are ours. A path or branch that already
+    // existed when create refused it stays as found.
+    let owned = record.created;
+    if owned
+        && record.path.exists()
         && let Err(error) = git_output(
             &record.source_root,
             &["worktree", "remove", "--force", path],
@@ -246,6 +278,9 @@ async fn remove_worktree(record: &WorkspaceRecord) -> Result<()> {
         fs::remove_dir_all(&record.path).with_context(|| format!("remove worktree {path}"))?;
     }
     git_output(&record.source_root, &["worktree", "prune"]).await?;
+    if !owned {
+        return Ok(());
+    }
     let branch_ref = format!("refs/heads/{}", record.branch_name);
     if git_succeeds(
         &record.source_root,

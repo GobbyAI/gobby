@@ -28,6 +28,7 @@ __all__ = [
     "LANDING",
     "CloseReceipt",
     "CloseReceiptError",
+    "latest_landed_tip",
     "list_close_receipts",
     "record_close_receipt",
 ]
@@ -130,6 +131,37 @@ def list_close_receipts(db: HubDatabase, task_id: str) -> list[CloseReceipt]:
         (task_id, CLOSE_RECEIPT_AUTHOR_TYPE),
     )
     return [receipt for row in rows if (receipt := _receipt_from_row(row)) is not None]
+
+
+def latest_landed_tip(db: HubDatabase, project_id: str, branch: str) -> str | None:
+    """Return the tip the newest landing on ``branch`` recorded, or None when none exists.
+
+    Receipts live in the hub database, so a worktree cannot move this anchor the way
+    it moves a branch ref. The text match only narrows the scan; the decoded facts decide.
+    """
+    rows = db.fetchall(
+        """
+        SELECT c.body FROM task_comments c
+        JOIN tasks t ON t.id = c.task_id
+        WHERE t.project_id = %s AND c.author_type = %s AND strpos(c.body, %s) > 0
+        ORDER BY c.created_at DESC, c.id DESC
+        """,
+        (project_id, CLOSE_RECEIPT_AUTHOR_TYPE, json.dumps(branch)),
+    )
+    for row in rows:
+        try:
+            body = json.loads(str(row["body"]))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(body, dict) or body.get("kind") != LANDING:
+            continue
+        facts = body.get("facts")
+        if not isinstance(facts, dict) or facts.get("branch") != branch:
+            continue
+        tip = facts.get("landed_tip")
+        if isinstance(tip, str) and _FULL_SHA_RE.fullmatch(tip):
+            return tip
+    return None
 
 
 def _bounded_facts(facts: object) -> dict[str, str | int | bool]:

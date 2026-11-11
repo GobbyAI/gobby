@@ -9,6 +9,7 @@ from __future__ import annotations
 import subprocess
 import time
 from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -1311,16 +1312,26 @@ class TestGetDiff:
 
 
 class TestListWorktrees:
+    @pytest.fixture
+    def managed_root(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        root = tmp_path / "managed"
+        monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", root)
+        return root
+
     def test_worktrees_no_storage(self, client: TestClient, mock_server: MagicMock) -> None:
         mock_server.services.worktree_storage = None
         response = client.get("/api/source-control/worktrees")
         assert response.status_code == 200
         assert response.json()["worktrees"] == []
 
-    def test_worktrees_with_storage(self, client: TestClient, mock_server: MagicMock) -> None:
+    def test_worktrees_with_storage(
+        self, client: TestClient, mock_server: MagicMock, managed_root: Path
+    ) -> None:
         wt1 = MagicMock()
+        wt1.worktree_path = str(managed_root / "wt-1")
         wt1.to_dict.return_value = {"id": "wt-1", "branch_name": "feature"}
         wt2 = MagicMock()
+        wt2.worktree_path = str(managed_root / "wt-2")
         wt2.to_dict.return_value = {"id": "wt-2", "branch_name": "bugfix"}
 
         mock_storage = MagicMock()
@@ -1343,6 +1354,26 @@ class TestListWorktrees:
         response = client.get("/api/source-control/worktrees?project_id=proj-1")
         assert response.status_code == 200
         mock_storage.list_worktrees.assert_called_once_with(project_id="proj-1", status=None)
+
+    def test_worktrees_hides_rows_outside_managed_root(
+        self, client: TestClient, mock_server: MagicMock, managed_root: Path, tmp_path: Path
+    ) -> None:
+        inside_path = str(managed_root / "proj" / "wt-inside")
+        outside_path = str(tmp_path / "scratchpad" / "wt-old")
+        inside = MagicMock()
+        inside.worktree_path = inside_path
+        inside.to_dict.return_value = {"id": "wt-inside", "worktree_path": inside_path}
+        outside = MagicMock()
+        outside.worktree_path = outside_path
+        outside.to_dict.return_value = {"id": "wt-old", "worktree_path": outside_path}
+
+        mock_storage = MagicMock()
+        mock_storage.list_worktrees.return_value = [inside, outside]
+        mock_server.services.worktree_storage = mock_storage
+
+        response = client.get("/api/source-control/worktrees")
+        assert response.status_code == 200
+        assert [row["id"] for row in response.json()["worktrees"]] == ["wt-inside"]
 
     def test_worktrees_with_status_filter(self, client: TestClient, mock_server: MagicMock) -> None:
         mock_storage = MagicMock()
@@ -1387,6 +1418,16 @@ class TestWorktreeStats:
 # ---------------------------------------------------------------------------
 # DELETE /api/source-control/worktrees/{worktree_id}
 # ---------------------------------------------------------------------------
+
+
+def _model_removal_lock(storage: MagicMock) -> None:
+    """Yield the stored row from the removal lock, as WorktreeStorage.lock_for_removal does."""
+
+    @contextmanager
+    def lock_for_removal(worktree_id: str) -> Iterator[Any]:
+        yield storage.get(worktree_id)
+
+    storage.lock_for_removal.side_effect = lock_for_removal
 
 
 class TestDeleteWorktree:
@@ -1436,6 +1477,7 @@ class TestDeleteWorktree:
 
         mock_storage = MagicMock()
         mock_storage.get.return_value = wt
+        _model_removal_lock(mock_storage)
         mock_storage.delete.return_value = True
         mock_server.services.worktree_storage = mock_storage
         mock_server.services.git_manager = None
@@ -1459,6 +1501,7 @@ class TestDeleteWorktree:
 
         mock_storage = MagicMock()
         mock_storage.get.return_value = wt
+        _model_removal_lock(mock_storage)
         mock_server.services.worktree_storage = mock_storage
         mock_server.services.git_manager = None
 
@@ -1489,6 +1532,7 @@ class TestDeleteWorktree:
 
         mock_storage = MagicMock()
         mock_storage.get.return_value = wt
+        _model_removal_lock(mock_storage)
         mock_storage.delete.return_value = True
         mock_server.services.worktree_storage = mock_storage
 
@@ -2209,13 +2253,14 @@ def test_create_client_worktree(
 def test_delete_client_worktree_refuses_live_terminals(
     client: TestClient,
     mock_server: MagicMock,
+    tmp_path: Path,
 ) -> None:
     """A client worktree remains until every Gobby-owned terminal exits."""
     worktree = SimpleNamespace(
         id="wt-client",
         project_id="project-1",
         branch_name="feature/client",
-        worktree_path="/tmp/client-worktree",
+        worktree_path=str(tmp_path / "client-worktree"),
         base_branch="main",
         task_id=None,
         workspace_role="client",
@@ -2229,13 +2274,14 @@ def test_delete_client_worktree_refuses_live_terminals(
     )
     storage = MagicMock()
     storage.get.return_value = worktree
+    _model_removal_lock(storage)
     storage.delete.return_value = True
     terminal_manager = MagicMock()
     terminal_manager.list_by_project.return_value = [terminal]
     mock_server.services.worktree_storage = storage
     mock_server.services.terminal_manager = terminal_manager
     mock_server.session_manager.get.return_value = SimpleNamespace(
-        workspace_path="/tmp/client-worktree/subdirectory"
+        workspace_path=str(tmp_path / "client-worktree" / "subdirectory")
     )
 
     refused = client.delete("/api/source-control/worktrees/wt-client")

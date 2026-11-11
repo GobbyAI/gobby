@@ -177,6 +177,15 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
         action = "Installed" if srt_result.installed else "Verified"
         click.echo(f"{action} managed Sandbox Runtime {srt_result.version}: {srt_result.path}")
 
+    from .install_setup_ocr import OcrInstallError, install_ocr_cli
+
+    try:
+        ocr_result = install_ocr_cli()
+    except OcrInstallError as exc:
+        raise click.ClickException(f"Failed to install OCR CLI: {exc}") from exc
+    ocr_action = "Installed" if ocr_result.installed else "Verified"
+    click.echo(f"{ocr_action} OCR CLI {ocr_result.version}: {ocr_result.path}")
+
     homebrew_mode = is_homebrew_distribution()
     provision_impeccable(project_path)
 
@@ -506,6 +515,12 @@ def _write_gterm_version_stamp(bin_dir: Path, version: str) -> None:
     _gterm_impl.write_gterm_version_stamp(_module(), bin_dir, version)
 
 
+def _promote_gterm_workspace_artifact(
+    src_bin: Path, bin_dir: Path, workspace_root: Path
+) -> str | None:
+    return _gterm_impl.promote_gterm_workspace_artifact(_module(), src_bin, bin_dir, workspace_root)
+
+
 def _install_gterm_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
     return _gterm_impl.install_gterm_from_github(_module(), bin_dir, target, version)
 
@@ -590,6 +605,12 @@ def _get_installed_gmcp_version(bin_dir: Path) -> str | None:
 
 def _write_gmcp_version_stamp(bin_dir: Path, version: str) -> None:
     _gmcp_impl.write_gmcp_version_stamp(_module(), bin_dir, version)
+
+
+def _promote_gmcp_workspace_artifact(
+    src_bin: Path, bin_dir: Path, workspace_root: Path
+) -> str | None:
+    return _gmcp_impl.promote_gmcp_workspace_artifact(_module(), src_bin, bin_dir, workspace_root)
 
 
 def _install_gmcp_from_submodule(bin_dir: Path) -> str | None:

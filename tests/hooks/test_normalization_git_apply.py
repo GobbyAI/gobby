@@ -17,7 +17,7 @@ def invocation(command: str, cwd: Path) -> dict[str, Any]:
         "tool_input": {"command": command, "cwd": str(cwd)},
         "project_path": str(cwd),
     }
-    _set_canonical_tool_metadata(data)
+    _set_canonical_tool_metadata(data, can_rewrite_input=True)
     return data
 
 
@@ -77,12 +77,12 @@ def test_git_apply_unproven_worktree_writes_stay_unknown(tmp_path: Path, argumen
         "--cached p*.diff",
     ],
 )
-def test_git_apply_cached_only_mutates_index(tmp_path: Path, arguments: str) -> None:
+def test_git_apply_cached_without_a_validated_patch_has_unknown_scope(
+    tmp_path: Path, arguments: str
+) -> None:
     data = invocation(f"git apply {arguments}", tmp_path)
-    assert data["canonical_tool_kind"] == "execute"
-    assert data["canonical_repo_mutation"] is True
-    assert data.get("canonical_edit_file_paths", []) == []
-    assert not data.get("canonical_repo_mutation_scope_unknown")
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
 def test_git_apply_dynamic_index_selector_stays_unknown(tmp_path: Path) -> None:
@@ -167,7 +167,8 @@ def _saved_patch(tmp_path: Path, text: str) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
     (repo / "src").mkdir(parents=True)
     subprocess.run(["git", "init", "-q", str(repo)], check=True)
-    patch = tmp_path / "workspace" / "set-aside.patch"
+    # The hook reads only a patch inside the checkout; one outside stays unknown scope.
+    patch = repo / "workspace" / "set-aside.patch"
     patch.parent.mkdir()
     patch.write_text(text, encoding="utf-8")
     return repo.resolve(), patch.resolve()

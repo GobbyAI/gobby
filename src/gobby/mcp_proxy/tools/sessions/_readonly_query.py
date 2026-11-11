@@ -12,8 +12,9 @@ explicitly excluded columns (connection URLs and args included), and it has no
 membership. The denied-name check is a second layer. ``SQL_FROM_TEXT_FUNCTIONS`` lists
 every built-in that runs SQL held in text. ``set_config`` is one: PUBLIC can execute it,
 and ``set_config('role', 'none')`` in the same statement would reset the role to the
-daemon runtime. A statement that names one of them is refused, and so is one that names
-any function outside pg_catalog, since a public plpgsql function can EXECUTE text. A
+daemon runtime. A statement that names one of them is refused, and so is one that calls
+any function outside pg_catalog, since a public plpgsql function can EXECUTE text. A dotted
+name that matches such a function is refused too, because attribute notation calls it. A
 statement cannot call a function named only by concatenation, the text-to-SQL entry
 points (``*_to_xml``, dblink) are refused, and ``SET ROLE`` cannot start a SELECT or
 WITH.
@@ -32,7 +33,7 @@ import json
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import psycopg
 
@@ -113,25 +114,41 @@ _CATALOG_SQL = (
     "WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
     "AND column_name ILIKE ANY(%s::text[])"
 )
-# Functions outside pg_catalog. A public plpgsql function can EXECUTE text, so the name gate
-# refuses any statement that names one.
+# Functions outside pg_catalog. A public plpgsql function can EXECUTE text, so the function gate
+# refuses any statement that calls one.
 _FUNCTION_SQL = (
     "SELECT DISTINCT p.proname AS name FROM pg_proc p "
     "JOIN pg_namespace n ON n.oid = p.pronamespace "
     "WHERE n.nspname <> 'pg_catalog'"
 )
 _NAME = re.compile(r"[a-z_][a-z0-9_$]*")
+# Reserved words (catcode R). A reserved word followed by "(" is grammar, never a function call.
+_KEYWORD_SQL = "SELECT word FROM pg_get_keywords() WHERE catcode = 'R'"
+# EXISTS is a column-name keyword (catcode C). Unqualified exists(...) never reaches function
+# lookup; it parses as the EXISTS sublink, so it counts as a keyword here too.
+_EXTRA_KEYWORDS = frozenset({"exists"})
+# The lexer follows PostgreSQL's scanner with standard_conforming_strings on, which the statement
+# pins before it runs. Text in a comment, a literal or a quoted name is never code, and code is
+# never text. Block comments nest. Dollar tags are case-sensitive and close at the first exact tag.
+# An E-string keeps its backslash escapes across a newline continuation, which PostgreSQL joins to
+# it. A block comment, literal, quoted name or dollar quote that never closes is a syntax error, so
+# the lexer reads it to the statement's end and nothing runs.
+_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_$]*")
+_DOLLAR_OPEN = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)?\$")
+_LINE_BREAK = re.compile(r"[\n\r]")
+_BLANK = frozenset(" \t\n\r\f\v")
 _UNICODE_ESCAPE = re.compile(r"\bu&", re.IGNORECASE)
 _STATEMENT_START = re.compile(r"(select|with)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
 class _Catalog:
-    """Credential names in this database, lowercased, read inside the query's transaction."""
+    """Names this database defines, lowercased, read inside the query's transaction."""
 
     columns: frozenset[str]
     tables: frozenset[str]
     functions: frozenset[str]
+    keywords: frozenset[str]
 
 
 def _single_statement(sql: str) -> str:
@@ -159,13 +176,168 @@ def _names(statement: str, params: Sequence[Any]) -> set[str]:
     return {name for text in texts for name in _NAME.findall(text.lower())}
 
 
-def _name_refusal(names: set[str], catalog: _Catalog) -> str | None:
+class _Token(NamedTuple):
+    kind: str
+    text: str
+    quoted: bool = False
+
+
+def _line_end(statement: str, start: int) -> int:
+    match = _LINE_BREAK.search(statement, start)
+    return len(statement) if match is None else match.start()
+
+
+def _block_comment_end(statement: str, start: int) -> int:
+    """Index past the block comment opened at start. PostgreSQL nests block comments."""
+    depth = 0
+    pos = start
+    while pos < len(statement):
+        if statement.startswith("/*", pos):
+            depth += 1
+            pos += 2
+        elif statement.startswith("*/", pos):
+            depth -= 1
+            pos += 2
+            if depth == 0:
+                return pos
+        else:
+            pos += 1
+    return len(statement)
+
+
+def _quote_end(statement: str, quote: int, *, backslash: bool) -> int:
+    """Index past the quote that closes the literal opened at quote, or the statement's end.
+
+    A doubled quote is an escaped quote. With backslash, a backslash escapes the character after it.
+    """
+    mark = statement[quote]
+    pos = quote + 1
+    while pos < len(statement):
+        char = statement[pos]
+        if backslash and char == "\\":
+            pos += 2
+        elif char != mark:
+            pos += 1
+        elif statement.startswith(mark, pos + 1):
+            pos += 2
+        else:
+            return pos + 1
+    return len(statement)
+
+
+def _continuation_quote(statement: str, pos: int) -> int | None:
+    """The opening quote PostgreSQL joins to the literal that ends at pos, or None.
+
+    PostgreSQL joins literals that are separated by whitespace holding a newline. A line comment
+    counts as whitespace. The joined literal keeps the escape rules of the literal before it.
+    """
+    newline = False
+    while pos < len(statement):
+        char = statement[pos]
+        if statement.startswith("--", pos):
+            pos = _line_end(statement, pos)
+        elif char in "\n\r":
+            newline = True
+            pos += 1
+        elif char in " \t\f" or (newline and char in _BLANK):
+            pos += 1
+        else:
+            break
+    if newline and statement.startswith("'", pos):
+        return pos
+    return None
+
+
+def _e_string_end(statement: str, quote: int) -> int:
+    """Index past the E-string opened at quote, with each continuation PostgreSQL joins to it."""
+    stop = _quote_end(statement, quote, backslash=True)
+    while (next_quote := _continuation_quote(statement, stop)) is not None:
+        stop = _quote_end(statement, next_quote, backslash=True)
+    return stop
+
+
+def _tokens(statement: str) -> list[_Token]:
+    """Split a statement into names, punctuation and opaque literals, as PostgreSQL lexes it.
+
+    Blanks and comments separate tokens and carry no meaning. Strings, E-strings and dollar quotes
+    are opaque "other" tokens. Bare and quoted names are lowercased. Lowercasing a quoted name can
+    only match more catalog names, never fewer, because catalog names are lowercased too.
+    """
+    tokens: list[_Token] = []
+    pos = 0
+    while pos < len(statement):
+        char = statement[pos]
+        if char in _BLANK:
+            pos += 1
+        elif statement.startswith("--", pos):
+            pos = _line_end(statement, pos)
+        elif statement.startswith("/*", pos):
+            pos = _block_comment_end(statement, pos)
+        elif char in "eE" and statement.startswith("'", pos + 1):
+            stop = _e_string_end(statement, pos + 1)
+            tokens.append(_Token("other", statement[pos:stop]))
+            pos = stop
+        elif char == "'":
+            stop = _quote_end(statement, pos, backslash=False)
+            tokens.append(_Token("other", statement[pos:stop]))
+            pos = stop
+        elif char == '"':
+            stop = _quote_end(statement, pos, backslash=False)
+            name = statement[pos + 1 : stop].removesuffix('"').replace('""', '"')
+            tokens.append(_Token("name", name.lower(), quoted=True))
+            pos = stop
+        elif char == "$" and (opener := _DOLLAR_OPEN.match(statement, pos)) is not None:
+            delimiter = opener.group()
+            close = statement.find(delimiter, opener.end())
+            stop = len(statement) if close < 0 else close + len(delimiter)
+            tokens.append(_Token("other", statement[pos:stop]))
+            pos = stop
+        elif (word := _WORD.match(statement, pos)) is not None:
+            tokens.append(_Token("name", word.group().lower()))
+            pos = word.end()
+        else:
+            tokens.append(_Token("punct", char))
+            pos += 1
+    return tokens
+
+
+def _references(statement: str, keywords: frozenset[str]) -> tuple[set[str], set[str]]:
+    """Return the names PostgreSQL may resolve to a function, as (called, dotted).
+
+    ``called`` holds a name followed by "(" that is not a reserved keyword, and every quoted name
+    followed by "(". ``dotted`` holds every name after a "." (schema-qualified calls and attribute
+    notation both reach function lookup). Bind values are not scanned: they reach the server as
+    values, not text. A bare name that is not called, such as an alias, never reaches function
+    lookup.
+    """
+    tokens = _tokens(statement)
+    called: set[str] = set()
+    dotted: set[str] = set()
+    for index, token in enumerate(tokens):
+        if token.kind != "name":
+            continue
+        if index > 0 and tokens[index - 1] == _Token("punct", "."):
+            dotted.add(token.text)
+        followed_by_paren = index + 1 < len(tokens) and tokens[index + 1] == _Token("punct", "(")
+        if followed_by_paren and (token.quoted or token.text not in keywords):
+            called.add(token.text)
+    return called, dotted
+
+
+def _name_refusal(
+    names: set[str], called: set[str], dotted: set[str], catalog: _Catalog
+) -> str | None:
     if names & (catalog.columns | catalog.tables | DENIED_NAMES):
         return (
             "That names a credential table or column, or a catalog that holds one. "
             "Those are never readable through query_readonly."
         )
-    if names & catalog.functions:
+    if dotted & catalog.functions:
+        return (
+            "That dotted name matches a function outside pg_catalog. Attribute notation can call "
+            "that function, so it is refused. Use a different alias for that column."
+        )
+    if called & catalog.functions:
         return (
             "That calls a function outside pg_catalog, which can run SQL held in text. "
             "It is refused."
@@ -181,10 +353,12 @@ def _load_catalog(txn: Transaction) -> _Catalog:
     tables = {str(row["table_name"]).lower() for row in rows}
     columns = {str(row["column_name"]).lower() for row in rows}
     functions = {str(row["name"]).lower() for row in txn.execute(_FUNCTION_SQL).fetchall()}
+    keywords = {str(row["word"]).lower() for row in txn.execute(_KEYWORD_SQL).fetchall()}
     return _Catalog(
         columns=frozenset(columns),
         tables=frozenset(tables | CREDENTIAL_TABLES),
         functions=frozenset(functions),
+        keywords=frozenset(keywords | _EXTRA_KEYWORDS),
     )
 
 
@@ -200,10 +374,15 @@ def _run(db: HubDatabase, sql: str, params: list[Any], limit: int) -> dict[str, 
     with db.bounded_transaction(
         statement_timeout_ms=STATEMENT_TIMEOUT_MS, repeatable_read_read_only=True
     ) as txn:
-        refusal = _name_refusal(_names(statement, params), _load_catalog(txn))
+        catalog = _load_catalog(txn)
+        called, dotted = _references(statement, catalog.keywords)
+        refusal = _name_refusal(_names(statement, params), called, dotted, catalog)
         if refusal is not None:
             return _refused(refusal)
         txn.execute(f"SET LOCAL ROLE {QUERY_ROLE}")
+        # The lexer reads plain strings with standard_conforming_strings on. Pin it so the
+        # statement parses the way the lexer read it.
+        txn.execute("SET LOCAL standard_conforming_strings = on")
         wrapped = f"SELECT * FROM (\n{statement}\n) AS readonly_result LIMIT {limit}"
         rows = txn.execute(wrapped, params).fetchall()
     return {

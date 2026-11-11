@@ -1,7 +1,8 @@
-"""An epic leaf's sub-worktree is torn down when the leaf closes (#25224).
+"""An epic leaf's dispatched seats end when the leaf closes; its sub-worktree stays (#25224, #25687).
 
-The epic's primary seats and tree persist until the epic closes. A leaf whose sub-worktree
-is dirty or unmerged keeps that tree and logs the refusal without filing a task.
+Teardown never deletes a leaf's sub-worktree or branch: the completion owner's delete_worktree
+retires them. The epic's primary seats and tree persist until the epic closes. A dispatched seat
+that cannot end is logged without filing a task.
 """
 
 from __future__ import annotations
@@ -15,15 +16,13 @@ from typing import Any
 
 import pytest
 
-from gobby.agents.team_admission_records import TeamBinding
-from gobby.agents.team_teardown import TEARDOWN_GRACE, _last_refusals
+from gobby.agents.team_teardown import TEARDOWN_GRACE
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.worktrees.deletion import WorktreeDeletionResult
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import TeamWorld, git_in, make_team_world
 from tests.fixtures.team_teardown_case import (
@@ -141,7 +140,7 @@ def team_tree(team: Team) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_closing_a_merged_epic_leaf_ends_its_dispatched_seat_and_removes_its_tree(
+async def test_closing_a_merged_epic_leaf_ends_its_dispatched_seat_and_keeps_its_tree(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = world.case.db
@@ -169,13 +168,18 @@ async def test_closing_a_merged_epic_leaf_ends_its_dispatched_seat_and_removes_i
     assert session_status(db, dispatched) == "expired"
     assert session_status(db, primary) == "active"
     assert session_status(db, manager) == "active"
-    assert not sub.path.exists()
-    assert LocalWorktreeManager(db).get(sub.worktree_id) is None
-    assert not branch_exists(world, sub.branch)
+    assert sub.path.is_dir()
+    assert LocalWorktreeManager(db).get(sub.worktree_id) is not None
+    assert branch_exists(world, sub.branch)
     assert tree.is_dir()
     assert branch_exists(world, team.binding.branch)
     assert LocalTaskManager(db).get_task(epic.id).closed_at is None
     assert project_task_ids(world) == tasks_before
+
+    await teardown_pass(db, daemon(db), closed_at(closed) + TEARDOWN_GRACE + timedelta(minutes=1))
+
+    assert terminations.ended() == [dispatched], "a later pass has no seat left to end"
+    assert sub.path.is_dir()
 
 
 @pytest.mark.asyncio
@@ -209,7 +213,7 @@ async def test_leaf_seat_that_cannot_end_files_no_task_and_keeps_its_sub_tree(
 
 
 @pytest.mark.asyncio
-async def test_leaf_teardown_keeps_a_dirty_or_unmerged_sub_tree_and_logs_it(
+async def test_leaf_teardown_leaves_a_dirty_or_unmerged_sub_tree_untouched(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     db = world.case.db
@@ -237,90 +241,50 @@ async def test_leaf_teardown_keeps_a_dirty_or_unmerged_sub_tree_and_logs_it(
         assert sub.path.is_dir()
         assert LocalWorktreeManager(db).get(sub.worktree_id) is not None
         assert branch_exists(world, sub.branch)
-    assert sorted(refusal_codes(caplog)) == [
-        "branch_not_merged_into_target",
-        "uncommitted_changes",
-    ]
+    assert refusal_codes(caplog) == [], "teardown never attempts a tree deletion"
     assert (dirty.path / "README.md").read_text() == "edited after the merge\n"
     assert tree.is_dir()
 
 
 @pytest.mark.asyncio
-async def test_refused_leaf_tree_logs_once_per_reason_and_retries_every_pass(
-    world: TeamWorld, caplog: pytest.LogCaptureFixture
+async def test_refused_leaf_seat_logs_once_per_reason_and_retries_every_pass(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """#25656: a retained sub-tree is retried each pass; its refusal logs once per reason."""
+    """#25656: a dispatched seat that refuses to end is retried each pass; it logs once per reason."""
     db = world.case.db
     epic = new_task(world, TITLE, epic=True)
     leaf = new_task(world, LEAF_TITLE, parent=epic)
     team = await seated_team(world, epic, world.child(epic))
     tree = team_tree(team)
     sub = sub_tree(world, team, leaf)
+    dispatched_seat(world, team, str(sub.path))
     git_in(tree, "merge", "--no-ff", sub.branch, "-m", "Merge leaf into epic main")
     closed = close_leaf(world, leaf, sub.sha)
     refusals = [
-        WorktreeDeletionResult(
-            success=False, error_code="uncommitted_changes", error="README.md modified"
-        ),
-        WorktreeDeletionResult(
-            success=False, error_code="uncommitted_changes", error="README.md modified"
-        ),
-        WorktreeDeletionResult(
-            success=False, error_code="uncommitted_changes", error="index.lock held"
-        ),
-        WorktreeDeletionResult(success=False, error_code="worktree_in_use", error="tree in use"),
-        WorktreeDeletionResult(success=False, error_code="worktree_in_use", error="tree in use"),
+        {"success": False, "error_code": "seat_busy", "error": "turn still open"},
+        {"success": False, "error_code": "seat_busy", "error": "turn still open"},
+        {"success": False, "error_code": "seat_busy", "error": "stop timed out"},
+        {"success": False, "error_code": "seat_stop_refused", "error": "stop timed out"},
+        {"success": False, "error_code": "seat_stop_refused", "error": "stop timed out"},
     ]
-    calls: list[str | None] = []
+    calls: list[str] = []
 
-    async def refuse(binding: TeamBinding) -> WorktreeDeletionResult:
-        calls.append(binding.worktree_id)
+    async def refuse(**_kwargs: Any) -> dict[str, Any]:
+        calls.append("terminate")
         return refusals[len(calls) - 1]
+
+    monkeypatch.setattr(agent_cancellation, "terminate_agent_run", refuse)
 
     first_pass = closed_at(closed) + TEARDOWN_GRACE
     with caplog.at_level(logging.DEBUG, logger=TEARDOWN_LOGGER):
         for minutes in range(len(refusals)):
-            await teardown_pass(
-                db, daemon(db), first_pass + timedelta(minutes=minutes), delete=refuse
-            )
+            await teardown_pass(db, daemon(db), first_pass + timedelta(minutes=minutes))
 
     assert len(calls) == len(refusals)
-    assert refusal_codes(caplog) == [
-        "uncommitted_changes",
-        "uncommitted_changes",
-        "worktree_in_use",
-    ]
-    assert refusal_codes(caplog, logging.DEBUG) == ["uncommitted_changes", "worktree_in_use"]
+    assert refusal_codes(caplog) == ["seat_busy", "seat_busy", "seat_stop_refused"]
+    assert refusal_codes(caplog, logging.DEBUG) == ["seat_busy", "seat_stop_refused"]
     assert sub.path.is_dir()
-
-
-@pytest.mark.asyncio
-async def test_a_refused_tree_that_later_deletes_releases_its_refusal_memory(
-    world: TeamWorld,
-) -> None:
-    """#25656: once a retained tree is deleted, no refusal memory for it stays in process."""
-    db = world.case.db
-    epic = new_task(world, TITLE, epic=True)
-    leaf = new_task(world, LEAF_TITLE, parent=epic)
-    team = await seated_team(world, epic, world.child(epic))
-    tree = team_tree(team)
-    sub = sub_tree(world, team, leaf)
-    git_in(tree, "merge", "--no-ff", sub.branch, "-m", "Merge leaf into epic main")
-    closed = close_leaf(world, leaf, sub.sha)
-    outcomes = [
-        WorktreeDeletionResult(success=False, error_code="worktree_in_use", error="tree in use"),
-        WorktreeDeletionResult(success=True),
-    ]
-
-    async def delete(binding: TeamBinding) -> WorktreeDeletionResult:
-        return outcomes.pop(0)
-
-    first_pass = closed_at(closed) + TEARDOWN_GRACE
-    await teardown_pass(db, daemon(db), first_pass, delete=delete)
-    assert any(worktree == sub.worktree_id for _, worktree in _last_refusals)
-
-    await teardown_pass(db, daemon(db), first_pass + timedelta(minutes=1), delete=delete)
-    assert not any(worktree == sub.worktree_id for _, worktree in _last_refusals)
+    assert LocalWorktreeManager(db).get(sub.worktree_id) is not None
 
 
 def manager_stops(db: HubDatabase, manager: str) -> None:
@@ -354,14 +318,14 @@ async def test_leaf_teardown_ends_a_dispatched_seat_whose_manager_already_ended(
 
     assert terminations.ended() == [dispatched]
     assert session_status(db, dispatched) == "expired"
-    assert not sub.path.exists()
-    assert LocalWorktreeManager(db).get(sub.worktree_id) is None
-    assert not branch_exists(world, sub.branch)
+    assert sub.path.is_dir()
+    assert LocalWorktreeManager(db).get(sub.worktree_id) is not None
+    assert branch_exists(world, sub.branch)
     assert tree.is_dir()
 
 
 @pytest.mark.asyncio
-async def test_closing_the_epic_before_any_pass_ends_every_seat_and_removes_both_trees(
+async def test_closing_the_epic_before_any_pass_ends_every_seat_and_keeps_both_trees(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = world.case.db
@@ -383,19 +347,20 @@ async def test_closing_the_epic_before_any_pass_ends_every_seat_and_removes_both
 
     assert set(terminations.ended()) == {dispatched, *team.seats}
     assert session_status(db, dispatched) == "expired"
-    assert not sub.path.exists()
-    assert LocalWorktreeManager(db).get(sub.worktree_id) is None
-    assert not branch_exists(world, sub.branch)
-    # The epic's tree is the sub-tree's merge target, so it stays until the sub-tree is gone.
+    assert sub.path.is_dir()
+    assert LocalWorktreeManager(db).get(sub.worktree_id) is not None
+    assert branch_exists(world, sub.branch)
     assert tree.is_dir()
 
     await teardown_pass(db, daemon(db), at)
 
-    assert not tree.is_dir()
+    assert set(terminations.ended()) == {dispatched, *team.seats}
+    assert sub.path.is_dir()
+    assert tree.is_dir()
 
 
 @pytest.mark.asyncio
-async def test_leaf_under_a_nested_epic_ends_its_seat_and_removes_its_sub_tree(
+async def test_leaf_under_a_nested_epic_ends_its_seat_and_keeps_its_sub_tree(
     world: TeamWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = world.case.db
@@ -418,8 +383,8 @@ async def test_leaf_under_a_nested_epic_ends_its_seat_and_removes_its_sub_tree(
     assert session_status(db, dispatched) == "expired"
     assert session_status(db, primary) == "active"
     assert session_status(db, manager) == "active"
-    assert not sub.path.exists()
-    assert LocalWorktreeManager(db).get(sub.worktree_id) is None
-    assert not branch_exists(world, sub.branch)
+    assert sub.path.is_dir()
+    assert LocalWorktreeManager(db).get(sub.worktree_id) is not None
+    assert branch_exists(world, sub.branch)
     assert tree.is_dir()
     assert LocalTaskManager(db).get_task(epic.id).closed_at is None

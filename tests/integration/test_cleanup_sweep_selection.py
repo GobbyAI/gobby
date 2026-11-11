@@ -1,16 +1,27 @@
 """Real-database contracts for destructive isolation cleanup selectors."""
 
+import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import psycopg
 import pytest
 
 from gobby.storage.clones import CloneStatus, LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.isolation_cleanup import IsolationRemovalBusyError
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.worktrees.deletion import (
+    DeletionSurface,
+    WorktreeDeletionRequest,
+    WorktreeDeletionResult,
+    delete_worktree_transaction,
+)
+from gobby.worktrees.executor import DestructiveBoundary
+from gobby.worktrees.removal_lock import hold_tree_removal
 
 pytestmark = pytest.mark.integration
 
@@ -229,3 +240,120 @@ def test_clone_sweeps_exclude_claimed_and_ineligible_rows(
     assert claimed_merged.id not in expired_ids
     assert claimed_stale.id not in stale_ids
     assert merged_stale.id not in stale_ids
+
+
+def test_removal_lock_reports_a_busy_row_apart_from_a_missing_one(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+) -> None:
+    project_id = str(sample_project["id"])
+    manager = LocalWorktreeManager(temp_db)
+    workspace = manager.create(project_id, "in-flight", "/tmp/worktree/in-flight")
+
+    def lock_again() -> None:
+        with manager.lock_for_removal(workspace.id):
+            pass
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with manager.lock_for_removal(workspace.id) as locked:
+            assert locked is not None
+            with pytest.raises(IsolationRemovalBusyError):
+                executor.submit(lock_again).result(timeout=2)
+        with manager.lock_for_removal(workspace.id) as locked:
+            assert locked is not None
+
+    manager.delete(workspace.id)
+    with manager.lock_for_removal(workspace.id) as locked:
+        assert locked is None
+
+
+def test_delete_racing_an_in_flight_removal_reads_busy_not_dirty(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    """A delete racing a removal that already took files reads busy, never dirty, never reaching git."""
+    project_id = str(sample_project["id"])
+    manager = LocalWorktreeManager(temp_db)
+    tree = tmp_path / "racing-removal"
+    tree.mkdir()
+    tracked = tree / "tracked.txt"
+    tracked.write_text("committed\n")
+    workspace = manager.create(project_id, "racing-removal", str(tree))
+    git_calls: list[object] = []
+
+    def resolve_git(worktree: object) -> None:
+        git_calls.append(worktree)
+
+    def delete_from_another_context() -> WorktreeDeletionResult:
+        # A worker thread has its own context, so the delete takes its own connection
+        # and cannot join the racing removal's transaction.
+        return asyncio.run(
+            delete_worktree_transaction(
+                DestructiveBoundary(),
+                request=WorktreeDeletionRequest(workspace.id, DeletionSurface.MCP),
+                worktree_storage=manager,
+                resolve_git_manager=resolve_git,
+                task_manager=None,
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with manager.lock_for_removal(workspace.id) as locked:
+            assert locked is not None
+            # The racing removal has already taken this tracked file from disk.
+            tracked.unlink()
+            result = executor.submit(delete_from_another_context).result(timeout=30)
+
+    assert result.success is False
+    assert result.git_deleted is False
+    assert result.uncommitted_changes is False
+    assert result.error_code == "worktree_removal_in_progress"
+    assert git_calls == []
+    assert manager.get(workspace.id) is not None
+
+
+def test_delete_racing_a_held_tree_removal_reads_busy_not_dirty(
+    temp_db: HubDatabase,
+    sample_project: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    """A delete racing a daemon removal that holds the tree's lock reads busy, never dirty."""
+    project_id = str(sample_project["id"])
+    manager = LocalWorktreeManager(temp_db)
+    tree = tmp_path / "held-removal"
+    tree.mkdir()
+    tracked = tree / "tracked.txt"
+    tracked.write_text("committed\n")
+    workspace = manager.create(project_id, "held-removal", str(tree))
+    git_calls: list[object] = []
+
+    def resolve_git(worktree: object) -> None:
+        git_calls.append(worktree)
+
+    def delete_from_another_context() -> WorktreeDeletionResult:
+        # A worker thread takes its own file descriptor on the tree's lock file.
+        return asyncio.run(
+            delete_worktree_transaction(
+                DestructiveBoundary(),
+                request=WorktreeDeletionRequest(workspace.id, DeletionSurface.MCP),
+                worktree_storage=manager,
+                resolve_git_manager=resolve_git,
+                task_manager=None,
+            )
+        )
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with hold_tree_removal(str(tree)) as held:
+            assert held is True
+            # The daemon's removal has already taken this tracked file from disk.
+            tracked.unlink()
+            result = executor.submit(delete_from_another_context).result(timeout=30)
+
+    assert result.success is False
+    assert result.git_deleted is False
+    assert result.uncommitted_changes is False
+    assert result.error_code == "worktree_removal_in_progress"
+    assert git_calls == []
+    assert tree.is_dir()
+    assert manager.get(workspace.id) is not None

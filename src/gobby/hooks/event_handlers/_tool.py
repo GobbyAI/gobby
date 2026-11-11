@@ -11,6 +11,7 @@ from gobby.adapters.codex_impl.execution_chain import (
     FUNCTIONS_EXEC_NAMES,
     validate_functions_exec_wrapper,
 )
+from gobby.hooks._normalization_apply_rewrite import applies_rewritten_input
 from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks._path_scope import checkout_root, current_tool_cwd, resolve_tool_path
@@ -514,7 +515,9 @@ class ToolEventHandlerMixin(EventHandlersBase):
             # Event-loop adapters normalize Bash without shell metadata; derive it here,
             # on the hook worker, so edit tracking never depends on a rule pass.
             if tool_name == "Bash" and "canonical_tool_kind" not in input_data:
-                normalize_tool_fields(input_data)
+                normalize_tool_fields(
+                    input_data, can_rewrite_input=applies_rewritten_input(event.source)
+                )
 
             # Structured edit tools and normalized shell writes both count as edits.
             is_canonical_edit = (

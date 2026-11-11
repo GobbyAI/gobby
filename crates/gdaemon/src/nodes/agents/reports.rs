@@ -120,15 +120,7 @@ pub async fn report_once(node: &NodeServices) -> Result<()> {
     if status == StatusCode::OK {
         let mut state = agents.state.lock().await;
         for record in &page {
-            let run_id = &record.exit.run_id;
-            if state
-                .runs
-                .get(run_id)
-                .is_some_and(|run| run.phase == RunPhase::Exited)
-            {
-                state.to_removals(run_id);
-                state.runs.remove(run_id);
-            }
+            state.acknowledge_exit(&record.exit.run_id);
         }
         state
             .exits

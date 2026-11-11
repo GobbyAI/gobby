@@ -1291,7 +1291,7 @@
       "id": "team-claim-handoff",
       "kind": "isolated-tests",
       "status": "passed",
-      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest tests/agents/test_team_review_loop.py tests/mcp_proxy/tools/tasks/test_coordinator_claim_release.py -q",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/agents/test_team_review_loop.py tests/mcp_proxy/tools/tasks/test_coordinator_claim_release.py -q",
       "result": "15 passed under #24797 (plan 3.2.1). test_claim_handoff_is_scoped_and_atomic covers another team's manager and a non-manager seat refused, an outside recipient refused, a stale holder refused, dirty task-attributed files refused, two concurrent hand-offs with exactly one winner, the recipient's claim state, the lifecycle actor and reason, and a stale replay."
     },
     {
@@ -1394,7 +1394,7 @@
     {
       "id": "tdd-runtime-tests",
       "kind": "isolated-tests",
-      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest tests/skills/test_tasks_skill.py tests/workflows/test_tdd_gate_retirement.py -q",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/skills/test_tasks_skill.py tests/workflows/test_tdd_gate_retirement.py -q",
       "result": "19 passed; four-gate close guidance and retired TDD runtime gate verified."
     },
     {

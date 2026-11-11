@@ -5,11 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import posixpath
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import tomllib
+from collections.abc import Callable, Collection
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -44,18 +47,81 @@ def _toml(path: Path) -> dict[str, Any]:
         return tomllib.load(stream)
 
 
-def crate_closure(root: Path, crate: Path) -> set[Path]:
-    """Include normal, build, target and workspace-inherited path dependencies."""
-    workspace_dependencies = _toml(root / "Cargo.toml").get("workspace", {}).get("dependencies", {})
-    pending = [crate.resolve()]
-    found: set[Path] = set()
+# Parsed TOML at a repository-relative POSIX path; None when the file is absent.
+Manifests = Callable[[str], dict[str, Any] | None]
+
+_ROOT_INPUTS = frozenset({"Cargo.toml", "rust-toolchain.toml", ".cargo/config.toml"})
+_NON_SOURCE_DIRS = frozenset({"tests", "benches", "examples", "docs"})
+
+
+def _is_source_path(relative: str) -> bool:
+    """Whether a repository-relative path is production source a build depends on."""
+    parts = relative.split("/")
+    return (
+        parts[-1] != "tests.rs"
+        and not parts[-1].endswith("_tests.rs")
+        and not any(part in _NON_SOURCE_DIRS for part in parts)
+    )
+
+
+def _disk_manifests(root: Path) -> Manifests:
+    def read(relative: str) -> dict[str, Any] | None:
+        path = root / relative
+        return _toml(path) if path.is_file() else None
+
+    return read
+
+
+def _revision_manifests(repo: Path, revision: str) -> Manifests:
+    """Read manifests from a Git revision without touching any checkout."""
+    cache: dict[str, dict[str, Any] | None] = {}
+
+    def read(relative: str) -> dict[str, Any] | None:
+        if relative not in cache:
+            listing = spawn.run(
+                ["git", "-C", str(repo), "ls-tree", "-z", "--full-tree", revision, "--", relative],
+                check=True,
+                capture_output=True,
+                timeout=10,
+            ).stdout
+            manifest = None
+            if listing:
+                _mode, kind, oid = listing.split(b"\t", 1)[0].split(b" ")
+                if kind != b"blob":
+                    raise BinaryReleaseVersionError(f"{relative} is not a file at {revision}")
+                content = spawn.run(
+                    ["git", "-C", str(repo), "cat-file", "blob", oid.decode()],
+                    check=True,
+                    capture_output=True,
+                    timeout=10,
+                ).stdout
+                manifest = tomllib.loads(content.decode())
+            cache[relative] = manifest
+        return cache[relative]
+
+    return read
+
+
+def _manifest(read: Manifests, relative: str) -> dict[str, Any]:
+    manifest = read(relative)
+    if manifest is None:
+        raise FileNotFoundError(relative)
+    return manifest
+
+
+def _closure(read: Manifests, crate: str) -> set[str]:
+    """Crate directories reachable through path dependencies, including build and target tables."""
+    workspace_dependencies = (read("Cargo.toml") or {}).get("workspace", {}).get("dependencies", {})
+    pending = [posixpath.normpath(crate)]
+    found: set[str] = set()
     while pending:
         current = pending.pop()
         if current in found:
             continue
-        current.relative_to(root.resolve())
+        if current == ".." or current.startswith(("../", "/")):
+            raise ValueError(f"path dependency leaves the workspace: {current}")
         found.add(current)
-        manifest = _toml(current / "Cargo.toml")
+        manifest = _manifest(read, f"{current}/Cargo.toml")
         tables = [manifest, *manifest.get("target", {}).values()]
         for table in tables:
             for kind in ("dependencies", "build-dependencies"):
@@ -65,20 +131,21 @@ def crate_closure(root: Path, crate: Path) -> set[Path]:
                     base = current
                     if dependency.get("workspace"):
                         dependency = workspace_dependencies.get(name, {})
-                        base = root
+                        base = "."
                     if isinstance(dependency, dict) and isinstance(dependency.get("path"), str):
-                        pending.append((base / dependency["path"]).resolve())
+                        joined = posixpath.join(base, dependency["path"])
+                        pending.append(posixpath.normpath(joined))
     return found
 
 
-def _locked_dependencies(root: Path, crates: set[Path]) -> bytes:
+def _locked_dependencies(read: Manifests, crates: Collection[str]) -> bytes:
     """Hash only reachable lock entries, so unrelated crate bumps do not cascade."""
-    lock = root / "Cargo.lock"
-    if not lock.exists():
+    lock = read("Cargo.lock")
+    if lock is None:
         return b""
-    packages = _toml(lock).get("package", [])
+    packages = lock.get("package", [])
     selected: dict[str, dict[str, Any]] = {}
-    pending = [_toml(crate / "Cargo.toml")["package"]["name"] for crate in crates]
+    pending = [_manifest(read, f"{crate}/Cargo.toml")["package"]["name"] for crate in crates]
     while pending:
         reference = pending.pop()
         parts = reference.split()
@@ -96,7 +163,8 @@ def _locked_dependencies(root: Path, crates: set[Path]) -> bytes:
 def workspace_source_identity(root: Path, name: str) -> str:
     """Fingerprint the binary crate, recursive path dependencies and build inputs."""
     root = root.resolve()
-    crates = crate_closure(root, root / "crates" / RELEASE_CRATES[name])
+    read = _disk_manifests(root)
+    crates = _closure(read, f"crates/{RELEASE_CRATES[name]}")
     digest = hashlib.sha256()
     files: set[Path] = set()
     try:
@@ -109,7 +177,7 @@ def workspace_source_identity(root: Path, name: str) -> str:
                 "--others",
                 "--exclude-standard",
                 "--",
-                *(crate.relative_to(root).as_posix() for crate in sorted(crates)),
+                *sorted(crates),
                 "Cargo.toml",
                 "rust-toolchain.toml",
                 ".cargo/config.toml",
@@ -127,21 +195,13 @@ def workspace_source_identity(root: Path, name: str) -> str:
         if not filename:
             continue
         path = root / os.fsdecode(filename)
-        if (
-            path.is_file()
-            and path.name != "tests.rs"
-            and not path.name.endswith("_tests.rs")
-            and not any(
-                part in {"tests", "benches", "examples", "docs"}
-                for part in path.relative_to(root).parts
-            )
-        ):
+        if path.is_file() and _is_source_path(path.relative_to(root).as_posix()):
             files.add(path)
     for path in sorted(files):
         digest.update(path.relative_to(root).as_posix().encode() + b"\0")
         with path.open("rb") as source:
             digest.update(hashlib.file_digest(source, "sha256").digest())
-    digest.update(_locked_dependencies(root, crates))
+    digest.update(_locked_dependencies(read, crates))
     return digest.hexdigest()
 
 
@@ -264,3 +324,77 @@ def write_release_identity(bin_dir: Path, name: str, identity: BinaryReleaseIden
         os.replace(staged, path)
     finally:
         staged.unlink(missing_ok=True)
+
+
+def _touches_closure(
+    changed: Collection[str], crates: set[str], before: Manifests, after: Manifests
+) -> bool:
+    """Whether a changed path is an identity input of a binary whose closure is ``crates``."""
+    if any(path in _ROOT_INPUTS for path in changed):
+        return True
+    if "Cargo.lock" in changed and _locked_dependencies(before, crates) != _locked_dependencies(
+        after, crates
+    ):
+        return True
+    return any(
+        path.startswith(f"{crate}/") and _is_source_path(path)
+        for path in changed
+        for crate in crates
+    )
+
+
+def _release_version(read: Manifests, crate: str) -> str:
+    version = _manifest(read, f"{crate}/Cargo.toml").get("package", {}).get("version")
+    if not isinstance(version, str):
+        raise BinaryReleaseVersionError(f"{crate}/Cargo.toml: version must be a literal string")
+    return version
+
+
+_RELEASE_NUMBERS = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+
+
+def _release_parts(version: str) -> tuple[int, int, int] | None:
+    match = _RELEASE_NUMBERS.fullmatch(version)
+    return None if match is None else (int(match[1]), int(match[2]), int(match[3]))
+
+
+def _is_patch_bump(base: str, target: str) -> bool:
+    """A bump raises only PATCH within the base MAJOR.MINOR; any other target is not a bump."""
+    base_parts = _release_parts(base)
+    if base_parts is None:
+        raise BinaryReleaseVersionError(f"base version {base!r} is not MAJOR.MINOR.PATCH")
+    target_parts = _release_parts(target)
+    return (
+        target_parts is not None
+        and target_parts[:2] == base_parts[:2]
+        and target_parts[2] > base_parts[2]
+    )
+
+
+def unbumped_binaries(repo: Path, base: str, target: str, changed: Collection[str]) -> list[str]:
+    """Shipped binaries a landing changes without a forward PATCH bump.
+
+    Closures come from the base manifests: any target edit that reaches a new crate edits a
+    manifest already in the base closure, so the changed paths still reach the binary.
+    """
+    if not any(
+        path in _ROOT_INPUTS or path == "Cargo.lock" or path.startswith("crates/")
+        for path in changed
+    ):
+        return []
+    before = _revision_manifests(repo, base)
+    after = _revision_manifests(repo, target)
+    unbumped: list[str] = []
+    try:
+        for name in sorted(RELEASE_CRATES):
+            crate = f"crates/{RELEASE_CRATES[name]}"
+            if before(f"{crate}/Cargo.toml") is None:
+                continue
+            crates = _closure(before, crate)
+            if _touches_closure(changed, crates, before, after) and not _is_patch_bump(
+                _release_version(before, crate), _release_version(after, crate)
+            ):
+                unbumped.append(name)
+    except (OSError, KeyError, ValueError, subprocess.SubprocessError) as exc:
+        raise BinaryReleaseVersionError(f"shipped binary manifests unreadable: {exc}") from exc
+    return unbumped

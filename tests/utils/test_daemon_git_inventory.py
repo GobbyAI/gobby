@@ -352,6 +352,9 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # commands pass; the daemon's bin freshness loop promotes release archives
     # with workspace_root=None (test_cli_only_git_boundaries_are_reached_only_from_cli).
     ("src/gobby/install/bin_release_identity.py", "workspace_source_identity"),
+    # Base and target manifests read by unbumped_binaries. Its only caller,
+    # _unbumped_binaries in src/gobby/tasks/land_commit.py, runs it through asyncio.to_thread.
+    ("src/gobby/install/bin_release_identity.py", "_revision_manifests.read"),
     # Canonical shell normalization runs off the loop: HookManager and the rule
     # engine offload it, chat _fire_lifecycle and Codex approvals use
     # asyncio.to_thread (tests/adapters/test_adapters_codex.py
@@ -386,8 +389,9 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # FoundWorkGateAnalyzer offloads the complete cover calculation through
     # _uncovered_failure_commands (test_found_work_gate's off-loop regression).
     ("src/gobby/workflows/validation_cover.py", "_tracked_at_head"),
-    # commit_workspace runs ensure_workspace, the only caller of _init_git_dir, through
-    # asyncio.to_thread before it commits, so the git init never runs on the loop.
+    # ensure_workspace is the only caller of _init_git_dir, and _commit_worker is its only
+    # caller; commit_workspace submits that worker to _BACKUP_EXECUTOR, so the git init
+    # never runs on the loop.
     ("src/gobby/agents/agent_workspaces.py", "_init_git_dir"),
     # _checkout_root is reached through assigned_run_checkout and _team_checkout from
     # spawn_workspace_write_paths, which grant_seat_workspace_paths calls through

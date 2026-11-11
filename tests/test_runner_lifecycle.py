@@ -6166,6 +6166,11 @@ def test_main_override_env_lets_a_worktree_package_start(
 class TestRuleDispositionStartup:
     """Narrow disposition migration runs once before hook service."""
 
+    @pytest.fixture(autouse=True)
+    def _skip_project_skill_sync(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Project skill sync has its own suite; these tests pass a placeholder database.
+        monkeypatch.setattr("gobby.skills.project_sync.sync_project_skills", lambda _db: {})
+
     def test_non_dev_runs_migration_once_without_aggregator(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

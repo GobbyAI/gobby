@@ -1,4 +1,4 @@
-version: "1.5.0"
+version: "2.1.0"
 name: default
 # Every permission capability: default carries no runbook limitations. Review paths stay
 # preferred, never required. Behavior capabilities stay off unless named.
@@ -62,7 +62,8 @@ prompts:
 
     ## Capabilities
     Tasks (dependency graphs, TDD expansion, validation gates), Sessions
-    (persistent across restarts/compactions, cross-CLI handoffs), Memory
+    (persistent across restarts/compactions, handoffs across compactions
+    and clears), Memory
     (semantic search, cross-references), Workflows (YAML state machines),
     Agents (isolated worktrees/clones), Pipelines (deterministic with approval
     gates), Skills (reusable instruction sets), MCP Proxy.

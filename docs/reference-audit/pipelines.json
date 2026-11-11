@@ -1268,7 +1268,7 @@
     {
       "id": "focused-runtime",
       "kind": "tests",
-      "command": "GOBBY_TEST_GDAEMON=checkout DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_pipeline_executor_approvals.py tests/workflows/test_pipeline_executor_core.py tests/workflows/test_pipeline_executor_nested.py tests/workflows/test_pipeline_executor_outputs.py tests/workflows/test_pipeline_executor_conditions.py tests/workflows/test_pipeline_renderer.py tests/workflows/test_workflows_pipeline_definitions.py tests/workflows/test_workflows_pipeline_resume.py tests/workflows/test_pipeline_loader.py tests/workflows/test_pipeline_step_types.py tests/workflows/test_pipeline_webhooks.py tests/skills/test_capability_catalog.py -q",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_pipeline_executor_approvals.py tests/workflows/test_pipeline_executor_core.py tests/workflows/test_pipeline_executor_nested.py tests/workflows/test_pipeline_executor_outputs.py tests/workflows/test_pipeline_executor_conditions.py tests/workflows/test_pipeline_renderer.py tests/workflows/test_workflows_pipeline_definitions.py tests/workflows/test_workflows_pipeline_resume.py tests/workflows/test_pipeline_loader.py tests/workflows/test_pipeline_step_types.py tests/workflows/test_pipeline_webhooks.py tests/skills/test_capability_catalog.py -q",
       "result": "212 passed in 3.44s. Prior run: 199 passed, 13 setup errors because another session published expected schema431 before installed gdaemon430 cutover. Owner #12953/#12956 supplied coherent checkout binary; supported opt-in resolved all failures. Owner subsequently completed installed431 cutover and normal daemon restart."
     },
     {
@@ -1304,7 +1304,7 @@
     {
       "id": "final-schema-coordination",
       "kind": "foreign-state-recovery",
-      "command": "Final focused CLI/import/catalog pytest group; GOBBY_TEST_GDAEMON=checkout rerun; cargo build -p gobby-daemon",
+      "command": "Final focused CLI/import/catalog pytest group; rerun; cargo build -p gobby-daemon",
       "result": "The installed-binary run passed 144 tests with ten storage setup errors: foreign checkout schema432 vs installed431. Checkout opt-in then failed shared setup because gdaemon predated foreign schema_contract.rs edits. Both diagnostics sent to active owner #12858. Rebuilt checkout-only gdaemon successfully in16.57s without installing/restarting; final focused rerun uses this coherent isolated-test binary. Final rerun outcome is in the task close transcript. A concurrent runner_tests.rs edit then invalidated the freshly built binary; sent diagnostics to owner #12953 and rebuilt after that edit."
     },
     {

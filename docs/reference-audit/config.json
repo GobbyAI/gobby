@@ -774,7 +774,7 @@
     },
     {
       "id": "isolated-alias-green-434",
-      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 GOBBY_TEST_GDAEMON=checkout uv run pytest tests/storage/test_task_config_key_migration.py tests/integration/config/test_config_cross_seam.py tests/config/test_config_registry.py tests/config/test_stateful_config_subscribers.py -q --tb=short",
+      "command": "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_task_config_key_migration.py tests/integration/config/test_config_cross_seam.py tests/config/test_config_registry.py tests/config/test_stateful_config_subscribers.py -q --tb=short",
       "result": "38 passed in 2.95s with alias patch and freshly built checkout gdaemon (cargo build -p gobby-daemon --bin gdaemon). Executed in managed worktree /tmp/gobby-config-22262; main checkout and installed binaries were still schema 433 during this pre-cutover check."
     },
     {

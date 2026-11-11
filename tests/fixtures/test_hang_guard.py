@@ -6,6 +6,7 @@ process, and the inner run must not load this suite's conftest or database.
 
 from __future__ import annotations
 
+import atexit
 import faulthandler
 import gc
 import os
@@ -13,7 +14,7 @@ import subprocess
 import sys
 import textwrap
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import cast
 
 import pytest
 
@@ -43,6 +44,30 @@ _EXIT_HANG = """
 
     def test_leaves_a_thread_running() -> None:
         threading.Thread(target=_leaked_worker).start()
+"""
+
+_SLOW_ATEXIT = """
+    import atexit
+    import time
+
+    def test_passes() -> None:
+        atexit.register(time.sleep, 3)
+"""
+
+_ATEXIT_HANG = """
+    import atexit
+    import threading
+
+    def _blocked_atexit() -> None:
+        threading.Event().wait()
+
+    def test_passes() -> None:
+        atexit.register(_blocked_atexit)
+"""
+
+_PASSING = """
+    def test_passes() -> None:
+        pass
 """
 
 
@@ -103,6 +128,98 @@ def test_run_that_never_exits_dumps_its_threads(
     assert "_leaked_worker" in output
 
 
+def test_slow_atexit_cleanup_after_threads_join_is_not_a_hang(
+    pytestconfig: pytest.Config, tmp_path: Path
+) -> None:
+    result = _run_inner(pytestconfig, tmp_path, _SLOW_ATEXIT, "-o", "exit_watchdog_timeout=1")
+
+    output = result.stdout + result.stderr
+    assert "1 passed" in output
+    assert result.returncode == 0
+    assert "Timeout" not in output
+
+
+def test_atexit_callback_that_never_returns_dumps_and_exits(
+    pytestconfig: pytest.Config, tmp_path: Path
+) -> None:
+    # The teardown bound also covers pytest's cleanup stack, which runs before atexit and
+    # can take over a second under load. The bound must clear it, so the dump is the
+    # atexit hang: the _blocked_atexit assertion fails if the dump landed in cleanup.
+    result = _run_inner(
+        pytestconfig,
+        tmp_path,
+        _ATEXIT_HANG,
+        "-o",
+        "exit_watchdog_timeout=5",
+        "-o",
+        "teardown_watchdog_timeout=10",
+    )
+
+    output = result.stdout + result.stderr
+    assert "1 passed" in output
+    assert result.returncode != 0
+    assert "Timeout (0:00:10)!" in output
+    assert "_blocked_atexit" in output
+
+
+def test_stdio_is_flushed_before_the_watchdog_arms(tmp_path: Path) -> None:
+    # faulthandler's exit skips stdio flushing. A write still buffered when the watchdog
+    # fires would be lost, so arming flushes first. The probe's stdout is a block-buffered
+    # pipe, as it is under pytest's runners.
+    probe = textwrap.dedent(
+        """
+        import sys
+        import time
+
+        from tests.fixtures.hang_guard import _arm_exit_watchdog
+
+        sys.stdout.write("written before the watchdog arms\\n")
+        _arm_exit_watchdog(1)
+        time.sleep(30)
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(_REPO_ROOT)},
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "written before the watchdog arms" in result.stdout
+
+
+def test_slow_cleanup_stack_after_the_pass_summary_is_not_a_hang(
+    pytestconfig: pytest.Config, tmp_path: Path
+) -> None:
+    # pytest's cleanup stack runs after the pass summary and before the thread join. Slow
+    # cleanup there is bounded work, so it must not trip the 1 s thread-join bound.
+    (tmp_path / "slow_cleanup.py").write_text(
+        "import time\n\n"
+        "def pytest_configure(config):\n"
+        "    config.add_cleanup(_slow_cleanup)\n\n"
+        "def _slow_cleanup():\n"
+        "    time.sleep(3)\n"
+    )
+    result = _run_inner(
+        pytestconfig,
+        tmp_path,
+        _PASSING,
+        "-o",
+        "exit_watchdog_timeout=1",
+        "-p",
+        "slow_cleanup",
+    )
+
+    output = result.stdout + result.stderr
+    assert "1 passed" in output
+    assert result.returncode == 0
+    assert "Timeout" not in output
+
+
 @pytest.mark.unit
 def test_exit_watchdog_freezes_the_session_heap_before_it_arms(
     monkeypatch: pytest.MonkeyPatch,
@@ -110,15 +227,30 @@ def test_exit_watchdog_freezes_the_session_heap_before_it_arms(
     # Finalization garbage-collects every live object once the process exits, and
     # that work is what overran the watchdog. The freeze must come before the timer
     # arms so the exit passes skip the session's objects, not after.
-    calls: list[str] = []
-    monkeypatch.setattr(gc, "freeze", lambda: calls.append("freeze"))
-    monkeypatch.setattr(faulthandler, "dump_traceback_later", lambda *_a, **_k: calls.append("arm"))
-    config = MagicMock(spec=pytest.Config)
-    config.getini.return_value = "60"
+    calls: list[tuple[object, ...]] = []
+    monkeypatch.setattr(gc, "freeze", lambda: calls.append(("freeze",)))
+    monkeypatch.setattr(
+        faulthandler,
+        "dump_traceback_later",
+        lambda seconds, *, exit, file: calls.append(("arm", seconds, exit, file)),
+    )
+    # Keep the atexit re-arm out of this process's real exit.
+    monkeypatch.setattr(atexit, "register", lambda fn, *args: calls.append(("atexit", fn, *args)))
+    read: list[str] = []
 
-    hang_guard.pytest_unconfigure(config)
+    class _Config:
+        def getini(self, name: str) -> str:
+            read.append(name)
+            return "600"
 
-    assert calls == ["freeze", "arm"]
+    hang_guard.pytest_unconfigure(cast(pytest.Config, _Config()))
+
+    assert read == ["teardown_watchdog_timeout"]
+    assert calls == [
+        ("freeze",),
+        ("arm", 600.0, True, 2),
+        ("atexit", hang_guard._arm_exit_watchdog, 600.0),
+    ]
 
 
 def test_import_heap_is_frozen_before_tests_run() -> None:

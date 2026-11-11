@@ -240,7 +240,10 @@ def test_prepare_daemon_env_records_current_test_owner(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, runner: FakeRunner
 ) -> None:
     lookups = _stub_owner(monkeypatch, FakeOwner(pid=os.getpid()))
-    monkeypatch.setattr("tests.fixtures.gdaemon_binary.select_test_gdaemon", lambda *_args: None)
+    monkeypatch.setattr(
+        "tests.fixtures.gdaemon_binary.build_checkout_gdaemon",
+        lambda *_args: tmp_path / "checkout" / "gdaemon",
+    )
 
     env = e2e_fixtures.prepare_daemon_env(
         {"GOBBY_E2E_OWNER_PID": "456", "GOBBY_E2E_OWNER_CREATE_TIME": "100.0"},

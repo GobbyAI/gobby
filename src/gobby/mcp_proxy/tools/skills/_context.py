@@ -13,6 +13,7 @@ from gobby.skills.search import SkillSearch
 from gobby.skills.updater import SkillUpdater
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager, SkillChangeNotifier
+from gobby.utils.project_context import get_project_context
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -46,6 +47,16 @@ class SkillsContext:
     db_runner: RunDb | None = None
     search_resolver: Callable[[], SkillSearch] | None = None
     hub_manager_resolver: Callable[[], HubManager | None] | None = None
+
+    def caller_project_id(self) -> str | None:
+        """Project a skill call acts on: the caller's session project, else the daemon's.
+
+        ``project_id`` is the daemon's registry-wide default. A call made from a
+        project session must read and change that project's rows, not the daemon's.
+        """
+        caller = get_project_context()
+        caller_id = caller.get("id") if caller else None
+        return str(caller_id) if caller_id else self.project_id
 
     def resolve_search(self) -> SkillSearch:
         if self.search_resolver is not None:

@@ -1218,10 +1218,11 @@ async fn cancel_during_host_spawn_never_commits() -> Result<()> {
     Ok(())
 }
 
-/// 2.7.4: a cancel committed while the host's commit reply is in flight still settles the run
-/// unlaunched. The child is aborted and the run is never recorded as launched.
+/// 2.7.4: a cancel that lands while the host's commit reply is in flight does not undo the
+/// commit. The host committed a live child, so the run is recorded as launched, the child is
+/// aborted, and the tree stays for the run's completion owner.
 #[tokio::test]
-async fn cancel_during_host_commit_settles_unlaunched() -> Result<()> {
+async fn cancel_during_host_commit_keeps_the_launched_tree() -> Result<()> {
     let fixture = CommandsFixture::new(false).await?;
     let id = fixture.launch.payload.run_id.clone();
     fixture.launch.host.hold_next_reply("spawn_commit");
@@ -1246,20 +1247,187 @@ async fn cancel_during_host_commit_settles_unlaunched() -> Result<()> {
         "cancel",
         json!({"stopped": true}),
     );
-    assert!(
-        !persisted_state(&fixture.launch.agents.home)?
+    {
+        let state = persisted_state(&fixture.launch.agents.home)?;
+        let run = state
             .runs
-            .contains_key(&id),
-        "a run cancelled before its launch record must not be recorded as launched"
+            .get(&id)
+            .context("the committed child is recorded")?;
+        // The exit may already have settled the run, so either launched phase is accepted.
+        assert!(
+            matches!(run.phase, RunPhase::Launched | RunPhase::Exited),
+            "a commit that returned a child records the run as launched"
+        );
+        assert!(run.host_terminal_id.is_some());
+    }
+    // The run is launched now, so its exit is owned by the watcher, as in `cancel_launched_run`.
+    let watcher = tokio::spawn({
+        let agents = fixture.launch.agents.clone();
+        async move { watch_exits(&agents).await }
+    });
+    let _watcher = AbortTask(watcher);
+    tokio::time::timeout(WAIT, async {
+        while !fixture
+            .launch
+            .host
+            .requests()
+            .iter()
+            .any(|r| r["method"] == "subscribe_events")
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?;
+    fixture.launch.host.terminal_exited()?;
+    let exit = fixture.exit(ExitReason::Cancelled, true).await?;
+    assert!(
+        exit.workspace.is_some(),
+        "a launched exit reports its tree for its completion owner"
     );
-    fixture.exit(ExitReason::Cancelled, false).await?;
-    assert!(!workspace.exists());
+    assert!(
+        workspace.exists(),
+        "a seat's stop must never delete its worktree"
+    );
     assert_eq!(launch_methods(&fixture), ["spawn", "spawn_commit", "kill"]);
     Ok(())
 }
 
 /// 2.7.2: an acceptance the hub never receives starts no preparation. The run is cancelled
 /// and settles unlaunched, so a later spawn for it is refused.
+#[tokio::test]
+async fn launch_rollback_keeps_a_tree_another_remover_holds() -> Result<()> {
+    use gobby_daemon::nodes::agents::{removal_lock::RemovalLock, workspace};
+    let fixture = CommandsFixture::new(false).await?;
+    let id = fixture.launch.payload.run_id.clone();
+    fixture.launch.host.reject_next_commit();
+    fixture.launch.host.hold_next_reply("spawn_commit");
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted": true}),
+    );
+    tokio::time::timeout(
+        WAIT,
+        fixture.launch.host.wait_for_held_reply("spawn_commit"),
+    )
+    .await?;
+    let tree = workspace_path(&fixture, &id)?;
+    // Another remover holds the tree while the refused commit's rollback runs.
+    let held = RemovalLock::acquire(&tree)?.context("the tree is not locked yet")?;
+    fixture.launch.host.release_held_reply("spawn_commit");
+    fixture.exit(ExitReason::LaunchFailed, false).await?;
+    assert!(
+        tree.exists(),
+        "a rollback that finds the tree locked keeps it"
+    );
+    assert!(
+        persisted_state(&fixture.launch.agents.home)?
+            .removals
+            .contains_key(&id),
+        "a busy rollback keeps the record queued for retry"
+    );
+    drop(held);
+    // A child another test forks shares the lock's descriptor until it execs, so the release
+    // can trail the drop; a busy retry keeps the record, as the next pass would.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        workspace::retry_removals(&fixture.launch.agents).await?;
+        if !tree.exists() || tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!tree.exists(), "the retry removes the rolled-back tree");
+    assert!(
+        !persisted_state(&fixture.launch.agents.home)?
+            .removals
+            .contains_key(&id)
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn lost_commit_reply_keeps_the_tree_a_refused_retry_cannot_erase() -> Result<()> {
+    let fixture = CommandsFixture::new(false).await?;
+    let id = fixture.launch.payload.run_id.clone();
+    // The commit may have launched the child before its reply was lost.
+    fixture.launch.host.lose_next_commit_reply();
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted": true}),
+    );
+    let exit = fixture.exit(ExitReason::LaunchFailed, true).await?;
+    let tree = workspace_path(&fixture, &id)?;
+    assert!(
+        exit.workspace.is_some(),
+        "an unknown commit outcome reports its tree for the completion owner"
+    );
+    assert!(
+        tree.exists(),
+        "an unknown commit outcome never removes the tree"
+    );
+    assert!(
+        !persisted_state(&fixture.launch.agents.home)?
+            .removals
+            .contains_key(&id),
+        "an unknown commit outcome queues no removal"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn lost_commit_reply_then_cancel_keeps_the_tree() -> Result<()> {
+    let fixture = CommandsFixture::new(false).await?;
+    let id = fixture.launch.payload.run_id.clone();
+    // The first commit may have launched the child before its reply was lost. The cancel lands
+    // during the client's wait, so the retry is stopped before it sends anything.
+    fixture.launch.host.lose_next_commit_reply();
+    ok(
+        &fixture.call(fixture.spawn("spawn")).await,
+        "spawn",
+        json!({"accepted": true}),
+    );
+    tokio::time::timeout(WAIT, async {
+        while !fixture
+            .launch
+            .host
+            .requests()
+            .iter()
+            .any(|r| r["method"] == "spawn_commit")
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?;
+    let workspace = workspace_path(&fixture, &id)?;
+    let mut cancel = fixture.spawn_dispatch(fixture.cancel("cancel", &id, "TERM"));
+    fixture
+        .wait_state(|state| state.cancelled.contains_key(&id))
+        .await;
+    let exit = fixture.exit(ExitReason::Cancelled, true).await?;
+    ok(
+        &tokio::time::timeout(WAIT, &mut cancel.0).await??,
+        "cancel",
+        json!({"stopped": true}),
+    );
+    assert!(
+        exit.workspace.is_some(),
+        "an unknown commit outcome reports its tree even when a cancel stops the retry"
+    );
+    assert!(
+        workspace.exists(),
+        "a cancel never removes a tree a lost commit may have launched"
+    );
+    assert!(
+        !persisted_state(&fixture.launch.agents.home)?
+            .removals
+            .contains_key(&id),
+        "an unknown commit outcome queues no removal"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn undelivered_acceptance_cancels_the_run() -> Result<()> {
     use futures_util::SinkExt;

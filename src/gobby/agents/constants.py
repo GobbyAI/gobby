@@ -91,6 +91,10 @@ CARGO_HOME = "CARGO_HOME"
 # Checkout-specific Cargo build directory (see gobby.agents.cargo_target).
 CARGO_TARGET_DIR = "CARGO_TARGET_DIR"
 
+# Turns off the OCR launcher's background self-update, which runs an unpinned `npm i -g`
+# and would replace the pinned install. Every seat shell and hook inherits it.
+OCR_NO_UPDATE = "OCR_NO_UPDATE"
+
 # ps that seat prescriptions run as `$GOBBY_PS_SHIM` (#25368). Unsandboxed seats keep the
 # PATH-resolved `ps`; an SRT seat is pinned to its shim by absolute path, because a login
 # shell can put /bin ahead of the shim on PATH.
@@ -265,6 +269,7 @@ def get_terminal_env_vars(
         GOBBY_AGENT_DEPTH: str(agent_depth),
         GOBBY_MAX_AGENT_DEPTH: str(max_agent_depth),
         GOBBY_PS_SHIM: "ps",
+        OCR_NO_UPDATE: "1",
         **build_spawn_cache_env(session_id),
         CARGO_TARGET_DIR: ensure_agent_cargo_target_dir(
             Path(checkout_root) if checkout_root is not None else Path.cwd(),
@@ -308,5 +313,6 @@ ALL_TERMINAL_ENV_VARS = [
     CARGO_HOME,
     CARGO_TARGET_DIR,
     GOBBY_PS_SHIM,
+    OCR_NO_UPDATE,
     *IDENTITY_ENV_VARS,
 ]

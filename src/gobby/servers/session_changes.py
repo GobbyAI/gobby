@@ -10,9 +10,9 @@ Resolution order:
 
 1. Load the session and its project (the default repo).
 2. If the session claimed a task with an isolated workspace (worktree/clone),
-   prefer that path and diff against its fork from the base branch (the
-   recorded ``base_commit_sha`` when the branch is unknown) so committed work
-   still appears and merged-in base changes do not.
+   prefer that path and diff against its fork from the newest landed tip of the
+   base branch (the recorded ``base_commit_sha`` when no landing is recorded)
+   so committed work still appears and merged-in base changes do not.
 3. Otherwise diff the project repo against ``HEAD`` (uncommitted changes).
 """
 
@@ -28,6 +28,7 @@ from typing import Any
 import psycopg
 
 from gobby.storage.tasks import TaskArtifactConstraintError
+from gobby.tasks.close_receipts import latest_landed_tip
 from gobby.utils.daemon_git import GitOk, daemon_git
 from gobby.worktrees.base_branch import isolation_base_branch
 
@@ -58,6 +59,9 @@ class SessionWorkspace:
     base_ref: str
     checkout_mode: str  # "none" | "worktree" | "clone"
     base_branch: str | None = None
+    # Tip the newest landing on base_branch recorded in the hub database. It is the
+    # diff anchor because a worktree can move the base ref itself.
+    base_tip: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -207,11 +211,13 @@ def _resolve_isolated_workspace(task_manager: Any, session_id: str) -> SessionWo
         if iso_path and Path(iso_path).is_dir():
             base = artifacts.base_commit_sha or "HEAD"
             kind = "worktree" if artifacts.worktree_path else "clone"
+            base_branch = _isolation_base_branch(task_manager, artifacts)
             return SessionWorkspace(
                 working_dir=iso_path,
                 base_ref=base,
                 checkout_mode=kind,
-                base_branch=_isolation_base_branch(task_manager, artifacts),
+                base_branch=base_branch,
+                base_tip=_landed_base_tip(task_manager, task, base_branch),
             )
     return None
 
@@ -225,12 +231,24 @@ def _isolation_base_branch(task_manager: Any, artifacts: Any) -> str | None:
         return None
 
 
+def _landed_base_tip(task_manager: Any, task: Any, base_branch: str | None) -> str | None:
+    """Return the tip the newest landing on the base branch recorded, else None."""
+    if not base_branch:
+        return None
+    try:
+        return latest_landed_tip(task_manager.db, task.project_id, base_branch)
+    except _RECOVERABLE_WORKSPACE_ERRORS:
+        logger.debug("Failed to read the landed base tip", exc_info=True)
+        return None
+
+
 async def _diff_base(workspace: SessionWorkspace) -> str:
-    """Return the fork from the base branch, which moves when the base is merged in."""
-    if workspace.base_branch:
-        ref = f"refs/heads/{workspace.base_branch}"
+    """Return the fork from the landed base tip, which moves when the base is merged in."""
+    if workspace.base_tip:
         result = await daemon_git.run(
-            ["merge-base", "HEAD", ref], cwd=workspace.working_dir, timeout=_GIT_TIMEOUT
+            ["merge-base", "HEAD", workspace.base_tip],
+            cwd=workspace.working_dir,
+            timeout=_GIT_TIMEOUT,
         )
         if isinstance(result, GitOk) and result.stdout.strip():
             return result.stdout.strip()

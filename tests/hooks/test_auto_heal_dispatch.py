@@ -14,6 +14,14 @@ from gobby.skills.formatting import skill_fetch_directive
 pytestmark = pytest.mark.unit
 
 
+def _proxy() -> AsyncMock:
+    """Async proxy whose session manager is synchronous, as ToolProxyService's is."""
+    proxy = AsyncMock()
+    proxy.session_manager = MagicMock()
+    proxy.session_manager.get.return_value = None
+    return proxy
+
+
 def _make_hook_manager_stub(
     tool_proxy_getter: Callable[[], Any] | None = None,
     loop: asyncio.AbstractEventLoop | None = None,
@@ -52,7 +60,7 @@ class TestInjectResult:
 
     def test_inject_result_captures_result(self) -> None:
         """Calls with inject_result=True return results in dispatch_results."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.list_servers = AsyncMock(
             return_value={
                 "success": True,
@@ -86,7 +94,7 @@ class TestInjectResult:
 
     def test_no_inject_result_returns_empty(self) -> None:
         """Calls without inject_result/block_on_failure don't appear in results."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.call_tool = AsyncMock(return_value={"success": True})
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event()
@@ -111,7 +119,7 @@ class TestBlockOnFailure:
 
     def test_block_on_failure_stops_chain(self) -> None:
         """When block_on_failure=True and call fails, remaining calls are skipped."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.list_servers = AsyncMock(return_value={"success": True, "servers": []})
         proxy.list_tools = AsyncMock(
             return_value={
@@ -159,7 +167,7 @@ class TestBlockOnFailure:
 
     def test_block_on_failure_success_continues(self) -> None:
         """When block_on_failure=True and call succeeds, chain continues."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.call_tool = AsyncMock(side_effect=[{"result": []}, {"result": []}])
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event()
@@ -188,7 +196,7 @@ class TestBlockOnFailure:
 
     def test_block_on_failure_stops_when_call_returns_none(self) -> None:
         """A missing MCP result is a failure and stops a guarded chain."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.call_tool = AsyncMock(return_value=None)
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
 
@@ -213,7 +221,7 @@ class TestBlockOnSuccess:
 
     def test_block_on_success_blocks_when_call_succeeds(self) -> None:
         """When block_on_success=True and call succeeds, result is captured with flag."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.call_tool = AsyncMock(
             return_value={
                 "result": [{"file_path": "src/foo.py", "line_start": 10, "snippet": "class Foo:"}],
@@ -243,7 +251,7 @@ class TestBlockOnSuccess:
         """A successful external CallToolResult triggers block_on_success."""
         from mcp.types import CallToolResult, TextContent
 
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.call_tool = AsyncMock(
             return_value=CallToolResult(
                 content=[TextContent(type="text", text="ok")],
@@ -270,7 +278,7 @@ class TestBlockOnSuccess:
 
     def test_block_on_success_allows_when_call_fails(self) -> None:
         """When block_on_success=True and call fails, no block is recorded."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.call_tool = AsyncMock(
             return_value={"success": False, "error": "gobby-skills unavailable"}
         )
@@ -296,7 +304,7 @@ class TestBlockOnSuccess:
 
     def test_block_on_failure_takes_precedence_over_block_on_success(self) -> None:
         """When both flags set and call fails, block_on_failure fires (checked first)."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.call_tool = AsyncMock(return_value={"success": False, "error": "server down"})
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event()
@@ -335,7 +343,7 @@ class TestInlineMcpDispatcher:
     async def test_success_without_success_key(self) -> None:
         from gobby.hooks.factory import HookManagerFactory
 
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.call_tool = AsyncMock(return_value={"result": "ok"})
         dispatcher = HookManagerFactory._build_inline_mcp_dispatcher(
             lambda: proxy,
@@ -359,7 +367,7 @@ class TestProxySelfRouting:
 
     def test_list_mcp_servers_routes_to_list_servers(self) -> None:
         """_proxy/list_mcp_servers routes to proxy.list_servers()."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.list_servers = AsyncMock(
             return_value={
                 "success": True,
@@ -389,7 +397,7 @@ class TestProxySelfRouting:
 
     def test_list_mcp_servers_preserves_issue_details(self) -> None:
         """_proxy/list_mcp_servers raises only servers needing attention into issues."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.list_servers = AsyncMock(
             return_value={
                 "success": True,
@@ -451,7 +459,7 @@ class TestProxySelfRouting:
 
     def test_list_tools_routes_to_proxy_list_tools(self) -> None:
         """_proxy/list_tools routes to proxy.list_tools(server_name)."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.list_tools = AsyncMock(return_value={"success": True, "tools": []})
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event()
@@ -473,7 +481,7 @@ class TestProxySelfRouting:
 
     def test_get_tool_schema_routes_to_proxy_get_tool_schema(self) -> None:
         """_proxy/get_tool_schema routes to proxy.get_tool_schema(server, tool)."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.get_tool_schema = AsyncMock(
             return_value={
                 "success": True,
@@ -500,7 +508,7 @@ class TestProxySelfRouting:
 
     def test_unknown_proxy_tool_returns_error(self) -> None:
         """_proxy/unknown_tool returns an error dict."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event()
 
@@ -522,7 +530,7 @@ class TestProxySelfRouting:
 
     def test_non_proxy_server_uses_call_tool(self) -> None:
         """Non-_proxy servers still route through proxy.call_tool()."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.call_tool = AsyncMock(return_value={"success": True, "result": "ok"})
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event()
@@ -672,7 +680,7 @@ class TestReturnValueBackwardsCompat:
 
     def test_dispatch_returns_list(self) -> None:
         """_dispatch_mcp_calls now returns a list (was None)."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.call_tool = AsyncMock(return_value={"success": True})
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event()

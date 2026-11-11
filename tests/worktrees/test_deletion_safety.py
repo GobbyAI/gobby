@@ -43,7 +43,12 @@ class _Artifacts:
 
 
 class _Storage:
-    """Worktree record store with the cleanup-lock surface the daemon surfaces use."""
+    """Worktree record store with the row locks the deletion surfaces hold.
+
+    Daemon surfaces hold ``lock_for_cleanup``; MCP, HTTP and teardown hold
+    ``lock_for_removal``. Both yield the row; the in-flight refusal under test comes
+    from the destructive boundary, not the row lock.
+    """
 
     def __init__(self, row: Worktree, *, delete_error: Exception | None = None) -> None:
         self.rows: dict[str, Worktree] = {row.id: row}
@@ -70,6 +75,10 @@ class _Storage:
     def lock_for_cleanup(
         self, worktree_id: str, *, expired_only: bool = True
     ) -> Iterator[Worktree | None]:
+        yield self.rows.get(worktree_id)
+
+    @contextlib.contextmanager
+    def lock_for_removal(self, worktree_id: str) -> Iterator[Worktree | None]:
         yield self.rows.get(worktree_id)
 
 

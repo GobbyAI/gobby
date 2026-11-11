@@ -14,7 +14,6 @@ def init_skills() -> None:
 
     base_path = Path(".")
     skills_dir = base_path / ".gobby" / "skills"
-    config_file = skills_dir / "config.yaml"
 
     result = init_skills_directory(base_path)
 
@@ -22,11 +21,6 @@ def init_skills() -> None:
         click.echo(f"Created {skills_dir}/")
     else:
         click.echo(f"Skills directory already exists: {skills_dir}/")
-
-    if result["config_created"]:
-        click.echo(f"Created {config_file}")
-    else:
-        click.echo(f"Config already exists: {config_file}")
 
     click.echo("\nSkills initialized successfully!")
 

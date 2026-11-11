@@ -1,7 +1,7 @@
 """Parent-shell directory state across exclusive and fallthrough branches."""
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from gobby.hooks._normalization_bindings import _raw_shell_word_is_literal
@@ -68,6 +68,8 @@ class ShellDirectoryState:
     group_entry: bool = False
     redirection_cwd: str | None = None
     group_closed: bool = False
+    # An unrecognised command may have moved the shell since the last literal top-level cd.
+    unproven_since_cd: bool = False
 
     @property
     def compound_pipeline(self) -> bool:
@@ -438,6 +440,47 @@ class ShellDirectoryState:
         if target is None:
             self.stack = None
         self.mark_changed()
+        if target is not None and not self.groups and not self.branches:
+            self.unproven_since_cd = False
+
+    def anchor_program(
+        self,
+        tokens: list[ShellToken],
+        parts: list[str],
+        raw: dict[int, str],
+        trusted: bool,
+    ) -> tuple[list[ShellToken], list[str], dict[int, str]]:
+        """Run a relative program word from the literal directory the shell is proven in.
+
+        Only a top-level stage outside a pipeline is trusted: a nested shell starts from
+        its caller's cwd, which an unrecognised command may have moved. Without a proven
+        directory the word stays relative and fails closed. Wrapped and dynamic words
+        keep the words they were given. Leading NAME=value assignments do not change
+        which word runs the program.
+        """
+        if not trusted or not tokens or not parts or not self.changed or self.unproven_since_cd:
+            return tokens, parts, raw
+        program_at = 0
+        while program_at < len(tokens) and re.match(
+            r"[A-Za-z_][A-Za-z0-9_]*=", tokens[program_at].value
+        ):
+            program_at += 1
+        if (
+            program_at == len(tokens)
+            or tokens[program_at].value != parts[0]
+            or not parts[0].startswith(("./", "../"))
+            or not _raw_shell_word_is_literal(raw[id(tokens[program_at])])
+            or self.cwd is None
+            or not Path(self.cwd).is_absolute()
+        ):
+            return tokens, parts, raw
+        program = str(Path(self.cwd, parts[0]))
+        token = replace(tokens[program_at], value=program)
+        return (
+            [*tokens[:program_at], token, *tokens[program_at + 1 :]],
+            [program, *parts[1:]],
+            {**raw, id(token): program},
+        )
 
     def directory_command(self, parts: list[str], *, uncertain: bool) -> None:
         """Track literal pushes and pops; unknown stack operations lose proof."""
@@ -529,6 +572,7 @@ class ShellDirectoryState:
     def mark_unproven(self) -> None:
         """Keep script proof monotonic without assuming directory movement."""
         self.changed = True
+        self.unproven_since_cd = True
 
     def mark_changed(self) -> None:
         """Record directory movement in every enclosing branch."""

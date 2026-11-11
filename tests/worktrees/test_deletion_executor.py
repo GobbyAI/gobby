@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import shutil
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.storage.isolation_cleanup import IsolationRemovalBusyError
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree
 from gobby.worktrees.deletion import (
@@ -40,6 +42,10 @@ class _Storage:
         with self._lock:
             self.thread_ids.add(threading.get_ident())
             return self.rows.get(worktree_id)
+
+    @contextmanager
+    def lock_for_removal(self, worktree_id: str) -> Iterator[Worktree | None]:
+        yield self.get(worktree_id)
 
     def update(self, worktree_id: str, *, status: str) -> None:
         with self._lock:
@@ -332,3 +338,39 @@ async def test_live_session_inside_refuses_before_git_or_storage_mutate(
     assert boundary.mutation_started is False
     assert storage.rows == {worktree.id: worktree}
     assert Path(worktree.worktree_path).is_dir()
+
+
+class _RemovalInFlightStorage(_Storage):
+    """Another removal holds this row, so the tree is busy rather than missing."""
+
+    @contextmanager
+    def lock_for_removal(self, worktree_id: str) -> Iterator[Worktree | None]:
+        raise IsolationRemovalBusyError(worktree_id)
+        yield None  # pragma: no cover - the busy row never yields
+
+
+@pytest.mark.asyncio
+async def test_mcp_delete_during_an_in_flight_removal_refuses_without_reporting_dirty(
+    tmp_path: Path,
+) -> None:
+    """A second delete must not read files another removal already took as uncommitted changes."""
+    worktree = _worktree("wt-in-flight", tmp_path / "wt-in-flight")
+    Path(worktree.worktree_path).mkdir()
+    storage = _RemovalInFlightStorage({worktree.id: worktree})
+
+    def no_git(_worktree: Worktree) -> WorktreeGitManager:
+        raise AssertionError("a tree another removal holds must not reach git")
+
+    result = await delete_worktree_transaction(
+        DestructiveBoundary(),
+        request=WorktreeDeletionRequest(worktree.id, DeletionSurface.MCP),
+        worktree_storage=cast(LocalWorktreeManager, storage),
+        resolve_git_manager=no_git,
+        task_manager=cast(LocalTaskManager, _TaskManager({worktree.id})),
+    )
+
+    assert result.success is False
+    assert result.git_deleted is False
+    assert result.uncommitted_changes is False
+    assert result.error_code == "worktree_removal_in_progress"
+    assert storage.rows == {worktree.id: worktree}

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.capabilities import hook_supports_model_context
+from gobby.hooks._normalization_apply_rewrite import applies_rewritten_input
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.tool_outcomes import classify_raw_tool_result, tool_outcome_from_data
@@ -491,7 +492,11 @@ class EnforcementCompletionMixin:
 
         outcome = tool_outcome_from_data(event.data)
         if outcome.succeeded is None:
-            await offload(normalize_tool_fields, event.data)
+            await offload(
+                normalize_tool_fields,
+                event.data,
+                can_rewrite_input=applies_rewritten_input(event.source),
+            )
             outcome = tool_outcome_from_data(event.data)
         # An oversized result reaches this hook as its bounded envelope; step handlers
         # need the stored result behind it, while the model keeps the envelope.

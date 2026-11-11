@@ -15,6 +15,7 @@ from unittest.mock import patch
 import psycopg
 import pytest
 
+from gobby.install import bin_release_identity as release
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
@@ -1100,6 +1101,94 @@ async def test_exact_landing_recovery_preserves_trailer_when_diff_fails(
     assert recovered["mode"] == ("merge" if move_tip else "ff")
     assert "retest_required" not in recovered
     assert "project_sync_required" not in recovered
+
+
+def _manifest(name: str, version: str = "1.0.0", *dependencies: str) -> str:
+    text = f'[package]\nname = "{name}"\nversion = "{version}"\n'
+    if dependencies:
+        text += "\n[dependencies]\n" + "".join(
+            f'{dep} = {{ path = "../{dep}" }}\n' for dep in dependencies
+        )
+    return text
+
+
+def _synthetic_workspace(case: LandingCase, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Commit a two-binary workspace onto trunk; both binaries depend on ``shared``."""
+    monkeypatch.setattr(release, "RELEASE_CRATES", {"alpha": "alpha", "beta": "beta"})
+    return case.direct(
+        {
+            "Cargo.toml": '[workspace]\nmembers = ["crates/*"]\n',
+            "crates/shared/Cargo.toml": _manifest("shared"),
+            "crates/shared/src/lib.rs": "pub fn shared() {}\n",
+            "crates/alpha/Cargo.toml": _manifest("alpha", "1.0.0", "shared"),
+            "crates/alpha/src/lib.rs": "pub fn alpha() {}\n",
+            "crates/beta/Cargo.toml": _manifest("beta", "1.0.0", "shared"),
+            "crates/beta/src/lib.rs": "pub fn beta() {}\n",
+            "crates/outsider/Cargo.toml": _manifest("outsider"),
+            "crates/outsider/src/lib.rs": "pub fn outsider() {}\n",
+        }
+    )
+
+
+async def test_landing_refuses_closure_change_without_bump_and_names_binaries(
+    case: LandingCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _synthetic_workspace(case, monkeypatch)
+    sha = case.candidate("lane", {"crates/shared/src/lib.rs": "pub fn shared_v2() {}\n"}, base=base)
+    task = case.task()
+    case.link(task, sha)
+    case.approve(task, sha)
+
+    result = await case.land(task, sha)
+
+    assert result["landed"] is False
+    assert result["error"] == "binary_bump_required"
+    assert result["unbumped_binaries"] == ["alpha", "beta"]
+    assert "alpha, beta" in result["message"]
+    assert case.git("rev-parse", "trunk") == base
+
+
+async def test_landing_admits_closure_change_once_each_binary_bumps(
+    case: LandingCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _synthetic_workspace(case, monkeypatch)
+    sha = case.candidate(
+        "lane",
+        {
+            "crates/shared/src/lib.rs": "pub fn shared_v2() {}\n",
+            "crates/alpha/Cargo.toml": _manifest("alpha", "1.0.1", "shared"),
+            "crates/beta/Cargo.toml": _manifest("beta", "1.0.1", "shared"),
+        },
+        base=base,
+    )
+    task = case.task()
+    case.link(task, sha)
+    case.approve(task, sha)
+
+    result = await case.land(task, sha)
+
+    assert result["landed"] is True
+    assert result["mode"] == "ff"
+    assert "unbumped_binaries" not in result
+    assert case.git("rev-parse", "trunk") == sha
+
+
+async def test_landing_leaves_binaries_outside_closures_unaffected(
+    case: LandingCase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    base = _synthetic_workspace(case, monkeypatch)
+    sha = case.candidate(
+        "lane", {"crates/outsider/src/lib.rs": "pub fn outsider_v2() {}\n"}, base=base
+    )
+    task = case.task()
+    case.link(task, sha)
+    case.approve(task, sha)
+
+    result = await case.land(task, sha)
+
+    assert result["landed"] is True
+    assert result["mode"] == "ff"
+    assert "unbumped_binaries" not in result
 
 
 @pytest.mark.parametrize("pipeline_in_candidate", [False, True])

@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from gobby.agents.sync import get_bundled_agents_path
-from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.agent_models import ALL_CAPABILITIES, AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
@@ -54,7 +54,10 @@ def test_spawner_guard_admits_only_callers_holding_a_listed_capability(path: Pat
         return
     for caller_path in _bundled_files():
         caller = _body(caller_path)
-        holds = bool(set(caller.capabilities) & set(guard.spawner_capabilities))
+        # The all-capabilities wildcard holds every listed capability.
+        holds = caller.capabilities == [ALL_CAPABILITIES] or bool(
+            set(caller.capabilities) & set(guard.spawner_capabilities)
+        )
         assert guard.admits_spawner(caller.capabilities) is holds, caller_path.stem
 
 

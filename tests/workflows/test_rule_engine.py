@@ -58,13 +58,13 @@ async def test_normalization_does_not_block_runtime_loop(db: HubDatabase) -> Non
     marker: ContextVar[str] = ContextVar("normalization-marker", default="missing")
     observed_context: list[str] = []
 
-    def normalize(data: dict[str, Any]) -> None:
+    def normalize(data: dict[str, Any], *, can_rewrite_input: bool = False) -> None:
         worker_threads.append(threading.get_ident())
         observed_context.append(marker.get())
         loop.call_soon_threadsafe(released.set)
         if threading.get_ident() != loop_thread:
             assert released.wait(5), "runtime loop did not progress during normalization"
-        normalize_tool_fields(data)
+        normalize_tool_fields(data, can_rewrite_input=can_rewrite_input)
 
     event = _make_event(data={"tool_name": "Bash", "tool_input": {"command": "echo hello"}})
     token = marker.set("delivery")

@@ -31,9 +31,9 @@ async def test_normalization_after_rehydration_runs_off_loop(
     loop_thread = threading.get_ident()
     worker_threads: list[int] = []
 
-    def normalize(data: dict[str, Any]) -> None:
+    def normalize(data: dict[str, Any], *, can_rewrite_input: bool = False) -> None:
         worker_threads.append(threading.get_ident())
-        normalize_tool_fields(data)
+        normalize_tool_fields(data, can_rewrite_input=can_rewrite_input)
 
     data: dict[str, Any] = {
         "tool_name": "Bash",

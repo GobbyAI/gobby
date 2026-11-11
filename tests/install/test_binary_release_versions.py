@@ -437,3 +437,147 @@ def test_unverified_installed_version_names_recovery(
     ):
         release.check_binary_release("gcode", source, bin_dir=installed.parent, workspace_root=None)
     assert installed.read_bytes() == original
+
+
+SHIPPED_BINARIES = ["gclient", "gcode", "gdaemon", "ghook", "gmcp", "gterm"]
+ALL_CRATE_DIRS = ["gcode", "gdaemon", "ghook", "gclient", "gmcp", "gterminal", "gcore"]
+
+
+def _commit_all(root: Path, message: str) -> str:
+    git = ["git", "-C", str(root), "-c", "user.name=Test", "-c", "user.email=test@example.com"]
+    subprocess.run([*git, "add", "--all"], check=True, capture_output=True)
+    subprocess.run([*git, "commit", "-q", "-m", message], check=True, capture_output=True)
+    return subprocess.run(
+        [*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _changed_paths(root: Path, base: str, target: str) -> set[str]:
+    listing = subprocess.run(
+        ["git", "-C", str(root), "diff", "--name-only", "--no-renames", base, target],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return set(listing.split())
+
+
+def _bump(root: Path, crate: str, version: str) -> None:
+    manifest = root / "crates" / crate / "Cargo.toml"
+    manifest.write_text(manifest.read_text().replace('version = "1.0.0"', f'version = "{version}"'))
+
+
+@pytest.mark.parametrize(
+    ("edits", "bumped", "expected"),
+    [
+        pytest.param(
+            {"crates/gcore/src/lib.rs": "pub fn changed() {}\n"},
+            [],
+            SHIPPED_BINARIES,
+            id="shared-source-reaches-every-dependent",
+        ),
+        pytest.param(
+            {"crates/gcore/src/lib.rs": "pub fn changed() {}\n"},
+            ["gcode"],
+            ["gclient", "gdaemon", "ghook", "gmcp", "gterm"],
+            id="bumped-binary-is-exempt",
+        ),
+        pytest.param(
+            {"crates/gcore/src/lib.rs": "pub fn changed() {}\n"},
+            ALL_CRATE_DIRS,
+            [],
+            id="every-changed-binary-bumped-lands",
+        ),
+        pytest.param(
+            {"crates/gmcp/src/lib.rs": "pub fn changed() {}\n"},
+            [],
+            ["gmcp"],
+            id="closure-change-names-only-its-binary",
+        ),
+        pytest.param(
+            {
+                "crates/gcore/tests/contract.rs": "#[test] fn contract() {}\n",
+                "crates/gcode/src/operations_tests.rs": "#[test] fn ops() {}\n",
+            },
+            [],
+            [],
+            id="test-only-changes-are-not-inputs",
+        ),
+        pytest.param({"docs/notes.md": "notes\n"}, [], [], id="documentation-outside-closures"),
+        pytest.param(
+            {"Cargo.toml": '[workspace]\nmembers = ["crates/*"]\nresolver = "3"\n'},
+            [],
+            SHIPPED_BINARIES,
+            id="root-manifest-reaches-every-binary",
+        ),
+        pytest.param(
+            {"Cargo.lock": '[[package]]\nname = "other"\nversion = "2.0.0"\n'},
+            [],
+            [],
+            id="unreachable-lock-entry-is-not-an-input",
+        ),
+        pytest.param(
+            {
+                "Cargo.lock": '[[package]]\nname = "other"\nversion = "1.0.0"\n\n'
+                '[[package]]\nname = "gcore"\nversion = "0.10.22"\n'
+            },
+            [],
+            SHIPPED_BINARIES,
+            id="reachable-lock-entry-reaches-dependents",
+        ),
+    ],
+)
+def test_landing_bump_check_follows_crate_closure(
+    workspace: Path, edits: dict[str, str], bumped: list[str], expected: list[str]
+) -> None:
+    (workspace / "Cargo.lock").write_text('[[package]]\nname = "other"\nversion = "1.0.0"\n')
+    base = _commit_all(workspace, "base")
+    for name, content in edits.items():
+        path = workspace / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content)
+    for crate in bumped:
+        _bump(workspace, crate, "1.0.1")
+    target = _commit_all(workspace, "candidate")
+
+    changed = _changed_paths(workspace, base, target)
+    assert release.unbumped_binaries(workspace, base, target, changed) == expected
+
+
+@pytest.mark.parametrize(
+    ("target_version", "refused"),
+    [
+        pytest.param("1.0.1", False, id="patch-bump-lands"),
+        pytest.param("1.0.0", True, id="equal-version-refused"),
+        pytest.param("0.9.9", True, id="downgrade-refused"),
+        pytest.param("1.1.0", True, id="minor-only-bump-refused"),
+        pytest.param("1.0.0-rc.1", True, id="prerelease-refused"),
+        pytest.param("1.0.1+build.7", True, id="build-metadata-refused"),
+        pytest.param("1.0.01", True, id="leading-zero-patch-refused"),
+        pytest.param("01.0.1", True, id="leading-zero-major-refused"),
+    ],
+)
+def test_landing_bump_must_be_a_forward_patch_bump(
+    workspace: Path, target_version: str, refused: bool
+) -> None:
+    base = _commit_all(workspace, "base")
+    (workspace / "crates" / "gcore" / "src" / "lib.rs").write_text("pub fn changed() {}\n")
+    _bump(workspace, "gcode", target_version)
+    target = _commit_all(workspace, "candidate")
+
+    changed = _changed_paths(workspace, base, target)
+    expected = (
+        SHIPPED_BINARIES if refused else [name for name in SHIPPED_BINARIES if name != "gcode"]
+    )
+    assert release.unbumped_binaries(workspace, base, target, changed) == expected
+
+
+def test_landing_bump_check_fails_closed_on_unparseable_base_version(workspace: Path) -> None:
+    _bump(workspace, "gcode", "1.0.0-rc.1")
+    base = _commit_all(workspace, "base")
+    (workspace / "crates" / "gcore" / "src" / "lib.rs").write_text("pub fn changed() {}\n")
+    target = _commit_all(workspace, "candidate")
+
+    changed = _changed_paths(workspace, base, target)
+    with pytest.raises(release.BinaryReleaseVersionError, match="not MAJOR.MINOR.PATCH"):
+        release.unbumped_binaries(workspace, base, target, changed)

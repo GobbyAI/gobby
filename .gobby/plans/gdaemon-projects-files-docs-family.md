@@ -938,7 +938,6 @@ Targets:
 - `src/gobby/config/project_validation.py`
 - `src/gobby/utils/durable_file.py::*` — scope-reason: expose bounded locking of a securely opened descriptor while preserving the path wrapper
 - `src/gobby/config/validation_detection.py::*` — scope-reason: extract project-file policy helpers and retain their import facade
-- `src/gobby/config/tasks.py::load_project_task_close_policy`
 - `src/gobby/utils/project_context.py::*` — scope-reason: guard policy snapshots and both sides of isolation metadata copy and repair
 - `src/gobby/utils/project_init.py::*` — scope-reason: serialize marker read/merge/publication and expected-identity cleanup
 - `src/gobby/servers/tool_approvals.py::*` — scope-reason: guard approval load/save/clear/migrate and the async wrapper
@@ -975,7 +974,7 @@ Targets:
 **Research context:** The PA-D01 sweep found policy reads in
 tool_approvals.load_project_approval_rules/_load_project_payload,
 validation_detection.load_project_validation_detection/_load_project_payload,
-tasks.load_project_task_close_policy, project_context.get_project_context/
+project_context.get_project_context/
 _build_and_set_project_context, verification evidence, and
 found_work_gate._project_verification_commands. Consumers include chat approval,
 asynchronous Codex/Droid permission callbacks, hook autoapproval, merge

@@ -260,7 +260,8 @@ class ClaudeCodeAdapter(BaseAdapter):
         tool_response = data.get("tool_response")
         if isinstance(tool_response, str):
             data["tool_response"] = _saved_mcp_result(tool_response, data.get("session_id"))
-        normalized = normalize_tool_fields(data)
+        # Claude Code runs the rewritten input a rule returns (updatedInput).
+        normalized = normalize_tool_fields(data, can_rewrite_input=True)
 
         # Claude uses ``user_prompt`` on UserPromptSubmit hooks. Canonicalize to
         # ``prompt`` so turn-start rules and BEFORE_AGENT handlers see the same

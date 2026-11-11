@@ -73,6 +73,8 @@ class EvidenceContextProtocol(Protocol):
 
     def get_commit_range_diff(self, range_: str) -> str: ...
 
+    def landed_base_tip(self, task_ref: str, branch: str) -> str | None: ...
+
 
 def resolve_evidence(spec: str, *, ctx: EvidenceContextProtocol) -> EvidenceBundle:
     """Resolve a single evidence spec into audit rows."""
@@ -242,13 +244,17 @@ def _resolve_worktree_diff(artifact_ref: str, *, ctx: EvidenceContextProtocol) -
             )
         )
 
-    # The fork moves when the base is merged or rebased in; the recorded sha is
-    # the fallback when the base branch is unknown or no longer resolves.
+    # The fork moves when the base is merged or rebased in. Its anchor is the tip the
+    # newest landing recorded in the hub database, which a worktree cannot move the way
+    # it moves a branch ref. The recorded sha stands when no landing tip resolves here.
     base_branch = artifacts.get("base_branch")
     if isinstance(base_branch, str) and base_branch:
-        fork = _run_git(path, ["merge-base", "HEAD", f"refs/heads/{base_branch}"])
-        if fork.returncode == 0 and fork.stdout.strip():
-            base = fork.stdout.strip()
+        landed_tip = ctx.landed_base_tip(artifact_ref, base_branch)
+        if landed_tip is not None:
+            validate_evidence_ref(landed_tip)
+            fork = _run_git(path, ["merge-base", "HEAD", landed_tip])
+            if fork.returncode == 0 and fork.stdout.strip():
+                base = fork.stdout.strip()
 
     diff = _run_git(path, ["diff", f"{base}...HEAD"])
     if diff.returncode != 0:

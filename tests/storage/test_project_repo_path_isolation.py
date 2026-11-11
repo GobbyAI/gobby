@@ -203,7 +203,7 @@ def test_agent_and_operator_plan_validation_match_with_project_flag(
     from gobby.runtime_grants.launch import materialize_managed_launch
     from gobby.runtime_grants.schema import GrantPrincipal, PostgresDirect
     from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
-    from tests.fixtures.gdaemon_binary import select_test_gdaemon
+    from tests.fixtures.gdaemon_binary import build_checkout_gdaemon
     from tests.runtime_grants.support import GOLDEN_SECRET
 
     fixture = authorization_fixture
@@ -338,11 +338,10 @@ Validate the same plan through both principals.
     gobby_home.mkdir()
     (gobby_home / "machine_id").write_text(str(fixture.machine_id), encoding="utf-8")
     base_env["GOBBY_HOME"] = str(gobby_home)
-    checkout_gdaemon = select_test_gdaemon(
+    checkout_gdaemon = build_checkout_gdaemon(
         Path(__file__).resolve().parents[2], base_env, native_bin_name("gdaemon")
     )
-    if checkout_gdaemon is not None:
-        base_env[NATIVE_BIN_DIR_ENV] = str(checkout_gdaemon.parent)
+    base_env[NATIVE_BIN_DIR_ENV] = str(checkout_gdaemon.parent)
 
     with _task_api_stub() as daemon:
         # Pin the dial target so neither principal reaches a live daemon.
@@ -354,7 +353,9 @@ Validate the same plan through both principals.
             text=True,
             capture_output=True,
             check=False,
-            timeout=30,
+            # A cold `gobby` start takes 17-37 s under host load (claude_agent_sdk import
+            # chain); a 30 s budget flaked at load 57. The bound still catches hangs.
+            timeout=120,
         )
         operator_requests = list(daemon.requests)
         # The reader rejects a GOBBY_PROJECT_ID that differs from the envelope principal,
@@ -372,7 +373,7 @@ Validate the same plan through both principals.
             text=True,
             capture_output=True,
             check=False,
-            timeout=30,
+            timeout=120,
         )
 
     assert operator.returncode == 0, operator.stderr or operator.stdout

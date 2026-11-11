@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -300,6 +302,76 @@ class TestMCPRewriteNesting:
         # The replacement keeps the call_tool routing fields the rule never touched.
         assert response.modified_input["server_name"] == "gobby-tasks"
         assert response.modified_input["tool_name"] == "close_task"
+
+
+class TestValidatedApplyRewrite:
+    """A literal git apply reaches the CLI as the bytes the normalizer validated."""
+
+    @staticmethod
+    def _setup(manager: RuleDefinitionManager, tmp_path: Path) -> tuple[Path, Path]:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        # The rewrite reads only a patch inside the checkout.
+        patch = repo / "set-aside.patch"
+        patch.write_text(
+            "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-one\n+two\n",
+            encoding="utf-8",
+        )
+        _insert_rule(
+            manager,
+            "run-validated-apply",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.BEFORE_TOOL,
+                mandatory=True,
+                tools=["Bash"],
+                when="event.data.get('_validated_apply_command') is not None",
+                effects=[
+                    RuleEffect(
+                        type="rewrite_input",
+                        input_updates={"command": "{{ event.data['_validated_apply_command'] }}"},
+                    )
+                ],
+            ),
+        )
+        return repo, patch
+
+    @staticmethod
+    def _bash_event(repo: Path, patch: Path, source: SessionSource) -> HookEvent:
+        return _make_event(
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": f"git apply {patch}", "cwd": str(repo)},
+                "project_path": str(repo),
+            },
+            source=source,
+        )
+
+    @pytest.mark.asyncio
+    async def test_engine_pass_keeps_the_rewrite_for_a_provider_that_applies_it(
+        self, db: HubDatabase, manager: RuleDefinitionManager, tmp_path: Path
+    ) -> None:
+        repo, patch = self._setup(manager, tmp_path)
+        event = self._bash_event(repo, patch, SessionSource.CLAUDE)
+
+        response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.modified_input is not None
+        command = response.modified_input["command"]
+        assert command.startswith("git apply - <<'")
+        assert "+two\n" in command
+        assert str(patch) not in command
+
+    @pytest.mark.asyncio
+    async def test_engine_pass_adds_no_rewrite_for_a_provider_that_cannot_apply_it(
+        self, db: HubDatabase, manager: RuleDefinitionManager, tmp_path: Path
+    ) -> None:
+        repo, patch = self._setup(manager, tmp_path)
+        event = self._bash_event(repo, patch, SessionSource.CODEX)
+
+        response = await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
+
+        assert response.modified_input is None
 
 
 class TestRegexReplaceFilter:

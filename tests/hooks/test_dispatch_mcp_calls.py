@@ -14,6 +14,14 @@ from tests._timing import wait_for_async_condition
 pytestmark = pytest.mark.unit
 
 
+def _proxy() -> AsyncMock:
+    """Async proxy whose session manager is synchronous, as ToolProxyService's is."""
+    proxy = AsyncMock()
+    proxy.session_manager = MagicMock()
+    proxy.session_manager.get.return_value = None
+    return proxy
+
+
 def _make_hook_manager_stub(
     tool_proxy_getter=None,
     loop: asyncio.AbstractEventLoop | None = None,
@@ -68,7 +76,7 @@ class TestDispatchMcpCallsGuards:
 
     def test_missing_server_or_tool_logs_warning(self) -> None:
         """Calls with missing server/tool are skipped with a warning."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy)
         event = _make_event()
 
@@ -83,7 +91,7 @@ class TestDispatchMcpCallsGuards:
 
     def test_empty_list_is_noop(self) -> None:
         """Empty mcp_calls list does nothing."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy)
         event = _make_event()
 
@@ -99,7 +107,7 @@ class TestDispatchMcpCallsContextInjection:
 
     def test_injects_session_id(self) -> None:
         """session_id is injected from event when not in arguments."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy)
         event = _make_event(platform_session_id="plat-123", prompt="Hello world")
 
@@ -135,7 +143,7 @@ class TestDispatchMcpCallsContextInjection:
 
     def test_does_not_overwrite_existing_session_id(self) -> None:
         """If arguments already contain session_id, it is not overwritten."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy)
         event = _make_event(platform_session_id="plat-123")
 
@@ -161,7 +169,7 @@ class TestDispatchMcpCallsContextInjection:
             loop.close()
 
     def test_omits_null_prompt_without_event_string(self) -> None:
-        proxy = AsyncMock()
+        proxy = _proxy()
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy)
         event = _make_event()
         event.data = {}
@@ -186,7 +194,7 @@ class TestDispatchMcpCallsBackgroundMode:
     @pytest.mark.asyncio
     async def test_background_call_uses_create_task(self) -> None:
         """Background calls use loop.create_task (fire-and-forget)."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy)
         event = _make_event()
 
@@ -217,7 +225,7 @@ class TestDispatchMcpCallsBackgroundMode:
         """Errors in background calls are logged, not raised."""
         proxy = AsyncMock(side_effect=RuntimeError("LLM down"))
         # tool_proxy_getter returns a proxy whose call_tool raises
-        mock_proxy = AsyncMock()
+        mock_proxy = _proxy()
         mock_proxy.call_tool = proxy
 
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: mock_proxy)
@@ -249,7 +257,7 @@ class TestDispatchMcpCallsNoEventLoop:
     """Tests for the asyncio.run() fallback when no event loop is available."""
 
     def test_blocking_call_respects_aggregate_deadline(self) -> None:
-        proxy = AsyncMock()
+        proxy = _proxy()
 
         async def slow_call(*_args: object, **_kwargs: object) -> dict[str, bool]:
             await asyncio.Event().wait()
@@ -276,7 +284,7 @@ class TestDispatchMcpCallsNoEventLoop:
         assert results[0]["success"] is False
 
     def test_captured_call_respects_effect_timeout(self) -> None:
-        proxy = AsyncMock()
+        proxy = _proxy()
 
         async def stalled_call(*_args: object, **_kwargs: object) -> dict[str, bool]:
             await asyncio.Event().wait()
@@ -304,7 +312,7 @@ class TestDispatchMcpCallsNoEventLoop:
 
     def test_blocking_call_falls_back_to_asyncio_run(self) -> None:
         """When no event loop exists, blocking calls use asyncio.run()."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         # _loop is None to simulate hook manager subprocess
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event(platform_session_id="plat-456")
@@ -339,7 +347,7 @@ class TestDispatchMcpCallsNoEventLoop:
 
     def test_background_call_falls_back_to_asyncio_run(self) -> None:
         """When no event loop exists, background calls also use asyncio.run()."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event()
 
@@ -360,7 +368,7 @@ class TestDispatchMcpCallsNoEventLoop:
 
     def test_blocking_asyncio_run_error_is_logged(self) -> None:
         """Errors in asyncio.run() fallback for blocking calls are logged."""
-        mock_proxy = AsyncMock()
+        mock_proxy = _proxy()
         mock_proxy.call_tool = AsyncMock(side_effect=RuntimeError("connection refused"))
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: mock_proxy, loop=None)
         event = _make_event()
@@ -391,7 +399,7 @@ class TestDispatchMcpCallsNoEventLoop:
 
     def test_multiple_calls_all_execute(self) -> None:
         """Multiple MCP calls in sequence all execute via asyncio.run()."""
-        proxy = AsyncMock()
+        proxy = _proxy()
         stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
         event = _make_event()
 
@@ -472,7 +480,7 @@ class TestDispatchMcpCallsSessionResolution:
         session.project_id = "proj-abc"
         session_manager.get.return_value = session
 
-        proxy = AsyncMock()
+        proxy = _proxy()
         proxy.session_manager = session_manager
         return proxy, session_manager
 

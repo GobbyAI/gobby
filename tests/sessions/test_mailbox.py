@@ -1570,3 +1570,44 @@ async def test_mailbox_nonroutine_decline_stays_at_info(
     records = [record for record in caplog.records if "declined" in record.getMessage()]
     assert len(records) == 1
     assert records[0].levelno == logging.INFO
+
+
+@pytest.mark.asyncio
+async def test_mailbox_decline_log_names_the_gate_reason(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A gate refusal's reason reaches the log, so a repeated decline is diagnosable."""
+
+    class GateRefusingDispatcher:
+        async def dispatch_live_wake(self, session_id: str) -> dict[str, Any]:
+            return {
+                "session_id": session_id,
+                "delivered": False,
+                "method": "terminal",
+                "skipped": "send_keys_composer_not_idle",
+                "decline_reason": "send_keys_composer_not_idle",
+                "reason": "the target pane does not show an idle agent composer",
+            }
+
+    sender = _register_session(session_manager, sample_project["id"], "reason-sender")
+    recipient = _register_session(session_manager, sample_project["id"], "reason-recipient")
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.mailbox_delivery"):
+        result = await _mailbox(temp_db, session_manager, GateRefusingDispatcher()).send(
+            from_session_id=sender.id,
+            target="session",
+            target_id=recipient.id,
+            content="declined",
+            wake=True,
+        )
+
+    records = [record for record in caplog.records if "declined" in record.getMessage()]
+    assert [record.getMessage() for record in records] == [
+        f"mailbox wake declined for session {recipient.id} message "
+        f"{result.message_ids[0]}: send_keys_composer_not_idle "
+        "(the target pane does not show an idle agent composer)"
+    ]
+    assert records[0].levelno == logging.INFO

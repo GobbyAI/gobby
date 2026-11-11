@@ -19,6 +19,7 @@ from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.eligibility import overlay_project_id_for_root
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeIndexLock
 from gobby.code_index.maintenance_launch import open_launch_async
+from gobby.install.bin_release_identity import BinaryReleaseVersionError, unbumped_binaries
 from gobby.releases.activation import project_checkout_root
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
@@ -83,6 +84,7 @@ class LandingResult(TypedDict, total=False):
     escalated: bool
     missing_schema_carriers: list[str]
     shared_paths: list[str]
+    unbumped_binaries: list[str]
     commit_sha: str
     branch: str
     landed_tip: str
@@ -192,6 +194,14 @@ async def _merge_tree(main: Path, tip: str, sha: str) -> GitOk | GitFailed:
     if isinstance(result, GitOk) or (isinstance(result, GitFailed) and result.returncode == 1):
         return result
     raise LandingGitError(f"could not compute candidate merge tree: {result.stderr}")
+
+
+async def _unbumped_binaries(main: Path, tip: str, tree: str, paths: set[str]) -> list[str]:
+    """Shipped binaries the landed tree changes without a version bump; unreadable fails closed."""
+    try:
+        return await asyncio.to_thread(unbumped_binaries, main, tip, tree, paths)
+    except BinaryReleaseVersionError as exc:
+        raise LandingGitError(str(exc)) from exc
 
 
 async def _candidate_paths(main: Path, tip: str, sha: str, tree: str) -> set[str]:
@@ -684,6 +694,14 @@ async def land_candidate(
                 # Only the integration tip counts; unlanded peers never block a landing.
                 if shared:
                     blockers.append("base_update_required")
+                # A landed crate change must bump the version of every binary it reaches.
+                binaries = (
+                    await _unbumped_binaries(main, tip, tree, paths)
+                    if isinstance(merged, GitOk)
+                    else []
+                )
+                if binaries:
+                    blockers.append("binary_bump_required")
                 refusal = {
                     "landed": False,
                     "commit_sha": sha,
@@ -694,6 +712,12 @@ async def land_candidate(
                 }
                 if blockers:
                     refusal["error"] = blockers[0]
+                    if binaries:
+                        refusal["unbumped_binaries"] = binaries
+                        refusal["message"] = (
+                            "bump the patch version of each changed shipped binary: "
+                            + ", ".join(binaries)
+                        )
                     if _CONFLICTS.issuperset(blockers):
                         return _escalate(db, current_task, refusal)
                     return refusal

@@ -65,6 +65,7 @@ async def test_install_publishes_files_atomically(
 
     monkeypatch.setattr(LocalSkillManager, "_set_skill_files", fail_file_write)
     tool = create_skills_registry(db).get_tool("install_skill")
+    assert tool is not None
 
     result = await tool(source=str(skill_dir))
 
@@ -110,6 +111,7 @@ class TestInstallSkillTool:
 
         registry = create_skills_registry(db)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source=str(skill_dir))
 
@@ -135,6 +137,7 @@ class TestInstallSkillTool:
 
         registry = create_skills_registry(db)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         skill_file = skill_dir / "SKILL.md"
         result = await tool(source=str(skill_file))
@@ -154,6 +157,7 @@ class TestInstallSkillTool:
 
         registry = create_skills_registry(db)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source=str(skill_zip))
 
@@ -179,6 +183,7 @@ class TestInstallSkillTool:
 
         registry = create_skills_registry(db)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         # Local directory
         result1 = await tool(source=str(skill_dir))
@@ -219,6 +224,7 @@ class TestInstallSkillTool:
 
         registry = create_skills_registry(db)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source="github:owner/repo")
 
@@ -238,6 +244,7 @@ class TestInstallSkillTool:
 
         registry = create_skills_registry(db)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source=str(skill_dir))
 
@@ -257,6 +264,7 @@ class TestInstallSkillTool:
 
         registry = create_skills_registry(db)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         # With project_scoped=False (default), skill is installed globally
         result = await tool(source=str(skill_dir), project_scoped=False)
@@ -278,6 +286,7 @@ class TestInstallSkillTool:
         import uuid
 
         from gobby.mcp_proxy.tools.skills import create_skills_registry
+        from gobby.utils.project_context import reset_project_context, set_project_context
 
         project_id = str(uuid.uuid4())
         with db.transaction() as conn:
@@ -303,8 +312,13 @@ version: "1.0.0"
 
         registry = create_skills_registry(db, project_id=project_id)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
-        result = await tool(source=str(template_dir), project_scoped=True)
+        token = set_project_context({"id": project_id})
+        try:
+            result = await tool(source=str(template_dir), project_scoped=True)
+        finally:
+            reset_project_context(token)
 
         assert result["success"] is False
         assert "bundled skill templates" in result["error"]
@@ -321,6 +335,7 @@ version: "1.0.0"
 
         registry = create_skills_registry(db)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source=str(tmp_path / "nonexistent"))
 
@@ -337,6 +352,7 @@ version: "1.0.0"
 
         registry = create_skills_registry(db)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source="https://example.com/skills/demo.zip")
 
@@ -364,6 +380,7 @@ Content
 
         registry = create_skills_registry(db)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source=str(invalid_dir))
 
@@ -376,6 +393,7 @@ Content
 
         registry = create_skills_registry(db)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool()
 
@@ -395,6 +413,8 @@ Content
         registry = create_skills_registry(db)
         install_tool = registry.get_tool("install_skill")
         search_tool = registry.get_tool("search_skills")
+        assert install_tool is not None
+        assert search_tool is not None
 
         # Install skill
         await install_tool(source=str(skill_dir))
@@ -405,6 +425,78 @@ Content
         assert result["success"] is True
         assert result["count"] > 0
         assert any(r["skill_name"] == "test-skill" for r in result["results"])
+
+    @pytest.mark.asyncio
+    async def test_install_skill_project_scoped_stores_caller_project(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        skill_dir: Path,
+    ) -> None:
+        """A project-scoped install from project B stores B, never the daemon's project."""
+        import uuid
+
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+        from gobby.utils.project_context import reset_project_context, set_project_context
+
+        daemon_project_id = str(uuid.uuid4())
+        caller_project_id = str(uuid.uuid4())
+        with db.transaction() as conn:
+            for project_id, name in (
+                (daemon_project_id, "daemon-project"),
+                (caller_project_id, "caller-project"),
+            ):
+                conn.execute(
+                    "INSERT INTO projects (id, name, created_at, updated_at) "
+                    "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                    (project_id, name),
+                )
+
+        registry = create_skills_registry(db, project_id=daemon_project_id)
+        tool = registry.get_tool("install_skill")
+        assert tool is not None
+
+        token = set_project_context({"id": caller_project_id})
+        try:
+            result = await tool(source=str(skill_dir), project_scoped=True)
+        finally:
+            reset_project_context(token)
+
+        assert result["success"] is True
+        installed = storage.get_by_name("test-skill", project_id=caller_project_id)
+        assert installed is not None
+        assert installed.project_id == caller_project_id
+        assert storage.get_by_name("test-skill", project_id=daemon_project_id) is None
+
+    @pytest.mark.asyncio
+    async def test_install_skill_project_scoped_without_caller_project_fails_loud(
+        self,
+        db: HubDatabase,
+        storage: LocalSkillManager,
+        skill_dir: Path,
+    ) -> None:
+        """With no caller project, a project-scoped install refuses instead of using the daemon's."""
+        import uuid
+
+        from gobby.mcp_proxy.tools.skills import create_skills_registry
+
+        daemon_project_id = str(uuid.uuid4())
+        with db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO projects (id, name, created_at, updated_at) "
+                "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+                (daemon_project_id, "daemon-project"),
+            )
+
+        registry = create_skills_registry(db, project_id=daemon_project_id)
+        tool = registry.get_tool("install_skill")
+        assert tool is not None
+
+        result = await tool(source=str(skill_dir), project_scoped=True)
+
+        assert result["success"] is False
+        assert "caller project" in result["error"]
+        assert storage.get_by_name("test-skill", project_id=daemon_project_id) is None
 
 
 class TestInstallSkillFromHub:
@@ -482,6 +574,7 @@ Content here.
 
         registry = create_skills_registry(db, hub_manager=mock_hub_manager)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source="clawdhub:commit-message")
 
@@ -527,6 +620,7 @@ Content here.
 
         registry = create_skills_registry(db, hub_manager=mock_hub_manager)
         tool = registry.get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source="clawdhub:commit-message")
 
@@ -572,7 +666,11 @@ Content here.
         mock_hub_manager.get_provider.return_value = provider
         registry = create_skills_registry(db, hub_manager=mock_hub_manager)
 
-        result = await registry.get_tool("install_skill")(source="clawdhub:owner/repo:path")
+        tool = registry.get_tool("install_skill")
+        assert tool is not None
+        assert tool is not None
+
+        result = await tool(source="clawdhub:owner/repo:path")
 
         assert result == {
             "success": False,
@@ -601,6 +699,7 @@ Content here.
         mock_hub_manager.has_hub.side_effect = None
         mock_hub_manager.has_hub.return_value = True
         tool = create_skills_registry(db, hub_manager=mock_hub_manager).get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source="github-collection:category/example-skill")
 
@@ -627,6 +726,7 @@ Content here.
             )
         )
         tool = create_skills_registry(db, hub_manager=mock_hub_manager).get_tool("install_skill")
+        assert tool is not None
 
         result = await tool(source="clawdhub:example-skill")
 
@@ -645,6 +745,7 @@ Content here.
         registry = create_skills_registry(db, hub_manager=mock_hub_manager)
         tool = registry.get_tool("install_skill")
         assert tool is not None
+        assert tool is not None
 
         result = await tool(source="unknown-hub:some-skill")
 
@@ -658,6 +759,7 @@ Content here.
 
         registry = create_skills_registry(db)  # No hub_manager
         tool = registry.get_tool("install_skill")
+        assert tool is not None
         assert tool is not None
 
         result = await tool(source="clawdhub:commit-message")

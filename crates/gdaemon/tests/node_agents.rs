@@ -23,6 +23,7 @@ use gobby_daemon::node_commands::{
 };
 use gobby_daemon::nodes::agents::{
     NodeAgents,
+    removal_lock::RemovalLock,
     repair::{self, RepairEnv},
     sandbox::{
         PolicyInputs, checkout_component, gcode_runtime_digest, resolve_srt_policy,
@@ -319,6 +320,7 @@ fn workspace(root: &Path, reused: bool) -> WorkspaceRecord {
         base_branch: Some("main".into()),
         source_root: root.join("source"),
         reused,
+        created: !reused,
     }
 }
 
@@ -510,9 +512,9 @@ async fn restart_fails_unlaunched_runs() -> Result<()> {
         let state = agents.state.lock().await;
         assert_eq!(state.live_and_accepted(), 1);
         assert!(state.runs.contains_key("launched"));
-        assert_eq!(state.removals.len(), 2);
-        assert!(state.removals.contains_key("preparing"));
+        assert_eq!(state.removals.len(), 1);
         assert!(state.removals.contains_key("existing-removal"));
+        assert!(!state.removals.contains_key("preparing"));
         assert!(!state.removals.contains_key("reused"));
         assert_eq!(state.exits.len(), 4);
         assert_eq!(state.exits[0].exit.run_id, "previous");
@@ -767,7 +769,14 @@ async fn prepare_cancelled_after_create_skips_repair() -> Result<()> {
     let persisted = persisted_state(&home)?;
     let on_disk = persisted.runs.get("run-12").expect("run is persisted");
     assert_eq!(on_disk.phase, RunPhase::Preparing);
-    assert_eq!(on_disk.workspace.as_ref(), Some(&planned));
+    // Create ran before the cancel, so the persisted record marks the tree as made.
+    assert_eq!(
+        on_disk.workspace.as_ref(),
+        Some(&WorkspaceRecord {
+            created: true,
+            ..planned.clone()
+        })
+    );
     Ok(())
 }
 
@@ -925,7 +934,14 @@ async fn failed_removal_keeps_record_and_retries() -> Result<()> {
     workspace::prepare(&agents, "run-4", &record, "codex", &env, &never).await?;
     {
         let mut state = agents.state.lock().await;
-        state.removals.insert("run-4".into(), record.clone());
+        // The queued record is the one the create marked as made, as `to_removals` would copy it.
+        state.removals.insert(
+            "run-4".into(),
+            WorkspaceRecord {
+                created: true,
+                ..record.clone()
+            },
+        );
         state.commit(&agents.home, &agents.changed)?;
     }
 
@@ -990,6 +1006,11 @@ async fn restart_at_each_boundary_cleans_up() -> Result<()> {
             &home,
         )?
         .expect("worktree mode plans a record");
+        // Only a boundary past create has a tree this run made.
+        let record = WorkspaceRecord {
+            created: boundary != Boundary::AfterRecord,
+            ..record
+        };
         if boundary != Boundary::AfterRecord {
             add_worktree(&source, &record)?;
         }
@@ -1010,28 +1031,280 @@ async fn restart_at_each_boundary_cleans_up() -> Result<()> {
             state.commit(&agents.home, &agents.changed)?;
         }
 
-        // Restart: recovery moves preparing runs to removals, then startup retries them.
+        // Restart settles preparing runs without queuing their trees; only a queued removal runs.
         let agents = NodeAgents::open(&home)?;
         workspace::retry_removals(&agents).await?;
         assert!(
             agents.state.lock().await.removals.is_empty(),
-            "{boundary:?}: the record is deleted"
+            "{boundary:?}: nothing stays queued"
         );
         assert!(
             persisted_state(&home)?.removals.is_empty(),
-            "{boundary:?}: the deletion is persisted"
+            "{boundary:?}: the empty queue is persisted"
         );
-        assert!(
-            !record.path.exists(),
-            "{boundary:?}: the worktree is removed"
+        let created = boundary != Boundary::AfterRecord;
+        let kept = created && boundary != Boundary::DuringRemoval;
+        assert_eq!(
+            record.path.exists(),
+            kept,
+            "{boundary:?}: the worktree stays unless its removal was queued"
         );
-        assert!(
-            git(&source, &["branch", "--list", record.branch_name.as_str()])?
-                .trim()
-                .is_empty(),
-            "{boundary:?}: the branch is removed"
+        let branch = git(&source, &["branch", "--list", record.branch_name.as_str()])?;
+        assert_eq!(
+            !branch.trim().is_empty(),
+            kept,
+            "{boundary:?}: the branch stays with its worktree"
         );
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn acknowledged_exit_keeps_run_created_worktree() -> Result<()> {
+    for dirty in [false, true] {
+        let root = tempfile::tempdir()?;
+        let source = source_repo(root.path())?;
+        let home = canonical_home(root.path())?;
+        let claude_json = root.path().join("claude.json");
+        let hooks_dir = home.join("hooks");
+        let env = repair_env(&home, &hooks_dir, &claude_json);
+        let record = workspace::plan_workspace(
+            "run-7",
+            PROJECT_ID,
+            &source,
+            &worktree_spawn("agent/exit"),
+            &home,
+        )?
+        .expect("worktree mode plans a record");
+        let agents = NodeAgents::open(&home)?;
+        accept_run(&agents, "run-7").await?;
+        workspace::prepare(&agents, "run-7", &record, "codex", &env, &never).await?;
+        if dirty {
+            fs::write(record.path.join("uncommitted.txt"), "work")?;
+        }
+        {
+            let mut state = agents.state.lock().await;
+            state.runs.get_mut("run-7").expect("run is accepted").phase = RunPhase::Exited;
+            state.acknowledge_exit("run-7");
+            state.commit(&agents.home, &agents.changed)?;
+        }
+        workspace::retry_removals(&agents).await?;
+        assert!(
+            agents.state.lock().await.removals.is_empty(),
+            "dirty={dirty}: an acknowledged exit queues nothing"
+        );
+        assert!(
+            record.path.exists(),
+            "dirty={dirty}: an acknowledged exit keeps its worktree"
+        );
+        assert!(
+            !git(&source, &["branch", "--list", "agent/exit-run-7"])?
+                .trim()
+                .is_empty(),
+            "dirty={dirty}: an acknowledged exit keeps its branch"
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_create_keeps_preexisting_branch() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let source = source_repo(root.path())?;
+    let home = canonical_home(root.path())?;
+    let claude_json = root.path().join("claude.json");
+    let hooks_dir = home.join("hooks");
+    let env = repair_env(&home, &hooks_dir, &claude_json);
+    git(&source, &["branch", "agent/collide-run-8"])?;
+    let record = workspace::plan_workspace(
+        "run-8",
+        PROJECT_ID,
+        &source,
+        &worktree_spawn("agent/collide-run-8"),
+        &home,
+    )?
+    .expect("worktree mode plans a record");
+    let agents = NodeAgents::open(&home)?;
+    accept_run(&agents, "run-8").await?;
+    assert!(
+        workspace::prepare(&agents, "run-8", &record, "codex", &env, &never)
+            .await
+            .is_err(),
+        "create refuses a branch that already exists"
+    );
+    {
+        // The boot-failure path queues the run's record, as record_failure does.
+        let mut state = agents.state.lock().await;
+        state.to_removals("run-8");
+        state.commit(&agents.home, &agents.changed)?;
+    }
+    workspace::retry_removals(&agents).await?;
+    assert!(
+        !git(&source, &["branch", "--list", "agent/collide-run-8"])?
+            .trim()
+            .is_empty(),
+        "a failed create must not delete a branch it did not create"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn failed_create_keeps_an_unrelated_directory() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let source = source_repo(root.path())?;
+    let home = canonical_home(root.path())?;
+    let claude_json = root.path().join("claude.json");
+    let hooks_dir = home.join("hooks");
+    let env = repair_env(&home, &hooks_dir, &claude_json);
+    git(&source, &["branch", "agent/unrelated-run-9"])?;
+    let record = workspace::plan_workspace(
+        "run-9",
+        PROJECT_ID,
+        &source,
+        &worktree_spawn("agent/unrelated-run-9"),
+        &home,
+    )?
+    .expect("worktree mode plans a record");
+    // An unrelated directory already occupies the path the run would take.
+    fs::create_dir_all(&record.path)?;
+    fs::write(record.path.join("keep.txt"), "not ours\n")?;
+    let agents = NodeAgents::open(&home)?;
+    accept_run(&agents, "run-9").await?;
+    assert!(
+        workspace::prepare(&agents, "run-9", &record, "codex", &env, &never)
+            .await
+            .is_err(),
+        "create refuses a path that is already taken"
+    );
+    {
+        // The boot-failure path queues the run's record, as record_failure does.
+        let mut state = agents.state.lock().await;
+        state.to_removals("run-9");
+        state.commit(&agents.home, &agents.changed)?;
+    }
+    workspace::retry_removals(&agents).await?;
+    assert_eq!(
+        fs::read_to_string(record.path.join("keep.txt"))?,
+        "not ours\n",
+        "a failed create must not remove a directory it did not make"
+    );
+    assert!(
+        !git(&source, &["branch", "--list", "agent/unrelated-run-9"])?
+            .trim()
+            .is_empty(),
+        "a failed create must not delete a branch it did not create"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn retry_removals_defers_to_a_held_removal_lock() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let source = source_repo(root.path())?;
+    let home = canonical_home(root.path())?;
+    let claude_json = root.path().join("claude.json");
+    let hooks_dir = home.join("hooks");
+    let env = repair_env(&home, &hooks_dir, &claude_json);
+    let record = workspace::plan_workspace(
+        "run-locked",
+        PROJECT_ID,
+        &source,
+        &worktree_spawn("agent/locked"),
+        &home,
+    )?
+    .expect("worktree mode plans a record");
+    let agents = NodeAgents::open(&home)?;
+    accept_run(&agents, "run-locked").await?;
+    workspace::prepare(&agents, "run-locked", &record, "codex", &env, &never).await?;
+    {
+        let mut state = agents.state.lock().await;
+        state.removals.insert(
+            "run-locked".into(),
+            WorkspaceRecord {
+                created: true,
+                ..record.clone()
+            },
+        );
+        state.commit(&agents.home, &agents.changed)?;
+    }
+    // The Python deletion path, or another removal, holds this tree's lock.
+    let held = RemovalLock::acquire(&record.path)?.expect("nothing holds the lock yet");
+    workspace::retry_removals(&agents).await?;
+    assert!(
+        agents
+            .state
+            .lock()
+            .await
+            .removals
+            .contains_key("run-locked"),
+        "a busy lock keeps the removal record for a later retry"
+    );
+    assert!(
+        record.path.exists(),
+        "a busy lock never touches the worktree"
+    );
+    drop(held);
+    // A child another test forks shares the lock's descriptor until it execs, so the release
+    // can trail the drop; a busy retry keeps the record, as the next pass would.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        workspace::retry_removals(&agents).await?;
+        if !record.path.exists() || Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(
+        !agents
+            .state
+            .lock()
+            .await
+            .removals
+            .contains_key("run-locked"),
+        "the retry removes the tree once the lock is free"
+    );
+    assert!(!record.path.exists());
+    Ok(())
+}
+
+#[test]
+fn removal_lock_follows_the_tree_it_guards() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let real = root.path().join("real");
+    fs::create_dir_all(real.join("wt"))?;
+    std::os::unix::fs::symlink(&real, root.path().join("link"))?;
+
+    // Identity: a symlinked parent and its target name the same lock.
+    let held = RemovalLock::acquire(&root.path().join("link/wt"))?.context("first lock")?;
+    assert!(
+        RemovalLock::acquire(&real.join("wt"))?.is_none(),
+        "the canonical path sees the symlinked holder's lock"
+    );
+    // Cancellation: dropping a guard (a cancelled removal) releases the lock. A child another
+    // test forks shares the lock's descriptor until it execs, so the release can trail the drop.
+    drop(held);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let again = loop {
+        let again = RemovalLock::acquire(&real.join("wt"))?;
+        if again.is_some() || Instant::now() >= deadline {
+            break again;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(again.is_some(), "a dropped guard releases the lock");
+    drop(again);
+
+    // A missing tree: the lock is released and its file is removed, as nothing is left to guard.
+    let gone = real.join("gone");
+    let lock_file = real.join(".gone.removal.lock");
+    drop(RemovalLock::acquire(&gone)?.context("missing tree lock")?);
+    assert!(
+        !lock_file.exists(),
+        "a lock on a missing tree leaves no lock file behind"
+    );
+
+    // A missing parent has no tree to race for, so the lock is granted without a file.
+    assert!(RemovalLock::acquire(&root.path().join("nowhere/tree"))?.is_some());
     Ok(())
 }
 
@@ -2060,6 +2333,67 @@ fn srt_spawn_time_grants() -> Result<()> {
             .iter()
             .any(|grant| Path::new(grant) == store),
         "a declared nextest store is granted: {store:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn srt_run_refuses_shared_cargo_grants() -> Result<()> {
+    // The shared Cargo home and the shared per-checkout target are what unsandboxed builds
+    // execute from, so a sandboxed run must not be granted write access to either.
+    let corpus = srt_corpus()?;
+    let root = tempfile::tempdir()?;
+    let inputs = srt_case_inputs(&corpus, "claude-srt-empty")?;
+    let tree = SrtTree::new(&root.path().join("shared-cargo"))?;
+    tree.materialize(&inputs)?;
+    let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
+    let grants = &policy.sandbox.extra_write_paths;
+    let shared_home = tree.path("gobby_home").join("cache").join("cargo-home");
+    assert!(
+        !grants.iter().any(|grant| Path::new(grant) == shared_home),
+        "the shared Cargo home is writable: {shared_home:?} in {grants:?}"
+    );
+    assert!(
+        !grants.iter().any(|grant| grant.contains("cargo-target-v2")),
+        "a shared per-checkout Cargo target is writable: {grants:?}"
+    );
+    let own_home = tree
+        .path("gobby_home")
+        .join("cache")
+        .join("sandbox")
+        .join("cargo-home");
+    assert!(
+        srt_covered(grants, &own_home),
+        "the run's own Cargo home is not writable: {own_home:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn srt_run_refuses_relative_cargo_grants() -> Result<()> {
+    // A relative CARGO_HOME names a path under the seat's working directory. The superseded
+    // set must anchor it where the grants are anchored, so the run keeps no grant on it.
+    let corpus = srt_corpus()?;
+    let root = tempfile::tempdir()?;
+    let mut inputs = srt_case_inputs(&corpus, "claude-srt-empty")?;
+    inputs["env"]["CARGO_HOME"] = Value::String("relative-cargo-cache".into());
+    let tree = SrtTree::new(&root.path().join("relative-cargo"))?;
+    tree.materialize(&inputs)?;
+    let policy = resolve_srt_policy(&srt_policy_inputs(&tree, &inputs)?)?;
+    let grants = &policy.sandbox.extra_write_paths;
+    let relative_home = tree.path("workspace").join("relative-cargo-cache");
+    let workspace = tree.path("workspace");
+    assert!(
+        !grants.iter().any(|grant| {
+            let grant = Path::new(grant);
+            let anchored = if grant.is_absolute() {
+                grant.to_path_buf()
+            } else {
+                workspace.join(grant)
+            };
+            anchored == relative_home
+        }),
+        "the relative Cargo home is writable: {relative_home:?} in {grants:?}"
     );
     Ok(())
 }

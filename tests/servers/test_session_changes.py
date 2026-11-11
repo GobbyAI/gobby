@@ -125,12 +125,22 @@ async def test_changes_start_at_the_fork_after_the_base_is_merged_in(tmp_path: P
     (repo / "upstream.txt").write_text("upstream\n", encoding="utf-8")
     _git(repo, "add", "upstream.txt")
     _git(repo, "commit", "-qm", "upstream")
+    landed_tip = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "trunk"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
     _git(repo, "checkout", "-q", "task")
     _git(repo, "merge", "-q", "--no-edit", "trunk")
     (repo / "upstream.txt").unlink()
     _git(repo, "commit", "-qam", "drop the merged file")
     workspace = SessionWorkspace(
-        working_dir=str(repo), base_ref=fork, checkout_mode="worktree", base_branch="trunk"
+        working_dir=str(repo),
+        base_ref=fork,
+        checkout_mode="worktree",
+        base_branch="trunk",
+        base_tip=landed_tip,
     )
 
     changes = await compute_session_changes(workspace)
@@ -166,7 +176,9 @@ def test_resolved_isolated_workspace_carries_its_base_branch(
     )
     task_manager = SimpleNamespace(
         db=temp_db,
-        list_tasks=lambda claimed_by_session_id: [SimpleNamespace(id="task-1")],
+        list_tasks=lambda claimed_by_session_id: [
+            SimpleNamespace(id="task-1", project_id=project.id)
+        ],
         artifacts=SimpleNamespace(get_artifacts=lambda _tid: artifacts),
     )
 
@@ -180,6 +192,55 @@ def test_resolved_isolated_workspace_carries_its_base_branch(
         checkout_mode="worktree",
         base_branch="trunk",
     )
+
+
+def test_resolved_isolated_workspace_carries_the_landed_base_tip(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.storage.projects import LocalProjectManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    project = LocalProjectManager(temp_db).create("project")
+    row = LocalWorktreeManager(temp_db).create(
+        project.id, "task", str(worktree), base_branch="trunk"
+    )
+    _patch_checkout_root(monkeypatch, str(tmp_path))
+    landed = "1" * 40
+    lookups: list[tuple[str, str]] = []
+
+    def latest_tip(db: object, project_id: str, branch: str) -> str:
+        lookups.append((project_id, branch))
+        return landed
+
+    monkeypatch.setattr(session_changes, "latest_landed_tip", latest_tip)
+    session_manager = SimpleNamespace(
+        get=lambda _sid: SimpleNamespace(project_id=project.id, machine_id="machine-1"),
+        db=temp_db,
+    )
+    artifacts = SimpleNamespace(
+        worktree_path=str(worktree),
+        worktree_id=row.id,
+        clone_path=None,
+        clone_id=None,
+        base_commit_sha="abc123",
+    )
+    task_manager = SimpleNamespace(
+        db=temp_db,
+        list_tasks=lambda claimed_by_session_id: [
+            SimpleNamespace(id="task-1", project_id=project.id)
+        ],
+        artifacts=SimpleNamespace(get_artifacts=lambda _tid: artifacts),
+    )
+
+    workspace = resolve_session_workspace(
+        session_manager=session_manager, task_manager=task_manager, session_id="sess-1"
+    )
+
+    assert workspace is not None
+    assert workspace.base_tip == landed
+    assert lookups == [(project.id, "trunk")]
 
 
 @pytest.mark.asyncio

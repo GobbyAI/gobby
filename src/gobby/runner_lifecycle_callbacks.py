@@ -10,7 +10,7 @@ from gobby.runner_lifecycle_reconcile import (
     _reclassify_reconciliation_pending_runs,
     _rotate_due_managed_credentials,
 )
-from gobby.runner_maintenance.isolation import team_run_terminator, team_tree_deleter
+from gobby.runner_maintenance.isolation import team_run_terminator
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -28,7 +28,7 @@ async def reconcile_agent_lifecycle_state(runner: GobbyRunner) -> int:
 
 
 async def _tear_down_closed_teams(runner: GobbyRunner) -> int:
-    """End closed teams' seats and delete their trees once startup reconciled the runs."""
+    """End closed teams' seats once startup reconciled the runs; their trees stay."""
     init = getattr(runner, "_subsystem_init_task", None)
     if getattr(runner, "agent_runner", None) is None or (init is not None and not init.done()):
         return 0
@@ -36,7 +36,6 @@ async def _tear_down_closed_teams(runner: GobbyRunner) -> int:
         return await reconcile_team_teardowns(
             runner.database,
             terminate=team_run_terminator(runner),
-            delete=team_tree_deleter(runner.database, runner.worktree_delete_executor),
         )
     except Exception:
         logger.exception("Closed team teardown pass failed")

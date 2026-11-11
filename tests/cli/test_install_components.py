@@ -26,6 +26,7 @@ from gobby.cli.install_components import (
     run_uninstall_components,
 )
 from gobby.cli.install_setup_impeccable import ImpeccableRemovalResult
+from gobby.cli.install_setup_ocr import OcrInstallError, OcrInstallResult
 from gobby.cli.install_setup_rtk import RtkCleanupReport, RtkInstallStatus
 from gobby.cli.installers import (
     install_claude,
@@ -34,6 +35,7 @@ from gobby.cli.installers import (
     uninstall_droid,
 )
 from gobby.config.bootstrap import BootstrapConfigError
+from gobby.utils.dependency_requirements import OCR_VERSION
 
 
 def _rtk_status(**overrides: Any) -> RtkInstallStatus:
@@ -75,6 +77,7 @@ class TestRegistry:
             "gmcp",
             "gterm",
             "srt",
+            "ocr",
         }
         assert len(set(COMPONENTS)) == len(COMPONENTS)
         assert CLI_COMPONENTS <= set(COMPONENTS)
@@ -87,7 +90,40 @@ class TestRegistry:
             "gmcp",
             "gterm",
             "srt",
+            "ocr",
         }
+
+    def test_ocr_component_installs_the_pinned_cli(self, tmp_path: Path) -> None:
+        pinned = OcrInstallResult(installed=True, version=OCR_VERSION, path=tmp_path / "ocr")
+        with patch("gobby.cli.install_components.install_ocr_cli", return_value=pinned):
+            results = run_install_components(
+                ("ocr",),
+                project_path=tmp_path,
+                no_interactive=True,
+                embedding=None,
+                runtime=MagicMock(),
+            )
+
+        assert results["ocr"] == {
+            "success": True,
+            "path": str(tmp_path / "ocr"),
+            "version": OCR_VERSION,
+            "installed": True,
+        }
+
+    def test_ocr_component_failure_is_a_click_error(self, tmp_path: Path) -> None:
+        failure = OcrInstallError("npm failed to install OCR: ENOTFOUND")
+        with (
+            patch("gobby.cli.install_components.install_ocr_cli", side_effect=failure),
+            pytest.raises(click.ClickException, match="ENOTFOUND"),
+        ):
+            run_install_components(
+                ("ocr",),
+                project_path=tmp_path,
+                no_interactive=True,
+                embedding=None,
+                runtime=MagicMock(),
+            )
 
     def test_embedding_overrides_any_set(self) -> None:
         assert not EmbeddingOverrides().any_set

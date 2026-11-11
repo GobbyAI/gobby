@@ -28,6 +28,7 @@ from gobby.utils.session_context import (
     TERMINAL_CONTEXT_HEADER,
     SeededContextTokens,
     SessionContext,
+    get_session_context,
     reset_seeded_contexts,
     resolve_and_seed_contexts,
     set_current_agent_run_id,
@@ -211,6 +212,7 @@ async def _set_context_for_request(
             SessionContext(
                 session_id=resolved_session.id,
                 conversation_id=resolved_session.external_id,
+                project_id=resolved_session.project_id,
             )
         )
         tokens.resolved_session_id = resolved_session.id
@@ -279,6 +281,14 @@ async def _set_context_for_request(
     if wrapper_request and tokens.resolved_session_id is None:
         reset_seeded_contexts(tokens)
         _raise_session_required(terminal_context_seen=terminal_context_seen)
+    if header_session_id and not project_ref_is_fallback:
+        # An explicit override is checked against the caller session's project. An
+        # unresolved session ref, or a session without a project, leaves nothing to
+        # check, so the override fails closed for any caller.
+        caller_session = get_session_context() if tokens.resolved_session_id else None
+        if caller_session is None or caller_session.project_id is None:
+            reset_seeded_contexts(tokens)
+            _raise_session_required(terminal_context_seen=terminal_context_seen)
     if (
         wrapper_request
         and header_session_id

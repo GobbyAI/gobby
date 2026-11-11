@@ -303,10 +303,15 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
                 self._sync_tool_context(event, session_id)
                 if isinstance(event.data, dict):
+                    from gobby.hooks._normalization_apply_rewrite import applies_rewritten_input
                     from gobby.hooks.normalization import normalize_tool_fields
 
                     event.data.setdefault("cwd", event.cwd)
-                    await asyncio.to_thread(normalize_tool_fields, event.data)
+                    await asyncio.to_thread(
+                        normalize_tool_fields,
+                        event.data,
+                        can_rewrite_input=applies_rewritten_input(event.source),
+                    )
 
                 # The owner's transcript is the only evidence that a background call ended.
                 transcript_value = event.data.get("transcript_path")

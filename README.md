@@ -21,8 +21,8 @@ Every detected CLI shares one daemon: sessions, task ledger, memory and hook-tim
 
 Behind that one command: a task ledger with validation gates and commit-linked
 close, spawned agents in isolated worktrees, hook-time rules, and handoffs across
-sessions and CLIs. If something goes off the rails, Gobby stops and escalates
-instead of merging garbage.
+compactions, clears, and spawned agent runs. If something goes off the rails, Gobby
+stops and escalates instead of merging garbage.
 
 **Gobby built Gobby.** 5K+ commits. 15K+ tasks across my projects. Two
 paying clients running production systems on it. The 0.4.x line was assembled
@@ -217,13 +217,13 @@ See [docs/guides/README.md](docs/guides/README.md) for the full guide index.
 | CLI | Integration | What Gobby adds |
 | --- | --- | --- |
 | Claude Code | Hooks + MCP | Durable sessions, task links, rule-enforced workflows, spawned agents |
-| Codex | Hooks + MCP | Shared tasks, MCP access, spawned agents, cross-CLI handoffs |
+| Codex | Hooks + MCP | Shared tasks, MCP access, spawned agents |
 | Factory Droid | Hooks + MCP | Droid sessions, transcript parsing, spawned-agent flows |
 | Grok | Hooks + MCP | Shared lifecycle, transcript parsing, spawned-agent flows |
 | AGY | Hooks + MCP config | Cross-session context, memory, tasks, pipelines; live chat/spawn unavailable |
 
-A task started in any one of them can be continued in any other with the same
-local state, validation gates, and review state. Hook policy is portable across
+A task released or handed off by one of them can be continued in any other with the
+same local state, validation gates, and review state. Hook policy is portable across
 providers, while native response fidelity remains provider-specific and is
 tracked in [adapter-fidelity.md](docs/guides/adapter-fidelity.md).
 

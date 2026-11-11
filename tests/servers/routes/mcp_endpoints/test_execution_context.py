@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -23,7 +24,13 @@ from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
 )
 from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
-from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER, SeededContextTokens
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.session_context import (
+    TERMINAL_CONTEXT_HEADER,
+    SeededContextTokens,
+    SessionContext,
+    reset_seeded_contexts,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -35,7 +42,7 @@ def _exception_detail(exc: HTTPException) -> dict[str, Any]:
     return cast(dict[str, Any], exc.detail)
 
 
-def _make_server(db: MagicMock | None = None) -> MagicMock:
+def _make_server(db: HubDatabase | MagicMock | None = None) -> MagicMock:
     server = MagicMock()
     server.session_manager = MagicMock()
     server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
@@ -221,10 +228,21 @@ class TestSetContextForRequest:
             session_id="#7",
         )
 
-        with patch(
-            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
-            return_value=SeededContextTokens(),
-        ) as mock_helper:
+        caller_session = SessionContext(
+            session_id="resolved-session",
+            conversation_id=None,
+            project_id=caller_project_id,
+        )
+        with (
+            patch(
+                "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+                return_value=SeededContextTokens(resolved_session_id="resolved-session"),
+            ) as mock_helper,
+            patch(
+                "gobby.servers.routes.mcp.endpoints.request_context.get_session_context",
+                return_value=caller_session,
+            ),
+        ):
             await _set_context_for_request(server, {}, request)
 
         kwargs = mock_helper.call_args.kwargs
@@ -530,3 +548,196 @@ class TestSetContextForRequest:
         assert detail["error_code"] == "SESSION_REQUIRED"
         assert detail["terminal_context_seen"] is True
         server.session_manager.resolve_current_terminal_session.assert_not_called()
+
+
+_TERMINAL_CONTEXT = {
+    "parent_pid": 4242,
+    "tmux_pane": "%1",
+    "tmux_socket_path": "/tmp/tmux/default",
+    "tmux_window_id": "@7",
+}
+
+
+def _insert_project(db: HubDatabase, project_id: str, name: str) -> None:
+    with db.transaction() as conn:
+        conn.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) "
+            "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (project_id, name),
+        )
+
+
+def _write_skill(folder: Path, name: str) -> Path:
+    folder.mkdir()
+    (folder / "SKILL.md").write_text(
+        f'---\nname: {name}\ndescription: Terminal scope check.\nversion: "1.0.0"\n'
+        "---\n\n# Terminal Scope\n\nTerminal body.\n",
+        encoding="utf-8",
+    )
+    return folder
+
+
+@pytest.mark.integration
+async def test_terminal_wrapper_explicit_override_is_refused_by_skill_guard(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """A terminal-bound wrapper in project B cannot install into project C by explicit override.
+
+    The real _set_context_for_request seeds the contexts; the test sets no project
+    context or SessionContext by hand.
+    """
+    from gobby.mcp_proxy.tools.skills import create_skills_registry
+    from gobby.storage.skills import LocalSkillManager
+
+    caller_project_id = str(uuid.uuid4())
+    override_project_id = str(uuid.uuid4())
+    _insert_project(temp_db, caller_project_id, "caller-project")
+    _insert_project(temp_db, override_project_id, "override-project")
+    skill_dir = _write_skill(tmp_path / "override-only", "override-only")
+    server = _make_server(temp_db)
+    server.session_manager.resolve_current_terminal_session.return_value = SimpleNamespace(
+        id=SESSION_UUID,
+        external_id="external-session",
+        project_id=caller_project_id,
+    )
+    request = _make_request(
+        project_id=override_project_id,
+        caller_project_id=caller_project_id,
+        wrapper=True,
+        terminal_context=json.dumps(_TERMINAL_CONTEXT),
+    )
+
+    tokens = await _set_context_for_request(server, {}, request)
+    try:
+        registry = create_skills_registry(temp_db)
+        result = await registry.call(
+            "install_skill", {"source": str(skill_dir), "project_scoped": True}
+        )
+    finally:
+        reset_seeded_contexts(tokens)
+
+    assert result["success"] is False
+    assert override_project_id in result["error"]
+    assert caller_project_id in result["error"]
+    storage = LocalSkillManager(temp_db)
+    for project_id in (override_project_id, caller_project_id):
+        assert (
+            storage.get_by_name("override-only", project_id=project_id, include_global=False)
+            is None
+        )
+
+
+@pytest.mark.integration
+async def test_terminal_wrapper_same_project_install_stores_the_caller_project(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """Without an override, a terminal-bound wrapper installs into its own project."""
+    from gobby.mcp_proxy.tools.skills import create_skills_registry
+    from gobby.storage.skills import LocalSkillManager
+
+    caller_project_id = str(uuid.uuid4())
+    _insert_project(temp_db, caller_project_id, "caller-project")
+    skill_dir = _write_skill(tmp_path / "caller-only", "caller-only")
+    server = _make_server(temp_db)
+    server.session_manager.resolve_current_terminal_session.return_value = SimpleNamespace(
+        id=SESSION_UUID,
+        external_id="external-session",
+        project_id=caller_project_id,
+    )
+    request = _make_request(
+        project_id=caller_project_id,
+        caller_project_id=caller_project_id,
+        wrapper=True,
+        terminal_context=json.dumps(_TERMINAL_CONTEXT),
+    )
+
+    tokens = await _set_context_for_request(server, {}, request)
+    try:
+        registry = create_skills_registry(temp_db)
+        result = await registry.call(
+            "install_skill", {"source": str(skill_dir), "project_scoped": True}
+        )
+    finally:
+        reset_seeded_contexts(tokens)
+
+    assert result["success"] is True
+    storage = LocalSkillManager(temp_db)
+    assert (
+        storage.get_by_name("caller-only", project_id=caller_project_id, include_global=False)
+        is not None
+    )
+
+
+@pytest.mark.integration
+async def test_explicit_override_fails_closed_when_caller_session_lookup_raises(
+    temp_db: HubDatabase,
+) -> None:
+    """A failed caller-session lookup propagates; it never seeds a session without a project.
+
+    An explicit override naming project C from a caller in project B must not
+    reach the skills guard with no caller project to compare against.
+    """
+    caller_project_id = str(uuid.uuid4())
+    override_project_id = str(uuid.uuid4())
+    _insert_project(temp_db, caller_project_id, "caller-project")
+    _insert_project(temp_db, override_project_id, "override-project")
+    server = _make_server(temp_db)
+    server.session_manager.resolve_session_reference.return_value = SESSION_UUID
+    server.session_manager.get.side_effect = RuntimeError("hub database unavailable")
+    request = _make_request(
+        project_id=override_project_id,
+        caller_project_id=caller_project_id,
+        session_id=SESSION_UUID,
+    )
+
+    with pytest.raises(RuntimeError, match="hub database unavailable"):
+        await _set_context_for_request(server, {}, request)
+
+
+@pytest.mark.integration
+async def test_explicit_override_fails_closed_when_session_ref_does_not_resolve(
+    temp_db: HubDatabase,
+) -> None:
+    """An explicit override whose session ref does not resolve is refused, not seeded.
+
+    With no caller session the skills guard has no caller project to compare, so
+    the override would otherwise pass into project C.
+    """
+    caller_project_id = str(uuid.uuid4())
+    override_project_id = str(uuid.uuid4())
+    _insert_project(temp_db, caller_project_id, "caller-project")
+    _insert_project(temp_db, override_project_id, "override-project")
+    server = _make_server(temp_db)
+    server.session_manager.resolve_session_reference.side_effect = ValueError("no such session")
+    request = _make_request(
+        project_id=override_project_id,
+        caller_project_id=caller_project_id,
+        session_id=SESSION_UUID,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _set_context_for_request(server, {}, request)
+
+    assert exc_info.value.status_code == 409
+    assert _exception_detail(exc_info.value)["error_code"] == "SESSION_REQUIRED"
+
+
+@pytest.mark.integration
+async def test_default_caller_with_unresolved_session_ref_keeps_project_seeding(
+    temp_db: HubDatabase,
+) -> None:
+    """Without an explicit override an unresolved session ref still seeds the header project."""
+    project_id = str(uuid.uuid4())
+    _insert_project(temp_db, project_id, "default-project")
+    server = _make_server(temp_db)
+    server.session_manager.resolve_session_reference.side_effect = ValueError("no such session")
+    request = _make_request(project_id=project_id, session_id=SESSION_UUID)
+
+    tokens = await _set_context_for_request(server, {}, request)
+    try:
+        assert tokens.resolved_session_id is None
+        assert tokens.resolved_project_id == project_id
+    finally:
+        reset_seeded_contexts(tokens)

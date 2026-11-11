@@ -978,16 +978,18 @@ def _prepare_zig_system_dir(*, workspace: Path, cache_root: Path) -> Path | None
     return cache_root / ZIG_PACKAGES if complete else None
 
 
-def previous_run_write_paths(env: Mapping[str, str]) -> set[str]:
+def previous_run_write_paths(env: Mapping[str, str], *, base: Path) -> set[str]:
     """Return superseded shared cache grants replaced by a run root.
 
     The hook inbox remains shared: ghook's durable transport always resolves
     ``$GOBBY_HOME/hooks/inbox`` and must be able to enqueue and unlink there.
     The spawn env's ``CARGO_HOME`` and ``CARGO_TARGET_DIR`` are the ones
     unsandboxed builds use, so their grants are superseded by the run's own.
+    A relative value is anchored at ``base``, the workspace the grants are
+    canonicalized against, so both sides compare the same absolute path.
     """
     return {
-        canonical_path(value)
+        canonical_path(value, base=base)
         for name in (*RUN_CACHE_ENV_VARS, CARGO_HOME, CARGO_TARGET_DIR)
         if (value := env.get(name))
     }

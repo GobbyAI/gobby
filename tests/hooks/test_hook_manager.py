@@ -16,12 +16,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import psutil
 import pytest
 
+from gobby.config.extensions import WebhooksConfig
 from gobby.hooks.dispatchers.mcp import run_coro_blocking
 from gobby.hooks.effect_deadline import BLOCKING_EFFECT_BUDGET_SECONDS, BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.session_types import HookSessionManager
+from gobby.hooks.webhooks import WebhookDispatcher
 from gobby.storage import workspace_machine_scope
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
@@ -700,6 +702,61 @@ class TestHandlePostProcessing:
         response = manager._handle_internal(event)
 
         assert "_raw_tool_input" not in response.metadata
+
+    def test_validated_apply_command_leaves_event_data_and_the_rewrite_survives(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+    ) -> None:
+        """The validated command is the rule's rewrite; it never stays in event.data for webhooks."""
+        mocks = cast(Any, manager_with_mocks)
+        mocks._event_handlers.get_handler.return_value = MagicMock(
+            return_value=HookResponse(decision="allow")
+        )
+        mocks._session_lookup.resolve.return_value = None
+        mocks._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        mocks._enricher.enrich = MagicMock()
+        rewrite = "git apply - <<'ABC'\n+two\nABC\n"
+        event = make_event(event_type=HookEventType.BEFORE_TOOL)
+        event.data["_validated_apply_command"] = rewrite
+        event.metadata["_modified_input"] = {"command": rewrite}
+
+        response = manager_with_mocks._handle_internal(event)
+
+        assert "_validated_apply_command" not in event.data
+        assert response.modified_input == {"command": rewrite}
+
+    def test_validated_rewrite_reaches_only_the_cli_facing_response(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable[..., HookEvent],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Broadcasts and webhook payloads carry no patch body; the CLI-facing response keeps it."""
+        cast(Any, manager_with_mocks)._enricher.enrich = MagicMock()
+        broadcast = MagicMock()
+        monkeypatch.setattr("gobby.hooks.hook_manager.schedule_hook_broadcast", broadcast)
+        dispatch = MagicMock()
+        monkeypatch.setattr(manager_with_mocks, "_dispatch_webhooks_async", dispatch)
+        rewrite = "git apply - <<'ABC'\n+two\nABC\n"
+        event = make_event(event_type=HookEventType.BEFORE_TOOL)
+        event.data["_validated_apply_command"] = rewrite
+        event.metadata["_modified_input"] = {"command": rewrite}
+
+        cli_response = manager_with_mocks._complete_response(
+            event, HookResponse(decision="allow"), None
+        )
+
+        assert cli_response.modified_input == {"command": rewrite}
+        broadcast_copy: HookResponse = broadcast.call_args.args[2]
+        webhook_copy: HookResponse = dispatch.call_args.args[1]
+        assert broadcast_copy.modified_input is None
+        assert webhook_copy.modified_input is None
+        payload = WebhookDispatcher(WebhooksConfig(endpoints=[]))._build_payload(
+            event, webhook_copy
+        )
+        assert "+two" not in json.dumps(payload, default=str)
+        assert "+two" not in repr(broadcast_copy)
 
 
 class TestHookManagerHelpers:

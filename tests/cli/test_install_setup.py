@@ -48,6 +48,7 @@ from gobby.install.distribution import HomebrewHelperStatus
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.storage import schema_contract
 from gobby.storage.projects import GLOBAL_PROJECT_ID
+from gobby.utils.dependency_requirements import OCR_VERSION
 from tests.fixtures.fake_hub import fake_database_url
 from tests.phase5_contract_helpers import is_bundled_agent_definition
 
@@ -1419,3 +1420,67 @@ class TestDownloadReleaseBinaryChecksum:
 def test_managed_native_binaries_include_gmcp() -> None:
     assert "gmcp" in install_setup.MANAGED_NATIVE_BINARY_NAMES
     assert install_setup._MANAGED_NATIVE_BINARY_DESCRIPTIONS["gmcp"] == "MCP stdio client"
+
+
+@patch("gobby.cli.install_setup_impeccable.install_impeccable_cli")
+@patch("gobby.cli.install_setup_srt.install_srt_runtime")
+@patch("gobby.cli.install_setup_ocr.install_ocr_cli")
+@patch("gobby.storage.hub.runtime.runtime_hub_database")
+@patch("gobby.sync_registry.sync_bundled_content_to_db")
+@patch("subprocess.run")
+@patch("gobby.cli.install_setup._install_gcode")
+@patch("gobby.cli.install_setup._install_ghook")
+@patch("gobby.cli.install_setup._install_gterm", return_value={"skipped": True})
+@patch("gobby.cli.install_setup._install_gmcp", return_value={"skipped": True})
+@patch("gobby.cli.install_setup._install_gclient", return_value={"skipped": True})
+@patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
+def test_run_daemon_setup_stops_when_ocr_install_fails(
+    mock_ide: MagicMock,
+    _mock_gclient: MagicMock,
+    _mock_gmcp: MagicMock,
+    _mock_gterm: MagicMock,
+    mock_ghook: MagicMock,
+    mock_gcode: MagicMock,
+    mock_run: MagicMock,
+    mock_sync: MagicMock,
+    mock_init: MagicMock,
+    mock_ocr: MagicMock,
+    mock_srt: MagicMock,
+    mock_impeccable: MagicMock,
+    tmp_path: Path,
+) -> None:
+    from gobby.cli.install_setup_ocr import OcrInstallError
+
+    mock_ocr.side_effect = OcrInstallError("npm failed to install OCR: ENOTFOUND")
+    mock_srt.return_value = MagicMock(installed=False, version="0.0.79", path=tmp_path / "srt")
+    mock_impeccable.return_value = MagicMock(installed=False, version="3.5.0", path=tmp_path)
+    mock_db = MagicMock()
+    mock_db.list_templates.return_value = []
+    mock_init.return_value = mock_db
+    mock_sync.return_value = {"total_synced": 0, "errors": []}
+    mock_gcode.return_value = {"skipped": True}
+    mock_ghook.return_value = {"skipped": True}
+    mock_ide.return_value = {"Code": {"added": False}}
+    mock_run.return_value = MagicMock(returncode=0)
+
+    with patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux:
+        mock_tmux.return_value = {"success": True, "updated": False}
+        with pytest.raises(click.ClickException) as exc_info:
+            install_setup.run_daemon_setup(tmp_path, configure_ide_settings=True)
+
+    assert exc_info.value.message == (
+        "Failed to install OCR CLI: npm failed to install OCR: ENOTFOUND"
+    )
+    assert exc_info.value.exit_code == 1
+    mock_gcode.assert_not_called()
+    mock_ghook.assert_not_called()
+    mock_ide.assert_not_called()
+    mock_tmux.assert_not_called()
+
+
+@pytest.fixture(autouse=True)
+def _ocr_install_pinned_by_default() -> Iterator[None]:
+    """Keep run_daemon_setup tests off the network: OCR is already at the pin."""
+    pinned = MagicMock(installed=False, version=OCR_VERSION, path=Path("/opt/homebrew/bin/ocr"))
+    with patch("gobby.cli.install_setup_ocr.install_ocr_cli", return_value=pinned):
+        yield

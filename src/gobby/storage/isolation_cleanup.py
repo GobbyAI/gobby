@@ -20,6 +20,14 @@ CLOSED_TASK_CLEANUP_PREDICATE = """
 """
 
 
+class IsolationRemovalBusyError(RuntimeError):
+    """Another removal holds this isolation row, so it is busy rather than missing."""
+
+    def __init__(self, workspace_id: str) -> None:
+        super().__init__(f"isolation {workspace_id} is being removed by another operation")
+        self.workspace_id = workspace_id
+
+
 @contextmanager
 def lock_isolation_for_cleanup(
     db: HubDatabase,
@@ -60,4 +68,23 @@ def lock_isolation_for_cleanup(
             query += " AND status = 'merged' AND cleanup_after < %s"
             params.append(utc_now())
         row = conn.execute(query + " FOR UPDATE SKIP LOCKED", params).fetchone()
+        yield row
+
+
+@contextmanager
+def lock_isolation_for_removal(db: HubDatabase, workspace_id: str) -> Iterator[Row | None]:
+    """Hold a worktree row against any other removal, whatever its eligibility.
+
+    A row another removal holds raises IsolationRemovalBusyError rather than reading as
+    missing, so the caller never reports a half-removed tree as dirty. A missing row
+    yields None.
+    """
+    select = "SELECT * FROM worktrees WHERE id = %s"
+    with db.bounded_transaction(statement_timeout_ms=5_000, lock_timeout_ms=1_000) as conn:
+        row = conn.execute(select + " FOR UPDATE SKIP LOCKED", (workspace_id,)).fetchone()
+        if row is None:
+            if conn.execute(select, (workspace_id,)).fetchone() is not None:
+                raise IsolationRemovalBusyError(workspace_id)
+            yield None
+            return
         yield row

@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.config.values import ConfigRuntimeReader
+from gobby.hooks._normalization_apply_rewrite import applies_rewritten_input
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -270,7 +271,12 @@ class RuleEngine(
                         and "project_path" not in event.data
                     ):
                         event.data["project_path"] = project_path
-                    await offload(normalize_tool_fields, event.data)
+                    # The rule pass re-derives shell metadata; keep the provider's rewrite flag.
+                    await offload(
+                        normalize_tool_fields,
+                        event.data,
+                        can_rewrite_input=applies_rewritten_input(event.source),
+                    )
 
                 raw_event_value = _event_value(event.event_type)
                 resolved_rule_events = _resolve_rule_events(event.event_type, source=event.source)
@@ -443,7 +449,7 @@ class RuleEngine(
                 # Track edit/write attempts — set pending on pre-tool
                 if is_before_tool:
                     if _is_write_like_event_data(event.data):
-                        mark_edit_write_pending(block_state)
+                        evaluation.armed_edit_write_mark = mark_edit_write_pending(block_state)
 
                 elif raw_event_value == HookEventType.POST_TOOL_BATCH.value:
                     # This agent context's response closed its tool batch, so the
@@ -553,7 +559,7 @@ class RuleEngine(
                         )
                     await self._flush_pending_terminal_denial(session_id)
                     if agent_block is not None:
-                        if _is_write_like_event_data(event.data):
+                        if evaluation.armed_edit_write_mark:
                             _clear_edit_write_state(block_state)
                         return await self._finalize_block_response(
                             agent_block,
@@ -580,7 +586,7 @@ class RuleEngine(
                     await self._flush_pending_terminal_denial(session_id)
                     if step_block is not None:
                         # Blocked edit/write never executed — nothing to recover
-                        if _is_write_like_event_data(event.data):
+                        if evaluation.armed_edit_write_mark:
                             _clear_edit_write_state(block_state)
                         return await self._finalize_block_response(
                             step_block,
@@ -747,7 +753,7 @@ class RuleEngine(
                         )
                         await self._flush_pending_terminal_denial(session_id)
                         if agent_block is not None:
-                            if _is_write_like_event_data(event.data):
+                            if evaluation.armed_edit_write_mark:
                                 _clear_edit_write_state(block_state)
                             return await self._finalize_block_response(
                                 agent_block,
@@ -765,7 +771,7 @@ class RuleEngine(
                         )
                         await self._flush_pending_terminal_denial(session_id)
                         if step_block is not None:
-                            if _is_write_like_event_data(event.data):
+                            if evaluation.armed_edit_write_mark:
                                 _clear_edit_write_state(block_state)
                             return await self._finalize_block_response(
                                 step_block,

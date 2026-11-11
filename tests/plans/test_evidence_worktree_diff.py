@@ -19,6 +19,7 @@ pytestmark = pytest.mark.unit
 class EvidenceContext:
     repo_root: Path
     artifacts: dict[str, Any] | None
+    landed_tip: str | None = None
 
     def get_task_diff(self, task_ref: str) -> str:
         raise AssertionError(f"unexpected task diff lookup: {task_ref}")
@@ -29,6 +30,11 @@ class EvidenceContext:
 
     def get_commit_range_diff(self, range_: str) -> str:
         raise AssertionError(f"unexpected commit range lookup: {range_}")
+
+    def landed_base_tip(self, task_ref: str, branch: str) -> str | None:
+        assert task_ref == "#13252"
+        assert self.artifacts is not None and branch == self.artifacts["base_branch"]
+        return self.landed_tip
 
 
 def test_resolves_with_base_sha(tmp_path: Path) -> None:
@@ -56,9 +62,51 @@ def test_diff_starts_at_the_fork_after_the_base_moves_in(
     _git(repo, "checkout", "-b", "task")
     _commit_file(repo, "own.txt", "own\n", "own")
     _git(repo, "checkout", "main")
-    _commit_file(repo, "upstream.txt", "upstream\n", "upstream")
+    landed = _commit_file(repo, "upstream.txt", "upstream\n", "upstream")
     _git(repo, "checkout", "task")
     _git(repo, *sync, "main")
+    ctx = EvidenceContext(
+        repo_root=tmp_path,
+        artifacts={"worktree_path": str(repo), "base_commit_sha": fork, "base_branch": "main"},
+        landed_tip=landed,
+    )
+
+    bundle = resolve_evidence("worktree-diff:#13252", ctx=ctx)
+
+    assert bundle.rows[0].status is EvidenceResolveStatus.resolved
+    assert bundle.rows[0].artifacts_touched == ("own.txt",)
+
+
+def test_moving_the_base_onto_the_candidate_keeps_the_candidate_in_the_diff(
+    tmp_path: Path,
+) -> None:
+    repo = _git_repo(tmp_path / "repo")
+    fork = _commit_file(repo, "base.txt", "base\n", "base")
+    _git(repo, "checkout", "-b", "task")
+    candidate = _commit_file(repo, "own.txt", "own\n", "own")
+    _git(repo, "checkout", "main")
+    landed = _commit_file(repo, "upstream.txt", "upstream\n", "upstream")
+    _git(repo, "checkout", "task")
+    # update-ref moves the base from inside the author's worktree without the checked-out guard.
+    _git(repo, "update-ref", "refs/heads/main", candidate)
+    ctx = EvidenceContext(
+        repo_root=tmp_path,
+        artifacts={"worktree_path": str(repo), "base_commit_sha": fork, "base_branch": "main"},
+        landed_tip=landed,
+    )
+
+    bundle = resolve_evidence("worktree-diff:#13252", ctx=ctx)
+
+    assert bundle.rows[0].status is EvidenceResolveStatus.resolved
+    assert bundle.rows[0].artifacts_touched == ("own.txt",)
+
+
+def test_without_a_landing_the_recorded_base_anchors_the_diff(tmp_path: Path) -> None:
+    repo = _git_repo(tmp_path / "repo")
+    fork = _commit_file(repo, "base.txt", "base\n", "base")
+    _git(repo, "checkout", "-b", "task")
+    candidate = _commit_file(repo, "own.txt", "own\n", "own")
+    _git(repo, "update-ref", "refs/heads/main", candidate)
     ctx = EvidenceContext(
         repo_root=tmp_path,
         artifacts={"worktree_path": str(repo), "base_commit_sha": fork, "base_branch": "main"},

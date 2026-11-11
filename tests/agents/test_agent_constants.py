@@ -25,6 +25,7 @@ from gobby.agents.constants import (
     GOBBY_TERMINAL_ID,
     GOBBY_WORKFLOW_NAME,
     IDENTITY_ENV_VARS,
+    OCR_NO_UPDATE,
     UV_CACHE_DIR,
     ensure_agent_cargo_home_dir,
     ensure_agent_uv_cache_dir,
@@ -121,7 +122,7 @@ class TestEnvironmentVariableConstants:
     def test_constants_start_with_gobby(self) -> None:
         """All Gobby-owned constants are prefixed with GOBBY_."""
         for var in ALL_TERMINAL_ENV_VARS:
-            if var in {UV_CACHE_DIR, CARGO_HOME, CARGO_TARGET_DIR}:
+            if var in {UV_CACHE_DIR, CARGO_HOME, CARGO_TARGET_DIR, OCR_NO_UPDATE}:
                 continue
             assert var.startswith("GOBBY_"), f"{var} should start with GOBBY_"
 
@@ -144,6 +145,7 @@ class TestEnvironmentVariableConstants:
             CARGO_HOME,
             CARGO_TARGET_DIR,
             "GOBBY_PS_SHIM",
+            OCR_NO_UPDATE,
             *IDENTITY_ENV_VARS,
         }
         assert set(ALL_TERMINAL_ENV_VARS) == expected
@@ -164,6 +166,21 @@ class TestEnvironmentVariableConstants:
 
 class TestGetTerminalEnvVars:
     """Tests for get_terminal_env_vars function."""
+
+    def test_seat_env_disables_ocr_self_update(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Seat shells and their hooks inherit OCR_NO_UPDATE, so ocr never self-replaces."""
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+        result = get_terminal_env_vars(
+            session_id="sess-child",
+            parent_session_id="sess-parent",
+            agent_run_id="run-123",
+            project_id="proj-abc",
+            checkout_root=tmp_path / "checkout",
+        )
+
+        assert result[OCR_NO_UPDATE] == "1"
 
     def test_returns_all_required_vars(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

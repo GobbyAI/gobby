@@ -172,7 +172,9 @@ class TestGtermInstaller:
             "--features",
             "vt-engine",
         ]
-        assert build.kwargs["timeout"] == 600
+        assert (
+            build.kwargs["timeout"] == install_setup_gterm._WORKSPACE_BUILD_TIMEOUT_SECONDS == 1800
+        )
         assert (dest / "gterm").read_bytes() == b"gterm-bin"
 
     def test_github_uses_gterm_tag_prefix(self, tmp_path: Path) -> None:

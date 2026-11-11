@@ -20,13 +20,13 @@ def query_readonly_gdaemon() -> None:
     """Refuse to run the query_readonly suites on a gdaemon that predates migration 482.
 
     The role and its column grants come from that migration, so a pre-482 binary fails
-    with misleading ``relation does not exist`` errors. Opt in to the checkout build with
-    ``GOBBY_TEST_GDAEMON=checkout`` after ``cargo build -p gobby-daemon``.
+    with misleading ``relation does not exist`` errors. The test schema authority is this
+    checkout's own build, so a failure here means the checkout does not carry that migration.
     """
     latest = installed_schema_version()
     if latest < QUERY_READONLY_MIGRATION:
         pytest.fail(
-            f"Selected gdaemon is schema v{latest}, before migration "
-            f"{QUERY_READONLY_MIGRATION} (the gobby_query_readonly role). Run "
-            "`cargo build -p gobby-daemon` and set GOBBY_TEST_GDAEMON=checkout."
+            f"Checkout gdaemon is schema v{latest}, before migration "
+            f"{QUERY_READONLY_MIGRATION} (the gobby_query_readonly role). Rebuild it with "
+            "`cargo build -p gobby-daemon`."
         )

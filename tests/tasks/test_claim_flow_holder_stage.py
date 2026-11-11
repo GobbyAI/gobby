@@ -757,6 +757,48 @@ def test_evidence_from_a_session_outside_the_flow_is_refused(
     assert len(list_attestations(temp_db, team.task_id)) == count
 
 
+def test_relaunched_seat_takes_the_claim_from_its_dead_holder(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A holder whose seat ended loses the claim to the live relaunched seat of its team."""
+    team = _team(temp_db, sample_project)
+    builder = team.session(IMPLEMENT)
+    team.retire(IMPLEMENT)
+    fresh = team.relaunch(IMPLEMENT)
+    assert team.holder() == builder
+
+    team.chain(fresh, IMPLEMENT, C1)
+
+    assert team.holder() == team.session(REVIEW)
+
+
+def test_relaunched_seat_does_not_take_the_claim_from_a_live_holder(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A relaunched seat cannot take the claim while its holder is still live, so the claim stays."""
+    team = _team(temp_db, sample_project)
+    builder = team.session(IMPLEMENT)
+    fresh = team.relaunch(IMPLEMENT)
+    assert team.holder() == builder
+
+    team.chain(fresh, IMPLEMENT, C1)
+
+    assert team.holder() == builder
+
+
+def test_claim_held_by_a_live_seat_does_not_move_to_a_seat_that_attests(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A live holder keeps the claim when another seat of its team records the stage evidence."""
+    team = _team(temp_db, sample_project)
+    builder, checker = team.session(IMPLEMENT), team.session(REVIEW)
+    team.hand_off(recipient=checker, holder=builder)
+
+    team.chain(builder, IMPLEMENT, C1)
+
+    assert team.holder() == checker
+
+
 @dataclass
 class _Epic:
     """An epic team with leaves ``a`` and ``b``; each live seat is bound to one leaf by its run."""

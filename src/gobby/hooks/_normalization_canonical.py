@@ -515,6 +515,9 @@ def _classify_shell_command(
         stdin_tokens, stdin_parts, stdin_raw = shell_stdin_arguments(
             segment, segments[index - 1] if index else None, scan, raw_by_token
         )
+        stdin_tokens, stdin_parts, stdin_raw = directory.anchor_program(
+            stdin_tokens, stdin_parts, stdin_raw, trusted=not in_pipeline and not depth
+        )
         bound = sed_literal_bindings.set(segment_values)
         try:
             segment_metadata = _classify_shell_segment(

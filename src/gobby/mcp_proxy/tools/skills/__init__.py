@@ -33,6 +33,8 @@ from gobby.skills.search import SkillSearch
 from gobby.skills.updater import SkillUpdater
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager, get_skill_change_notifier
+from gobby.utils.project_context import get_project_context
+from gobby.utils.session_context import get_session_context
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -44,6 +46,38 @@ class SkillsToolRegistry(InternalToolRegistry):
     """Registry for skill management tools with extra search attribute."""
 
     search: SkillSearch  # Assigned dynamically in create_skills_registry
+
+    async def call(
+        self, name: str, arguments: dict[str, Any], context: dict[str, Any] | None = None
+    ) -> Any:
+        refusal = _explicit_project_refusal()
+        if refusal is not None:
+            return refusal
+        return await super().call(name, arguments, context)
+
+
+def _explicit_project_refusal() -> dict[str, Any] | None:
+    """Refuse an explicit project override that names a project other than the session's.
+
+    An explicit project_id seeds the project context and can differ from the calling
+    session's own project. Skill tools act only on the caller's project, so a mismatch
+    fails loudly instead of reading or writing the named project's rows.
+    """
+    session = get_session_context()
+    session_project_id = session.project_id if session is not None else None
+    project = get_project_context()
+    override_project_id = project.get("id") if project else None
+    if not session_project_id or not override_project_id:
+        return None
+    if override_project_id == session_project_id:
+        return None
+    return {
+        "success": False,
+        "error": (
+            f"Explicit project_id {override_project_id} differs from the calling session's "
+            f"project {session_project_id}; skill tools act only on the caller's project."
+        ),
+    }
 
 
 def create_skills_registry(

@@ -545,7 +545,7 @@ def retained_launch_write_paths(
     extra_write_paths: list[str], env: Mapping[str, str], workspace: Path
 ) -> list[str]:
     """Drop the spawn-level grants that the run's own cache paths supersede at launch."""
-    superseded_writes = previous_run_write_paths(env)
+    superseded_writes = previous_run_write_paths(env, base=workspace)
     return [
         path
         for path in extra_write_paths
