@@ -111,10 +111,16 @@ fn header_values(request: &str, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// Store `credential` under the CLI process this test runs in, as ghook stores a mint.
+fn store_for_this_cli(home: &Path, credential: &SessionCredential) {
+    let cli = current_cli_pid().expect("the parent CLI process is readable");
+    session_credential::store(home, &[cli_pid_key(cli)], credential).unwrap();
+}
+
 #[test]
 fn bound_request_presents_its_session_token_and_no_machine_key() {
     let home = machine_key_home();
-    session_credential::store(home.path(), &[provider_key("sid-1")], &credential("sid-1")).unwrap();
+    store_for_this_cli(home.path(), &credential("sid-1"));
 
     isolated(home.path(), || {
         let envelope = envelope(
@@ -186,14 +192,24 @@ fn unbound_request_sends_machine_key_and_no_session_selector() {
 }
 
 #[test]
-fn a_credential_for_another_provider_session_is_not_used() {
+fn this_clis_credential_for_another_provider_session_is_not_used() {
     let home = machine_key_home();
-    session_credential::store(
-        home.path(),
-        &[provider_key("sid-1")],
-        &credential("sid-other"),
-    )
-    .unwrap();
+    store_for_this_cli(home.path(), &credential("sid-other"));
+
+    isolated(home.path(), || {
+        assert!(matches!(
+            caller_for(&envelope("sid-1", &[])),
+            Caller::Unbound
+        ));
+    });
+}
+
+#[test]
+fn the_session_an_envelope_names_never_selects_a_credential() {
+    // Any process can put another session's id in its hook body, so a record kept under
+    // that provider session is never loaded: only this CLI's own record speaks for it.
+    let home = machine_key_home();
+    session_credential::store(home.path(), &[provider_key("sid-1")], &credential("sid-1")).unwrap();
 
     isolated(home.path(), || {
         assert!(matches!(
@@ -206,7 +222,7 @@ fn a_credential_for_another_provider_session_is_not_used() {
 #[test]
 fn a_managed_run_keeps_its_ordinary_identity() {
     let home = machine_key_home();
-    session_credential::store(home.path(), &[provider_key("sid-1")], &credential("sid-1")).unwrap();
+    store_for_this_cli(home.path(), &credential("sid-1"));
 
     isolated_with(
         home.path(),
@@ -236,7 +252,7 @@ fn record_count(home: &Path) -> usize {
 }
 
 #[test]
-fn response_credential_is_stored_for_the_provider_and_cli_and_stripped() {
+fn response_credential_is_stored_for_this_cli_only_and_stripped() {
     let home = machine_key_home();
     let body = json!({
         "continue": true,
@@ -260,27 +276,25 @@ fn response_credential_is_stored_for_the_provider_and_cli_and_stripped() {
 
             let rest: Value = serde_json::from_str(&stripped).unwrap();
             assert_eq!(rest, json!({"continue": true}));
-            let by_provider = session_credential::bound_for_provider(home.path(), "sid-1")
-                .expect("record stored under the provider key");
-            assert_eq!(by_provider.token, TOKEN);
-            assert_eq!(by_provider.provider_session_id, "sid-1");
+            assert!(session_credential::bound_for_provider(home.path(), "sid-1").is_none());
             let cli = current_cli_pid().expect("the parent CLI process is readable");
             let by_cli = session_credential::load(home.path(), &cli_pid_key(cli))
                 .expect("record stored under the CLI key");
             assert_eq!(by_cli.token, TOKEN);
+            assert_eq!(by_cli.provider_session_id, "sid-1");
             assert_eq!(
                 record_count(home.path()),
-                2,
-                "the provider and CLI keys only; a tmux pane is not a key"
+                1,
+                "the CLI key only; neither the provider session nor a tmux pane is a key"
             );
         },
     );
 }
 
 #[test]
-fn a_bound_session_start_replaces_the_old_record_after_key_activation() {
+fn a_session_start_replaces_the_old_record_after_key_activation() {
     let home = machine_key_home();
-    session_credential::store(home.path(), &[provider_key("sid-1")], &credential("sid-1")).unwrap();
+    store_for_this_cli(home.path(), &credential("sid-1"));
 
     isolated(home.path(), || {
         let envelope = session_start_envelope("sid-1", "resume");
@@ -304,18 +318,17 @@ fn a_bound_session_start_replaces_the_old_record_after_key_activation() {
         assert_eq!(report.outcome, DeliveryOutcome::Delivered);
         let cli = current_cli_pid().expect("the parent CLI process is readable");
         let restored = session_credential::load(home.path(), &cli_pid_key(cli))
-            .expect("the bound credential is restored under the CLI key");
+            .expect("the fresh credential replaces the CLI's record");
         assert_eq!(restored.token, "fresh-daemon-token");
         assert_eq!(restored.session_id, SESSION_UUID);
-        let provider = session_credential::bound_for_provider(home.path(), "sid-1").unwrap();
-        assert_eq!(provider.token, "fresh-daemon-token");
+        assert!(session_credential::bound_for_provider(home.path(), "sid-1").is_none());
     });
 }
 
 #[test]
 fn every_unspawned_session_start_can_remint_after_key_activation() {
     let home = machine_key_home();
-    session_credential::store(home.path(), &[provider_key("sid-1")], &credential("sid-1")).unwrap();
+    store_for_this_cli(home.path(), &credential("sid-1"));
 
     isolated(home.path(), || {
         for hook_type in ["session-start", "SessionStart"] {
@@ -372,9 +385,10 @@ fn delivered_report_never_holds_the_session_credential() {
             serde_json::from_str::<Value>(&body).unwrap(),
             json!({"continue": true})
         );
+        let cli = current_cli_pid().expect("the parent CLI process is readable");
         assert!(
-            session_credential::bound_for_provider(home.path(), "sid-1").is_some(),
-            "the credential is still recorded for the session"
+            session_credential::load(home.path(), &cli_pid_key(cli)).is_some(),
+            "the credential is still recorded for this CLI"
         );
     });
 }

@@ -119,15 +119,14 @@ def is_cli_startup(event: HookEvent, reported_source: str | None) -> bool:
     return (reported_source or "startup") in STARTUP_SOURCES
 
 
-def record_deferred_codex_startup(
-    handler: Any, event: HookEvent, reported_source: str | None
-) -> None:
-    """Leave the durable mark that a Codex thread's own startup deferred its row (#25647).
+def record_deferred_startup(handler: Any, event: HookEvent, reported_source: str | None) -> None:
+    """Leave the durable mark that a thread's own startup deferred its row (#25647, #25905).
 
-    The mark lets the thread's first registration search for its fresh seat, even
-    after a daemon restart between the startup and its first prompt.
+    The mark survives a daemon restart before the first prompt. It lets a Codex thread's
+    first registration search for its fresh seat, and it holds the pin naming the only CLI
+    whose hook may create the row and receive its credential.
     """
-    if event.source.value != "codex" or not is_cli_startup(event, reported_source):
+    if not is_cli_startup(event, reported_source):
         return
     if handler._session_manager is None or not event.machine_id or not event.session_id:
         return
@@ -135,12 +134,12 @@ def record_deferred_codex_startup(
         record_startup_mark(
             handler._session_manager.db,
             machine_id=event.machine_id,
-            source="codex",
+            source=event.source.value,
             external_id=event.session_id,
         )
     except psycopg.Error as exc:
         handler.logger.warning(
-            "Could not record the startup mark for Codex thread %s: %s", event.session_id, exc
+            "Could not record the startup mark for thread %s: %s", event.session_id, exc
         )
 
 

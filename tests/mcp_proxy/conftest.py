@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -23,16 +22,19 @@ _MANAGED_ENV_NAMES = (
 
 
 @pytest.fixture(autouse=True)
-def bound_cli_session(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[None]:
+def bound_cli_session(
+    monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathFactory
+) -> Iterator[None]:
     """Every proxy here is an unspawned CLI whose session its SessionStart bound.
 
     The managed identity is cleared so a developer's own agent environment cannot turn an
     unspawned fixture into a managed one. Tests that need another record or none patch the
-    same seam again, which takes precedence over this fixture.
+    same seam again, which takes precedence over this fixture. The home lives outside
+    ``tmp_path``, which many tests make a git repository.
     """
     for name in _MANAGED_ENV_NAMES:
         monkeypatch.delenv(name, raising=False)
-    home = tmp_path / "gobby-home"
+    home = tmp_path_factory.mktemp("gobby-home")
     (home / STORE_DIR).mkdir(mode=0o700, parents=True)
     path = record_path(home, cli_pid_key(BOUND_CLI_PID))
     path.write_text(

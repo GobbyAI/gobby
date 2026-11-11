@@ -138,6 +138,11 @@ def build_cli_command(
             command.append("exec")
         elif resume_session_id:
             command.append("resume")
+        if mode != "headless":
+            # A seat runs its own app-server, never Codex's shared worker, so its hooks and
+            # gmcp are its own children and bind to its own run (#25905). `codex exec`
+            # has no such flag and never attaches to the shared worker.
+            command.append("--no-daemon")
         if codex_oss_provider:
             command.extend(["--oss", "--local-provider", codex_oss_provider])
             if model:

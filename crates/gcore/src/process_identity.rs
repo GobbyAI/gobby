@@ -52,6 +52,28 @@ pub fn current_cli_pid() -> Option<u32> {
     stable_cli_pid(parent_pid()?)
 }
 
+const CODEX: &str = "codex";
+const CODEX_SHARED_HOST_FLAG: &str = "--managed-daemon";
+
+/// Whether `process` is Codex's shared managed app-server worker.
+///
+/// That worker runs every hand-started thread's hooks and MCP clients, so its pid names
+/// no single session. This mirrors `_is_codex_shared_host` in the Python hook tooling.
+pub fn is_codex_shared_host(process: &ProcessInfo) -> bool {
+    process.name == CODEX
+        && process
+            .argv
+            .as_ref()
+            .is_some_and(|argv| argv.iter().any(|arg| arg == CODEX_SHARED_HOST_FLAG))
+}
+
+/// Whether the process that spawned this one is Codex's shared app-server worker.
+pub fn parent_is_codex_shared_host() -> bool {
+    parent_pid()
+        .and_then(process_info)
+        .is_some_and(|parent| is_codex_shared_host(&parent))
+}
+
 #[cfg(unix)]
 fn parent_pid() -> Option<u32> {
     use libc::getppid;

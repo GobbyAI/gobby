@@ -109,7 +109,7 @@ pub fn navigator_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<Navigato
         .collect()
 }
 
-/// Blank rows, with nothing assigned or being worked, match the blank filter.
+/// Blank rows, with nothing assigned, match the blank filter.
 fn matches_filter(state: RowState, filter: NavigatorStateFilter) -> bool {
     match filter {
         NavigatorStateFilter::All => true,

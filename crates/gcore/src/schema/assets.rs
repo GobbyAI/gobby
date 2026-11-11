@@ -508,22 +508,28 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     },
     EmbeddedMigration {
         version: 495,
-        filename: "495_session_status_line.sql",
-        checksum: "2a0511ee870e9603ce1773a344b80f72d3ae00de9009e31fdf12d104f9c0c743",
-        sql: include_str!("../../assets/schema/migrations/495_session_status_line.sql"),
+        filename: "495_session_startup_pins.sql",
+        checksum: "933dbf554b1b1b2eb248a8c43cfe71febfef9159d4e1d115b4dcdb890c444533",
+        sql: include_str!("../../assets/schema/migrations/495_session_startup_pins.sql"),
     },
     EmbeddedMigration {
         version: 496,
-        filename: "496_drop_session_titles.sql",
-        checksum: "1422055d191cb7c7c488995a5b23667d77b4c47eb5a0e6b64eac04239047c14b",
-        sql: include_str!("../../assets/schema/migrations/496_drop_session_titles.sql"),
+        filename: "496_session_status_line.sql",
+        checksum: "2a0511ee870e9603ce1773a344b80f72d3ae00de9009e31fdf12d104f9c0c743",
+        sql: include_str!("../../assets/schema/migrations/496_session_status_line.sql"),
     },
     EmbeddedMigration {
         version: 497,
-        filename: "497_session_status_line_control_check.sql",
+        filename: "497_drop_session_titles.sql",
+        checksum: "1422055d191cb7c7c488995a5b23667d77b4c47eb5a0e6b64eac04239047c14b",
+        sql: include_str!("../../assets/schema/migrations/497_drop_session_titles.sql"),
+    },
+    EmbeddedMigration {
+        version: 498,
+        filename: "498_session_status_line_control_check.sql",
         checksum: "81166e87a4295fda233c9e265ee33136a9bcd1dcfcf1f0f93bbcdbac2329cb29",
         sql: include_str!(
-            "../../assets/schema/migrations/497_session_status_line_control_check.sql"
+            "../../assets/schema/migrations/498_session_status_line_control_check.sql"
         ),
     },
 ];

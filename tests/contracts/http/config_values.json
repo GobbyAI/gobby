@@ -29,6 +29,9 @@
         "mcp_allowed_hosts": [],
         "test_mode": true,
         "worktrees_dir": "~/.gobby/worktrees",
+        "agent_build": {
+          "build_root": ""
+        },
         "agent_sandbox": {
           "allow_git_network": false,
           "allow_network": false,
@@ -1183,6 +1186,9 @@
         "mcp_allowed_hosts": [],
         "test_mode": true,
         "worktrees_dir": "~/.gobby/worktrees",
+        "agent_build": {
+          "build_root": ""
+        },
         "agent_sandbox": {
           "allow_git_network": false,
           "allow_network": false,

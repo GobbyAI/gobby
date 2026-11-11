@@ -46,6 +46,11 @@ from gobby.guard_set_g import socket_dir_from_cmdline
 from gobby.terminals.host_manager import TerminalHostManager
 from gobby.terminals.host_protocol import read_pidfile, write_pidfile
 from gobby.utils.dependency_requirements import SRT_RELEASE
+from gobby.utils.local_token import (
+    issue_agent_api_token,
+    issue_session_api_token,
+    read_managed_signing_key,
+)
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 from tests.native_binary_selection import (
     NativeBinarySelectionError,
@@ -1902,12 +1907,6 @@ def _session_bound_headers(
     run; this mints the same token with the isolated daemon's signing key so a test
     acts as the session, or the run, it names.
     """
-    from gobby.utils.local_token import (
-        issue_agent_api_token,
-        issue_session_api_token,
-        read_managed_signing_key,
-    )
-
     signing_key = read_managed_signing_key(gobby_home / "bootstrap.yaml")
     if signing_key is None:
         raise RuntimeError(f"Daemon signing key is missing beside {gobby_home / 'bootstrap.yaml'}")
@@ -2075,8 +2074,9 @@ class AsyncMCPTestClient:
     See ``MCPTestClient`` for the session-context rationale.
     """
 
-    def __init__(self, daemon_url: str, token: str):
+    def __init__(self, daemon_url: str, token: str, gobby_home: Path | None = None):
         self.daemon_url = daemon_url
+        self.gobby_home = gobby_home
         self.client = httpx.AsyncClient(
             base_url=daemon_url,
             headers={"Authorization": f"Bearer {token}"},
@@ -2088,8 +2088,15 @@ class AsyncMCPTestClient:
         """Close the HTTP client."""
         await self.client.aclose()
 
-    def _session_headers(self) -> dict[str, str]:
-        return {"X-Gobby-Session-Id": self.session_id} if self.session_id else {}
+    async def _session_headers(self) -> dict[str, str]:
+        if not self.session_id:
+            return {}
+        if self.gobby_home is None:
+            return {"X-Gobby-Session-Id": self.session_id}
+        response = await self.client.get(f"/api/sessions/{self.session_id}")
+        response.raise_for_status()
+        session = cast(dict[str, Any], response.json()["session"])
+        return _session_bound_headers(self.gobby_home, session)
 
     async def list_servers(self) -> list[dict[str, Any]]:
         """List available MCP servers."""
@@ -2144,7 +2151,7 @@ class AsyncMCPTestClient:
 
         # Endpoint is /mcp/tools/call
         response = await self.client.post(
-            "/api/mcp/tools/call", json=payload, headers=self._session_headers()
+            "/api/mcp/tools/call", json=payload, headers=await self._session_headers()
         )
         response.raise_for_status()
         return cast(dict[str, Any], response.json())
@@ -2158,6 +2165,7 @@ async def async_mcp_client(
     client = AsyncMCPTestClient(
         daemon_instance.http_url,
         daemon_token(daemon_instance.gobby_home),
+        gobby_home=daemon_instance.gobby_home,
     )
     yield client
     await client.close()

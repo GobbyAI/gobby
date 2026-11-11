@@ -242,7 +242,10 @@ def test_unspawned_session_completes_mcp_with_minted_credential(
     daemon_instance: DaemonInstance,
     tmp_path: Path,
 ) -> None:
-    """A real client socket proves its claimant, then uses only the minted token."""
+    """A real client socket proves its claimant, then uses only the minted token.
+
+    A fresh startup with no resume: the token arrives on the first activity hook.
+    """
     client_home = tmp_path / "unspawned-home"
     client_home.mkdir()
     external_id = f"unspawned-{uuid.uuid4().hex}"
@@ -258,13 +261,12 @@ url = inputs["url"]
 machine_token = inputs.pop("machine_token")
 start = inputs["start"]
 activity = inputs["activity"]
-first_status, _ = post(url + "/api/hooks/execute", machine_token, {{}}, start)
-# Startup can be deferred; materialize through the provider's first activity,
-# then resume from the same kernel-attested CLI parent to receive its token.
-activity_status, _ = post(url + "/api/hooks/execute", machine_token, {{}}, activity)
-start["input_data"]["source"] = "resume"
 start_status, started = post(url + "/api/hooks/execute", machine_token, {{}}, start)
-credential = started[{_SESSION_CREDENTIAL_FIELD!r}]
+# A fresh startup defers its row, so the first activity materializes it and carries
+# the token. No resume is sent.
+activity_status, active = post(url + "/api/hooks/execute", machine_token, {{}}, activity)
+minted_by = "start" if {_SESSION_CREDENTIAL_FIELD!r} in started else "activity"
+credential = started.get({_SESSION_CREDENTIAL_FIELD!r}) or active[{_SESSION_CREDENTIAL_FIELD!r}]
 del machine_token
 identity = {{
     "X-Gobby-Session-Id": credential["session_id"],
@@ -275,7 +277,7 @@ home = Path(os.environ["GOBBY_HOME"])
 assert not (home / "bootstrap.yaml").exists()
 assert not (home / "local_cli_token").exists()
 status, result = post(url + "/api/mcp/tools/call", credential["token"], identity, {_MCP_CALL!r})
-print(json.dumps({{"first_status": first_status, "activity_status": activity_status,
+print(json.dumps({{"activity_status": activity_status, "minted_by": minted_by,
                   "start_status": start_status, "status": status, "result": result,
                   "session_id": credential["session_id"]}}))
 """
@@ -303,9 +305,10 @@ print(json.dumps({{"first_status": first_status, "activity_status": activity_sta
     )
     assert completed.returncode == 0, completed.stderr
     report = json.loads(completed.stdout)
-    assert report["first_status"] == 200, report
-    assert report["activity_status"] == 200, report
     assert report["start_status"] == 200, report
+    assert report["activity_status"] == 200, report
+    # The fresh startup defers its row; its first activity hook mints the token.
+    assert report["minted_by"] == "activity", report
     assert report["status"] == 200, report
     assert report["result"]["success"] is True, report
     assert report["session_id"]

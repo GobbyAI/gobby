@@ -271,3 +271,142 @@ fn a_rejected_cli_token_is_never_retried_with_the_machine_key() {
         "no second connection carries the machine key"
     );
 }
+
+const THREAD: &str = "01a1b24d-0000-7000-8000-000000025904";
+
+/// Serve one request with `status` and `body`; return the request's head and body.
+fn serve_once(status: &'static str, body: &'static str) -> (String, thread::JoinHandle<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = read_head(&mut stream);
+        let length: usize = header_values(&request, "Content-Length")
+            .first()
+            .map_or(0, |value| value.parse().unwrap());
+        let already = request.split("\r\n\r\n").nth(1).map_or(0, str::len);
+        let mut rest = vec![0u8; length.saturating_sub(already)];
+        stream.read_exact(&mut rest).unwrap();
+        request.push_str(&String::from_utf8_lossy(&rest));
+        let reply = format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(reply.as_bytes()).unwrap();
+        request
+    });
+    (url, server)
+}
+
+#[test]
+fn a_tool_calls_meta_names_its_codex_thread() {
+    let direct = json!({"threadId": THREAD, "sessionId": "other"});
+    let turn = json!({"x-codex-turn-metadata": {"thread_id": THREAD}});
+    let empty = json!({"threadId": ""});
+
+    assert_eq!(
+        codex_thread_id(direct.as_object().unwrap()).as_deref(),
+        Some(THREAD)
+    );
+    assert_eq!(
+        codex_thread_id(turn.as_object().unwrap()).as_deref(),
+        Some(THREAD)
+    );
+    assert_eq!(codex_thread_id(empty.as_object().unwrap()), None);
+    assert_eq!(codex_thread_id(&Map::new()), None);
+}
+
+#[test]
+fn the_exchange_presents_the_thread_and_returns_its_own_credential() {
+    let (url, server) = serve_once(
+        "200 OK",
+        r#"{"success":true,"token":"gobby-agent-v1.thread.sig","session_id":"33333333-3333-4333-8333-333333333333","project_id":"22222222-2222-4222-8222-222222222222"}"#,
+    );
+    let agent = ureq::AgentBuilder::new().build();
+
+    let credential =
+        crate::daemon::exchange_thread_credential(&agent, &url, MACHINE_KEY, THREAD).unwrap();
+
+    let request = server.join().unwrap();
+    assert!(request.starts_with("POST /api/hooks/codex-thread-credential "));
+    assert_eq!(
+        header_values(&request, "Authorization"),
+        vec![format!("Bearer {MACHINE_KEY}")]
+    );
+    assert!(request.contains(&format!(r#""thread_id":"{THREAD}""#)));
+    assert_eq!(credential.token, "gobby-agent-v1.thread.sig");
+    assert_eq!(
+        credential.session_id,
+        "33333333-3333-4333-8333-333333333333"
+    );
+    assert_eq!(credential.provider_session_id, THREAD);
+}
+
+#[test]
+fn a_refused_exchange_binds_nothing() {
+    let (url, server) = serve_once(
+        "403 Forbidden",
+        r#"{"success":false,"error_code":"session_credential_unbound"}"#,
+    );
+    let agent = ureq::AgentBuilder::new().build();
+
+    assert!(crate::daemon::exchange_thread_credential(&agent, &url, MACHINE_KEY, THREAD).is_none());
+    server.join().unwrap();
+}
+
+#[test]
+fn a_call_thread_is_scoped_to_its_call() {
+    use crate::daemon::{call_thread, for_thread};
+
+    assert_eq!(call_thread(), None);
+    for_thread(Some(THREAD.into()), || {
+        assert_eq!(call_thread().as_deref(), Some(THREAD));
+        // Another OS thread serves another call and never sees this one's thread.
+        let elsewhere = std::thread::spawn(call_thread).join().unwrap();
+        assert_eq!(elsewhere, None);
+        for_thread(Some("inner".into()), || {
+            assert_eq!(call_thread().as_deref(), Some("inner"));
+        });
+        assert_eq!(call_thread().as_deref(), Some(THREAD));
+    });
+    let after_panic = std::panic::catch_unwind(|| for_thread(Some("p".into()), || panic!()));
+    assert!(after_panic.is_err());
+    assert_eq!(call_thread(), None);
+}
+
+#[test]
+fn a_client_outside_the_shared_worker_never_takes_the_thread_path() {
+    // The test's parent is not Codex's worker: a call naming a thread is still refused
+    // locally, with no exchange and no machine key sent.
+    let home = machine_key_home();
+    let cwd = tempdir().unwrap();
+
+    in_surroundings(
+        home.path(),
+        Surroundings {
+            daemon_url: Some("http://127.0.0.1:9"),
+            ..Surroundings::default()
+        },
+        || {
+            assert!(!under_shared_host());
+            let dialer = Dialer::with_context(cwd.path(), Map::new()).unwrap();
+            let answer = crate::daemon::for_thread(Some(THREAD.into()), || {
+                dialer.request("GET", "/api/probe", None, RequestOptions::default())
+            });
+            assert_eq!(answer["error_code"], "session_credential_unbound");
+        },
+    );
+}
+
+#[test]
+fn a_managed_run_is_never_under_the_shared_worker() {
+    let home = machine_key_home();
+    in_surroundings(
+        home.path(),
+        Surroundings {
+            run_id: Some("run-1"),
+            ..Surroundings::default()
+        },
+        || assert!(!under_shared_host()),
+    );
+}

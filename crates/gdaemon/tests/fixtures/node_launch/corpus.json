@@ -324,6 +324,7 @@
         ],
         "command": [
           "codex",
+          "--no-daemon",
           "--model",
           "model-x",
           "-c",
@@ -532,6 +533,7 @@
         "command": [
           "codex",
           "resume",
+          "--no-daemon",
           "--ask-for-approval",
           "never",
           "--disable",
@@ -720,6 +722,7 @@
         ],
         "command": [
           "codex",
+          "--no-daemon",
           "--oss",
           "--local-provider",
           "ollama",

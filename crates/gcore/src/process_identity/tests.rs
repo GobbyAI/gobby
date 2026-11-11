@@ -149,3 +149,26 @@ fn live_process_reports_its_parent_and_arguments() {
     assert_eq!(stable_cli_pid(me), Some(me));
     assert_eq!(current_cli_pid(), stable_cli_pid(parent));
 }
+
+#[test]
+fn only_a_codex_managed_daemon_worker_is_the_shared_host() {
+    let worker = proc(
+        "codex",
+        Some(1),
+        Some(&["codex", "app-server", "--managed-daemon"]),
+    );
+    let own_server = proc("codex", Some(1), Some(&["codex", "app-server"]));
+    let no_daemon_tui = proc("codex", Some(1), Some(&["codex", "resume", "--no-daemon"]));
+    let unreadable = proc("codex", Some(1), None);
+    let other = proc("claude", Some(1), Some(&["claude", "--managed-daemon"]));
+
+    assert!(is_codex_shared_host(&worker));
+    for process in [own_server, no_daemon_tui, unreadable, other] {
+        assert!(!is_codex_shared_host(&process), "{process:?}");
+    }
+}
+
+#[test]
+fn a_test_process_parent_is_not_the_shared_host() {
+    assert!(!parent_is_codex_shared_host());
+}

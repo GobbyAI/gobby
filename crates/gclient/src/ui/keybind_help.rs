@@ -200,13 +200,13 @@ const LEGEND: [(RowState, &str); 5] = [
     ),
     (
         RowState::Paused,
-        "alive but stopped: paused on purpose or interrupted by you",
+        "alive but not active: between turns, paused on purpose or interrupted by you",
     ),
     (
         RowState::NoLive,
         "agents are assigned but all are dead, or the machine's daemon is unreachable",
     ),
-    (RowState::Blank, "nothing is assigned or being worked"),
+    (RowState::Blank, "nothing is assigned"),
 ];
 const LEGEND_STATE_WIDTH: usize = 17;
 /// Cells before a legend row's meaning: the glyph cell and the state.
