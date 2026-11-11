@@ -428,7 +428,10 @@ fn haiku_alias_uses_the_display_model_family() {
         agent.run_id = Some("haiku-run".to_string());
         let sidebar = model(&rows, &[agent], &[pane(1, "terminal-a", false, true)]);
 
-        assert_eq!(sidebar.agents[0].model_slug(), "claude-haiku-5.5-xhigh");
+        assert_eq!(
+            sidebar.agents[0].model_slug(),
+            "claude/claude-haiku-5.5-xhigh"
+        );
     }
 }
 
@@ -899,8 +902,8 @@ fn model_slug_lowercases_hyphenates_and_appends_effort() {
     claude.provider = "claude".to_string();
     assert_eq!(
         claude.model_slug(),
-        "claude-opus-5.5-high",
-        "the provider's own name stays in the slug"
+        "claude/claude-opus-5.5-high",
+        "the provider leads, and the model keeps its own family name"
     );
     assert_eq!(
         agent(None, Some("GPT-5-Codex"), Some("high")).model_slug(),

@@ -275,10 +275,10 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
     assert_eq!(rows[0].height(), 3);
     assert_eq!(rows[0].definition, "Codex");
     assert_eq!(rows[0].reference, "#77");
-    assert_eq!(rows[0].model_slug, "gpt-5-high");
+    assert_eq!(rows[0].model_slug, "codex/gpt-5-high");
     // The model sits under the title, the task status below it (#24895).
     let model_line = row_second_line(&rows[0], 34, &Chrome::dark());
-    assert_eq!(line_text(&model_line), "   gpt-5-high");
+    assert_eq!(line_text(&model_line), "   codex/gpt-5-high");
     assert!(model_line
         .spans
         .iter()
@@ -300,7 +300,7 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
         assert_eq!(model, Some(p.model));
         assert!(model != Some(p.text) && model != Some(p.overlay1));
     }
-    assert_eq!(rows[1].model_slug, "gpt-5");
+    assert_eq!(rows[1].model_slug, "codex/gpt-5");
     let fable = SidebarRow {
         model_slug: "claude-fable-5.1-xhigh".into(),
         kind: RowKind::Agent,
@@ -353,6 +353,36 @@ fn model_slug_reads_provider_model_effort_and_skips_absent_segments() {
         }
         .model_slug()
     };
+    let with_provider =
+        |provider: &str, model: &str, display: Option<&str>, effort: Option<&str>| {
+            AgentEntry {
+                provider: provider.to_owned(),
+                model: Some(model.to_owned()),
+                model_display_name: display.map(str::to_owned),
+                effort: effort.map(str::to_owned),
+                ..AgentEntry::default()
+            }
+            .model_slug()
+        };
+    assert_eq!(
+        with_provider(
+            "claude",
+            "claude-opus-5-5",
+            Some("Opus 5.5"),
+            Some("medium")
+        ),
+        "claude/claude-opus-5.5-medium"
+    );
+    assert_eq!(
+        with_provider(
+            "agy",
+            "gemini-3.8-flash",
+            Some("Gemini 3.8 Flash (High)"),
+            None
+        ),
+        "agy/gemini-3.8-flash-high",
+        "a parenthesized effort joins the model like every other effort"
+    );
     assert_eq!(
         slug(Some("gpt-6-sol"), None, Some("xhigh")),
         "gpt-6-sol-xhigh"
@@ -1360,11 +1390,13 @@ fn a_sandboxed_agent_marks_its_model_line_and_only_its_model_line() {
     assert!(plain_first.ends_with(" #15976: synthetic"), "{plain_first}");
     let model = line_text(&row_second_line(&row, 40, &chrome));
     assert!(
-        model.ends_with("\u{f023} claude-opus-5.5-medium"),
+        model
+            .trim_end()
+            .ends_with("claude-opus-5.5-medium \u{f023}"),
         "{model}"
     );
     let plain_model = line_text(&row_second_line(&plain, 40, &chrome));
-    assert_eq!(model.find('\u{f023}'), plain_model.find("claude-"));
+    assert_eq!(model.find("claude-"), plain_model.find("claude-"));
     assert!(!plain_model.contains('\u{f023}'));
     assert!(!line_text(&row_third_line(&row, 40, &chrome)).contains('\u{f023}'));
 }
@@ -1388,7 +1420,7 @@ fn the_sandbox_lock_leaves_the_title_window_unchanged() {
 }
 
 #[test]
-fn sandbox_text_fallback_precedes_the_model_on_line_two() {
+fn sandbox_text_fallback_follows_the_model_on_line_two() {
     let chrome = Chrome::dark();
     let row = SidebarRow {
         definition: "Architect".into(),
@@ -1400,7 +1432,10 @@ fn sandbox_text_fallback_precedes_the_model_on_line_two() {
     };
     assert!(!line_text(&row_line(&row, 50, &chrome, 0)).contains("sbx"));
     let model = line_text(&row_second_line(&row, 50, &chrome));
-    assert!(model.ends_with("sbx codex-gpt-6.1-sol-medium"), "{model}");
+    assert!(
+        model.trim_end().ends_with("codex-gpt-6.1-sol-medium sbx"),
+        "{model}"
+    );
     assert!(!line_text(&row_third_line(&row, 50, &chrome)).contains("sbx"));
 }
 

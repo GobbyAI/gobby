@@ -886,7 +886,8 @@ fn agent_rows_golden() {
         .find(|line| line.starts_with(&format!("{:02} :", agent + 1)))
         .expect("model slug style");
     // The model takes the theme's model colour, never dimmed (#23416).
-    assert!(slug_style.contains("model/panel_bg*5"), "{slug_style}");
+    // `codex/gpt-5`: provider and model share the one model colour.
+    assert!(slug_style.contains("model/panel_bg*11"), "{slug_style}");
     assert!(!slug_style.contains("model/panel_bg+d"), "{slug_style}");
 }
 

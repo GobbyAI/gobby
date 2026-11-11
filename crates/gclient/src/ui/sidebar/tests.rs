@@ -403,7 +403,7 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     assert!(blank(lines[5]), "{:?}", lines[5]);
     assert_eq!(lines[6], " Agents");
     assert_eq!(lines[7], " ⍾ Codex");
-    assert_eq!(lines[8], "   gpt-6-sol");
+    assert_eq!(lines[8], "   codex/gpt-6-sol");
     assert!(blank(lines[9]), "{:?}", lines[9]);
     assert!(blank(lines[22]), "{:?}", lines[22]);
     assert_eq!(lines[23], " Terminals");

@@ -773,14 +773,14 @@ pub fn row_second_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> 
     let style = Style::default().fg(chrome.palette.subtext0);
     match row.kind {
         RowKind::Agent => {
-            if let Some(mark) = row.sandbox_mark {
-                spans.push(Span::styled(mark, style));
-                spans.push(Span::raw(" "));
-            }
             spans.push(Span::styled(
                 truncate_end(&row.model_slug, budget.saturating_sub(sandbox_width(row))),
                 Style::default().fg(chrome.palette.model),
             ));
+            if let Some(mark) = row.sandbox_mark {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(mark, style));
+            }
         }
         RowKind::Terminal => spans.push(Span::styled(truncate_end(&row.detail, budget), style)),
         _ => return Line::default(),

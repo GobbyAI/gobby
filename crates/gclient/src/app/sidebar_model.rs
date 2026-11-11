@@ -210,7 +210,8 @@ impl AgentEntry {
             .as_deref()
             .or(self.model.as_deref())
             .unwrap_or_default()
-            .to_lowercase();
+            .to_lowercase()
+            .replace(['(', ')'], " ");
         let mut slug = model.split_whitespace().collect::<Vec<_>>().join("-");
         let family = self
             .model
@@ -228,6 +229,10 @@ impl AgentEntry {
                 slug.push('-');
             }
             slug.push_str(effort);
+        }
+        let provider = self.provider.trim().to_lowercase();
+        if !provider.is_empty() && !slug.is_empty() {
+            slug = format!("{provider}/{slug}");
         }
         slug
     }
