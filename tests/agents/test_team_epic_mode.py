@@ -450,3 +450,39 @@ async def test_topology_and_bound_close_teardown(world: TeamWorld) -> None:
     nested_team = await world.admit(bad_run, bad)
     assert team_record(world, bad_run)["mode"] == "epic"
     assert sorted(world.tree_ids()) == sorted([tree_id_of(team), tree_id_of(nested_team)])
+
+
+@pytest.mark.asyncio
+async def test_claim_team_tasks_capability_passes_the_team_fence(
+    world: TeamWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session holding claim_team_tasks (granted by "*") claims another team's leaf."""
+    from gobby.mcp_proxy.tools.tasks import _lifecycle_claim
+
+    tasks = LocalTaskManager(world.case.db)
+    tools = create_task_registry(tasks)
+    epic = new_task(world, TITLE, epic=True)
+    leaf = new_task(world, LEAF_TITLE, parent=epic)
+    await world.admit(world.child(epic), epic)
+    holder = world.case.session("fixture-worker", parent=world.case.creator)
+    outsider = world.case.session("fixture-worker", parent=world.case.creator)
+    granted: list[tuple[str, str]] = []
+
+    def holds(_db: HubDatabase, session_id: str, capability: str) -> bool:
+        granted.append((session_id, capability))
+        return session_id == holder
+
+    monkeypatch.setattr(_lifecycle_claim, "session_has_capability_or_operator", holds)
+
+    async def claim(session_id: str) -> dict[str, Any]:
+        with session_context_for_test(session_id):
+            return cast(dict[str, Any], await tools.call("claim_task", {"task_id": leaf.id}))
+
+    reply = await claim(outsider)
+    assert reply.get("success") is not True, reply
+    assert tasks.get_task(leaf.id).claimed_by_session_id is None
+
+    reply = await claim(holder)
+    assert reply.get("success") is True, reply
+    assert tasks.get_task(leaf.id).claimed_by_session_id == holder
+    assert (holder, _lifecycle_claim.CLAIM_TEAM_TASKS) in granted

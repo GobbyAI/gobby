@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.tasks.attestation_shapes import CLOSURE_EVENTS, select_closure_rules
-from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.agent_models import WAIVE_REVIEW_GATES, AgentDefinitionBody
 from gobby.workflows.definitions import RuleDefinitionBody
 
 if TYPE_CHECKING:
@@ -38,6 +38,8 @@ def attestation_authorship_refusal(
     implementation does not count; a review that names no candidate counts against every
     implementation. Only rules the author's definition selects apply.
     """
+    if agent.holds(WAIVE_REVIEW_GATES):
+        return None
     candidate = _candidate(reference)
     for row in select_closure_rules(agent, rules, CLOSURE_EVENTS):
         authorship = RuleDefinitionBody.model_validate(row.definition_json).attestation_authorship

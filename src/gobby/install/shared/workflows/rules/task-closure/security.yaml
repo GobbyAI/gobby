@@ -1,4 +1,4 @@
-version: "4.0.0"
+version: "5.0.0"
 tags: [task-security]
 
 rules:
@@ -30,6 +30,7 @@ rules:
     priority: 35
     protected: true
     when: &security_required >-
+      not holds_capability(caller.get('capabilities', []), 'waive_review_gates') and
       reason == 'done' and
       ('security-review' in (task.get('labels') or []) or
        paths_match(facts.get('candidate_paths', []),
@@ -37,7 +38,7 @@ rules:
       not any(record.get('kind') == 'security-review' and
         record.get('id') == latest_attestation('security-review').get('id') and
         record.get('result') == 'approved' and
-        'approve_security_review' in record.get('agent_capabilities', []) and
+        holds_capability(record.get('agent_capabilities', []), 'approve_security_review') and
         (record.get('reference') or {}).get('scheme') == 'git' and
         ((record.get('reference') or {}).get('value') == facts.get('candidate_commit_sha') or
          any(receipt.get('commit_sha') == (record.get('reference') or {}).get('value') and

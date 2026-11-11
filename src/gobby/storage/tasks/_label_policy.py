@@ -67,7 +67,7 @@ def authorize_label_removal(
             .get("_agent_type")
         )
         if is_operator_session(actor, role) or (
-            definition and "remove_security_review_label" in definition.capabilities
+            definition and definition.holds("remove_security_review_label")
         ):
             return
     raise ValueError("Removing security-review requires the operator or authorized policy owner.")

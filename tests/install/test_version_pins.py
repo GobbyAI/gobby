@@ -73,7 +73,7 @@ def test_managed_bin_pins_match_cargo_lock_versions(bin_name: str) -> None:
         # gcode, gdaemon, ghook: gcore and the native build-root sandbox launch changed in #25825 under installed 1.9.111, 0.4.151, 0.9.74.
         ("gcode", "1.9.112"),
         ("gdaemon", "0.4.113"),
-        ("gdaemon", "0.4.152"),
+        ("gdaemon", "0.4.153"),
         # gclient, gterm: the outage toast and the one-suite test layout changed in #25825 under 0.1.122, 0.1.28.
         ("gclient", "0.1.123"),
         # gclient: live idle and waiting agents draw paused, not blank, changed in #25903 under 0.1.123.

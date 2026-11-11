@@ -43,6 +43,10 @@ and its supported Zig/SDK toolchain; a library-only build does not validate it.
 `gclient` builds without Zig. See
 [rebuild and reinstall](../../../../../../../../docs/guides/gterminal-development-guide.md#rebuild-and-reinstall).
 
+`gobby build-sweep` reports agent Cargo build folders under the configured build
+root that no registered checkout owns; `--apply` removes them and `--json` emits
+the findings.
+
 gcode database tests read only `GCODE_POSTGRES_TEST_DATABASE_URL`. Point it at
 `gobby_gcode_test` on the isolated hub. The fixture creates a cohort keyed by
 compiled schema version and a 32-character schema root-hash prefix, enables
@@ -73,4 +77,4 @@ or any rule active. Template defaults are source evidence only. Native spawning
 requires an available host and has no silent tmux fallback; use typed failures
 and the relevant agent/session recovery procedure.
 
-_Version: 1.0.0_
+_Version: 1.1.0_

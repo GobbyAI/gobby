@@ -33,7 +33,7 @@ def can_add_team_task_labels(db: HubDatabase, caller_id: str, task: Task) -> boo
     definition = session_agent_definition(db, caller)
     return (
         definition is not None
-        and "add_team_task_labels" in definition[0].capabilities
+        and definition[0].holds("add_team_task_labels")
         and managed_task_team(db, caller.id, task.id) is not None
     )
 
@@ -101,7 +101,7 @@ def is_operator_coordinator(
     if caller.agent_run_id or caller.agent_depth or caller.machine_id != require_machine_id():
         return False
     definition = session_agent_definition(tasks.db, caller)
-    return definition is not None and capability in definition[0].capabilities
+    return definition is not None and definition[0].holds(capability)
 
 
 def resolve_lifecycle_task(

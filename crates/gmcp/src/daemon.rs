@@ -432,7 +432,7 @@ fn unbound_refusal() -> Value {
     json!({
         "success": false,
         "error_code": "session_credential_unbound",
-        "error": "this session has no session-bound credential, so the request was not sent; start the session from its CLI so its SessionStart hook stores one",
+        "error": "this session has no session-bound credential, so the request was not sent; start the session from its CLI so its SessionStart hook stores one. A Codex TUI attached to Codex's shared app-server daemon cannot be bound to one session: relaunch it with `codex resume --no-daemon <session id>` (or `codex --no-daemon`)",
     })
 }
 

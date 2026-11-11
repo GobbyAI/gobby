@@ -106,7 +106,9 @@ def _session_credential_unbound_result() -> dict[str, Any]:
         "error_code": _SESSION_CREDENTIAL_UNBOUND_ERROR_CODE,
         "error": (
             "no session credential is bound to this CLI process; the session's SessionStart "
-            "hook must run from this CLI before its MCP tools can act"
+            "hook must run from this CLI before its MCP tools can act. A Codex TUI attached "
+            "to Codex's shared app-server daemon cannot be bound to one session: relaunch it "
+            "with `codex resume --no-daemon <session id>` (or `codex --no-daemon`)"
         ),
     }
 

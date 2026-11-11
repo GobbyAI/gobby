@@ -33,7 +33,7 @@ def _caller_may_write_notes(db: HubDatabase, session_id: str | None) -> bool:
     if caller is None or caller.machine_id != require_machine_id():
         return False
     definition = session_agent_definition(db, caller)
-    return definition is not None and WORKTREE_NOTE_CAPABILITY in definition[0].capabilities
+    return definition is not None and definition[0].holds(WORKTREE_NOTE_CAPABILITY)
 
 
 def create_notes_registry(ctx: RegistryContext) -> InternalToolRegistry:
