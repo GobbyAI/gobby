@@ -2,12 +2,37 @@
 
 from __future__ import annotations
 
+import asyncio
+import shutil
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
 import pytest
 
 from gobby.agents.detection.matcher import CompiledManifest, compile_manifest
 from gobby.agents.idle_detector import IdleDetector
+from gobby.terminals.frame_client import FrameProtocolError
+from gobby.terminals.host_client import HostEpochChangedError, HostNotAdoptedError
+from gobby.terminals.host_protocol import frames_socket_path
 from tests.agents.detection_test_support import BundledDetectionRegistry, detection_manifest
-from tests.e2e.handoff_continuation_runner import classify_frame
+from tests.e2e.composer_proof import ProofRefused
+from tests.e2e.composer_proof_live import LiveProof
+from tests.e2e.handoff_continuation_runner import classify_frame, unregistered_frame_class
+
+_FAILURES = [
+    ProofRefused("native host binding outside private proof root"),
+    FrameProtocolError("bad frame"),
+    HostEpochChangedError("epoch moved"),
+    HostNotAdoptedError(),
+    RuntimeError("unexpected"),
+    TimeoutError(),
+    ConnectionRefusedError(),
+    ValueError("bad json"),
+    httpx.ConnectError("refused"),
+]
 
 pytestmark = pytest.mark.unit
 
@@ -34,6 +59,60 @@ def test_frame_without_a_prompt_or_composer_is_unknown() -> None:
     detector = IdleDetector(_Synthetic(manifest), "probe")
     assert classify_frame(manifest, detector, f"{_SECRET}\nloading\n") == "unknown"
     assert classify_frame(None, detector, f"{_SECRET}\n") == "unknown"
+
+
+_RUNNER = "tests.e2e.handoff_continuation_runner"
+
+
+def _locator(tmp_path: Path) -> MagicMock:
+    return MagicMock(return_value=SimpleNamespace(host_socket=str(tmp_path / "h" / "f.sock")))
+
+
+@pytest.mark.parametrize("failure", _FAILURES, ids=lambda exc: type(exc).__name__)
+async def test_terminal_readback_failure_records_unreadable(
+    tmp_path: Path, failure: Exception
+) -> None:
+    proof = LiveProof.__new__(LiveProof)
+    with (
+        patch.object(proof, "terminal", AsyncMock(side_effect=failure)),
+        patch.object(proof, "locator", _locator(tmp_path)),
+    ):
+        assert await unregistered_frame_class(proof, "grok", "t") == "unreadable"
+
+
+@pytest.mark.parametrize("failure", _FAILURES, ids=lambda exc: type(exc).__name__)
+async def test_frame_client_failure_records_unreadable_and_closes(failure: Exception) -> None:
+    # A real frames socket accepts the connection; only the frame handshake fails.
+    root = Path(tempfile.mkdtemp(prefix="fc", dir="/tmp"))
+    host = root / "h"
+    host.mkdir()
+    connected = asyncio.Event()
+
+    async def accept(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        connected.set()
+        writer.close()
+
+    server = await asyncio.start_unix_server(accept, path=str(frames_socket_path(host)))
+    proof = LiveProof.__new__(LiveProof)
+    locator = SimpleNamespace(host_socket=str(host / "control.sock"))
+    client = SimpleNamespace(handshake=AsyncMock(side_effect=failure), close=AsyncMock())
+    try:
+        with (
+            patch.object(proof, "terminal", AsyncMock(return_value={"id": "t"})),
+            patch.object(proof, "locator", MagicMock(return_value=locator)),
+            patch(f"{_RUNNER}.FrameClient", return_value=client),
+            patch(f"{_RUNNER}.daemon_token", return_value="local"),
+        ):
+            assert await unregistered_frame_class(proof, "agy", "t") == "unreadable"
+        # The classifier reached the seat's real frames socket before the handshake failed.
+        await asyncio.wait_for(connected.wait(), 5)
+    finally:
+        server.close()
+        await server.wait_closed()
+        shutil.rmtree(root)
+    assert client.handshake.await_args.args == (locator,)
+    assert client.handshake.await_args.kwargs == {"local_token": "local"}
+    client.close.assert_awaited_once()
 
 
 def test_a_visible_composer_is_named_composer() -> None:

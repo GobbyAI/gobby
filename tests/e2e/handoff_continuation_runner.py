@@ -2,11 +2,15 @@
 
 import asyncio
 import os
+from contextlib import suppress
 from pathlib import Path
+
+import httpx
 
 from gobby.agents.detection.matcher import CompiledManifest
 from gobby.agents.idle_detector import IdleDetector, plain_text
-from gobby.terminals.frame_client import FrameClient
+from gobby.terminals.frame_client import FrameClient, FrameProtocolError
+from gobby.terminals.host_client import HostEpochChangedError, HostNotAdoptedError
 from gobby.terminals.host_protocol import frames_socket_path
 from tests.e2e.composer_proof import ProofRefused
 from tests.e2e.composer_proof_live import Frames, LiveProof, ProofWsSession, Seat
@@ -18,6 +22,20 @@ from tests.e2e.test_terminal_client_stack import _ws_create
 # Rules a provider's detection manifest names for a screen that waits on the operator.
 _PROMPT_RULES = (("trust_prompt", "trust_prompt"), ("approval_prompt", "approval_prompt"))
 _FRAME_READ_SECONDS = 5
+# What reading an unregistered seat's frame can raise: the proof's refusals, the frame and
+# host clients' protocol, epoch and adoption errors (all RuntimeError), socket and decode
+# failures, and the terminal readback's HTTP errors. Any of them means "unreadable".
+_UNREADABLE_FRAME_ERRORS = (
+    ProofRefused,
+    FrameProtocolError,
+    HostEpochChangedError,
+    HostNotAdoptedError,
+    RuntimeError,
+    TimeoutError,
+    OSError,
+    ValueError,
+    httpx.HTTPError,
+)
 
 
 def classify_frame(manifest: CompiledManifest | None, detector: IdleDetector, ansi: str) -> str:
@@ -58,13 +76,14 @@ async def unregistered_frame_class(proof: LiveProof, provider: str, terminal_id:
         return classify_frame(
             manifest, IdleDetector(proof.detection_registry, provider), frame.ansi
         )
-    except (ProofRefused, TimeoutError, OSError, ValueError):
+    except _UNREADABLE_FRAME_ERRORS:
         return "unreadable"
     finally:
-        if frames is not None:
-            await frames.close()
-        elif client is not None:
-            await client.close()
+        with suppress(*_UNREADABLE_FRAME_ERRORS):
+            if frames is not None:
+                await frames.close()
+            elif client is not None:
+                await client.close()
 
 
 async def adopt(proof: LiveProof, provider: str, command: list[str]) -> Seat:
