@@ -252,3 +252,26 @@ async def test_audit_source_block_sync_lands_without_running_loop(
     audit = _audit_mock(engine)
     audit.assert_called_once()
     assert audit.call_args.kwargs["rule_id"] == "hook-stop-safety"
+
+
+async def test_a_block_with_no_resolved_session_writes_no_audit_row(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unresolved caller has no session to attribute; its block is logged, not stored."""
+    audit = MagicMock()
+
+    with caplog.at_level(logging.INFO, logger=block_audit.__name__):
+        await block_audit.log_enforcement_block(
+            audit,
+            session_id="",
+            current_step=None,
+            rule_id="synthetic-gate",
+            condition=None,
+            result="block",
+            reason="refused",
+            tool_name="Bash",
+        )
+
+    audit.log_rule_eval.assert_not_called()
+    assert "Workflow block audit failed" not in caplog.text
+    assert "synthetic-gate" in caplog.text

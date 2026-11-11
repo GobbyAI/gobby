@@ -43,6 +43,10 @@ async def log_enforcement_block(
     tool_name: str | None,
 ) -> None:
     """Persist one enforcement block without changing enforcement behavior."""
+    if not session_id:
+        # An unresolved caller has no session row to attribute the block to.
+        logger.info("Rule %s blocked %s for an unresolved session", rule_id, tool_name or "-")
+        return
     step = current_step.strip() if isinstance(current_step, str) else ""
     try:
         await asyncio.to_thread(

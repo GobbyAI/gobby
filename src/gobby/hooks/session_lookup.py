@@ -506,8 +506,12 @@ class SessionLookupService:
         if platform_session_id or event.event_type == HookEventType.SESSION_START:
             return platform_session_id
         if event.source == SessionSource.GIT:
-            # The protected-branch guard only names a committing session; it never mints one.
-            return None
+            # The protected-branch guard names the committing session by its Gobby id
+            # (GOBBY_SESSION_ID). It resolves only a live session and never mints one.
+            named = self._session_manager.get(external_id)
+            if named is None or named.status in TERMINAL_SESSION_STATUSES:
+                return None
+            return named.id
 
         with self._session_coordinator.get_lookup_lock(external_id, event.source.value):
             platform_session_id = self._session_manager.get_session_id(
