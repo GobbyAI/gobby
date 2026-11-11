@@ -94,6 +94,16 @@ def test_override_entry_needs_api_base_and_model() -> None:
         DecisionsConfig(overrides={"box": {"wire_api": "openrouter-decisions"}})
 
 
+def test_an_all_default_override_entry_is_no_entry() -> None:
+    # The config projection emits every leaf of each optional entry at its default.
+    unset = DecisionEndpointConfig().model_dump()
+    config = DecisionsConfig(**OLLAMA, overrides={"choice": unset, "box": unset})
+
+    assert config.overrides.choice is None
+    assert config.overrides.box is None
+    assert config.endpoint_for("choice") is config
+
+
 def test_override_entries_run_the_endpoint_validators() -> None:
     with pytest.raises(ValidationError, match="long_context requires systemone"):
         DecisionsConfig(overrides={"choice": {**WORKERS_AI, "long_context": True}})
