@@ -21,7 +21,12 @@ import pytest
 from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD
 from gobby.storage.codex_thread_hosts import ThreadHost, register_thread_host, thread_host
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.session_startup_marks import StartupPin, pin_startup, record_startup_mark
+from gobby.storage.session_startup_marks import (
+    StartupPin,
+    pin_startup,
+    record_startup_mark,
+    startup_mark,
+)
 from gobby.storage.sessions import SessionManager
 from gobby.utils.local_token import verify_agent_api_token
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
@@ -305,9 +310,16 @@ def _worker_child_start(route: HookRoute, start_source: str = "resume") -> Any:
 
 
 def _pinned_seat_mark(temp_db: HubDatabase) -> None:
-    key = {"machine_id": TEST_MACHINE_ID, "source": "codex", "external_id": CODEX_PROVIDER_SESSION}
-    record_startup_mark(temp_db, **key)
-    assert pin_startup(temp_db, **key, pin=StartupPin(CODEX_TUI_PID, FAKE_PROCESS_START))
+    record_startup_mark(
+        temp_db, machine_id=TEST_MACHINE_ID, source="codex", external_id=CODEX_PROVIDER_SESSION
+    )
+    assert pin_startup(
+        temp_db,
+        machine_id=TEST_MACHINE_ID,
+        source="codex",
+        external_id=CODEX_PROVIDER_SESSION,
+        pin=StartupPin(CODEX_TUI_PID, FAKE_PROCESS_START),
+    )
 
 
 def _refused_without_registration(response: Any, temp_db: HubDatabase) -> None:
@@ -330,6 +342,11 @@ def test_a_worker_child_cannot_claim_a_live_seats_pinned_thread(
         response = _worker_child_start(hook_route, start_source="startup")
 
     _refused_without_registration(response, temp_db)
+    mark = startup_mark(
+        temp_db, machine_id=TEST_MACHINE_ID, source="codex", external_id=CODEX_PROVIDER_SESSION
+    )
+    assert mark is not None
+    assert mark.pin == StartupPin(CODEX_TUI_PID, FAKE_PROCESS_START)
 
 
 def test_a_worker_child_cannot_mint_for_a_live_seat_row(
