@@ -110,11 +110,12 @@ AGY_PAYLOAD_ALIASES: dict[str, str] = {
 
 
 AGY_HOOK_CONTRACTS: dict[str, AgyHookContract] = {
-    # Fires only when a conversation starts, never on resume, so PreInvocation stays
-    # start-capable. Both dispatch the same idempotent SESSION_START.
+    # Observed only. PreInvocation alone starts the session, behind the startup-claim
+    # preflight and its hint checks; a second unguarded start path could rebind a hinted
+    # seat's provider identity.
     "SessionStart": AgyHookContract(
         hook_event_name="SessionStart",
-        event_type=HookEventType.SESSION_START,
+        event_type=HookEventType.SETUP,
     ),
     "PreInvocation": AgyHookContract(
         hook_event_name="PreInvocation",

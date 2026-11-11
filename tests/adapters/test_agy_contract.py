@@ -32,7 +32,7 @@ def test_agy_hook_contract_maps_supported_events() -> None:
         "Stop",
     )
     assert AGY_EVENT_MAP == {
-        "SessionStart": HookEventType.SESSION_START,
+        "SessionStart": HookEventType.SETUP,
         "PreInvocation": HookEventType.BEFORE_AGENT,
         "PreToolUse": HookEventType.BEFORE_TOOL,
         "PostToolUse": HookEventType.AFTER_TOOL,
@@ -41,7 +41,7 @@ def test_agy_hook_contract_maps_supported_events() -> None:
     }
 
 
-def test_agy_session_start_injects_startup_context_as_steps() -> None:
+def test_agy_session_start_emits_no_steps() -> None:
     from gobby.adapters.agy import AgyAdapter
     from gobby.hooks.events import HookResponse
 
@@ -49,9 +49,8 @@ def test_agy_session_start_injects_startup_context_as_steps() -> None:
         HookResponse(decision="allow", context="Startup packet"), hook_type="SessionStart"
     )
 
-    # AGY protojson-rejects unknown fields, so SessionStart emits only injectSteps.
-    assert set(result) == {"injectSteps"}
-    assert "Startup packet" in result["injectSteps"][0]["ephemeralMessage"]
+    # Observed only: PreInvocation delivers startup context behind the claim preflight.
+    assert result == {}
 
 
 def test_agy_pre_tool_contract_blocks_tool_calls() -> None:

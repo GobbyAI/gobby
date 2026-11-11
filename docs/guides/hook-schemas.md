@@ -217,14 +217,14 @@ passes kebab-case hook types to the daemon.
 
 Antigravity hooks are installed to `~/.gemini/config/hooks.json`, which is the Antigravity
 vendor config path. These are its six native events; Antigravity does not expose
-`UserPromptSubmit`. `SessionStart` fires only when a conversation starts, never on
-resume, so every `PreInvocation` still dispatches the same idempotent `session_start`
-first. Gobby separately supports managed spawning and web chat through Antigravity's
+`UserPromptSubmit`. `SessionStart` is observed only, as `setup`: `PreInvocation` alone
+starts the session, behind the startup-claim preflight and its hint checks, and
+dispatches an idempotent `session_start` first. Gobby separately supports managed spawning and web chat through Antigravity's
 custom stream-json subprocess transport on 1.1.18+.
 
 | Native Hook | Raw Workflow Event | Semantic Event |
 | --- | --- | --- |
-| `SessionStart` | `session_start` | `session_start` |
+| `SessionStart` | `setup` | `setup` |
 | `PreInvocation` | `before_agent` | `turn_start` |
 | `PostInvocation` | `after_agent` | `turn_end` |
 | `PreToolUse` | `before_tool` | `before_tool` |

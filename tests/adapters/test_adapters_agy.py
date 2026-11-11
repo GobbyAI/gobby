@@ -325,6 +325,33 @@ def test_handle_native_uses_agy_source_and_compact_response() -> None:
     assert hook_event.event_type is HookEventType.BEFORE_TOOL
 
 
+def test_session_start_is_observed_and_never_starts_a_session() -> None:
+    """SessionStart must not bypass PreInvocation's startup-claim preflight (#25918).
+
+    A start here would reach the generic handler, which adopts a GOBBY_SESSION_ID-hinted
+    row and rewrites its external_id to the new conversation without the hint checks.
+    """
+    from gobby.hooks.session_credential import is_session_start_hook
+    from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS
+
+    hook_manager = MagicMock()
+    hook_manager.handle.return_value = HookResponse(decision="allow", context="Startup packet")
+    native_event = {
+        "hook_type": "SessionStart",
+        "source": "agy",
+        "input_data": {"hook_event_name": "SessionStart", "conversationId": "conv-new"},
+    }
+
+    result = AgyAdapter().handle_native(native_event, hook_manager)
+
+    dispatched = [call.args[0].event_type for call in hook_manager.handle.call_args_list]
+    assert dispatched == [HookEventType.SETUP]
+    assert HookEventType.SETUP in NON_MATERIALIZING_EVENTS
+    assert is_session_start_hook("agy", "SessionStart") is False
+    assert is_session_start_hook("agy", "PreInvocation") is True
+    assert result == {}
+
+
 def _agy_pre_invocation_event(
     *,
     invocation_num: int = 0,

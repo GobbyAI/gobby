@@ -446,7 +446,7 @@ def _agy_capabilities() -> ProviderCapabilities:
             extra_fields.extend(["permission_decision", "auto_approve", "modified_input"])
         elif hook_name == "Stop":
             decision_style = ProviderDecisionStyle.HARD_STOP
-        elif hook_name in {"SessionStart", "PreInvocation", "PostInvocation"}:
+        elif hook_name in {"PreInvocation", "PostInvocation"}:
             context_channel = ContextChannel.INJECT_STEPS
 
         events[hook_name] = HookCapability(
