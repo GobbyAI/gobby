@@ -52,7 +52,7 @@ def test_maintenance_launch_exports_its_envelope_owner(
         assert read_managed_api_token(child_env) == grant.managed_api_token
 
 
-def test_launch_signs_with_current_bootstrap_key(
+def test_launch_signs_with_the_capability_key_across_bearer_rotation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from unittest.mock import MagicMock
@@ -63,6 +63,7 @@ def test_launch_signs_with_current_bootstrap_key(
     from gobby.servers.auth_service import AuthService
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.utils import local_token
+    from gobby.utils.capability_signing_key import CAPABILITY_SIGNING_KEY_FILENAME
 
     bootstrap = tmp_path / "bootstrap.yaml"
     bootstrap.write_text("api_key: first-key\n")
@@ -102,11 +103,14 @@ def test_launch_signs_with_current_bootstrap_key(
             )
             assert service.authenticate(request).allowed
     assert tokens[0] != tokens[1]
-    assert local_token.verify_agent_api_token(tokens[0], service.managed_signing_key()) is None
-    bootstrap.unlink()
+    # The capability signing key is the daemon's own; rotating the machine bearer leaves it.
+    signing_key = service.managed_signing_key()
+    assert all(local_token.verify_agent_api_token(token, signing_key) for token in tokens)
+    # A key file another user could read fails closed instead of signing.
+    bootstrap.with_name(CAPABILITY_SIGNING_KEY_FILENAME).chmod(0o644)
     with pytest.raises(HandshakeRejection, match="signing_key_unavailable") as error:
         with factory.open("project-1", timeout_seconds=30):
-            pytest.fail("missing key admitted a maintenance launch")
+            pytest.fail("an unsafe key admitted a maintenance launch")
     assert error.value.code == "signing_key_unavailable"
     assert handshake.calls == 2
 
