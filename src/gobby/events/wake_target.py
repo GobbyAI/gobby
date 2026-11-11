@@ -11,6 +11,7 @@ can go stale, so the wake is withheld and the message waits for the seat's next 
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from gobby.hub.machine_routing import is_local_machine
@@ -18,8 +19,13 @@ from gobby.hub.machine_routing import is_local_machine
 NODE_TERMINAL_WITHHELD = "node_terminal_withheld"
 
 
-async def target_gate(session_id: str, terminal: Any) -> dict[str, Any] | None:
-    """Return the withheld outcome when the wake's target is no agent CLI, else ``None``."""
+async def target_gate(
+    session_id: str, terminal: Any, terminal_context: Mapping[str, Any] | None
+) -> dict[str, Any] | None:
+    """Return the withheld outcome when the wake's target is no agent CLI, else ``None``.
+
+    ``terminal_context`` is the target session's recorded process identity.
+    """
     if terminal is not None and not is_local_machine(terminal.machine_id):
         return {
             "session_id": session_id,
@@ -33,7 +39,7 @@ async def target_gate(session_id: str, terminal: Any) -> dict[str, Any] | None:
     # themselves import the events package.
     from gobby.mcp_proxy.tools.sessions._terminal_send_keys_gate import wake_target_refusal
 
-    refusal = await wake_target_refusal(session_id, terminal)
+    refusal = await wake_target_refusal(session_id, terminal, terminal_context)
     if refusal is None:
         return None
     return {

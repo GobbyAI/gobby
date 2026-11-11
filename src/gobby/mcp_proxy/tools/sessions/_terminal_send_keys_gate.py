@@ -9,10 +9,10 @@ screen. Every signal that cannot be read refuses.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import shutil
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -20,12 +20,15 @@ from typing import Any
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, plain_text
 from gobby.agents.srt_runtime import srt_install_root
+from gobby.sessions.terminal_kill import process_identity_matches
 from gobby.terminals.composer_ledger import read_composer
 from gobby.terminals.foreground import (
     command_name,
     foreground_child_executables,
     foreground_executables,
+    foreground_group,
     foreground_node_script,
+    group_and_executable,
     shell_pid,
 )
 from gobby.terminals.pane_io import clear_composer, composer_reader, live_runtime_pane
@@ -103,15 +106,38 @@ def _installed_cli(cli: str) -> Path | None:
     return None if located is None else _on_disk(located)
 
 
-def _agent_cli(executable: str) -> str | None:
+@dataclass(frozen=True)
+class _Seat:
+    """The target session's recorded CLI process and its terminal's foreground group."""
+
+    terminal_context: Mapping[str, Any]
+    foreground_group: int
+
+    def runs(self, build: Path) -> bool:
+        """Whether the session's recorded CLI process is live in the foreground running ``build``.
+
+        Its pid and start time were recorded from the process that ran the session's own
+        hooks, so a planted file that never started this session cannot match.
+        """
+        pid = self.terminal_context.get("parent_pid")
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+            return False
+        if not process_identity_matches(pid, self.terminal_context):
+            return False
+        read = group_and_executable(pid)
+        return read is not None and read[0] == self.foreground_group and _on_disk(read[1]) == build
+
+
+def _agent_cli(executable: str, seat: _Seat | None) -> str | None:
     """The agent CLI a foreground executable is an installed build of, or None.
 
     A name proves nothing: any program can be renamed or planted as ``claude``. The
-    executable counts only when it resolves to the build the daemon's PATH resolves for
-    that CLI. Claude's and Grok's installers keep each version beside the current one
+    executable counts when it resolves to the build the daemon's PATH resolves for that
+    CLI. Claude's and Grok's installers keep each version beside the current one
     (``claude/versions/<version>``, ``.grok/downloads/grok-<version>-<os>-<arch>``) and a
-    running session keeps its build across an update, so a versioned sibling in that same
-    installer directory counts too.
+    running session keeps its build across an update. A versioned sibling in that
+    installer directory counts only when it is the target session's own recorded CLI
+    process, since anyone who can write the directory can plant a file named like one.
     """
     running = _on_disk(executable)
     if running is None:
@@ -127,6 +153,8 @@ def _agent_cli(executable: str) -> str | None:
             build is not None
             and running.parent == installed.parent
             and build.fullmatch(running.name) is not None
+            and seat is not None
+            and seat.runs(running)
         ):
             return cli
     return None
@@ -141,47 +169,33 @@ def _is_installed_srt_runner(script: str) -> bool:
         return False
 
 
-def _srt_runner_cli(pid: int) -> str | None:
+def _srt_runner_cli(pid: int, seat: _Seat | None) -> str | None:
     """The agent CLI an SRT runner launched, read from its live child in the same group.
 
     The runner's script names no provider; its child does. The child is classified like
     any foreground executable, so only an installed agent CLI build qualifies.
     """
     for executable in foreground_child_executables(pid):
-        cli = _agent_cli(executable)
+        cli = _agent_cli(executable, seat)
         if cli is not None:
             return cli
     return None
 
 
-def _node_agent_cli(pid: int) -> str | None:
+def _node_agent_cli(pid: int, seat: _Seat | None) -> str | None:
     """Bind node's live script to the agent CLI it runs.
 
-    Either the installed Claude package's declared CLI, or Gobby's installed SRT runner
-    with its provider as a live child.
+    Either the script the daemon's PATH resolves ``claude`` to (an npm install), or
+    Gobby's installed SRT runner with its provider as a live child. A package's own
+    metadata proves nothing, since any directory can declare itself Claude's package.
     """
     script = foreground_node_script(pid)
     if script is None:
         return None
     if _is_installed_srt_runner(script):
-        return _srt_runner_cli(pid)
-    try:
-        entrypoint = Path(script).resolve(strict=True)
-        manifest_path = entrypoint.parent / "package.json"
-        if not entrypoint.is_file() or manifest_path.stat().st_size > 65536:
-            return None
-        package = json.loads(manifest_path.read_text())
-        if not isinstance(package, dict) or package.get("name") != "@anthropic-ai/claude-code":
-            return None
-        bins = package.get("bin")
-        relative = bins.get("claude") if isinstance(bins, dict) else None
-        if not isinstance(relative, str):
-            return None
-        if (entrypoint.parent / relative).resolve(strict=True) == entrypoint:
-            return "claude"
-    except (OSError, ValueError):
-        return None
-    return None
+        return _srt_runner_cli(pid, seat)
+    entrypoint = _on_disk(script)
+    return "claude" if entrypoint is not None and entrypoint == _installed_cli("claude") else None
 
 
 def _detection_registry(terminal_manager: Any) -> DetectionManifestRegistry:
@@ -189,10 +203,28 @@ def _detection_registry(terminal_manager: Any) -> DetectionManifestRegistry:
     return DetectionManifestRegistry(terminal_manager.db)
 
 
-async def _foreground_agent_cli(terminal: Any) -> SendKeysRefusal | str:
+def _seat(pid: int | None, terminal_context: Mapping[str, Any] | None) -> _Seat | None:
+    """The target session's recorded CLI process, when the session and its shell record one."""
+    if pid is None or terminal_context is None:
+        return None
+    group = foreground_group(pid)
+    return None if group is None else _Seat(terminal_context, group)
+
+
+def _classify(executable: str, pid: int | None, seat: _Seat | None) -> str | None:
+    cli = _agent_cli(executable, seat)
+    if cli is None and command_name(executable) == "node" and pid is not None:
+        cli = _node_agent_cli(pid, seat)
+    return cli
+
+
+async def _foreground_agent_cli(
+    terminal: Any, terminal_context: Mapping[str, Any] | None
+) -> SendKeysRefusal | str:
     """The agent CLI in the terminal's foreground, or why the process is no agent CLI.
 
     Process inspection only: nothing here reads what the CLI drew on screen.
+    ``terminal_context`` is the target session's recorded process identity.
     """
     pid = shell_pid(terminal)
     executables = {terminal.id: pid} if pid else {}
@@ -206,9 +238,8 @@ async def _foreground_agent_cli(terminal: Any) -> SendKeysRefusal | str:
     command = command_name(executable)
     if command in _SHELLS:
         return _refuse("send_keys_target_bare_shell", "the target is a bare shell")
-    cli = _agent_cli(executable)
-    if cli is None and command == "node" and pid is not None:
-        cli = await asyncio.to_thread(_node_agent_cli, pid)
+    seat = await asyncio.to_thread(_seat, pid, terminal_context)
+    cli = await asyncio.to_thread(_classify, executable, pid, seat)
     if cli is None:
         return _refuse(
             "send_keys_target_unconfirmed",
@@ -217,7 +248,9 @@ async def _foreground_agent_cli(terminal: Any) -> SendKeysRefusal | str:
     return cli
 
 
-async def wake_target_refusal(session_id: str, terminal: Any) -> SendKeysRefusal | None:
+async def wake_target_refusal(
+    session_id: str, terminal: Any, terminal_context: Mapping[str, Any] | None
+) -> SendKeysRefusal | None:
     """Return why a live wake must not type into ``terminal``, or ``None``.
 
     A wake reads no pane text: whether the seat may be typed into is decided by its
@@ -226,7 +259,7 @@ async def wake_target_refusal(session_id: str, terminal: Any) -> SendKeysRefusal
     into a bare shell, an editor or a ``sudo`` prompt.
     """
     try:
-        found = await _foreground_agent_cli(terminal)
+        found = await _foreground_agent_cli(terminal, terminal_context)
     except Exception:
         # Fail closed: an unreadable target never receives keys.
         logger.warning("wake target check failed for %s", session_id, exc_info=True)
@@ -239,6 +272,7 @@ async def send_keys_target_refusal(
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
     *,
+    terminal_context: Mapping[str, Any] | None,
     clear_held: bool = False,
 ) -> SendKeysRefusal | ComposerCleared | None:
     """Return why the target cannot take keys, or ``None`` when it shows an idle agent composer.
@@ -255,7 +289,7 @@ async def send_keys_target_refusal(
         if terminal is None:
             return _refuse("send_keys_no_live_terminal", "the target has no live terminal")
 
-        found = await _foreground_agent_cli(terminal)
+        found = await _foreground_agent_cli(terminal, terminal_context)
         if isinstance(found, SendKeysRefusal):
             return found
         cli = found

@@ -106,6 +106,22 @@ def foreground_executables(shell_pids: Mapping[str, int]) -> dict[str, str]:
     return resolved
 
 
+def foreground_group(shell_pid: int) -> int | None:
+    """The foreground process group of the terminal ``shell_pid``'s shell controls, or None."""
+    shell = _process_snapshot().get(shell_pid) if shell_pid > 0 else None
+    return None if shell is None else shell[0]
+
+
+def group_and_executable(pid: int) -> tuple[int, str] | None:
+    """``pid``'s process group and absolute on-disk executable, or None when unreadable."""
+    try:
+        group = os.getpgid(pid)
+    except OSError:
+        return None
+    executable = _executable_path(pid)
+    return None if executable is None else (group, executable)
+
+
 def _executable_path(pid: int) -> str | None:
     """``pid``'s absolute on-disk executable, or ``None`` when it cannot be read."""
     try:
@@ -227,6 +243,8 @@ __all__ = [
     "command_name",
     "foreground_commands",
     "foreground_executables",
+    "foreground_group",
+    "group_and_executable",
     "process_shell",
     "shell_cwds",
     "shell_pid",

@@ -578,7 +578,8 @@ def read_composer(terminal_id: str) -> ComposerRead:
     """The bound ledger's composer read; blocked, untracked and unbound read ``unknown``.
 
     A blocked or untracked entry carries its block reason; an unbound ledger has none. A
-    cursor-only draft reads ``draft`` with the cursor reason, which a wake drains.
+    cursor-only draft reads ``draft`` with the cursor reason, which withholds a wake and
+    raises the seat's attention item.
     """
     if _bound is None:
         return ComposerRead("unknown")

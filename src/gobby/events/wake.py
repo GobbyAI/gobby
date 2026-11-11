@@ -860,15 +860,18 @@ class WakeDispatcher:
             )
             if blocked is not None:
                 return blocked
-            refused = await target_gate(session_id, terminal)
-            if refused is not None:
-                return refused
             if handoff_attempt_id is not None:
                 _, state_failure = await self._preflight_live_side_effect(
                     session_id, handoff_attempt_id=handoff_attempt_id
                 )
                 if state_failure is not None:
                     return state_failure
+            # Last before the write: no await separates the foreground check from it.
+            refused = await target_gate(
+                session_id, terminal, getattr(session, "terminal_context", None)
+            )
+            if refused is not None:
+                return refused
             if confirmed_empty:
                 # The sender needs the positive proof to settle an old wake latch;
                 # merely opting out of a drain does not supply that proof.

@@ -32,20 +32,30 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("package", ["claude", "other", "wrong-bin", "missing"])
+@pytest.mark.parametrize("script_kind", ["installed", "linked", "declared-package", "missing"])
 @pytest.mark.parametrize("busy", [False, True])
-async def test_node_composer_requires_verified_claude_entrypoint(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, package: str, busy: bool
+async def test_node_composer_requires_the_installed_claude_entrypoint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, script_kind: str, busy: bool
 ) -> None:
-    script = tmp_path / "cli.js"
-    script.write_text("// CLI fixture\n")
-    manifests = {
-        "claude": '{"name":"@anthropic-ai/claude-code","bin":{"claude":"cli.js"}}',
-        "other": '{"name":"other-cli","bin":{"claude":"cli.js"}}',
-        "wrong-bin": '{"name":"@anthropic-ai/claude-code","bin":{"claude":"other.js"}}',
-    }
-    if package in manifests:
-        (tmp_path / "package.json").write_text(manifests[package])
+    # Any directory can declare itself @anthropic-ai/claude-code with a bin naming its
+    # script, so only the script the daemon's PATH resolves claude to counts.
+    installed = tmp_path / "npm" / "claude-code" / "cli.js"
+    _install(monkeypatch, "claude", installed)
+    planted = tmp_path / "planted" / "cli.js"
+    planted.parent.mkdir()
+    planted.write_text("// planted\n")
+    (planted.parent / "package.json").write_text(
+        '{"name":"@anthropic-ai/claude-code","bin":{"claude":"cli.js"}}'
+    )
+    linked = tmp_path / "bin" / "claude"
+    linked.parent.mkdir()
+    linked.symlink_to(installed)
+    script = {
+        "installed": installed,
+        "linked": linked,
+        "declared-package": planted,
+        "missing": tmp_path / "missing" / "cli.js",
+    }[script_kind]
     manager = _scene(
         monkeypatch,
         foreground={TERMINAL_ID: "/usr/local/bin/node"},
@@ -55,14 +65,17 @@ async def test_node_composer_requires_verified_claude_entrypoint(
         gate, "foreground_node_script", lambda pid: str(script) if pid == 4321 else None
     )
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None
+    )
 
-    if package == "claude" and not busy:
+    admitted = script_kind in ("installed", "linked")
+    if admitted and not busy:
         assert refusal is None
     else:
         assert isinstance(refusal, gate.SendKeysRefusal)
         assert refusal.code == (
-            "send_keys_composer_not_idle" if package == "claude" else "send_keys_target_unconfirmed"
+            "send_keys_composer_not_idle" if admitted else "send_keys_target_unconfirmed"
         )
 
 
@@ -243,7 +256,9 @@ async def test_refuses_a_target_that_cannot_take_keys(
 ) -> None:
     manager = _scene(monkeypatch, **overrides)
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None
+    )
 
     assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == code
@@ -256,7 +271,10 @@ async def test_admits_a_target_showing_an_idle_agent_composer(
 ) -> None:
     manager = _scene(monkeypatch)
 
-    assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
+    assert (
+        await gate.send_keys_target_refusal(SESSION_ID, manager, object(), terminal_context=None)
+        is None
+    )
 
 
 def _install(monkeypatch: pytest.MonkeyPatch, cli: str, build: Path) -> None:
@@ -272,6 +290,35 @@ def _file(path: Path) -> Path:
     return path
 
 
+# The seat's recorded CLI process, and the foreground group its terminal shows. Synthetic.
+SEAT_PID = 5150
+FOREGROUND_GROUP = 5150
+SEAT_CONTEXT = {"parent_pid": SEAT_PID, "parent_create_time": 1.0, "parent_name": "seat"}
+
+
+def _seat_process(
+    monkeypatch: pytest.MonkeyPatch,
+    runs: Path,
+    *,
+    identity: bool = True,
+    group: int = FOREGROUND_GROUP,
+) -> None:
+    """Script the recorded seat process: its identity check, group and on-disk build."""
+    monkeypatch.setattr(
+        gate, "process_identity_matches", lambda pid, context: identity and pid == SEAT_PID
+    )
+    monkeypatch.setattr(
+        gate,
+        "group_and_executable",
+        lambda pid: (group, str(runs)) if pid == SEAT_PID else None,
+    )
+    monkeypatch.setattr(gate, "foreground_group", lambda shell: FOREGROUND_GROUP)
+
+
+def _seat() -> gate._Seat:
+    return gate._Seat(SEAT_CONTEXT, FOREGROUND_GROUP)
+
+
 @pytest.mark.parametrize(
     ("parts", "expected"),
     [
@@ -283,16 +330,43 @@ def _file(path: Path) -> Path:
     ],
     ids=["installed", "older-sibling", "unversioned", "look-alike-tree", "wrong-dir"],
 )
-def test_only_the_installed_grok_or_its_sibling_build_is_an_agent_cli(
+def test_only_the_installed_grok_or_the_seats_own_sibling_build_is_an_agent_cli(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, parts: tuple[str, ...], expected: str | None
 ) -> None:
     # A renamed shell at /tmp/.grok/downloads/grok-<v>-<os>-<arch> has the installer's
-    # shape but not its directory, so it is no agent CLI.
+    # shape but not its directory, so it is no agent CLI, even as the seat's process.
     _install(monkeypatch, "grok", tmp_path / ".grok" / "downloads" / "grok-1.0.78-macos-aarch64")
     build = _file(tmp_path.joinpath(*parts))
+    _seat_process(monkeypatch, build)
 
-    assert gate._agent_cli(str(build)) == expected
-    assert gate._agent_cli(str(tmp_path / "missing" / build.name)) is None
+    assert gate._agent_cli(str(build), _seat()) == expected
+    assert gate._agent_cli(str(tmp_path / "missing" / build.name), _seat()) is None
+
+
+@pytest.mark.parametrize(
+    "seat",
+    ["none", "identity-mismatch", "background-group", "runs-the-current-build", "unreadable"],
+)
+def test_a_planted_versioned_sibling_is_no_agent_cli(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, seat: str
+) -> None:
+    # Anyone who can write the installer directory can copy a shell there under a version
+    # name. It counts only as the session's recorded CLI process in the foreground.
+    installed = tmp_path / ".grok" / "downloads" / "grok-1.0.78-macos-aarch64"
+    _install(monkeypatch, "grok", installed)
+    planted = _file(tmp_path / ".grok" / "downloads" / "grok-9.9.9-macos-aarch64")
+    if seat == "identity-mismatch":
+        _seat_process(monkeypatch, planted, identity=False)
+    elif seat == "background-group":
+        _seat_process(monkeypatch, planted, group=FOREGROUND_GROUP + 1)
+    elif seat == "runs-the-current-build":
+        _seat_process(monkeypatch, installed)
+    else:
+        _seat_process(monkeypatch, planted)
+    if seat == "unreadable":
+        monkeypatch.setattr(gate, "group_and_executable", lambda pid: None)
+
+    assert gate._agent_cli(str(planted), None if seat == "none" else _seat()) is None
 
 
 @pytest.mark.parametrize("cli", sorted(gate._AGENT_CLIS))
@@ -306,10 +380,10 @@ def test_a_program_named_like_an_agent_cli_is_not_one(
     linked.parent.mkdir()
     linked.symlink_to(planted)
 
-    assert gate._agent_cli(str(tmp_path / "installed" / cli)) == cli
-    assert gate._agent_cli(str(planted)) is None
-    assert gate._agent_cli(str(linked)) is None
-    assert gate._agent_cli(cli) is None
+    assert gate._agent_cli(str(tmp_path / "installed" / cli), None) == cli
+    assert gate._agent_cli(str(planted), None) is None
+    assert gate._agent_cli(str(linked), None) is None
+    assert gate._agent_cli(cli, None) is None
 
 
 @pytest.mark.asyncio
@@ -318,15 +392,22 @@ async def test_a_password_line_above_an_idle_prompt_is_not_a_credential_prompt(
 ) -> None:
     manager = _scene(monkeypatch, snapshot=f"Password: \n{IDLE_COMPOSER}")
 
-    assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
+    assert (
+        await gate.send_keys_target_refusal(SESSION_ID, manager, object(), terminal_context=None)
+        is None
+    )
 
 
 @pytest.mark.asyncio
 async def test_missing_manager_or_registry_refuses(monkeypatch: pytest.MonkeyPatch) -> None:
     _scene(monkeypatch)
 
-    no_manager = await gate.send_keys_target_refusal(SESSION_ID, None, object())
-    no_registry = await gate.send_keys_target_refusal(SESSION_ID, _Manager(_terminal(), None), None)
+    no_manager = await gate.send_keys_target_refusal(
+        SESSION_ID, None, object(), terminal_context=None
+    )
+    no_registry = await gate.send_keys_target_refusal(
+        SESSION_ID, _Manager(_terminal(), None), None, terminal_context=None
+    )
 
     assert isinstance(no_manager, gate.SendKeysRefusal)
     assert no_manager.code == "send_keys_target_unconfirmed"
@@ -336,7 +417,7 @@ async def test_missing_manager_or_registry_refuses(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("via_symlink", [False, True], ids=["direct", "symlink"])
-async def test_admits_an_idle_composer_on_a_versioned_claude_build(
+async def test_admits_an_idle_composer_on_the_seats_own_versioned_claude_build(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, via_symlink: bool
 ) -> None:
     # The session still runs 2.1.314 after the installer moved the launcher to 2.1.320.
@@ -347,9 +428,21 @@ async def test_admits_an_idle_composer_on_a_versioned_claude_build(
         executable = tmp_path / "bin" / "cli"
         executable.parent.mkdir()
         executable.symlink_to(build)
+    _seat_process(monkeypatch, executable)
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: str(executable)})
 
-    assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
+    assert (
+        await gate.send_keys_target_refusal(
+            SESSION_ID, manager, object(), terminal_context=SEAT_CONTEXT
+        )
+        is None
+    )
+    # Without the session's recorded process, the superseded build proves nothing.
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None
+    )
+    assert isinstance(refusal, gate.SendKeysRefusal)
+    assert refusal.code == "send_keys_target_unconfirmed"
 
 
 @pytest.mark.asyncio
@@ -365,7 +458,9 @@ async def test_refuses_an_unknown_versioned_binary(
     build = _file(tmp_path / relative)
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: str(build)})
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None
+    )
 
     assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_target_unconfirmed"
@@ -379,7 +474,9 @@ async def test_refuses_a_versioned_path_that_does_not_exist(
     missing = tmp_path / "claude" / "versions" / "2.1.314"
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: str(missing)})
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None
+    )
 
     assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_target_unconfirmed"
@@ -404,7 +501,9 @@ async def test_a_busy_rule_timeout_over_a_hook_denial_refuses(
 ) -> None:
     manager = _scene(monkeypatch, snapshot=HOOK_DENIAL_OVER_LIVE_TURN)
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None
+    )
 
     assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_composer_not_idle"
@@ -610,12 +709,17 @@ async def test_clear_key_drains_a_held_wake_line_so_the_next_wake_types_fresh(
     pane = _Pane(IDLE_COMPOSER)
     manager = _scene(monkeypatch, composer=None, live_pane=pane)
 
-    cleared = await gate.send_keys_target_refusal(SESSION_ID, manager, object(), clear_held=True)
+    cleared = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None, clear_held=True
+    )
 
     assert isinstance(cleared, gate.ComposerCleared)
     assert "ctrl_u" in pane.keys
     assert read_composer(TERMINAL_ID).state == "empty"
-    assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
+    assert (
+        await gate.send_keys_target_refusal(SESSION_ID, manager, object(), terminal_context=None)
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -633,7 +737,9 @@ async def test_a_bare_shell_or_credential_prompt_is_refused_with_an_empty_compos
     # An empty ledger isolates the target check: a draft would refuse first on composer state.
     manager = _scene(monkeypatch, **overrides)
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None
+    )
 
     assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == code
@@ -647,7 +753,9 @@ async def test_a_visible_draft_refuses_an_idle_agent_composer(
     draft_frame = "────────────────────\n❯ hello\n────────────────────"
     manager = _scene(monkeypatch, composer="draft", snapshot=draft_frame)
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None
+    )
 
     assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_composer_not_idle"
@@ -758,7 +866,10 @@ async def test_srt_runner_admits_an_idle_composer_on_its_native_claude_child(
     _srt_pane(monkeypatch, tmp_path, [_SrtChild(SRT_CHILD_PID, str(build))])
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"})
 
-    assert await gate.send_keys_target_refusal(SESSION_ID, manager, object()) is None
+    assert (
+        await gate.send_keys_target_refusal(SESSION_ID, manager, object(), terminal_context=None)
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -779,7 +890,9 @@ async def test_srt_runner_refuses_without_a_live_agent_cli_child(
     _srt_pane(monkeypatch, tmp_path, children)
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"})
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None
+    )
 
     assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_target_unconfirmed"
@@ -797,7 +910,9 @@ async def test_a_runner_copy_outside_the_installed_root_admits_nothing(
     monkeypatch.setattr(gate, "foreground_node_script", lambda pid: str(copy))
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"})
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None
+    )
 
     assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == "send_keys_target_unconfirmed"
@@ -821,7 +936,9 @@ async def test_srt_admission_leaves_the_composer_checks_in_force(
     _srt_pane(monkeypatch, tmp_path, [_SrtChild(SRT_CHILD_PID, str(build))])
     manager = _scene(monkeypatch, foreground={TERMINAL_ID: "/opt/homebrew/bin/node"}, **overrides)
 
-    refusal = await gate.send_keys_target_refusal(SESSION_ID, manager, object())
+    refusal = await gate.send_keys_target_refusal(
+        SESSION_ID, manager, object(), terminal_context=None
+    )
 
     assert isinstance(refusal, gate.SendKeysRefusal)
     assert refusal.code == code
