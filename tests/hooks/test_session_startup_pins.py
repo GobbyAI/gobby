@@ -520,3 +520,46 @@ def test_an_antigravity_first_invocation_starts_and_pins_its_session(
     context = parse_terminal_context_value(row["terminal_context"])
     assert context is not None
     assert context["parent_pid"] == victim_cli
+
+
+def test_the_protected_branch_guard_is_not_a_cli_session_claim(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    victim_cli: int,
+) -> None:
+    """A git guard names the committing session; it never pins or owns a git session row."""
+    _machine_caller(hook_route)
+    committer = _live_row(
+        temp_db, session_manager, sample_project, StartupPin(victim_cli, _started(victim_cli))
+    )
+    identity = {
+        **_identity(_fresh_workspace(tmp_path, sample_project)),
+        "session_id": committer.id,
+    }
+
+    with _as(_claimant(os.getpid())):
+        verdict = hook_route.client.post(
+            "/api/hooks/execute",
+            headers={"X-Gobby-Peer-Port": "53412", "X-Gobby-Session-Id": committer.id},
+            json={
+                "schema_version": SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
+                "critical": False,
+                "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
+                "hook_type": "PreToolUse",
+                "source": "git",
+                "input_data": {
+                    **identity,
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "git commit"},
+                    "staged_paths": ["README.md"],
+                    "integration_branch": "0.5.0",
+                },
+            },
+        )
+
+    assert verdict.status_code == 200, verdict.text
+    assert temp_db.fetchone("SELECT 1 FROM sessions WHERE source = 'git'") is None

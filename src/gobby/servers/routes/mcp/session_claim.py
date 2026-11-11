@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Final
 from fastapi import Request
 
 from gobby.hooks import session_claimant
+from gobby.hooks.events import SessionSource
 from gobby.hooks.session_claimant import SessionStartClaim
 from gobby.hooks.session_credential import (
     SESSION_CREDENTIAL_FIELD,
@@ -52,6 +53,10 @@ def claim_hook(server: HTTPServer, request: Request, payload: dict[str, Any]) ->
     body's parent pid removed, so its row never names an owner it could later mint for.
     """
     if request.headers.get(AGENT_RUN_ID_HEADER):
+        return SessionStartClaim()
+    if payload.get("source") == SessionSource.GIT:
+        # The protected-branch guard names the committing session; it is no CLI and
+        # never owns, pins or mints a session row of its own.
         return SessionStartClaim()
     identity = server.auth_service.verified_front_door_identity(request)
     input_data = payload.get("input_data")
