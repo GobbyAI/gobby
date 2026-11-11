@@ -60,7 +60,12 @@ def test_current_claude_and_grok_hooks_are_required() -> None:
         "PostToolBatch",
         "MessageDisplay",
         "DirectoryAdded",
+        "PreModelSwitch",
+        "PostModelSwitch",
     } <= claude_required
+    assert {"PreModelRequest", "PostModelRequest"} <= set(
+        validate_settings.CLI_VALIDATION_CONFIGS["codex"].required_hooks
+    )
     assert {
         "PostCompact",
         "PermissionDenied",

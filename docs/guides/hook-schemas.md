@@ -207,6 +207,8 @@ passes kebab-case hook types to the daemon.
 | `worktree-remove` | `WorktreeRemove` | `worktree_remove` | `worktree_remove` |
 | `pre-compact` | `PreCompact` | `pre_compact` | `pre_compact` |
 | `post-compact` | `PostCompact` | `post_compact` | `post_compact` |
+| `pre-model-switch` | `PreModelSwitch` | `pre_model_switch` | `pre_model_switch` |
+| `post-model-switch` | `PostModelSwitch` | `post_model_switch` | `post_model_switch` |
 | `session-end` | `SessionEnd` | `session_end` | `session_end` |
 | `elicitation` | `Elicitation` | `elicitation` | `elicitation` |
 | `elicitation-result` | `ElicitationResult` | `elicitation_result` | `elicitation_result` |
@@ -241,7 +243,20 @@ integration, but they are not the installed terminal hook contract.
 | `PostToolUse` | `after_tool` | `after_tool` |
 | `PreCompact` | `pre_compact` | `pre_compact` |
 | `PostCompact` | `post_compact` | `post_compact` |
+| `PreModelRequest` | `before_model` | `before_model` |
+| `PostModelRequest` | `after_model` | `after_model` |
 | `Stop` | `stop` | `turn_end` |
+
+Claude `PreModelSwitch` and `PostModelSwitch` are observed and allowed. The
+session's model label still comes from the transcript, because `to_model` can
+be an alias. Claude blocks the switch when a `PreModelSwitch` hook times out,
+so the installed 120-second timeout sits outside ghook's 30-second transport
+window: a slow daemon fails open and `/model` proceeds.
+
+Codex `PreModelRequest` is synchronous so it orders before the turn's `Stop`;
+it marks the turn as working. `PostModelRequest` is fire-and-forget
+(`--enqueue-only`). Codex treats both outputs as diagnostic only, so the adapter
+returns `{}`. Token usage stays with the transcript ledger.
 
 Codex `PreToolUse` and `Stop` responses use `systemMessage` for context; Codex
 does not accept `additionalContext` for those hooks.

@@ -47,6 +47,8 @@ class TestRuleTriggerEvent:
         assert RuleTriggerEvent.BEFORE_TOOL_SELECTION == "before_tool_selection"
         assert RuleTriggerEvent.BEFORE_MODEL == "before_model"
         assert RuleTriggerEvent.AFTER_MODEL == "after_model"
+        assert RuleTriggerEvent.PRE_MODEL_SWITCH == "pre_model_switch"
+        assert RuleTriggerEvent.POST_MODEL_SWITCH == "post_model_switch"
         assert RuleTriggerEvent.SUBAGENT_START == "subagent_start"
         assert RuleTriggerEvent.SUBAGENT_STOP == "subagent_stop"
         assert RuleTriggerEvent.PERMISSION_REQUEST == "permission_request"

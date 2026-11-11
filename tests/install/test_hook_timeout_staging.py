@@ -69,3 +69,25 @@ def test_codex_template_keeps_session_end_enqueue_only() -> None:
     assert session_end["timeout"] == 3
     assert "--enqueue-only" in session_end["command"]
     assert set(_timeout_values(template)) == {3, 120}
+
+
+def test_codex_model_request_hooks_order_pre_and_enqueue_post() -> None:
+    template = json.loads(Path("src/gobby/install/codex/hooks-template.json").read_text())
+    pre = template["hooks"]["PreModelRequest"][0]["hooks"][0]
+    post = template["hooks"]["PostModelRequest"][0]["hooks"][0]
+
+    # PreModelRequest marks the turn as working, so it must finish before the turn's Stop.
+    assert "--enqueue-only" not in pre["command"]
+    assert pre["timeout"] == 120
+    assert post["command"].endswith("--type=PostModelRequest --enqueue-only")
+    assert post["timeout"] == 3
+
+
+def test_claude_model_switch_timeout_outlasts_ghook_window() -> None:
+    template = json.loads(Path("src/gobby/install/claude/hooks-template.json").read_text())
+
+    # Claude blocks /model when a PreModelSwitch hook times out; ghook must give up first.
+    for event in ("PreModelSwitch", "PostModelSwitch"):
+        handler = template["hooks"][event][0]["hooks"][0]
+        assert "matcher" not in template["hooks"][event][0]
+        assert handler["timeout"] > HOOK_TRANSPORT_WINDOW_SECONDS

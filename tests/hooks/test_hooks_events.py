@@ -41,6 +41,8 @@ class TestHookEventType:
         """Test model lifecycle event types."""
         assert HookEventType.BEFORE_MODEL.value == "before_model"
         assert HookEventType.AFTER_MODEL.value == "after_model"
+        assert HookEventType.PRE_MODEL_SWITCH.value == "pre_model_switch"
+        assert HookEventType.POST_MODEL_SWITCH.value == "post_model_switch"
 
     def test_other_events(self) -> None:
         """Test other event types."""
@@ -243,7 +245,13 @@ class TestEventTypeCLISupport:
     def test_cli_specific_events(self) -> None:
         """Test CLI-specific event support."""
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["claude"] is None
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["codex"] is None
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["codex"] == "PreModelRequest"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_MODEL]["codex"] == "PostModelRequest"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.PRE_MODEL_SWITCH]["claude"] == "PreModelSwitch"
+        assert (
+            EVENT_TYPE_CLI_SUPPORT[HookEventType.POST_MODEL_SWITCH]["claude"] == "PostModelSwitch"
+        )
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.PRE_MODEL_SWITCH]["codex"] is None
 
         # Claude and Codex expose subagent lifecycle events.
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["claude"] == "SubagentStart"

@@ -68,6 +68,8 @@ CODEX_HOOK_EVENT_KEY_LABELS: dict[str, str] = {
     "Stop": "stop",
     "Interrupt": "interrupt",
     "SessionEnd": "session_end",
+    "PreModelRequest": "pre_model_request",
+    "PostModelRequest": "post_model_request",
 }
 
 CODEX_MATCHER_HASH_EVENTS = {

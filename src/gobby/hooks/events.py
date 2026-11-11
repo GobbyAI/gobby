@@ -57,6 +57,8 @@ class HookEventType(str, Enum):
     # Model lifecycle
     BEFORE_MODEL = "before_model"
     AFTER_MODEL = "after_model"
+    PRE_MODEL_SWITCH = "pre_model_switch"
+    POST_MODEL_SWITCH = "post_model_switch"
 
     # Context management
     PRE_COMPACT = "pre_compact"  # Claude/Codex: PreCompact, ACP CLIs: PreCompress
@@ -340,10 +342,18 @@ EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
     },
     HookEventType.BEFORE_MODEL: {
         "claude": None,
-        "codex": None,
+        "codex": "PreModelRequest",
     },
     HookEventType.AFTER_MODEL: {
         "claude": None,
+        "codex": "PostModelRequest",
+    },
+    HookEventType.PRE_MODEL_SWITCH: {
+        "claude": "PreModelSwitch",
+        "codex": None,
+    },
+    HookEventType.POST_MODEL_SWITCH: {
+        "claude": "PostModelSwitch",
         "codex": None,
     },
     HookEventType.PRE_COMPACT: {

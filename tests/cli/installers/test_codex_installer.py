@@ -28,6 +28,8 @@ EXPECTED_HOOK_EVENTS: Final[tuple[str, ...]] = (
     "SubagentStop",
     "Stop",
     "Interrupt",
+    "PreModelRequest",
+    "PostModelRequest",
 )
 EXPECTED_HOOK_EVENT_SET: Final[set[str]] = set(EXPECTED_HOOK_EVENTS)
 HOOKS_WITH_MATCHERS: Final[set[str]] = {"PreToolUse", "PermissionRequest", "PostToolUse"}
@@ -44,6 +46,8 @@ EVENT_KEY_LABELS: Final[dict[str, str]] = {
     "SubagentStop": "subagent_stop",
     "Stop": "stop",
     "Interrupt": "interrupt",
+    "PreModelRequest": "pre_model_request",
+    "PostModelRequest": "post_model_request",
 }
 
 

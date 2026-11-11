@@ -274,6 +274,8 @@ CODEX_EVENT_MAP: dict[str, HookEventType] = {
     "Stop": HookEventType.STOP,
     "Interrupt": HookEventType.INTERRUPT,
     "SessionEnd": HookEventType.SESSION_END,
+    "PreModelRequest": HookEventType.BEFORE_MODEL,
+    "PostModelRequest": HookEventType.AFTER_MODEL,
 }
 
 CODEX_ADDITIONAL_CONTEXT_HOOKS = frozenset(
@@ -312,6 +314,8 @@ def _codex_capabilities() -> ProviderCapabilities:
             "UserPromptSubmit",
             "PostToolUse",
             "Interrupt",
+            "PreModelRequest",
+            "PostModelRequest",
         }:
             decision_style = ProviderDecisionStyle.NONE
 
