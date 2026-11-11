@@ -57,8 +57,9 @@ from gobby.hooks.session_claimant import SessionStartClaim
 from gobby.hooks.session_credential import (
     SESSION_CREDENTIAL_FIELD,
     is_session_start_hook,
-    mint_session_credential,
+    mint_for_claim,
 )
+from gobby.hooks.session_startup_pins import startup_pins
 from gobby.hooks.startup_claim_preflight import (
     StartupClaimLease,
     StartupClaimPreflightTimeout,
@@ -180,6 +181,7 @@ def _claim_session_start(
         external_id=external_id,
         source=source,
         machine_id=identity.machine_id,
+        pinned_cli_pid=startup_pins(server).pinned((identity.machine_id, source, external_id)),
     )
     if claim.refusal is None and claim.cli_pid is not None:
         terminal_context = input_data.get("terminal_context")
@@ -201,9 +203,9 @@ def _attach_session_credential(
 ) -> dict[str, Any]:
     """Hand a machine-started session its own token after its hook is persisted.
 
-    Only a kernel-proven claimant gets one, on a start or on the hook that materializes a
-    deferred startup's row, which must store the claim's CLI pid. A managed or run-bound
-    caller never reaches this branch; a daemon replay or an unproven hook mints nothing.
+    Only a kernel-proven claimant gets one, on a start or on the hook that creates a
+    deferred startup's row from the CLI that startup pinned (mint_for_claim). A managed or
+    run-bound caller never reaches this branch; a daemon replay or unproven hook mints none.
     """
     start = is_session_start_hook(payload.get("source"), payload.get("hook_type"))
     if not claim.proven or (claim.cli_pid is None and not start):
@@ -219,13 +221,15 @@ def _attach_session_credential(
     if external_id is None or db is None:
         return response
     try:
-        credential = mint_session_credential(
+        credential = mint_for_claim(
             db,
+            startup_pins(server),
             signing_key=server.auth_service.managed_signing_key(),
             external_id=external_id,
             source=source,
             machine_id=identity.machine_id,
-            owner_cli_pid=claim.cli_pid,
+            start=start,
+            cli_pid=claim.cli_pid,
         )
     except Exception as exc:
         logger.warning("Session credential mint failed: %s", type(exc).__name__)

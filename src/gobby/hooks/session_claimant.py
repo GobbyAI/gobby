@@ -149,6 +149,7 @@ def claim_session_start(
     external_id: str,
     source: str,
     machine_id: str,
+    pinned_cli_pid: int | None = None,
 ) -> SessionStartClaim:
     """Decide what a machine-bearer SessionStart may do for its kernel-attested claimant.
 
@@ -156,6 +157,8 @@ def claim_session_start(
     refused. An existing session is refused unless its stored CLI pid is the claimant's.
     A new session is proven by its claimant's CLI pid, which the handler records. That is
     the stabilized pid the live check compares, not the raw parent of a Droid exec backend.
+    ``pinned_cli_pid`` is the CLI a deferred startup proved: a hook from any other CLI may
+    not create that session's row.
     """
     if claimant is None:
         return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
@@ -180,6 +183,9 @@ def claim_session_start(
         )
         return SessionStartClaim()
     if live is None:
+        if pinned_cli_pid is not None and pinned_cli_pid != claimant.cli_pid:
+            logger.warning("Machine hook claimant is not the CLI its deferred startup proved")
+            return SessionStartClaim(refusal=SESSION_CLAIMANT_MISMATCH)
         return SessionStartClaim(proven=True, cli_pid=claimant.cli_pid)
     if live.parent_pid != claimant.cli_pid:
         logger.warning("Machine SessionStart claimant does not own the live session")

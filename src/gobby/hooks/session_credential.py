@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.hooks.events import HookEventType
+from gobby.hooks.session_startup_pins import StartupPins
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.terminal_context import parse_terminal_context_value
@@ -31,6 +32,41 @@ def is_session_start_hook(source: object, hook_type: object) -> bool:
     except ValueError:
         return False
     return capability is not None and capability.event_type == HookEventType.SESSION_START
+
+
+def mint_for_claim(
+    db: HubDatabase,
+    pins: StartupPins,
+    *,
+    signing_key: bytes | None,
+    external_id: str,
+    source: str,
+    machine_id: str,
+    start: bool,
+    cli_pid: int | None,
+) -> dict[str, Any] | None:
+    """Mint for a proven claim on a start or on the hook that creates a deferred row.
+
+    A start whose row is deferred mints nothing yet and pins its CLI. The hook that later
+    creates the row mints only for that pinned CLI, which the row then stores, so the
+    token is bound when the session receives its id.
+    """
+    key = (machine_id, source, external_id)
+    if not start and (cli_pid is None or pins.pinned(key) != cli_pid):
+        return None
+    credential = mint_session_credential(
+        db,
+        signing_key=signing_key,
+        external_id=external_id,
+        source=source,
+        machine_id=machine_id,
+        owner_cli_pid=cli_pid,
+    )
+    if credential is not None:
+        pins.release(key)
+    elif start and cli_pid is not None:
+        pins.pin(key, cli_pid)
+    return credential
 
 
 def mint_session_credential(

@@ -886,6 +886,85 @@ def test_fresh_startup_receives_its_credential_on_the_hook_that_materializes_it(
     assert SESSION_CREDENTIAL_FIELD not in foreign.text
 
 
+def _fresh_workspace(tmp_path: Path, project: dict[str, Any]) -> Path:
+    workspace = tmp_path / "workspace"
+    (workspace / ".gobby").mkdir(parents=True)
+    (workspace / ".gobby" / "project.json").write_text(json.dumps({"id": project["id"]}))
+    return workspace
+
+
+def _activity(route: HookRoute, identity: dict[str, Any]) -> Any:
+    return _hook_response(
+        route,
+        hook_type="user-prompt-submit",
+        source="claude",
+        input_data={**identity, "hook_event_name": "UserPromptSubmit", "prompt": "go"},
+    )
+
+
+def test_a_foreign_cli_cannot_create_a_deferred_startups_row(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    live_cli_claimant: Claimant,
+) -> None:
+    """The deferred startup pins its proven CLI; another CLI's first hook is refused.
+
+    A process that learns the thread id after launch cannot create the row, so it can
+    neither take the session's token nor lock the real CLI out of it.
+    """
+    _machine_caller(hook_route)
+    workspace = _fresh_workspace(tmp_path, sample_project)
+    external_id = "provider-session-pinned-startup"
+    identity = {"session_id": external_id, "cwd": str(workspace), "machine_id": TEST_MACHINE_ID}
+    _hook_response(
+        hook_route,
+        hook_type="session-start",
+        source="claude",
+        input_data={**identity, "hook_event_name": "SessionStart", "source": "startup"},
+    )
+
+    other_cli = Claimant(pid=HOOK_PID, parent_pid=OTHER_CLI_PID, cli_pid=OTHER_CLI_PID)
+    with patch("gobby.hooks.session_claimant.resolve_claimant", return_value=other_cli):
+        foreign = _activity(hook_route, identity)
+
+    assert foreign.status_code == 403
+    assert foreign.json() == {"code": "session_claimant_mismatch"}
+    assert SESSION_CREDENTIAL_FIELD not in foreign.text
+    row_query = "SELECT id FROM sessions WHERE external_id = %s AND source = 'claude'"
+    assert temp_db.fetchone(row_query, (external_id,)) is None
+
+    own = _activity(hook_route, identity)
+
+    assert own.status_code == 200, own.text
+    row = temp_db.fetchone(row_query, (external_id,))
+    assert row is not None
+    assert own.json()[SESSION_CREDENTIAL_FIELD]["session_id"] == row["id"]
+
+
+def test_a_first_activity_with_no_pinned_startup_mints_nothing(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    live_cli_claimant: Claimant,
+) -> None:
+    """Without a deferred startup's pin, no proof binds the thread to this CLI."""
+    _machine_caller(hook_route)
+    workspace = _fresh_workspace(tmp_path, sample_project)
+    identity = {
+        "session_id": "provider-session-never-started",
+        "cwd": str(workspace),
+        "machine_id": TEST_MACHINE_ID,
+    }
+
+    response = _activity(hook_route, identity)
+
+    assert response.status_code == 200, response.text
+    assert SESSION_CREDENTIAL_FIELD not in response.json()
+
+
 def test_an_attested_activity_hook_on_a_live_session_mints_nothing(
     hook_route: HookRoute, started_session: Any, cli_claimant: Claimant
 ) -> None:
