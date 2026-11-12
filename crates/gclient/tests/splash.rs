@@ -10,7 +10,7 @@ use gobby_client::daemon::{
 use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::marks::{self, MarkPalette};
-use gobby_client::ui::{render_workspace, splash, status, Chrome};
+use gobby_client::ui::{render_workspace, render_workspace_with, splash, status, Chrome};
 use gobby_client::Workspace;
 use gobby_terminal::protocol::{CellData, FrameData, PaneModes, ServerMessage};
 use mock_daemon::MockDaemon;
@@ -222,9 +222,14 @@ async fn panes_keep_their_last_frame_while_the_daemon_is_away() {
     chrome.open_pane(pane, "terminal-1");
     chrome.compute_view(&workspace, Rect::new(0, 0, 80, 24));
     let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test terminal");
+    // Draw the pane bodies as the live loop does; the bare chrome draw leaves
+    // them blank.
+    let mut body = |frame: &mut ratatui::Frame<'_>, area, id| {
+        gobby_client::views::grid::render(frame, area, workspace.pane(id), false);
+    };
     terminal
         .draw(|frame| {
-            render_workspace(frame, &workspace, &chrome);
+            render_workspace_with(frame, &workspace, &chrome, &mut body);
         })
         .expect("render frozen pane");
     assert!(

@@ -245,6 +245,62 @@ pub(super) fn move_pane_to_tab(
     });
 }
 
+/// Move every pane of tab `from` into tab `to`, in layout order; the
+/// daemon removes `from` once its last pane leaves.
+pub(super) fn move_tab_to_tab(
+    workspace: &Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    outcomes: &UnboundedSender<JobOutcome>,
+    from: &str,
+    to: &str,
+) {
+    let panes = match tab_panes(chrome, from, to) {
+        Ok(panes) => panes,
+        Err(notice) => {
+            chrome.notify(notice);
+            return;
+        }
+    };
+    let ops = panes
+        .into_iter()
+        .map(|pane| WorkspaceOp::PaneMove {
+            pane,
+            tab: to.to_owned(),
+            beside: None,
+            axis: None,
+            node: None,
+        })
+        .collect();
+    let daemon = workspace.daemon().clone();
+    spawn_job(outcomes, op_tag(&daemon), async move {
+        JobResult::Ops {
+            unplaced: None,
+            result: send_ops(&daemon, ops).await,
+        }
+    });
+}
+
+/// The daemon pane IDs of tab `from`, in layout order, while it and `to`
+/// are both still open.
+fn tab_panes(chrome: &Chrome, from: &str, to: &str) -> Result<Vec<String>, Toast> {
+    let tabs = &chrome.tabs().tabs;
+    let Some(source) = tabs.iter().find(|tab| tab.id == from) else {
+        return Err(Toast::warning("Cannot move: that tab has closed"));
+    };
+    if !tabs.iter().any(|tab| tab.id == to) {
+        return Err(Toast::warning(
+            "Cannot move: the destination tab has closed",
+        ));
+    }
+    source
+        .layout
+        .pane_ids()
+        .into_iter()
+        .map(|slot| daemon_pane_id(chrome, slot))
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| Toast::warning("Cannot move: pane mapping unavailable"))
+}
+
 /// Build a grid with workspace-owned shells, so closing its panes also stops
 /// their terminals. The chain runs as one job: each split starts from the pane
 /// ID the previous reply returned.

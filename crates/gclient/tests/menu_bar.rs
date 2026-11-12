@@ -141,32 +141,6 @@ fn observable_state(fixture: &LiveMenuFixture) -> String {
 }
 
 #[test]
-fn agent_menu_lists_its_attention_actions_in_order() {
-    let workspace = Workspace::scripted();
-    let chrome = Chrome::dark();
-    let menu = build_menu(
-        &workspace,
-        &chrome,
-        ContextMenuKind::MenuBar(MenuBarMenu::Agent),
-        (0, 1),
-    );
-
-    let labels: Vec<_> = menu.items.iter().map(|item| item.label.as_ref()).collect();
-    assert_eq!(
-        labels,
-        [
-            "Respond",
-            "Mark seen",
-            "Open alert target",
-            "Next attention",
-            "Previous attention",
-        ]
-    );
-    assert!(!menu.items[0].enabled, "no pane can respond");
-    assert!(!menu.items[1].enabled, "no pane has unseen attention");
-}
-
-#[test]
 fn file_menu_lists_project_actions_and_help_holds_the_alert_log() {
     let workspace = Workspace::scripted();
     let chrome = Chrome::dark();
@@ -185,11 +159,9 @@ fn file_menu_lists_project_actions_and_help_holds_the_alert_log() {
             "New tab",
             "New project…",
             "Open project…",
-            "Rename tab",
-            "Sort tabs A–Z",
-            "Close tab",
             "Destroy orphaned terminals…",
-        ]
+        ],
+        "with no tab open, the tab rows are left out"
     );
     assert_eq!(
         labels(MenuBarMenu::Help),

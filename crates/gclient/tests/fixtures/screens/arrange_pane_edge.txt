@@ -1,6 +1,6 @@
 # gclient screen golden: arrange_pane_edge
 # 120x40, dark theme, colours normalised to theme::Palette roles
-00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
+00 | Gobby  File  Edit  View  Window  Help                                                                                  |
 00 : subtext0/dim+b*120
 01 | build      │ logs       │ +                                                                                            |
 01 : text/selection+b*12 line/surface0*1 subtext0/surface0*12 line/surface0*1 overlay1/surface0*3 text/surface0*91
@@ -22,16 +22,16 @@
 09 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*20 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
 10 |│                                                          ││       │ Even horizontal ││ Arrange ▸                 │   │|
 10 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 accent/panel_bg+bv*17 surface0/panel_bg*2 accent/panel_bg+bv*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
-11 |│                                                          ││       │ Even vertical   ││ Move to tab ▸             │   │|
-11 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 overlay0/panel_bg+d*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
-12 |│                                                          ││       │ Main horizontal ││ Copy mode                 │   │|
+11 |│                                                          ││       │ Even vertical   ││ Copy mode                 │   │|
+11 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
+12 |│                                                          ││       │ Main horizontal ││ Send right-clicks to pane │   │|
 12 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
-13 |│                                                          ││       │ Main vertical   ││ Send right-clicks to pane │   │|
+13 |│                                                          ││       │ Main vertical   ││ Close pane                │   │|
 13 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
-14 |│                                                          ││       │ Tiled           ││ Close pane                │   │|
-14 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
-15 |│                                                          ││       │ New grid…       │└───────────────────────────┘   │|
-15 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*30 text/panel_bg*3 accent/panel_bg*1
+14 |│                                                          ││       │ Tiled           │└───────────────────────────┘   │|
+14 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*30 text/panel_bg*3 accent/panel_bg*1
+15 |│                                                          ││       │ New grid…       │                                │|
+15 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 text/panel_bg*32 accent/panel_bg*1
 16 |│                                                          ││       └─────────────────┘                                │|
 16 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*19 text/panel_bg*32 accent/panel_bg*1
 17 |│                                                          ││                                                          │|

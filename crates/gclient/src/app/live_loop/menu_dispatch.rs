@@ -50,6 +50,9 @@ pub async fn apply_live_menu_action(
         MenuAction::MovePane { pane, tab } => {
             super::arrange::move_pane_to_tab(workspace, chrome, outcomes, pane, &tab);
         }
+        MenuAction::MoveTab { from, to } => {
+            super::arrange::move_tab_to_tab(workspace, chrome, outcomes, &from, &to);
+        }
         MenuAction::Act(action) => {
             focus_menu_target(workspace, chrome, outcomes, &kind).await?;
             if action == Action::Quit {

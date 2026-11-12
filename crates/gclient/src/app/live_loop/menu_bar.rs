@@ -1,4 +1,4 @@
-//! Items under the seven persistent menu-bar titles.
+//! Items under the six persistent menu-bar titles.
 
 use crate::ui::menu_bar::MenuBarMenu;
 use crate::ui::{Action, Chrome, WorkspaceView};
@@ -87,9 +87,7 @@ pub fn menu_bar_items<W: WorkspaceView>(
                 tab: tab.id.clone(),
                 pane: None,
             })));
-            items
-        }
-        MenuBarMenu::Agent => {
+            // The agent attention controls follow the pane controls.
             let focused = chrome.focused_pane();
             let entry = focused.and_then(|pane| blocked_entry(ws, pane));
             let has_entry = entry.is_some();
@@ -98,7 +96,7 @@ pub fn menu_bar_items<W: WorkspaceView>(
                 || attention
                     .first()
                     .is_some_and(|only| entry.as_ref() != Some(only));
-            vec![
+            items.extend([
                 enabled_if(act("Respond", Action::Respond), has_entry),
                 enabled_if(
                     item("Mark seen", MenuAction::MarkSeen(entry.unwrap_or_default())),
@@ -113,7 +111,8 @@ pub fn menu_bar_items<W: WorkspaceView>(
                     act("Previous attention", Action::PreviousAttention),
                     can_step,
                 ),
-            ]
+            ]);
+            items
         }
         MenuBarMenu::Help => vec![
             act("Keybinds", Action::Help),

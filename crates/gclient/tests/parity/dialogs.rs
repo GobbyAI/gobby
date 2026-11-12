@@ -704,20 +704,16 @@ fn context_menu_renders_anchored_and_clamped() {
     let mut chrome = Chrome::new(theme());
     chrome.open_tab(alpha, "");
     chrome.compute_view(&ws, AREA);
-    let (accent, text, overlay0) = (
-        chrome.palette.accent,
-        chrome.palette.text,
-        chrome.palette.overlay0,
-    );
-    let item = |label: &'static str, enabled: bool| MenuItem {
+    let (accent, text) = (chrome.palette.accent, chrome.palette.text);
+    let item = |label: &'static str| MenuItem {
         label: label.into(),
         action: MenuAction::Act(Action::NewTab),
-        enabled,
+        enabled: true,
     };
     let items = vec![
-        item("Rename pane", true),
-        item("Swap with focused pane", false),
-        item("Close pane", true),
+        item("Rename pane"),
+        item("Swap with focused pane"),
+        item("Close pane"),
     ];
     // `longest label + 4` wide and `items + 2` tall.
     let (width, height) = (26, 5);
@@ -778,13 +774,12 @@ fn context_menu_renders_anchored_and_clamped() {
         "selected row is reversed and bold: {:?}",
         selected.modifier
     );
-    let disabled = cell(&terminal, popup.x + 2, popup.y + 2);
-    assert_eq!(disabled.fg, overlay0);
-    assert!(disabled.modifier.contains(Modifier::DIM));
-    assert!(!disabled.modifier.contains(Modifier::REVERSED));
-    let plain = cell(&terminal, popup.x + 2, popup.y + 3);
-    assert_eq!(plain.fg, text);
-    assert_eq!(plain.modifier, Modifier::empty());
+    // Every other row is actionable and reads in one colour.
+    for row in [2, 3] {
+        let plain = cell(&terminal, popup.x + 2, popup.y + row);
+        assert_eq!(plain.fg, text, "row {row}");
+        assert_eq!(plain.modifier, Modifier::empty(), "row {row}");
+    }
     let far = chrome.view.terminal_area;
     assert!(
         !cell(&terminal, far.right() - 2, far.bottom() - 2)

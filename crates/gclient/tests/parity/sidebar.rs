@@ -1278,11 +1278,8 @@ fn agent_rows_follow_project_and_machine_filter() {
         .collect();
     assert_eq!(
         items,
-        [
-            ("✓ Show all machines", true),
-            ("  Show all projects", true),
-            ("  Group agents by project", false),
-        ]
+        [("✓ Show all machines", true), ("  Show all projects", true),],
+        "project grouping is left out while one project shows"
     );
     // A remote row filters to that machine and a second click returns to
     // local; the local row toggles `all`.

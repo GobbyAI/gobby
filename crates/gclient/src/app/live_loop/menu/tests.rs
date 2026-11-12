@@ -36,7 +36,7 @@ fn view_menu_exposes_sidebar_controls_without_a_section_tree() {
         (0, 0),
     );
     assert_eq!(view.items[6].label, "  Show all projects");
-    assert!(!view.items[7].enabled);
+    assert_eq!(view.items.len(), 7, "project grouping is left out");
 }
 
 #[test]
@@ -88,15 +88,61 @@ fn sort_tabs_needs_two_daemon_tabs_on_the_bar() {
             ContextMenuKind::MenuBar(MenuBarMenu::File),
             (0, 0),
         );
-        [&menu, &file].map(|menu| {
-            let sort = menu.items.iter().find(|item| item.label == "Sort tabs A–Z");
-            sort.expect("sort item").enabled
-        })
+        [&menu, &file].map(|menu| menu.items.iter().any(|item| item.label == "Sort tabs A–Z"))
     };
     assert_eq!(sort_enabled(&chrome), [true, true]);
 
     chrome.tabs_mut().tabs[1].id = "local-draft".to_owned();
     assert_eq!(sort_enabled(&chrome), [false, false]);
+}
+
+#[test]
+fn a_tab_menu_moves_the_whole_tab_into_another_daemon_tab() {
+    let mut ws = Workspace::scripted();
+    let mut chrome = Chrome::dark();
+    for (index, terminal) in ["term-a", "term-b", "term-c"].into_iter().enumerate() {
+        let pane = ws.open_terminal(terminal, "native", "epoch").unwrap();
+        chrome.open_tab(pane, terminal);
+        chrome.tabs_mut().tabs[index].id = format!("daemon-tab-{index}");
+    }
+    chrome.tabs_mut().tabs[2].id = "local-draft".to_owned();
+
+    let menu = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (3, 0));
+    let row = menu
+        .items
+        .iter()
+        .find(|item| item.label == "Move to tab ▸")
+        .expect("move row");
+    assert!(row.enabled);
+    let MenuAction::OpenSubmenu(submenu) = row.action.clone() else {
+        panic!("the row opens a submenu");
+    };
+    assert!(apply_local_menu_action(
+        &mut ws,
+        &mut chrome,
+        &MenuAction::OpenSubmenu(submenu)
+    ));
+    let open = chrome.menu.as_ref().expect("move submenu");
+    assert_eq!(
+        open.items
+            .iter()
+            .map(|item| (item.label.as_ref(), item.action.clone()))
+            .collect::<Vec<_>>(),
+        [(
+            "term-b",
+            MenuAction::MoveTab {
+                from: "daemon-tab-0".to_owned(),
+                to: "daemon-tab-1".to_owned(),
+            }
+        )],
+        "only the other daemon tab is a destination"
+    );
+
+    let local = build_menu(&ws, &chrome, ContextMenuKind::Tab(2), (3, 0));
+    assert!(
+        !local.items.iter().any(|item| item.label == "Move to tab ▸"),
+        "a local tab has no daemon panes to move"
+    );
 }
 
 #[test]
@@ -130,11 +176,11 @@ fn menus_list_items_per_target_and_state() {
             "Split down",
             "Zoom",
             "Arrange ▸",
-            "Move to tab ▸",
             "Copy mode",
             "Send right-clicks to pane",
             "Close pane",
-        ]
+        ],
+        "one tab leaves Move to tab ▸ out"
     );
     let tab_id = chrome.tabs().tabs[0].id.clone();
     assert_eq!(menu.items[1].action, MenuAction::SwapWithFocused(other));
@@ -146,12 +192,8 @@ fn menus_list_items_per_target_and_state() {
         })),
         "the pane's Arrange targets its own tab and remembers the pane"
     );
-    assert_eq!(
-        menu.items[6].action,
-        MenuAction::OpenSubmenu(Submenu::MoveToTab { pane: other })
-    );
-    assert_eq!(menu.items[8].action, MenuAction::TogglePassthrough(other));
-    assert_eq!(menu.items[9].action, MenuAction::Act(Action::ClosePane));
+    assert_eq!(menu.items[7].action, MenuAction::TogglePassthrough(other));
+    assert_eq!(menu.items[8].action, MenuAction::Act(Action::ClosePane));
     assert_eq!(
         (menu.kind, menu.anchor, menu.selected),
         (ContextMenuKind::Pane(other), (10, 5), 0)
@@ -184,7 +226,6 @@ fn menus_list_items_per_target_and_state() {
             "Split down",
             "Unzoom",
             "Arrange ▸",
-            "Move to tab ▸",
             "Respond",
             "Copy mode",
             "Use gclient menu",
@@ -192,18 +233,13 @@ fn menus_list_items_per_target_and_state() {
         ]
     );
     assert_eq!(menu.items[1].action, MenuAction::ClearPaneName(focused));
-    assert_eq!(menu.items[7].action, MenuAction::Respond(entry_id));
+    assert_eq!(menu.items[6].action, MenuAction::Respond(entry_id));
 
     let menu = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (3, 0));
     assert_eq!(
         labels(&menu),
-        [
-            "New tab",
-            "Rename tab",
-            "Arrange ▸",
-            "Sort tabs A–Z",
-            "Close tab"
-        ]
+        ["New tab", "Rename tab", "Arrange ▸", "Close tab"],
+        "one tab has nowhere to move and nothing to sort"
     );
     assert_eq!(
         menu.items[2].action,
@@ -212,12 +248,10 @@ fn menus_list_items_per_target_and_state() {
             pane: None,
         }))
     );
-    assert_eq!(menu.items[3].action, MenuAction::Act(Action::SortTabs));
-    assert!(!menu.items[3].enabled, "one tab has nothing to sort");
-    assert_eq!(menu.items[4].action, MenuAction::Act(Action::CloseTab));
+    assert_eq!(menu.items[3].action, MenuAction::Act(Action::CloseTab));
     let gone = build_menu(&ws, &chrome, ContextMenuKind::Tab(9), (3, 0));
     assert!(
-        !gone.items[2].enabled,
+        !labels(&gone).contains(&"Arrange ▸"),
         "a tab index with no tab offers no Arrange"
     );
 
@@ -322,10 +356,10 @@ fn menu_bar_menus_regroup_items_per_title() {
             "New project…",
             "Open project…",
             "Rename tab",
-            "Sort tabs A–Z",
             "Close tab",
             "Destroy orphaned terminals…",
-        ]
+        ],
+        "one tab has nothing to sort"
     );
     assert_eq!(
         actions(&file),
@@ -335,7 +369,6 @@ fn menu_bar_menus_regroup_items_per_title() {
             MenuAction::Act(Action::NewProject),
             MenuAction::Act(Action::OpenProject),
             MenuAction::Act(Action::RenameTab),
-            MenuAction::Act(Action::SortTabs),
             MenuAction::Act(Action::CloseTab),
             MenuAction::DestroyOrphans,
         ]
@@ -466,8 +499,9 @@ fn menu_bar_menus_regroup_items_per_title() {
     );
     let bare = menu(&ws, &Chrome::dark(), MenuBarMenu::Window);
     assert!(
-        !bare.items[5].enabled,
-        "with no tab open, Window offers no Arrange"
+        bare.items.is_empty(),
+        "with no tab open, Window leaves out every row it cannot act on: {:?}",
+        labels(&bare)
     );
     let mut empty = Chrome::dark();
     open_menu(
@@ -476,11 +510,10 @@ fn menu_bar_menus_regroup_items_per_title() {
         ContextMenuKind::MenuBar(MenuBarMenu::Window),
         (0, 1),
     );
-    empty.menu.as_mut().expect("window menu").selected = 5;
     assert_eq!(activate_menu(&mut empty), None);
     assert!(
         empty.menu.is_none() && empty.mode == Mode::Terminal,
-        "a disabled Arrange ▸ closes the menu like any disabled row"
+        "activating an empty menu closes it"
     );
 
     let help = menu(&ws, &chrome, MenuBarMenu::Help);
@@ -498,23 +531,13 @@ fn menu_bar_menus_regroup_items_per_title() {
         ]
     );
 
-    let agent = menu(&ws, &chrome, MenuBarMenu::Agent);
-    // Respond, Mark seen, Open alert target, Next attention, Previous attention.
-    assert_eq!(agent.items.len(), 5);
-    assert!(!agent.items[0].enabled);
-    assert!(!agent.items[1].enabled);
-
-    // With no pane focused, Edit shows its pane items disabled.
+    // With no pane focused, Edit leaves out its pane items.
     let edit = menu(&ws, &Chrome::dark(), MenuBarMenu::Edit);
-    assert_eq!(
-        labels(&edit),
-        ["Copy mode", "Rename pane", "Rename tab", "Rename terminal"]
-    );
-    assert!(edit.items.iter().all(|item| !item.enabled));
+    assert!(edit.items.is_empty(), "{:?}", labels(&edit));
 }
 
 #[test]
-fn agent_menu_disables_navigation_when_its_only_attention_is_focused() {
+fn window_menu_hides_navigation_when_its_only_attention_is_focused() {
     let mut ws = Workspace::scripted();
     let pane = ws
         .open_terminal("term-attention", "native", "epoch")
@@ -533,16 +556,23 @@ fn agent_menu_disables_navigation_when_its_only_attention_is_focused() {
     let menu = build_menu(
         &ws,
         &chrome,
-        ContextMenuKind::MenuBar(MenuBarMenu::Agent),
+        ContextMenuKind::MenuBar(MenuBarMenu::Window),
         (0, 1),
     );
-    assert!(menu.items[0].enabled);
-    assert!(menu.items[1].enabled);
-    assert!(!menu.items[3].enabled, "next would revisit the same pane");
-    assert!(
-        !menu.items[4].enabled,
-        "previous would revisit the same pane"
+    let entry_id = format!("run:{}", ws.pane(pane).terminal_id);
+    let tail: Vec<_> = menu.items[6..]
+        .iter()
+        .map(|item| (item.label.as_ref(), item.action.clone()))
+        .collect();
+    assert_eq!(
+        tail,
+        [
+            ("Respond", MenuAction::Act(Action::Respond)),
+            ("Mark seen", MenuAction::MarkSeen(entry_id)),
+        ],
+        "next and previous would revisit the same pane, so they are left out"
     );
+    assert!(menu.items.iter().all(|item| item.enabled));
 }
 
 #[test]
@@ -632,17 +662,11 @@ fn row_menu_labels_orphaned_rows() {
     );
     assert_eq!(
         labels(&menu),
-        [
-            "Focus",
-            "Open in new tab",
-            "Mark seen",
-            "Destroy orphaned terminal",
-        ]
+        ["Focus", "Open in new tab", "Destroy orphaned terminal",],
+        "nothing unseen leaves Mark seen out"
     );
-    let enabled: Vec<bool> = menu.items.iter().map(|item| item.enabled).collect();
-    assert_eq!(enabled, [true, true, false, true]);
     assert_eq!(
-        menu.items[3].action,
+        menu.items[2].action,
         MenuAction::DestroyTerminal("term-orphan".to_string())
     );
 
@@ -652,8 +676,10 @@ fn row_menu_labels_orphaned_rows() {
         ContextMenuKind::Agent("run:term-live".to_string()),
         (3, 22),
     );
-    assert_eq!(labels(&menu)[3], "Close terminal");
-    assert!(!menu.items[3].enabled, "no pane to close");
+    assert!(
+        !labels(&menu).contains(&"Close terminal"),
+        "no pane to close"
+    );
 }
 
 /// 5.3.1: the sidebar rows' menus. A git project with worktree children
@@ -731,9 +757,6 @@ fn row_menus_list_items_per_target_and_state() {
     let mut chrome = Chrome::dark();
     chrome.open_pane(blocked, "blocked");
     chrome.open_pane(held, "held");
-    let enabled = |menu: &ContextMenuState| -> Vec<bool> {
-        menu.items.iter().map(|item| item.enabled).collect()
-    };
     let git = || ContextMenuKind::Project("proj-git".to_string());
 
     // The git project with a child, folded then expanded; the plain one.
@@ -788,20 +811,19 @@ fn row_menus_list_items_per_target_and_state() {
     // The worktree row: rename and close wait for a tab tagged with it.
     let worktree = || ContextMenuKind::Worktree("wt-1".to_string());
     let menu = build_menu(&ws, &chrome, worktree(), (4, 4));
+    assert_eq!(labels(&menu), ["Delete worktree checkout…"]);
     assert_eq!(
-        labels(&menu),
-        ["Rename", "Close", "Delete worktree checkout…"]
-    );
-    assert_eq!(enabled(&menu), [false, false, true]);
-    assert_eq!(menu.items[0].action, MenuAction::Act(Action::RenameTab));
-    assert_eq!(menu.items[1].action, MenuAction::Act(Action::CloseTab));
-    assert_eq!(
-        menu.items[2].action,
+        menu.items[0].action,
         MenuAction::RemoveWorktree("wt-1".to_string())
     );
     chrome.active_tab_mut().expect("active tab").worktree_id = Some("wt-1".to_string());
     let menu = build_menu(&ws, &chrome, worktree(), (4, 4));
-    assert!(menu.items.iter().all(|item| item.enabled));
+    assert_eq!(
+        labels(&menu),
+        ["Rename", "Close", "Delete worktree checkout…"]
+    );
+    assert_eq!(menu.items[0].action, MenuAction::Act(Action::RenameTab));
+    assert_eq!(menu.items[1].action, MenuAction::Act(Action::CloseTab));
 
     // Agent rows: blocked and observed; plain and held; without a pane.
     let agent = |entry: &str| ContextMenuKind::Agent(entry.to_string());
@@ -838,16 +860,11 @@ fn row_menus_list_items_per_target_and_state() {
     let menu = build_menu(&ws, &chrome, agent("run:term-held"), (3, 22));
     assert_eq!(
         labels(&menu),
-        ["Focus", "Open in new tab", "Mark seen", "Close terminal",]
+        ["Focus", "Open in new tab", "Close terminal"]
     );
-    assert_eq!(enabled(&menu), [true, true, false, true]);
-    assert_eq!(menu.items[3].action, MenuAction::CloseTerminal(held));
+    assert_eq!(menu.items[2].action, MenuAction::CloseTerminal(held));
     let menu = build_menu(&ws, &chrome, agent("run:term-away"), (3, 24));
-    assert_eq!(
-        labels(&menu),
-        ["Focus", "Open in new tab", "Mark seen", "Close terminal",]
-    );
-    assert_eq!(enabled(&menu), [true, true, false, false]);
+    assert_eq!(labels(&menu), ["Focus", "Open in new tab"]);
 }
 
 #[test]

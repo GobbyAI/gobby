@@ -1248,7 +1248,7 @@ switch_project = "ctrl+1..9"
                     // moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "ff55add4cfdcdc143b51decadb080f20f60761a22c0e8bef3e89e64184c57154",
+                        "58656ae717ab360489f7d2c63315f42d8f2ced4d0f14b6f22c58d11aa92804af",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );

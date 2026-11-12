@@ -925,7 +925,7 @@ fn projects_agents_golden() {
     // sidebar under them.
     assert_eq!(
         rows[0].trim_end(),
-        " Gobby  File  Edit  View  Window  Agent  Help",
+        " Gobby  File  Edit  View  Window  Help",
         "menu-bar row"
     );
     let machines = row_containing(" Machines");

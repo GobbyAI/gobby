@@ -1,6 +1,6 @@
 # gclient screen golden: monochrome
 # 120x40, dark theme in grays, colours normalised to theme::Palette roles
-00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
+00 | Gobby  File  Edit  View  Window  Help                                                                                  |
 00 : subtext0/dim+b*120
 01 | Machines                                                                                                               |
 01 : text/surface0*1 subtext0/surface0+b*8 text/surface0*16 text/panel_bg*95

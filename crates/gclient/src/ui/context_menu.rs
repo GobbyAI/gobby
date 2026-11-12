@@ -15,7 +15,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::app::{item_rects, menu_rect, ContextMenuState, MenuItem};
+use crate::app::{item_rects, menu_rect, ContextMenuState};
 use crate::theme::Palette;
 use crate::ui::widgets::render_panel_shell;
 use crate::ui::Chrome;
@@ -49,7 +49,7 @@ fn draw_menu(
     }
     let rows = item_rects(popup, menu.items.len());
     for (index, (item, row)) in menu.items.iter().zip(&rows).enumerate() {
-        let style = row_style(palette, item, index == menu.selected);
+        let style = row_style(palette, index == menu.selected);
         frame.render_widget(
             Paragraph::new(format!(" {}", item.label)).style(style),
             *row,
@@ -101,25 +101,17 @@ fn place(start: u16, len: u16, low: u16, end: u16) -> u16 {
     placed.clamp(low, end.saturating_sub(len).max(low))
 }
 
-/// Rows carry their state by weight and reversal, never hue alone: the
-/// selected row is bold and reversed in `accent`, a disabled row dim in
-/// `overlay0`, and a disabled selected row reversed but still dim, so the
-/// pointer's place shows without promising an action.
-fn row_style(palette: &Palette, item: &MenuItem, selected: bool) -> Style {
-    let mut style = if item.enabled {
-        Style::new().fg(palette.text)
-    } else {
-        Style::new()
-            .fg(palette.overlay0)
-            .add_modifier(Modifier::DIM)
-    };
+/// Every row is actionable (menus leave disabled rows out), so each reads in
+/// `text`; the selected row is bold and reversed in `accent`, marked by
+/// weight and reversal as well as hue.
+fn row_style(palette: &Palette, selected: bool) -> Style {
     if selected {
-        style = style.add_modifier(Modifier::REVERSED);
-        if item.enabled {
-            style = style.fg(palette.accent).add_modifier(Modifier::BOLD);
-        }
+        Style::new()
+            .fg(palette.accent)
+            .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+    } else {
+        Style::new().fg(palette.text)
     }
-    style
 }
 
 #[cfg(test)]

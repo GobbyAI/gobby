@@ -227,7 +227,7 @@ fn hit_test_covers_split_live_layout() {
     // Row 0 is the menu bar: its titles, then the bar beside them.
     let menu_bar = view.menu_bar_rect;
     assert_eq!(menu_bar, Rect::new(0, 0, WIDTH, 1));
-    assert_eq!(view.menu_title_hit_areas.len(), 7);
+    assert_eq!(view.menu_title_hit_areas.len(), 6);
     for (index, rect) in &view.menu_title_hit_areas {
         assert_eq!(at(view, rect.x, rect.y), Hit::MenuTitle(*index));
         assert_eq!(at(view, rect.right() - 1, rect.y), Hit::MenuTitle(*index));

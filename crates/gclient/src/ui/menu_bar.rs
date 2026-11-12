@@ -1,5 +1,5 @@
 // upstream: none (Gobby's menu bar)
-//! The menu bar on row 0: seven titles, each opening its menu under itself.
+//! The menu bar on row 0: six titles, each opening its menu under itself.
 //!
 //! [`MenuBarMenu::ALL`] is the one definition of the title set and its
 //! order; the menus' items live with the other menu lists in
@@ -22,19 +22,17 @@ pub enum MenuBarMenu {
     Edit,
     View,
     Window,
-    Agent,
     Help,
 }
 
 impl MenuBarMenu {
     /// Every title in bar order (the signed chrome canvas's set).
-    pub const ALL: [MenuBarMenu; 7] = [
+    pub const ALL: [MenuBarMenu; 6] = [
         MenuBarMenu::Gobby,
         MenuBarMenu::File,
         MenuBarMenu::Edit,
         MenuBarMenu::View,
         MenuBarMenu::Window,
-        MenuBarMenu::Agent,
         MenuBarMenu::Help,
     ];
 
@@ -45,7 +43,6 @@ impl MenuBarMenu {
             MenuBarMenu::Edit => "Edit",
             MenuBarMenu::View => "View",
             MenuBarMenu::Window => "Window",
-            MenuBarMenu::Agent => "Agent",
             MenuBarMenu::Help => "Help",
         }
     }
@@ -142,7 +139,7 @@ mod tests {
 
         assert_eq!(
             row_text(&buffer, 0).trim_end(),
-            " Gobby  File  Edit  View  Window  Agent  Help"
+            " Gobby  File  Edit  View  Window  Help"
         );
         for x in 0..WIDTH {
             let cell = &buffer[(x, 0)];
@@ -162,8 +159,7 @@ mod tests {
                 (2, Rect::new(13, 0, 6, 1)),
                 (3, Rect::new(19, 0, 6, 1)),
                 (4, Rect::new(25, 0, 8, 1)),
-                (5, Rect::new(33, 0, 7, 1)),
-                (6, Rect::new(40, 0, 6, 1)),
+                (5, Rect::new(33, 0, 6, 1)),
             ]
         );
     }

@@ -48,6 +48,9 @@ pub enum Submenu {
     /// Move to tab ▸: the other tabs of this pane's project and machine, for
     /// the pane whose menu offered it.
     MoveToTab { pane: PaneId },
+    /// Move to tab ▸ on a tab's menu: the other tabs of its project and
+    /// machine, for moving every pane of `tab`.
+    MoveTabTo { tab: String },
 }
 
 impl Submenu {
@@ -55,7 +58,11 @@ impl Submenu {
     /// menu itself.
     fn parent(&self) -> Option<Self> {
         match self {
-            Self::Appearance | Self::Theme | Self::Arrange(_) | Self::MoveToTab { .. } => None,
+            Self::Appearance
+            | Self::Theme
+            | Self::Arrange(_)
+            | Self::MoveToTab { .. }
+            | Self::MoveTabTo { .. } => None,
         }
     }
 }
@@ -110,6 +117,11 @@ pub enum MenuAction {
     MovePane {
         pane: PaneId,
         tab: String,
+    },
+    /// Move every pane of tab `from` into tab `to`; `from` closes empty.
+    MoveTab {
+        from: String,
+        to: String,
     },
     OpenNewGrid,
     NewGrid {
@@ -206,7 +218,14 @@ pub fn build_menu<W: WorkspaceView>(
     menu_state(kind, anchor, items)
 }
 
-fn menu_state(kind: ContextMenuKind, anchor: (u16, u16), items: Vec<MenuItem>) -> ContextMenuState {
+/// A menu shows only what can act now: a disabled row is left out rather
+/// than drawn dim, so every row reads in one colour.
+fn menu_state(
+    kind: ContextMenuKind,
+    anchor: (u16, u16),
+    mut items: Vec<MenuItem>,
+) -> ContextMenuState {
+    items.retain(|item| item.enabled);
     let item_rects = item_rects(menu_rect(anchor, &items), items.len());
     ContextMenuState {
         kind,

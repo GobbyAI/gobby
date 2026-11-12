@@ -62,8 +62,50 @@ fn move_to_tab_row(chrome: &Chrome, pane: PaneId) -> MenuItem {
 /// One row per other daemon tab, named by its title. Empty when the pane's
 /// own tab is local or the pane is in no tab.
 fn move_to_tab_items(chrome: &Chrome, pane: PaneId) -> Vec<MenuItem> {
+    let source = chrome
+        .tabs()
+        .tabs
+        .iter()
+        .find(|tab| tab.slot_for(pane).is_some());
+    move_targets(chrome, source.map(|tab| tab.id.as_str()), |tab| {
+        MenuAction::MovePane { pane, tab }
+    })
+}
+
+/// The Move to tab ▸ row of the tab at `index`, moving all its panes;
+/// disabled when it has no tab to move to.
+fn move_tab_row(chrome: &Chrome, index: usize) -> MenuItem {
+    let tab = chrome.tabs().tabs.get(index).map(|tab| tab.id.clone());
+    let enabled = tab
+        .as_ref()
+        .is_some_and(|tab| !move_tab_items(chrome, tab).is_empty());
+    enabled_if(
+        item(
+            "Move to tab ▸",
+            MenuAction::OpenSubmenu(Submenu::MoveTabTo {
+                tab: tab.unwrap_or_default(),
+            }),
+        ),
+        enabled,
+    )
+}
+
+fn move_tab_items(chrome: &Chrome, from: &str) -> Vec<MenuItem> {
+    move_targets(chrome, Some(from), |to| MenuAction::MoveTab {
+        from: from.to_owned(),
+        to,
+    })
+}
+
+/// One row per daemon tab other than `source`, each acting through
+/// `action`; none when `source` is gone or local.
+fn move_targets(
+    chrome: &Chrome,
+    source: Option<&str>,
+    action: impl Fn(String) -> MenuAction,
+) -> Vec<MenuItem> {
     let tabs = &chrome.tabs().tabs;
-    let Some(source) = tabs.iter().find(|tab| tab.slot_for(pane).is_some()) else {
+    let Some(source) = source.and_then(|id| tabs.iter().find(|tab| tab.id == id)) else {
         return Vec::new();
     };
     if source.is_local() {
@@ -71,15 +113,7 @@ fn move_to_tab_items(chrome: &Chrome, pane: PaneId) -> Vec<MenuItem> {
     }
     tabs.iter()
         .filter(|tab| !tab.is_local() && tab.id != source.id)
-        .map(|tab| {
-            item(
-                tab.title.clone(),
-                MenuAction::MovePane {
-                    pane,
-                    tab: tab.id.clone(),
-                },
-            )
-        })
+        .map(|tab| item(tab.title.clone(), action(tab.id.clone())))
         .collect()
 }
 
@@ -141,6 +175,7 @@ pub(super) fn tab_items(chrome: &Chrome, index: usize) -> Vec<MenuItem> {
             tab: tab.id.clone(),
             pane: None,
         })),
+        move_tab_row(chrome, index),
         sort_tabs_item(chrome),
         item("Close tab", MenuAction::Act(Action::CloseTab)),
     ]
@@ -268,6 +303,7 @@ pub(super) fn submenu_items(chrome: &Chrome, submenu: &Submenu) -> Vec<MenuItem>
     match submenu {
         Submenu::Arrange(target) => arrange_items(target),
         Submenu::MoveToTab { pane } => move_to_tab_items(chrome, *pane),
+        Submenu::MoveTabTo { tab } => move_tab_items(chrome, tab),
         Submenu::Appearance => appearance_items(chrome),
         Submenu::Theme => theme_items(chrome),
     }

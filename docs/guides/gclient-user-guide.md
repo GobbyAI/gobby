@@ -78,8 +78,10 @@ tabs or panes. `esc` or `prefix+b` rolls the overlay up. **View ›
 Pin sidebar** pins it again. The menus remain usable while the client connects.
 
 **Menus.** Click a title on row 0 or move between open menus with the keyboard.
-Items that need a focused pane or an attention prompt are disabled
-when those conditions are absent. Slashes below separate alternative labels:
+A menu lists only the items that can act now: an item that needs a focused
+pane, a second tab or an attention prompt is left out while that condition is
+absent, so every listed item reads in one colour. Slashes below separate
+alternative labels:
 
 | Menu | Items |
 | --- | --- |
@@ -87,7 +89,7 @@ when those conditions are absent. Slashes below separate alternative labels:
 | File | New terminal, New tab, New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals… |
 | Edit | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name (when named), Send right-clicks to pane / Use gclient menu |
 | View | Appearance: Dark / Light / System ▸, Theme: Restored ▸, Monochrome, Show sidebar, Pin sidebar, Show all machines, Show all projects, Group agents by project |
-| Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled, New grid…) |
+| Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled, New grid…), Respond, Mark seen, Open alert target, Next / Previous attention |
 | Agent | Respond, Mark seen, Open alert target, Next attention, Previous attention |
 | Help | Keybinds, Alerts…, Daemon, About Gobby |
 
@@ -116,7 +118,7 @@ Monochrome** toggles monochrome (below). View also holds:
 | Pin sidebar | pins it beside the content, or unpins it to an overlay |
 | Show all machines | unchecked by default, so a new window lists this machine's rows; checked lists every machine on the hub |
 | Show all projects | checked by default; unchecked limits projects and agents to the current project |
-| Group agents by project | groups agents under project headings; disabled while Show all projects is unchecked |
+| Group agents by project | groups agents under project headings; hidden while Show all projects is unchecked |
 
 A `✓` marks a toggle in force; a `●` marks a theme or appearance choice.
 Selected choices stay enabled, and choosing them again changes nothing.
@@ -233,7 +235,7 @@ second after the section scrolls or while the navigate cursor is in it.
   walks left to its end, parks, and jumps home; every scrolling row and pane
   header shares one clock. Settings can reverse that direction or turn it off.
   **View › Show all projects** also sets the agents' scope. **Group agents
-  by project** adds project headings; it is disabled in current-project scope.
+  by project** adds project headings; it is hidden in current-project scope.
   Agent sort in Settings chooses Grouped (tab order, with runs nested under
   their parent session) or Priority (urgency order).
 - *Terminals* lists bare terminals without an agent row by their given pane
@@ -881,8 +883,8 @@ close.
 
 | Target | Items |
 | --- | --- |
-| Pane | Rename pane, Clear pane name, Swap with focused pane, Split right, Split down, Zoom / Unzoom, Arrange ▸ (for the pane's tab), Respond (when it needs you), Copy mode, Send right-clicks to pane / Use gclient menu, Close pane |
-| Tab | New tab, Rename tab, Arrange ▸ (for that tab), Sort tabs A–Z (with two or more workspace tabs on the bar), Close tab |
+| Pane | Rename pane, Clear pane name, Swap with focused pane, Split right, Split down, Zoom / Unzoom, Arrange ▸ (for the pane's tab), Move to tab ▸ (with another workspace tab), Respond (when it needs you), Copy mode, Send right-clicks to pane / Use gclient menu, Close pane |
+| Tab | New tab, Rename tab, Arrange ▸ (for that tab), Move to tab ▸ (moves every pane of the tab into the chosen tab and closes the emptied one), Sort tabs A–Z (with two or more workspace tabs on the bar), Close tab |
 | Project card | Rename, Close, New worktree, Open worktree…, Collapse / Expand |
 | Worktree row | Rename, Close, Delete worktree checkout… |
 | Agent or bare terminal row | Focus, Open in new tab, Respond (when it needs you), Mark seen, Close terminal / Destroy orphaned terminal (when orphaned) |
@@ -891,8 +893,7 @@ close.
 | **File** on the menu bar (click) | New terminal, New tab, New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals… |
 | **Edit** on the menu bar (click) | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name, Send right-clicks to pane / Use gclient menu |
 | **View** on the menu bar (click) | Appearance ▸, Theme ▸, Monochrome, Show sidebar, Pin sidebar, Show all machines, Show all projects, Group agents by project |
-| **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (five layouts, New grid…) |
-| **Agent** on the menu bar (click) | Respond, Mark seen, Open alert target, Next / Previous attention |
+| **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (five layouts, New grid…), Respond, Mark seen, Open alert target, Next / Previous attention |
 | **Help** on the menu bar (click) | Keybinds, Alerts…, Daemon, About Gobby |
 
 `Send right-clicks to pane` flips a per-pane flag so the pane's application gets

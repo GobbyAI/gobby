@@ -6672,8 +6672,8 @@ async fn sort_tabs_menu_reorders_by_title_and_reattaches_in_that_order() {
                 KeyModifiers::NONE,
             )
             .await;
-            // New tab, Rename tab, Arrange ▸, then Sort tabs A–Z.
-            for _ in 0..3 {
+            // New tab, Rename tab, Arrange ▸, Move to tab ▸, then Sort tabs A–Z.
+            for _ in 0..4 {
                 send_key(&input_tx, KeyCode::Down, KeyModifiers::NONE).await;
             }
             send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
@@ -7169,10 +7169,11 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         press(MouseButton::Left, item_cell(bare_cell, 6)).await;
         settle_live_event().await;
 
-        // The tab's menu: `close tab` (its fifth row) runs the confirm-close path.
+        // The tab's menu: `close tab` (its fourth row, as one tab has nowhere
+        // to move and nothing to sort) runs the confirm-close path.
         press(MouseButton::Right, tab_cell).await;
-        hover(item_cell(tab_cell, 4)).await;
-        press(MouseButton::Left, item_cell(tab_cell, 4)).await;
+        hover(item_cell(tab_cell, 3)).await;
+        press(MouseButton::Left, item_cell(tab_cell, 3)).await;
         settle_live_event().await;
         drop(input_tx);
         (initial, other)
@@ -10846,10 +10847,11 @@ async fn row_menus_dispatch_project_and_agent_actions() {
         .expect("the worktree shell attaches");
         settle_live_event().await;
 
-        // The child row's `delete worktree checkout…` asks; enter deletes.
+        // The child row's `delete worktree checkout…` asks; enter deletes. No
+        // tab is tagged with wt-1, so it is the only row.
         let fetched = gets(worktrees_path);
         press(MouseButton::Right, worktree_cell).await;
-        press(MouseButton::Left, item_cell(worktree_cell, 2)).await;
+        press(MouseButton::Left, item_cell(worktree_cell, 0)).await;
         key(KeyCode::Enter).await;
         wait_for_http_requests(&mock, "DELETE", "/api/source-control/worktrees/wt-1", 1).await;
         wait_for_http_requests(&mock, "GET", worktrees_path, fetched + 1).await;
@@ -11858,9 +11860,9 @@ async fn closing_a_bare_terminal_row_kills_that_row_not_the_focused_pane() {
             )
         };
         // `agent_items` for an unblocked bare row: focus, open in new tab,
-        // mark seen, close terminal.
+        // close terminal (nothing unseen leaves mark seen out).
         press(MouseButton::Right, anchor).await;
-        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 3)).await;
+        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 2)).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
         drop(input_tx);
     };
@@ -11971,8 +11973,8 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
             )
         };
         press(MouseButton::Right, anchor).await;
-        // Unblocked row: focus, open in new tab, mark seen, close.
-        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 3)).await;
+        // Unblocked row: focus, open in new tab, close (no mark seen).
+        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 2)).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
         // The kill is a job: its reply drops the pane and relists.
         wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
@@ -12097,8 +12099,8 @@ async fn closing_an_external_row_detaches_instead_of_killing_it() {
         tokio::time::advance(RENDER_TICK * 2).await;
         settle_live_event().await;
         tokio::time::resume();
-        // `close terminal` is the fourth item of an unblocked row's menu.
-        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 3)).await;
+        // `close terminal` is the third item of an unblocked row's menu.
+        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 2)).await;
         wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
         drop(input_tx);
     };
