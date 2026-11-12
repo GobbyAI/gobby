@@ -19,6 +19,34 @@ from tests.hooks.test_clear_successor_seat import _pane
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        'f=~/.gobby/bootstrap.yaml; test -r "$f"',
+        "test -r $'~/.gobby/bootstrap.yaml'",
+        r"test -r $'~/.gobby/\x62ootstrap.yaml'",
+        "dd if=~/.gobby/local_cli_token of=/dev/null bs=1 count=0",
+        'python -c \'import os; open(os.path.expanduser("~/.gobby/")+"bootstrap.yaml")\'',
+        "test -r ~/.gobby/Bootstrap.yaml",
+        "test -r ~/.Gobby/bootstrap.yaml",
+        "test -r ~/.gobby/.SECRET_KEK",
+    ],
+)
+def test_shell_operand_spellings_are_protected(credential_home: Path, command: str) -> None:
+    for name in ("bootstrap.yaml", "local_cli_token", ".secret_kek"):
+        (credential_home / name).write_text("synthetic")
+    assert credential_file_access(
+        {"tool_name": "Bash", "cwd": str(credential_home.parent.parent)}, {"command": command}
+    )
+
+
+def test_case_variant_direct_path_is_protected(credential_home: Path) -> None:
+    (credential_home / "bootstrap.yaml").write_text("synthetic")
+    assert credential_file_access(
+        {"tool_name": "Read"}, {"file_path": str(credential_home / "Bootstrap.yaml")}
+    )
+
+
 @pytest.mark.parametrize("name", [".secret_kek", ".secret_salt"])
 def test_globbed_parent_directory_is_protected(credential_home: Path, name: str) -> None:
     command = f"cat {credential_home.parent}/.gobb*/{name}"
