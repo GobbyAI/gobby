@@ -277,11 +277,13 @@ state inconsistent.
   `target/release/`; and the stamped coherent set is exactly `gcode`, `gdaemon`,
   `ghook`, so other `gobby-core` dependents such as `gclient` must be rebuilt alongside
   them but are promoted separately.
-  Every shipped binary whose crate or recursive path dependencies changed gets
-  a `0.0.1` patch-version bump in its shipping commit, with `Cargo.lock` updated.
-  Keep managed version pins and the gcode maintenance version floor in step.
-  Apply this to `gcode`, `gdaemon`, `ghook`, `gclient`, `gmcp`, and `gterm` only when
-  released. Unpublished binaries (`UNPUBLISHED_MANAGED_BINS` in
+  Source branches do not edit managed binary versions, lockfile version entries,
+  or managed pins. `land_commit` generates `0.0.1` patch bumps against the locked
+  `0.5.0` tip for each affected binary dependency closure, updating `Cargo.lock`
+  and managed pins in a verified mechanical commit. Epic-child landings do not
+  bump. Maintenance version floors derive from the managed pins.
+  This covers `gcode`, `gdaemon`, `ghook`, `gclient`, `gmcp`, and `gterm`, including
+  unpublished managed binaries; publishing remains separate. Unpublished binaries (`UNPUBLISHED_MANAGED_BINS` in
   `src/gobby/install/version_pins.py`) go through the checkout build on every
   `gobby install`; a changed source without a bump is refused promotion, so the
   installed binary stays stale. Workspace promotion records each binary's version and source identity

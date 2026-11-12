@@ -104,10 +104,13 @@ each as its own crate statically linked into `gdaemon` (decision 16):
 The crate → binary map and the rebuild-and-reinstall requirement (including the
 new-inode install step macOS needs) live in `AGENTS.md` under Architecture Facts.
 
-Every released `gcode`, `gdaemon`, `ghook`, `gclient`, `gmcp`, or `gterm` binary
-whose crate or recursive path dependencies changed needs a `0.0.1` patch bump in
-its shipping commit and a matching `Cargo.lock` update. Bump only binaries actually
-released; keep managed version pins and the gcode maintenance floor in step.
+Keep managed binary versions, lockfile version entries and managed pins out of
+source branches. When landing into `0.5.0`, `land_commit` generates a `0.0.1` patch
+bump against the locked integration tip for every affected managed dependency
+closure, with matching `Cargo.lock` and managed pins. This includes `gcode`,
+`gdaemon`, `ghook`, `gclient`, `gmcp`, and `gterm`, including unpublished managed
+binaries. Child landings into an epic branch do not bump. Publishing remains
+separate, and gcode maintenance floors derive from its managed pin.
 Unpublished binaries go through the checkout build on every `gobby install`; a
 changed source without a bump is refused promotion, so the installed binary
 stays stale.

@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import posixpath
-import re
 import shutil
 import subprocess
 import sys
@@ -343,36 +342,8 @@ def _touches_closure(
     )
 
 
-def _release_version(read: Manifests, crate: str) -> str:
-    version = _manifest(read, f"{crate}/Cargo.toml").get("package", {}).get("version")
-    if not isinstance(version, str):
-        raise BinaryReleaseVersionError(f"{crate}/Cargo.toml: version must be a literal string")
-    return version
-
-
-_RELEASE_NUMBERS = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
-
-
-def _release_parts(version: str) -> tuple[int, int, int] | None:
-    match = _RELEASE_NUMBERS.fullmatch(version)
-    return None if match is None else (int(match[1]), int(match[2]), int(match[3]))
-
-
-def _is_patch_bump(base: str, target: str) -> bool:
-    """A bump raises only PATCH within the base MAJOR.MINOR; any other target is not a bump."""
-    base_parts = _release_parts(base)
-    if base_parts is None:
-        raise BinaryReleaseVersionError(f"base version {base!r} is not MAJOR.MINOR.PATCH")
-    target_parts = _release_parts(target)
-    return (
-        target_parts is not None
-        and target_parts[:2] == base_parts[:2]
-        and target_parts[2] > base_parts[2]
-    )
-
-
-def unbumped_binaries(repo: Path, base: str, target: str, changed: Collection[str]) -> list[str]:
-    """Shipped binaries a landing changes without a forward PATCH bump.
+def affected_binaries(repo: Path, base: str, target: str, changed: Collection[str]) -> list[str]:
+    """Managed binaries whose source identity changes in this integration.
 
     Closures come from the base manifests: any target edit that reaches a new crate edits a
     manifest already in the base closure, so the changed paths still reach the binary.
@@ -384,17 +355,15 @@ def unbumped_binaries(repo: Path, base: str, target: str, changed: Collection[st
         return []
     before = _revision_manifests(repo, base)
     after = _revision_manifests(repo, target)
-    unbumped: list[str] = []
+    affected: list[str] = []
     try:
         for name in sorted(RELEASE_CRATES):
             crate = f"crates/{RELEASE_CRATES[name]}"
             if before(f"{crate}/Cargo.toml") is None:
                 continue
             crates = _closure(before, crate)
-            if _touches_closure(changed, crates, before, after) and not _is_patch_bump(
-                _release_version(before, crate), _release_version(after, crate)
-            ):
-                unbumped.append(name)
+            if _touches_closure(changed, crates, before, after):
+                affected.append(name)
     except (OSError, KeyError, ValueError, subprocess.SubprocessError) as exc:
         raise BinaryReleaseVersionError(f"shipped binary manifests unreadable: {exc}") from exc
-    return unbumped
+    return affected

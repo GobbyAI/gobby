@@ -1,0 +1,15 @@
+{
+  "index": {
+    "hidden_allowlist": [
+      ".gobby/gcode.json",
+      ".gobby/workflows/**/*.yaml",
+      ".gobby/workflows/**/*.yml",
+      ".gobby/install/**/*.yaml",
+      ".gobby/install/**/*.yml",
+      ".gobby/install/**/*.md",
+      ".gobby/install/**/*.json",
+      ".gobby/mcp/templates/**/*.yaml",
+      ".gobby/mcp/templates/**/*.yml"
+    ]
+  }
+}

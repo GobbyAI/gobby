@@ -5,10 +5,12 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
+from gobby.releases.activation import project_checkout_root
 from gobby.storage.definitions.rules import RuleDefinitionManager, RuleDefinitionRow
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_tasks import claimant_sessions
@@ -17,6 +19,7 @@ from gobby.storage.tasks import LocalTaskManager, Task, TaskStaleStateError
 from gobby.tasks.attestations import AttestationError, list_attestations
 from gobby.tasks.close_receipts import list_close_receipts
 from gobby.tasks.closure_policy import ClosureDecision, ClosureSnapshot, evaluate_closure_policy
+from gobby.tasks.landing_versions import verify_landing_transform
 from gobby.tasks.lifecycle_access import resolve_lifecycle_task
 from gobby.tasks.subtree_snapshot import capture_subtree_facts
 from gobby.workflows.agent_models import AgentDefinitionBody
@@ -29,6 +32,42 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 _JSON_OBJECT = TypeAdapter(dict[str, Any])
 _JSON_POLICY = TypeAdapter(dict[str, JsonValue])
+
+
+def _admitted_landing_receipts(db: HubDatabase, task: Task) -> list[dict[str, JsonValue]]:
+    """Version receipts carry evidence only after their exact Git trees reproduce."""
+    admitted: list[dict[str, JsonValue]] = []
+    for receipt in list_close_receipts(db, task.id):
+        facts: dict[str, JsonValue] = dict(receipt.facts)
+        facts.pop("verified_version_transform", None)
+        if "version_bump_commit" in facts:
+            required = (
+                "reviewed_sha",
+                "integration_base",
+                "version_source_commit",
+                "version_bump_commit",
+            )
+            values = {key: facts.get(key) for key in required}
+            if (
+                facts.get("branch") != "0.5.0"
+                or values["reviewed_sha"] != receipt.commit_sha
+                or values["version_bump_commit"] != facts.get("landed_tip")
+                or not all(isinstance(value, str) for value in values.values())
+                or not verify_landing_transform(
+                    Path(project_checkout_root(db, task.project_id)),
+                    reviewed=str(values["reviewed_sha"]),
+                    base=str(values["integration_base"]),
+                    source=str(values["version_source_commit"]),
+                    bump=str(values["version_bump_commit"]),
+                )
+            ):
+                continue
+            if values["version_source_commit"] == values["reviewed_sha"]:
+                facts["verified_version_transform"] = True
+        admitted.append(
+            {"commit_sha": receipt.commit_sha, "recorded_at": receipt.recorded_at, "facts": facts}
+        )
+    return admitted
 
 
 def installed_project_policy(
@@ -223,14 +262,7 @@ def prepare_closure(
                 "claimants": sorted(claimant_sessions(conn, task_id)),
                 "project_policy": project_policy or {},
                 "project_policy_available": project_policy is not None,
-                "landing_receipts": [
-                    {
-                        "commit_sha": receipt.commit_sha,
-                        "recorded_at": receipt.recorded_at,
-                        "facts": receipt.facts,
-                    }
-                    for receipt in list_close_receipts(db, task_id)
-                ],
+                "landing_receipts": _admitted_landing_receipts(db, task),
             },
         )
         decision = evaluate_closure_policy(snapshot, agent=agent, rules=rules)
