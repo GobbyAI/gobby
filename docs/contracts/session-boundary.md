@@ -261,6 +261,19 @@ knows (Droid loads its `/clear` successor as a resume).
 
 Manual `/clear` has no marker. Its new session is independent and receives no handoff.
 
+An operator-opened clear resets semantic identity to `default`, including persona,
+definition variables, step workflow, and workspace bindings. Recovery and configured
+startup overrides cannot restore the previous definition; deliberate activation can
+select a new one. Provider identity, authentication, task claims, and repository
+safeguards remain. A handoff with `clear_session=false` retains the same session and
+definition. Default uses provider-native scratch space and has no agent workspace or
+workspace policy, even when a definition override explicitly selects a workspace rule.
+
+A spawned seat's clear ends its run through cancellation, with the existing claim
+recovery, terminal and sandbox teardown, and coordinator notification. It does not
+complete the task or create a default successor. The clear transaction refuses to
+transfer a spawned run; parent-session lineage alone never identifies a spawned seat.
+
 ## Pull-Only Recovery
 
 No-argument `get_handoff()` checks only:

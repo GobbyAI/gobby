@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.storage.definitions.rules import RuleDefinitionRow
 from gobby.workflows import selectors as selectors_module
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.selectors import (
@@ -20,6 +22,19 @@ from gobby.workflows.selectors import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def test_rule_scope_exclusion_wins_over_explicit_selection() -> None:
+    agent = MagicMock()
+    agent.name = "default"
+    agent.workflows.rules = ["fixture-scoped"]
+    agent.workflows.rule_selectors.include = ["*"]
+    agent.workflows.rule_selectors.exclude = []
+    row = MagicMock()
+    row.name = "fixture-scoped"
+    row.definition_json = {"agent_scope": ["*", "!default"], "mandatory": True}
+    assert not rule_matches_agent(agent, row)
+    assert resolve_rules_for_agent(agent, [row]) == set()
 
 
 # --- parse_selector ---
@@ -482,7 +497,7 @@ def test_resolve_rules_for_agent_reuses_parsed_rule_definition(
     parse_count = 0
     original_parser = selectors_module._rule_definition_json
 
-    def counted_parser(rule_row: object) -> object | None:
+    def counted_parser(rule_row: RuleDefinitionRow) -> dict[str, Any]:
         nonlocal parse_count
         parse_count += 1
         return original_parser(rule_row)

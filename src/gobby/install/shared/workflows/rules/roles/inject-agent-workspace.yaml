@@ -1,11 +1,12 @@
 tags: [roles, runbook, enforcement, gobby]
-version: "2.0.0"
+version: "3.0.0"
 
 # The seat's workspace folder (addendum 9.3). Injected once per context epoch, with the
 # predecessor-read note for persistent seats only. The reset re-arms it after clear or compact,
 # the same epochs that re-arm the shared seat guidance.
 rules:
   inject-agent-workspace:
+    agent_scope: ["*", "!default"]
     description: "Inject the seat's agent workspace folder once per context epoch"
     event: turn_start
     enabled: true
@@ -34,6 +35,7 @@ rules:
         value: true
 
   reset-agent-workspace-on-context-loss:
+    agent_scope: ["*", "!default"]
     description: "Re-arm the agent workspace folder after clear or compact"
     event: session_start
     enabled: true

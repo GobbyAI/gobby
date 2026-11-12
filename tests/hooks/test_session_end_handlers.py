@@ -114,12 +114,23 @@ class TestSessionEndHandling:
             metadata={"_platform_session_id": session.id},
         )
 
-        response = handlers.handle_session_end(event)
+        with patch(
+            "gobby.hooks.event_handlers.clear_identity.stop_spawned_clear", return_value=True
+        ) as stop:
+            response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
         storage.update_status_if_non_terminal.assert_called_once_with(session.id, "expired")
-        mock_dependencies["session_coordinator"].complete_agent_run.assert_called_once_with(session)
-        terminal_manager.mark_exited.assert_called_once()
+        if reason == "clear":
+            stop.assert_called_once_with(session)
+            mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
+            terminal_manager.mark_exited.assert_not_called()
+        else:
+            stop.assert_not_called()
+            mock_dependencies["session_coordinator"].complete_agent_run.assert_called_once_with(
+                session
+            )
+            terminal_manager.mark_exited.assert_called_once()
 
     def test_session_end_from_seat_descendant_performs_real_exit_cleanup(
         self, mock_dependencies: dict[str, Any]
@@ -763,14 +774,11 @@ class TestSessionEndHandling:
         assert response.decision == "allow"
         monitor.mark_recently_handled.assert_called_once_with("sess-123")
 
-    @pytest.mark.parametrize(
-        ("status", "hands_off"),
-        [("awaiting_handoff", True), ("active", False)],
-    )
-    def test_staged_clear_end_hands_run_to_successor(
-        self, mock_dependencies: dict[str, Any], status: str, hands_off: bool
+    @pytest.mark.parametrize("status", ["awaiting_handoff", "active"])
+    def test_clear_end_cancels_run_without_successor(
+        self, mock_dependencies: dict[str, Any], status: str
     ) -> None:
-        """A staged clear leaves its run and terminal to the successor; an unstaged one ends both."""
+        """Every spawned clear delegates run and pane teardown to cancellation."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = "run-456"
@@ -795,7 +803,12 @@ class TestSessionEndHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        with patch("gobby.workflows.step_instances.AgentStepInstanceManager") as manager_cls:
+        with (
+            patch("gobby.workflows.step_instances.AgentStepInstanceManager") as manager_cls,
+            patch(
+                "gobby.hooks.event_handlers.clear_identity.stop_spawned_clear", return_value=True
+            ) as stop,
+        ):
             response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
@@ -805,8 +818,5 @@ class TestSessionEndHandling:
             "exited": terminals.mark_exited.call_args_list,
             "released": terminals.release_session.call_args_list,
         }
-        assert ended == (
-            {"run": [], "exited": [], "released": []}
-            if hands_off
-            else {"run": [call(mock_session)], "exited": [call("term-1")], "released": []}
-        )
+        stop.assert_called_once_with(mock_session)
+        assert ended == {"run": [], "exited": [], "released": []}

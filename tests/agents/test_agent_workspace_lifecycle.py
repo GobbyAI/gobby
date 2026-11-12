@@ -129,20 +129,20 @@ async def test_session_folder_binding(
         _activate(pane, seat, source)
         assert _workspace(temp_db, seat)[0] == folder, source
 
-    # A seat without a definition writes under default/.
+    # A seat without a definition keeps scratch space provider-native.
     plain = pane.register("plain-ext")
     _activate(pane, plain, "startup")
     assert SessionVariableManager(temp_db).get_variables(plain).get("_agent_type") == "default"
-    expected = _folder(home, pane, "default", plain)
-    assert _workspace(temp_db, plain)[0] == expected
+    assert _workspace(temp_db, plain)[0] is None
+    assert not (home / "agents_workspaces" / pane.project_id / "default").exists()
 
-    # A manual /clear without a handoff marker is a new session with a new folder.
+    # A manual /clear without a handoff marker also has no agent workspace.
     manual = pane.register("manual-clear-ext")
     _activate(pane, manual, "clear")
     manual_type = SessionVariableManager(temp_db).get_variables(manual).get("_agent_type")
     manual_folder = _workspace(temp_db, manual)[0]
-    assert manual_folder == _folder(home, pane, manual_type or "default", manual)
-    assert manual_folder not in (folder, expected)
+    assert manual_type == "default"
+    assert manual_folder is None
 
 
 @pytest.mark.asyncio
@@ -168,7 +168,7 @@ async def test_handoff_references_name_the_bound_folder(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("persistent", [True, False], ids=["persistent", "fresh"])
 @pytest.mark.parametrize("sandboxed", [True, False], ids=["sandboxed", "unsandboxed"])
-async def test_clear_inheritance_by_persistence(
+async def test_clear_unbinds_workspace_regardless_of_persistence(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -190,15 +190,10 @@ async def test_clear_inheritance_by_persistence(
     successor = _clear_into(pane, "succ-ext")
 
     folder, flag = _workspace(temp_db, successor)
-    assert flag is persistent
-    if persistent or sandboxed:
-        # The lineage keeps its first sequence number across clears.
-        assert folder == lineage
-        # A resume must preserve the same narrow grant after the session ID changes.
-        assert spawn_workspace_write_paths(temp_db, successor, name) == [str(lineage)]
-    else:
-        assert folder == _folder(home, pane, name, successor)
-        assert folder != lineage
+    assert flag is False
+    assert folder is None
+    assert spawn_workspace_write_paths(temp_db, successor, "default") == []
+    assert lineage is not None and lineage.is_dir()
 
 
 async def _turn(engine: RuleEngine, variables: dict[str, Any]) -> str:

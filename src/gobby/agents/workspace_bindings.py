@@ -34,7 +34,8 @@ def definition_workspace_changes(
     location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
     folder = None
     if (
-        location is not None
+        definition != "default"
+        and location is not None
         and location["project_id"] is not None
         and location["seq_num"] is not None
     ):
@@ -43,7 +44,7 @@ def definition_workspace_changes(
     return {
         WORKSPACE_DIR_VARIABLE: str(folder) if folder is not None else None,
         WORKSPACE_EPIC_DIR_VARIABLE: None,
-        WORKSPACE_PERSISTENT_VARIABLE: persistent,
+        WORKSPACE_PERSISTENT_VARIABLE: persistent and definition != "default",
         "_agent_workspace_injected": False,
     }
 
@@ -60,6 +61,18 @@ def bind_session_workspace(
 
     variables = SessionVariableManager(db)
     current = variables.get_variables(session_id)
+    definition = current.get("_agent_type")
+    if not definition or definition == "default":
+        variables.merge_variables(
+            session_id,
+            {
+                WORKSPACE_DIR_VARIABLE: None,
+                WORKSPACE_EPIC_DIR_VARIABLE: None,
+                WORKSPACE_PERSISTENT_VARIABLE: False,
+                "_agent_workspace_injected": False,
+            },
+        )
+        return None
     bound = current.get(WORKSPACE_DIR_VARIABLE)
     if isinstance(bound, str) and bound:
         Path(bound).mkdir(parents=True, exist_ok=True)

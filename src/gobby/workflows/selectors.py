@@ -39,6 +39,17 @@ def _match_rule(
     return False
 
 
+def agent_scope_matches(scope: list[str] | None, agent_type: str | None) -> bool:
+    """Match declared agent applicability; exclusions win over wildcard inclusion."""
+    if scope is None:
+        return True
+    if agent_type is None:
+        return False
+    if f"!{agent_type}" in scope:
+        return False
+    return "*" in scope or agent_type in scope
+
+
 def resolve_rules_for_agent(
     agent: AgentDefinitionBody, all_rules: list[RuleDefinitionRow]
 ) -> set[str]:
@@ -80,6 +91,8 @@ def rule_matches_agent(
     rule_definition_json = (
         _rule_definition_json(rule) if definition_json is None else definition_json
     )
+    if not agent_scope_matches(rule_definition_json.get("agent_scope"), agent.name):
+        return False
     if _is_mandatory(rule_definition_json):
         return True
 
@@ -113,6 +126,8 @@ def _rule_excluded_by_agent(
     rule_definition_json = (
         _rule_definition_json(rule) if definition_json is None else definition_json
     )
+    if not agent_scope_matches(rule_definition_json.get("agent_scope"), agent.name):
+        return True
     if _is_mandatory(rule_definition_json):
         return False
     for exc in selectors.exclude:

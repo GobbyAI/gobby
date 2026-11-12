@@ -1,4 +1,4 @@
-"""A spawned pane's frozen run identity follows its run to the /clear successor."""
+"""A rejected spawned clear preserves authentication on its original run boundary."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
@@ -17,24 +17,20 @@ from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from gobby.config.app import DaemonConfig
-from gobby.hooks.runtime_compat import SUPPORTED_HOOK_RESPONSE_CAPABILITY
 from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_PROTOCOL_VERSION_HEADER
 from gobby.runtime_grants import encode_grant_header
 from gobby.servers.auth_service import AuthService
 from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.servers.routes.llm import create_llm_router
 from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
-from gobby.sessions.clear_continuation import stage_clear_attempt, take_clear_handoff_marker
-from gobby.sessions.handoff_records import build_handoff_payload
+from gobby.sessions.clear_continuation import take_clear_handoff_marker
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.local_token import issue_agent_api_token
-from gobby.utils.machine_id import get_machine_id
 from gobby.utils.session_context import get_session_context, reset_seeded_contexts
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.hooks.test_clear_successor_seat import _pane, _spawned_seat, _stage
 from tests.hooks.test_session_materialize import _ATTEMPT_ID, _StagedClear
-from tests.servers.conftest import create_http_server
 from tests.servers.routes.test_llm_routes import (
     _chat_result,
     _FakeToolChatService,
@@ -96,7 +92,7 @@ def _tool_call(headers: dict[str, str]) -> Request:
 
 @dataclass
 class _Seat:
-    """A spawned pane whose run and launch identity cross one staged /clear."""
+    """A spawned pane whose launch identity cannot transfer through clear."""
 
     pane: _StagedClear
     run: AgentRun
@@ -114,46 +110,15 @@ class _Seat:
             self.token, self.run.id, self.pane.predecessor_id, self.pane.project_id
         )
 
-    def take(self) -> None:
-        """The successor's SessionStart takes the clear marker and, with it, the run."""
+    def reject_transfer(self) -> None:
+        """An unrelated session cannot take the spawned run through a clear marker."""
         self.successor_id = self.pane.register("successor-ext")
-        assert take_clear_handoff_marker(
+        assert not take_clear_handoff_marker(
             self.db,
             self.pane.predecessor_id,
             attempt_id=_ATTEMPT_ID,
             successor_id=self.successor_id,
         )
-
-    def clear_again(self) -> str:
-        """The successor stages its own /clear and a third session takes the run from it."""
-        stage_clear_attempt(
-            self.db,
-            self.successor_id,
-            attempt_id=_SECOND_ATTEMPT_ID,
-            handoff=build_handoff_payload(current_state="Ready.", next_steps=["Continue."]),
-            terminal_context=self.pane.term,
-            chat_context=None,
-        )
-        third_id = self.pane.register("third-ext")
-        assert take_clear_handoff_marker(
-            self.db,
-            self.successor_id,
-            attempt_id=_SECOND_ATTEMPT_ID,
-            successor_id=third_id,
-        )
-        return third_id
-
-    def supersede(self) -> str:
-        """An operator /clear before the pull: a third session supersedes the unpulled successor."""
-        third_id = self.pane.register("third-ext")
-        assert take_clear_handoff_marker(
-            self.db,
-            self.pane.predecessor_id,
-            attempt_id=_ATTEMPT_ID,
-            successor_id=third_id,
-            supersede_successor_id=self.successor_id,
-        )
-        return third_id
 
     def end_run(self) -> None:
         assert LocalAgentRunManager(self.db).complete(self.run.id) is not None
@@ -199,8 +164,8 @@ def seat(temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     )
 
 
-async def test_successor_tool_call_is_attributed_to_successor(seat: _Seat) -> None:
-    seat.take()
+async def test_rejected_transfer_preserves_tool_attribution(seat: _Seat) -> None:
+    seat.reject_transfer()
     request = _tool_call(seat.headers())
     assert seat.service.authenticate(request).allowed
 
@@ -213,112 +178,9 @@ async def test_successor_tool_call_is_attributed_to_successor(seat: _Seat) -> No
         reset_seeded_contexts(tokens)
 
     variables = SessionVariableManager(seat.db)
-    assert tokens.resolved_session_id == seat.successor_id
-    assert variables.get_variables(seat.successor_id).get(_PROBE) == "written"
-    assert _PROBE not in variables.get_variables(seat.pane.predecessor_id)
-
-
-def _hook_server(seat: _Seat) -> HTTPServer:
-    """The daemon's routes behind real auth, with the provider adapter left to the test."""
-    server = create_http_server(session_manager=seat.pane.sessions, authenticated_requests=False)
-    server.auth_service = seat.service
-    server.app.state.hook_manager = MagicMock()
-    server.app.state.hook_manager.shutdown_async = AsyncMock()
-    return server
-
-
-def _hook(hook_type: str, conversation_id: str, **input_data: str) -> dict[str, Any]:
-    """A Claude hook envelope from the CLI conversation ``conversation_id``."""
-    return {
-        "schema_version": 1,
-        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
-        "enqueued_at": "2026-10-08T12:00:00Z",
-        "critical": False,
-        "hook_type": hook_type,
-        "source": "claude",
-        "input_data": {
-            "session_id": conversation_id,
-            "machine_id": get_machine_id(),
-            **input_data,
-        },
-    }
-
-
-def test_successor_hook_and_variables_follow_run(seat: _Seat) -> None:
-    seat.take()
-    variables = SessionVariableManager(seat.db)
-    variables.set_variable(seat.pane.predecessor_id, _PROBE, "predecessor")
-    variables.set_variable(seat.successor_id, _PROBE, "successor")
-
-    with (
-        TestClient(_hook_server(seat).app) as client,
-        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
-    ):
-        adapter_cls.return_value.handle_native.return_value = {"continue": True}
-        hook = client.post(
-            "/api/hooks/execute",
-            json=_hook("session-start", "successor-ext"),
-            headers=seat.headers(),
-        )
-        read = client.post(
-            f"/api/sessions/{seat.pane.predecessor_id}/variables/get",
-            json={"name": _PROBE},
-            headers=seat.headers(),
-        )
-
-    assert hook.status_code == 200, hook.text
-    adapter_payload = adapter_cls.return_value.handle_native.call_args.args[0]
-    assert adapter_payload["_platform_session_id"] == seat.successor_id
-    assert read.status_code == 200, read.text
-    assert read.json()["session_id"] == seat.successor_id
-    assert read.json()["value"] == "successor"
-
-
-@pytest.mark.parametrize(
-    ("conversation_id", "owner"),
-    [("pred-ext", "predecessor"), ("successor-ext", "successor")],
-)
-def test_late_predecessor_hook_stays_on_predecessor(
-    seat: _Seat, conversation_id: str, owner: str
-) -> None:
-    """A clear end the predecessor's conversation sends after the take cannot end the seat."""
-    seat.take()
-
-    owners = {"predecessor": seat.pane.predecessor_id, "successor": seat.successor_id}
-    assert _late_clear_end_session(seat, conversation_id) == owners[owner]
-
-
-@pytest.mark.parametrize("later_take", ["clear_again", "supersede"])
-@pytest.mark.parametrize(
-    ("conversation_id", "owner"),
-    [("pred-ext", "first"), ("successor-ext", "second"), ("third-ext", "third")],
-)
-def test_late_hook_after_a_later_take_stays_on_its_session(
-    seat: _Seat, later_take: str, conversation_id: str, owner: str
-) -> None:
-    """Every earlier session of the pane's clear chain keeps its own late clear end."""
-    seat.take()
-    third_id = {"clear_again": _Seat.clear_again, "supersede": _Seat.supersede}[later_take](seat)
-
-    owners = {"first": seat.pane.predecessor_id, "second": seat.successor_id, "third": third_id}
-    assert _late_clear_end_session(seat, conversation_id) == owners[owner]
-
-
-def _late_clear_end_session(seat: _Seat, conversation_id: str) -> str:
-    """The session a clear end from ``conversation_id`` on the frozen pane is attributed to."""
-    with (
-        TestClient(_hook_server(seat).app) as client,
-        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
-    ):
-        adapter_cls.return_value.handle_native.return_value = {"continue": True}
-        response = client.post(
-            "/api/hooks/execute",
-            json=_hook("session-end", conversation_id, reason="clear"),
-            headers=seat.headers(),
-        )
-
-    assert response.status_code == 200, response.text
-    return str(adapter_cls.return_value.handle_native.call_args.args[0]["_platform_session_id"])
+    assert tokens.resolved_session_id == seat.pane.predecessor_id
+    assert variables.get_variables(seat.pane.predecessor_id).get(_PROBE) == "written"
+    assert _PROBE not in variables.get_variables(seat.successor_id)
 
 
 async def test_no_forwarding_without_live_run_binding(seat: _Seat) -> None:
@@ -327,7 +189,7 @@ async def test_no_forwarding_without_live_run_binding(seat: _Seat) -> None:
     pane = seat.pane
     assert await seat.caller(seat.headers()) == pane.predecessor_id
 
-    seat.take()
+    seat.reject_transfer()
     runs = LocalAgentRunManager(seat.db)
     other_id = pane.register("other-ext")
     created = runs.create(
@@ -375,8 +237,8 @@ async def test_no_forwarding_without_live_run_binding(seat: _Seat) -> None:
     )
 
 
-def test_successor_chat_completion_keeps_issued_grant(seat: _Seat) -> None:
-    seat.take()
+def test_rejected_transfer_preserves_chat_grant(seat: _Seat) -> None:
+    seat.reject_transfer()
     pane = seat.pane
     grant = _signed_presentation_grant(
         kind="agent_run",
@@ -405,7 +267,9 @@ def test_successor_chat_completion_keeps_issued_grant(seat: _Seat) -> None:
     )
 
     assert served.status_code == 200, served.text
-    assert [request.session_id for request in tool_chat.requests] == [UUID(seat.successor_id)]
+    assert [request.session_id for request in tool_chat.requests] == [
+        UUID(seat.pane.predecessor_id)
+    ]
 
     seat.end_run()
     refused = client.post(

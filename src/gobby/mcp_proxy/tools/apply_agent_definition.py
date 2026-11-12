@@ -79,6 +79,7 @@ def build_definition_changes(
             definition_keys.add(key)
 
     defaults = load_variable_defaults(db, project_id)
+    changes["_agent_definition_explicit_keys"] = sorted(definition_keys)
     active_variable_names = resolve_variables_for_agent(agent_body, enabled_variables)
     for name, value in defaults.items():
         if name in changes:
@@ -263,6 +264,7 @@ def commit_definition_changes(
             "is_spawned_agent",
             "_agent_definition_hash",
             "_agent_definition_keys",
+            "_agent_definition_explicit_keys",
         } | (definition_variable_names or set())
         delta = {
             key: value
@@ -285,6 +287,10 @@ def commit_definition_changes(
                 delta["step_workflow_complete"] = changes["step_workflow_complete"]
         else:
             new_keys |= previous_keys
+            delta["_agent_definition_explicit_keys"] = sorted(
+                set(current.get("_agent_definition_explicit_keys") or [])
+                | set(changes.get("_agent_definition_explicit_keys") or [])
+            )
         delta["_agent_definition_keys"] = sorted(new_keys)
         delta.update(overlays or {})
         if workspace_persistent is not None:
@@ -415,6 +421,7 @@ async def apply_agent_definition_impl(
         body, session_id, db, all_skills=all_skills, is_spawned=False
     )
     overlays = {
+        "_clear_identity_reset": body.name == "default",
         "_persona_name": None,
         "_agent_context_injected": False,
         "_agent_identity_reinject": True,
