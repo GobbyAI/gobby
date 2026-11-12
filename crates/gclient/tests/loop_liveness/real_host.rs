@@ -429,6 +429,16 @@ async fn real_pty_delivery_and_rendered_echo_by_pane_count() {
                 echo.push(started.elapsed());
             }
             captures.await.unwrap();
+            let mut extra = [0];
+            assert!(
+                timeout(
+                    Duration::from_millis(20),
+                    host.panes[0].receipt.read(&mut extra)
+                )
+                .await
+                .is_err(),
+                "the PTY received an extra native keystroke"
+            );
             wait_within(
                 Duration::from_secs(15),
                 "daemon reconnect and inventory reconciliation",
