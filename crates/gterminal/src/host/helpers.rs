@@ -141,6 +141,7 @@ pub fn truncate_title(text: &str) -> String {
 }
 
 /// Queue changed semantic frames, preserving forced snapshots after desync.
+#[cfg(any(test, not(feature = "vt-engine")))]
 pub(crate) fn push_semantic_frame(att: &mut Attachment, frame: FrameData, cap: usize) -> bool {
     if !att.desynced && att.last_semantic_frame.as_ref() == Some(&frame) {
         return false;

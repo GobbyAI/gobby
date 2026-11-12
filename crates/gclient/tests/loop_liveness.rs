@@ -21,6 +21,13 @@ mod lifecycle;
 #[path = "loop_liveness/writer_leases.rs"]
 mod writer_leases;
 
+#[path = "loop_liveness/scheduling.rs"]
+mod scheduling;
+
+#[cfg(all(unix, feature = "real-host-stress"))]
+#[path = "loop_liveness/real_host.rs"]
+mod real_host;
+
 use super::draw;
 use draw::DrawRecorder;
 

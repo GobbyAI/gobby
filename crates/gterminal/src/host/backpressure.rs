@@ -166,6 +166,15 @@ impl FrameMailbox {
 
     pub fn try_push(&self, msg: &ServerMessage, cap: usize) -> PushResult {
         let bytes = encoded_message_bytes(msg);
+        self.try_push_prepared(msg.clone(), bytes, cap)
+    }
+
+    pub(crate) fn try_push_prepared(
+        &self,
+        msg: ServerMessage,
+        bytes: usize,
+        cap: usize,
+    ) -> PushResult {
         let mut inner = self.lock();
         if inner.closed {
             return PushResult::Closed;
@@ -174,7 +183,7 @@ impl FrameMailbox {
             return PushResult::Overflow;
         }
         inner.queued_bytes = inner.queued_bytes.saturating_add(bytes);
-        inner.items.push_back((bytes, msg.clone()));
+        inner.items.push_back((bytes, msg));
         drop(inner);
         self.shared.notify.notify_waiters();
         PushResult::Queued
@@ -208,6 +217,10 @@ impl FrameMailbox {
     /// left untouched and the observer is still owed a repaint.
     pub fn replace_with_keyframe(&self, msg: &ServerMessage, cap: usize) -> bool {
         let bytes = encoded_message_bytes(msg);
+        self.replace_prepared(msg.clone(), bytes, cap)
+    }
+
+    pub(crate) fn replace_prepared(&self, msg: ServerMessage, bytes: usize, cap: usize) -> bool {
         let mut inner = self.lock();
         if inner.closed {
             return false;
@@ -217,7 +230,7 @@ impl FrameMailbox {
         }
         inner.items.clear();
         inner.queued_bytes = bytes;
-        inner.items.push_back((bytes, msg.clone()));
+        inner.items.push_back((bytes, msg));
         drop(inner);
         self.shared.notify.notify_waiters();
         true

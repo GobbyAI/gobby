@@ -19,6 +19,10 @@ pub const MAX_WRITE_BATCH_OPERATIONS_PER_TARGET: usize = 128;
 pub const MAX_WRITE_BATCH_DELAY_MS: u64 = 1_000;
 pub const MAX_WRITE_BATCH_TOTAL_DELAY_MS: u64 = 5_000;
 
+#[cfg(test)]
+#[path = "write_tests.rs"]
+mod tests;
+
 struct BatchOperation {
     delay_ms: u64,
     payload: NativeInput,
@@ -107,7 +111,8 @@ impl HostState {
         let kind = input.kind();
         let bytes = input.len();
         let interrupt = input.interrupt();
-        let activity = {
+        #[cfg(not(feature = "vt-engine"))]
+        {
             let inner = self.inner.lock().await;
             let attachment = inner
                 .attachments
@@ -121,9 +126,8 @@ impl HostState {
             if slot.locator.is_some() {
                 return Err("not_native");
             }
-            let (effect, submit) = input.classify(slot);
-            deliver_native(slot, input)?;
-            InputActivity {
+            let (effect, submit) = input.classify_mode(false);
+            let activity = InputActivity {
                 terminal_id: slot.identity.terminal_id.clone(),
                 host_terminal_id: slot.host_terminal_id.clone(),
                 attachment_id: attachment.client_attachment_id.clone().unwrap_or_default(),
@@ -132,10 +136,64 @@ impl HostState {
                 interrupt,
                 submit,
                 effect,
+            };
+            deliver_native(slot, input)?;
+            drop(inner);
+            self.events.emit_input_activity(activity).await;
+            Ok(())
+        }
+        #[cfg(feature = "vt-engine")]
+        {
+            if bytes > MAX_WRITE_BYTES {
+                return Err("request_too_large");
             }
-        };
-        self.events.emit_input_activity(activity).await;
-        Ok(())
+            let (mut activity, writer, bracketed) = {
+                let inner = self.inner.lock().await;
+                let attachment = inner
+                    .attachments
+                    .get(&attachment_id)
+                    .ok_or("terminal_gone")?;
+                let identity = inner
+                    .by_host_id
+                    .get(&attachment.host_terminal_id)
+                    .ok_or("terminal_gone")?;
+                let slot = inner.terminals.get(identity).ok_or("terminal_gone")?;
+                if slot.locator.is_some() {
+                    return Err("not_native");
+                }
+                let child = slot.child.as_ref().ok_or("terminal_gone")?;
+                (
+                    InputActivity {
+                        terminal_id: slot.identity.terminal_id.clone(),
+                        host_terminal_id: slot.host_terminal_id.clone(),
+                        attachment_id: attachment.client_attachment_id.clone().unwrap_or_default(),
+                        kind,
+                        bytes,
+                        interrupt,
+                        submit: false,
+                        effect: InputEffect::Control,
+                    },
+                    child.runtime.input_writer(),
+                    child.runtime.bracketed_paste(),
+                )
+            };
+            let (effect, submit) = input.classify_mode(bracketed);
+            activity.effect = effect;
+            activity.submit = submit;
+            let payload = match input {
+                NativeInput::Bytes(bytes) => bytes::Bytes::from(bytes),
+                NativeInput::Paste(text) if bracketed => {
+                    bytes::Bytes::from(format!("\x1b[200~{text}\x1b[201~"))
+                }
+                NativeInput::Paste(text) => bytes::Bytes::from(text),
+            };
+            writer.try_send(payload).map_err(|error| match error {
+                tokio::sync::mpsc::error::TrySendError::Full(_) => "pty_busy",
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => "terminal_gone",
+            })?;
+            self.events.emit_input_activity(activity).await;
+            Ok(())
+        }
     }
 
     pub async fn write_batch(&self, extra: &Map<String, Value>) -> Value {
@@ -329,7 +387,12 @@ impl NativeInput {
 
     /// Whether `slot`'s child reads this input as Enter. A paste it takes
     /// bracketed is text; an unbracketed one reaches it as keystrokes.
+    #[cfg(all(test, feature = "vt-engine"))]
     fn classify(&self, slot: &TerminalSlot) -> (InputEffect, bool) {
+        self.classify_mode(pastes_bracketed(slot))
+    }
+
+    fn classify_mode(&self, bracketed: bool) -> (InputEffect, bool) {
         match self {
             Self::Bytes(bytes) => classify_input(bytes),
             Self::Paste(text) => (
@@ -338,7 +401,7 @@ impl NativeInput {
                 } else {
                     InputEffect::Edit
                 },
-                !pastes_bracketed(slot) && presses_enter(text.as_bytes()),
+                !bracketed && presses_enter(text.as_bytes()),
             ),
         }
     }
@@ -404,17 +467,11 @@ fn send_to_pty(_slot: &TerminalSlot, _input: NativeInput) -> Result<(), &'static
     Err("terminal_gone")
 }
 
-#[cfg(feature = "vt-engine")]
+#[cfg(all(test, feature = "vt-engine"))]
 fn pastes_bracketed(slot: &TerminalSlot) -> bool {
     slot.child
         .as_ref()
         .is_some_and(|child| child.runtime.bracketed_paste())
-}
-
-/// No slot owns a child here, and `send_to_pty` refuses every write anyway.
-#[cfg(not(feature = "vt-engine"))]
-fn pastes_bracketed(_slot: &TerminalSlot) -> bool {
-    false
 }
 
 fn parse_batch_operations(
@@ -506,354 +563,4 @@ fn batch_error(target: &BatchTarget, code: &'static str) -> Value {
         "error": code,
         "stage": "none",
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::host::config::HostConfig;
-    use crate::protocol::RenderEncoding;
-    use tokio::sync::watch;
-    use tokio::time::timeout;
-
-    fn state() -> std::sync::Arc<HostState> {
-        let (shutdown, _) = watch::channel(false);
-        HostState::new(
-            HostConfig::default(),
-            "control".to_string(),
-            "epoch".to_string(),
-            crate::host::image::PinnedImage::for_tests(),
-            1,
-            shutdown,
-        )
-    }
-
-    fn target(recipient_id: &str, terminal_id: &str) -> Value {
-        json!({
-            "recipient_id": recipient_id,
-            "host_terminal_id": terminal_id,
-            "operations": [
-                {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 0},
-            ],
-        })
-    }
-
-    async fn remove_terminal(state: &HostState, host_terminal_id: &str) {
-        let mut inner = state.inner.lock().await;
-        let identity = inner
-            .by_host_id
-            .remove(host_terminal_id)
-            .expect("terminal identity");
-        inner.terminals.remove(&identity).expect("terminal slot");
-    }
-
-    #[cfg(feature = "vt-engine")]
-    async fn attach_accepting_child(
-        state: &HostState,
-        host_terminal_id: &str,
-    ) -> tokio::sync::mpsc::Receiver<bytes::Bytes> {
-        let (runtime, received) = crate::pane::PaneRuntime::test_with_channel(80, 24);
-        let child = crate::host::spawn::PreparedChild::from_test_runtime(runtime);
-        let mut inner = state.inner.lock().await;
-        let identity = inner
-            .by_host_id
-            .get(host_terminal_id)
-            .expect("terminal identity")
-            .clone();
-        inner
-            .terminals
-            .get_mut(&identity)
-            .expect("terminal slot")
-            .child = Some(child);
-        received
-    }
-
-    #[cfg(feature = "vt-engine")]
-    #[tokio::test]
-    async fn native_write_refuses_enter_when_compact_is_queued() {
-        let state = state();
-        crate::host::state::insert_native_slot(&state, "ht-1", 24, 80).await;
-        let mut received = attach_accepting_child(&state, "ht-1").await;
-        for text in ["/compact", "a", "b", "c"] {
-            let request = json!({"host_terminal_id": "ht-1", "kind": "text",
-                "data": base64::engine::general_purpose::STANDARD.encode(text)});
-            assert_eq!(
-                state.write(request.as_object().unwrap()).await["written"],
-                true
-            );
-        }
-        let request = json!({"host_terminal_id": "ht-1", "kind": "key",
-            "data": base64::engine::general_purpose::STANDARD.encode("enter")});
-        let response = state.write(request.as_object().unwrap()).await;
-        assert_eq!(
-            response,
-            json!({"ok": false, "written": false,
-            "error": "pty_busy", "code": "pty_busy", "stage": "none"})
-        );
-        assert_eq!(received.try_recv().unwrap().as_ref(), b"/compact");
-        for text in [b"a", b"b", b"c"] {
-            assert_eq!(received.try_recv().unwrap().as_ref(), text);
-        }
-        assert!(received.try_recv().is_err());
-    }
-
-    #[cfg(feature = "vt-engine")]
-    #[tokio::test]
-    async fn native_write_refuses_closed_or_missing_writer() {
-        for closed in [false, true] {
-            for kind in ["text", "key", "paste"] {
-                let state = state();
-                crate::host::state::insert_native_slot(&state, "ht-1", 24, 80).await;
-                if closed {
-                    drop(attach_accepting_child(&state, "ht-1").await);
-                }
-                let request = json!({"host_terminal_id": "ht-1", "kind": kind,
-                    "data": base64::engine::general_purpose::STANDARD.encode("enter")});
-                let response = state.write(request.as_object().unwrap()).await;
-                assert_eq!(
-                    response,
-                    json!({"ok": false, "written": false,
-                    "error": "terminal_gone", "code": "terminal_gone", "stage": "none"})
-                );
-            }
-        }
-    }
-
-    #[cfg(feature = "vt-engine")]
-    #[tokio::test]
-    async fn native_write_accepts_text_key_and_paste() {
-        for (kind, payload, expected) in [
-            ("text", "/compact", &b"/compact"[..]),
-            ("key", "enter", &b"\r"[..]),
-            ("paste", "hello", &b"hello"[..]),
-        ] {
-            let state = state();
-            crate::host::state::insert_native_slot(&state, "ht-1", 24, 80).await;
-            let mut received = attach_accepting_child(&state, "ht-1").await;
-            let request = json!({"host_terminal_id": "ht-1", "kind": kind,
-                "data": base64::engine::general_purpose::STANDARD.encode(payload)});
-            assert_eq!(
-                state.write(request.as_object().unwrap()).await,
-                json!({"ok": true, "written": true})
-            );
-            assert_eq!(received.try_recv().unwrap().as_ref(), expected);
-            assert!(received.try_recv().is_err());
-        }
-    }
-
-    #[tokio::test]
-    async fn batch_returns_one_ordered_result_per_target() {
-        let value = json!({
-            "targets": [target("r1", "t1"), target("r2", "t2"), target("r3", "t3")],
-        });
-        let response = state().write_batch(value.as_object().unwrap()).await;
-
-        assert_eq!(response["ok"], true);
-        assert_eq!(response["results"].as_array().unwrap().len(), 3);
-        assert_eq!(response["results"][0]["recipient_id"], "r1");
-        assert_eq!(response["results"][1]["recipient_id"], "r2");
-        assert_eq!(response["results"][2]["recipient_id"], "r3");
-        assert!(response["results"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|result| result["error"] == "not_found" && result["stage"] == "none"));
-    }
-
-    #[tokio::test]
-    async fn batch_rejects_global_and_per_target_limits_before_writes() {
-        let targets: Vec<_> = (0..=MAX_WRITE_BATCH_TARGETS)
-            .map(|index| target(&format!("r{index}"), &format!("t{index}")))
-            .collect();
-        let too_many = json!({"targets": targets});
-        let response = state().write_batch(too_many.as_object().unwrap()).await;
-        assert_eq!(response["error"], "too_many_targets");
-
-        let operations: Vec<_> = (0..=MAX_WRITE_BATCH_OPERATIONS_PER_TARGET)
-            .map(|_| json!({"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 0}))
-            .collect();
-        let invalid_target = json!({
-            "targets": [{
-                "recipient_id": "r1",
-                "host_terminal_id": "t1",
-                "operations": operations,
-            }],
-        });
-        let response = state()
-            .write_batch(invalid_target.as_object().unwrap())
-            .await;
-        assert_eq!(response["ok"], true);
-        assert_eq!(response["results"][0]["error"], "too_many_operations");
-        assert_eq!(response["results"][0]["stage"], "none");
-
-        let delayed = json!({
-            "targets": [{
-                "recipient_id": "r1",
-                "host_terminal_id": "t1",
-                "operations": (0..6).map(|_| json!({
-                    "kind": "text",
-                    "encoding": "utf8-b64",
-                    "data": "eA==",
-                    "delay_ms": 1_000,
-                })).collect::<Vec<_>>(),
-            }],
-        });
-        let response = state().write_batch(delayed.as_object().unwrap()).await;
-        assert_eq!(response["results"][0]["error"], "invalid_delay");
-        assert_eq!(response["results"][0]["stage"], "none");
-    }
-
-    #[tokio::test]
-    async fn native_input_is_refused_when_the_slot_owns_no_pty() {
-        let state = state();
-        crate::host::state::insert_native_slot(&state, "ht-1", 24, 80).await;
-        let mut inner = state.inner.lock().await;
-        let slot = native_slot_mut(&mut inner, "ht-1").expect("native slot");
-
-        // Answering Ok here would report a delivery to a terminal that owns no
-        // writer, and the frame stream would emit `input_activity` for it.
-        assert_eq!(
-            deliver_native(slot, NativeInput::Bytes(b"x".to_vec())),
-            Err("terminal_gone"),
-        );
-        assert_eq!(
-            deliver_native(slot, NativeInput::Paste("x".to_owned())),
-            Err("terminal_gone"),
-        );
-    }
-
-    #[cfg(feature = "vt-engine")]
-    #[tokio::test]
-    async fn a_paste_submits_only_when_the_child_reads_it_unbracketed() {
-        for (child_output, submits) in [(&b""[..], true), (b"\x1b[?2004h", false)] {
-            let state = state();
-            crate::host::state::insert_native_slot(&state, "ht-1", 24, 80).await;
-            let (runtime, _received) =
-                crate::pane::PaneRuntime::test_with_channel_and_scrollback_limits(
-                    80,
-                    24,
-                    crate::ghostty::ScrollbackLimits { bytes: 0, lines: 0 },
-                    child_output,
-                    4,
-                );
-            let mut inner = state.inner.lock().await;
-            let slot = native_slot_mut(&mut inner, "ht-1").expect("native slot");
-            slot.child = Some(crate::host::spawn::PreparedChild::from_test_runtime(
-                runtime,
-            ));
-
-            assert_eq!(
-                NativeInput::Paste("ls\r".to_owned()).classify(slot),
-                (InputEffect::Edit, submits)
-            );
-            assert_eq!(
-                NativeInput::Paste("ls".to_owned()).classify(slot),
-                (InputEffect::Edit, false)
-            );
-            assert_eq!(
-                NativeInput::Bytes(b"\r".to_vec()).classify(slot),
-                (InputEffect::Edit, true)
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn batch_delay_does_not_block_input_on_another_terminal() {
-        let state = state();
-        crate::host::state::insert_native_slot(&state, "batch", 24, 80).await;
-        crate::host::state::insert_native_slot(&state, "interactive", 24, 80).await;
-        let (attachment_id, _mailbox) = state
-            .attach("interactive", None, RenderEncoding::SemanticFrame, 24, 80)
-            .await
-            .expect("attach interactive terminal");
-        state
-            .bind_attachment(attachment_id, "client".to_owned())
-            .await
-            .expect("bind interactive terminal");
-
-        let batch = json!({
-            "targets": [{
-                "recipient_id": "recipient",
-                "host_terminal_id": "batch",
-                "operations": [
-                    {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 1_000},
-                    {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 1_000},
-                ],
-            }],
-        });
-        let batch_state = state.clone();
-        let batch_task = tokio::spawn(async move {
-            batch_state
-                .write_batch(batch.as_object().expect("batch object"))
-                .await
-        });
-        tokio::task::yield_now().await;
-
-        let framed = timeout(
-            Duration::from_millis(250),
-            state.frame_input(Some(attachment_id), NativeInput::Bytes(b"x".to_vec())),
-        )
-        .await
-        .expect("frame_input blocked behind batch delay");
-        assert_eq!(framed, Err("terminal_gone"));
-
-        batch_task.abort();
-        assert!(batch_task
-            .await
-            .expect_err("batch task should be cancelled")
-            .is_cancelled());
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn batch_reports_removed_targets_and_continues_later_operations() {
-        let state = state();
-        crate::host::state::insert_native_slot(&state, "removed-first", 24, 80).await;
-        crate::host::state::insert_native_slot(&state, "removed-later", 24, 80).await;
-        #[cfg(feature = "vt-engine")]
-        let (_first_input, _later_input) = {
-            let first = attach_accepting_child(&state, "removed-first").await;
-            let later = attach_accepting_child(&state, "removed-later").await;
-            (first, later)
-        };
-        let batch = json!({
-            "targets": [
-                {
-                    "recipient_id": "first",
-                    "host_terminal_id": "removed-first",
-                    "operations": [
-                        {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 0},
-                        {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 100},
-                    ],
-                },
-                {
-                    "recipient_id": "later",
-                    "host_terminal_id": "removed-later",
-                    "operations": [
-                        {"kind": "text", "encoding": "utf8-b64", "data": "eA==", "delay_ms": 500},
-                    ],
-                },
-            ],
-        });
-        let batch_state = state.clone();
-        let batch_task = tokio::spawn(async move {
-            batch_state
-                .write_batch(batch.as_object().expect("batch object"))
-                .await
-        });
-        tokio::task::yield_now().await;
-        tokio::time::advance(Duration::from_millis(1)).await;
-        tokio::task::yield_now().await;
-
-        remove_terminal(&state, "removed-first").await;
-        tokio::time::advance(Duration::from_millis(249)).await;
-        tokio::task::yield_now().await;
-        remove_terminal(&state, "removed-later").await;
-        tokio::time::advance(Duration::from_millis(250)).await;
-
-        let response = batch_task.await.expect("batch task");
-        assert_eq!(response["results"][0]["error"], "not_found");
-        assert_eq!(response["results"][0]["stage"], "partial");
-        assert_eq!(response["results"][1]["error"], "not_found");
-        assert_eq!(response["results"][1]["stage"], "none");
-    }
 }

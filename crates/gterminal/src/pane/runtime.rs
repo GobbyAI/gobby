@@ -86,6 +86,35 @@ enum PaneRuntimeIo {
     },
 }
 
+/// The existing PTY actor's bounded input lane, independent of terminal rendering.
+#[derive(Clone)]
+pub(crate) enum PaneInputWriter {
+    Actor(PtyIoActorHandle),
+    #[cfg(test)]
+    Test(mpsc::Sender<Bytes>),
+}
+
+impl PaneInputWriter {
+    pub(crate) fn write_terminal_response(&self, response: impl FnOnce() -> Option<Bytes>) {
+        match self {
+            Self::Actor(actor) => actor.write_terminal_response(response),
+            #[cfg(test)]
+            Self::Test(sender) => {
+                if let Some(bytes) = response() {
+                    let _ = sender.try_send(bytes);
+                }
+            }
+        }
+    }
+    pub(crate) fn try_send(&self, bytes: Bytes) -> Result<(), mpsc::error::TrySendError<Bytes>> {
+        match self {
+            Self::Actor(actor) => actor.try_write_user_input(bytes),
+            #[cfg(test)]
+            Self::Test(sender) => sender.try_send(bytes),
+        }
+    }
+}
+
 impl PaneRuntimeIo {
     fn shutdown(&self) {
         match self {

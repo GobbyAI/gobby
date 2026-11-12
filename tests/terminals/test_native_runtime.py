@@ -96,7 +96,7 @@ class FakeHostClient:
     hold: asyncio.Event | None = None
     snapshot_text: str = ""
     snapshot_truncated: bool = False
-    snapshot_dropped: int = 0
+    snapshot_dropped: int | None = 0
     snapshot_total: int | None = None
     snapshot_error: str | None = None
     snapshot_modes: list[str] = field(default_factory=list)
@@ -294,7 +294,7 @@ class FakeHostClient:
             raise HostCommandError(self.snapshot_error)
         total = (
             self.snapshot_total
-            if self.snapshot_total is not None
+            if self.snapshot_total is not None or self.snapshot_truncated
             else len(self.snapshot_text.encode("utf-8"))
         )
         return {
@@ -665,6 +665,20 @@ async def test_snapshot_metadata_survives_the_adapter() -> None:
     hint = NativeTerminalRuntime.snapshot.__annotations__["return"]
     assert "SnapshotResult" in str(hint)
     assert host.snapshot_modes == ["text", "text", "text"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_preserves_unknown_history_byte_counts() -> None:
+    runtime, host = _runtime()
+    host.snapshot_text = "bounded tail"
+    host.snapshot_truncated = True
+    host.snapshot_dropped = None
+    host.snapshot_total = None
+    captured = await runtime.snapshot_full(_native_terminal(host))
+    assert captured.text == "bounded tail"
+    assert captured.truncated is True
+    assert captured.dropped_bytes is None
+    assert captured.total_bytes is None
 
 
 @pytest.mark.asyncio

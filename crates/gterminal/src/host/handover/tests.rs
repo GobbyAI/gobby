@@ -197,7 +197,7 @@ async fn concurrent_restore_matches_the_serial_restore() {
         dir.path().to_path_buf(),
         &["sh".into(), "-c".into(), "sleep 30".into()],
         &PaneLaunchEnv::default(),
-        1 << 20,
+        TEST_SCROLLBACK,
         TerminalTheme::default(),
         None,
     )

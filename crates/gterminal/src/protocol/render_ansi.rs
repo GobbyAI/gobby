@@ -46,7 +46,7 @@ pub(crate) struct EncodedBlit {
 }
 
 /// Stateful encoder that diffs semantic frames into terminal ANSI bytes.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct BlitEncoder {
     last_frame: Option<FrameData>,
     last_visible_cursor: Option<(u16, u16)>,

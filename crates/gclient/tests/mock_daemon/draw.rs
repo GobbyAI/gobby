@@ -10,6 +10,7 @@ pub(crate) struct DrawRecorder {
     inner: TestBackend,
     draws: Arc<AtomicUsize>,
     frames: Arc<Mutex<Vec<String>>>,
+    pub(crate) draw_notify: Arc<tokio::sync::Notify>,
 }
 
 impl DrawRecorder {
@@ -24,6 +25,7 @@ impl DrawRecorder {
                 inner: TestBackend::new(width, height),
                 draws: Arc::clone(&draws),
                 frames: Arc::clone(&frames),
+                draw_notify: Arc::new(tokio::sync::Notify::new()),
             },
             draws,
             frames,
@@ -49,6 +51,7 @@ impl Backend for DrawRecorder {
             .collect::<Vec<_>>()
             .join("\n");
         self.frames.lock().expect("recorded frames").push(text);
+        self.draw_notify.notify_one();
         Ok(())
     }
 

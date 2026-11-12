@@ -117,6 +117,7 @@ pub struct Attachment {
     pub rows: u16,
     pub cols: u16,
     pub scroll: u32,
+    pub(crate) view_revision: u64,
     pub reservation_id: Option<String>,
     /// Daemon attachment name this stream bound with `BindAttachment`. It names
     /// the stream for input attribution and theme relay.
@@ -208,6 +209,8 @@ pub struct HostState {
     pub(crate) mutation_gate: Arc<RwLock<()>>,
     pub(crate) events: HostEvents,
     pub(crate) inner: Mutex<Inner>,
+    #[cfg(feature = "vt-engine")]
+    pub(crate) frame_build: Mutex<HashSet<u64>>,
     pub(crate) polls: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
 }
 
@@ -243,6 +246,8 @@ impl HostState {
             events,
             polls: Mutex::new(HashMap::new()),
             inner: Mutex::new(inner),
+            #[cfg(feature = "vt-engine")]
+            frame_build: Mutex::new(HashSet::new()),
         })
     }
 
@@ -275,6 +280,7 @@ impl HostState {
             events: carried.events,
             polls: Mutex::new(HashMap::new()),
             inner: Mutex::new(carried.inner),
+            frame_build: Mutex::new(HashSet::new()),
         })
     }
 
@@ -397,6 +403,11 @@ impl HostState {
         // the spawning session's own pane), else the unset theme, which gives
         // no reply. Another client's declaration never seeds it.
         let theme_from = s(extra, "theme_from");
+        let inherited_theme = if explicit_theme.is_none() {
+            self.inherited_theme(&theme_from).await
+        } else {
+            None
+        };
         let spawn_theme = {
             let inner = self.inner.lock().await;
             if let Some(existing) = inner.terminals.get(&identity) {
@@ -427,7 +438,7 @@ impl HostState {
             if res.key != reserve_key || res.terminal_id != terminal_id {
                 return err("invalid_reservation");
             }
-            explicit_theme.or_else(|| super::theme::slot_theme(&inner, &theme_from))
+            explicit_theme.or(inherited_theme)
         };
         #[cfg(not(feature = "vt-engine"))]
         {
@@ -596,6 +607,7 @@ impl HostState {
                 rows,
                 cols,
                 scroll: 0,
+                view_revision: 0,
                 reservation_id: reservation_id.clone(),
                 client_attachment_id: None,
                 mailbox: mailbox.clone(),
@@ -655,6 +667,10 @@ impl HostState {
         attachment_id: u64,
         client_attachment_id: String,
     ) -> Result<(), &'static str> {
+        let _gate = self
+            .mutation_gate
+            .try_read()
+            .map_err(|_| "host_upgrading")?;
         let mut inner = self.inner.lock().await;
         let attachment = inner
             .attachments
@@ -673,7 +689,9 @@ impl HostState {
             .get_mut(&attachment_id)
             .expect("attachment checked above")
             .client_attachment_id = Some(client_attachment_id);
-        super::theme::apply_slot_theme(&inner, &host_terminal_id);
+        let theme = super::theme::slot_theme_work(&inner, &host_terminal_id);
+        drop(inner);
+        super::theme::apply_theme_work(theme).await;
         Ok(())
     }
 
@@ -691,6 +709,7 @@ impl HostState {
         att.rows = rows;
         att.cols = cols;
         att.desynced = true;
+        att.view_revision = att.view_revision.wrapping_add(1);
         Ok(())
     }
 
@@ -699,7 +718,7 @@ impl HostState {
         attachment_id: u64,
         rows_from_live_edge: u32,
     ) -> Result<ServerMessage, &'static str> {
-        let mut inner = self.inner.lock().await;
+        let inner = self.inner.lock().await;
         let host_id = inner
             .attachments
             .get(&attachment_id)
@@ -707,17 +726,50 @@ impl HostState {
             .host_terminal_id
             .clone();
         let identity = inner.by_host_id.get(&host_id).cloned().ok_or("not_found")?;
-        let max_rows = inner
+        #[cfg(feature = "vt-engine")]
+        let terminal = inner
             .terminals
             .get(&identity)
-            .map(|slot| slot.config_scroll_max(self.config.native_scrollback_max_lines))
-            .unwrap_or(0);
+            .and_then(|slot| slot.child.as_ref())
+            .map(|child| child.runtime.terminal_handle());
+        drop(inner);
+        let max_rows = self.config.native_scrollback_max_lines;
+        #[cfg(feature = "vt-engine")]
+        let max_rows = if let Some(terminal) = terminal.as_ref() {
+            let terminal = terminal.clone();
+            tokio::task::spawn_blocking(move || {
+                terminal
+                    .scroll_metrics()
+                    .map(|metrics| metrics.max_offset_from_bottom as u32)
+            })
+            .await
+            .map_err(|_| "read_failed")?
+            .unwrap_or(max_rows)
+            .min(max_rows)
+        } else {
+            max_rows
+        };
+        let mut inner = self.inner.lock().await;
+        #[cfg(feature = "vt-engine")]
+        if let Some(terminal) = terminal {
+            if !inner
+                .terminals
+                .get(&identity)
+                .and_then(|slot| slot.child.as_ref())
+                .is_some_and(|child| Arc::ptr_eq(&terminal, &child.runtime.terminal_handle()))
+            {
+                return Err("terminal_gone");
+            }
+        }
+        #[cfg(not(feature = "vt-engine"))]
+        let _ = identity;
         let applied = rows_from_live_edge.min(max_rows);
         let Some(att) = inner.attachments.get_mut(&attachment_id) else {
             return Err("not_found");
         };
         att.scroll = applied;
         att.desynced = true;
+        att.view_revision = att.view_revision.wrapping_add(1);
         Ok(ServerMessage::ScrollOffsetApplied {
             applied_rows: applied,
             max_rows,
@@ -744,18 +796,38 @@ impl HostState {
             return Err("not_native");
         }
         #[cfg(feature = "vt-engine")]
-        return slot
-            .child
-            .as_ref()
-            .ok_or("terminal_gone")?
-            .runtime
-            .read_text_screen(
-                start_rows_from_live_edge,
-                start_col,
-                end_rows_from_live_edge,
-                end_col,
-            )
-            .ok_or("read_failed");
+        {
+            let terminal = slot
+                .child
+                .as_ref()
+                .ok_or("terminal_gone")?
+                .runtime
+                .terminal_handle();
+            let capture = terminal.begin_history_capture()?;
+            let host_id = host_id.clone();
+            drop(inner);
+            let text = tokio::task::spawn_blocking(move || {
+                capture.read_selection(
+                    start_rows_from_live_edge,
+                    start_col,
+                    end_rows_from_live_edge,
+                    end_col,
+                )
+            })
+            .await
+            .map_err(|_| "read_failed")??;
+            let inner = self.inner.lock().await;
+            if !inner
+                .by_host_id
+                .get(&host_id)
+                .and_then(|id| inner.terminals.get(id))
+                .and_then(|slot| slot.child.as_ref())
+                .is_some_and(|child| Arc::ptr_eq(&terminal, &child.runtime.terminal_handle()))
+            {
+                return Err("terminal_gone");
+            }
+            Ok(text)
+        }
         #[cfg(not(feature = "vt-engine"))]
         {
             let _ = (
@@ -766,18 +838,6 @@ impl HostState {
             );
             Err("terminal_gone")
         }
-    }
-}
-
-impl TerminalSlot {
-    fn config_scroll_max(&self, max_lines: u32) -> u32 {
-        #[cfg(feature = "vt-engine")]
-        if let Some(child) = self.child.as_ref() {
-            if let Some(metrics) = child.runtime.scroll_metrics() {
-                return (metrics.max_offset_from_bottom as u32).min(max_lines);
-            }
-        }
-        max_lines
     }
 }
 

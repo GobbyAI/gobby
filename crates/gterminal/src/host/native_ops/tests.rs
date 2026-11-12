@@ -1,5 +1,6 @@
-use super::{kill_group, snapshot_mode, truncate_snapshot, KillGroupError};
+use super::{kill_group, KillGroupError};
 use crate::host::config::HostConfig;
+use crate::host::snapshot::{snapshot_mode, truncate_snapshot};
 use crate::host::state::{insert_native_slot, HostState};
 use crate::protocol::SnapshotMode;
 use serde_json::{json, Map, Value};
@@ -9,6 +10,14 @@ use tokio::sync::watch;
 
 fn object(value: Value) -> Map<String, Value> {
     value.as_object().cloned().expect("json object")
+}
+
+#[test]
+fn zero_line_tail_counts_do_not_exceed_full_bytes() {
+    let snapshot = truncate_snapshot("a\nb", 0, 100);
+    assert_eq!(snapshot.text, "");
+    assert_eq!(snapshot.total_bytes, Some(3));
+    assert_eq!(snapshot.dropped_bytes, Some(3));
 }
 
 async fn slot_killing(state: &HostState, host_terminal_id: &str) -> Option<bool> {
@@ -339,14 +348,14 @@ fn truncate_snapshot_keeps_the_line_tail_and_counts_what_it_dropped() {
     let whole = truncate_snapshot(full, 10, 1024);
     assert_eq!(whole.text, "one\ntwo\nthree");
     assert!(!whole.truncated);
-    assert_eq!(whole.dropped_bytes, 0);
-    assert_eq!(whole.total_bytes, full.len() as u64);
+    assert_eq!(whole.dropped_bytes, Some(0));
+    assert_eq!(whole.total_bytes, Some(full.len() as u64));
 
     let tail = truncate_snapshot(full, 2, 1024);
     assert_eq!(tail.text, "two\nthree");
     assert!(tail.truncated);
-    assert_eq!(tail.dropped_bytes, "one\n".len() as u64);
-    assert_eq!(tail.total_bytes, full.len() as u64);
+    assert_eq!(tail.dropped_bytes, Some("one\n".len() as u64));
+    assert_eq!(tail.total_bytes, Some(full.len() as u64));
 }
 
 #[test]
@@ -360,12 +369,12 @@ fn truncate_snapshot_trims_multibyte_text_on_char_boundaries() {
     assert_eq!(split.text, "\u{e9}");
     assert!(split.text.len() <= 3);
     assert!(split.truncated);
-    assert_eq!(split.dropped_bytes, 4);
-    assert_eq!(split.total_bytes, text.len() as u64);
+    assert_eq!(split.dropped_bytes, Some(4));
+    assert_eq!(split.total_bytes, Some(text.len() as u64));
 
     let both = truncate_snapshot("aaa\n\u{e9}\u{e9}\u{e9}\n", 1, 3);
     assert_eq!(both.text, "\u{e9}");
     assert!(both.truncated);
-    assert_eq!(both.dropped_bytes, 8);
-    assert_eq!(both.total_bytes, 11);
+    assert_eq!(both.dropped_bytes, Some(8));
+    assert_eq!(both.total_bytes, Some(11));
 }

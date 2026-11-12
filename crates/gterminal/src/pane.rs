@@ -11,6 +11,8 @@ mod shell;
 mod shutdown;
 mod state;
 mod terminal;
+pub(crate) use self::runtime::PaneInputWriter;
+pub(crate) use self::terminal::PaneTerminal;
 
 pub use self::runtime::ChildExit;
 pub use self::runtime::ChildExitWatch;
