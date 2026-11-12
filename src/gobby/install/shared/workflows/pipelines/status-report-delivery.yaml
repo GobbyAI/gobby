@@ -1,11 +1,12 @@
 name: status-report-delivery
 type: pipeline
-version: "1.0.0"
+version: "1.1.0"
 description: |
   Delivers the operator status report to the operator channel at the project-policy cadence with
   no agent turn. The compose step builds the report from hub evidence, git and live agent runs,
   and writes it under the project's reports directory. The deliver step sends that file as an
-  attachment. A failed compose step ends the run before anything is sent. Every step is an MCP call.
+  attachment and records a successful delivery receipt for full/delta baselines. Each run owns
+  a unique artifact. A failed compose step ends the run before anything is sent.
 tags: [status, report]
 resume_on_restart: false
 # Lets this run's daemon-owned steps send operator attachments, limited to the reports directory.
@@ -32,6 +33,7 @@ steps:
       server: gobby-communications
       tool: compose_status_report
       arguments:
+        channel: "${{ inputs.channel }}"
         integration_branch: "${{ inputs.integration_branch }}"
         operator_timezone: "${{ inputs.operator_timezone }}"
         window_seconds: "${{ inputs.window_seconds }}"

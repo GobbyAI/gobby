@@ -24,6 +24,7 @@ pytestmark = pytest.mark.integration
 SYNTHETIC_PIPELINE = "synthetic-status-run"
 OPERATOR_CHANNEL = "operator-status"
 COMPOSE_ARGUMENTS = {
+    "channel": OPERATOR_CHANNEL,
     "integration_branch": "0.5.0",
     "operator_timezone": "America/Chicago",
     "window_seconds": 1800,
@@ -54,7 +55,7 @@ def _manager(channels: list[ChannelConfig]) -> MagicMock:
         "conversation_id": "dm:42",
         "session_id": None,
     }
-    message = MagicMock(status="sent", id="delivered", error=None, platform_message_id="p1")
+    message = MagicMock(status="sent", id=str(uuid.uuid4()), error=None, platform_message_id="p1")
     attachment = MagicMock(
         id="att",
         message_id="delivered",
@@ -148,6 +149,14 @@ async def _run_step(
             "gobby.mcp_proxy.tools.communications.get_project_context",
             return_value={"id": project_id, "project_path": str(project_root)},
         ),
+        patch(
+            "gobby.mcp_proxy.tools.communications_reports.get_current_session_id",
+            return_value=session_id,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.communications_reports.get_project_context",
+            return_value={"id": project_id, "project_path": str(project_root)},
+        ),
     ):
         output: dict[str, Any] = await execute_mcp_step(
             step, context, lambda: proxy, SessionManager(temp_db)
@@ -183,12 +192,12 @@ async def test_daemon_run_composes_report_under_reports_directory(
 ) -> None:
     project_id = str(sample_project["id"])
     session = _session(temp_db, project_id)
-    run = _execution(temp_db, project_id, session.id, {})
+    run = _execution(temp_db, project_id, session.id, {"operator_messaging": True})
     project_root = tmp_path / "checkout"
     project_root.mkdir()
 
     output = await _run_step(
-        _manager([]),
+        _manager([_channel(OPERATOR_CHANNEL, project_id)]),
         temp_db,
         project_id,
         session.id,
@@ -199,8 +208,11 @@ async def test_daemon_run_composes_report_under_reports_directory(
         arguments=COMPOSE_ARGUMENTS,
     )
 
-    report = project_root / ".gobby" / "reports" / "status-report.md"
-    assert output == {"file_path": str(report), "nominal": True}
+    report = Path(output["file_path"])
+    assert report.parent == project_root / ".gobby" / "reports"
+    assert report.name.startswith("status-report-")
+    assert output["nominal"] is True
+    assert output["mode"] == "full"
     assert report.read_text(encoding="utf-8").endswith("Systems nominal\n")
 
 
@@ -226,6 +238,16 @@ async def test_composed_report_is_delivered_by_the_next_daemon_step(
         tool="compose_status_report",
         arguments=COMPOSE_ARGUMENTS,
     )
+    original = Path(composed["file_path"]).resolve()
+    expected_bytes = original.read_bytes()
+    observed: list[bytes] = []
+    response = manager.send_attachment.return_value
+
+    async def send_snapshot(**kwargs: Any) -> Any:
+        observed.append(kwargs["file_path"].read_bytes())
+        return response
+
+    manager.send_attachment.side_effect = send_snapshot
     delivered = await _run_step(
         manager,
         temp_db,
@@ -242,7 +264,16 @@ async def test_composed_report_is_delivered_by_the_next_daemon_step(
     manager.send_attachment.assert_awaited_once()
     sent = manager.send_attachment.await_args.kwargs
     assert sent["channel_name"] == OPERATOR_CHANNEL
-    assert sent["file_path"] == Path(composed["file_path"]).resolve()
+    assert sent["file_path"] != original
+    assert sent["file_path"].name == original.name
+    assert observed == [expected_bytes]
+    assert not sent["file_path"].exists()
+    receipt = temp_db.fetchone(
+        "SELECT delivered_at, message_id FROM status_report_runs WHERE id = %s",
+        (composed["run_id"],),
+    )
+    assert receipt is not None and receipt["delivered_at"] is not None
+    assert str(receipt["message_id"]) == delivered["message"]["id"]
 
 
 @pytest.mark.asyncio

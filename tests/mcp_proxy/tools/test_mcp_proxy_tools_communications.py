@@ -289,8 +289,14 @@ async def test_send_operator_message_requires_installed_operator_grant(
     tools = create_communications_registry(mock_manager, db=temp_db, workspace_root=tmp_path)
     handler = tools.get_tool(tool_name)
     assert handler is not None
-    with patch(
-        "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=caller.id
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=caller.id
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.communications_reports.get_current_session_id",
+            return_value=caller.id,
+        ),
     ):
         if tool_name == "send_operator_attachment":
             result = await handler(channel=requested_channel, file_path=str(report))

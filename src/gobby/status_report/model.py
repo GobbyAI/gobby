@@ -127,3 +127,6 @@ class StatusData:
     load_threshold: float
     gaps: tuple[str, ...]
     idle_holders: tuple[IdleHolder, ...] = ()
+    report_mode: str = "full"
+    baseline_at: datetime | None = None
+    removed: tuple[str, ...] = ()

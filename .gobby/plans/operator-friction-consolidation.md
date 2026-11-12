@@ -437,7 +437,11 @@ Targets:
 - `src/gobby/status_report/model.py::*` — scope-reason: carry semantic row and activation state.
 - `src/gobby/status_report/render.py::*` — scope-reason: render rows, removals and operator-local times.
 - `src/gobby/status_report/compose.py::*` — scope-reason: coordinate full and delta report artifacts.
-- `src/gobby/status_report/delivery.py`
+- `src/gobby/status_report/delivery.py::*` — scope-reason: own semantic comparison and successful full-report delivery baselines.
+- `src/gobby/mcp_proxy/tools/communications.py::*` — scope-reason: bind composition and delivery acknowledgement to the authenticated operator destination.
+- `src/gobby/mcp_proxy/tools/communications_reports.py::*` — scope-reason: register report composition and operator attachment tools at one adapter boundary.
+- `src/gobby/install/shared/workflows/pipelines/status-report-delivery.yaml::*` — scope-reason: pass the operator channel into composition and document delivery acknowledgement.
+- `crates/gcore/assets/schema/migrations/501_status_report_deliveries.sql`
 - `src/gobby/status_report/activation.py`
 - `src/gobby/status_report/rows.py::*` — scope-reason: project claim holders, idle age and stored task relationships without growing the Git collector.
 - `crates/gcore/assets/schema/migrations/500_status_report_note_eta.sql`
@@ -454,12 +458,20 @@ Targets:
 - `tests/status_report/test_collect.py::*` — scope-reason: exercise actual holder attribution, stored role exclusions, epic ordering and idle claims against isolated hub state.
 - `tests/status_report/test_worktree_notes_collect.py::*` — scope-reason: link freshness fixtures to synthetic tasks while preserving every real-Git change assertion.
 - `tests/status_report/test_worktree_notes_render.py::*` — scope-reason: preserve freshness and escaping while extending the row columns.
-- `tests/status_report/test_delivery.py`
+- `tests/status_report/test_delivery.py::*` — scope-reason: exercise schedule, changes, removals and ordered delivery receipts.
+- `tests/status_report/test_compose.py::*` — scope-reason: verify unique artifacts and cleanup at the publication boundary.
+- `tests/mcp_proxy/tools/test_communications_status_report.py::*` — scope-reason: verify daemon-only composition binds the destination and acknowledges only a successful send.
+- `tests/mcp_proxy/tools/test_communications_daemon_operator_attachment.py::*` — scope-reason: preserve isolated context seams for the extracted report adapter and its authorization matrix.
+- `tests/mcp_proxy/tools/test_mcp_proxy_tools_communications.py::*` — scope-reason: preserve authenticated caller seams in the synthetic installed-grant matrix after extracting the report adapter.
 - `tests/status_report/test_activation.py`
 
 **Research context:** Installed project policy supplies report cadence and full/delta windows. The existing status-report package has collection, model, render and compose owners; `compose_status_report` in the communications tools calls its composer, and the status-report-delivery pipeline orchestrates delivery. Extend those owners. New delivery and activation helpers will keep semantic row comparison separate from delivery state; activation records require successful source/binary identity proof. Test with synthetic task, delivery and activation fixtures.
 
 **Granularity:** These are three ordered implementation outcomes under existing #25863. Implement and verify rows first, delivery second and activation third, retaining task-sized commits for the existing task.
+
+Delivery implementation: the report capability owns a PostgreSQL run ledger in migration 501, with a database sequence, project/machine/destination scope, immutable semantic snapshot, artifact digest and successful delivery receipt. A baseline is the highest-sequence delivered full run in that scope, so overlapping older deliveries cannot replace a newer baseline. Composition reads the installed full/delta minute ranges, promotes an initial delta to full when no delivered baseline exists, and publishes a unique artifact per run. Semantic comparison ignores advancing clocks and stale-note timestamps while retaining freshness transitions; changed rows and removed row identities are explicit. The existing daemon-only operator attachment path acknowledges the exact stored artifact only after its send succeeds and its digest still matches. No agent-callable acknowledgement tool is added. The pipeline passes its channel into composition to bind the enrolled destination. Tests cover schedule, semantic changes/removals, failed and overlapping delivery, destination isolation, artifact tampering and unique output paths. State ownership stays in the status-report capability; the MCP adapter depends inward on it. No new generic package or delivery framework is needed.
+
+Split report composition and operator attachment registration from `src/gobby/mcp_proxy/tools/communications.py` into `src/gobby/mcp_proxy/tools/communications_reports.py`. This cohesive adapter owns report-only daemon admission, artifact scope and receipt orchestration; the existing registry supplies the shared authenticated operator-destination resolver and attachment sender. Direct extraction preserves the existing tool API and generic attachment authorization without a circular import. The 86 passing focused report/operator-attachment tests provide the pre-extraction characterization baseline.
 
 Row implementation research: `collect_status` already batches latest attestations and open claim intervals, but the interval projection discards session identity. The new focused row helper will join each unreleased claim to its session and latest bound agent run, retaining unknown identity explicitly when no run exists. Session `last_activity` supplies idle age. Stored `workspace_role` controls exclusions; task type and parent relationships control epic classification and recursive open-leaf counts. Team admission records supply landing targets, and workflow state carries the optional repair task reference. `WorktreeRow.current_note` remains the authority for reconcile-note freshness. Existing real-Git collector fixtures and isolated-hub claim fixtures will verify behavior before implementation; no live project registration is required. Report cadence defaults to 1800 seconds, with a policy override for idle-holder age. Verification is focused status-report pytest plus Ruff, mypy, test-type/quality and suppression audits; these checks are planned, not yet run for this outcome.
 

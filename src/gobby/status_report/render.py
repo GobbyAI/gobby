@@ -43,6 +43,11 @@ def is_nominal(data: StatusData) -> bool:
 
 def render_markdown(data: StatusData, zone: ZoneInfo) -> str:
     lines = [_header(data, zone), ""]
+    if data.report_mode == "delta" and data.baseline_at is not None:
+        lines += [
+            f"Delta since delivered full report {data.baseline_at.astimezone(zone):%Y-%m-%d %H:%M %Z}",
+            "",
+        ]
     lines += _in_flight_section(data, zone)
     lines += _section("Landed", [_landing_line(item) for item in data.landings])
     lines += _section("Closed", [_closed_line(item) for item in data.closed])
@@ -59,6 +64,7 @@ def render_markdown(data: StatusData, zone: ZoneInfo) -> str:
             [f"- 5-minute load {load:.1f} is above {data.load_threshold:g} (one sample)"],
         )
     lines += _section("Source gaps", [f"- GAP: {gap}" for gap in data.gaps])
+    lines += _section("Removed", [f"- {item}" for item in data.removed])
     lines += _section(
         "Idle holders",
         [
@@ -72,7 +78,9 @@ def render_markdown(data: StatusData, zone: ZoneInfo) -> str:
             for holder in data.idle_holders
         ],
     )
-    if is_nominal(data):
+    if data.report_mode == "delta" and len(lines) == 4:
+        lines.append("No changes since the delivered full report.")
+    elif data.report_mode == "full" and is_nominal(data):
         lines.append(_NOMINAL)
     return "\n".join(lines).rstrip() + "\n"
 
