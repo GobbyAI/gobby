@@ -19,9 +19,6 @@ def resolve_agent_name(
     """Determine which agent to activate."""
     if handler._session_manager is None:
         raise RuntimeError("session storage is not initialized")
-    if agent_name_override:
-        return agent_name_override
-
     from gobby.workflows.state_manager import SessionVariableManager
 
     if existing_vars is None:
@@ -30,6 +27,17 @@ def resolve_agent_name(
         )
     existing_agent_type = existing_vars.get("_agent_type") if existing_vars else None
 
+    from gobby.hooks.event_handlers.clear_identity import CLEAR_IDENTITY_VARIABLE
+
+    if (
+        SessionVariableManager(handler._session_manager.db)
+        .get_variable_subset(session_id, (CLEAR_IDENTITY_VARIABLE,))
+        .get(CLEAR_IDENTITY_VARIABLE)
+    ):
+        return "default"
+
+    if agent_name_override:
+        return agent_name_override
     if existing_agent_type and existing_agent_type != "default":
         return str(existing_agent_type)
 
@@ -212,6 +220,10 @@ def activate_default_agent(
             committed["status"],
         )
         return None
+
+    from gobby.agents.workspace_bindings import bind_session_workspace
+
+    bind_session_workspace(db, session_id)
 
     _ta_format = time.monotonic()
     active_skills = committed["variables"].get("_active_skill_names")

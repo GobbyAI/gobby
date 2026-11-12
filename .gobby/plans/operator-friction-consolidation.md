@@ -185,11 +185,41 @@ Targets:
 `kind: deliverable`
 
 Targets:
-- `src/gobby/hooks/event_handlers/_session_end.py::*` — scope-reason: route confirmed clear through semantic lifecycle reset.
-- `src/gobby/hooks/event_handlers/clear_identity.py`
-- `tests/hooks/test_clear_identity.py`
+- `src/gobby/hooks/event_handlers/_session_end.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `src/gobby/hooks/event_handlers/_session_start/flow.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `src/gobby/hooks/event_handlers/_session_start/materialize.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `src/gobby/hooks/event_handlers/_session_start/agents.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `src/gobby/agents/workspace_bindings.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `src/gobby/agents/agent_workspaces.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `src/gobby/mcp_proxy/tools/apply_agent_definition.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `src/gobby/sessions/clear_run_lineage.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `src/gobby/workflows/selectors.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `src/gobby/workflows/engine/core.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `tests/hooks/test_clear_identity.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `tests/hooks/test_clear_successor_seat.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `tests/hooks/test_session_end_handlers.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `tests/agents/test_agent_workspace_lifecycle.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `tests/workflows/test_selectors.py::*` — scope-reason: implement and verify the confirmed-clear lifecycle and effective default workspace exemption.
+- `tests/servers/test_managed_clear_identity.py::*` — scope-reason: replace removed spawned-clear forwarding expectations with preserved authentication after refused transfer.
+- `src/gobby/hooks/event_handlers/clear_identity.py::*` — scope-reason: centralize semantic reset and cancellation dispatch.
+- `docs/contracts/session-boundary.md`
+- `src/gobby/workflows/engine/rule_selection.py::*` — scope-reason: own enabled-rule loading and applicability filtering.
+- `src/gobby/hooks/event_handlers/_session_start/diagnostics.py::*` — scope-reason: own lifecycle and timing diagnostics extracted from flow.
+- `src/gobby/install/shared/workflows/rules/roles/inject-agent-workspace.yaml::*` — scope-reason: declare workspace applicability outside default and version the changed policy.
+- `src/gobby/install/shared/workflows/rules/roles/agent-workspace-scope.yaml::*` — scope-reason: declare workspace applicability outside default and version the changed policy.
+- `src/gobby/install/shared/workflows/rules/roles/workspace-only-write-scope.yaml::*` — scope-reason: declare workspace applicability outside default and version the changed policy.
+- `src/gobby/install/shared/workflows/rules/roles/inject-standing-directives.yaml::*` — scope-reason: declare workspace applicability outside default and version the changed policy.
+- `src/gobby/install/shared/workflows/rules/roles/block-temp-scratchpad-writes.yaml::*` — scope-reason: keep provider-native scratchpads available to default.
+
+**Granularity:** Operator reset and spawned cancellation are the two outcomes of one confirmed-clear boundary. Keep their ingress guards, transactional ownership check, and cancellation adapter in this lifecycle deliverable; reuse the existing cancellation state machine rather than creating another one. Default workspace allocation and selection must change together to prevent recovery from restoring stale scope.
+
+Split lifecycle and timing diagnostics from `src/gobby/hooks/event_handlers/_session_start/flow.py` into `src/gobby/hooks/event_handlers/_session_start/diagnostics.py` before extending clear ingress.
+
+Split rule loading and selection from `src/gobby/workflows/engine/core.py` into `src/gobby/workflows/engine/rule_selection.py` before extending scope matching. The engine delegates to this mixin; selector scope matching remains the shared activation and evaluation policy.
 
 **Research context:** Session-end handling owns termination; new `clear_identity.py` will centralize reset and spawned-seat cleanup integration. Preserve provider authentication and safeguards while clearing semantic definition state. Verify with isolated lifecycle fixtures.
+
+Activation records explicit workflow-variable ownership separately from initialized runtime defaults, retaining that inventory across same-role definition refreshes. Clear uses the recorded inventory even after a definition changes or disappears, restores registered defaults for its explicit values, and preserves canonical task ledgers and runtime safeguards. The forced-default marker controls recovery selection only; each confirmed clear still removes any persona applied since the previous boundary.
 
 **Changes:**
 

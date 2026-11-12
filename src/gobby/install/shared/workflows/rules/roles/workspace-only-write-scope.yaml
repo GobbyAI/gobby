@@ -1,9 +1,10 @@
-version: "2.0.0"
+version: "3.0.0"
 tags: [roles, enforcement, gobby]
 
 # Selected by name. A write with no resolvable target path fails closed.
 rules:
   workspace-only-write-scope:
+    agent_scope: ["*", "!default"]
     description: "Keep a seat's file writes in its own agent workspace folders"
     event: before_tool
     enabled: true

@@ -106,14 +106,16 @@ class SessionEndMixin(EventHandlersBase):
         else:
             end_status = "expired"
         terminal_outcome = end_status == "expired"
-        # A staged clear hands its run and the run's terminal to the successor,
-        # whose marker take rebinds both; ending them here would kill the seat.
-        hands_off_run = bool(
-            end_reason == SessionEndReason.CLEAR
-            and session is not None
-            and session.status == "awaiting_handoff"
-            and session.agent_run_id
-        )
+        spawned_clear = False
+        if end_reason == SessionEndReason.CLEAR and session is not None:
+            from gobby.hooks.event_handlers.clear_identity import (
+                reset_operator_identity,
+                stop_spawned_clear,
+            )
+
+            spawned_clear = stop_spawned_clear(session)
+            if not spawned_clear and self._session_manager is not None:
+                reset_operator_identity(self._session_manager.db, session.id)
 
         # A graceful exit stops the owner's background process tree while the CLI is still
         # its parent. Its calls settle only once that tree is verified empty; any other end
@@ -160,7 +162,7 @@ class SessionEndMixin(EventHandlersBase):
         # Complete agent run if this is a terminal-mode agent session
         if (
             terminal_outcome
-            and not hands_off_run
+            and not spawned_clear
             and session
             and session.agent_run_id
             and self._session_coordinator
@@ -176,7 +178,7 @@ class SessionEndMixin(EventHandlersBase):
                 self.logger.warning("Failed to complete agent run: %s", e)
 
         # Run end releases the epic folder; a resumed seat re-binds it while its team is live.
-        if terminal_outcome and not hands_off_run and session_id and self._session_manager:
+        if terminal_outcome and not spawned_clear and session_id and self._session_manager:
             try:
                 unbind_epic_workspace(self._session_manager.db, session_id)
             except Exception as e:
@@ -254,6 +256,7 @@ class SessionEndMixin(EventHandlersBase):
             session is not None
             and session.status == "awaiting_handoff"
             and end_reason != SessionEndReason.COMPACT
+            and not spawned_clear
         ):
             self.logger.debug(
                 "SESSION_END: session %s is awaiting_handoff; leaving status for the successor",
@@ -265,7 +268,7 @@ class SessionEndMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning("Failed to update session %s status on end: %s", session_id, e)
 
-        if terminal_outcome and not hands_off_run and session_id:
+        if terminal_outcome and not spawned_clear and session_id:
             manager = getattr(self, "terminal_manager", None)
             if manager is not None:
                 try:

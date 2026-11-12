@@ -694,15 +694,17 @@ def spawn_workspace_write_paths(
         .get_variable_subset(session_id, [WORKSPACE_DIR_VARIABLE])
         .get(WORKSPACE_DIR_VARIABLE)
     )
-    folder = (
-        Path(bound)
-        if isinstance(bound, str) and bound
-        else session_workspace_dir(location["project_id"], definition, location["seq_num"])
-    )
-    folders = [folder]
-    epic = _seat_epic_folder(db, session_id)
-    if epic is not None:
-        folders.append(epic)
+    folders: list[Path] = []
+    if definition and definition != "default":
+        folder = (
+            Path(bound)
+            if isinstance(bound, str) and bound
+            else session_workspace_dir(location["project_id"], definition, location["seq_num"])
+        )
+        folders.append(folder)
+        epic = _seat_epic_folder(db, session_id)
+        if epic is not None:
+            folders.append(epic)
     capable = session_has_capability(db, session_id, CAPABILITY)
     worktree = assigned_run_checkout(db, session_id)
     if worktree is not None and (capable or worktree.is_relative_to(workspaces_root())):
@@ -730,7 +732,12 @@ def grant_seat_workspace_paths(
     folders = [path for path in granted if Path(path).is_relative_to(workspaces_root())]
     reads = list(folders)
     location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
-    if location is not None and location["project_id"] is not None:
+    if (
+        definition
+        and definition != "default"
+        and location is not None
+        and location["project_id"] is not None
+    ):
         anchor = workspace_anchor(location["project_id"])
         reads.append(str(anchor / "README.md"))
         row = (
@@ -787,6 +794,11 @@ def bind_epic_workspace(db: HubDatabase, session_id: str) -> Path | None:
     """
     from gobby.workflows.state_manager import SessionVariableManager
 
+    variables = SessionVariableManager(db)
+    definition = variables.get_variables(session_id).get("_agent_type")
+    if not definition or definition == "default":
+        variables.merge_variables(session_id, {WORKSPACE_EPIC_DIR_VARIABLE: None})
+        return None
     folder = _seat_epic_folder(db, session_id)
     if folder is None:
         return None

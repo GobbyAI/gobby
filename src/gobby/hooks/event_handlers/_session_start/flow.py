@@ -38,6 +38,7 @@ from .context import (
 from .context import (
     startup_claim_owner_token as _startup_claim_owner_token,
 )
+from .diagnostics import _log_session_start_lifecycle, _log_session_start_timing
 from .handoff import (
     STARTUP_SOURCES,
     rebind_resumed_session_start,
@@ -60,62 +61,6 @@ from .terminal_runtime import (
     session_start_is_nested_cli_child,
 )
 from .transcripts import replace_session_message_processor
-
-SLOW_SESSION_START_THRESHOLD_MS = 1000
-
-
-def _log_session_start_lifecycle(
-    handler: Any,
-    *,
-    session_id: str | None,
-    session_source: str | None,
-    cli_source: str,
-    project_id: str | None,
-    parent_session_id: str | None,
-    pre_created: bool = False,
-) -> None:
-    parts = ["Session start:"]
-    if session_id:
-        parts.append(f"session={session_id}")
-    if session_source:
-        parts.append(f"source={session_source}")
-    parts.append(f"cli={cli_source}")
-    if project_id:
-        parts.append(f"project={project_id}")
-    if parent_session_id:
-        parts.append(f"parent={parent_session_id}")
-    if pre_created:
-        parts.append("pre_created=true")
-    handler.logger.debug(" ".join(parts))
-
-
-def _log_session_start_timing(
-    handler: Any,
-    *,
-    session_source: str,
-    session_id: str | None,
-    timings: dict[str, int],
-) -> None:
-    timing_message = f"SESSION_START timing [{session_source}]: " + " ".join(
-        f"{name}={duration}ms" for name, duration in timings.items()
-    )
-    slow_component, slow_ms = max(
-        ((name, duration) for name, duration in timings.items() if name != "total"),
-        key=lambda item: item[1],
-        default=("total", timings.get("total", 0)),
-    )
-    total_ms = timings.get("total", 0)
-    if total_ms >= SLOW_SESSION_START_THRESHOLD_MS:
-        handler.logger.info(
-            "SESSION_START slow: component=%s duration=%sms total=%sms source=%s session=%s",
-            slow_component,
-            slow_ms,
-            total_ms,
-            session_source,
-            session_id,
-        )
-    else:
-        handler.logger.debug(timing_message)
 
 
 def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
@@ -344,6 +289,18 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     )
     if resolution.blocked_reason:
         return HookResponse(decision="block", reason=resolution.blocked_reason)
+    clear_owner = resolution.clear_predecessor
+    if clear_owner is None and resolution.session_source == "clear":
+        clear_owner = resolution.session
+        if clear_owner is None and terminal_context and handler._session_manager:
+            owner_id = terminal_context.get("gobby_session_id")
+            if isinstance(owner_id, str):
+                clear_owner = handler._session_manager.get(owner_id)
+    if clear_owner is not None:
+        from gobby.hooks.event_handlers.clear_identity import stop_spawned_clear
+
+        if stop_spawned_clear(clear_owner):
+            return HookResponse(decision="block", reason="Clear ends this spawned agent run.")
     reported_source = session_source
     session_source = resolution.session_source
     if session_start_should_defer(
@@ -594,6 +551,11 @@ def handle_pre_created_session(
     terminal_context: dict[str, Any] | None = None,
 ) -> HookResponse:
     """Handle session start for a pre-created session."""
+    if event.data.get("source") == "clear":
+        from gobby.hooks.event_handlers.clear_identity import stop_spawned_clear
+
+        if stop_spawned_clear(existing_session):
+            return HookResponse(decision="block", reason="Clear ends this spawned agent run.")
     machine_id = require_hook_machine_id(event)
     handler.logger.info("Found pre-created session %s, updating instead of creating", external_id)
 

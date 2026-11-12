@@ -12,10 +12,9 @@ def current_run_session_id(
 ) -> str:
     """Return the session a run-bound capability now speaks for.
 
-    A /clear hands a live run to the successor, but the pane keeps sending the
-    predecessor it was launched as. Follows the run's live binding (the run's
-    child naming the run back) and never walks the clear chain, so a capability
-    without a live run keeps ``session_id``.
+    Follow only a live mutual binding between the run and its child in this
+    project. Never infer authority from clear lineage. A capability without a
+    live run keeps ``session_id``; spawned clear cannot transfer a run.
     """
     if agent_run_id is None:
         return session_id
@@ -76,47 +75,23 @@ def move_clear_run_lineage(
     successor_id: str,
     session_ids: Sequence[str],
 ) -> None:
-    """Hand the runs of ``session_ids`` and the predecessor's spawn depth to the successor.
+    """Move an operator's child runs to its clear successor.
 
     ``session_ids`` holds the predecessor and, when a newer successor supersedes a
     bound one, that stale successor. Runs inside the caller's clear transaction.
     """
     ids = list(session_ids)
+    spawned = conn.execute(
+        """
+        SELECT id FROM sessions WHERE id = ANY(%s)
+          AND (agent_run_id IS NOT NULL OR agent_depth > 0 OR spawned_by_agent_id IS NOT NULL)
+        FOR UPDATE
+        """,
+        (ids,),
+    ).fetchone()
+    if spawned is not None:
+        raise ValueError("A spawned seat ends on clear and cannot have a clear successor")
     conn.execute(
         "UPDATE agent_runs SET parent_session_id = %s WHERE parent_session_id = ANY(%s)",
         (successor_id, ids),
-    )
-    moved = conn.execute(
-        """
-        UPDATE agent_runs SET child_session_id = %s, updated_at = now()
-        WHERE child_session_id = ANY(%s) AND status IN ('pending', 'running')
-        RETURNING id
-        """,
-        (successor_id, ids),
-    ).fetchall()
-    for row in moved:
-        run_id = row["id"]
-        conn.execute(
-            "UPDATE sessions SET agent_run_id = NULL WHERE id = ANY(%s) AND agent_run_id = %s",
-            (ids, run_id),
-        )
-        conn.execute(
-            "UPDATE sessions SET agent_run_id = %s WHERE id = %s AND agent_run_id IS NULL",
-            (run_id, successor_id),
-        )
-        conn.execute(
-            """
-            UPDATE terminals SET session_id = %s, updated_at = now()
-            WHERE agent_run_id = %s AND state IN ('pending', 'live')
-            """,
-            (successor_id, run_id),
-        )
-    conn.execute(
-        """
-        UPDATE sessions SET agent_depth = predecessor.agent_depth,
-                            spawned_by_agent_id = predecessor.spawned_by_agent_id
-        FROM sessions predecessor
-        WHERE sessions.id = %s AND predecessor.id = %s
-        """,
-        (successor_id, predecessor_id),
     )

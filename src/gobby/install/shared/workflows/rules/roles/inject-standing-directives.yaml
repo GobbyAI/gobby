@@ -1,8 +1,9 @@
-version: "1.0.0"
+version: "2.0.0"
 tags: [roles, runbook, enforcement, gobby]
 
 rules:
   inject-standing-directives:
+    agent_scope: ["*", "!default"]
     description: "Inject the standing-directives procedure once per context epoch for every runbook seat"
     event: turn_start
     enabled: true
@@ -33,6 +34,7 @@ rules:
         value: true
 
   reset-standing-directives-on-context-loss:
+    agent_scope: ["*", "!default"]
     description: "Re-arm the standing-directives procedure after context loss"
     event: session_start
     enabled: true

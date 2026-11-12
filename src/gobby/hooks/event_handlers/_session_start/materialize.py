@@ -204,30 +204,6 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
         handler.logger.warning("Failed to reset agent context injection flag: %s", exc)
 
 
-def _crossing_seat(
-    handler: Any, successor_id: str, predecessor_vars: dict[str, Any]
-) -> dict[str, Any]:
-    """The seat a clear successor keeps; the base agent is resolved afresh, as for any session."""
-    agent_type = predecessor_vars.get("_agent_type")
-    if not agent_type or agent_type == "default":
-        return {}
-    try:
-        from gobby.storage.config_repository import ConfigRepository
-
-        config = ConfigRepository(handler._session_manager.db).read(resolve_secrets=False)
-    except Exception as exc:
-        handler.logger.warning(
-            "Failed to read the default agent for clear successor %s: %s", successor_id, exc
-        )
-        return {}
-    if agent_type == config.values.get("default_agent"):
-        return {}
-    seat = {"_agent_type": agent_type}
-    if predecessor_vars.get("_agent_definition_hash"):
-        seat["_agent_definition_hash"] = predecessor_vars["_agent_definition_hash"]
-    return seat
-
-
 def _bind_clear_successor(
     handler: Any,
     resolution: SessionStartResolution | None,
@@ -308,7 +284,9 @@ def _bind_clear_successor(
             successor_id,
             exc,
         )
-    seat = _crossing_seat(handler, successor_id, predecessor_vars)
+    from gobby.hooks.event_handlers.clear_identity import reset_operator_identity
+
+    reset_operator_identity(handler._session_manager.db, successor_id)
     try:
         from gobby.workflows.state_manager import SessionVariableManager
 
@@ -317,7 +295,6 @@ def _bind_clear_successor(
             {
                 HANDOFF_PULL_PENDING_VARIABLE: True,
                 **inherited_mcp_proxy_ready(predecessor_vars),
-                **seat,
             },
         )
     except Exception as exc:
@@ -464,6 +441,10 @@ def activate_materialized_session(
                 handler.logger.warning(
                     "Failed to bind native clear successor %s: %s", session_id, exc
                 )
+        if handler._session_manager is not None:
+            from gobby.hooks.event_handlers.clear_identity import reset_operator_identity
+
+            reset_operator_identity(handler._session_manager.db, session_id)
         # Codex fires SessionStart only when the successor thread's first prompt is
         # submitted, so a prompt is already in flight there (the clear delivery typed
         # the pull prompt itself); typing another would queue a duplicate turn.

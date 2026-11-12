@@ -1,4 +1,4 @@
-version: "2.0.1"
+version: "3.0.0"
 tags: [roles, runbook, enforcement, gobby]
 
 # Agent workspace scope (addendum P9.2). A write under the workspace root goes only to the
@@ -8,6 +8,7 @@ tags: [roles, runbook, enforcement, gobby]
 # in the eligible predecessor folders of its own definition.
 rules:
   agent-workspace-write-scope:
+    agent_scope: ["*", "!default"]
     description: "Agent workspace writes stay in the seat's folders and assigned task worktree"
     event: before_tool
     enabled: true
@@ -24,6 +25,7 @@ rules:
           `.gobby` config outside a repository checkout are not writable there.
 
   agent-workspace-read-scope:
+    agent_scope: ["*", "!default"]
     description: "Agent workspace reads stay within the seat's folders, assigned task worktree, project README and eligible predecessors; interpreter-inline code and the heredoc data it reads are judged only by the paths they name literally"
     event: before_tool
     enabled: true
