@@ -17,10 +17,11 @@ use super::jobs::JobOutcome;
 use super::menu::{apply_local_menu_action, ContextMenuKind, MenuAction};
 use super::modal_input::open_alerts_dialog;
 use super::orphans::{agent_orphan, destroy_orphans, open_destroy_orphans_dialog};
+use super::project_operations::{close_project, focus_project};
 use super::projects::{
-    close_live_terminal, close_project, focus_agent, focus_project, mark_agent_seen,
-    open_agent_in_new_tab, open_new_worktree_dialog, open_open_worktree_dialog,
-    open_remove_worktree_dialog, open_worktree, rename_project, reveal_agent,
+    close_live_terminal, focus_agent, mark_agent_seen, open_agent_in_new_tab,
+    open_new_worktree_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
+    open_worktree, rename_project, reveal_agent,
 };
 
 /// A context menu item. A keymap action runs as its chord would once the
@@ -54,6 +55,30 @@ pub async fn apply_live_menu_action(
             super::arrange::move_tab_to_tab(workspace, chrome, outcomes, &from, &to);
         }
         MenuAction::Act(action) => {
+            if action != Action::Quit {
+                let then = super::project_navigation::ProjectAction::Menu(
+                    kind.clone(),
+                    MenuAction::Act(action),
+                );
+                let deferred = match &kind {
+                    ContextMenuKind::Agent(id) => {
+                        super::projects::defer_agent_terminal(workspace, chrome, id, then)
+                    }
+                    ContextMenuKind::Worktree(id) => {
+                        let project = super::project_operations::worktree_entry(workspace, id)
+                            .map(|(project, _)| project);
+                        project.is_some_and(|project| {
+                            super::project_navigation::defer_project(
+                                workspace, chrome, &project, false, then,
+                            )
+                        })
+                    }
+                    _ => false,
+                };
+                if deferred {
+                    return Ok(false);
+                }
+            }
             focus_menu_target(workspace, chrome, outcomes, &kind).await?;
             if action == Action::Quit {
                 return Ok(true);
@@ -83,7 +108,7 @@ pub async fn apply_live_menu_action(
             open_remove_worktree_dialog(workspace, chrome, &worktree_id);
         }
         MenuAction::CloseProject(project_id) => {
-            close_project(workspace, chrome, &project_id).await?;
+            close_project(workspace, chrome, outcomes, &project_id).await?;
         }
         MenuAction::RenameProject(project_id) => {
             let current = project_label(workspace, chrome, &project_id).unwrap_or_default();

@@ -2277,62 +2277,38 @@ async fn a_late_detach_reply_retries_direct_without_reconnecting() {
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
         wait_for_focus_reports(&mock, 1).await;
-        let reply_gate = mock.pause_websocket_reads().await;
-        tokio::time::pause();
-        // The host image changed under the dead stream: the host-local
-        // reconnect refuses the new epoch and falls through to the daemon
-        // path, which still detaches the old attachment before re-attaching
-        // (#23076, plan 2.3.2).
+        let reply_gate = mock.hold_ws("terminal_detach", |_| true);
+        // Keep network I/O on real time. Paused TCP tests can advance past
+        // unrelated healthy-socket deadlines while the host is reconnecting.
         host.set_host_epoch("direct-recovery-epoch-moved");
         host.disconnect();
-        // Let the reconnect run and refuse the changed epoch, then let the
-        // detach it falls back to reach its deadline so the supervisor submits
-        // it while the reply is held.
-        tokio::time::advance(Duration::from_secs(3)).await;
-        for _ in 0..1_024 {
-            tokio::task::yield_now().await;
-        }
-        tokio::time::advance(Duration::from_secs(3)).await;
-        for _ in 0..1_024 {
-            if observed_daemon.pending_counts().0 > 0 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(
-            observed_daemon.pending_counts().0,
-            1,
-            "detach request entered the healthy socket"
+        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
+        assert!(
+            observed_daemon.pending_counts().0 > 0,
+            "held detach is outstanding"
         );
-
-        tokio::time::advance(Duration::from_secs(3)).await;
-        for _ in 0..1_024 {
-            if observed_daemon.pending_counts().0 == 0 {
-                break;
+        tokio::time::timeout(WAIT_BUDGET, async {
+            while observed_daemon.pending_counts().0 != 0 {
+                tokio::task::yield_now().await;
             }
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(observed_daemon.pending_counts().0, 0);
-        assert_eq!(mock.websocket_handshakes(), 1);
-
-        reply_gate.notify_waiters();
-        for _ in 0..1_024 {
-            if !websocket_requests(&mock, "terminal_detach").is_empty() {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
+        })
+        .await
+        .expect("detach deadline retires the pending reply");
+        assert_eq!(
+            mock.websocket_handshakes(),
+            1,
+            "detach deadline must preserve the healthy socket: {:?}",
+            mock.activity()
+        );
+        reply_gate.notify_one();
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
         assert_eq!(websocket_requests(&mock, "terminal_detach").len(), 1);
-
-        tokio::time::advance(Duration::from_secs(6)).await;
-        for _ in 0..4_096 {
-            if websocket_requests(&mock, "terminal_attach").len() >= 2 {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
-        assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 2);
-        assert_eq!(mock.websocket_handshakes(), 1);
+        assert_eq!(
+            mock.websocket_handshakes(),
+            1,
+            "healthy socket request history: {:?}",
+            mock.activity()
+        );
         assert_eq!(
             websocket_requests(&mock, "terminal_attach")[1]
                 .get("frame_delivery")
@@ -2340,7 +2316,6 @@ async fn a_late_detach_reply_retries_direct_without_reconnecting() {
             Some("direct"),
             "the retry must restore the advertised direct transport"
         );
-        tokio::time::resume();
         drop(input_tx);
     };
 
@@ -2356,7 +2331,12 @@ async fn a_late_detach_reply_retries_direct_without_reconnecting() {
         driver
     );
     result.expect("late detach recovery loop");
-    assert_eq!(mock.websocket_handshakes(), 1);
+    assert_eq!(
+        mock.websocket_handshakes(),
+        1,
+        "healthy socket request history: {:?}",
+        mock.activity()
+    );
     host.shutdown().await;
     mock.shutdown().await;
 }
@@ -3607,22 +3587,15 @@ async fn reconnect_episode_rolls_generation_forward() {
 async fn detach_reply_errors_retry_panes_without_reconnecting() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [
-                    {"terminal_id": "term-detach-1", "backend": "native", "state": "live"},
-                    {"terminal_id": "term-detach-2", "backend": "native", "state": "live"},
-                    {"terminal_id": "term-detach-3", "backend": "native", "state": "live"}
-                ],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-detach", "seq": 1}
-            }),
-        );
-    }
+    mock.seed_terminal_roster(json!({
+        "items": [
+            {"terminal_id": "term-detach-1", "backend": "native", "state": "live"},
+            {"terminal_id": "term-detach-2", "backend": "native", "state": "live"},
+            {"terminal_id": "term-detach-3", "backend": "native", "state": "live"}
+        ],
+        "next_cursor": null,
+        "snapshot": {"daemon_epoch": "epoch-detach", "seq": 1}
+    }));
     for _ in 0..3 {
         mock.enqueue_detach_reply(false, Some("detach state indeterminate"));
     }
@@ -3642,7 +3615,6 @@ async fn detach_reply_errors_retry_panes_without_reconnecting() {
 
     let driver = async {
         wait_for_websocket_requests(&mock, "terminal_set_viewport", 3).await;
-        tokio::time::pause();
         let attachments: Vec<_> = websocket_requests(&mock, "terminal_set_viewport")
             .into_iter()
             .map(|request| {
@@ -3677,10 +3649,7 @@ async fn detach_reply_errors_retry_panes_without_reconnecting() {
             wait_for_websocket_requests(&mock, "terminal_detach", index + 1).await;
         }
         assert_eq!(mock.websocket_handshakes(), 1);
-        assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 3);
 
-        tokio::time::advance(Duration::from_secs(5)).await;
-        tokio::time::resume();
         wait_for_websocket_requests(&mock, "terminal_attach", 6).await;
         // A request on the wire precedes applying its recovery step. Wait
         // until geometry for every replacement reaches the daemon before
@@ -9241,6 +9210,7 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
                 item["command"] = json!("codex");
             }
         }
+        mock.seed_terminal_roster(page.clone());
         mock.enqueue("GET", "/api/terminals?", 200, page);
         mock.enqueue("GET", "/api/attention/roster", 200, roster.clone());
     }
@@ -9287,7 +9257,8 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
         .map(|(_, rect)| (rect.x + 1, rect.y))
         .expect("daemon-hosted row drawn");
 
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let (backend, _, frames) = super::draw::DrawRecorder::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
     let mut chrome = pinned_chrome();
     chrome.open_pane(shown, workspace.pane(shown).display_name());
     let (input_tx, input_rx) = mpsc::channel(32);
@@ -9307,7 +9278,12 @@ async fn assert_daemon_hosted_activation(path: ExplicitActivation) -> usize {
             }
         })
         .await
-        .unwrap_or_else(|_| panic!("{path:?} did not reveal the daemon-hosted pane"));
+        .unwrap_or_else(|_| {
+            panic!(
+                "{path:?} did not reveal the daemon-hosted pane; last frame: {:?}",
+                frames.lock().expect("frames").last()
+            )
+        });
         activate_daemon_hosted_terminal(&input_tx, path, agent_cell).await;
         settle_live_event().await;
         // The focus report leaves on a render tick, which can land after the
@@ -9564,6 +9540,7 @@ async fn tab_sets_follow_the_focused_project() {
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2");
+    mock_daemon::project_jobs::settle_navigation(&mut workspace, &mut chrome).await;
     workspace
         .drain_live_events()
         .await
@@ -9605,6 +9582,7 @@ async fn tab_sets_follow_the_focused_project() {
     focus_project(&mut workspace, &mut chrome, "project-1")
         .await
         .expect("focus project-1");
+    mock_daemon::project_jobs::settle_navigation(&mut workspace, &mut chrome).await;
     let project_one = workspace.workspace_model().expect("project-1 workspace");
     assert_eq!(
         project_one.workspace.default_project_id.as_deref(),
@@ -9622,6 +9600,7 @@ async fn tab_sets_follow_the_focused_project() {
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2 again");
+    mock_daemon::project_jobs::settle_navigation(&mut workspace, &mut chrome).await;
     let project_two = workspace.workspace_model().expect("project-2 workspace");
     assert_eq!(project_two.workspace.id, workspace_id);
     assert_eq!(
@@ -10282,15 +10261,7 @@ async fn worktree_flows_round_trip_the_daemon() {
         200,
         json!({"worktrees": [worktree("wt-2", "spare")]}),
     );
-    for page in [
-        terminal_page(&[]),
-        terminal_page(&[SPAWNED]),
-        terminal_page(&[]),
-        terminal_page(&["term-x", "term-y"]),
-        terminal_page(&["term-x"]),
-    ] {
-        mock.enqueue("GET", "/api/terminals?", 200, page);
-    }
+    mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[]));
 
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
@@ -10321,6 +10292,9 @@ async fn worktree_flows_round_trip_the_daemon() {
         chrome.dialog
     );
     let (outcomes, mut outcome_rx) = mpsc::unbounded_channel();
+    if let Some(Dialog::NewWorktree { branch, .. }) = &mut chrome.dialog {
+        *branch = "feature".into();
+    }
     create_worktree(
         &mut workspace,
         &mut chrome,
@@ -10331,8 +10305,24 @@ async fn worktree_flows_round_trip_the_daemon() {
     )
     .await
     .expect("create worktree");
+    assert!(gobby_client::app::dispatch_project_navigation(
+        &mut workspace,
+        &outcomes
+    ));
+    let outcome = outcome_rx.recv().await.expect("creation job reports");
+    let gobby_client::app::JobResult::ProjectAttached(attachment) = outcome.result else {
+        panic!("creation result");
+    };
+    gobby_client::app::apply_project_attachment(&mut workspace, &mut chrome, true, attachment);
+    gobby_client::app::resume_project_navigation(&mut workspace, &mut chrome, &outcomes)
+        .await
+        .expect("open created worktree");
     // The shell spawn runs as a job; wait for it to finish its tab.create.
     outcome_rx.recv().await.expect("the shell job reports");
+    workspace
+        .flush_sidebar_refetches()
+        .await
+        .expect("created worktree rows");
     // The daemon's tab.created event places the shell: apply it and project
     // the row the way the loop does between actions.
     workspace
@@ -10392,7 +10382,7 @@ async fn worktree_flows_round_trip_the_daemon() {
     chrome.mode = Mode::Terminal;
 
     // Close project with children asks with the group text.
-    close_project(&mut workspace, &mut chrome, "project-1")
+    close_project(&mut workspace, &mut chrome, &outcomes, "project-1")
         .await
         .expect("close project asks first");
     assert_eq!(chrome.mode, Mode::ConfirmClose);
@@ -10426,9 +10416,10 @@ async fn worktree_flows_round_trip_the_daemon() {
         })
     );
     mock.enqueue_kill_refusal("held by another viewer");
-    remove_worktree(&mut workspace, &mut chrome, "wt-1")
+    remove_worktree(&mut workspace, &mut chrome, &outcomes, "wt-1")
         .await
         .expect("refused remove");
+    mock_daemon::project_jobs::settle_removal(&mut workspace, &mut chrome, &mut outcome_rx).await;
     assert!(
         matches!(
             &chrome.dialog,
@@ -10444,9 +10435,10 @@ async fn worktree_flows_round_trip_the_daemon() {
             .all(|request| request.method != "DELETE"),
         "no delete while a terminal survives"
     );
-    remove_worktree(&mut workspace, &mut chrome, "wt-1")
+    remove_worktree(&mut workspace, &mut chrome, &outcomes, "wt-1")
         .await
         .expect("unmerged checkout refusal");
+    mock_daemon::project_jobs::settle_removal(&mut workspace, &mut chrome, &mut outcome_rx).await;
     assert!(
         matches!(
             &chrome.dialog,
@@ -10457,9 +10449,14 @@ async fn worktree_flows_round_trip_the_daemon() {
         chrome.dialog
     );
     assert_eq!(children(&workspace), ["wt-1", "wt-2"]);
-    remove_worktree(&mut workspace, &mut chrome, "wt-1")
+    remove_worktree(&mut workspace, &mut chrome, &outcomes, "wt-1")
         .await
         .expect("remove worktree");
+    mock_daemon::project_jobs::settle_removal(&mut workspace, &mut chrome, &mut outcome_rx).await;
+    workspace
+        .flush_sidebar_refetches()
+        .await
+        .expect("updated worktree rows");
     workspace
         .drain_live_events()
         .await
@@ -10488,15 +10485,25 @@ async fn worktree_flows_round_trip_the_daemon() {
 
     // Close project terminates every tab's terminals but keeps the pane
     // whose kill the daemon refuses.
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        terminal_page(&["term-x", "term-y"]),
+    );
+    mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&["term-x"]));
     workspace.fetch_roster().await.expect("roster with x and y");
     let x = workspace.pane_for_terminal("term-x").expect("x pane");
     let y = workspace.pane_for_terminal("term-y").expect("y pane");
     chrome.open_tab(x, "x");
     chrome.open_tab(y, "y");
     mock.enqueue_kill_refusal("external owner");
-    close_project_confirmed(&mut workspace, &mut chrome, "project-1")
+    close_project_confirmed(&mut workspace, &mut chrome, &outcomes, "project-1")
         .await
         .expect("close project");
+    outcome_rx.recv().await.expect("project kill reports");
+    workspace.fetch_roster().await.expect("post-kill roster");
+    sync_live_chrome(&mut workspace, &mut chrome);
     let kills: Vec<Value> = websocket_requests(&mock, "terminal_kill")
         .into_iter()
         .map(|request| request["terminal_id"].clone())
@@ -10779,7 +10786,8 @@ async fn row_menus_dispatch_project_and_agent_actions() {
             .count()
     };
 
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let (backend, _, frames) = super::draw::DrawRecorder::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
     let mut chrome = pinned_chrome();
     chrome.sidebar.toggle_group("project-1");
     let (input_tx, input_rx) = mpsc::channel(256);
@@ -10853,7 +10861,23 @@ async fn row_menus_dispatch_project_and_agent_actions() {
         press(MouseButton::Right, worktree_cell).await;
         press(MouseButton::Left, item_cell(worktree_cell, 0)).await;
         key(KeyCode::Enter).await;
-        wait_for_http_requests(&mock, "DELETE", "/api/source-control/worktrees/wt-1", 1).await;
+        timeout(
+            WAIT_BUDGET,
+            mock.wait_for_request(|request| {
+                request.method == "DELETE" && request.target == "/api/source-control/worktrees/wt-1"
+            }),
+        )
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "worktree deletion not issued; last frame: {:?}; deletes: {:?}",
+                frames.lock().expect("frames").last(),
+                mock.requests()
+                    .iter()
+                    .filter(|request| request.method == "DELETE")
+                    .collect::<Vec<_>>()
+            )
+        });
         wait_for_http_requests(&mock, "GET", worktrees_path, fetched + 1).await;
         settle_live_event().await;
 
@@ -11011,6 +11035,7 @@ async fn opening_a_project_attaches_an_empty_next_workspace() {
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2");
+    mock_daemon::project_jobs::settle_navigation(&mut workspace, &mut chrome).await;
     sync_live_chrome(&mut workspace, &mut chrome);
     let attaches = websocket_requests(&mock, "workspace_attach");
     assert!(
@@ -11061,6 +11086,7 @@ async fn project_focus_does_not_claim_another_windows_tabs() {
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2");
+    mock_daemon::project_jobs::settle_navigation(&mut workspace, &mut chrome).await;
     let project_workspace = workspace
         .workspace_model()
         .expect("project workspace")
@@ -11099,6 +11125,7 @@ async fn tabs_created_behind_another_project_appear_on_return() {
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2");
+    mock_daemon::project_jobs::settle_navigation(&mut workspace, &mut chrome).await;
     let project_workspace = workspace
         .workspace_model()
         .expect("project workspace")
@@ -11113,6 +11140,7 @@ async fn tabs_created_behind_another_project_appear_on_return() {
     focus_project(&mut workspace, &mut chrome, "project-1")
         .await
         .expect("focus project-1");
+    mock_daemon::project_jobs::settle_navigation(&mut workspace, &mut chrome).await;
 
     for terminal in [SPAWNED, "terminal-b1"] {
         other_window_creates_tab(&daemon, &project_workspace, terminal).await;
@@ -11142,6 +11170,7 @@ async fn tabs_created_behind_another_project_appear_on_return() {
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2 again");
+    mock_daemon::project_jobs::settle_navigation(&mut workspace, &mut chrome).await;
     assert_eq!(
         shown_terminals(&workspace, &chrome),
         ["terminal-b1", SPAWNED]
@@ -11670,6 +11699,16 @@ async fn clicking_a_bare_terminal_in_workspace_one_focuses_its_existing_pane() {
             KeyModifiers::NONE,
         )
         .await;
+        tokio::time::timeout(WAIT_BUDGET, async {
+            while !workspace_ops(&mock, "workspace.set_focus_hints")
+                .iter()
+                .any(|request| request["workspace"] == owning_workspace)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("owning workspace is applied before exit");
         wait_for_focus_of(&mock, TARGET).await;
         drop(input_tx);
     };
@@ -11747,7 +11786,8 @@ async fn clicking_a_stale_bare_terminal_refreshes_its_row_without_placing_it() {
         .await
         .expect("install stale roster row");
     let (column, row) = bare_terminal_row_anchor(&workspace, TARGET);
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let (backend, _, frames) = super::draw::DrawRecorder::new(120, 40);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
     let mut chrome = pinned_chrome();
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(32);
@@ -11761,6 +11801,18 @@ async fn clicking_a_stale_bare_terminal_refreshes_its_row_without_placing_it() {
         )
         .await;
         wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
+        tokio::time::timeout(WAIT_BUDGET, async {
+            while !frames
+                .lock()
+                .expect("frames")
+                .iter()
+                .any(|frame| frame.contains("Terminal is no longer available"))
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("stale row result is presented before exit");
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;

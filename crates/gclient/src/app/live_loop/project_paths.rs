@@ -7,7 +7,7 @@ use std::time::Duration;
 use tokio::fs;
 use tokio::process::Command;
 
-use super::projects::daemon_reason;
+use super::project_operations::daemon_reason;
 use crate::daemon::{Daemon, ProjectRow};
 use crate::ui::dialogs::project::expand_home;
 

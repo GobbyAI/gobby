@@ -112,23 +112,7 @@ pub(super) fn kill_live_panes(
     let daemon = workspace.daemon().clone();
     spawn_job(outcomes, op_tag(&daemon), async move {
         await_barriers(after).await;
-        let mut killed = false;
-        let mut kept = Vec::new();
-        let mut result = Ok(());
-        for (pane, terminal_id) in kills {
-            if result.is_err() {
-                kept.push(pane);
-                continue;
-            }
-            match daemon.terminate(&terminal_id).await {
-                Ok(KillOutcome::Killed { .. }) => killed = true,
-                Ok(KillOutcome::Refused { .. }) => kept.push(pane),
-                Err(error) => {
-                    kept.push(pane);
-                    result = Err(error);
-                }
-            }
-        }
+        let (killed, kept, mut result) = kill_batch(&daemon, kills).await;
         if let (Some(op), true) = (then, kept.is_empty()) {
             result = run_op(&daemon, op).await;
         }
@@ -138,6 +122,31 @@ pub(super) fn kill_live_panes(
             result,
         }
     });
+}
+
+/// Terminate in order, retaining refused panes and every unsent pane after an error.
+pub(super) async fn kill_batch(
+    daemon: &LiveDaemon,
+    kills: Vec<(PaneId, String)>,
+) -> (bool, Vec<PaneId>, Result<(), DaemonError>) {
+    let mut killed = false;
+    let mut kept = Vec::new();
+    let mut result = Ok(());
+    for (pane, terminal_id) in kills {
+        if result.is_err() {
+            kept.push(pane);
+            continue;
+        }
+        match daemon.terminate(&terminal_id).await {
+            Ok(KillOutcome::Killed { .. }) => killed = true,
+            Ok(KillOutcome::Refused { .. }) => kept.push(pane),
+            Err(error) => {
+                kept.push(pane);
+                result = Err(error);
+            }
+        }
+    }
+    (killed, kept, result)
 }
 
 /// A kill's outcome. Only local pane bookkeeping and status change here, so

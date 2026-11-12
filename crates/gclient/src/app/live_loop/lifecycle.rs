@@ -1,7 +1,7 @@
 //! Terminal lifecycle for the live loop: spawning shells into tabs and
 //! splits, closing panes and tabs, and terminating terminals.
 
-use crate::daemon::{Daemon, KillOutcome, LiveDaemon, SpawnOutcome, SpawnRequest};
+use crate::daemon::{Daemon, LiveDaemon, SpawnOutcome, SpawnRequest};
 use crate::frame_source::FrameError;
 use crate::ui::chrome::Tab;
 use crate::ui::status::Toast;
@@ -240,31 +240,5 @@ pub(super) async fn spawn_live_shell(
             roster,
         }
     });
-    Ok(())
-}
-
-pub(super) async fn terminate_live_terminal(
-    workspace: &mut Workspace<LiveDaemon>,
-    pane_id: PaneId,
-) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
-    }
-    let terminal_id = workspace.pane(pane_id).terminal_id.clone();
-    workspace
-        .panes
-        .get_mut(&pane_id)
-        .expect("pane exists")
-        .terminating = true;
-    match workspace.daemon().terminate(&terminal_id).await? {
-        KillOutcome::Killed { .. } => workspace.fetch_roster().await?,
-        KillOutcome::Refused { .. } => {
-            workspace
-                .panes
-                .get_mut(&pane_id)
-                .expect("pane exists")
-                .terminating = false;
-        }
-    }
     Ok(())
 }

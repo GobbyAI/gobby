@@ -1,12 +1,59 @@
 //! Project daemon workspace rows into the visible tab and pane layout.
 
 use crate::app::ViewerState;
-use crate::daemon::LiveDaemon;
+use crate::daemon::{DaemonError, LiveDaemon};
 use crate::ui::chrome::Tab;
-use crate::ui::Chrome;
+use crate::ui::{Chrome, WorkspaceView};
 use gobby_terminal::layout;
 
-use super::super::Workspace;
+use super::super::{sidebar_model::SidebarModel, Pane, PaneId, Workspace, WorkspaceModel};
+use std::path::Path;
+
+impl WorkspaceView for Workspace<LiveDaemon> {
+    fn project_id(&self) -> Option<&str> {
+        Workspace::<LiveDaemon>::project_id(self)
+    }
+
+    fn focused_project(&self) -> Option<&str> {
+        Workspace::<LiveDaemon>::project_id(self)
+    }
+
+    fn sidebar(&self) -> &SidebarModel {
+        Workspace::<LiveDaemon>::sidebar(self)
+    }
+
+    fn roster_terminal_ids(&self) -> Vec<String> {
+        Workspace::<LiveDaemon>::roster_terminal_ids(self)
+    }
+
+    fn attention_entry_ids(&self) -> Vec<String> {
+        Workspace::<LiveDaemon>::attention_entry_ids(self)
+    }
+
+    fn pane_for_terminal(&self, terminal_id: &str) -> Option<PaneId> {
+        Workspace::<LiveDaemon>::pane_for_terminal(self, terminal_id)
+    }
+
+    fn pane(&self, id: PaneId) -> &Pane {
+        Workspace::<LiveDaemon>::pane(self, id)
+    }
+
+    fn daemon_ready(&self) -> bool {
+        Workspace::<LiveDaemon>::daemon_ready(self)
+    }
+
+    fn daemon_error(&self) -> Option<&DaemonError> {
+        Workspace::<LiveDaemon>::daemon_error(self)
+    }
+
+    fn gobby_home(&self) -> Option<&Path> {
+        self.gobby_home()
+    }
+
+    fn workspace_model(&self) -> Option<&WorkspaceModel> {
+        Workspace::<LiveDaemon>::workspace_model(self)
+    }
+}
 
 /// Show the daemon's layout for the focused project and reap what left.
 /// The model is re-projected when it (or the project) moved since the last

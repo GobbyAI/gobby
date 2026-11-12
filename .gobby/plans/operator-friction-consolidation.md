@@ -365,14 +365,44 @@ Consumers unchanged:
 
 Targets:
 - `crates/gclient/src/app/live_loop/projects.rs::*` — scope-reason: extract project operations into asynchronous jobs.
-- `crates/gclient/src/app/live_loop/project_operations.rs`
+- `crates/gclient/src/app/attach.rs::*` — scope-reason: prevent a recovery-owned detach deadline from also requesting daemon reconnect; cover timer-first ordering.
+- `crates/gclient/src/app/live_loop/project_operations.rs::*` — scope-reason: own project-close and worktree-removal chains and reducers.
+- `crates/gclient/src/app/live_loop/project_navigation.rs::*` — scope-reason: own serialized navigation intent, generation checks and typed continuations.
 - `crates/gclient/src/app/live_loop/jobs.rs::*` — scope-reason: add project operation job and outcome variants.
 - `crates/gclient/src/app/live_loop/jobs_apply.rs::*` — scope-reason: apply generation-checked project outcomes.
-- `crates/gclient/src/app/live_loop/project_operations_tests.rs`
+- `crates/gclient/src/app/live.rs::*` — scope-reason: initialize navigation and removal state.
+- `crates/gclient/src/app/live/relist.rs::*` — scope-reason: expose inventory membership for explicit terminal resolution.
+- `crates/gclient/src/app/live_loop.rs::*` — scope-reason: dispatch and resume asynchronous navigation beside input and move the view adapter to projection.
+- `crates/gclient/src/app/live_loop/actions.rs::*` — scope-reason: invalidate dismissed navigation and queue project actions.
+- `crates/gclient/src/app/live_loop/actions/sidebar.rs::*` — scope-reason: pass the existing outcome channel to navigation actions.
+- `crates/gclient/src/app/live_loop/daemon_ops.rs::*` — scope-reason: share kill batching and barrier ordering.
+- `crates/gclient/src/app/live_loop/lifecycle.rs::*` — scope-reason: retire synchronous terminal termination and reuse asynchronous kills.
+- `crates/gclient/src/app/live_loop/menu_dispatch.rs::*` — scope-reason: preserve typed menu continuations across project selection.
+- `crates/gclient/src/app/live_loop/project_paths.rs::*` — scope-reason: resolve project registration from the navigation job.
+- `crates/gclient/src/app/live_loop/terminal_location.rs::*` — scope-reason: resolve authoritative terminal placement without mutating the input loop.
+- `crates/gclient/src/app/live_loop/projection.rs::*` — scope-reason: own the workspace view adapter beside layout projection.
+- `crates/gclient/src/app/mod.rs::*` — scope-reason: store operation state and expose production reducers to integration fixtures.
+- `crates/gclient/tests/client_loop.rs::*` — scope-reason: exercise asynchronous project flows and repair characterized detach fixtures.
+- `crates/gclient/tests/attention_flow.rs::*` — scope-reason: await observable agent focus and retain stable mock inventory.
+- `crates/gclient/tests/loop_liveness.rs::*` — scope-reason: include held-project operation cases.
+- `crates/gclient/tests/loop_liveness/projects.rs::*` — scope-reason: characterize input delivery during held project operations and failures.
+- `crates/gclient/tests/mock_daemon/mod.rs::*` — scope-reason: expose navigation fixture helpers.
+- `crates/gclient/tests/mock_daemon/transport.rs::*` — scope-reason: provide stable terminal inventory for recovery fixtures.
+- `crates/gclient/tests/mock_daemon/project_jobs.rs::*` — scope-reason: pump production job reducers for direct integration calls.
+- `crates/gclient/tests/placed_agent.rs::*` — scope-reason: cover placed and unplaced agent project ownership.
+- `crates/gclient/tests/project_flows.rs::*` — scope-reason: cover cancellation, supersession, reconnect retries and coalesced creation.
 
 Split `projects.rs` into `crates/gclient/src/app/live_loop/project_operations.rs` before expanding operations.
 
-**Research context:** Project attachment and worktree removal still await daemon operations from the input path.
+**Research context:** `projects.rs::focus_agent`, `create_worktree` and `open_worktree` are called by modal, sidebar and menu input paths. `project_operations.rs::remove_worktree` owns kill-before-close-before-delete ordering. Reuse `jobs.rs::spawn_job`, `JobOutcome` and `LoopJobs::drain_pending_refetch`; keep all daemon waits in jobs and apply results in `jobs_apply.rs::apply_job_outcome`. `project_navigation.rs::dispatch`, `apply` and `resume` separate actual request identity from the newest intent, serialize attachments and reject stale generations. Terminal discovery uses `terminal_location.rs::prepare`; an existing workspace placement wins over the sidebar's assigned project, while unplaced agents retain their assigned project. Newly resolved rows must set `roster_landed` so the loop starts initial attachments. Reuse `MockDaemon`, the held native host, existing responsiveness bound of 1500ms, and production reducers in integration fixtures. The project operation module and navigation module are new extractions in this task; the view adapter moves from the loop into the existing projection owner. Keep source versions untouched: step 1 owns the integration-only mechanical bump.
+
+**Granularity:** Retain the operator-selected existing #25768 as one input-responsiveness deliverable. Its navigation and termination paths share the live loop's job channel, generation boundary and surviving-pane acceptance check. The broad file inventory records callers and fixture consumers rather than independently closeable features.
+
+**Observed checks:** Held deletion and attachment missed 1500ms before changes (run `f06ac314-4353-4730-a3c7-1404f3e4c0e4`); terminal discovery missed the same bound (run `f9b745bb-b608-4158-b4a5-5f88dea556ad`); creation did too (run `22ea5ff9-6414-49b8-9376-e5c4dd5b79dc`). Initial kill RED used an invalid fixture and is excluded; the corrected surviving-pane kill fixture passed. A→B→A navigation and creation, cross-project unplaced agents, and placed-owner cycling have separate tests-first evidence. Focused project/placed-agent/liveness tests passed 27/27 (run `34769531-fa1d-492b-b87a-d0c2625162ab`); later review fixes still require final crate validation. The first full run of the current phase passed 1001/1004 with three failures, which remain under correction rather than being counted as success.
+
+**Verification:** Run `cargo nextest run -p gobby-client`, `cargo test --doc -p gobby-client`, `cargo clippy -p gobby-client --all-targets -- -D warnings`, and `cargo fmt -p gobby-client -- --check`, then audit every changed test with `uv run --no-sync gobby test-quality audit` against the existing baseline. Verify version-only landing receipt and installed binary identity after promotion from main. No full local pytest or per-task local E2E run.
+
+**Final observed reruns:** The earlier full run `e0041df0-e45d-4a7a-bb89-489121b37103` passed 1007 tests, but later full runs exposed an intermittent late-detach reconnect and superseded that result. A deterministic timer-first regression failed before the fix (run `5c252c1b-b676-48fb-836e-aa740f6427ba`): an expired recovery-owned detach incorrectly requested reconnect. Keep that deadline under the active recovery future's ownership; unowned detach expiry retains its existing reconnect behavior. Focused regression and live-loop checks then passed 2/2 (run `a8b1b60b-6ea3-4a1b-88fc-d2d01400c605`). Final full crate run `c4075ba5-69db-406a-bf10-6a2e9217eccc` passed 1008 tests with one configured skip in 39.358s. Clippy passed with warnings denied. The changed-test quality audit scanned ten files and 190 tests with zero issues. Formatting, doctests, candidate review, landing and installed activation are recorded separately.
 
 **Changes:**
 
@@ -384,7 +414,11 @@ Split `projects.rs` into `crates/gclient/src/app/live_loop/project_operations.rs
 
 **Acceptance:**
 
-- 7.1 - While each daemon operation is held, input reaches the terminal within the established bound; cover failure, cancellation, repeated requests, and focus changes. file: `crates/gclient/src/app/live_loop/project_operations_tests.rs`.
+- 7.1 - During held project kill, input reaches the surviving terminal within 1500ms. test: `crates/gclient/tests/loop_liveness/projects.rs::held_project_kill_keeps_direct_input_live`.
+- 7.2 - Held deletion, attachment, discovery and creation preserve input delivery. file: `crates/gclient/tests/loop_liveness/projects.rs`.
+- 7.3 - Cancellation, repeated requests, focus changes, reconnects and A→B→A intent do not install stale results or duplicate creation. file: `crates/gclient/tests/project_flows.rs`.
+- 7.4 - Placed terminal ownership wins; unplaced agents retain their assigned project. file: `crates/gclient/tests/placed_agent.rs`.
+- 7.5 - Kill refusals preserve terminals and prevent deletion; dismissed errors identify the original target. file: `crates/gclient/tests/client_loop.rs`.
 
 ### 8. Status-report outcomes — #25863 (depends: 7)
 `kind: deliverable`

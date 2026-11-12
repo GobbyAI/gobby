@@ -61,6 +61,8 @@ impl Workspace<LiveDaemon> {
             placement_seen: HashSet::new(),
             requested_focus: None,
             open_failures: HashMap::new(),
+            removing_worktrees: HashSet::new(),
+            project_navigation: Default::default(),
         }
     }
 
