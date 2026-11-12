@@ -352,9 +352,11 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # commands pass; the daemon's bin freshness loop promotes release archives
     # with workspace_root=None (test_cli_only_git_boundaries_are_reached_only_from_cli).
     ("src/gobby/install/bin_release_identity.py", "workspace_source_identity"),
-    # Base and target manifests read by unbumped_binaries. Its only caller,
-    # _unbumped_binaries in src/gobby/tasks/land_commit.py, runs it through asyncio.to_thread.
+    # Version generation and receipt verification run through worker-thread
+    # landing admission and synchronous closure entry points.
     ("src/gobby/install/bin_release_identity.py", "_revision_manifests.read"),
+    ("src/gobby/tasks/landing_versions.py", "_git"),
+    ("src/gobby/tasks/landing_versions.py", "_read"),
     # Canonical shell normalization runs off the loop: HookManager and the rule
     # engine offload it, chat _fire_lifecycle and Codex approvals use
     # asyncio.to_thread (tests/adapters/test_adapters_codex.py

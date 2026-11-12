@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypedDict
@@ -19,7 +20,7 @@ from gobby.code_index.context import CodeIndexContext
 from gobby.code_index.eligibility import overlay_project_id_for_root
 from gobby.code_index.gcode_gateway import GcodeGateway, GcodeIndexLock
 from gobby.code_index.maintenance_launch import open_launch_async
-from gobby.install.bin_release_identity import BinaryReleaseVersionError, unbumped_binaries
+from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.releases.activation import project_checkout_root
 from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase, MainCheckoutLanding
@@ -44,6 +45,11 @@ from gobby.tasks.landing_policy import (
     classify_paths,
     missing_schema_carriers,
     read_freeze,
+)
+from gobby.tasks.landing_versions import (
+    generate_version_bump,
+    verify_landing_transform,
+    verify_version_bump,
 )
 from gobby.tasks.lifecycle_access import (
     CrossProjectTaskForbidden,
@@ -84,7 +90,6 @@ class LandingResult(TypedDict, total=False):
     escalated: bool
     missing_schema_carriers: list[str]
     shared_paths: list[str]
-    unbumped_binaries: list[str]
     commit_sha: str
     branch: str
     landed_tip: str
@@ -196,14 +201,6 @@ async def _merge_tree(main: Path, tip: str, sha: str) -> GitOk | GitFailed:
     raise LandingGitError(f"could not compute candidate merge tree: {result.stderr}")
 
 
-async def _unbumped_binaries(main: Path, tip: str, tree: str, paths: set[str]) -> list[str]:
-    """Shipped binaries the landed tree changes without a version bump; unreadable fails closed."""
-    try:
-        return await asyncio.to_thread(unbumped_binaries, main, tip, tree, paths)
-    except BinaryReleaseVersionError as exc:
-        raise LandingGitError(str(exc)) from exc
-
-
 async def _candidate_paths(main: Path, tip: str, sha: str, tree: str) -> set[str]:
     # Conflicted trees can relocate files to synthesized names absent from both tips.
     return await _paths(main, tip, tree) & await _paths(main, tip, sha)
@@ -272,6 +269,27 @@ async def _recover_landing(
             if action["mode"] == "merge":
                 facts["merge_commit"] = entry.new
             if action["candidate"] == sha:
+                message = await _git(main, "show", "-s", "--format=%B", entry.new)
+                if "Gobby-Version-Base:" in message:
+                    source = await _git(main, "rev-parse", f"{entry.new}^")
+                    if not await asyncio.to_thread(
+                        verify_landing_transform,
+                        main,
+                        reviewed=sha,
+                        base=entry.old,
+                        source=source,
+                        bump=entry.new,
+                    ):
+                        return {**unknown, "version_bump_commit": entry.new}
+                    facts.update(
+                        {
+                            "reviewed_sha": sha,
+                            "version_source_commit": source,
+                            "version_bump_commit": entry.new,
+                        }
+                    )
+                    if action["mode"] == "merge":
+                        facts["merge_commit"] = source
                 return facts
             try:
                 merged = await _merge_tree(main, entry.old, sha)
@@ -618,7 +636,8 @@ async def land_candidate(
                             "integration_path_grant": agent.covers_direct_integration_paths(paths)
                         }
 
-                    prepared = prepare_closure(
+                    prepared = await asyncio.to_thread(
+                        prepare_closure,
                         db,
                         task_id=task.id,
                         session_id=caller_session_id,
@@ -694,14 +713,6 @@ async def land_candidate(
                 # Only the integration tip counts; unlanded peers never block a landing.
                 if shared:
                     blockers.append("base_update_required")
-                # A landed crate change must bump the version of every binary it reaches.
-                binaries = (
-                    await _unbumped_binaries(main, tip, tree, paths)
-                    if isinstance(merged, GitOk)
-                    else []
-                )
-                if binaries:
-                    blockers.append("binary_bump_required")
                 refusal = {
                     "landed": False,
                     "commit_sha": sha,
@@ -712,12 +723,6 @@ async def land_candidate(
                 }
                 if blockers:
                     refusal["error"] = blockers[0]
-                    if binaries:
-                        refusal["unbumped_binaries"] = binaries
-                        refusal["message"] = (
-                            "bump the patch version of each changed shipped binary: "
-                            + ", ".join(binaries)
-                        )
                     if _CONFLICTS.issuperset(blockers):
                         return _escalate(db, current_task, refusal)
                     return refusal
@@ -742,6 +747,31 @@ async def land_candidate(
                         main, "commit-tree", tree, "-p", tip, "-p", sha, "-m", subject
                     )
                     mode = "merge"
+                source_commit = target
+                bump = None
+                if branch == "0.5.0" and main.resolve() == repo.resolve():
+                    try:
+                        bump = await asyncio.to_thread(
+                            generate_version_bump,
+                            main,
+                            tip,
+                            source_commit,
+                            paths,
+                            task_ref=f"#{current_task.seq_num}",
+                        )
+                    except (
+                        BinaryReleaseVersionError,
+                        OSError,
+                        ValueError,
+                        subprocess.SubprocessError,
+                    ) as exc:
+                        return _refused(refusal, "binary_version_generation_failed", str(exc))
+                    if bump is not None:
+                        if not await asyncio.to_thread(
+                            verify_version_bump, main, tip, source_commit, bump
+                        ):
+                            return _refused(refusal, "binary_version_verification_failed")
+                        target = bump
                 env = {
                     **(git_subprocess_env() or os.environ),
                     # The refusal classes below match git's English stderr.
@@ -770,7 +800,15 @@ async def land_candidate(
                         "landed_by_session_id": caller_session_id,
                     }
                     if mode == "merge":
-                        facts["merge_commit"] = target
+                        facts["merge_commit"] = source_commit
+                    if bump is not None:
+                        facts.update(
+                            {
+                                "reviewed_sha": sha,
+                                "version_source_commit": source_commit,
+                                "version_bump_commit": bump,
+                            }
+                        )
                     landed = await _record_and_notify(
                         db, current_task, caller_session_id, sha, facts
                     )

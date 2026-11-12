@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "1.1.0"
 tags: [task-integrated-validation]
 
 rules:
@@ -12,8 +12,10 @@ rules:
        not any(
          receipt.get('facts', {}).get('landed_tip', receipt.get('commit_sha')) == facts.get('candidate_commit_sha') and
          (latest_attestation('validation').get('reference') or {}).get('scheme') == 'git' and
-         (latest_attestation('validation').get('reference') or {}).get('value') == facts.get('candidate_commit_sha') and
-         timestamp(latest_attestation('validation').get('created_at')) > timestamp(receipt.get('recorded_at'))
+         (((latest_attestation('validation').get('reference') or {}).get('value') == facts.get('candidate_commit_sha') and
+           timestamp(latest_attestation('validation').get('created_at')) > timestamp(receipt.get('recorded_at'))) or
+          (receipt.get('facts', {}).get('verified_version_transform') == True and
+           (latest_attestation('validation').get('reference') or {}).get('value') == receipt.get('commit_sha')))
          for receipt in facts.get('landing_receipts', [])))
     effects:
       - type: block

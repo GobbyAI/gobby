@@ -1130,7 +1130,7 @@ def _synthetic_workspace(case: LandingCase, monkeypatch: pytest.MonkeyPatch) -> 
     )
 
 
-async def test_landing_refuses_closure_change_without_bump_and_names_binaries(
+async def test_nonintegration_landing_does_not_bump_binary_versions(
     case: LandingCase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     base = _synthetic_workspace(case, monkeypatch)
@@ -1141,11 +1141,10 @@ async def test_landing_refuses_closure_change_without_bump_and_names_binaries(
 
     result = await case.land(task, sha)
 
-    assert result["landed"] is False
-    assert result["error"] == "binary_bump_required"
-    assert result["unbumped_binaries"] == ["alpha", "beta"]
-    assert "alpha, beta" in result["message"]
-    assert case.git("rev-parse", "trunk") == base
+    assert result["landed"] is True, result
+    assert case.git("rev-parse", "trunk") == sha
+    assert 'version = "1.0.0"' in case.git("show", "trunk:crates/alpha/Cargo.toml")
+    assert 'version = "1.0.0"' in case.git("show", "trunk:crates/beta/Cargo.toml")
 
 
 async def test_landing_admits_closure_change_once_each_binary_bumps(
