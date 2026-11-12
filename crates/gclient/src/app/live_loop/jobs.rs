@@ -83,6 +83,8 @@ pub enum OpIntent {
 
 #[derive(Debug)]
 pub enum JobResult {
+    ProjectAttached(super::project_navigation::ProjectAttachment),
+    WorktreeRemoved(super::project_operations::WorktreeRemoval),
     WorkspaceOp {
         intent: OpIntent,
         result: Result<(), DaemonError>,
@@ -92,7 +94,9 @@ pub enum JobResult {
         result: Result<(), DaemonError>,
     },
     /// A proxied pane's scroll offset reached the daemon, or failed to.
-    Scrolled { result: Result<(), DaemonError> },
+    Scrolled {
+        result: Result<(), DaemonError>,
+    },
     /// The daemon's answer to a proxied pane's theme relay. A failure leaves
     /// the pane's theme undeclared, so the next tick relays it again.
     ThemeRelayed {
@@ -102,7 +106,9 @@ pub enum JobResult {
     },
     /// The daemon's answer to the focus report; a failure hands it back to the
     /// focus hold to send again.
-    FocusReported { result: Result<(), DaemonError> },
+    FocusReported {
+        result: Result<(), DaemonError>,
+    },
     /// The daemon's reply to one write of `bytes`.
     Write {
         pane: PaneId,
@@ -111,7 +117,10 @@ pub enum JobResult {
     },
     /// A write whose send failed, so the daemon may or may not have it.
     /// `attachment` is the one it was typed for.
-    WriteUnconfirmed { pane: PaneId, attachment: String },
+    WriteUnconfirmed {
+        pane: PaneId,
+        attachment: String,
+    },
     /// Writes the writer dropped unsent after an unconfirmed write or a
     /// connection change, with the attachment the newest was typed for.
     WriteAbandoned {
@@ -205,7 +214,9 @@ pub enum JobResult {
         result: Result<Vec<TerminalRow>, DaemonError>,
     },
     /// The destroy dialog's kills, one result per requested orphan.
-    OrphansDestroyed { summary: DestroySummary },
+    OrphansDestroyed {
+        summary: DestroySummary,
+    },
 }
 
 /// What an owned shell's create chain committed.
@@ -516,6 +527,7 @@ impl LoopJobs {
         workspace: &mut Workspace<LiveDaemon>,
         chrome: &mut Chrome,
     ) {
+        super::project_navigation::dispatch(workspace, &self.tx);
         chain_apply::settle_panes(self, workspace, chrome);
         chain_apply::evaluate(self, workspace);
         let pending = std::mem::take(&mut workspace.pending_refetch);

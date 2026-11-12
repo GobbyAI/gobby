@@ -38,11 +38,18 @@ pub use live_loop::mouse::{
     MouseOutcome, Placement, DOUBLE_CLICK_MS, MOUSE_SCROLL_LINES, PROJECT_DRAG_THRESHOLD,
     TAB_DRAG_THRESHOLD,
 };
+pub use live_loop::project_navigation::{
+    apply as apply_project_attachment, dispatch as dispatch_project_navigation,
+    resume as resume_project_navigation,
+};
+pub use live_loop::project_operations::apply_worktree_removal;
+pub use live_loop::project_operations::{
+    close_project, close_project_confirmed, focus_project, remove_worktree,
+};
 pub use live_loop::projects::{
-    close_project, close_project_confirmed, create_worktree, focus_agent, focus_project,
-    open_new_project_dialog, open_new_worktree_dialog, open_open_project_dialog,
-    open_open_worktree_dialog, open_remove_worktree_dialog, open_worktree, project_dialog_key,
-    remove_worktree, rename_project, submit_new_project, submit_open_project,
+    create_worktree, focus_agent, open_new_project_dialog, open_new_worktree_dialog,
+    open_open_project_dialog, open_open_worktree_dialog, open_remove_worktree_dialog,
+    open_worktree, project_dialog_key, rename_project, submit_new_project, submit_open_project,
 };
 pub use live_loop::run_live_loop;
 pub use live_loop::sync_live_chrome;
@@ -164,6 +171,9 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     /// the error text it failed with: a split waiting on one no longer holds
     /// focus, since it cannot resolve yet.
     open_failures: HashMap<String, String>,
+    /// Worktree removals already dispatched by this window.
+    removing_worktrees: HashSet<String>,
+    project_navigation: live_loop::project_navigation::ProjectNavigation,
 }
 
 impl<D: Daemon> crate::teardown::ShutdownWorkspace for Workspace<D> {
@@ -249,6 +259,8 @@ impl Workspace {
             placement_seen: HashSet::new(),
             requested_focus: None,
             open_failures: HashMap::new(),
+            removing_worktrees: HashSet::new(),
+            project_navigation: Default::default(),
         }
     }
 

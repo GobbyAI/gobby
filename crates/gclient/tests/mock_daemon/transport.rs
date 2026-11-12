@@ -82,6 +82,7 @@ struct MockState {
     ws_holds: Vec<WsHold>,
     /// Rows the `terminal_list` reply serves, filtered by the request's `states`.
     terminal_inventory: Vec<Value>,
+    terminal_roster: Option<Value>,
     /// Replies actually written, per request `type`.
     ws_replies: HashMap<String, usize>,
     active_websockets: usize,
@@ -148,6 +149,7 @@ impl MockDaemon {
             websocket_read_gate: None,
             ws_holds: Vec::new(),
             terminal_inventory: Vec::new(),
+            terminal_roster: None,
             ws_replies: HashMap::new(),
             active_websockets: 0,
             websocket_closes: 0,
@@ -598,6 +600,10 @@ impl MockDaemon {
         self.state.lock().expect("mock state").terminal_inventory = rows;
     }
 
+    pub fn seed_terminal_roster(&self, page: Value) {
+        self.state.lock().expect("mock state").terminal_roster = Some(page);
+    }
+
     /// Hold the reply (and the events sent before it) to the next websocket
     /// request of `kind` that `filter` accepts, until the returned notify is
     /// released. The hold is one-shot: the first matching request takes it.
@@ -828,13 +834,19 @@ async fn serve_connection(
             .and_then(|terminal_id| state.workspace.owned_terminal_row(terminal_id));
         (response, owned_row)
     };
-    let response = response.unwrap_or_else(|| match owned_row {
+    let unqueued = response.is_none();
+    let mut response = response.unwrap_or_else(|| match owned_row {
         Some(row) => QueuedResponse {
             body: row,
             ..default_response(&method, &target)
         },
         None => default_response(&method, &target),
     });
+    if unqueued && method == "GET" && target.starts_with("/api/terminals?") {
+        if let Some(roster) = state.lock().expect("mock state").terminal_roster.clone() {
+            response.body = roster;
+        }
+    }
     for event in response.events_before_response {
         let delivered = response.wait_for_events.then(|| Arc::new(Notify::new()));
         let _ = events.send(MockEvent {

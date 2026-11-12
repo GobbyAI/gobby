@@ -18,6 +18,9 @@ use super::mock_daemon;
 #[path = "loop_liveness/lifecycle.rs"]
 mod lifecycle;
 
+#[path = "loop_liveness/projects.rs"]
+mod projects;
+
 #[path = "loop_liveness/writer_leases.rs"]
 mod writer_leases;
 
@@ -1141,6 +1144,7 @@ async fn a_roster_for_a_project_no_longer_focused_is_dropped() {
         "selecting a project must not await its held roster"
     );
     selected.unwrap().expect("select second project");
+    mock_daemon::project_jobs::apply_navigation(&mut workspace, &mut chrome).await;
     assert_eq!(workspace.project_id(), Some("project-2"));
 
     mock.enqueue(
@@ -1156,6 +1160,7 @@ async fn a_roster_for_a_project_no_longer_focused_is_dropped() {
     .await
     .expect("switch back while the old roster is held")
     .expect("select first project");
+    mock_daemon::project_jobs::apply_navigation(&mut workspace, &mut chrome).await;
     let (backend, draws, frames) = DrawRecorder::new(96, 30);
     let mut terminal = Terminal::new(backend).expect("test terminal");
     let (input_tx, input_rx) = mpsc::channel(16);

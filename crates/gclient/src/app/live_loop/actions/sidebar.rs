@@ -12,7 +12,7 @@ use crate::ui::{Action, Chrome, Mode};
 
 use super::super::super::Workspace;
 use super::super::modal_input::persist_prefs;
-use super::super::projects::focus_project;
+use super::super::project_operations::focus_project;
 
 /// Apply one of the sidebar's actions; `handle_live_action` routes only
 /// those here.

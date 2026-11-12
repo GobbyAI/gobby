@@ -7,96 +7,42 @@ use std::path::PathBuf;
 use crossterm::event::{KeyCode, KeyEvent};
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceErrorCode, WorkspaceOp};
+use crate::daemon::{Daemon, LiveDaemon};
 use crate::frame_source::FrameError;
 use crate::ui::chrome::{attention_pane, Tab};
-use crate::ui::dialogs::project::{complete_directory, plural};
-use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, OrphanRow, RenameKind, WorktreeChoice};
+use crate::ui::dialogs::project::complete_directory;
+use crate::ui::dialogs::{Dialog, OrphanRow, RenameKind, WorktreeChoice};
 use crate::ui::sidebar::TERMINAL_ROW;
-use crate::ui::sidebar_rows::project_label;
-use crate::ui::status::Toast;
 use crate::ui::{Chrome, Mode};
 
-use super::super::sidebar_model::{ProjectEntry, WorktreeEntry};
 use super::super::{PaneId, Workspace};
 use super::actions::{activate_live_tab, open_live_rename};
 use super::control::{close_barrier, focus_live_pane};
 use super::daemon_ops::{kill_live_panes, place_live_terminal};
 use super::jobs::JobOutcome;
-use super::lifecycle::{close_live_pane, spawn_live_shell, terminate_live_terminal};
+use super::lifecycle::{close_live_pane, spawn_live_shell};
 use super::menu::{attention_id, ContextMenuKind, MenuAction};
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
+use super::project_navigation::{defer_project, ProjectAction};
+use super::project_operations::{project_entry, tagged_tabs, worktree_entry};
 use super::sync_live_chrome;
-use super::terminal_location::locate_terminal_workspace;
 
-/// Make `project_id` the focused project: its roster replaces the current
-/// one and its tab set the tab bar; the outgoing set stays parked in the
-/// chrome.
-pub async fn focus_project(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    project_id: &str,
-) -> Result<(), FrameError> {
-    if workspace.project_id() == Some(project_id) {
-        return Ok(());
-    }
-    attach_project_workspace(workspace, project_id).await?;
-    if let Some(current) = workspace.project_id() {
-        chrome.focus_project(current);
-    }
-    workspace.select_project(project_id);
-    // The roster lands beside the loop and is installed only if this project
-    // is still focused then; the switch never waits on it.
-    workspace.request_roster(project_id);
-    // The new project's sessions and runs arrive from a background
-    // refetch; the switch itself never waits on git status.
-    workspace.request_focused_sessions();
-    chrome.focus_project(project_id);
-    chrome.sidebar.expanded_project = Some(project_id.to_owned());
-    sync_live_chrome(workspace, chrome);
-    Ok(())
-}
-
-/// Attach the project's default workspace when this window is not already on it.
-///
-/// Opening a project creates that workspace at the next free ref. An explicit
-/// new tab stays in the attached workspace and does not call this.
-async fn attach_project_workspace(
-    workspace: &mut Workspace<LiveDaemon>,
-    project_id: &str,
-) -> Result<(), FrameError> {
-    let same = workspace
-        .workspace_model()
-        .is_some_and(|model| model.workspace.default_project_id.as_deref() == Some(project_id));
-    if same {
-        return Ok(());
-    }
-    let node = workspace.attach_target().node.clone();
-    let snapshot = workspace
-        .daemon()
-        .attach_workspace(node.as_deref(), None, Some(project_id))
-        .await?;
-    workspace.apply_workspace_snapshot(snapshot);
-    let mut target = workspace.attach_target().clone();
-    if let Some(model) = workspace.workspace_model() {
-        target.workspace = Some(model.workspace.id.clone());
-    }
-    target.project_id = None;
-    workspace.set_attach_target(target);
-    Ok(())
-}
-
-/// Show the agent behind `entry_id` (its row's `focus` item, and its row's
-/// click): its project is focused first when it is another one, then its
-/// pane is revealed on the tab already showing it, or in a new tab when
-/// none does, and takes control the way any explicit activation does.
+/// Reveal a selected session without waiting on daemon reads.
 pub async fn focus_agent(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
     outcomes: &UnboundedSender<JobOutcome>,
     entry_id: &str,
 ) -> Result<(), FrameError> {
+    if defer_agent_terminal(
+        workspace,
+        chrome,
+        entry_id,
+        ProjectAction::FocusAgent(entry_id.to_owned()),
+    ) {
+        return Ok(());
+    }
     let Some(pane) = reveal_agent(workspace, chrome, outcomes, entry_id).await? else {
         return Ok(());
     };
@@ -112,6 +58,14 @@ pub async fn open_agent_in_new_tab(
     outcomes: &UnboundedSender<JobOutcome>,
     entry_id: &str,
 ) -> Result<(), FrameError> {
+    if defer_agent_terminal(
+        workspace,
+        chrome,
+        entry_id,
+        ProjectAction::OpenAgent(entry_id.to_owned()),
+    ) {
+        return Ok(());
+    }
     let Some(pane) = agent_pane(workspace, chrome, entry_id).await? else {
         return Ok(());
     };
@@ -165,7 +119,13 @@ pub(super) async fn focus_terminal(
     outcomes: &UnboundedSender<JobOutcome>,
     terminal_id: &str,
 ) -> Result<(), FrameError> {
-    if !locate_terminal_workspace(workspace, chrome, terminal_id, true).await? {
+    if super::project_navigation::defer_terminal(
+        workspace,
+        chrome,
+        terminal_id,
+        true,
+        ProjectAction::FocusTerminal(terminal_id.to_owned()),
+    ) {
         return Ok(());
     }
     let pane = terminal_pane(workspace, terminal_id).await?;
@@ -241,49 +201,78 @@ pub async fn mark_agent_seen(
 /// retargets through here before the action runs. A bare row carries its
 /// terminal in its own id and belongs to the focused project already, so the
 /// id is the whole answer.
+pub(super) fn defer_agent_terminal(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    entry_id: &str,
+    then: ProjectAction,
+) -> bool {
+    let agent = workspace.sidebar().agents.iter().find(|agent| {
+        agent.entry_id == entry_id
+            || entry_id.strip_prefix(TERMINAL_ROW) == Some(agent.terminal_id.as_str())
+    });
+    let project = agent
+        .map(|agent| agent.project_id.clone())
+        .filter(|project| !project.is_empty());
+    let terminal = agent
+        .map(|agent| agent.terminal_id.clone())
+        .or_else(|| entry_id.strip_prefix(TERMINAL_ROW).map(str::to_owned));
+    let placed = terminal.as_ref().is_some_and(|terminal| {
+        super::project_navigation::terminal_prepared(workspace, terminal)
+            || workspace.workspace_model().is_some_and(|model| {
+                model
+                    .panes()
+                    .any(|pane| pane.terminal_id.as_deref() == Some(terminal.as_str()))
+            })
+    });
+    if let Some(project) =
+        project.filter(|project| !placed && workspace.project_id() != Some(project.as_str()))
+    {
+        if super::project_navigation::defer_project(
+            workspace,
+            chrome,
+            &project,
+            false,
+            then.clone(),
+        ) {
+            return true;
+        }
+    }
+    terminal.filter(|id| !id.is_empty()).is_some_and(|id| {
+        super::project_navigation::defer_terminal(
+            workspace,
+            chrome,
+            &id,
+            !entry_id.starts_with(TERMINAL_ROW),
+            then,
+        )
+    })
+}
+
 async fn agent_pane(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
     entry_id: &str,
 ) -> Result<Option<PaneId>, FrameError> {
-    let agent = workspace
+    let terminal = workspace
         .sidebar()
         .agents
         .iter()
         .find(|agent| agent.entry_id == entry_id)
-        .map(|agent| (agent.project_id.clone(), agent.terminal_id.clone()));
-    let terminal_id = match agent {
-        // An ended assignment has no terminal, so there is no pane to reveal.
-        Some((_, terminal_id)) if terminal_id.is_empty() => return Ok(None),
-        Some((project, terminal_id)) => {
-            if workspace.project_id() != Some(project.as_str()) {
-                focus_project(workspace, chrome, &project).await?;
-            }
-            terminal_id
-        }
-        None => match entry_id.strip_prefix(TERMINAL_ROW) {
-            Some(terminal_id) => terminal_id.to_string(),
-            None => return Ok(None),
-        },
-    };
-    let reuse_client_pane = !entry_id.starts_with(TERMINAL_ROW);
-    if !locate_terminal_workspace(workspace, chrome, &terminal_id, reuse_client_pane).await? {
-        return Ok(None);
-    }
-    if let Some(pane) = attention_pane(workspace, entry_id) {
-        return Ok(Some(pane));
-    }
-    Ok(Some(terminal_pane(workspace, &terminal_id).await?))
+        .map(|agent| agent.terminal_id.as_str())
+        .or_else(|| entry_id.strip_prefix(TERMINAL_ROW));
+    let _ = chrome;
+    Ok(attention_pane(workspace, entry_id)
+        .or_else(|| terminal.and_then(|id| workspace.pane_for_terminal(id))))
 }
 
 async fn terminal_pane(
     workspace: &mut Workspace<LiveDaemon>,
     terminal_id: &str,
 ) -> Result<PaneId, FrameError> {
-    match workspace.pane_for_terminal(terminal_id) {
-        Some(pane) => Ok(pane),
-        None => workspace.open_live_terminal(terminal_id).await,
-    }
+    workspace
+        .pane_for_terminal(terminal_id)
+        .ok_or_else(|| FrameError::from(std::io::Error::other("Terminal is no longer available")))
 }
 
 /// Open `worktree_id`: focus its project, then activate the tab that
@@ -305,7 +294,15 @@ pub async fn open_worktree(
     let Some((project_id, path)) = found else {
         return Ok(());
     };
-    focus_project(workspace, chrome, &project_id).await?;
+    if defer_project(
+        workspace,
+        chrome,
+        &project_id,
+        false,
+        ProjectAction::OpenWorktree(worktree_id.to_owned()),
+    ) {
+        return Ok(());
+    }
     let shown = chrome
         .tabs()
         .tabs
@@ -370,33 +367,24 @@ async fn submit_project_path(
     path: &str,
     create: bool,
 ) -> Result<(), FrameError> {
-    match super::project_paths::resolve_project(workspace.daemon(), path, &home_dir(), create).await
+    super::project_navigation::submit_path(workspace, path, home_dir(), create);
+    if let Some(
+        Dialog::NewProject {
+            path: current,
+            cursor,
+            ..
+        }
+        | Dialog::OpenProject {
+            path: current,
+            cursor,
+            ..
+        },
+    ) = chrome.dialog.as_mut()
     {
-        Ok(row) => {
-            let result = async {
-                workspace.fetch_sidebar_rows().await?;
-                // Open attaches the default even when this project was selected
-                // inside an explicitly attached, different workspace.
-                attach_project_workspace(workspace, &row.id).await?;
-                focus_project(workspace, chrome, &row.id).await
-            }
-            .await;
-            match result {
-                Ok(()) => {
-                    close_modal(chrome);
-                    sync_live_chrome(workspace, chrome);
-                }
-                Err(error) => {
-                    set_dialog_error(chrome, format!("Cannot open project workspace: {error}"))
-                }
-            }
-            Ok(())
-        }
-        Err(error) => {
-            set_dialog_error(chrome, error);
-            Ok(())
-        }
+        *current = path.to_owned();
+        *cursor = path.chars().count();
     }
+    Ok(())
 }
 
 /// Open the new-worktree dialog for `project_id`, based on its branch.
@@ -423,27 +411,14 @@ pub fn open_new_worktree_dialog<D: Daemon>(
 /// refusal shows in the dialog.
 pub async fn create_worktree(
     workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    outcomes: &UnboundedSender<JobOutcome>,
+    _chrome: &mut Chrome,
+    _outcomes: &UnboundedSender<JobOutcome>,
     project_id: &str,
     branch: &str,
     base: Option<&str>,
 ) -> Result<(), FrameError> {
-    match workspace
-        .daemon()
-        .create_worktree(project_id, branch.trim(), base)
-        .await
-    {
-        Ok(row) => {
-            workspace.fetch_sidebar_rows().await?;
-            close_modal(chrome);
-            open_worktree(workspace, chrome, outcomes, &row.id).await
-        }
-        Err(error) => {
-            set_dialog_error(chrome, daemon_reason(&error));
-            Ok(())
-        }
-    }
+    super::project_navigation::create_worktree(workspace, project_id, branch, base);
+    Ok(())
 }
 
 /// Open the picker of `project_id`'s worktrees no tab shows.
@@ -500,130 +475,6 @@ pub fn open_remove_worktree_dialog<D: Daemon>(
         error: None,
     });
     chrome.mode = Mode::ProjectDialog;
-}
-
-/// Terminate the worktree's terminals, then delete the checkout; a
-/// surviving terminal keeps the checkout and says so in the dialog.
-pub async fn remove_worktree(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    worktree_id: &str,
-) -> Result<(), FrameError> {
-    let Some((project_id, _)) = worktree_entry(workspace, worktree_id) else {
-        return Ok(());
-    };
-    focus_project(workspace, chrome, &project_id).await?;
-    let panes: Vec<PaneId> = tagged_tabs(chrome, &project_id, worktree_id)
-        .iter()
-        .flat_map(|tab| tab.slots.values().copied())
-        .collect();
-    for pane in panes {
-        terminate_live_terminal(workspace, pane).await?;
-    }
-    sync_live_chrome(workspace, chrome);
-    let live: usize = tagged_tabs(chrome, &project_id, worktree_id)
-        .iter()
-        .map(|tab| tab.slots.len())
-        .sum();
-    if live > 0 {
-        set_dialog_error(chrome, format!("{} still live", plural(live, "terminal")));
-        return Ok(());
-    }
-    // The worktree's terminals are gone: its daemon tabs go with them.
-    let tabs: Vec<String> = tagged_tabs(chrome, &project_id, worktree_id)
-        .iter()
-        .filter(|tab| !tab.is_local())
-        .map(|tab| tab.id.clone())
-        .collect();
-    // Awaited inline until A4a moves worktree removal off the loop. A tab
-    // the daemon already closed is done; a refused close is shown and the
-    // rest still go.
-    for tab in tabs {
-        match workspace
-            .daemon()
-            .workspace_op(WorkspaceOp::TabClose { tab, node: None })
-            .await
-        {
-            Ok(_) => {}
-            Err(DaemonError::Workspace(error)) if error.code == WorkspaceErrorCode::NotFound => {}
-            Err(DaemonError::Workspace(error)) => chrome.notify(Toast::warning(error.reason)),
-            Err(error) => return Err(error.into()),
-        }
-    }
-    match workspace.daemon().delete_worktree(worktree_id).await {
-        Ok(()) => {
-            workspace.fetch_sidebar_rows().await?;
-            close_modal(chrome);
-        }
-        Err(error) => set_dialog_error(chrome, daemon_reason(&error)),
-    }
-    Ok(())
-}
-
-/// Ask before closing `project_id` when the prefs say so, else close it.
-pub async fn close_project(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    project_id: &str,
-) -> Result<(), FrameError> {
-    let Some(project) = project_entry(workspace, project_id) else {
-        return Ok(());
-    };
-    if !chrome.prefs.confirm_close {
-        return close_project_confirmed(workspace, chrome, project_id).await;
-    }
-    let (tabs, panes) = chrome
-        .project_tabs
-        .sets
-        .get(project_id)
-        .map_or((0, 0), |set| {
-            (
-                set.tabs.len(),
-                set.tabs.iter().map(|tab| tab.slots.len()).sum(),
-            )
-        });
-    let (target, scope) = if project.worktrees.is_empty() {
-        (
-            CloseTarget::Project(project_id.to_owned()),
-            CloseScope::Tabs { tabs, panes },
-        )
-    } else {
-        (
-            CloseTarget::WorktreeGroup(project_id.to_owned()),
-            CloseScope::Group {
-                workspaces: 1 + project.worktrees.len(),
-                panes,
-            },
-        )
-    };
-    chrome.dialog = Some(Dialog::ConfirmClose {
-        target,
-        title: project_label(workspace, chrome, project_id).unwrap_or_default(),
-        scope,
-    });
-    chrome.mode = Mode::ConfirmClose;
-    Ok(())
-}
-
-/// Terminate every terminal of every tab of `project_id`; a refused kill
-/// keeps its pane.
-pub async fn close_project_confirmed(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    project_id: &str,
-) -> Result<(), FrameError> {
-    focus_project(workspace, chrome, project_id).await?;
-    let panes: Vec<PaneId> = chrome
-        .tabs()
-        .tabs
-        .iter()
-        .flat_map(|tab| tab.slots.values().copied())
-        .collect();
-    for pane in panes {
-        terminate_live_terminal(workspace, pane).await?;
-    }
-    sync_live_chrome(workspace, chrome);
-    Ok(())
 }
 
 /// Open the rename dialog on `project_id`'s current label.
@@ -804,81 +655,6 @@ fn home_dir() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_default()
-}
-
-fn project_entry<'a, D: Daemon>(
-    workspace: &'a Workspace<D>,
-    project_id: &str,
-) -> Option<&'a ProjectEntry> {
-    workspace
-        .sidebar()
-        .projects
-        .iter()
-        .find(|project| project.project_id == project_id)
-}
-
-/// The worktree row and its project's id.
-fn worktree_entry<'a, D: Daemon>(
-    workspace: &'a Workspace<D>,
-    worktree_id: &str,
-) -> Option<(String, &'a WorktreeEntry)> {
-    workspace.sidebar().projects.iter().find_map(|project| {
-        project
-            .worktrees
-            .iter()
-            .find(|worktree| worktree.worktree_id == worktree_id)
-            .map(|worktree| (project.project_id.clone(), worktree))
-    })
-}
-
-/// The tabs of `project_id`'s set opened from `worktree_id`.
-fn tagged_tabs<'a>(chrome: &'a Chrome, project_id: &str, worktree_id: &str) -> Vec<&'a Tab> {
-    chrome
-        .project_tabs
-        .sets
-        .get(project_id)
-        .map(|set| {
-            set.tabs
-                .iter()
-                .filter(|tab| tab.worktree_id.as_deref() == Some(worktree_id))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// Show `message` in whichever project dialog is open.
-fn set_dialog_error(chrome: &mut Chrome, message: String) {
-    match chrome.dialog.as_mut() {
-        Some(
-            Dialog::NewProject { error, .. }
-            | Dialog::OpenProject { error, .. }
-            | Dialog::NewWorktree { error, .. }
-            | Dialog::RemoveWorktree { error, .. },
-        ) => *error = Some(message),
-        _ => chrome.notify(Toast::warning(message)),
-    }
-}
-
-/// The daemon's reason for a refusal: the `message`, `error_code`, or
-/// `error` of a JSON `detail` body, else the error's own text.
-pub(super) fn daemon_reason(error: &DaemonError) -> String {
-    let DaemonError::Protocol { detail } = error else {
-        return error.to_string();
-    };
-    let Ok(body) = serde_json::from_str::<serde_json::Value>(detail) else {
-        return detail.clone();
-    };
-    let detail_value = body.get("detail").unwrap_or(&body);
-    ["git_error", "message", "error_code", "error"]
-        .iter()
-        .find_map(|key| {
-            detail_value
-                .get(key)
-                .and_then(|value| value.as_str())
-                .filter(|value| !value.trim().is_empty())
-        })
-        .or_else(|| detail_value.as_str())
-        .map_or_else(|| detail.clone(), str::to_owned)
 }
 
 #[cfg(test)]

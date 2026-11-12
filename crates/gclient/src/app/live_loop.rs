@@ -11,7 +11,6 @@
 //! host stream itself starts host-local recovery.
 
 use std::io::Write as _;
-use std::path::Path;
 use std::time::Duration;
 
 use crossterm::event::MouseEventKind;
@@ -33,7 +32,7 @@ use crate::key_input::{key_input, resolve_chord, text_bytes, Resolution};
 use crate::startup::initial_project;
 use crate::teardown::MouseCaptureSwitch;
 use crate::ui::status::Toast;
-use crate::ui::{Action, Chrome, Mode, WorkspaceView};
+use crate::ui::{Action, Chrome, Mode};
 
 use super::attention::route_response_input;
 use super::live::relist::{Relist, RelistFuture};
@@ -41,8 +40,7 @@ use super::live_attach::RecoveryFuture;
 use super::run_loop::{
     shutdown, ReconnectAttempt, ReconnectFuture, ReconnectSupervisor, RENDER_TICK,
 };
-use super::sidebar_model::SidebarModel;
-use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace, WorkspaceModel};
+use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace};
 use host_recovery::HostRecoveries;
 
 mod actions;
@@ -63,6 +61,8 @@ pub(super) mod menu_dispatch;
 pub(super) mod modal_input;
 pub(super) mod mouse;
 pub(super) mod orphans;
+pub(super) mod project_navigation;
+pub(super) mod project_operations;
 mod project_paths;
 mod projection;
 pub(super) mod projects;
@@ -94,52 +94,6 @@ use signals::{recv_exit_signal, recv_resize_signal, recv_suspend_signal};
 use suspend::suspend_process;
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
-
-impl WorkspaceView for Workspace<LiveDaemon> {
-    fn project_id(&self) -> Option<&str> {
-        Workspace::<LiveDaemon>::project_id(self)
-    }
-
-    fn focused_project(&self) -> Option<&str> {
-        Workspace::<LiveDaemon>::project_id(self)
-    }
-
-    fn sidebar(&self) -> &SidebarModel {
-        Workspace::<LiveDaemon>::sidebar(self)
-    }
-
-    fn roster_terminal_ids(&self) -> Vec<String> {
-        Workspace::<LiveDaemon>::roster_terminal_ids(self)
-    }
-
-    fn attention_entry_ids(&self) -> Vec<String> {
-        Workspace::<LiveDaemon>::attention_entry_ids(self)
-    }
-
-    fn pane_for_terminal(&self, terminal_id: &str) -> Option<PaneId> {
-        Workspace::<LiveDaemon>::pane_for_terminal(self, terminal_id)
-    }
-
-    fn pane(&self, id: PaneId) -> &super::Pane {
-        Workspace::<LiveDaemon>::pane(self, id)
-    }
-
-    fn daemon_ready(&self) -> bool {
-        Workspace::<LiveDaemon>::daemon_ready(self)
-    }
-
-    fn daemon_error(&self) -> Option<&DaemonError> {
-        Workspace::<LiveDaemon>::daemon_error(self)
-    }
-
-    fn gobby_home(&self) -> Option<&Path> {
-        self.gobby_home()
-    }
-
-    fn workspace_model(&self) -> Option<&WorkspaceModel> {
-        Workspace::<LiveDaemon>::workspace_model(self)
-    }
-}
 
 /// Run the interactive client against the authenticated daemon connection.
 pub async fn run_live_loop<B: Backend>(
@@ -208,6 +162,11 @@ pub async fn run_live_loop<B: Backend>(
     }
 
     while workspace.exit_reason().is_none() {
+        if let Err(error) = project_navigation::resume(workspace, chrome, jobs.outcomes()).await {
+            workspace.latch_exit(error.to_string());
+            loop_error = Some(error);
+            break;
+        }
         // Reads that events and focus changes flagged, issued before the next select.
         jobs.drain_pending_refetch(workspace, chrome);
         // A roster that landed after a switch installed panes no attach or

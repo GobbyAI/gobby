@@ -322,6 +322,7 @@ async fn a_placement_lost_with_the_connection_never_moves_the_view() {
     )
     .await
     .expect("focus the unplaced agent");
+    mock_daemon::project_jobs::settle_navigation(&mut s.workspace, &mut s.chrome).await;
     let placing = |mock: &MockDaemon| {
         mock.workspace_requests().iter().any(|request| {
             request.get("op") == Some(&json!("tab.create"))
@@ -369,6 +370,7 @@ fn seat_on_roster(mock: &MockDaemon) {
     let attention = json!({"epoch": "attention-1", "seq": 1, "entries": [{
         "entry_id": format!("run:run-{AGENT}"),
         "run_id": format!("run-{AGENT}"),
+        "project_id": "project-1",
         "session_id": null,
         "lifecycle_status": "running",
         "definition": "Lane 8 architect",
@@ -406,6 +408,117 @@ async fn tab_create(mock: &MockDaemon) -> Value {
 
 /// A roster seat with no pane opens in a tab named after it.
 #[tokio::test]
+async fn attention_terminal_absent_from_inventory_is_resolved_and_opened() {
+    let mock = MockDaemon::start("local-token").await;
+    seat_on_roster(&mock);
+    let mut s = session_on(mock, &[(&["existing"], "existing")], &["existing"]).await;
+    s.mock
+        .enqueue("GET", &format!("/api/terminals/{AGENT}"), 200, agent_row());
+    let (outcomes, _unapplied) = mpsc::unbounded_channel();
+    focus_agent(
+        &mut s.workspace,
+        &mut s.chrome,
+        &outcomes,
+        &format!("run:run-{AGENT}"),
+    )
+    .await
+    .expect("focus attention terminal");
+    mock_daemon::project_jobs::apply_navigation(&mut s.workspace, &mut s.chrome).await;
+    assert!(
+        s.workspace.pane_for_terminal(AGENT).is_some(),
+        "resolved row installs a pane"
+    );
+    let create = tab_create(&s.mock).await;
+    assert_eq!(create["terminal_id"], json!(AGENT));
+    s.mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn existing_placement_wins_over_an_agents_assigned_project() {
+    let mock = MockDaemon::start("local-token").await;
+    seat_on_roster(&mock);
+    let mut s = session_on(mock, &[(&["existing"], "existing")], &["existing", AGENT]).await;
+    let owner = s.mock.seed_other_workspace("other", &[(&[AGENT], "agent")]);
+    let (outcomes, _unapplied) = mpsc::unbounded_channel();
+    focus_agent(
+        &mut s.workspace,
+        &mut s.chrome,
+        &outcomes,
+        &format!("terminal:{AGENT}"),
+    )
+    .await
+    .expect("focus placed agent");
+    timeout(
+        Duration::from_secs(10),
+        mock_daemon::project_jobs::settle_navigation(&mut s.workspace, &mut s.chrome),
+    )
+    .await
+    .expect("placed terminal navigation settles without cycling between projects");
+    assert_eq!(
+        s.workspace.project_id(),
+        Some("other"),
+        "existing placement owns the terminal"
+    );
+    assert_eq!(
+        s.workspace.workspace_model().expect("model").workspace.id,
+        owner
+    );
+    assert!(
+        !s.mock
+            .workspace_requests()
+            .iter()
+            .any(|request| request["op"] == "tab.create"),
+        "focusing preserves the existing placement"
+    );
+    s.mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn unplaced_agent_uses_its_project_after_another_project_is_focused() {
+    for new_tab in [false, true] {
+        let mock = MockDaemon::start("local-token").await;
+        seat_on_roster(&mock);
+        let mut s = session_on(mock, &[(&["existing"], "existing")], &["existing", AGENT]).await;
+        s.mock
+            .seed_other_workspace("other", &[(&["other-terminal"], "other")]);
+        gobby_client::app::focus_project(&mut s.workspace, &mut s.chrome, "other")
+            .await
+            .expect("focus another project");
+        mock_daemon::project_jobs::settle_navigation(&mut s.workspace, &mut s.chrome).await;
+        assert_eq!(s.workspace.project_id(), Some("other"));
+        s.mock
+            .enqueue("GET", &format!("/api/terminals/{AGENT}"), 200, agent_row());
+        let (outcomes, _unapplied) = mpsc::unbounded_channel();
+        let entry = format!("terminal:{AGENT}");
+        if new_tab {
+            apply_live_menu_action(
+                &mut s.workspace,
+                &mut s.chrome,
+                &outcomes,
+                ContextMenuKind::Global,
+                MenuAction::OpenAgentInNewTab(entry),
+            )
+            .await
+            .expect("open unplaced agent");
+        } else {
+            focus_agent(&mut s.workspace, &mut s.chrome, &outcomes, &entry)
+                .await
+                .expect("focus unplaced agent");
+        }
+        mock_daemon::project_jobs::settle_navigation(&mut s.workspace, &mut s.chrome).await;
+        let create = tab_create(&s.mock).await;
+        assert_eq!(create["terminal_id"], json!(AGENT));
+        assert_eq!(
+            create["project_id"],
+            json!("project-1"),
+            "agent retains its project"
+        );
+        assert_eq!(s.workspace.project_id(), Some("project-1"));
+        s.mock.shutdown().await;
+    }
+}
+
+#[tokio::test]
 async fn an_unplaced_agent_opens_in_a_tab_named_after_it() {
     let mock = MockDaemon::start("local-token").await;
     seat_on_roster(&mock);
@@ -421,6 +534,7 @@ async fn an_unplaced_agent_opens_in_a_tab_named_after_it() {
     )
     .await
     .expect("focus the unplaced agent");
+    mock_daemon::project_jobs::settle_navigation(&mut s.workspace, &mut s.chrome).await;
 
     let create = tab_create(&s.mock).await;
     assert_eq!(create["terminal_id"], json!(AGENT));
@@ -487,6 +601,7 @@ async fn a_placed_agent_is_focused_in_its_tab_without_a_new_one() {
     )
     .await
     .expect("focus the placed agent");
+    mock_daemon::project_jobs::settle_navigation(&mut s.workspace, &mut s.chrome).await;
 
     assert_eq!(
         s.chrome.active_tab().map(|tab| tab.id.clone()),

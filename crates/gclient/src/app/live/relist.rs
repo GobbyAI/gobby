@@ -58,6 +58,12 @@ pub struct Relist {
     pin: Snapshot,
 }
 
+impl Relist {
+    pub(in crate::app) fn contains_terminal(&self, terminal: &str) -> bool {
+        self.rows.iter().any(|row| row.terminal_id == terminal)
+    }
+}
+
 /// A running background relist; the live loop polls it from a select branch.
 pub(crate) type RelistFuture = Pin<Box<dyn Future<Output = Result<Relist, DaemonError>> + 'static>>;
 

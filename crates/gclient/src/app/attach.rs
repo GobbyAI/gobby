@@ -256,9 +256,12 @@ impl Pane {
     }
 
     pub(super) fn take_expired_detach_generation(&mut self, now: Instant) -> Option<Generation> {
-        if self
-            .detaching_deadline()
-            .is_none_or(|deadline| deadline > now)
+        // Recovery owns its detach timeout and schedules a pane retry. A render
+        // tick winning that deadline must not reconnect the healthy daemon.
+        if self.fallback_in_flight
+            || self
+                .detaching_deadline()
+                .is_none_or(|deadline| deadline > now)
         {
             return None;
         }
@@ -453,6 +456,30 @@ mod tests {
     use crate::app::Backend;
     use gobby_terminal::protocol::{CellData, FrameData, PaneModes};
     use serde_json::json;
+
+    #[test]
+    fn a_recovery_owned_detach_deadline_does_not_request_a_daemon_reconnect() {
+        let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+        let now = tokio::time::Instant::now();
+        let (_, generation) = pane.begin_detaching(now).expect("attached pane");
+        pane.fallback_in_flight = true;
+
+        assert_eq!(
+            pane.take_expired_detach_generation(now + DETACH_DEADLINE),
+            None,
+            "the recovery future owns this deadline even if the render tick runs first"
+        );
+        pane.fallback_in_flight = false;
+        assert_eq!(
+            pane.take_expired_detach_generation(now + DETACH_DEADLINE),
+            Some(generation),
+            "an unowned detach still requests reconnect once"
+        );
+        assert_eq!(
+            pane.take_expired_detach_generation(now + DETACH_DEADLINE),
+            None
+        );
+    }
 
     #[test]
     fn panes_keep_their_last_frame_while_the_daemon_is_away() {

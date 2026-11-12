@@ -36,10 +36,10 @@ use super::menu_dispatch::apply_live_menu_action;
 use super::modal_input::{apply_rename, ModalOutcome};
 use super::mouse::{MouseOutcome, Placement};
 use super::orphans::destroy_orphans;
+use super::project_operations::{close_project_confirmed, focus_project, remove_worktree};
 use super::projects::{
-    close_live_terminal, close_project_confirmed, create_worktree, focus_agent, focus_project,
-    focus_terminal, open_new_project_dialog, open_open_project_dialog, open_worktree,
-    remove_worktree, submit_new_project, submit_open_project,
+    close_live_terminal, create_worktree, focus_agent, focus_terminal, open_new_project_dialog,
+    open_open_project_dialog, open_worktree, submit_new_project, submit_open_project,
 };
 use super::sync_live_chrome;
 
@@ -147,7 +147,8 @@ pub(super) async fn apply_live_modal_outcome(
     outcome: ModalOutcome,
 ) -> Result<bool, FrameError> {
     match outcome {
-        ModalOutcome::Consumed | ModalOutcome::Close | ModalOutcome::Passthrough => {}
+        ModalOutcome::Close => super::project_navigation::cancel_path(workspace),
+        ModalOutcome::Consumed | ModalOutcome::Passthrough => {}
         ModalOutcome::Focus(pane) => {
             chrome.focus_pane(pane);
             focus_live_pane(workspace, pane);
@@ -183,7 +184,7 @@ pub(super) async fn apply_live_modal_outcome(
         }
         ModalOutcome::Confirm(
             CloseTarget::Project(project_id) | CloseTarget::WorktreeGroup(project_id),
-        ) => close_project_confirmed(workspace, chrome, &project_id).await?,
+        ) => close_project_confirmed(workspace, chrome, outcomes, &project_id).await?,
         ModalOutcome::Commit(kind, value) => {
             if !rename_daemon_target(workspace, chrome, outcomes, &kind, &value) {
                 apply_rename(workspace, chrome, kind, value);
@@ -207,7 +208,7 @@ pub(super) async fn apply_live_modal_outcome(
             .await?
         }
         ModalOutcome::RemoveWorktree(worktree_id) => {
-            remove_worktree(workspace, chrome, &worktree_id).await?;
+            remove_worktree(workspace, chrome, outcomes, &worktree_id).await?;
         }
         ModalOutcome::DestroyOrphans(rows) => destroy_orphans(workspace, outcomes, rows),
         ModalOutcome::Menu { kind, action } => {

@@ -33,6 +33,14 @@ pub(super) fn apply_job_outcome(
     // Lost input is reported whichever connection it was typed on, and a
     // kill's pane bookkeeping is local.
     let result = match outcome.result {
+        JobResult::ProjectAttached(attachment) => {
+            return super::project_navigation::apply(workspace, chrome, current, attachment);
+        }
+        JobResult::WorktreeRemoved(removal) => {
+            return super::project_operations::apply_worktree_removal(
+                workspace, chrome, current, removal,
+            );
+        }
         JobResult::WriteUnconfirmed { pane, attachment } => {
             let current = current && on_attachment(workspace, pane, &attachment);
             return apply_write_unconfirmed(workspace, pane, current);
@@ -126,7 +134,9 @@ pub(super) fn apply_job_outcome(
         JobResult::Write { bytes, reply, .. } => {
             apply_write_result(workspace, chrome, bytes, &reply)
         }
-        JobResult::WriteUnconfirmed { .. }
+        JobResult::ProjectAttached(_)
+        | JobResult::WorktreeRemoved(_)
+        | JobResult::WriteUnconfirmed { .. }
         | JobResult::WriteAbandoned { .. }
         | JobResult::Killed { .. } => {}
         JobResult::ThemeRelayed {

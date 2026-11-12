@@ -205,35 +205,28 @@ async fn respond_reaches_daemon() {
 async fn agent_row_click_jumps_and_labels_the_session() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [
-                    {
-                        "terminal_id": "terminal-1",
-                        "backend": "tmux",
-                        "state": "live",
-                        "title": "15",
-                        "session_id": "sess-1",
-                        "attach": {"backend": "tmux", "pane_id": "%15"}
-                    },
-                    {
-                        "terminal_id": "terminal-2",
-                        "backend": "tmux",
-                        "state": "live",
-                        "title": "zsh",
-                        "command": "zsh",
-                        "attach": {"backend": "tmux", "pane_id": "%16"}
-                    }
-                ],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
+    mock.seed_terminal_roster(json!({
+        "items": [
+            {
+                "terminal_id": "terminal-1",
+                "backend": "tmux",
+                "state": "live",
+                "title": "15",
+                "session_id": "sess-1",
+                "attach": {"backend": "tmux", "pane_id": "%15"}
+            },
+            {
+                "terminal_id": "terminal-2",
+                "backend": "tmux",
+                "state": "live",
+                "title": "zsh",
+                "command": "zsh",
+                "attach": {"backend": "tmux", "pane_id": "%16"}
+            }
+        ],
+        "next_cursor": null,
+        "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+    }));
     let roster = json!({
         "epoch": "attention-1",
         "seq": 1,
@@ -341,8 +334,18 @@ async fn agent_row_click_jumps_and_labels_the_session() {
             blocked_row,
         )
         .await;
-        // The loop consumes both queued clicks before the closed channel exits;
-        // a click on a held pane need not request control again.
+        timeout(
+            Duration::from_secs(10),
+            mock.wait_for_request(|request| {
+                request.body.as_ref().is_some_and(|body| {
+                    body["type"] == "terminal_focus"
+                        && body["terminal_id"] == "terminal-1"
+                        && body["focused"] == true
+                })
+            }),
+        )
+        .await
+        .expect("blocked terminal focus is applied before exit");
         drop(input_tx);
     };
 
