@@ -98,8 +98,8 @@
       "audience": "agent; requires an installed operator_messaging grant",
       "reference": "src/gobby/install/shared/skills/gobby/references/communications/attachments.md",
       "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/communications.py",
-        "symbol": "create_communications_registry.send_operator_attachment"
+        "path": "src/gobby/mcp_proxy/tools/communications_reports.py",
+        "symbol": "register_report_tools.send_operator_attachment"
       },
       "verification": [
         "operator-send-contract",
@@ -146,8 +146,8 @@
       "audience": "daemon-run steps only (agents are refused with forbidden)",
       "reference": "src/gobby/install/shared/skills/gobby/references/communications/attachments.md",
       "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/communications.py",
-        "symbol": "create_communications_registry.compose_status_report"
+        "path": "src/gobby/mcp_proxy/tools/communications_reports.py",
+        "symbol": "register_report_tools.compose_status_report"
       },
       "verification": [
         "focused-current"
@@ -633,8 +633,8 @@
       "audience": "daemon-run pipeline steps only; refused to agent sessions",
       "reference": "src/gobby/install/shared/skills/gobby/references/communications/attachments.md",
       "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/communications.py",
-        "symbol": "compose_status_report"
+        "path": "src/gobby/mcp_proxy/tools/communications_reports.py",
+        "symbol": "register_report_tools.compose_status_report"
       },
       "verification": [
         "inventory",
