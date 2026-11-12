@@ -18,9 +18,11 @@ from gobby.storage.hub.protocol import HubDatabase
 _SESSION_LOCATION_SQL = "SELECT project_id, seq_num FROM sessions WHERE id = %s"
 
 
-def cleanup_default_workspaces(db: HubDatabase, project_id: str) -> None:
+def cleanup_default_workspaces(
+    db: HubDatabase, project_id: str, *, binding_session_id: str | None = None
+) -> None:
     """Retire default bindings and empty generated folders, preserving every file."""
-    from gobby.storage.hub.protocol import SessionVariableMutation
+    from gobby.storage.hub.protocol import SessionVariableTransfer
     from gobby.workflows.state_manager import SessionVariableManager
 
     variables = SessionVariableManager(db)
@@ -35,8 +37,13 @@ def cleanup_default_workspaces(db: HubDatabase, project_id: str) -> None:
         "ORDER BY s.id",
         (project_id,),
     ).fetchall()
-    for row in rows:
-        with db.transaction_immediate(SessionVariableMutation(session_id=row["id"])):
+    session_ids = tuple(row["id"] for row in rows)
+    if binding_session_id is not None:
+        session_ids += (binding_session_id,)
+    # Nested transactions retain their advisory locks until the outer commit.
+    # Acquire the entire batch, including the caller's subsequent binding, in order.
+    with db.transaction_immediate(SessionVariableTransfer(session_ids)):
+        for row in rows:
             current = variables.get_variables(row["id"])
             definition = current.get("_agent_type") or current.get(WORKSPACE_DEFINITION_VARIABLE)
             if definition not in (None, "", "default"):
@@ -130,7 +137,7 @@ def _bind_session_workspace(db: HubDatabase, session_id: str) -> Path | None:
     if not definition or definition == "default":
         location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
         if location is not None and location["project_id"] is not None:
-            cleanup_default_workspaces(db, location["project_id"])
+            cleanup_default_workspaces(db, location["project_id"], binding_session_id=session_id)
         variables.merge_variables(
             session_id,
             {
