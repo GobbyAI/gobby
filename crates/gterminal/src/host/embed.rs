@@ -193,6 +193,7 @@ async fn attach_tmux(
             rows,
             cols,
             scroll: 0,
+            view_revision: 0,
             reservation_id: None,
             client_attachment_id: None,
             mailbox: mailbox.clone(),

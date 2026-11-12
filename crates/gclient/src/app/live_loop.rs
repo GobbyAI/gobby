@@ -166,6 +166,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut render_tick = tokio::time::interval(RENDER_TICK);
     render_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut next_frame_render_at = Instant::now();
+    let mut frame_render_pending = false;
     let mut system_theme_watcher = None;
     let mut system_theme_watch_attempted = false;
     let mut host_colors_due = true;
@@ -244,10 +245,6 @@ pub async fn run_live_loop<B: Backend>(
                     loop_error = Some(error);
                 }
             }
-            Some(outcome) = jobs.rx.recv() => {
-                apply_job_outcome(workspace, chrome, &mut jobs, outcome);
-                sync_live_chrome(workspace, chrome);
-            }
             event = input.recv() => {
                 let Some(event) = event else {
                     workspace.latch_exit("terminal input closed");
@@ -263,6 +260,153 @@ pub async fn run_live_loop<B: Backend>(
                     Ok(false) => {}
                     Err(error) => chrome.notify(Toast::error(error.to_string())),
                 }
+            }
+            _ = render_tick.tick() => {
+                // System's ground is the hosting terminal's own colours: ask
+                // for them on entering System, after each appearance flip,
+                // and again whenever the last answer has aged out.
+                host_colors_due |= !chrome.prefs.follows_system();
+                if chrome.prefs.follows_system() {
+                    if !system_theme_watch_attempted {
+                        system_theme_watcher = dark_light::subscribe().ok();
+                        system_theme_watch_attempted = true;
+                    }
+                    if let Some(watcher) = &system_theme_watcher {
+                        for mode in watcher.try_iter() {
+                            chrome.set_theme(if mode == dark_light::Mode::Light {
+                                crate::theme::ThemeKind::Light
+                            } else {
+                                crate::theme::ThemeKind::Dark
+                            });
+                            host_colors_due = true;
+                        }
+                    }
+                    super::theme_sync::query_host_colors_when_due(
+                        &chrome.host_color_query,
+                        &mut host_colors_asked_at,
+                        std::mem::take(&mut host_colors_due),
+                        std::time::Instant::now(),
+                        &mut std::io::stdout(),
+                    )?;
+                } else if let Some(watcher) = &system_theme_watcher {
+                    for _ in watcher.try_iter() {}
+                }
+                // New attachments and theme changes (toggle, menu, system)
+                // all reach the panes' hosts here, and the next spawn carries
+                // the same colours.
+                let terminal_theme = (&chrome.terminal_theme()).into();
+                workspace.daemon().set_terminal_theme(&terminal_theme);
+                // Each proxied pane's theme relay is a job, so a slow daemon
+                // never holds up the tick (#25653).
+                for (pane_id, theme) in workspace.sync_terminal_themes(&terminal_theme) {
+                    jobs.offer(
+                        workspace,
+                        chrome,
+                        JobKey::ThemeRelay(pane_id),
+                        Pending::ThemeRelay(pane_id, theme),
+                    );
+                }
+                chrome.connection.now = std::time::Instant::now();
+                chrome.ticker = chrome.ticker.wrapping_add(1);
+                chrome.expire_toasts(std::time::Instant::now());
+                // The focus report is a job too. One in flight holds the next
+                // hint, and a refused report hands its hint back to be sent.
+                if jobs.take_focus_refused() {
+                    focus_hold.unsent();
+                }
+                if !jobs.focus_report_in_flight() {
+                    if let Some(message) = focus_hold.sync(
+                        workspace,
+                        chrome,
+                        std::time::Instant::now(),
+                        chrome.prefs.focus_hold_seconds,
+                    ) {
+                        jobs.offer(
+                            workspace,
+                            chrome,
+                            JobKey::FocusReport,
+                            Pending::FocusReport(message),
+                        );
+                    }
+                }
+                workspace.submit_expired_detaches(&mut supervisor, Instant::now());
+                // A due attach runs beside the loop; the recoveries branch
+                // above applies it (#22747).
+                if reconnect_job.is_none()
+                    && reconnect_stage.is_none()
+                    && supervisor.next_attempt_at().is_none()
+                {
+                    recoveries.extend(workspace.start_due_attaches(Instant::now(), false));
+                    recoveries.extend(workspace.start_due_promotions(Instant::now()));
+                }
+                if chrome.sidebar.pinned || chrome.sidebar.overlay {
+                    workspace.request_git_refresh_if_due();
+                }
+                if !launch_pending && reconnect_stage.is_none() {
+                    workspace.request_roster_refresh_if_due();
+                }
+                // The refetch runs beside the loop; its branch above applies it.
+                if !launch_pending && reconnect_stage.is_none() && sidebar_job.is_none() {
+                    sidebar_job = workspace.start_sidebar_refetch();
+                }
+                // Rendering on every 16 ms timer tick rebuilds the full frame
+                // while idle. The marquee advances only once per TICKER_STEP.
+                let frame_due = frame_render_pending && Instant::now() >= next_frame_render_at;
+                if frame_due || chrome
+                    .ticker
+                    .is_multiple_of(crate::ui::sidebar_rows::TICKER_STEP)
+                {
+                    if frame_due { next_frame_render_at = Instant::now() + RENDER_TICK * 4; }
+                    frame_render_pending = false;
+                    if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
+                        workspace.latch_exit(error.to_string());
+                        loop_error = Some(error);
+                    }
+                }
+            }
+            frame = recv_workspace_frame(workspace) => {
+                frame_render_pending |= frame.is_some();
+                if let Some((pane_id, Ok(gobby_terminal::protocol::ServerMessage::TextRead {
+                    text,
+                    ..
+                }))) = &frame
+                {
+                    let mut output = std::io::stdout();
+                    apply_text_read(chrome, *pane_id, text.clone(), &mut output)?;
+                    output.flush()?;
+                }
+                if let Some((pane_id, Err(error))) = frame {
+                    // A direct pane reconnects straight to its host first; its
+                    // result is applied by pane identity and epoch, so a daemon
+                    // reconnect cannot cancel it (#23076). Everything else, and
+                    // every host-local failure, goes down the daemon path. The
+                    // recovery's waits run beside the loop; its branch below
+                    // applies each step (#22747).
+                    if let Some((cancel, future)) =
+                        workspace.begin_host_frame_recovery(pane_id, &error)
+                    {
+                        host_recoveries.push(pane_id, cancel, future);
+                    } else {
+                        match workspace.begin_frame_recovery(pane_id, &error) {
+                            Ok(Some(recovery)) => recoveries.push(recovery),
+                            Ok(None) => {}
+                            Err(error) => chrome.notify(Toast::error(error.to_string())),
+                        }
+                    }
+                }
+                let now = Instant::now();
+                if frame_render_pending && now >= next_frame_render_at {
+                    next_frame_render_at = now + RENDER_TICK * 4;
+                    frame_render_pending = false;
+                    if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
+                        workspace.latch_exit(error.to_string());
+                        loop_error = Some(error);
+                    }
+                }
+            }
+            Some(outcome) = jobs.rx.recv() => {
+                apply_job_outcome(workspace, chrome, &mut jobs, outcome);
+                sync_live_chrome(workspace, chrome);
             }
             result = async { startup_job.as_mut().expect("startup job").await }, if startup_job.is_some() => {
                 startup_job = None;
@@ -386,44 +530,6 @@ pub async fn run_live_loop<B: Backend>(
                     }
                 }
             }
-            frame = recv_workspace_frame(workspace) => {
-                if let Some((pane_id, Ok(gobby_terminal::protocol::ServerMessage::TextRead {
-                    text,
-                    ..
-                }))) = &frame
-                {
-                    let mut output = std::io::stdout();
-                    apply_text_read(chrome, *pane_id, text.clone(), &mut output)?;
-                    output.flush()?;
-                }
-                if let Some((pane_id, Err(error))) = frame {
-                    // A direct pane reconnects straight to its host first; its
-                    // result is applied by pane identity and epoch, so a daemon
-                    // reconnect cannot cancel it (#23076). Everything else, and
-                    // every host-local failure, goes down the daemon path. The
-                    // recovery's waits run beside the loop; its branch below
-                    // applies each step (#22747).
-                    if let Some((cancel, future)) =
-                        workspace.begin_host_frame_recovery(pane_id, &error)
-                    {
-                        host_recoveries.push(pane_id, cancel, future);
-                    } else {
-                        match workspace.begin_frame_recovery(pane_id, &error) {
-                            Ok(Some(recovery)) => recoveries.push(recovery),
-                            Ok(None) => {}
-                            Err(error) => chrome.notify(Toast::error(error.to_string())),
-                        }
-                    }
-                }
-                let now = Instant::now();
-                if now >= next_frame_render_at {
-                    next_frame_render_at = now + RENDER_TICK * 4;
-                    if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
-                        workspace.latch_exit(error.to_string());
-                        loop_error = Some(error);
-                    }
-                }
-            }
             result = await_sidebar_job(&mut sidebar_job), if sidebar_job.is_some() => {
                 sidebar_job = None;
                 let error = match result {
@@ -518,106 +624,6 @@ pub async fn run_live_loop<B: Backend>(
                 if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
                     workspace.latch_exit(error.to_string());
                     loop_error = Some(error);
-                }
-            }
-            _ = render_tick.tick() => {
-                // System's ground is the hosting terminal's own colours: ask
-                // for them on entering System, after each appearance flip,
-                // and again whenever the last answer has aged out.
-                host_colors_due |= !chrome.prefs.follows_system();
-                if chrome.prefs.follows_system() {
-                    if !system_theme_watch_attempted {
-                        system_theme_watcher = dark_light::subscribe().ok();
-                        system_theme_watch_attempted = true;
-                    }
-                    if let Some(watcher) = &system_theme_watcher {
-                        for mode in watcher.try_iter() {
-                            chrome.set_theme(if mode == dark_light::Mode::Light {
-                                crate::theme::ThemeKind::Light
-                            } else {
-                                crate::theme::ThemeKind::Dark
-                            });
-                            host_colors_due = true;
-                        }
-                    }
-                    super::theme_sync::query_host_colors_when_due(
-                        &chrome.host_color_query,
-                        &mut host_colors_asked_at,
-                        std::mem::take(&mut host_colors_due),
-                        std::time::Instant::now(),
-                        &mut std::io::stdout(),
-                    )?;
-                } else if let Some(watcher) = &system_theme_watcher {
-                    for _ in watcher.try_iter() {}
-                }
-                // New attachments and theme changes (toggle, menu, system)
-                // all reach the panes' hosts here, and the next spawn carries
-                // the same colours.
-                let terminal_theme = (&chrome.terminal_theme()).into();
-                workspace.daemon().set_terminal_theme(&terminal_theme);
-                // Each proxied pane's theme relay is a job, so a slow daemon
-                // never holds up the tick (#25653).
-                for (pane_id, theme) in workspace.sync_terminal_themes(&terminal_theme) {
-                    jobs.offer(
-                        workspace,
-                        chrome,
-                        JobKey::ThemeRelay(pane_id),
-                        Pending::ThemeRelay(pane_id, theme),
-                    );
-                }
-                chrome.connection.now = std::time::Instant::now();
-                chrome.ticker = chrome.ticker.wrapping_add(1);
-                chrome.expire_toasts(std::time::Instant::now());
-                // The focus report is a job too. One in flight holds the next
-                // hint, and a refused report hands its hint back to be sent.
-                if jobs.take_focus_refused() {
-                    focus_hold.unsent();
-                }
-                if !jobs.focus_report_in_flight() {
-                    if let Some(message) = focus_hold.sync(
-                        workspace,
-                        chrome,
-                        std::time::Instant::now(),
-                        chrome.prefs.focus_hold_seconds,
-                    ) {
-                        jobs.offer(
-                            workspace,
-                            chrome,
-                            JobKey::FocusReport,
-                            Pending::FocusReport(message),
-                        );
-                    }
-                }
-                workspace.submit_expired_detaches(&mut supervisor, Instant::now());
-                // A due attach runs beside the loop; the recoveries branch
-                // above applies it (#22747).
-                if reconnect_job.is_none()
-                    && reconnect_stage.is_none()
-                    && supervisor.next_attempt_at().is_none()
-                {
-                    recoveries.extend(workspace.start_due_attaches(Instant::now(), false));
-                    recoveries.extend(workspace.start_due_promotions(Instant::now()));
-                }
-                if chrome.sidebar.pinned || chrome.sidebar.overlay {
-                    workspace.request_git_refresh_if_due();
-                }
-                if !launch_pending && reconnect_stage.is_none() {
-                    workspace.request_roster_refresh_if_due();
-                }
-                // The refetch runs beside the loop; its branch above applies it.
-                if !launch_pending && reconnect_stage.is_none() && sidebar_job.is_none() {
-                    sidebar_job = workspace.start_sidebar_refetch();
-                }
-                // Rendering on every 16 ms timer tick rebuilds the full frame
-                // while idle. The marquee advances only once per TICKER_STEP.
-                if chrome
-                    .ticker
-                    .is_multiple_of(crate::ui::sidebar_rows::TICKER_STEP)
-                {
-                    if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
-                        workspace.latch_exit(error.to_string());
-                        loop_error = Some(error);
-                    }
                 }
             }
         }

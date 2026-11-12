@@ -8,16 +8,15 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 
-#[cfg(feature = "vt-engine")]
-use super::helpers::truncate_title;
-use super::helpers::{err, native_entitlements, push_semantic_frame, push_terminal_ansi, s};
+use super::helpers::{err, native_entitlements, s};
+#[cfg(not(feature = "vt-engine"))]
+use super::helpers::{push_semantic_frame, push_terminal_ansi};
 #[cfg(feature = "vt-engine")]
 use super::spawn::CommitResult;
 use super::state::{CommitState, HostState, Identity, ObserverBind, Reservation, TerminalSlot};
-use crate::protocol::{
-    validate_dimensions, RenderEncoding, ServerMessage, SnapshotMode, SNAPSHOT_DEFAULT_MAX_BYTES,
-    SNAPSHOT_DEFAULT_MAX_LINES,
-};
+use crate::protocol::validate_dimensions;
+#[cfg(not(feature = "vt-engine"))]
+use crate::protocol::{RenderEncoding, ServerMessage};
 
 #[derive(Debug)]
 pub(crate) enum KillGroupError {
@@ -102,90 +101,6 @@ async fn terminate_group(pgid: i32, grace: Duration, signal: KillSignal) -> bool
     group_exits_by(pgid, Instant::now() + KILL_REAP_TIMEOUT).await
 }
 
-pub(crate) fn trim_to_char_boundary(text: &str, max_bytes: usize) -> String {
-    if text.len() <= max_bytes {
-        return text.to_string();
-    }
-    let mut start = text.len() - max_bytes;
-    while start < text.len() && !text.is_char_boundary(start) {
-        start += 1;
-    }
-    text[start..].to_string()
-}
-
-/// Refusal for a `mode` the snapshot verb does not implement. It names every
-/// accepted value so a caller never has to guess after a typo.
-fn invalid_snapshot_mode() -> Value {
-    json!({
-        "ok": false,
-        "error": "invalid_mode",
-        "valid_modes": SnapshotMode::VALID,
-    })
-}
-
-fn snapshot_reply(mode: SnapshotMode, body: SnapshotBody) -> Value {
-    json!({
-        "ok": true,
-        "mode": mode.as_wire(),
-        "text": body.text,
-        "truncated": body.truncated,
-        "dropped_bytes": body.dropped_bytes,
-        "total_bytes": body.total_bytes,
-    })
-}
-
-/// `mode` selects which representation a snapshot returns. Omitting it means
-/// plain text; anything else is refused rather than answered with the
-/// representation the caller did not ask for.
-fn snapshot_mode(extra: &Map<String, Value>) -> Result<SnapshotMode, Value> {
-    match extra.get("mode") {
-        None => Ok(SnapshotMode::Text),
-        Some(Value::String(value)) => {
-            SnapshotMode::from_wire(value).ok_or_else(invalid_snapshot_mode)
-        }
-        Some(_) => Err(invalid_snapshot_mode()),
-    }
-}
-
-/// A capped snapshot body. Every counter describes the representation that was
-/// selected, because the caps run after that choice.
-struct SnapshotBody {
-    text: String,
-    truncated: bool,
-    dropped_bytes: u64,
-    total_bytes: u64,
-}
-
-/// The one snapshot truncation policy: keep the last `max_lines` lines, then
-/// trim that tail to `max_bytes` on a UTF-8 boundary.
-fn truncate_snapshot(text: &str, max_lines: usize, max_bytes: usize) -> SnapshotBody {
-    let total_bytes = text.len() as u64;
-    let mut truncated = false;
-    let mut dropped_bytes = 0u64;
-    let mut lines: Vec<&str> = text.lines().collect();
-    if lines.len() > max_lines {
-        dropped_bytes += lines[..lines.len() - max_lines]
-            .iter()
-            .map(|line| line.len() as u64 + 1)
-            .sum::<u64>();
-        lines = lines[lines.len() - max_lines..].to_vec();
-        truncated = true;
-    }
-    let mut joined = lines.join("\n");
-    if joined.len() > max_bytes {
-        let before = joined.len();
-        joined = trim_to_char_boundary(&joined, max_bytes);
-        dropped_bytes += (before - joined.len()) as u64;
-        truncated = true;
-    }
-    SnapshotBody {
-        text: joined,
-        truncated,
-        dropped_bytes,
-        total_bytes,
-    }
-}
-
 #[cfg(feature = "vt-engine")]
 fn commit_failure_json(outcome: CommitResult) -> Value {
     match outcome {
@@ -250,22 +165,19 @@ fn remove_terminal_slot(
     inner: &mut super::state::Inner,
     identity: &Identity,
     kill_signal: Option<i32>,
-) {
+) -> Option<TerminalSlot> {
     if let Some(slot) = inner.terminals.remove(identity) {
         inner.by_host_id.remove(&slot.host_terminal_id);
         inner.reservations.remove(&slot.reservation_id);
         remove_slot_attachments(inner, &slot);
-        inner.exit_tails.record(
-            &slot.host_terminal_id,
-            super::exit_tails::final_text(&slot),
-            Instant::now(),
-        );
         if let Some(signal) = kill_signal {
             if let Err(err) = kill_group(slot.pgid, signal) {
                 tracing::debug!(%err, pgid = slot.pgid, "kill_group failed");
             }
         }
+        return Some(slot);
     }
+    None
 }
 
 /// Whether a native slot still owns a live group for the shutdown drain,
@@ -504,7 +416,9 @@ impl HostState {
         match outcome {
             CommitResult::Committed => {}
             failure => {
-                remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
+                let retired = remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
+                drop(inner);
+                self.retain_exit_tail(retired).await;
                 return commit_failure_json(failure);
             }
         }
@@ -544,10 +458,11 @@ impl HostState {
             }),
         };
         // An exited leader has its exit watch (runtime.rs sets both), which settles this removal.
-        if already_exited {
-            remove_terminal_slot(&mut inner, &identity, None);
-        }
+        let retired = already_exited
+            .then(|| remove_terminal_slot(&mut inner, &identity, None))
+            .flatten();
         drop(inner);
+        self.retain_exit_tail(retired).await;
         #[cfg(feature = "vt-engine")]
         if let Some(exit_watch) = exit_watch {
             self.watch_leader_exit(identity, host_terminal_id, exit_watch, already_exited);
@@ -633,15 +548,18 @@ impl HostState {
             let _gate = gate;
             let proven = terminate_group(pgid, grace, signal).await;
             let mut inner = state.inner.lock().await;
-            if proven {
-                remove_terminal_slot(&mut inner, &identity, None);
+            let retired = if proven {
+                remove_terminal_slot(&mut inner, &identity, None)
             } else {
                 tracing::warn!(pgid, %host_terminal_id, "kill left the process group alive");
                 if let Some(slot) = inner.terminals.get_mut(&identity) {
                     slot.killing = false;
                     slot.kill_unproven = true;
                 }
-            }
+                None
+            };
+            drop(inner);
+            state.retain_exit_tail(retired).await;
             proven
         });
         match proof.await {
@@ -677,8 +595,30 @@ impl HostState {
         }
         #[cfg(feature = "vt-engine")]
         if let Some(child) = slot.child.as_ref() {
-            child.runtime.resize(dims.0, dims.1, 0, 0);
+            let terminal = child.runtime.terminal_handle();
+            let (revision, work) = child.runtime.native_resize_work(dims.0, dims.1);
+            drop(inner);
+            if !matches!(tokio::task::spawn_blocking(work).await, Ok(true)) {
+                return err("resize_superseded");
+            }
+            inner = self.inner.lock().await;
+            let Some(slot) = inner.terminals.get(&identity) else {
+                return err("terminal_gone");
+            };
+            if !slot
+                .child
+                .as_ref()
+                .is_some_and(|child| Arc::ptr_eq(&terminal, &child.runtime.terminal_handle()))
+            {
+                return err("terminal_gone");
+            }
+            if !terminal.resize_revision_current(revision) {
+                return err("resize_superseded");
+            }
         }
+        let Some(slot) = inner.terminals.get_mut(&identity) else {
+            return err("terminal_gone");
+        };
         slot.rows = dims.0;
         slot.cols = dims.1;
         slot.last_seq += 1;
@@ -691,51 +631,9 @@ impl HostState {
             .filter(|att| att.host_terminal_id == host_terminal_id)
         {
             att.desynced = true;
+            att.view_revision = att.view_revision.wrapping_add(1);
         }
         json!({"ok": true, "rows": dims.0, "cols": dims.1})
-    }
-
-    pub async fn snapshot(&self, extra: &Map<String, Value>) -> Value {
-        let mode = match snapshot_mode(extra) {
-            Ok(mode) => mode,
-            Err(refusal) => return refusal,
-        };
-        let host_terminal_id = s(extra, "host_terminal_id");
-        let max_bytes = extra
-            .get("max_bytes")
-            .and_then(Value::as_u64)
-            .unwrap_or(SNAPSHOT_DEFAULT_MAX_BYTES as u64) as usize;
-        let max_lines = extra
-            .get("max_lines")
-            .and_then(Value::as_u64)
-            .unwrap_or(SNAPSHOT_DEFAULT_MAX_LINES as u64) as usize;
-        let inner = self.inner.lock().await;
-        let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
-            // A retired terminal answers from the text it printed last, in text mode.
-            return match inner.exit_tails.get(&host_terminal_id, Instant::now()) {
-                Some(text) if matches!(mode, SnapshotMode::Text) => {
-                    snapshot_reply(mode, truncate_snapshot(text, max_lines, max_bytes))
-                }
-                _ => err("not_found"),
-            };
-        };
-        let Some(slot) = inner.terminals.get(&identity) else {
-            return err("not_found");
-        };
-        if slot.locator.is_some() {
-            return err("not_native");
-        }
-        #[cfg(feature = "vt-engine")]
-        let text = match slot.child.as_ref() {
-            Some(child) => child
-                .runtime
-                .snapshot_history(mode)
-                .unwrap_or_else(|| child.runtime.visible_snapshot(mode)),
-            None => String::new(),
-        };
-        #[cfg(not(feature = "vt-engine"))]
-        let text = String::new();
-        snapshot_reply(mode, truncate_snapshot(&text, max_lines, max_bytes))
     }
 
     /// Removes a committed pane whose leader exited and emits its
@@ -772,8 +670,9 @@ impl HostState {
         if let Some(drain) = drain {
             let _ = tokio::time::timeout(EXIT_DRAIN_WAIT, drain).await;
         }
+        let tail = self.capture_exit_tail(host_terminal_id).await;
         let mut inner = self.inner.lock().await;
-        match inner
+        let retired = match inner
             .terminals
             .get(identity)
             .filter(|slot| slot.host_terminal_id == host_terminal_id)
@@ -782,7 +681,12 @@ impl HostState {
             Some(_) => remove_terminal_slot(&mut inner, identity, None),
             // Absent after the drain: a kill removed it while the drain ran.
             None if !exit_at_commit => return false,
-            None => {}
+            None => None,
+        };
+        if let Some(text) = tail {
+            inner
+                .exit_tails
+                .record_snapshot(host_terminal_id, text, Instant::now());
         }
         // Emitted before the `inner` lock is released: no reader sees the
         // slot gone while its event is still unwritten.
@@ -793,13 +697,16 @@ impl HostState {
                 exit_code,
             )
             .await;
+        drop(inner);
+        drop(retired);
         true
     }
 
-    pub async fn expire_prepared(&self) {
+    pub async fn expire_prepared(self: &Arc<Self>) {
         let _gate = self.mutation_gate.read().await;
         let mut inner = self.inner.lock().await;
         let now = Instant::now();
+        let mut retired = Vec::new();
         let expired: Vec<Identity> = inner
             .terminals
             .iter()
@@ -811,7 +718,11 @@ impl HostState {
             .map(|(identity, _)| identity.clone())
             .collect();
         for identity in expired {
-            remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
+            retired.extend(remove_terminal_slot(
+                &mut inner,
+                &identity,
+                Some(libc::SIGKILL),
+            ));
         }
         // An unproven kill settled its slot with its ack and kept it only for
         // the group it left alive, so its exited leader's watcher is done and
@@ -833,10 +744,18 @@ impl HostState {
             .collect();
         #[cfg(feature = "vt-engine")]
         for identity in abandoned {
-            remove_terminal_slot(&mut inner, &identity, None);
+            retired.extend(remove_terminal_slot(&mut inner, &identity, None));
+        }
+        drop(inner);
+        for slot in retired {
+            let state = self.clone();
+            tokio::spawn(async move {
+                state.retain_exit_tail(Some(slot)).await;
+            });
         }
     }
 
+    #[cfg(not(feature = "vt-engine"))]
     pub async fn broadcast_frames(self: &Arc<Self>) {
         let mut inner = self.inner.lock().await;
         let cap = self.config.delta_queue_bytes as usize;
@@ -874,45 +793,6 @@ impl HostState {
             {
                 continue;
             }
-            #[cfg(feature = "vt-engine")]
-            let (frame, seq, built_generation) = {
-                let Some(slot) = inner.terminals.get_mut(&identity) else {
-                    continue;
-                };
-                tracing::trace!(
-                    written_bytes = slot.written_bytes,
-                    dropped_bytes = slot.dropped_bytes,
-                    total_bytes = slot.total_bytes,
-                    truncated = slot.truncated,
-                    observer_generation = slot.observer_generation,
-                    "broadcast slot counters"
-                );
-                let Some(child) = slot.child.as_mut() else {
-                    continue;
-                };
-                // Read before building: a write that races the build leaves the
-                // recorded generation behind, so the next pass rebuilds.
-                let generation = child.runtime.content_generation();
-                if reusable_generation == Some(generation) {
-                    continue;
-                }
-                if scroll > 0 {
-                    child.runtime.set_scroll_offset_from_bottom(scroll as usize);
-                } else {
-                    child.runtime.scroll_reset();
-                }
-                let frame = child.runtime.frame_data(cols, rows);
-                if scroll > 0 {
-                    child.runtime.scroll_reset();
-                }
-                let title = child.runtime.osc_title();
-                if slot.title != title {
-                    slot.title = truncate_title(&title);
-                    slot.last_seq += 1;
-                }
-                (frame, slot.last_seq, Some(generation))
-            };
-            #[cfg(not(feature = "vt-engine"))]
             let (frame, seq, built_generation) = {
                 let _ = (scroll, reusable_generation);
                 (

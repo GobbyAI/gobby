@@ -46,6 +46,7 @@ fn attachment() -> (Attachment, FrameMailbox) {
         rows: 2,
         cols: 3,
         scroll: 0,
+        view_revision: 0,
         reservation_id: None,
         client_attachment_id: None,
         mailbox: mailbox.clone(),

@@ -27,10 +27,13 @@ pub mod handover;
 mod helpers;
 pub mod image;
 mod ledger;
+#[cfg(feature = "vt-engine")]
+mod native_frames;
 mod native_ops;
 pub mod poll;
 #[cfg(all(unix, feature = "vt-engine"))]
 pub(crate) mod sigterm;
+mod snapshot;
 #[cfg(all(unix, feature = "vt-engine"))]
 mod spawn;
 mod state;

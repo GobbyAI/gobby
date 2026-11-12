@@ -4,6 +4,40 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 #[tokio::test]
+async fn snapshot_preserves_unknown_byte_counts() -> Result<()> {
+    let (client, host) = tokio::io::duplex(16_384);
+    let script = tokio::spawn(async move {
+        let mut host = BufReader::new(host);
+        for method in ["hello", "snapshot"] {
+            let mut line = String::new();
+            host.read_line(&mut line).await?;
+            let request: Value = serde_json::from_str(&line)?;
+            assert_eq!(request["method"], method);
+            let reply = if method == "hello" {
+                json!({"id":request["id"],"ok":true,"protocol_version":1,
+                    "host_epoch":"epoch","version":"fixture","capabilities":[]})
+            } else {
+                json!({"id":request["id"],"ok":true,"mode":"text","text":"tail",
+                    "truncated":true,"dropped_bytes":null,"total_bytes":null})
+            };
+            host.get_mut()
+                .write_all(format!("{reply}\n").as_bytes())
+                .await?;
+        }
+        Ok::<_, anyhow::Error>(())
+    });
+    let mut client = ControlClient::new(client);
+    client.hello("token").await?;
+    let captured = client.snapshot("pane", "text", 128, 1).await?;
+    assert_eq!(serde_json::to_value(captured.dropped_bytes)?, Value::Null);
+    assert_eq!(serde_json::to_value(captured.total_bytes)?, Value::Null);
+    assert_eq!(captured.text, "tail");
+    assert!(captured.truncated);
+    script.await??;
+    Ok(())
+}
+
+#[tokio::test]
 async fn snapshot_round_trips_and_checks_mode() -> Result<()> {
     let (client, host) = tokio::io::duplex(16_384);
     let script = tokio::spawn(async move {
@@ -46,8 +80,8 @@ async fn snapshot_round_trips_and_checks_mode() -> Result<()> {
     assert_eq!(captured.mode, "text");
     assert_eq!(captured.text, "ready ›\n");
     assert!(captured.truncated);
-    assert_eq!(captured.dropped_bytes, 19);
-    assert_eq!(captured.total_bytes, 29);
+    assert_eq!(captured.dropped_bytes, Some(19));
+    assert_eq!(captured.total_bytes, Some(29));
     let mismatch = client.snapshot("host-codex", "text", 8192, 7).await;
     assert!(
         mismatch

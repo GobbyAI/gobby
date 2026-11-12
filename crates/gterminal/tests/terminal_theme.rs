@@ -145,7 +145,7 @@ impl Host {
         Ok(prepared["host_terminal_id"].as_str().unwrap().to_string())
     }
 
-    fn screen(&mut self, host_terminal_id: &str) -> String {
+    fn screen(&mut self, host_terminal_id: &str) -> Option<String> {
         let snap = rpc(
             &mut self.ctrl,
             "snapshot",
@@ -156,8 +156,14 @@ impl Host {
                 "max_lines": 50,
             }),
         );
+        if matches!(
+            snap["error"].as_str(),
+            Some("capture_busy" | "capture_invalidated")
+        ) {
+            return None;
+        }
         assert_eq!(snap["ok"], true, "{snap}");
-        snap["text"].as_str().unwrap_or_default().to_string()
+        Some(snap["text"].as_str().unwrap_or_default().to_string())
     }
 
     /// Polls until `ready` accepts the pane's screen and returns that screen.
@@ -169,9 +175,12 @@ impl Host {
     ) -> String {
         let mut screen = String::new();
         let dir = self._dir.path().to_path_buf();
-        wait_until_host(&dir, what, || {
-            screen = self.screen(host_terminal_id);
-            ready(&screen)
+        wait_until_host(&dir, what, || match self.screen(host_terminal_id) {
+            Some(captured) => {
+                screen = captured;
+                ready(&screen)
+            }
+            None => false,
         });
         screen
     }
@@ -269,7 +278,7 @@ fn spawn_theme_answers_the_first_osc_queries() {
     host.wait_for(&light, "light spawn theme", |s| LIGHT.shown_by(s));
     host.wait_for(&dark, "dark spawn theme", |s| DARK.shown_by(s));
     // The child is gated until commit, so no answer predates the theme.
-    let first = host.screen(&light);
+    let first = host.wait_for(&light, "initial screen", |screen| !screen.is_empty());
     let first_answer = first.lines().find(|line| line.contains("A<")).unwrap();
     assert!(first_answer.contains(LIGHT.bg_answer), "{first}");
 }
@@ -284,7 +293,7 @@ fn unset_theme_is_the_fallback_until_a_client_declares() {
     });
     // With no theme known, the pane leaves OSC 10/11 unanswered, so programs
     // keep their own defaults instead of trusting an invented colour.
-    let screen = host.screen(&pane);
+    let screen = host.wait_for(&pane, "initial screen", |screen| !screen.is_empty());
     let answer = screen
         .lines()
         .find(|line| line.contains("A<") && line.contains('>'))

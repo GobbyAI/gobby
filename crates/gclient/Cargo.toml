@@ -12,6 +12,10 @@ keywords = ["gobby", "terminal", "tui"]
 categories = ["command-line-utilities"]
 autotests = false
 
+[features]
+# Isolated release stress tests require an explicitly built gterm artifact.
+real-host-stress = []
+
 [lib]
 name = "gobby_client"
 path = "src/lib.rs"

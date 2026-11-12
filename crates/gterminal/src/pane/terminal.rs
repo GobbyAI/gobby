@@ -2,7 +2,7 @@
 use std::collections::hash_map::DefaultHasher;
 #[cfg(test)]
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -17,7 +17,10 @@ use unicode_width::UnicodeWidthStr;
 use crate::layout::PaneId;
 use crate::protocol::CellData;
 
+mod control;
+mod frame;
 mod handover;
+mod history;
 #[cfg(windows)]
 mod windows_recent_fallback;
 
@@ -157,6 +160,7 @@ pub(crate) struct TerminalReadSnapshot {
 
 pub struct GhosttyPaneTerminal {
     pub(crate) core: Mutex<GhosttyPaneCore>,
+    pub(crate) bracketed_paste: AtomicBool,
     key_encoder: Mutex<crate::ghostty::KeyEncoder>,
     pending_pty_responses: Arc<Mutex<Vec<Bytes>>>,
 }
@@ -195,6 +199,13 @@ pub(crate) struct PaneTerminal {
     /// Changes after every mutation that can alter a rendered frame. Scroll
     /// moves are excluded: frame builders set the viewport themselves.
     content_generation: AtomicU64,
+    history_mutation: Mutex<()>,
+    capture_active: AtomicBool,
+    frame_view: Mutex<()>,
+    host_theme_seq: AtomicU64,
+    resize_revision: AtomicU64,
+    #[cfg(test)]
+    pub(crate) work_started: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl PaneTerminal {
@@ -202,6 +213,13 @@ impl PaneTerminal {
         Self {
             ghostty,
             content_generation: AtomicU64::new(next_content_generation()),
+            history_mutation: Mutex::new(()),
+            capture_active: AtomicBool::new(false),
+            frame_view: Mutex::new(()),
+            host_theme_seq: AtomicU64::new(0),
+            resize_revision: AtomicU64::new(0),
+            #[cfg(test)]
+            work_started: Mutex::new(None),
         }
     }
 
@@ -223,6 +241,10 @@ impl PaneTerminal {
         bytes: &[u8],
         response_writer: &mpsc::Sender<Bytes>,
     ) -> ProcessBytesResult {
+        let _mutation = self
+            .history_mutation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let result = self
             .ghostty
             .process_pty_bytes(pane_id, shell_pid, bytes, response_writer);
@@ -237,6 +259,10 @@ impl PaneTerminal {
         cell_width_px: u32,
         cell_height_px: u32,
     ) -> Vec<Bytes> {
+        let _mutation = self
+            .history_mutation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let responses = self
             .ghostty
             .resize(rows, cols, cell_width_px, cell_height_px);
@@ -261,6 +287,8 @@ impl PaneTerminal {
     }
 
     pub fn scroll_metrics(&self) -> Option<ScrollMetrics> {
+        #[cfg(test)]
+        self.note_work_started();
         self.ghostty.scroll_metrics()
     }
 
@@ -434,14 +462,6 @@ impl PaneTerminal {
         self.ghostty.visible_ansi()
     }
 
-    pub fn recent_unwrapped_text(&self, lines: usize) -> String {
-        self.ghostty.recent_unwrapped_text(lines)
-    }
-
-    pub fn recent_unwrapped_ansi(&self, lines: usize) -> String {
-        self.ghostty.recent_unwrapped_ansi(lines)
-    }
-
     pub fn extract_selection(&self, selection: &crate::selection::Selection) -> Option<String> {
         self.ghostty.extract_selection(selection)
     }
@@ -486,10 +506,16 @@ impl PaneTerminal {
     }
 
     pub fn host_terminal_theme(&self) -> crate::terminal_theme::TerminalTheme {
+        #[cfg(test)]
+        self.note_work_started();
         self.ghostty.host_terminal_theme()
     }
 
     pub fn apply_host_terminal_theme(&self, theme: crate::terminal_theme::TerminalTheme) {
+        let _mutation = self
+            .history_mutation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         self.ghostty.apply_host_terminal_theme(theme);
         self.mark_content_changed();
     }
@@ -498,6 +524,10 @@ impl PaneTerminal {
         &self,
         appearance: Option<crate::terminal_theme::HostAppearance>,
     ) -> Option<Bytes> {
+        let _mutation = self
+            .history_mutation
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let response = self.ghostty.apply_host_terminal_appearance(appearance);
         self.mark_content_changed();
         response

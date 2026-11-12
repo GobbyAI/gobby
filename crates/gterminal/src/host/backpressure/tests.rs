@@ -918,7 +918,12 @@ async fn native_broadcast_skips_frame_builds_for_idle_panes() {
         .await
         .expect("viewer");
     state.broadcast_frames().await;
-    assert!(matches!(viewer.try_pop(), Some(ServerMessage::Frame(_))));
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(1), viewer.recv())
+            .await
+            .unwrap(),
+        Some(ServerMessage::Frame(_))
+    ));
     viewer.note_drain();
 
     let with_runtime = |write: fn(&crate::pane::PaneRuntime)| {
@@ -939,7 +944,11 @@ async fn native_broadcast_skips_frame_builds_for_idle_panes() {
 
     with_runtime(|runtime| runtime.test_feed_output(b" shown")).await;
     state.broadcast_frames().await;
-    let Some(ServerMessage::Frame(frame)) = viewer.try_pop() else {
+    let Some(ServerMessage::Frame(frame)) =
+        tokio::time::timeout(Duration::from_secs(1), viewer.recv())
+            .await
+            .unwrap()
+    else {
         panic!("output did not reach the viewer");
     };
     let top_row: String = frame.cells[..usize::from(frame.width)]

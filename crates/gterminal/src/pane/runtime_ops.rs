@@ -109,6 +109,44 @@ impl PaneRuntime {
         self.render_notify.notify_one();
     }
 
+    pub(crate) fn native_resize_work(
+        &self,
+        rows: u16,
+        cols: u16,
+    ) -> (u64, impl FnOnce() -> bool + Send + 'static) {
+        let rows = rows.max(2);
+        let cols = cols.max(4);
+        self.current_size.set((rows, cols, 0, 0));
+        let terminal = self.terminal.clone();
+        let revision = terminal.next_resize_revision();
+        let notify = self.render_notify.clone();
+        let actor = match &self.io {
+            PaneRuntimeIo::Actor(actor) => Some(actor.clone()),
+            #[cfg(test)]
+            PaneRuntimeIo::TestChannel { .. } => None,
+        };
+        #[cfg(test)]
+        let resize_tx = match &self.io {
+            PaneRuntimeIo::TestChannel { resize_tx, .. } => Some(resize_tx.clone()),
+            _ => None,
+        };
+        (revision, move || {
+            if !terminal.resize_for_revision(revision, rows, cols, |responses| {
+                if let Some(actor) = actor {
+                    actor.resize(rows, cols, 0, 0, responses);
+                }
+                #[cfg(test)]
+                if let Some(resize_tx) = resize_tx {
+                    let _ = resize_tx.send((rows, cols, 0, 0));
+                }
+            }) {
+                return false;
+            }
+            notify.notify_one();
+            true
+        })
+    }
+
     #[cfg(unix)]
     pub fn nudge_child_redraw_after_handoff(&self) {
         let (rows, cols, cell_width_px, cell_height_px) = self.current_size.get();
@@ -200,10 +238,17 @@ impl PaneRuntime {
     /// Unwrapped scrollback-and-viewport history in the requested
     /// representation, or `None` when it holds no content to return.
     pub fn snapshot_history(&self, mode: crate::protocol::SnapshotMode) -> Option<String> {
-        let history = match mode {
-            crate::protocol::SnapshotMode::Text => self.terminal.recent_unwrapped_text(usize::MAX),
-            crate::protocol::SnapshotMode::Ansi => self.terminal.recent_unwrapped_ansi(usize::MAX),
-        };
+        let history = self
+            .terminal
+            .begin_history_capture()
+            .ok()?
+            .read(
+                mode,
+                crate::protocol::SNAPSHOT_DEFAULT_MAX_LINES,
+                crate::protocol::SNAPSHOT_DEFAULT_MAX_BYTES,
+            )
+            .ok()?
+            .text;
         (!history.trim().is_empty()).then_some(history)
     }
 
@@ -226,70 +271,22 @@ impl PaneRuntime {
         )
     }
 
-    pub fn render(&self, frame: &mut ratatui::Frame, area: ratatui::layout::Rect, show_cursor: bool) {
+    pub fn render(
+        &self,
+        frame: &mut ratatui::Frame,
+        area: ratatui::layout::Rect,
+        show_cursor: bool,
+    ) {
         self.terminal.render(frame, area, show_cursor);
     }
 
     pub fn frame_data(&self, cols: u16, rows: u16) -> crate::protocol::FrameData {
-        let cols = cols.max(1);
-        let rows = rows.max(1);
-        let area = ratatui::layout::Rect::new(0, 0, cols, rows);
-        let mut buffer = ratatui::buffer::Buffer::filled(area, ratatui::buffer::Cell::new(" "));
-        let cursor = self.terminal.render_to_buffer(&mut buffer, area);
-        let protocol_cursor = cursor
-            .filter(|cursor| cursor.visible && cursor.x < cols && cursor.y < rows)
-            .map(|cursor| crate::protocol::CursorState {
-                x: cursor.x,
-                y: cursor.y,
-                visible: cursor.visible,
-                shape: cursor.shape,
-            });
-        let hyperlinks = self.terminal.visible_hyperlinks(area);
-        let mut frame = crate::protocol::FrameData::from_ratatui_buffer_with_hyperlinks(
-            &buffer,
-            protocol_cursor,
-            &hyperlinks,
-        );
-        if let Ok(core) = self.terminal.ghostty.core.lock() {
-            const MODE_MOUSE_X10: u16 = 9;
-            const MODE_MOUSE_PRESS_RELEASE: u16 = 1000;
-            const MODE_MOUSE_BUTTON_MOTION: u16 = 1002;
-            const MODE_MOUSE_ANY_MOTION: u16 = 1003;
-            frame.modes = crate::protocol::PaneModes {
-                mouse_standard: core
-                    .terminal
-                    .mode_get(MODE_MOUSE_PRESS_RELEASE)
-                    .unwrap_or(false),
-                mouse_button: core
-                    .terminal
-                    .mode_get(MODE_MOUSE_BUTTON_MOTION)
-                    .unwrap_or(false),
-                mouse_all: core
-                    .terminal
-                    .mode_get(MODE_MOUSE_ANY_MOTION)
-                    .unwrap_or(false),
-                mouse_any: core.terminal.mode_get(MODE_MOUSE_X10).unwrap_or(false),
-                mouse_sgr: core
-                    .terminal
-                    .mode_get(crate::ghostty::MODE_MOUSE_SGR)
-                    .unwrap_or(false),
-                alternate_on: core.terminal.active_screen().ok()
-                    == Some(crate::ghostty::ActiveScreen::Alternate),
-                kitty_keyboard_flags: core
-                    .terminal
-                    .kitty_keyboard_flags()
-                    .map(u16::from)
-                    .unwrap_or(0),
-                ..Default::default()
-            };
-        }
-        frame
+        self.terminal.frame_data(cols, rows)
     }
 
     pub fn dirty_patch(&self) -> super::TerminalDirtyPatchOutcome {
         let (rows, cols, _, _) = self.current_size.get();
-        self.terminal
-            .collect_dirty_patch(cols.max(1), rows.max(1))
+        self.terminal.collect_dirty_patch(cols.max(1), rows.max(1))
     }
 
     pub fn collect_dirty_patch(
@@ -327,6 +324,18 @@ impl PaneRuntime {
         self.io.try_send_bytes(bytes)
     }
 
+    pub(crate) fn input_writer(&self) -> PaneInputWriter {
+        match &self.io {
+            PaneRuntimeIo::Actor(actor) => PaneInputWriter::Actor(actor.clone()),
+            #[cfg(test)]
+            PaneRuntimeIo::TestChannel { sender, .. } => PaneInputWriter::Test(sender.clone()),
+        }
+    }
+
+    pub(crate) fn terminal_handle(&self) -> Arc<PaneTerminal> {
+        self.terminal.clone()
+    }
+
     pub fn send_bytes_after(&self, bytes: Bytes, delay: std::time::Duration) {
         self.io.send_bytes_after(bytes, delay);
     }
@@ -342,8 +351,10 @@ impl PaneRuntime {
     /// Whether the child asked for bracketed paste (mode 2004), so a paste
     /// reaches it wrapped as text rather than as keystrokes.
     pub fn bracketed_paste(&self) -> bool {
-        self.input_state()
-            .is_some_and(|state| state.bracketed_paste)
+        self.terminal
+            .ghostty
+            .bracketed_paste
+            .load(Ordering::Acquire)
     }
 
     fn paste_payload(&self, text: String) -> Bytes {
@@ -485,6 +496,29 @@ impl PaneRuntime {
         let (responses, _rx) = mpsc::channel(4);
         self.terminal
             .process_pty_bytes(self.pane_id, 0, bytes, &responses);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_hold_terminal(
+        &self,
+    ) -> (std::sync::mpsc::Sender<()>, std::thread::JoinHandle<()>) {
+        let terminal = self.terminal.clone();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let _guard = terminal.ghostty.core.lock().unwrap();
+            ready_tx.send(()).unwrap();
+            let _ = release_rx.recv();
+        });
+        ready_rx.recv().unwrap();
+        (release_tx, thread)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_frame_started(&self) -> tokio::sync::oneshot::Receiver<()> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        *self.terminal.work_started.lock().unwrap() = Some(tx);
+        rx
     }
 
     /// Change the screen without advancing the content generation, so a test

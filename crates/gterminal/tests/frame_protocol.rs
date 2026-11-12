@@ -124,7 +124,7 @@ fn commit_spawn(stream: &mut UnixStream, terminal_id: &str) {
     assert_eq!(committed["ok"], true, "{committed}");
 }
 
-fn snapshot_text(stream: &mut UnixStream, host_terminal_id: &str) -> String {
+fn snapshot_text(stream: &mut UnixStream, host_terminal_id: &str) -> Option<String> {
     send_json(
         stream,
         &json!({
@@ -136,8 +136,14 @@ fn snapshot_text(stream: &mut UnixStream, host_terminal_id: &str) -> String {
         }),
     );
     let snap = recv_json(stream);
+    if matches!(
+        snap["error"].as_str(),
+        Some("capture_busy" | "capture_invalidated")
+    ) {
+        return None;
+    }
     assert_eq!(snap["ok"], true, "{snap}");
-    snap["text"].as_str().unwrap_or("").to_string()
+    Some(snap["text"].as_str().unwrap_or("").to_string())
 }
 
 /// Next non-render message: refusals and errors ride the same stream as frames.
@@ -397,7 +403,7 @@ fn attached_input_writes_with_no_grant_and_unattached_input_is_refused() {
         },
     );
     wait_until_host(&dir, "attached input echoes with no grant", || {
-        snapshot_text(&mut ctrl, &host_terminal_id).contains("GOT:hello")
+        snapshot_text(&mut ctrl, &host_terminal_id).is_some_and(|text| text.contains("GOT:hello"))
     });
 
     // A bound name types the same way.
@@ -414,7 +420,7 @@ fn attached_input_writes_with_no_grant_and_unattached_input_is_refused() {
         },
     );
     wait_until_host(&dir, "bound input echoes", || {
-        snapshot_text(&mut ctrl, &host_terminal_id).contains("GOT:again")
+        snapshot_text(&mut ctrl, &host_terminal_id).is_some_and(|text| text.contains("GOT:again"))
     });
 
     // Over the write cap: refused, and the stream stays open.
@@ -545,7 +551,7 @@ fn read_text_spans_native_scrollback_and_requires_an_attachment() {
     let host_terminal_id = prepared["host_terminal_id"].as_str().unwrap().to_string();
     commit_spawn(&mut ctrl, "term-read-text");
     wait_until_host(&dir, "child fills native scrollback", || {
-        snapshot_text(&mut ctrl, &host_terminal_id).contains("read-40")
+        snapshot_text(&mut ctrl, &host_terminal_id).is_some_and(|text| text.contains("read-40"))
     });
 
     let mut frames = connect(&dir.path().join(FRAMES_SOCKET));
@@ -726,7 +732,7 @@ fn attached_reports_distinct_host_owned_stream_identifiers() {
         },
     );
     wait_until_host(&dir, "owner's input reaches the child", || {
-        snapshot_text(&mut ctrl, &terminal).contains("READ:owner")
+        snapshot_text(&mut ctrl, &terminal).is_some_and(|text| text.contains("READ:owner"))
     });
     let activity = recv_json(&mut events);
     assert_eq!(activity["event"], "input_activity");
@@ -746,7 +752,7 @@ fn attached_reports_distinct_host_owned_stream_identifiers() {
         },
     );
     wait_until_host(&dir, "the unbound stream's input reaches the child", || {
-        snapshot_text(&mut ctrl, &terminal).contains("READ:second-stream")
+        snapshot_text(&mut ctrl, &terminal).is_some_and(|text| text.contains("READ:second-stream"))
     });
     let activity = recv_json(&mut events);
     assert_eq!(activity["attachment_id"], "");

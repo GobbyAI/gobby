@@ -97,7 +97,7 @@ pub struct SidebarRow {
 }
 
 impl SidebarRow {
-    /// Screen lines the row takes: agents use three, terminals two, others one.
+    /// Agents use three lines, or four with a task; terminals two, others one.
     pub fn height(&self) -> u16 {
         match self.kind {
             // A task holder carries its status on a fourth line, under the task.

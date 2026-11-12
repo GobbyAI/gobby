@@ -480,8 +480,8 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
         return SnapshotResult(
             text=text,
             truncated=truncated,
-            dropped_bytes=int(dropped) if isinstance(dropped, int) else 0,
-            total_bytes=int(total) if isinstance(total, int) else len(text.encode("utf-8")),
+            dropped_bytes=int(dropped) if isinstance(dropped, int) else None,
+            total_bytes=int(total) if isinstance(total, int) else None,
         )
 
     async def write_batch(self, targets: Sequence[NativeBatchTarget]) -> list[NativeBatchResult]:

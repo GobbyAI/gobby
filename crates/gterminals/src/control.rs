@@ -111,8 +111,8 @@ pub struct Snapshot {
     pub mode: String,
     pub text: String,
     pub truncated: bool,
-    pub dropped_bytes: u64,
-    pub total_bytes: u64,
+    pub dropped_bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -462,8 +462,8 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
                 .get("truncated")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| ControlError::Malformed("truncated".into()))?,
-            dropped_bytes: reply_u64(&reply, "dropped_bytes")?,
-            total_bytes: reply_u64(&reply, "total_bytes")?,
+            dropped_bytes: reply_optional_u64(&reply, "dropped_bytes")?,
+            total_bytes: reply_optional_u64(&reply, "total_bytes")?,
         })
     }
 
@@ -862,6 +862,17 @@ fn reply_str(reply: &Value, field: &str) -> Result<String, ControlError> {
         .and_then(Value::as_str)
         .map(str::to_owned)
         .ok_or_else(|| ControlError::Malformed(field.into()))
+}
+
+fn reply_optional_u64(reply: &Value, field: &str) -> Result<Option<u64>, ControlError> {
+    match reply.get(field) {
+        Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .map(Some)
+            .ok_or_else(|| ControlError::Malformed(field.into())),
+        None => Err(ControlError::Malformed(field.into())),
+    }
 }
 
 fn reply_u64(reply: &Value, field: &str) -> Result<u64, ControlError> {

@@ -34,7 +34,9 @@ impl GhosttyPaneTerminal {
         let mut key_encoder =
             crate::ghostty::KeyEncoder::new().map_err(|e| std::io::Error::other(e.to_string()))?;
         key_encoder.set_from_terminal(&terminal);
+        let bracketed_paste = terminal.mode_get(2004).unwrap_or(false);
         Ok(Self {
+            bracketed_paste: AtomicBool::new(bracketed_paste),
             core: Mutex::new(GhosttyPaneCore {
                 terminal,
                 #[cfg(windows)]
@@ -204,8 +206,7 @@ impl GhosttyPaneTerminal {
             .active_screen()
             .map(|screen| screen == crate::ghostty::ActiveScreen::Alternate)
             .unwrap_or(false);
-        let filtered_bytes =
-            maybe_filter_primary_screen_scrollback_clear(bytes, alternate_screen);
+        let filtered_bytes = maybe_filter_primary_screen_scrollback_clear(bytes, alternate_screen);
         if filtered_bytes.len() != bytes.len() {
             debug!(
                 pane = pane_id.raw(),
@@ -227,6 +228,10 @@ impl GhosttyPaneTerminal {
             default_color_events,
             in_progress_default_color_event,
             &mut terminal_responses,
+        );
+        self.bracketed_paste.store(
+            core.terminal.mode_get(2004).unwrap_or(false),
+            Ordering::Release,
         );
         let clipboard_writes = core.terminal.take_clipboard_writes();
         let reported_cwd = core
@@ -350,6 +355,10 @@ impl GhosttyPaneTerminal {
         #[cfg(windows)]
         core.kitty_keyboard.observe(ansi.as_bytes());
         core.terminal.write(ansi.as_bytes());
+        self.bracketed_paste.store(
+            core.terminal.mode_get(2004).unwrap_or(false),
+            Ordering::Release,
+        );
         #[cfg(windows)]
         windows_recent_fallback::update(&mut core);
         if let Ok(mut key_encoder) = self.key_encoder.lock() {
@@ -899,12 +908,12 @@ impl GhosttyPaneTerminal {
                 last_row.saturating_sub(start_rows_from_live_edge),
                 start_col,
             );
-            let second = (
-                last_row.saturating_sub(end_rows_from_live_edge),
-                end_col,
-            );
-            let ((start_row, start_col), (end_row, end_col)) =
-                if first <= second { (first, second) } else { (second, first) };
+            let second = (last_row.saturating_sub(end_rows_from_live_edge), end_col);
+            let ((start_row, start_col), (end_row, end_col)) = if first <= second {
+                (first, second)
+            } else {
+                (second, first)
+            };
             core.terminal
                 .read_text_screen((start_col, start_row), (end_col, end_row), false)
                 .ok()
