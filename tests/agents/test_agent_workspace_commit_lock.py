@@ -16,12 +16,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.agents import agent_workspaces
-from gobby.agents.agent_workspaces import (
+from gobby.agents import workspace_backups as agent_workspaces
+from gobby.agents.agent_workspaces import workspace_anchor, workspace_git_dir
+from gobby.agents.workspace_backups import (
     commit_workspace,
     ensure_workspace,
-    workspace_anchor,
-    workspace_git_dir,
 )
 from gobby.storage.cron_models import CronJob
 from gobby.utils import spawn
@@ -223,7 +222,7 @@ async def test_fresh_orphan_lock_is_not_removed(
     _write(anchor, NOTES, "one finding\n")
     lock = workspace_git_dir(project_id) / "index.lock"
     lock.touch()
-    caplog.set_level(logging.WARNING, logger="gobby.agents.agent_workspaces")
+    caplog.set_level(logging.WARNING, logger="gobby.agents.workspace_backups")
 
     await _trigger(project_id, "set_handoff")
 
@@ -275,7 +274,7 @@ async def test_uninspectable_lock_reports_failure_off_loop_and_backs_off(
         return real_run(args, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", inspect_failure)
-    caplog.set_level(logging.WARNING, logger="gobby.agents.agent_workspaces")
+    caplog.set_level(logging.WARNING, logger="gobby.agents.workspace_backups")
 
     result = await agent_workspaces.run_workspace_cron(MagicMock(spec=CronJob))
     await _trigger(project_id, "set_handoff")
@@ -395,7 +394,7 @@ async def test_git_timeout_keeps_original_failure_when_lock_inspection_fails(
     warnings = "\n".join(
         record.message
         for record in caplog.records
-        if record.name == "gobby.agents.agent_workspaces"
+        if record.name == "gobby.agents.workspace_backups"
     )
     assert "git add failed" in warnings
     assert "GitTimeout" in warnings

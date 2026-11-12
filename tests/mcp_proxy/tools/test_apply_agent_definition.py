@@ -999,6 +999,9 @@ async def test_public_activation_rebinds_workspace_policy(
         lambda: SimpleNamespace(session_id=sid),
     )
     definitions["y"] = definitions["y"].model_copy(update={"persistent_workspace": True})
+    from gobby.storage.definitions import AgentDefinitionManager
+
+    AgentDefinitionManager(temp_db).create("y", definitions["y"].model_dump())
     manager = SessionVariableManager(temp_db)
     manager.merge_variables(
         sid,
@@ -1012,7 +1015,7 @@ async def test_public_activation_rebinds_workspace_policy(
     )
     result = await agents_registry.call("apply_agent_definition", {"agent": "y"})
     assert result["success"] is True
-    expected = tmp_path / "agents_workspaces" / project.id / "y" / f"session-{session.seq_num}"
+    expected = tmp_path / "agents_workspaces" / project.id / "y" / "current"
     stored = manager.get_variables(sid)
     assert stored["_agent_workspace_dir"] == str(expected)
     assert expected.is_dir()
@@ -1023,6 +1026,42 @@ async def test_public_activation_rebinds_workspace_policy(
     repeated = await agents_registry.call("apply_agent_definition", {"agent": "y"})
     assert repeated["status"] == "unchanged"
     assert manager.get_variables(sid)["_agent_workspace_injected"] is True
+
+
+@pytest.mark.asyncio
+async def test_public_activation_refuses_live_workspace_owner_without_identity_changes(
+    agents_registry: InternalToolRegistry,
+    definitions: dict[str, AgentDefinitionBody],
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from gobby.storage.definitions import AgentDefinitionManager
+
+    project = LocalProjectManager(temp_db).create("activation-owner")
+    first = register_session(temp_db, monkeypatch, project.id)
+    second = register_session(temp_db, monkeypatch, project.id)
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    current_session = first
+    monkeypatch.setattr(
+        "gobby.utils.session_context.get_session_context",
+        lambda: SimpleNamespace(session_id=current_session),
+    )
+    definitions["y"] = definitions["y"].model_copy(update={"persistent_workspace": True})
+    AgentDefinitionManager(temp_db).create("y", definitions["y"].model_dump())
+    first_result = await agents_registry.call("apply_agent_definition", {"agent": "y"})
+    assert first_result["success"] is True
+    manager = SessionVariableManager(temp_db)
+    folder = Path(manager.get_variables(first)["_agent_workspace_dir"])
+    (folder / "live.md").write_text("first owner's work")
+    manager.merge_variables(second, {"_agent_type": "x", "sentinel": "keep"})
+    before = manager.get_variables(second)
+    current_session = second
+    result = await agents_registry.call("apply_agent_definition", {"agent": "y"})
+    assert result["success"] is False
+    assert result["error_code"] == "workspace_unavailable"
+    assert manager.get_variables(second) == before
+    assert (folder / "live.md").read_text() == "first owner's work"
 
 
 async def test_public_activation_switches_current_definition_without_pane(

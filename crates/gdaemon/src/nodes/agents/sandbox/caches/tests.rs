@@ -146,6 +146,7 @@ fn inputs_with_build_root(gobby_home: &Path, build_root: &Path, workspace: &Path
         definition: None,
         session_seq: None,
         epic_seq: None,
+        persistent_workspace: false,
         read_all_agent_workspaces: false,
         predecessor_workspace_folders: Vec::new(),
     }

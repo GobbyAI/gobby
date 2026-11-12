@@ -306,9 +306,7 @@ def _bind_clear_successor(
     try:
         from gobby.agents.workspace_bindings import bind_session_workspace
 
-        bind_session_workspace(
-            handler._session_manager.db, successor_id, inherit_from=predecessor_id
-        )
+        bind_session_workspace(handler._session_manager.db, successor_id)
     except Exception as exc:
         handler.logger.warning(
             "Failed to bind agent workspace for clear successor %s: %s", successor_id, exc

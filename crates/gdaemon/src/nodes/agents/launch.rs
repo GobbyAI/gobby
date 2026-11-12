@@ -305,6 +305,7 @@ fn policy_inputs(
         definition: None,
         session_seq: None,
         epic_seq: None,
+        persistent_workspace: false,
         read_all_agent_workspaces: false,
         predecessor_workspace_folders: Vec::new(),
     })

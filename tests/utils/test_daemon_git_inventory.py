@@ -394,7 +394,7 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # ensure_workspace is the only caller of _init_git_dir, and _commit_worker is its only
     # caller; commit_workspace submits that worker to _BACKUP_EXECUTOR, so the git init
     # never runs on the loop.
-    ("src/gobby/agents/agent_workspaces.py", "_init_git_dir"),
+    ("src/gobby/agents/workspace_backups.py", "_init_git_dir"),
     # _checkout_root is reached through assigned_run_checkout and _team_checkout from
     # spawn_workspace_write_paths, which grant_seat_workspace_paths calls through
     # asyncio.to_thread in the spawn and resume executors and through run_db in the

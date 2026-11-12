@@ -154,7 +154,7 @@ def _session(db: HubDatabase, project: str, seq: int, folder: Path | None = None
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("persistent", [False, True])
-async def test_seat_scope_uses_definition_and_preserves_predecessor_guards(
+async def test_seat_scope_uses_definition_and_keeps_history_read_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
@@ -165,17 +165,17 @@ async def test_seat_scope_uses_definition_and_preserves_predecessor_guards(
     root = tmp_path / "gobby" / "agents_workspaces"
     project: str = sample_project["id"]
     anchor = root / project
-    own = anchor / "custom-seat" / "session-40"
-    prior = own.parent / "session-10"
-    live = own.parent / "session-20"
-    future = own.parent / "session-50"
+    own = anchor / "custom-seat" / ("current" if persistent else "session-40")
+    prior = own.parent / "history" / "session-10" if persistent else own.parent / "session-10"
+    live = anchor / "other-seat" / "session-20"
+    future = own.parent / "unbound-future"
     foreign = anchor / "other-seat" / "session-5"
     for folder in (own, prior, live, future, foreign):
         folder.mkdir(parents=True)
     (anchor / "README.md").write_text("Shared guidance")
     _definition(temp_db, persistent=persistent)
     caller = _session(temp_db, project, 40)
-    _session(temp_db, project, 30, live)  # A live clear successor holds the old folder.
+    _session(temp_db, project, 30, live)
     config = grant_seat_workspace_paths(
         SandboxConfig(enabled=True, backend="srt"), temp_db, caller, "custom-seat"
     )
@@ -183,14 +183,12 @@ async def test_seat_scope_uses_definition_and_preserves_predecessor_guards(
     assert str(own) in paths.read_paths
     assert str(own) in paths.write_paths
     assert str(anchor / "README.md") in paths.read_paths
-    assert (str(prior) in paths.read_paths) is persistent
+    history = own.parent / "history"
+    assert (str(history) in paths.read_paths) is persistent
+    assert str(prior) not in paths.write_paths
+    assert str(history) not in paths.write_paths
     assert not {str(live), str(future), str(foreign)}.intersection(paths.read_paths)
     assert str(root) in paths.deny_read_paths
-    if persistent:
-        _session(temp_db, project, 35, prior)
-        refreshed = grant_seat_workspace_paths(config, temp_db, caller, "custom-seat")
-        paths = await compute_sandbox_paths(refreshed, str(own))
-        assert str(prior) not in paths.read_paths, "resume must drop a now-live predecessor"
 
 
 @pytest.mark.asyncio

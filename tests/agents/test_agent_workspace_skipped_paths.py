@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-from gobby.agents import agent_workspaces
+from gobby.agents import workspace_backups as agent_workspaces
+from gobby.agents.agent_workspaces import workspace_git_dir
 from gobby.utils.daemon_git import GitOk
 
 pytestmark = pytest.mark.unit
@@ -140,7 +141,7 @@ async def test_skipped_path_parent_replaced_by_file_does_not_block_backups(
     skipped = f"{parent_path}/link.md"
     (anchor / skipped).symlink_to(anchor / "README.md")
     assert await agent_workspaces.commit_workspace(project_id, "timer")
-    exclude = agent_workspaces.workspace_git_dir(project_id) / "info/exclude"
+    exclude = workspace_git_dir(project_id) / "info/exclude"
     assert skipped in exclude.read_text()
 
     (anchor / skipped).unlink()

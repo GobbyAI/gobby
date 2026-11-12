@@ -99,7 +99,13 @@ def _clear_into(pane: _StagedClear, external_id: str) -> str:
 def _folder(home: Path, pane: _StagedClear, definition: str, session_id: str) -> Path:
     session = pane.sessions.get(session_id)
     assert session is not None and session.seq_num is not None
-    return home / "agents_workspaces" / pane.project_id / definition / f"session-{session.seq_num}"
+    row = AgentDefinitionManager(pane.sessions.db).get_by_name(definition, pane.project_id)
+    leaf = (
+        "current"
+        if row is not None and row.definition_json.get("persistent_workspace")
+        else f"session-{session.seq_num}"
+    )
+    return home / "agents_workspaces" / pane.project_id / definition / leaf
 
 
 def _workspace(db: HubDatabase, session_id: str) -> tuple[Path | None, Any]:

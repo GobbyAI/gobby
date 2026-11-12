@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from gobby.agents import agent_workspaces
+from gobby.agents import workspace_backups as agent_workspaces
 
 pytestmark = pytest.mark.unit
 

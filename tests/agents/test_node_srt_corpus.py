@@ -138,6 +138,7 @@ def _case(
     definition: str | None = None,
     session_seq: int | None = None,
     epic_seq: int | None = None,
+    persistent_workspace: bool = False,
     read_all_agent_workspaces: bool = False,
     predecessor_workspace_folders: tuple[str, ...] = (),
 ) -> dict[str, Any]:
@@ -153,6 +154,7 @@ def _case(
             "definition": definition,
             "session_seq": session_seq,
             "epic_seq": epic_seq,
+            "persistent_workspace": persistent_workspace,
             "read_all_agent_workspaces": read_all_agent_workspaces,
             "predecessor_workspace_folders": list(predecessor_workspace_folders),
             # Recorded from the oracle under the pinned layout; see `_hub_authorities`.
@@ -172,6 +174,9 @@ def _case(
 
 def _case_templates() -> list[dict[str, Any]]:
     cases = [_case(f"{provider}-srt-empty", provider) for provider in _PROVIDERS]
+    cases.append(
+        _case("codex-default-workspace-exempt", "codex", definition="default", session_seq=7)
+    )
     cases.append(
         _case(
             "codex-domains-git-registries",
@@ -247,8 +252,9 @@ def _case_templates() -> list[dict[str, Any]]:
             "claude",
             definition="persistent-seat",
             session_seq=7,
+            persistent_workspace=True,
             predecessor_workspace_folders=(
-                "{gobby_home}/agents_workspaces/node-srt-project/persistent-seat/session-2",
+                "{gobby_home}/agents_workspaces/node-srt-project/persistent-seat/history",
             ),
         )
     )
@@ -377,10 +383,15 @@ def _pin_account_home(monkeypatch: pytest.MonkeyPatch, layout: dict[str, str]) -
 def _workspace_write_paths(inputs: dict[str, Any]) -> list[str]:
     """The seat's own and epic folders the spawn grants, from the case's sequence inputs."""
     session_seq = inputs["session_seq"]
-    if session_seq is None:
+    if session_seq is None or inputs["definition"] in (None, "", "default"):
         return []
     project_id = str(inputs["project_id"])
-    paths = [str(session_workspace_dir(project_id, inputs["definition"], int(session_seq)))]
+    folder = (
+        workspace_anchor(project_id) / inputs["definition"] / "current"
+        if inputs.get("persistent_workspace", False)
+        else session_workspace_dir(project_id, inputs["definition"], int(session_seq))
+    )
+    paths = [str(folder)]
     if inputs["epic_seq"] is not None:
         paths.append(str(epic_workspace_dir(project_id, int(inputs["epic_seq"]))))
     return paths
@@ -409,7 +420,7 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
     # authority and eligible predecessors. These inputs are outside user config.
     workspace_paths = _workspace_write_paths(inputs)
     reads = list(workspace_paths)
-    if inputs["session_seq"] is not None:
+    if workspace_paths:
         reads.append(str(workspace_anchor(str(inputs["project_id"])) / "README.md"))
         if inputs.get("read_all_agent_workspaces", False):
             reads = [str(workspaces_root())]
@@ -764,14 +775,15 @@ def test_workspace_read_authority_does_not_expand_writes(
     filesystem = json.loads(settings)["filesystem"]
     root = Path(layout["gobby_home"]) / "agents_workspaces"
     anchor = root / _PROJECT_ID
-    own = anchor / template["inputs"]["definition"] / "session-7"
+    live = "current" if template["inputs"]["persistent_workspace"] else "session-7"
+    own = anchor / template["inputs"]["definition"] / live
     writes = {entry for entry in filesystem["allowWrite"] if entry.startswith(f"{root}/")}
     assert writes == {str(own)}
     assert str(root) not in filesystem["allowWrite"]
     if case_name == "claude-workspace-read-all":
         assert str(root) in filesystem["allowRead"]
     else:
-        prior = own.parent / "session-2"
+        prior = own.parent / "history"
         assert str(prior) in filesystem["allowRead"]
         assert str(prior) not in writes
         assert str(root) not in filesystem["allowRead"]

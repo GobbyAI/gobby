@@ -383,8 +383,11 @@ def _assert_only_own_folders(
     assert _anchor_grants(writes) == {str(folder) for folder in own}
     for folder in own:
         assert _denied_ancestor(paths, folder) is None, folder
-    project = next(iter(own)).parents[1]
-    for parent in (workspaces_root(), project, workspace_git_dir(project.name)):
+    parents = [workspaces_root()]
+    if own:
+        project = next(iter(own)).parents[1]
+        parents.extend((project, workspace_git_dir(project.name)))
+    for parent in parents:
         assert not _covered(writes, parent), parent
     for root in (Path.home() / ".ssh", Path.home() / ".gobby", *credential_roots()):
         assert not _covered(writes, root), root
@@ -441,8 +444,9 @@ async def test_spawn_and_resume_grant_exactly_the_seats_own_folder(
     config, filesystem, paths = await _spawn(request, context)
 
     assert own.parent.name == (definition or "default")
-    assert _covered(filesystem["allowWrite"], own)
-    _assert_only_own_folders(filesystem, paths, {own})
+    expected = {own} if definition is not None else set()
+    assert _covered(filesystem["allowWrite"], own) is (definition is not None)
+    _assert_only_own_folders(filesystem, paths, expected)
     for folder in foreign:
         assert not _covered(filesystem["allowWrite"], folder), folder
 
@@ -452,9 +456,9 @@ async def test_spawn_and_resume_grant_exactly_the_seats_own_folder(
     assert persisted.extra_write_paths == config.extra_write_paths
     resumed, context = _request(world, seat, definition, persisted, {}, workspace)
     config, filesystem, paths = await _spawn(resumed, context)
-    _assert_only_own_folders(filesystem, paths, {own})
+    _assert_only_own_folders(filesystem, paths, expected)
     granted = [path for path in config.extra_write_paths if path in _anchor_grants([path])]
-    assert len(granted) == 1, granted
+    assert len(granted) == len(expected), granted
 
 
 @pytest.mark.asyncio

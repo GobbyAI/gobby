@@ -1839,6 +1839,7 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         definition: filled["definition"].as_str().map(str::to_owned),
         session_seq: filled["session_seq"].as_u64(),
         epic_seq: filled["epic_seq"].as_u64(),
+        persistent_workspace: filled["persistent_workspace"].as_bool().unwrap_or(false),
         read_all_agent_workspaces: filled["read_all_agent_workspaces"]
             .as_bool()
             .unwrap_or(false),

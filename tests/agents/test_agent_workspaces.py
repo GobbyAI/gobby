@@ -11,19 +11,19 @@ from typing import Any
 
 import pytest
 
-from gobby.agents import agent_workspaces, team_teardown
-from gobby.agents.agent_workspaces import (
+from gobby.agents import team_teardown
+from gobby.agents import workspace_backups as agent_workspaces
+from gobby.agents.agent_workspaces import workspace_anchor, workspace_git_dir
+from gobby.agents.workspace_backups import (
     commit_workspace,
     ensure_workspace,
     register_agent_workspace_cron,
-    workspace_anchor,
-    workspace_git_dir,
 )
 from gobby.agents.workspace_bindings import bind_session_workspace
 from gobby.hooks.event_handlers import _agent, _session_end
 from gobby.hooks.event_handlers._session_start import materialize
 from gobby.mcp_proxy.tools.sessions import _terminal
-from gobby.runner_init import orchestration
+from gobby.runner_init import cron, orchestration
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -164,7 +164,8 @@ async def test_backup_runs_only_from_the_nightly_cron(
     for lifecycle_module in (_terminal, _agent, _session_end, materialize, team_teardown):
         source = inspect.getsource(lifecycle_module)
         assert "commit_workspace" not in source, lifecycle_module.__name__
-    assert "register_agent_workspace_cron(" in inspect.getsource(orchestration.init_orchestration)
+    assert "init_cron(" in inspect.getsource(orchestration.init_orchestration)
+    assert "register_agent_workspace_cron(" in inspect.getsource(cron.init_cron)
 
     # The nightly cron commits a dirty tree.
     storage = CronJobStorage(temp_db)
@@ -202,6 +203,11 @@ async def test_timer_bootstraps_the_first_workspace(
         source="claude",
         project_id=project_id,
     )
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    SessionVariableManager(temp_db).merge_variables(
+        session.id, {"_agent_type": "fixture-workspace-writer"}
+    )
     folder = bind_session_workspace(temp_db, session.id)
     assert folder is not None
     assert not workspace_git_dir(project_id).exists()
@@ -220,7 +226,7 @@ async def test_timer_bootstraps_the_first_workspace(
 
     relative = folder.relative_to(workspace_anchor(project_id)).as_posix()
     assert {"README.md", f"{relative}/notes.md"} <= _tracked(project_id)
-    assert _subjects(project_id) == ["agents-ws: timer default"]
+    assert _subjects(project_id) == ["agents-ws: timer fixture-workspace-writer"]
 
 
 @pytest.mark.parametrize("state", ["running", "disabled", "parked"])
