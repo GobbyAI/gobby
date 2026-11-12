@@ -1,17 +1,28 @@
 //! Remote terminal placement lookup, performed exclusively by a navigation job.
 
 use super::project_navigation::Prepared;
-use crate::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceErrorCode, WorkspaceOp};
+use crate::daemon::{Daemon, DaemonError, Generation, LiveDaemon, WorkspaceErrorCode, WorkspaceOp};
+
+pub(super) struct Selection<'a> {
+    pub terminal: &'a str,
+    pub known: bool,
+    pub attention: bool,
+    pub reuse: bool,
+}
 
 pub(super) async fn prepare(
     daemon: &LiveDaemon,
+    generation: Generation,
     node: Option<&str>,
-    terminal: &str,
-    known: bool,
-    attention: bool,
-    reuse: bool,
+    selection: Selection<'_>,
     roster: impl std::future::Future<Output = Result<super::super::live::relist::Relist, DaemonError>>,
 ) -> Result<Prepared, String> {
+    let Selection {
+        terminal,
+        known,
+        attention,
+        reuse,
+    } = selection;
     let reply = daemon
         .workspace_op(WorkspaceOp::WorkspaceList {
             node: node.map(str::to_owned),
@@ -41,7 +52,7 @@ pub(super) async fn prepare(
             continue;
         };
         let attached = daemon
-            .attach_workspace(node, Some(id), None)
+            .attach_workspace_at_generation(node, Some(id), None, generation)
             .await
             .map_err(|error| error.to_string())?;
         if !attached

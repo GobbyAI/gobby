@@ -2,7 +2,7 @@
 
 use super::live::LiveDaemon;
 use super::workspace::{attach_request, op_request};
-use super::{DaemonError, WorkspaceOp, WorkspaceReply, WorkspaceSnapshot};
+use super::{DaemonError, Generation, WorkspaceOp, WorkspaceReply, WorkspaceSnapshot};
 use gobby_terminal::terminal_theme::ThemeDeclaration;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -15,6 +15,28 @@ impl LiveDaemon {
         node: Option<&str>,
         workspace: Option<&str>,
         project_id: Option<&str>,
+    ) -> Result<WorkspaceSnapshot, DaemonError> {
+        self.attach_workspace_for_generation(node, workspace, project_id, None)
+            .await
+    }
+
+    pub async fn attach_workspace_at_generation(
+        &self,
+        node: Option<&str>,
+        workspace: Option<&str>,
+        project_id: Option<&str>,
+        generation: Generation,
+    ) -> Result<WorkspaceSnapshot, DaemonError> {
+        self.attach_workspace_for_generation(node, workspace, project_id, Some(generation))
+            .await
+    }
+
+    async fn attach_workspace_for_generation(
+        &self,
+        node: Option<&str>,
+        workspace: Option<&str>,
+        project_id: Option<&str>,
+        generation: Option<Generation>,
     ) -> Result<WorkspaceSnapshot, DaemonError> {
         let request_id = Uuid::new_v4().to_string();
         let mut request = attach_request(node, workspace, project_id);
@@ -29,7 +51,10 @@ impl LiveDaemon {
             daemon: self,
             request_id,
         };
-        decode(self.request(request).await?)
+        decode(
+            self.request_at_generation(request, None, None, generation)
+                .await?,
+        )
     }
 
     /// Read another workspace without changing this socket's event subscription.

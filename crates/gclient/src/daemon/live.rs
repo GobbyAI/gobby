@@ -202,9 +202,10 @@ impl LiveDaemon {
         &self,
         key: &RouteKey,
         sender: ReplySender,
+        generation: Option<Generation>,
     ) -> Result<mpsc::Sender<Outbound>, DaemonError> {
         let mut state = self.inner.state();
-        if state.closed {
+        if state.closed || generation.is_some_and(|generation| generation != state.generation) {
             return Err(DaemonError::Unavailable { retry_after: None });
         }
         let outbound = state.outbound.clone().ok_or_else(|| {
@@ -285,6 +286,17 @@ impl LiveDaemon {
         override_deadline: Option<Duration>,
         on_written: Option<watch::Sender<bool>>,
     ) -> Result<Value, DaemonError> {
+        self.request_at_generation(message, override_deadline, on_written, None)
+            .await
+    }
+
+    pub(super) async fn request_at_generation(
+        &self,
+        message: Value,
+        override_deadline: Option<Duration>,
+        on_written: Option<watch::Sender<bool>>,
+        generation: Option<Generation>,
+    ) -> Result<Value, DaemonError> {
         let raw = encode_frame_text(&message)?;
         let request = super::message_kind(&message)
             .unwrap_or("message")
@@ -296,7 +308,7 @@ impl LiveDaemon {
         let deadline = Instant::now() + duration;
         let (reply_tx, reply_rx) = oneshot::channel();
         let write_state = Arc::new(AtomicU8::new(WRITE_QUEUED));
-        let outbound = self.register_waiter(&key, reply_tx)?;
+        let outbound = self.register_waiter(&key, reply_tx, generation)?;
         let mut guard = PendingGuard {
             daemon: self,
             key: &key,

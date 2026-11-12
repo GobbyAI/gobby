@@ -39,8 +39,8 @@ pub use live_loop::mouse::{
     TAB_DRAG_THRESHOLD,
 };
 pub use live_loop::project_navigation::{
-    apply as apply_project_attachment, dispatch as dispatch_project_navigation,
-    resume as resume_project_navigation,
+    apply as apply_project_attachment, cancel_path as cancel_project_navigation,
+    dispatch as dispatch_project_navigation, resume as resume_project_navigation,
 };
 pub use live_loop::project_operations::apply_worktree_removal;
 pub use live_loop::project_operations::{

@@ -18,6 +18,440 @@ fn project(path: &std::path::Path) -> Value {
 }
 
 #[tokio::test]
+async fn a_failed_subscription_restore_does_not_starve_pending_project_selection() {
+    use gobby_client::app::{
+        apply_project_attachment, dispatch_project_navigation, focus_project, JobResult,
+    };
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_workspace("original", &[]);
+    mock.seed_other_workspace("superseded", &[(&["terminal-second"], "terminal-second")]);
+    mock.seed_other_workspace("latest", &[(&["terminal-latest"], "terminal-latest")]);
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect");
+    let mut workspace = Workspace::live(daemon);
+    let home = tempfile::tempdir().expect("home");
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.select_project("original");
+    workspace.reconcile_subscribe_first().await.expect("model");
+    let mut chrome = Chrome::dark();
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    focus_project(&mut workspace, &mut chrome, "superseded")
+        .await
+        .expect("second");
+    assert!(dispatch_project_navigation(&mut workspace, &sender));
+    focus_project(&mut workspace, &mut chrome, "latest")
+        .await
+        .expect("latest");
+    let outcome = receiver.recv().await.expect("superseded attach");
+    let JobResult::ProjectAttached(attachment) = outcome.result else {
+        panic!("attach");
+    };
+    apply_project_attachment(&mut workspace, &mut chrome, true, attachment);
+    mock.suppress_ws("workspace_attach");
+    assert!(dispatch_project_navigation(&mut workspace, &sender));
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(10), receiver.recv())
+        .await
+        .expect("restore deadline")
+        .expect("restore result");
+    let JobResult::ProjectAttached(attachment) = outcome.result else {
+        panic!("restore");
+    };
+    apply_project_attachment(&mut workspace, &mut chrome, true, attachment);
+    mock.allow_ws("workspace_attach");
+    mock_daemon::project_jobs::apply_navigation(&mut workspace, &mut chrome).await;
+    assert_eq!(
+        workspace.project_id(),
+        Some("latest"),
+        "a failed repair must let the pending navigation repair the subscription itself"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn terminal_metadata_failure_after_attach_restores_visible_workspace_events() {
+    use gobby_client::app::{
+        apply_project_attachment, dispatch_project_navigation, focus_agent, JobResult,
+    };
+    use gobby_client::daemon::{Daemon, DaemonEvent};
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_workspace("original", &[(&["existing"], "existing")]);
+    mock.seed_other_workspace("other", &[(&["missing-metadata"], "missing-metadata")]);
+    mock.enqueue(
+        "GET",
+        "/api/terminals/missing-metadata",
+        404,
+        json!({"detail":"gone"}),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect");
+    let mut workspace = Workspace::live(daemon);
+    let home = tempfile::tempdir().expect("home");
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.select_project("original");
+    workspace.reconcile_subscribe_first().await.expect("model");
+    let original = workspace
+        .workspace_model()
+        .expect("model")
+        .workspace
+        .id
+        .clone();
+    let mut chrome = Chrome::dark();
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    focus_agent(
+        &mut workspace,
+        &mut chrome,
+        &sender,
+        "terminal:missing-metadata",
+    )
+    .await
+    .expect("focus");
+    assert!(dispatch_project_navigation(&mut workspace, &sender));
+    let outcome = receiver.recv().await.expect("result");
+    let JobResult::ProjectAttached(attachment) = outcome.result else {
+        panic!("attach");
+    };
+    apply_project_attachment(&mut workspace, &mut chrome, true, attachment);
+    assert!(
+        format!("{:?}", chrome.toasts).contains("Cannot open terminal missing-metadata"),
+        "metadata lookup must fail after attach"
+    );
+    mock_daemon::project_jobs::apply_navigation(&mut workspace, &mut chrome).await;
+    assert_eq!(workspace.project_id(), Some("original"));
+    let (_, mut events) = workspace.daemon().subscribe();
+    let mut event: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/terminal_ws_golden/workspace_event.json"
+    ))
+    .expect("event");
+    event["workspace_id"] = json!(original);
+    mock.send_event_and_wait(event).await;
+    let delivered = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if let DaemonEvent::Workspace(event) = events.recv().await.expect("event stream") {
+                break event.workspace_id;
+            }
+        }
+    })
+    .await;
+    assert_eq!(
+        delivered.ok().as_deref(),
+        Some(original.as_str()),
+        "an accepted navigation failure must repair the subscription side effect"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn a_cancelled_path_cannot_cancel_a_later_project_selection() {
+    use gobby_client::app::{
+        apply_project_attachment, cancel_project_navigation, dispatch_project_navigation,
+        focus_project, JobResult,
+    };
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_workspace("original", &[]);
+    mock.seed_other_workspace("latest", &[(&["latest-terminal"], "latest-terminal")]);
+    let home = tempfile::tempdir().expect("home");
+    let root = home.path().join("new");
+    let release = mock.enqueue_held("POST", "/api/projects/init", 200, project(&root));
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect");
+    let mut workspace = Workspace::live(daemon);
+    workspace.set_gobby_home(home.path().join("state"));
+    workspace.select_project("original");
+    workspace.reconcile_subscribe_first().await.expect("model");
+    let mut chrome = Chrome::dark();
+    open_new_project_dialog(&mut chrome);
+    submit_new_project(&mut workspace, &mut chrome, root.to_str().expect("path"))
+        .await
+        .expect("queue path");
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    assert!(dispatch_project_navigation(&mut workspace, &sender));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        mock.wait_for_request(|request| request.target == "/api/projects/init"),
+    )
+    .await
+    .expect("path held");
+    cancel_project_navigation(&mut workspace);
+    focus_project(&mut workspace, &mut chrome, "latest")
+        .await
+        .expect("new selection");
+    // Closing an unrelated modal must not revive the cancelled path's authority.
+    cancel_project_navigation(&mut workspace);
+    chrome.dialog = None;
+    release.notify_one();
+    let outcome = receiver.recv().await.expect("path result");
+    let JobResult::ProjectAttached(attachment) = outcome.result else {
+        panic!("attach");
+    };
+    apply_project_attachment(&mut workspace, &mut chrome, true, attachment);
+    mock_daemon::project_jobs::apply_navigation(&mut workspace, &mut chrome).await;
+    assert_eq!(
+        workspace.project_id(),
+        Some("latest"),
+        "cancelled path identity must not cancel unrelated later navigation"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn removing_a_worktree_refuses_a_terminal_missing_from_the_captured_ui() {
+    use gobby_client::app::{remove_worktree, sync_live_chrome};
+    use gobby_client::daemon::{Daemon, WorkspaceOp};
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_workspace("project-1", &[]);
+    mock.enqueue(
+        "GET",
+        "/api/projects",
+        200,
+        json!([{
+            "id":"project-1", "name":"fixture",
+            "checkout":{"machine_id":"m-local", "root_path":"/repo"}
+        }]),
+    );
+    mock.enqueue(
+        "GET",
+        "/api/source-control/worktrees?",
+        200,
+        json!({"worktrees":[{
+            "id":"occupied-tree", "project_id":"project-1", "branch_name":"fixture",
+            "worktree_path":"/occupied-tree", "status":"active", "workspace_role":"client"
+        }]}),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect");
+    let mut workspace = Workspace::live(daemon.clone());
+    let home = tempfile::tempdir().expect("home");
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.select_project("project-1");
+    workspace.reconcile_subscribe_first().await.expect("model");
+    let mut chrome = Chrome::dark();
+    sync_live_chrome(&mut workspace, &mut chrome);
+    let id = workspace
+        .workspace_model()
+        .expect("model")
+        .workspace
+        .id
+        .clone();
+    // Another window adds a terminal after this UI's snapshot. Its event is
+    // deliberately not applied before removal captures the empty kill set.
+    daemon
+        .workspace_op(WorkspaceOp::TabCreate {
+            workspace: id,
+            project_id: "project-1".into(),
+            worktree_id: Some("occupied-tree".into()),
+            title: None,
+            terminal_id: None,
+            cwd: None,
+            rows: None,
+            cols: None,
+            node: None,
+        })
+        .await
+        .expect("another window opens a terminal");
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    remove_worktree(&mut workspace, &mut chrome, &sender, "occupied-tree")
+        .await
+        .expect("queue removal");
+    mock_daemon::project_jobs::settle_removal(&mut workspace, &mut chrome, &mut receiver).await;
+    assert!(
+        !mock
+            .requests()
+            .iter()
+            .any(|request| request.method == "DELETE"),
+        "fresh worktree occupants must prevent deletion even with an empty captured kill set"
+    );
+    assert!(
+        format!("{:?}", chrome.toasts).contains("occupied-tree"),
+        "the refusal must name the original worktree"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn dismissing_an_in_flight_project_attach_restores_visible_workspace_events() {
+    use gobby_client::app::{apply_project_attachment, dispatch_project_navigation, JobResult};
+    use gobby_client::daemon::{Daemon, DaemonEvent};
+
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_workspace("original", &[(&["original-terminal"], "original-terminal")]);
+    let home = tempfile::tempdir().expect("home");
+    let root = home.path().join("other");
+    mock.enqueue("POST", "/api/projects/init", 200, project(&root));
+    let release = mock.hold_ws("workspace_attach", |body| {
+        body["project_id"] == "project-new"
+    });
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect");
+    let mut workspace = Workspace::live(daemon);
+    workspace.set_gobby_home(home.path().join("state"));
+    workspace.select_project("original");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("initial workspace");
+    let original = workspace
+        .workspace_model()
+        .expect("model")
+        .workspace
+        .id
+        .clone();
+    let mut chrome = Chrome::dark();
+    open_new_project_dialog(&mut chrome);
+    submit_new_project(&mut workspace, &mut chrome, root.to_str().expect("path"))
+        .await
+        .expect("queue");
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    assert!(dispatch_project_navigation(&mut workspace, &sender));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        mock.wait_for_request(|request| {
+            request.body.as_ref().is_some_and(|body| {
+                body["type"] == "workspace_attach" && body["project_id"] == "project-new"
+            })
+        }),
+    )
+    .await
+    .expect("attachment held");
+    chrome.dialog = None;
+    release.notify_one();
+    let outcome = receiver.recv().await.expect("result");
+    let JobResult::ProjectAttached(attachment) = outcome.result else {
+        panic!("attach result");
+    };
+    apply_project_attachment(&mut workspace, &mut chrome, true, attachment);
+    mock_daemon::project_jobs::apply_navigation(&mut workspace, &mut chrome).await;
+    assert_eq!(workspace.project_id(), Some("original"));
+    assert_eq!(
+        workspace
+            .workspace_model()
+            .expect("visible model")
+            .workspace
+            .id,
+        original
+    );
+
+    let (_, mut events) = workspace.daemon().subscribe();
+    let mut event: Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/terminal_ws_golden/workspace_event.json"
+    ))
+    .expect("event fixture");
+    event["workspace_id"] = json!(original);
+    mock.send_event_and_wait(event).await;
+    let delivered = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if let DaemonEvent::Workspace(event) = events.recv().await.expect("event stream") {
+                break event.workspace_id;
+            }
+        }
+    })
+    .await;
+    assert_eq!(
+        delivered.ok().as_deref(),
+        Some(original.as_str()),
+        "dismissing navigation must restore the visible workspace's event stream"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn dismissed_worktree_creation_reports_its_result_without_opening_a_terminal() {
+    use gobby_client::app::{
+        apply_project_attachment, create_worktree, dispatch_project_navigation,
+        resume_project_navigation, JobResult,
+    };
+    use gobby_client::daemon::Daemon;
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_workspace("project-1", &[(&["existing"], "existing")]);
+    let release = mock.enqueue_held(
+        "POST",
+        "/api/source-control/worktrees",
+        200,
+        json!({"id":"created-tree", "project_id":"project-1", "branch_name":"kept-branch",
+            "worktree_path":"/kept-branch", "status":"active", "workspace_role":"client"}),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect");
+    let mut workspace = Workspace::live(daemon);
+    let home = tempfile::tempdir().expect("home");
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.select_project("project-1");
+    workspace.reconcile_subscribe_first().await.expect("model");
+    let mut chrome = Chrome::dark();
+    gobby_client::app::sync_live_chrome(&mut workspace, &mut chrome);
+    chrome.dialog = Some(Dialog::NewWorktree {
+        project_id: "project-1".into(),
+        branch: "kept-branch".into(),
+        base: String::new(),
+        cursor: 11,
+        base_focused: false,
+        error: None,
+    });
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    create_worktree(
+        &mut workspace,
+        &mut chrome,
+        &sender,
+        "project-1",
+        "kept-branch",
+        None,
+    )
+    .await
+    .expect("queue");
+    assert!(dispatch_project_navigation(&mut workspace, &sender));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        mock.wait_for_request(|request| {
+            request.method == "POST" && request.target == "/api/source-control/worktrees"
+        }),
+    )
+    .await
+    .expect("creation held");
+    chrome.dialog = None;
+    let generation = workspace.daemon().generation();
+    workspace
+        .daemon()
+        .reconnect(generation)
+        .await
+        .expect("reconnect");
+    assert!(!dispatch_project_navigation(&mut workspace, &sender));
+    release.notify_one();
+    let outcome = receiver.recv().await.expect("creation result");
+    let JobResult::ProjectAttached(attachment) = outcome.result else {
+        panic!("creation result");
+    };
+    apply_project_attachment(&mut workspace, &mut chrome, false, attachment);
+    resume_project_navigation(&mut workspace, &mut chrome, &sender)
+        .await
+        .expect("resume");
+    let notices = format!("{:?}", chrome.toasts);
+    assert!(
+        notices.contains("Created") && notices.contains("kept-branch"),
+        "the completed operation must remain visible after dismissal: {notices}"
+    );
+    assert!(
+        !mock
+            .requests()
+            .iter()
+            .any(|request| request.method == "DELETE"),
+        "dismissal never rolls back an already created worktree"
+    );
+    assert!(
+        !mock
+            .workspace_requests()
+            .iter()
+            .any(|request| request["op"] == "tab.create"),
+        "dismissed creation must not open a terminal"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
 async fn active_project_path_can_be_reselected_after_superseding_intent() {
     use gobby_client::app::{
         apply_project_attachment, dispatch_project_navigation, resume_project_navigation, JobResult,
@@ -148,14 +582,19 @@ async fn same_project_path_can_be_retried_after_connection_generation_changes() 
     };
     apply_project_attachment(&mut workspace, &mut chrome, false, attachment);
     assert_eq!(workspace.project_id(), Some("project-new"));
+    assert_eq!(
+        project_attaches(&mock).len(),
+        1,
+        "the retired HTTP job must not attach through the replacement connection"
+    );
     mock.shutdown().await;
 }
 
 #[tokio::test]
 async fn reselecting_a_pending_worktree_creation_reuses_its_success() {
     use gobby_client::app::{
-        apply_project_attachment, create_worktree, dispatch_project_navigation,
-        resume_project_navigation, JobResult,
+        apply_project_attachment, cancel_project_navigation, create_worktree,
+        dispatch_project_navigation, resume_project_navigation, JobResult,
     };
     let mock = MockDaemon::start("local-token").await;
     mock.seed_workspace("project-1", &[(&["existing"], "existing")]);
@@ -201,6 +640,7 @@ async fn reselecting_a_pending_worktree_creation_reuses_its_success() {
     )
     .await
     .expect("first creation held");
+    cancel_project_navigation(&mut workspace);
     create_worktree(
         &mut workspace,
         &mut chrome,

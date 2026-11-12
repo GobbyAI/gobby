@@ -61,7 +61,7 @@ pub async fn remove_worktree(
         .iter()
         .filter_map(|pane| close_barrier(workspace, outcomes, *pane))
         .collect();
-    let kills = panes
+    let kills: Vec<_> = panes
         .into_iter()
         .filter_map(|id| {
             let pane = workspace.panes.get_mut(&id)?;
@@ -70,11 +70,18 @@ pub async fn remove_worktree(
         })
         .collect();
     let daemon = workspace.daemon().clone();
+    let captured: Vec<String> = kills.iter().map(|(_, terminal)| terminal.clone()).collect();
+    let node = workspace.attach_target().node.clone();
     let worktree_id = worktree_id.to_owned();
     spawn_job(outcomes, op_tag(&daemon), async move {
         await_barriers(after).await;
         let (killed, kept, mut result) = kill_batch(&daemon, kills).await;
         let mut warnings = Vec::new();
+        if kept.is_empty() && result.is_ok() {
+            result =
+                ensure_no_new_worktree_terminals(&daemon, node.as_deref(), &worktree_id, &captured)
+                    .await;
+        }
         if kept.is_empty() && result.is_ok() {
             for tab in tabs {
                 match daemon
@@ -92,7 +99,16 @@ pub async fn remove_worktree(
                 }
             }
             if result.is_ok() {
-                result = daemon.delete_worktree(&worktree_id).await;
+                result = ensure_no_new_worktree_terminals(
+                    &daemon,
+                    node.as_deref(),
+                    &worktree_id,
+                    &captured,
+                )
+                .await;
+                if result.is_ok() {
+                    result = daemon.delete_worktree(&worktree_id).await;
+                }
             }
         }
         JobResult::WorktreeRemoved(WorktreeRemoval {
@@ -104,6 +120,66 @@ pub async fn remove_worktree(
             result,
         })
     });
+    Ok(())
+}
+
+async fn ensure_no_new_worktree_terminals(
+    daemon: &LiveDaemon,
+    node: Option<&str>,
+    worktree: &str,
+    captured: &[String],
+) -> Result<(), DaemonError> {
+    let reply = daemon
+        .workspace_op(WorkspaceOp::WorkspaceList {
+            node: node.map(str::to_owned),
+        })
+        .await?;
+    let rows = reply
+        .result
+        .as_array()
+        .ok_or_else(|| DaemonError::Protocol {
+            detail: "Cannot verify worktree occupants: invalid workspace list".into(),
+        })?;
+    for row in rows {
+        let id = row
+            .get("id")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| DaemonError::Protocol {
+                detail: "Cannot verify worktree occupants: invalid workspace identity".into(),
+            })?;
+        let snapshot = match daemon.workspace_snapshot(node, id).await {
+            Ok(snapshot) => snapshot,
+            Err(DaemonError::Workspace(error)) if error.code == WorkspaceErrorCode::NotFound => {
+                continue
+            }
+            Err(error) => return Err(error),
+        };
+        for tab in snapshot
+            .tabs
+            .iter()
+            .filter(|tab| tab.worktree_id.as_deref() == Some(worktree))
+        {
+            for terminal in snapshot
+                .panes
+                .iter()
+                .filter(|pane| pane.tab_id == tab.id)
+                .filter_map(|pane| pane.terminal_id.as_ref())
+                .filter(|terminal| !captured.contains(terminal))
+            {
+                let row = daemon.terminal(terminal).await?;
+                if !matches!(
+                    row.fields.get("state").and_then(|value| value.as_str()),
+                    Some("closed" | "exited" | "failed")
+                ) {
+                    return Err(DaemonError::Protocol {
+                        detail: format!(
+                            "Worktree {worktree} has a new live terminal; retry removal"
+                        ),
+                    });
+                }
+            }
+        }
+    }
     Ok(())
 }
 

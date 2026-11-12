@@ -380,6 +380,8 @@ Targets:
 - `crates/gclient/src/app/live_loop/menu_dispatch.rs::*` — scope-reason: preserve typed menu continuations across project selection.
 - `crates/gclient/src/app/live_loop/project_paths.rs::*` — scope-reason: resolve project registration from the navigation job.
 - `crates/gclient/src/app/live_loop/terminal_location.rs::*` — scope-reason: resolve authoritative terminal placement without mutating the input loop.
+- `crates/gclient/src/daemon/live.rs::*` — scope-reason: atomically fence navigation requests to their captured connection generation when selecting the outbound channel.
+- `crates/gclient/src/daemon/live_workspace.rs::*` — scope-reason: expose generation-bound workspace attachment while preserving pending-attach cleanup.
 - `crates/gclient/src/app/live_loop/projection.rs::*` — scope-reason: own the workspace view adapter beside layout projection.
 - `crates/gclient/src/app/mod.rs::*` — scope-reason: store operation state and expose production reducers to integration fixtures.
 - `crates/gclient/tests/client_loop.rs::*` — scope-reason: exercise asynchronous project flows and repair characterized detach fixtures.
@@ -393,6 +395,8 @@ Targets:
 - `crates/gclient/tests/project_flows.rs::*` — scope-reason: cover cancellation, supersession, reconnect retries and coalesced creation.
 
 Split `projects.rs` into `crates/gclient/src/app/live_loop/project_operations.rs` before expanding operations.
+
+Security-review follow-up: compensate the subscription side effect of dismissed, superseded or failed navigation; allow pending selection during restoration backoff. Preserve and report in-flight creation results across dismissal and reconnect, and retain request identity so reselection coalesces. Resample authoritative worktree occupants before closing captured tabs and deleting the worktree. Generation checks must share the outbound-channel selection lock, because an HTTP lookup can outlive its original connection.
 
 **Research context:** `projects.rs::focus_agent`, `create_worktree` and `open_worktree` are called by modal, sidebar and menu input paths. `project_operations.rs::remove_worktree` owns kill-before-close-before-delete ordering. Reuse `jobs.rs::spawn_job`, `JobOutcome` and `LoopJobs::drain_pending_refetch`; keep all daemon waits in jobs and apply results in `jobs_apply.rs::apply_job_outcome`. `project_navigation.rs::dispatch`, `apply` and `resume` separate actual request identity from the newest intent, serialize attachments and reject stale generations. Terminal discovery uses `terminal_location.rs::prepare`; an existing workspace placement wins over the sidebar's assigned project, while unplaced agents retain their assigned project. Newly resolved rows must set `roster_landed` so the loop starts initial attachments. Reuse `MockDaemon`, the held native host, existing responsiveness bound of 1500ms, and production reducers in integration fixtures. The project operation module and navigation module are new extractions in this task; the view adapter moves from the loop into the existing projection owner. Keep source versions untouched: step 1 owns the integration-only mechanical bump.
 

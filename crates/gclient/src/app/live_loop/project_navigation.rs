@@ -16,6 +16,7 @@ use super::sync_live_chrome;
 
 #[derive(Debug, Clone)]
 pub enum ProjectAction {
+    Restore,
     Focus,
     OpenWorktree(String),
     RemoveWorktree(String),
@@ -46,6 +47,7 @@ struct Request {
 
 #[derive(Debug)]
 enum Target {
+    Restore(crate::startup::AttachTarget),
     CreateWorktree(WorktreeRequest),
     Project {
         project: String,
@@ -71,6 +73,7 @@ pub(in crate::app) struct ProjectNavigation {
     active: Option<ActiveRequest>,
     pending: Option<Request>,
     ready: Option<(u64, Generation, ProjectAction)>,
+    restore: Option<(Generation, tokio::time::Instant)>,
 }
 
 #[derive(Debug)]
@@ -84,6 +87,9 @@ struct ActiveRequest {
 
 impl ProjectNavigation {
     fn expire(&mut self, generation: Generation) {
+        if self.restore.is_some_and(|(owner, _)| owner != generation) {
+            self.restore = None;
+        }
         if self
             .active
             .as_ref()
@@ -115,7 +121,8 @@ pub(super) fn defer_project(
         .is_some_and(|model| model.workspace.default_project_id.as_deref() == Some(project));
     let generation = workspace.daemon().generation();
     workspace.project_navigation.expire(generation);
-    let busy = workspace.project_navigation.active.is_some();
+    let busy = workspace.project_navigation.active.is_some()
+        || workspace.project_navigation.restore.is_some();
     workspace.project_navigation.serial += 1;
     workspace.project_navigation.pending = None;
     workspace.project_navigation.ready = None;
@@ -171,7 +178,26 @@ pub fn dispatch(
     if workspace.project_navigation.active.is_some() {
         return false;
     }
-    let Some(request) = workspace.project_navigation.pending.take() else {
+    let request = if workspace
+        .project_navigation
+        .restore
+        .is_some_and(|(_, due)| due <= tokio::time::Instant::now())
+    {
+        workspace.project_navigation.restore = None;
+        let mut target = workspace.attach_target().clone();
+        if let Some(model) = workspace.workspace_model() {
+            target.workspace = Some(model.workspace.id.clone());
+            target.project_id = None;
+        }
+        Request {
+            id: workspace.project_navigation.serial,
+            generation,
+            target: Target::Restore(target),
+            then: ProjectAction::Restore,
+        }
+    } else if let Some(request) = workspace.project_navigation.pending.take() {
+        request
+    } else {
         return false;
     };
     if request.generation != generation {
@@ -195,6 +221,7 @@ pub fn dispatch(
     let roster =
         workspace.issue_roster_fetch(workspace.project_id().unwrap_or_default().to_owned());
     let label = match &request.target {
+        Target::Restore(_) => "visible workspace".to_owned(),
         Target::CreateWorktree(request) => {
             format!("worktree {} in project {}", request.branch, request.project)
         }
@@ -204,6 +231,19 @@ pub fn dispatch(
     };
     spawn_job(outcomes, op_tag(&daemon), async move {
         let result = match request.target {
+            Target::Restore(target) => daemon
+                .attach_workspace_at_generation(
+                    target.node.as_deref(),
+                    target.workspace.as_deref(),
+                    target.project_id.as_deref(),
+                    generation,
+                )
+                .await
+                .map(|snapshot| Prepared {
+                    snapshot: Some(snapshot),
+                    ..Prepared::default()
+                })
+                .map_err(|error| error.to_string()),
             Target::CreateWorktree(request) => daemon
                 .create_worktree(&request.project, &request.branch, request.base.as_deref())
                 .await
@@ -213,10 +253,11 @@ pub fn dispatch(
                 })
                 .map_err(|error| super::project_operations::daemon_reason(&error)),
             Target::Project { project, workspace } => daemon
-                .attach_workspace(
+                .attach_workspace_at_generation(
                     node.as_deref(),
                     workspace.as_deref(),
                     workspace.is_none().then_some(project.as_str()),
+                    generation,
                 )
                 .await
                 .map(|snapshot| Prepared {
@@ -231,7 +272,12 @@ pub fn dispatch(
                         super::project_paths::resolve_project(&daemon, &path, &home, create)
                             .await?;
                     let snapshot = daemon
-                        .attach_workspace(node.as_deref(), None, Some(&project.id))
+                        .attach_workspace_at_generation(
+                            node.as_deref(),
+                            None,
+                            Some(&project.id),
+                            generation,
+                        )
                         .await
                         .map_err(|error| error.to_string())?;
                     Ok(Prepared {
@@ -250,11 +296,14 @@ pub fn dispatch(
             } => {
                 super::terminal_location::prepare(
                     &daemon,
+                    generation,
                     node.as_deref(),
-                    &id,
-                    known,
-                    attention,
-                    reuse,
+                    super::terminal_location::Selection {
+                        terminal: &id,
+                        known,
+                        attention,
+                        reuse,
+                    },
                     roster,
                 )
                 .await
@@ -385,26 +434,19 @@ fn queue(workspace: &mut Workspace<LiveDaemon>, target: Target, then: ProjectAct
     });
 }
 
-pub(super) fn cancel_path(workspace: &mut Workspace<LiveDaemon>) {
+pub fn cancel_path(workspace: &mut Workspace<LiveDaemon>) {
     let navigation = &mut workspace.project_navigation;
-    if navigation
-        .active
-        .as_ref()
-        .is_some_and(|active| active.path.is_some() || active.worktree.is_some())
-        || navigation.pending.as_ref().is_some_and(|request| {
-            matches!(
-                request.target,
-                Target::Path { .. } | Target::CreateWorktree(_)
-            )
-        })
-    {
+    if navigation.active.as_ref().is_some_and(|active| {
+        active.intent == navigation.serial && (active.path.is_some() || active.worktree.is_some())
+    }) || navigation.pending.as_ref().is_some_and(|request| {
+        matches!(
+            request.target,
+            Target::Path { .. } | Target::CreateWorktree(_)
+        )
+    }) {
         navigation.serial += 1;
         navigation.pending = None;
         navigation.ready = None;
-        if let Some(active) = &mut navigation.active {
-            active.path = None;
-            active.worktree = None;
-        }
     }
 }
 
@@ -433,6 +475,7 @@ pub(super) fn defer_terminal(
         model.tab(&pane.tab_id).map(|tab| tab.project_id.clone())
     });
     if workspace.project_navigation.active.is_none()
+        && workspace.project_navigation.restore.is_none()
         && workspace.pane_for_terminal(terminal).is_some()
         && project.is_some()
     {
@@ -473,14 +516,47 @@ pub fn apply(
     if !navigation.active.as_ref().is_some_and(|active| {
         active.request == attachment.request && active.generation == attachment.generation
     }) {
+        if matches!(attachment.then, ProjectAction::CreateWorktree(_)) {
+            discard_attachment(workspace, chrome, current_generation, attachment);
+        }
         return;
     }
     let active = navigation.active.take().expect("matched active request");
+    if matches!(attachment.then, ProjectAction::Restore) {
+        if current_generation {
+            match attachment.result {
+                Ok(prepared) => {
+                    if let Some(snapshot) = prepared.snapshot {
+                        if let Some(model) = workspace.workspace_model() {
+                            if model.workspace.id == snapshot.workspace.id {
+                                workspace.apply_workspace_snapshot(snapshot);
+                                sync_live_chrome(workspace, chrome);
+                            } else {
+                                workspace.project_navigation.restore =
+                                    Some((attachment.generation, tokio::time::Instant::now()));
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    workspace.project_navigation.restore = Some((
+                        attachment.generation,
+                        tokio::time::Instant::now() + std::time::Duration::from_secs(4),
+                    ));
+                    chrome.notify(Toast::warning(format!(
+                        "Cannot restore visible workspace: {error}"
+                    )));
+                }
+            }
+        }
+        return;
+    }
     if matches!(attachment.then, ProjectAction::CreateWorktree(_)) {
         workspace.pending_sidebar.projects = true;
     }
     let navigation = &mut workspace.project_navigation;
     if !current_generation || navigation.serial != active.intent {
+        discard_attachment(workspace, chrome, current_generation, attachment);
         return;
     }
     if let ProjectAction::OpenProject { path, create } = &attachment.then {
@@ -490,6 +566,7 @@ pub fn apply(
             _ => false,
         };
         if !matches {
+            discard_attachment(workspace, chrome, current_generation, attachment);
             return;
         }
     }
@@ -499,12 +576,7 @@ pub fn apply(
                 && base.as_str() == request.base.as_deref().unwrap_or_default())
             || workspace.project_id() != Some(request.project.as_str())
         {
-            if let Err(error) = attachment.result {
-                chrome.notify(Toast::warning(format!(
-                    "Cannot create {}: {error}",
-                    attachment.label
-                )));
-            }
+            discard_attachment(workspace, chrome, current_generation, attachment);
             return;
         }
     }
@@ -521,6 +593,7 @@ pub fn apply(
                 attachment.then
             };
             if let Some(snapshot) = prepared.snapshot {
+                workspace.project_navigation.restore = None;
                 let id = snapshot.workspace.id.clone();
                 workspace.apply_workspace_snapshot(snapshot);
                 let mut target = workspace.attach_target().clone();
@@ -547,6 +620,10 @@ pub fn apply(
             workspace.project_navigation.ready = Some((active.intent, attachment.generation, then));
         }
         Err(error) => {
+            if !matches!(attachment.then, ProjectAction::CreateWorktree(_)) {
+                workspace.project_navigation.restore =
+                    Some((attachment.generation, tokio::time::Instant::now()));
+            }
             if matches!(
                 attachment.then,
                 ProjectAction::OpenProject { .. } | ProjectAction::CreateWorktree(_)
@@ -559,6 +636,36 @@ pub fn apply(
                 )));
             }
         }
+    }
+}
+
+fn discard_attachment(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    current_generation: bool,
+    attachment: ProjectAttachment,
+) {
+    if matches!(attachment.then, ProjectAction::CreateWorktree(_)) {
+        workspace.pending_sidebar.projects = true;
+        match attachment.result {
+            Ok(prepared) => {
+                if let Some(row) = prepared.created {
+                    chrome.notify(Toast::warning(format!(
+                        "Created {}; navigation dismissed. Worktree kept at {}",
+                        attachment.label, row.worktree_path
+                    )));
+                }
+            }
+            Err(error) => chrome.notify(Toast::warning(format!(
+                "Cannot create {}: {error}",
+                attachment.label
+            ))),
+        }
+    } else if current_generation {
+        // The reply also changed the daemon's parametric subscription. Repair
+        // that side effect before allowing another navigation request to run.
+        workspace.project_navigation.restore =
+            Some((attachment.generation, tokio::time::Instant::now()));
     }
 }
 
@@ -588,7 +695,7 @@ pub async fn resume(
             )
             .await?;
         }
-        ProjectAction::Focus => {}
+        ProjectAction::Focus | ProjectAction::Restore => {}
         ProjectAction::FocusTerminal(id) => {
             super::projects::focus_terminal(workspace, chrome, outcomes, &id).await?
         }
