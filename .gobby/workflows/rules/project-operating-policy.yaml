@@ -1,4 +1,4 @@
-version: "4.0.0"
+version: "4.0.1"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -256,7 +256,12 @@ rules:
               "src/gobby/agents/build_sweep.py",
               "src/gobby/config/agent_build.py",
               "src/gobby/cli/build_sweep.py",
-              "src/gobby/terminals/native_env_policy.py"
+              "src/gobby/terminals/native_env_policy.py",
+              "crates/gterminal/src/pty/**",
+              "crates/gterminal/src/pane/terminal/history.rs",
+              "src/gobby/hooks/credential_file_policy.py",
+              "src/gobby/workflows/read_path_patterns.py",
+              "src/gobby/install/shared/workflows/rules/worker-safety/credential-file-protection.yaml"
             ],
             "operator_channel": "gobby-telegram",
             "quiet_hours": "04:00–06:30 America/Chicago daily",
@@ -312,7 +317,7 @@ rules:
           - Integration 0.5.0. Push: the operator and sessions running the default agent definition may push. Other definitions follow their runbook push policy.
           - Claim before editing; preserve foreign files and stage only owned task paths.
           - Follow TDD where applicable, focused validation and OCR self-review. Record truthful completion evidence and close with the commit SHA.
-          - Test runs on a shared host: run `uv sync` once per checkout, then `uv run --no-sync pytest ...`, because a plain `uv run` waits silently on the shared sync lock. A seat that can't write the checkout's `target/` sets CARGO_TARGET_DIR to its own writable target and builds gdaemon there once before running tests that need it. A run that prints nothing is waiting on a lock or a build, so don't count it as a hang or a failure.
+          - Test runs on a shared host: run `uv sync --frozen` once per checkout (plain `uv sync` may rewrite uv.lock and is refused), then `uv run --no-sync pytest ...`, because a plain `uv run` waits silently on the shared sync lock. A seat that can't write the checkout's `target/` sets CARGO_TARGET_DIR to its own writable target and builds gdaemon there once before running tests that need it. A run that prints nothing is waiting on a lock or a build, so don't count it as a hang or a failure.
           - Direct integration commits require the active definition's capability and declared path coverage. Otherwise follow the configured landing workflow.
           - The operator alone moves protected/operator-placed tasks. Preserve the deferred-by-user label.
           - Honor project_policy.quiet_hours; read release_guidance before crate releases.
