@@ -1,0 +1,86 @@
+"""Prepare a clearly instructed, result-blind human review from frozen inputs."""
+
+import csv
+import importlib.util
+import json
+import random
+import subprocess
+from pathlib import Path
+
+ROOT = Path("/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/session-21986")
+spec = importlib.util.spec_from_file_location("diagnostic", ROOT / "expanded-clef-diagnostic-20261111.py")
+assert spec is not None and spec.loader is not None
+diagnostic = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(diagnostic)
+population = json.loads((ROOT / "population-after-fix-20261111.json").read_text())
+groups = [row for row in population["communities"] if row["member_count"] >= 3]
+names = json.loads((ROOT / "population-names-20261111.json").read_text())["names"]
+sample = diagnostic.select_stratified(groups, 6)
+items = []
+for offset in range(0, 30, 6):
+    for row in sample[offset:offset + 2]:
+        items.append({"community": row["community"], "variant": "baseline", "row": row,
+                      "name": names[row["community"]], "members": row["members"]})
+    row = sample[offset]
+    donor = next(other for other in groups if other["community"] != row["community"]
+                 and not set(other["members"]) & set(row["members"])
+                 and other["members"][0].split("/")[0] != row["members"][0].split("/")[0])
+    for variant, displayed_row, members in [
+        ("remove_quarter", row, row["members"][:max(1, len(row["members"]) - max(1, len(row["members"]) // 4))]),
+        ("replace_all", donor, donor["members"][:len(row["members"])]),
+    ]:
+        items.append({"community": row["community"], "variant": variant, "row": displayed_row,
+                      "name": names[row["community"]], "members": members})
+random.Random(25163).shuffle(items)
+lines = [
+    "# Expanded community-name review",
+    "",
+    "This is a new, representative 20-item review. Your previous 45 ratings are preserved.",
+    "The candidates cover groups of 3–4, 5–19, 20–49, 50–99 and 100+ files.",
+    "Names are navigation aids: judge whether they help you find the code shown.",
+    "No community number or directory name is the proposed label.",
+    "",
+    "For each item, fill the matching row in `expanded-review.csv`:",
+    "",
+    "- **Accuracy:** 2 = describes the main responsibility; 1 = partly right or overly broad; 0 = wrong or misleading.",
+    "- **Findability:** 2 = you would confidently look here for the responsibility named; 1 = some help; 0 = no help or sends you to the wrong code.",
+    "- **Keep this name?** yes/no: would you keep this exact name for the files currently shown? This direct answer supplies carry truth without converting a partial score into a yes.",
+    "- Use `skip` when the context is insufficient; a skip never counts as an approval. A short comment or suggested name is welcome.",
+    "",
+    "Some names intentionally accompany different files. Judge only the displayed files; you do not need to infer their history.",
+    "This worksheet does not change the original 85% acceptance bar or enable a live decision check.",
+    "",
+]
+key = {}
+csv_rows = []
+for index, item in enumerate(items, 1):
+    item_id = f"R{index:02}"
+    row, members = item["row"], item["members"]
+    representative_candidates = list(dict.fromkeys([*row["representatives"], *members]))
+    representative = next((p for p in representative_candidates if p in members
+                           and Path(p).stem not in {"__init__", "index", "mod", "lib"}), members[0])
+    proc = subprocess.run(["gcode", "outline", representative], cwd="/Users/josh/Projects/gobby",
+                          capture_output=True, text=True, check=False)
+    symbols = [line for line in proc.stdout.splitlines()
+               if any(marker in line for marker in ("[function]", "[class]", "[struct]", "[enum]", "[method]"))][:5]
+    selected = list(dict.fromkeys([representative, *[p for p in row["representatives"] if p in members], *members]))[:8]
+    lines += [f"## {item_id} — {item['name']}", "", f"**Proposed name:** {item['name']}", "",
+              f"**Files in this case:** {len(members)}. Representative examples:", ""]
+    lines += [f"- `{member}`" for member in selected]
+    if symbols:
+        lines += ["", "**Concrete code entry points:**", "", "```text", *symbols, "```"]
+    lines += ["", "Accuracy: ___ / Findability: ___ / Keep this name? ___ / Comment: ___", ""]
+    key[item_id] = {k: v for k, v in item.items() if k != "row"}
+    key[item_id]["representative"] = representative
+    key[item_id]["source_outline"] = symbols
+    key[item_id]["source_outline_exit"] = proc.returncode
+    csv_rows.append({"item_id": item_id, "proposed_name": item["name"],
+                     "accuracy_0_2_or_skip": "", "findability_0_2_or_skip": "",
+                     "keep_name_yes_no_or_skip": "", "comment": ""})
+(ROOT / "expanded-review.md").write_text("\n".join(lines))
+(ROOT / "expanded-review-key.json").write_text(json.dumps(key, indent=2) + "\n")
+with (ROOT / "expanded-review.csv").open("w", newline="") as handle:
+    writer = csv.DictWriter(handle, fieldnames=list(csv_rows[0]), lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(csv_rows)
+print(f"Prepared {len(items)} review cases; source outlines available for {sum(bool(v['source_outline']) for v in key.values())}")

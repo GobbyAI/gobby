@@ -1,0 +1,94 @@
+{
+  "communities_before": 3074,
+  "communities_after": 3003,
+  "singletons_before": 2915,
+  "singletons_after": 2810,
+  "previous_singletons_now_grouped": 109,
+  "previous_grouped_now_singletons": 1,
+  "added_files": [
+    ".gobby/gcode.json",
+    ".gobby/plans/operator-friction-consolidation.md",
+    "docs/evidence/community-labels-2026-09/population-study-2026-11-11/README.md",
+    "src/gobby/tasks/landing_versions.py",
+    "tests/tasks/test_landing_versions.py"
+  ],
+  "removed_files": [],
+  "label_kinds": {
+    "group_name": 169,
+    "paired_file_captions": 24,
+    "file_caption": 2810
+  },
+  "caption_derivations": {
+    "readable_filename": 1199,
+    "module_docstring": 184,
+    "markdown_heading": 1302,
+    "rust_module_comment": 173
+  },
+  "diagnostic_cases": 313,
+  "baseline_question_answers": 579,
+  "carry_answers": 120,
+  "errors": [],
+  "selection_counts": {
+    "candidate": 182,
+    "deterministic": 11
+  },
+  "opinions": {
+    "group_name": {
+      "n": 169,
+      "mean": 1.6270304784698422,
+      "min": 0.8828478730243479,
+      "max": 1.8720227195676307,
+      "at_least_half": 169
+    },
+    "negative_control_probability": {
+      "n": 193,
+      "mean": 0.029052765341909228,
+      "min": 0.01672114370544215,
+      "max": 0.07807816514495095,
+      "at_least_half": 0
+    },
+    "file_caption": {
+      "n": 16,
+      "mean": 1.262921648586591,
+      "min": 0.5929339609740825,
+      "max": 1.6549592517847187,
+      "at_least_half": 16
+    },
+    "paired_file_captions": {
+      "n": 8,
+      "mean": 1.539332409748675,
+      "min": 1.1407741670790457,
+      "max": 1.8547986639737397,
+      "at_least_half": 8
+    },
+    "carry_unchanged": {
+      "n": 30,
+      "mean": 0.8610248487399906,
+      "min": 0.2605775779131141,
+      "max": 0.9764905475924671,
+      "at_least_half": 28
+    },
+    "carry_reordered": {
+      "n": 30,
+      "mean": 0.8341681854888917,
+      "min": 0.15559099407709326,
+      "max": 0.9759464471055739,
+      "at_least_half": 28
+    },
+    "carry_remove_quarter": {
+      "n": 30,
+      "mean": 0.8469812212484715,
+      "min": 0.3285294332643027,
+      "max": 0.9734434290045008,
+      "at_least_half": 28
+    },
+    "carry_replace_all": {
+      "n": 30,
+      "mean": 0.036620231810948436,
+      "min": 0.01013041166358438,
+      "max": 0.11357959169117389,
+      "at_least_half": 0
+    }
+  },
+  "interpretation": "Descriptive Clef opinions only. A 0.5 split is a diagnostic display, not a new acceptance threshold. No human precision, recall or ship approval inferred."
+}
