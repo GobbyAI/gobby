@@ -395,8 +395,8 @@ async def test_codex_rollout_boundary_observed_at_deadline_completes_wait(
         None,
         None,
         timeout_seconds=0.0,
-        codex_cursor=cursor,
-        on_codex_boundary=receive_boundary,
+        compact_cursor=cursor,
+        on_compact_record=receive_boundary,
     )
 
     assert result is None

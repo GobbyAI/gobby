@@ -216,9 +216,26 @@ class PromptDetector:
             return self.prompt_payload(pane_output, kind="approval")
         if self.detect_trust_prompt(pane_output):
             return self.prompt_payload(pane_output, kind="trust")
-        if len(self._enumerated_options(self._prompt_excerpt(pane_output))) >= 2:
+        excerpt = self._prompt_excerpt(pane_output)
+        if len(self._enumerated_options(excerpt)) >= 2 and self._cursor_on_option(excerpt):
             return self.prompt_payload(pane_output, kind="question")
         return None
+
+    def _cursor_on_option(self, excerpt: str) -> bool:
+        """Whether a selection marker sits on a numbered row.
+
+        A live menu marks its selected option (`❯ 1. Stop`); a numbered list in a
+        working session's output marks none, so it waits on no one.
+        """
+        for raw_line in excerpt.splitlines():
+            line = _ANSI_ESCAPE_RE.sub("", raw_line).strip(" │╭╮╰╯─")
+            if (
+                line
+                and line[0] in self.SELECTION_MARKERS
+                and self.ENUMERATED_OPTION_PATTERN.match(line[1:].lstrip())
+            ):
+                return True
+        return False
 
     def prompt_payload(self, pane_output: str, *, kind: PromptKind) -> DetectedPrompt:
         """Build a bounded structured payload for a known prompt kind."""

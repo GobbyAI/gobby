@@ -330,10 +330,40 @@ class TestStructuredPromptDetection:
     def test_sorts_enumerated_options_numerically(self) -> None:
         detector = make_detector()
 
-        detected = detector.detect_prompt("Choose a response:\n10. Later\n2. Soon\n1. Now\n")
+        detected = detector.detect_prompt("Choose a response:\n10. Later\n2. Soon\n❯ 1. Now\n")
 
         assert detected is not None
         assert [option["option"] for option in detected.options] == [1, 2, 10]
+
+    def test_a_numbered_list_in_working_output_is_no_question(self) -> None:
+        """Output that numbers its steps marks no selected row, so it waits on no one."""
+        detector = make_detector()
+        pane_output = (
+            "⏺ Next steps:\n"
+            "  1. Bump gclient to 0.1.129\n"
+            "  2. Run fmt, clippy and nextest\n"
+            "\n"
+            "✻ Crunching… (esc to interrupt)\n"
+            "╭──────────────────────────────────╮\n"
+            "│ ❯                                │\n"
+            "╰──────────────────────────────────╯\n"
+        )
+
+        assert detector.detect_prompt(pane_output) is None
+
+    def test_a_menu_with_its_cursor_on_an_option_is_a_question(self) -> None:
+        detector = make_detector()
+        pane_output = (
+            "  What do you want to do?\n"
+            "\n"
+            "  ❯ 1. Stop and wait for limit to reset\n"
+            "    2. Wait here, then continue automatically\n"
+        )
+
+        detected = detector.detect_prompt(pane_output)
+
+        assert detected is not None
+        assert detected.kind == "question"
 
 
 class TestDetectQueuedMessagePrompt:
@@ -382,8 +412,8 @@ class TestDismissedTracking:
     def test_clear_nonexistent_is_noop(self) -> None:
         """Clearing a run_id that was never tracked doesn't raise."""
         detector = make_detector()
-        result = detector.clear("run-never-seen")
-        assert result is None
+        detector.clear("run-never-seen")
+        assert not detector.was_dismissed("run-never-seen")
         assert detector.was_dismissed("run-never-seen") is False
 
     def test_independent_tracking(self) -> None:

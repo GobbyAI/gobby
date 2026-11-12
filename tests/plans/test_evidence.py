@@ -38,6 +38,9 @@ class EvidenceContext:
     def get_commit_range_diff(self, range_: str) -> str:
         return self.commit_range_diff
 
+    def landed_base_tip(self, task_ref: str, branch: str) -> str | None:
+        return None
+
 
 def test_resolve_commits_range(tmp_path: Path) -> None:
     repo = _git_repo(tmp_path)

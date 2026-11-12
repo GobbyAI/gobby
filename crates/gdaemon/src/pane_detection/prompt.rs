@@ -124,7 +124,8 @@ impl<'a> PromptDetector<'a> {
         if self.detect_trust_prompt(pane) {
             return Some(prompt_payload(pane, PromptKind::Trust));
         }
-        if enumerated_options(&prompt_excerpt(pane)).len() >= 2 {
+        let excerpt = prompt_excerpt(pane);
+        if enumerated_options(&excerpt).len() >= 2 && cursor_on_option(&excerpt) {
             return Some(prompt_payload(pane, PromptKind::Question));
         }
         None
@@ -171,6 +172,25 @@ pub(super) fn strip_ansi(text: &str) -> String {
 
 fn strip_box(value: &str) -> &str {
     value.trim_matches(BOX_CHARS)
+}
+
+/// Whether a selection marker sits on a numbered row, as the Python
+/// `_cursor_on_option`: a live menu marks its selected option (`❯ 1. Stop`); a
+/// numbered list in a working session's output marks none.
+fn cursor_on_option(excerpt: &str) -> bool {
+    py_splitlines(excerpt).into_iter().any(|raw_line| {
+        let visible = strip_ansi(raw_line);
+        let mut chars = strip_box(&visible).chars();
+        chars
+            .next()
+            .is_some_and(|first| SELECTION_MARKERS.contains(first))
+            && patterns()
+                .enumerated_option
+                .find(chars.as_str().trim_start_matches(py_isspace))
+                .ok()
+                .flatten()
+                .is_some_and(|found| found.start() == 0)
+    })
 }
 
 fn is_selected_option(line: &str) -> bool {

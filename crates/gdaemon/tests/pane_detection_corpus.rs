@@ -345,8 +345,16 @@ fn loop_and_quota_match_python() {
 fn prompt_options_read_unicode_digits_as_python() {
     let manifests = bundled_manifests();
     let prompt = PromptDetector::new(manifests.for_provider("claude"))
-        .detect_prompt("Pick one:\n1\u{661}. Eleven\n2. Two\n")
-        .expect("two enumerated options make a question");
+        .detect_prompt("Pick one:\n1\u{661}. Eleven\n\u{276f} 2. Two\n")
+        .expect("a cursor on one of two enumerated options makes a question");
+    assert!(
+        PromptDetector::new(manifests.for_provider("claude"))
+            .detect_prompt(
+                "⏺ Next steps:\n  1. Bump gclient\n  2. Run nextest\n\n✻ Crunching…\n│ ❯                │\n"
+            )
+            .is_none(),
+        "a numbered list in working output marks no selected row"
+    );
     assert_eq!(
         prompt.to_payload()["options"],
         json!([

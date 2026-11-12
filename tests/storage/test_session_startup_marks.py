@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -20,7 +22,15 @@ pytestmark = pytest.mark.unit
 
 MACHINE = "machine-25647"
 THREAD = "01a1a561-0000-7000-8000-000000025647"
-MARK = {"machine_id": MACHINE, "source": "codex", "external_id": THREAD}
+
+
+class _Mark(TypedDict):
+    machine_id: str
+    source: str
+    external_id: str
+
+
+MARK: _Mark = {"machine_id": MACHINE, "source": "codex", "external_id": THREAD}
 
 
 def test_a_recorded_mark_answers_only_its_own_thread_source_and_machine(
@@ -29,10 +39,10 @@ def test_a_recorded_mark_answers_only_its_own_thread_source_and_machine(
     record_startup_mark(temp_db, **MARK)
 
     assert startup_mark_exists(temp_db, **MARK)
-    assert not startup_mark_exists(temp_db, **{**MARK, "machine_id": "machine-other"})
-    assert not startup_mark_exists(temp_db, **{**MARK, "source": "claude"})
+    assert not startup_mark_exists(temp_db, **_Mark({**MARK, "machine_id": "machine-other"}))
+    assert not startup_mark_exists(temp_db, **_Mark({**MARK, "source": "claude"}))
     assert not startup_mark_exists(
-        temp_db, **{**MARK, "external_id": "01a1a561-0000-7000-8000-000000025648"}
+        temp_db, **_Mark({**MARK, "external_id": "01a1a561-0000-7000-8000-000000025648"})
     )
 
 
@@ -56,7 +66,7 @@ def test_a_repeated_startup_keeps_one_mark_and_one_delete_consumes_it(
 
 
 def test_pruning_drops_only_marks_older_than_the_age_limit(temp_db: HubDatabase) -> None:
-    aged = {**MARK, "external_id": "01a1a561-0000-7000-8000-000000025649"}
+    aged = _Mark({**MARK, "external_id": "01a1a561-0000-7000-8000-000000025649"})
     record_startup_mark(temp_db, **MARK)
     record_startup_mark(temp_db, **aged)
     temp_db.execute(

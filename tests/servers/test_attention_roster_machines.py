@@ -26,7 +26,7 @@ pytestmark = pytest.mark.unit
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
 REMOTE_MACHINE_ID = "eeeeeeee-eeee-4eee-8eee-000000024277"
-QUESTION_PROMPT = "Would you like to continue?\n1. Yes\n2. No\n"
+QUESTION_PROMPT = "Would you like to continue?\n❯ 1. Yes\n  2. No\n"
 
 
 async def _run_db(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

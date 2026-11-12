@@ -2507,10 +2507,10 @@
       "id": "claude.detect.sorted_options",
       "provider": "claude",
       "detector": "prompt.detect",
-      "pane": "Choose a response:\n10. Later\n2. Soon\n1. Now\n",
+      "pane": "Choose a response:\n10. Later\n2. Soon\n❯ 1. Now\n",
       "expect": {
         "kind": "question",
-        "excerpt": "Choose a response:\n10. Later\n2. Soon\n1. Now",
+        "excerpt": "Choose a response:\n10. Later\n2. Soon\n❯ 1. Now",
         "options": [
           {
             "option": 1,
@@ -2525,7 +2525,7 @@
             "label": "Later"
           }
         ],
-        "fingerprint": "23c8216217425d77046ec42258b25243f338b7335ae33e3add5f4fa4b452eb3c"
+        "fingerprint": "df2a72f78924a06ed4279f38b7ea1f0f1a5b326a2943d13644a5ccd60b445690"
       }
     },
     {
@@ -3049,15 +3049,15 @@
       "id": "claude.attention.question",
       "provider": "claude",
       "detector": "attention.classify",
-      "pane": "Choose a response:\n10. Later\n2. Soon\n1. Now\n",
+      "pane": "Choose a response:\n10. Later\n2. Soon\n❯ 1. Now\n",
       "expect": {
         "transition": {
           "reason": "question",
           "kind": "actionable",
-          "fingerprint": "23c8216217425d77046ec42258b25243f338b7335ae33e3add5f4fa4b452eb3c",
+          "fingerprint": "df2a72f78924a06ed4279f38b7ea1f0f1a5b326a2943d13644a5ccd60b445690",
           "payload": {
             "kind": "question",
-            "excerpt": "Choose a response:\n10. Later\n2. Soon\n1. Now",
+            "excerpt": "Choose a response:\n10. Later\n2. Soon\n❯ 1. Now",
             "options": [
               {
                 "option": 1,
@@ -3072,7 +3072,7 @@
                 "label": "Later"
               }
             ],
-            "fingerprint": "23c8216217425d77046ec42258b25243f338b7335ae33e3add5f4fa4b452eb3c"
+            "fingerprint": "df2a72f78924a06ed4279f38b7ea1f0f1a5b326a2943d13644a5ccd60b445690"
           }
         },
         "dismissed": false

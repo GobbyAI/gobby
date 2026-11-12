@@ -27,7 +27,7 @@ MACHINE = "5d0e8a52-1f4b-4c39-9a4e-2b7c6f1d0b01"
 OTHER = "5d0e8a52-1f4b-4c39-9a4e-2b7c6f1d0b02"
 DIGEST = "ab" * 32
 APPROVAL = "Permission required: press Enter to approve this command"
-QUESTION = "Choose a response:\n1. Yes / 2. No\n"
+QUESTION = "Choose a response:\n❯ 1. Yes / 2. No\n"
 CLEAN = "all quiet"
 STALL = "503 service unavailable"
 _STAMP = datetime(2026, 1, 1, tzinfo=UTC)

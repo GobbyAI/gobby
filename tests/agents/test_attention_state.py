@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import threading
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -54,8 +55,8 @@ def _agent_run() -> AgentRun:
         provider="claude",
         prompt="test",
         status="running",
-        created_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-01T00:00:00+00:00",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         terminal_id="agent-run-1",
     )
 
@@ -482,7 +483,7 @@ async def test_attention_tracker_tracks_prompts_stalls_and_injection_clear(
     await tracker.clear_after_injection(run)
     assert manager.get(f"run:{run.id}").state is None
 
-    await tracker.sync(run, "Choose a response:\n1. Yes / 2. No\n")
+    await tracker.sync(run, "Choose a response:\n❯ 1. Yes / 2. No\n")
     question = manager.get(f"run:{run.id}")
     assert question is not None
     assert question.reason == "question"
