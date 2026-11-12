@@ -73,6 +73,14 @@ def _no_foreign_owners(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(close_context, "foreign_owned_dirty_paths_async", _no_owners)
 
+    def _no_other_checkout(*_args: object, **_kwargs: object) -> bool:
+        return False
+
+    monkeypatch.setattr(
+        "gobby.workflows.checkout_task_attribution.checkout_owned_by_other_claim",
+        _no_other_checkout,
+    )
+
 
 def _ctx(variables: dict[str, Any]) -> RegistryContext:
     return cast(

@@ -101,8 +101,18 @@ class CodeIndexSymbolStorageMixin:
         )
         return [Symbol.from_row(r) for r in rows]
 
-    def get_symbols_for_file(self, project_id: str, file_path: str) -> list[Symbol]:
-        """Get all symbols in a file."""
+    def get_symbols_for_file(
+        self, project_id: str, file_path: str, *, content_hash: str | None = None
+    ) -> list[Symbol]:
+        """Read one immutable file version, or the machine's current selection."""
+        if content_hash is not None:
+            rows = self.db.fetchall(
+                """SELECT * FROM code_symbols
+                   WHERE project_id = %s AND file_path = %s AND file_content_hash = %s
+                   ORDER BY line_start""",
+                (project_id, file_path, content_hash),
+            )
+            return [Symbol.from_row(row) for row in rows]
         rows = self.db.fetchall(
             """SELECT s.* FROM code_symbols s
                JOIN code_indexed_file_states fs

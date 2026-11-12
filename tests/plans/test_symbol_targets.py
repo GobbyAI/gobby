@@ -68,6 +68,7 @@ class _Index:
         project_files: dict[str, dict[str, _IndexedFile]] | None = None,
         project_symbols: dict[str, dict[str, list[_Symbol]]] | None = None,
         available_projects: set[str] | None = None,
+        pins: dict[tuple[str, str], tuple[str, _IndexedFile]] | None = None,
     ) -> None:
         self.files = {
             (project_id, file_path): indexed_file
@@ -91,6 +92,7 @@ class _Index:
             if available_projects is not None
             else ({PROJECT_ID} if available else set())
         )
+        self.pins = pins or {}
         self.file_queries: list[tuple[str, str]] = []
         self.symbol_queries: list[tuple[str, str]] = []
 
@@ -101,7 +103,12 @@ class _Index:
         self.file_queries.append((project_id, file_path))
         return self.files.get((project_id, file_path))
 
-    def get_symbols_for_file(self, project_id: str, file_path: str) -> list[_Symbol]:
+    def get_pinned_file(self, project_id: str, file_path: str) -> tuple[str, _IndexedFile] | None:
+        return self.pins.get((project_id, file_path))
+
+    def get_symbols_for_file(
+        self, project_id: str, file_path: str, *, content_hash: str | None = None
+    ) -> list[_Symbol]:
         self.symbol_queries.append((project_id, file_path))
         return self.symbols.get((project_id, file_path), [])
 
@@ -558,6 +565,43 @@ def test_validate_missing_index_obeys_policy(
     assert result.issues[0].blocking is blocking
 
 
+def test_validate_overlay_uses_pinned_metadata_and_symbols_after_parent_advances(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src" / "inherited.py"
+    source.parent.mkdir()
+    source.write_text("def inherited():\n    pass\n", encoding="utf-8")
+    context, overlay_id = _overlay_context(tmp_path)
+    pinned_hash = _hash(source)
+    symbol_hashes: list[str | None] = []
+
+    class PinnedIndex(_Index):
+        def get_pinned_file(
+            self, project_id: str, file_path: str
+        ) -> tuple[str, _IndexedFile] | None:
+            assert (project_id, file_path) == (overlay_id, "src/inherited.py")
+            return PROJECT_ID, _IndexedFile(pinned_hash, 1)
+
+        def get_symbols_for_file(
+            self, project_id: str, file_path: str, *, content_hash: str | None = None
+        ) -> list[_Symbol]:
+            symbol_hashes.append(content_hash)
+            return [_Symbol("inherited" if content_hash == pinned_hash else "renamed")]
+
+    index = PinnedIndex(
+        project_files={PROJECT_ID: {"src/inherited.py": _IndexedFile("new-parent", 1)}},
+        available_projects={overlay_id, PROJECT_ID},
+    )
+    result = validate_symbol_targets(
+        _parse(tmp_path, "- `src/inherited.py::inherited`"),
+        project_context=context,
+        code_index=index,
+        required=True,
+    )
+    assert result.status == "passed", result.to_dict()
+    assert symbol_hashes[0] == pinned_hash
+
+
 def test_validate_overlay_resolves_branch_only_and_inherited_files(tmp_path: Path) -> None:
     branch_path = tmp_path / "src" / "branch.py"
     inherited_path = tmp_path / "src" / "inherited.py"
@@ -566,6 +610,9 @@ def test_validate_overlay_resolves_branch_only_and_inherited_files(tmp_path: Pat
     inherited_path.write_text("def inherited():\n    pass\n", encoding="utf-8")
     context, overlay_id = _overlay_context(tmp_path)
     index = _Index(
+        pins={
+            (overlay_id, "src/inherited.py"): (PROJECT_ID, _IndexedFile(_hash(inherited_path), 1))
+        },
         project_files={
             overlay_id: {"src/branch.py": _IndexedFile(_hash(branch_path), 1)},
             PROJECT_ID: {"src/inherited.py": _IndexedFile(_hash(inherited_path), 1)},

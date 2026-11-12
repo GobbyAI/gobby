@@ -34,7 +34,7 @@ from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.codex_impl.item_normalization import build_pre_tool_lifecycle_payload
 from gobby.hooks._path_scope import current_tool_cwd
 from gobby.hooks.event_handlers import EventHandlers
-from gobby.hooks.event_handlers._tool import _call_worktree_root
+from gobby.hooks.event_handlers.edit_attribution import _call_worktree_root
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase

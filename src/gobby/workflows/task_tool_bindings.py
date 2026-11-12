@@ -213,6 +213,24 @@ class TaskToolBindings:
         self.manager = manager
         self.session_id = session_id
 
+    def _checkout_selections(
+        self, event: HookEvent, variables: dict[str, Any]
+    ) -> dict[str, str | None]:
+        from gobby.storage.sessions import SessionManager
+        from gobby.workflows.checkout_task_attribution import checkout_task_selections
+
+        project_id = event.project_id
+        if project_id is None:
+            session = SessionManager(self.manager.db).get(self.session_id)
+            project_id = session.project_id if session is not None else None
+        return (
+            checkout_task_selections(
+                self.manager.db, variables, project_id, event.timestamp.timestamp()
+            )
+            if project_id is not None
+            else {}
+        )
+
     def begin_turn(self, event: HookEvent) -> None:
         if event.source.value != "codex" or not event.data.get("turn_id"):
             return
@@ -222,10 +240,13 @@ class TaskToolBindings:
                 "turn_id": event.data["turn_id"],
                 "started_at": event.timestamp.timestamp(),
                 "selection_count": len(variables.get("task_selection_history", [])),
+                "checkout_tasks": self._checkout_selections(event, variables),
             }
             return None, True
 
-        self.manager._mutate_variables(self.session_id, mutate, keys=("task_tool_turn",))
+        self.manager._mutate_variables(
+            self.session_id, mutate, keys=("task_tool_turn", "claimed_tasks")
+        )
 
     def start(self, event: HookEvent) -> None:
         key = _call_key(event)
@@ -272,6 +293,7 @@ class TaskToolBindings:
                 "fences_switch": _fences_switch(event),
                 "anonymous": anonymous,
                 "source": event.source.value,
+                "checkout_tasks": self._checkout_selections(event, variables),
             }
             outer = event.metadata.get("_native_shell_outer_call_id")
             if event.source == SessionSource.CODEX and isinstance(outer, str) and outer:
@@ -433,7 +455,13 @@ class TaskToolBindings:
             return None
         task_id = call.get("task_id")
         if isinstance(task_id, str) and task_id not in variables.get("claimed_tasks", {}):
-            return None
+            checkout_tasks = call.get("checkout_tasks", {})
+            if not isinstance(checkout_tasks, dict) or not any(
+                target in variables.get("claimed_tasks", {})
+                for target in checkout_tasks.values()
+                if isinstance(target, str)
+            ):
+                return None
         value = call.get("started_at")
         return (
             float(value)

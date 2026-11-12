@@ -252,6 +252,41 @@ def test_get_symbols_for_file(code_storage: CodeIndexStorage, sample_symbols: li
     assert symbols[0].line_start <= symbols[1].line_start
 
 
+@pytest.mark.parametrize("shadowed", [False, True])
+def test_pinned_file_survives_parent_advance_and_respects_local_shadow(
+    code_storage: CodeIndexStorage, sample_symbols: list[Symbol], shadowed: bool
+) -> None:
+    code_storage.upsert_symbols(sample_symbols)
+    overlay_id = str(uuid.uuid4())
+    code_storage.upsert_project_stats(
+        IndexedProject(id=overlay_id, root_path="/tmp/gobby-overlay-index-tests"),
+        mode=IndexWriteMode.OVERLAY,
+    )
+    with code_storage.db.transaction() as conn:
+        conn.execute(
+            """INSERT INTO code_overlay_pins
+               (machine_id, overlay_project_id, file_path, source_project_id, content_hash)
+               VALUES (%s, %s, %s, %s, %s)""",
+            (require_machine_id(), overlay_id, "src/app.py", PROJECT_ID, FILE_CONTENT_HASH),
+        )
+    _upsert_test_file(code_storage, "src/app.py", "advanced-parent")
+    if shadowed:
+        _upsert_test_file(code_storage, "src/app.py", "local-marker", project_id=overlay_id)
+        assert code_storage.get_pinned_file(overlay_id, "src/app.py") is None
+        return
+
+    pinned = code_storage.get_pinned_file(overlay_id, "src/app.py")
+    assert pinned is not None
+    source_id, file = pinned
+    assert source_id == PROJECT_ID
+    assert file.content_hash == FILE_CONTENT_HASH
+    assert code_storage.get_symbols_for_file(PROJECT_ID, "src/app.py") == []
+    symbols = code_storage.get_symbols_for_file(
+        source_id, "src/app.py", content_hash=file.content_hash
+    )
+    assert {symbol.id for symbol in symbols} == {symbol.id for symbol in sample_symbols}
+
+
 def test_get_symbols_for_file_empty(code_storage: CodeIndexStorage) -> None:
     """No symbols for a non-indexed file."""
     symbols = code_storage.get_symbols_for_file(PROJECT_ID, "missing.py")
