@@ -50,7 +50,7 @@ def _untracked(ledger: ComposerLedger) -> None:
     [
         (_clean, ComposerRead("empty")),
         (_draft, ComposerRead("draft")),
-        (_held, ComposerRead("held", "/compact")),
+        (_held, ComposerRead("held", "/compact", unsubmitted=True)),
         (_blocked, ComposerRead("unknown", reason="provider_limit")),
         (_untracked, ComposerRead("unknown", reason="untracked")),
     ],

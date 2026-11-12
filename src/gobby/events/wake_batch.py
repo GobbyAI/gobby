@@ -106,7 +106,10 @@ async def dispatch_live_wakes(
                 continue
             if current is not None:
                 session = current
-            blocked, confirmed_empty = await dispatcher._composer_blocks_wake(
+            # No prompt: a stranded wake stays withheld here, and its composer
+            # retry submits it through the single-recipient path, which can
+            # press Enter alone while this batch holds every target's lock.
+            blocked, composer = await dispatcher._composer_blocks_wake(
                 session_id, session, terminal, method="terminal"
             )
             if blocked is not None:
@@ -122,7 +125,7 @@ async def dispatch_live_wakes(
                 session_id=session_id,
                 terminal_id=str(terminal.id),
                 cli_source=getattr(session, "source", None),
-                drain=not confirmed_empty,
+                drain=composer != "empty",
             )
             # target_gate withheld every node terminal above, so each target here is local.
             native_targets.append(target)

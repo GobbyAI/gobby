@@ -129,11 +129,15 @@ def _types_text(kind: WriteKind, payload: str, text: str) -> bool:
 @dataclass(frozen=True)
 class LedgerRead:
     """``blocked`` and ``draft`` refuse typing; ``held`` is daemon text (``pending``,
-    ``None`` when unknown); ``empty`` admits typing without a drain."""
+    ``None`` when unknown); ``empty`` admits typing without a drain.
+
+    ``unsubmitted`` marks known held text that no Enter followed: a write the daemon
+    stopped between its text and its submit."""
 
     state: LedgerState
     reason: str | None = None
     pending: str | None = None
+    unsubmitted: bool = False
 
     def holds(self, payload: str) -> bool:
         """Whether the held daemon text is exactly ``payload``, ignoring whitespace runs."""
@@ -550,7 +554,11 @@ def _read(entry: _Entry) -> LedgerRead:
     if entry.human_seq > entry.clean_seq:
         return LedgerRead("draft")
     if entry.pending_seq > entry.clean_seq:
-        return LedgerRead("held", pending=entry.pending_text)
+        return LedgerRead(
+            "held",
+            pending=entry.pending_text,
+            unsubmitted=entry.pending_text is not None and entry.pending_seq > entry.flagged_seq,
+        )
     return LedgerRead("empty")
 
 
@@ -588,7 +596,7 @@ def read_composer(terminal_id: str) -> ComposerRead:
         return ComposerRead("unknown", reason=read.reason)
     if read.state == "draft" and _bound.cursor_mark(terminal_id) is not None:
         return ComposerRead("draft", reason=CURSOR_DRAFT_REASON)
-    return ComposerRead(read.state, read.pending)
+    return ComposerRead(read.state, read.pending, unsubmitted=read.unsubmitted)
 
 
 def composer_drain_keys(terminal_id: str, cli_source: str | None) -> tuple[NamedKey, ...]:

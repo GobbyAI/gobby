@@ -534,11 +534,13 @@ def test_daemon_text_is_held_until_its_submit_is_recorded() -> None:
     ledger.observe_write("t1", origin="automatic", kind="text", payload="continue")
 
     read = ledger.read("t1")
-    assert read == LedgerRead("held", pending="continue")
+    assert read == LedgerRead("held", pending="continue", unsubmitted=True)
     assert read.holds(" continue ")
     assert not read.holds("/compact")
 
     ledger.observe_write("t1", origin="automatic", kind="key", payload="enter")
+    # Its Enter is sent: the text waits on the submit record, no longer stranded.
+    assert ledger.read("t1") == LedgerRead("held", pending="continue")
     ledger.record_submit("t1")
     assert ledger.read("t1") == _EMPTY
 
@@ -556,7 +558,7 @@ def test_consecutive_daemon_text_writes_accumulate() -> None:
     ledger.observe_write("t1", origin="daemon", kind="text", payload="/com")
     ledger.observe_write("t1", origin="daemon", kind="paste", payload="pact")
 
-    assert ledger.read("t1") == LedgerRead("held", pending="/compact")
+    assert ledger.read("t1") == LedgerRead("held", pending="/compact", unsubmitted=True)
 
 
 def test_daemon_clear_keys_hold_unknown_text_until_a_drain_is_recorded() -> None:
@@ -950,3 +952,23 @@ def test_release_without_a_running_ledger_is_refused() -> None:
         release_composer(terminals, "seat-session", caller_session_id=None)
 
     assert refused.value.code == "ledger_unavailable"
+
+
+def test_daemon_text_stranded_before_its_enter_survives_a_restart() -> None:
+    # A daemon that stops between a wake's text and its Enter leaves the text unsubmitted;
+    # the restored ledger still says so, which lets the next wake press that Enter.
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="automatic", kind="paste", payload="[Gobby] Check messages")
+
+    restored = ComposerLedger.from_state(ledger.to_state())
+
+    assert restored.read("t1") == LedgerRead(
+        "held", pending="[Gobby] Check messages", unsubmitted=True
+    )
+
+
+def test_text_written_with_its_submit_is_not_stranded() -> None:
+    ledger = _tracked()
+    ledger.observe_write("t1", origin="automatic", kind="text", payload="continue", submit=True)
+
+    assert ledger.read("t1") == LedgerRead("held", pending="continue")

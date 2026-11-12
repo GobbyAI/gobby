@@ -279,6 +279,57 @@ async def test_held_daemon_text_is_never_typed_into(
 
 
 @pytest.mark.asyncio
+async def test_a_wake_stranded_before_its_enter_is_submitted_without_retyping(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_target: Callable[..., None],
+) -> None:
+    # A daemon blip between a wake's text and its Enter left the prompt in the composer.
+    agent_target(foreground="codex", snapshot=_CODEX_IDLE)
+    stranded = ComposerRead("held", CONTINUE_WAKE_MESSAGE, unsubmitted=True)
+    session_id, sender, dispatcher = _seat(
+        temp_db,
+        session_manager,
+        sample_project["id"],
+        source="codex",
+        status="idle",
+        read=lambda _id: TerminalActivity(stranded),
+    )
+
+    result = await dispatcher.dispatch_live_wake(session_id)
+
+    assert result["delivered"] is True, result
+    sender.assert_awaited_once()
+    assert sender.await_args is not None
+    assert sender.await_args.args[1] == ""
+    assert sender.await_args.kwargs["submit"] is True
+    assert sender.await_args.kwargs["clear_before_submit"] is False
+
+
+@pytest.mark.asyncio
+async def test_other_stranded_daemon_text_is_never_submitted(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    session_id, sender, dispatcher = _seat(
+        temp_db,
+        session_manager,
+        sample_project["id"],
+        source="codex",
+        status="idle",
+        read=lambda _id: TerminalActivity(ComposerRead("held", "/compact", unsubmitted=True)),
+    )
+
+    result = await dispatcher.dispatch_live_wake(session_id)
+
+    assert result["skipped"] == "composer_unconfirmed"
+    sender.assert_not_awaited()
+    await _cancel_followups(dispatcher)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("reason", [None, "interrupt", "gap", "provider_limit"])
 async def test_unconfirmed_composer_is_never_typed_into(
     temp_db: HubDatabase,

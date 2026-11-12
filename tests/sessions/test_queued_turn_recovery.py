@@ -26,7 +26,6 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
 from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead, UnsafeReason
 from gobby.terminals.host_events import InputActivityEvent
-from tests._timing import drain_asyncio_tasks
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
@@ -414,7 +413,9 @@ async def test_queued_stop_recovers_native_composer_and_pending_wake(
         assert session is not None and session.status == "idle"
         activity = await probe_terminal_activity(session, terminal)
         assert activity.composer.state == ("empty" if draft_position == "none" else "draft")
-        await drain_asyncio_tasks(cycles=10)
+        # Join the replay the idle transition started; a fixed number of loop cycles
+        # cannot cover the target gate's off-loop process reads.
+        await coordinator.request_replay(seat.session_id)
         await coordinator.close()
         if draft_position != "none":
             sender.assert_not_awaited()

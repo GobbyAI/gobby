@@ -105,7 +105,9 @@ how the system behaves so you can work with it instead of being surprised by it.
     draft, held daemon text, or a blocked composer (a gap, an interrupt, or a cursor or
     control key that may have recalled history), and an interrupted, input-, approval-,
     or handoff-waiting seat, take no typed input, so the message stays queued until the
-    seat is safe to wake. A blocked composer raises an attention item that names the
+    seat is safe to wake. The one held-text exception is a wake prompt the daemon
+    stranded between its text and its Enter: the next wake presses that Enter alone.
+    A blocked composer raises an attention item that names the
     seat and the reason; a submit or `release_composer` clears it. The one handoff
     exception is the `get_handoff` continuation of an awaiting-handoff terminal with a
     confirmed compact boundary and an empty composer. Otherwise `project` fanout stays

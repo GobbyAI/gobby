@@ -32,7 +32,9 @@ mailbox on its next tool call. No wake replaces typed composer text, operator co
 included: a typed draft, held daemon text, or a blocked composer (a gap, an
 interrupt, or a cursor or control key that may have recalled history), and an
 interrupted, input-, approval-, or handoff-waiting seat, take no typed input, so the
-message stays queued until the seat is safe to wake. A blocked composer raises an
+message stays queued until the seat is safe to wake. The one held-text exception is a
+wake prompt the daemon stranded between its text and its Enter: the next wake presses
+that Enter alone. A blocked composer raises an
 attention item that names the seat and the reason; a submit or `release_composer`
 clears it. The one handoff exception is the `get_handoff` continuation of an
 awaiting-handoff terminal with a confirmed compact boundary and an empty composer.
@@ -126,5 +128,5 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Version: 3.0.1_
+_Version: 3.1.0_
 _Last verified: 2026-11-10_

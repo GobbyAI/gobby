@@ -243,7 +243,7 @@ async def test_cancel_during_delivered_clear_returns_result_without_duplicate_re
 @pytest.mark.parametrize(
     ("origin", "expected"),
     [
-        ("automatic", LedgerRead("held", pending="continue")),
+        ("automatic", LedgerRead("held", pending="continue", unsubmitted=True)),
         ("attention", LedgerRead("draft")),
     ],
 )

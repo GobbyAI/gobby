@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from datetime import datetime
 from functools import partial
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from gobby.events.live_wake import (
     RETRYABLE_WAKE_SKIPS,
@@ -88,6 +88,7 @@ COMPOSER_RETRY_BASE_SECONDS = 15.0
 COMPOSER_RETRY_MAX_SECONDS = 240.0
 
 RunDb = Callable[..., Awaitable[Any]]
+WakeComposer = Literal["empty", "drain", "stranded"]
 LifecycleRefresh = Callable[[str], Awaitable[None]]
 
 
@@ -751,11 +752,16 @@ class WakeDispatcher:
         *,
         method: str,
         handoff_continuation: bool = False,
-    ) -> tuple[dict[str, Any] | None, bool]:
+        prompt: str | None = None,
+    ) -> tuple[dict[str, Any] | None, WakeComposer]:
         """Withhold the wake while the pane is focused or the composer ledger refuses typing.
 
-        Returns the withheld outcome (``None`` to deliver) and whether the composer
-        was confirmed empty; only an unconfirmed delivery keeps the drain.
+        Returns the withheld outcome (``None`` to deliver) and how to deliver:
+        ``empty`` types into a confirmed-empty composer, ``drain`` clears an
+        unconfirmed one first, and ``stranded`` only presses Enter. ``stranded`` means
+        the ledger holds exactly ``prompt`` with no Enter after it: an earlier wake the
+        daemon stopped between its text and its submit. Completing that write replaces
+        nothing; any other held text still withholds.
 
         No pane text decides a wake (#25901): CLI screens change with every release.
         The activity probe reads the keystroke ledger and the transcript file, never
@@ -784,41 +790,48 @@ class WakeDispatcher:
         if terminal is not None and not is_local_machine(terminal.machine_id):
             state = remote_composer_state(str(terminal.id), terminal.machine_id)
             if state == "empty":
-                return None, True
+                return None, "empty"
             if state == "draft":
-                return composer_occupied_result(session_id, method=method), False
-            return composer_unconfirmed_result(session_id, method=method), False
+                return composer_occupied_result(session_id, method=method), "drain"
+            return composer_unconfirmed_result(session_id, method=method), "drain"
         if self._activity_probe is None:
             if handoff_continuation:
-                return composer_unconfirmed_result(session_id, method=method), False
-            return None, False
+                return composer_unconfirmed_result(session_id, method=method), "drain"
+            return None, "drain"
         try:
             activity = await self._activity_probe(session, terminal)
         except Exception:
             logger.debug("activity probe failed for session %s", session_id, exc_info=True)
-            return composer_unconfirmed_result(session_id, method=method), False
+            return composer_unconfirmed_result(session_id, method=method), "drain"
         composer = activity.composer
         if self._attention_manager is not None:
             await sync_composer_attention(
                 self._attention_manager, self._run_db, session, composer.reason
             )
         if activity.turn_in_flight_fingerprint is not None:
-            return composer_unconfirmed_result(session_id, method=method), False
+            return composer_unconfirmed_result(session_id, method=method), "drain"
         if terminal is not None and self._lease_registry is not None:
             terminal_id = str(terminal.id)
             if self._lease_registry.focus_held(terminal_id):
                 self._focus_holds.setdefault(terminal_id, set()).add(session_id)
-                return pane_focused_result(session_id, method=method), False
+                return pane_focused_result(session_id, method=method), "drain"
             # The pane is unfocused now, so a hold recorded earlier is stale.
             self._focus_holds.get(terminal_id, set()).discard(session_id)
         if composer.state == "empty":
-            return None, True
+            return None, "empty"
+        if (
+            prompt is not None
+            and composer.state == "held"
+            and composer.unsubmitted
+            and composer.holds_payload(prompt)
+        ):
+            return None, "stranded"
         if composer.state == "draft":
             logger.warning(
                 "wake for session %s deferred: composer holds an operator draft", session_id
             )
-            return composer_occupied_result(session_id, method=method), False
-        return composer_unconfirmed_result(session_id, method=method), False
+            return composer_occupied_result(session_id, method=method), "drain"
+        return composer_unconfirmed_result(session_id, method=method), "drain"
 
     async def _send_managed_terminal_wake(
         self,
@@ -851,12 +864,14 @@ class WakeDispatcher:
                 return state_failure
             if current is not None:
                 session = current
-            blocked, confirmed_empty = await self._composer_blocks_wake(
+            continuation = handoff_attempt_id is not None
+            blocked, composer = await self._composer_blocks_wake(
                 session_id,
                 session,
                 terminal,
                 method="terminal",
-                handoff_continuation=handoff_attempt_id is not None,
+                handoff_continuation=continuation,
+                prompt=None if continuation else prompt,
             )
             if blocked is not None:
                 return blocked
@@ -872,16 +887,17 @@ class WakeDispatcher:
             )
             if refused is not None:
                 return refused
-            if confirmed_empty:
+            if composer == "empty":
                 # The sender needs the positive proof to settle an old wake latch;
                 # merely opting out of a drain does not supply that proof.
                 send = partial(send, composer_confirmed_empty=True)
             try:
+                # A stranded wake already holds this prompt: press its Enter only.
                 submitted_at = await send(
                     terminal_id,
-                    prompt,
+                    "" if composer == "stranded" else prompt,
                     submit=True,
-                    clear_before_submit=not confirmed_empty,
+                    clear_before_submit=composer == "drain",
                     cli_source=getattr(session, "source", None),
                 )
             except IndeterminateWrite as exc:
