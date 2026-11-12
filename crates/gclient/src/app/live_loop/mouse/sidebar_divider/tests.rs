@@ -106,7 +106,7 @@ fn overflowing_projects() -> Workspace {
 /// A wheel notch on the divider under Projects scrolls the Projects section,
 /// as it would on the row above the divider.
 #[test]
-fn a_wheel_notch_on_a_section_divider_scrolls_the_section_above_it() {
+fn a_wheel_notch_on_a_label_band_scrolls_that_section() {
     let ws = overflowing_projects();
     let mut chrome = Chrome::dark();
     chrome.sidebar.pinned = true;
@@ -120,14 +120,13 @@ fn a_wheel_notch_on_a_section_divider_scrolls_the_section_above_it() {
         chrome.view.project_hit_areas.len(),
         chrome.view.sidebar_section_rects
     );
-    let divider = chrome.view.sidebar_section_divider_hit_areas[1]
-        .expect("the divider under Projects is drawn");
-    let notch = event(MouseEventKind::ScrollDown, divider.x + 1, divider.y);
+    let band = chrome.view.sidebar_section_rects[SidebarSection::Projects.index()];
+    let notch = event(MouseEventKind::ScrollDown, band.x + 1, band.y);
     assert_eq!(route_mouse(&ws, &mut chrome, &notch), MouseOutcome::Handled);
     assert_eq!(
         chrome.sidebar.scroll(SidebarSection::Projects),
         MOUSE_SCROLL_LINES,
-        "the notch scrolls the section above the divider"
+        "the notch on the Projects band scrolls Projects"
     );
 }
 

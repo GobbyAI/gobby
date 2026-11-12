@@ -1449,9 +1449,9 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         assert!(
             matches!(
                 chrome.gesture,
-                Some(MouseGesture::SidebarSectionDrag { index: 1, .. })
+                Some(MouseGesture::SidebarSectionDrag { index: 0, .. })
             ),
-            "the Projects band starts its resize: {:?}",
+            "the Projects band moves its top edge against Machines: {:?}",
             chrome.gesture
         );
         assert_eq!(

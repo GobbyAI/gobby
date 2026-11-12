@@ -21,8 +21,8 @@ use crate::ui::scrollbar::{render_scrollbar, scrolled_recently, should_show_scro
 use crate::ui::settings::SidebarSide;
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar_rows::{
-    project_rows, row_line_with_scrolling, row_second_line, row_third_line_with_travel, row_travel,
-    worktree_glyph_offset, RowKind, SidebarRow,
+    project_rows, row_fourth_line_with_travel, row_line_with_scrolling, row_second_line,
+    row_third_line_with_travel, row_travel, worktree_glyph_offset, RowKind, SidebarRow,
 };
 use crate::ui::text::{display_width_u16, truncate_end};
 use gobby_terminal::layout::ScrollMetrics;
@@ -262,13 +262,14 @@ pub fn render_sidebar<W: WorkspaceView>(
     projects::render_projects(frame, layout.sections[1], &projects, chrome, &mut hits);
     agents::render_agents(frame, layout.sections[2], &agents, chrome, &mut hits);
     terminals::render_terminals(frame, layout.sections[3], &terminals, chrome, &mut hits);
-    // A section's label band is the handle that trades its rows with the
-    // section below, when both are drawn tall enough to trade; the blank row
-    // under it is inert.
+    // A section's label band is its top edge: dragging it trades rows with the
+    // section above, so divider `index` (between `index` and `index + 1`) is
+    // the lower section's band. The first section's band has nothing above it
+    // and stays inert, as does the blank row under every band.
     for index in 0..hits.dividers.len() {
-        let section = layout.sections[index];
-        if section.height >= 3 && layout.sections[index + 1].height > 0 {
-            hits.dividers[index] = Some(Rect::new(section.x, section.y, section.width, BAND_ROWS));
+        let lower = layout.sections[index + 1];
+        if layout.sections[index].height > 0 && lower.height >= 3 {
+            hits.dividers[index] = Some(Rect::new(lower.x, lower.y, lower.width, BAND_ROWS));
         }
     }
     hits
@@ -406,6 +407,15 @@ pub(super) fn render_section_rows(
                     ))
                     .style(row_style),
                     Rect::new(body.x, y + 2, body.width, 1),
+                );
+            }
+            if height > 3 {
+                frame.render_widget(
+                    Paragraph::new(row_fourth_line_with_travel(
+                        row, body.width, chrome, max_travel,
+                    ))
+                    .style(row_style),
+                    Rect::new(body.x, y + 3, body.width, 1),
                 );
             }
             let rect = Rect::new(body.x, y, body.width, height);
