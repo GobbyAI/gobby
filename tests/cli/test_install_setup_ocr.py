@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -113,6 +114,7 @@ def npm(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeNpm:
     )
     monkeypatch.setattr(requirements, "OCR_NATIVE_SHA256", {PLATFORM: _sha256(NATIVE_BYTES)})
     monkeypatch.setenv("PATH", str(npm_dir))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
 
     def run(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
         fake.calls.append(list(argv))
@@ -146,6 +148,38 @@ def test_pinned_install_is_left_in_place_on_rerun(
     assert result.path == (npm.prefix / "bin" / "ocr").resolve()
     assert npm.installs() == []
     assert npm.uninstalls() == []
+
+
+def _update_check_deferred() -> bool:
+    """OCR's launcher skips its npm self-update while this stamp is younger than its cooldown."""
+    stamp = Path.home() / ".opencodereview" / "last-update-check"
+    return stamp.is_file() and stamp.stat().st_mtime > time.time() + 365 * 24 * 3600
+
+
+def test_a_pinned_rerun_keeps_ocr_from_updating_itself(
+    npm: FakeNpm, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_npm_install(npm.prefix, npm.tree, npm.native)
+    monkeypatch.setenv("PATH", str(npm.prefix / "bin"))
+
+    install_ocr_cli()
+
+    assert _update_check_deferred()
+
+
+def test_a_fresh_install_keeps_ocr_from_updating_itself(npm: FakeNpm) -> None:
+    install_ocr_cli()
+
+    assert _update_check_deferred()
+
+
+def test_a_failed_install_leaves_the_update_stamp_alone(npm: FakeNpm) -> None:
+    npm.returncode = 1
+
+    with pytest.raises(OcrInstallError):
+        install_ocr_cli()
+
+    assert not (Path.home() / ".opencodereview").exists()
 
 
 def test_missing_ocr_installs_the_pinned_release(npm: FakeNpm) -> None:

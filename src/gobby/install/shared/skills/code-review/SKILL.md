@@ -1,7 +1,7 @@
 ---
 name: code-review
 description: How to review code with open-code-review delegate mode. Use when asked to review code or a diff, to run an adversarial review, or when the commit gate or a review gate blocks.
-version: "1.0.0"
+version: "1.0.1"
 category: engineering
 triggers: code review, diff review, delegate review, review gate, adversarial review
 tags:
@@ -44,10 +44,12 @@ native call must be abandoned while loading; continue with the missing loads.
 ocr --version
 ```
 
-If `ocr` is missing and `npm` is on PATH, install it and re-check:
+If `ocr` is missing or `gobby status` reports it off its pin, install the pinned release
+and re-check. Never install it with `npm` directly, which takes the latest release and
+fails the pin:
 
 ```bash
-npm i -g @alibaba-group/open-code-review
+gobby install ocr --no-interactive
 ```
 
 If `ocr` is still missing, use the fallback: `git diff --name-only <range>` (or
