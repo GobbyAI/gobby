@@ -1,0 +1,76 @@
+"""A paired diagnostic of fixed Codex/Gemma names, never a human quality verdict."""
+import asyncio
+import csv
+import hashlib
+import json
+from dataclasses import asdict
+from pathlib import Path
+
+from gobby.ai.decisions import ChoiceQuestion, DecisionService, ScoreQuestion
+from gobby.config.ai import DecisionsConfig
+
+ROOT = Path('/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/session-21986')
+PRIOR = ROOT / 'full-study-20261111'
+OUT = ROOT / 'codex-clef-comparison-20261111.json'
+
+
+async def main():
+    names = json.loads((ROOT / 'codex-label-candidates-20261111.json').read_text())['names']
+    key = json.loads((PRIOR / 'key.json').read_text())
+    with (PRIOR / 'sheet.csv').open() as handle:
+        rows = {row['item_id']: row for row in csv.DictReader(handle)}
+    communities = {}
+    for item, entry in key.items():
+        community = communities.setdefault(str(entry['community']), {})
+        row = rows[item]
+        for arm in entry['arms']:
+            community[arm] = row
+    assert set(names) == set(communities)
+    config = DecisionsConfig(wire_api='systemone', api_base='http://127.0.0.1:11434',
+                             model='clef:27b', identity_contract='response_version',
+                             backend_max_state_tokens=16384, timeout_seconds=30)
+    result = {'purpose': 'Source-blinded paired diagnostic, not a replacement for human ratings',
+              'generation': 'Codex authored fixed names; no text generation service invoked',
+              'model': 'clef:27b', 'api_cost_usd': 0, 'local_compute_cost': 'unmeasured',
+              'source_sheet_sha256': hashlib.sha256((PRIOR / 'sheet.csv').read_bytes()).hexdigest(),
+              'evidence_scope': 'Complete frozen member lists; differs from production 40-path cap',
+              'communities': []}
+    for cid, community in communities.items():
+        generated = community['G']
+        state = {'members': generated['members'].splitlines()}
+        codex = names[cid]
+        gemma = generated['name']
+        fallback = community['D']['name']
+        options = {'a': codex, 'b': gemma, 'fallback': fallback}
+        swapped = {'a': gemma, 'b': codex, 'fallback': fallback}
+        service = DecisionService(config)
+        choice = await service.choose('community_label_candidate_comparison', state, {
+            'first_order': ChoiceQuestion('Choose the name that best describes this group of files.', options),
+            'swapped_order': ChoiceQuestion('Choose the name that best describes this group of files.', swapped),
+        })
+        service = DecisionService(config)
+        score = await service.score('community_label_candidate_comparison', state, {
+            'first': ScoreQuestion(f'How useful is the name "{codex}" for finding this code?',
+                                   ('misleading or unhelpful', 'partly useful', 'clear and useful')),
+            'second': ScoreQuestion(f'How useful is the name "{gemma}" for finding this code?',
+                                    ('misleading or unhelpful', 'partly useful', 'clear and useful')),
+        })
+        carry_state = {'members': community['carry']['members'].splitlines()}
+        service = DecisionService(config)
+        carry = await service.noul('community_label_carry_comparison', carry_state, {
+            'first': f'The name "{codex}" still usefully describes this group of files.',
+            'second': f'The name "{gemma}" still usefully describes this group of files.',
+        })
+        record = {'community': cid, 'codex_name': codex, 'gemma_name': gemma,
+                  'fallback': fallback, 'member_count': len(state['members']),
+                  'first_order': {'a': 'codex', 'b': 'gemma', 'fallback': 'fallback'},
+                  'swapped_order': {'a': 'gemma', 'b': 'codex', 'fallback': 'fallback'},
+                  'choice': asdict(choice),
+                  'score': asdict(score),
+                  'carry': asdict(carry)}
+        result['communities'].append(record)
+        OUT.write_text(json.dumps(result, indent=2) + '\n')
+        print(f'Completed community {cid}', flush=True)
+
+
+asyncio.run(main())

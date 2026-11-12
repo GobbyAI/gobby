@@ -1,0 +1,13 @@
+{
+  "source": "/Users/josh/Projects/gobby/docs/evidence/community-labels-2026-09/study-2026-11/sheet.rated.csv",
+  "source_sha256": "91b63c24cd99363b7a664b12ac2d956860bfebaa00f2343ff3ab7a65ae01bcba",
+  "sheet_sha256": "e5a6efae9e1a732f6500bd6c1a0ae5894734eb635f21dca65f3a33dfe782b684",
+  "matching": "exact displayed members and name",
+  "reused": [
+    {
+      "item_id": "item-038",
+      "source_item_id": "item-016"
+    }
+  ],
+  "remaining": 44
+}

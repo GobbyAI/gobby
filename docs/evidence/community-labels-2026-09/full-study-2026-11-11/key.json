@@ -1,0 +1,557 @@
+{
+  "item-001": {
+    "corpus": "gobby",
+    "community": 8,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "mild",
+    "carry_outcome": "kept",
+    "probability": 0.9715639669551474,
+    "regenerated_name": null
+  },
+  "item-002": {
+    "corpus": "gobby",
+    "community": 67,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-003": {
+    "corpus": "gobby",
+    "community": 103,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.7888669725539501,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-004": {
+    "corpus": "gobby",
+    "community": 90,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-005": {
+    "corpus": "gobby",
+    "community": 5626,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.7024836280789425,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-006": {
+    "corpus": "gobby",
+    "community": 5626,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "heavy",
+    "carry_outcome": "regenerated",
+    "probability": 0.1500288243424251,
+    "regenerated_name": "Communications Channel Integrations"
+  },
+  "item-007": {
+    "corpus": "gobby",
+    "community": 67,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.8907299003956932,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-008": {
+    "corpus": "gobby",
+    "community": 4816,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.7920364233880538,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-009": {
+    "corpus": "gobby",
+    "community": 6031,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.8971817423680217,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-010": {
+    "corpus": "gobby",
+    "community": 8,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.6489504644869108,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-011": {
+    "corpus": "gobby",
+    "community": 5626,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-012": {
+    "corpus": "gobby",
+    "community": 4712,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-013": {
+    "corpus": "gobby",
+    "community": 5253,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-014": {
+    "corpus": "gobby",
+    "community": 23,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-015": {
+    "corpus": "gobby",
+    "community": 17,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.7822666102758572,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-016": {
+    "corpus": "gobby",
+    "community": 3514,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.6340221567524948,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-017": {
+    "corpus": "gobby",
+    "community": 6059,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "mild",
+    "carry_outcome": "kept",
+    "probability": 0.8365545588915281,
+    "regenerated_name": null
+  },
+  "item-018": {
+    "corpus": "gobby",
+    "community": 23,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "heavy",
+    "carry_outcome": "kept",
+    "probability": 0.7302898704283038,
+    "regenerated_name": null
+  },
+  "item-019": {
+    "corpus": "gobby",
+    "community": 5929,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-020": {
+    "corpus": "gobby",
+    "community": 6031,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-021": {
+    "corpus": "gobby",
+    "community": 5929,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.9330174826256163,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-022": {
+    "corpus": "gobby",
+    "community": 90,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "mild",
+    "carry_outcome": "kept",
+    "probability": 0.9341552994156889,
+    "regenerated_name": null
+  },
+  "item-023": {
+    "corpus": "gobby",
+    "community": 67,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "heavy",
+    "carry_outcome": "kept",
+    "probability": 0.9619649074673171,
+    "regenerated_name": null
+  },
+  "item-024": {
+    "corpus": "gobby",
+    "community": 23,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.8985116089702756,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-025": {
+    "corpus": "gobby",
+    "community": 6059,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.884429471266278,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-026": {
+    "corpus": "gobby",
+    "community": 5625,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "mild",
+    "carry_outcome": "kept",
+    "probability": 0.9343951625409306,
+    "regenerated_name": null
+  },
+  "item-027": {
+    "corpus": "gobby",
+    "community": 103,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "mild",
+    "carry_outcome": "kept",
+    "probability": 0.8793541289831708,
+    "regenerated_name": null
+  },
+  "item-028": {
+    "corpus": "gobby",
+    "community": 103,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-029": {
+    "corpus": "gobby",
+    "community": 4816,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-030": {
+    "corpus": "gobby",
+    "community": 4712,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.8939358619186168,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-031": {
+    "corpus": "gobby",
+    "community": 90,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.7161808778494922,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-032": {
+    "corpus": "gobby",
+    "community": 6031,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "heavy",
+    "carry_outcome": "regenerated",
+    "probability": 0.07477004290796138,
+    "regenerated_name": "Code Indexing and Search"
+  },
+  "item-033": {
+    "corpus": "gobby",
+    "community": 6059,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-034": {
+    "corpus": "gobby",
+    "community": 3514,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-035": {
+    "corpus": "gobby",
+    "community": 17,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "mild",
+    "carry_outcome": "kept",
+    "probability": 0.9640516782107567,
+    "regenerated_name": null
+  },
+  "item-036": {
+    "corpus": "gobby",
+    "community": 4816,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "mild",
+    "carry_outcome": "kept",
+    "probability": 0.8652240825770433,
+    "regenerated_name": null
+  },
+  "item-037": {
+    "corpus": "gobby",
+    "community": 5253,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "heavy",
+    "carry_outcome": "kept",
+    "probability": 0.643777325964941,
+    "regenerated_name": null
+  },
+  "item-038": {
+    "corpus": "gobby",
+    "community": 17,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-039": {
+    "corpus": "gobby",
+    "community": 8,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-040": {
+    "corpus": "gobby",
+    "community": 5625,
+    "arms": [
+      "D"
+    ],
+    "label_confidence": null,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-041": {
+    "corpus": "gobby",
+    "community": 5625,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.8516978764249585,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-042": {
+    "corpus": "gobby",
+    "community": 3514,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "mild",
+    "carry_outcome": "kept",
+    "probability": 0.9754836641728087,
+    "regenerated_name": null
+  },
+  "item-043": {
+    "corpus": "gobby",
+    "community": 5929,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "heavy",
+    "carry_outcome": "regenerated",
+    "probability": 0.17078441790183443,
+    "regenerated_name": "Task Integrations Activity UI"
+  },
+  "item-044": {
+    "corpus": "gobby",
+    "community": 5253,
+    "arms": [
+      "G",
+      "J"
+    ],
+    "label_confidence": 0.935775911840563,
+    "perturbation": null,
+    "carry_outcome": null,
+    "probability": null,
+    "regenerated_name": null
+  },
+  "item-045": {
+    "corpus": "gobby",
+    "community": 4712,
+    "arms": [
+      "carry"
+    ],
+    "label_confidence": null,
+    "perturbation": "heavy",
+    "carry_outcome": "regenerated",
+    "probability": 0.2247353007352621,
+    "regenerated_name": "Prompt and Hook Testing"
+  }
+}

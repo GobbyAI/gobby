@@ -1,0 +1,1166 @@
+{
+  "purpose": "Source-blinded paired diagnostic, not a replacement for human ratings",
+  "generation": "Codex authored fixed names; no text generation service invoked",
+  "model": "clef:27b",
+  "api_cost_usd": 0,
+  "local_compute_cost": "unmeasured",
+  "source_sheet_sha256": "e5a6efae9e1a732f6500bd6c1a0ae5894734eb635f21dca65f3a33dfe782b684",
+  "evidence_scope": "Complete frozen member lists; differs from production 40-path cap",
+  "communities": [
+    {
+      "community": "8",
+      "codex_name": "Dashboard Navigation and Activity Controls",
+      "gemma_name": "Web Interface Components",
+      "fallback": "web/src/components",
+      "member_count": 122,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.01346377731922623,
+              "b": 0.8395075062197087,
+              "fallback": 0.14702871646106502
+            },
+            "confidence": 0.556954964559714
+          },
+          "swapped_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.8634481822914319,
+              "b": 0.01878030824015111,
+              "fallback": 0.11777150946841686
+            },
+            "confidence": 0.587354252906027
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 0.9235164747498061,
+            "probabilities": {
+              "0": 0.22558826108377866,
+              "1": 0.6253070030826364,
+              "2": 0.14910473583358486
+            },
+            "confidence": 0.16871269916628084
+          },
+          "second": {
+            "score": 1.4144645772908062,
+            "probabilities": {
+              "0": 0.058249846082116453,
+              "1": 0.4690357305449611,
+              "2": 0.4727144233729226
+            },
+            "confidence": 0.20364190824144746
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.4301473485858429
+          },
+          "second": {
+            "probability": 0.8914335771643437
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "67",
+      "codex_name": "Memory Graph Extraction and Retrieval",
+      "gemma_name": "Memory Knowledge Graph",
+      "fallback": "tests/memory",
+      "member_count": 32,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.07353701170763553,
+              "b": 0.9135335391330374,
+              "fallback": 0.012929449159327139
+            },
+            "confidence": 0.6989245782622182
+          },
+          "swapped_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.8869396763535641,
+              "b": 0.09421594844851261,
+              "fallback": 0.018844375197923327
+            },
+            "confidence": 0.6324377375611633
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.647793364135924,
+            "probabilities": {
+              "0": 0.05551980282826696,
+              "1": 0.24116703020754202,
+              "2": 0.703313166964191
+            },
+            "confidence": 0.31636906096131523
+          },
+          "second": {
+            "score": 1.7967932764678272,
+            "probabilities": {
+              "0": 0.03306924857892023,
+              "1": 0.1370682263743325,
+              "2": 0.8298625250467473
+            },
+            "confidence": 0.5085655398232292
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.4561674946423043
+          },
+          "second": {
+            "probability": 0.5573635027507514
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "103",
+      "codex_name": "Hook Dispatch and Daemon Transport",
+      "gemma_name": "Hook dispatch and transport",
+      "fallback": "crates/ghook/src",
+      "member_count": 21,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.49991723123029996,
+              "b": 0.2782458421480732,
+              "fallback": 0.22183692662162682
+            },
+            "confidence": 0.05645520398046633
+          },
+          "swapped_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.1468989285877856,
+              "b": 0.7489341329571857,
+              "fallback": 0.10416693845502867
+            },
+            "confidence": 0.3319987479111043
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.2732831268835687,
+            "probabilities": {
+              "0": 0.08917079837159299,
+              "1": 0.5483752763732453,
+              "2": 0.36245392525516174
+            },
+            "confidence": 0.16909322894765644
+          },
+          "second": {
+            "score": 1.1936080216185263,
+            "probabilities": {
+              "0": 0.05369162261661712,
+              "1": 0.6990087331482396,
+              "2": 0.24729964423514333
+            },
+            "confidence": 0.3147297247068128
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.2704802220302491
+          },
+          "second": {
+            "probability": 0.1571368534705856
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "90",
+      "codex_name": "Code Search Indexing and Maintenance Commands",
+      "gemma_name": "Code Indexing and Search",
+      "fallback": "crates/gcode/src/commands",
+      "member_count": 81,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.6105555059276809,
+              "b": 0.3217401422915393,
+              "fallback": 0.0677043517807796
+            },
+            "confidence": 0.22775528904675724
+          },
+          "swapped_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.4772852733808817,
+              "b": 0.44836802050250124,
+              "fallback": 0.0743467061166171
+            },
+            "confidence": 0.17541217518890384
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.606164969159126,
+            "probabilities": {
+              "0": 0.05705287750818229,
+              "1": 0.2797292758245095,
+              "2": 0.6632178466673082
+            },
+            "confidence": 0.27900438326297083
+          },
+          "second": {
+            "score": 1.6591540267859652,
+            "probabilities": {
+              "0": 0.05061863145533939,
+              "1": 0.2396087103033558,
+              "2": 0.7097726582413048
+            },
+            "confidence": 0.3294490922665052
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.9086178969328287
+          },
+          "second": {
+            "probability": 0.9173026573249612
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "5626",
+      "codex_name": "Operator Messaging and Channel Delivery",
+      "gemma_name": "Communications and Messaging",
+      "fallback": "src/gobby/communications",
+      "member_count": 25,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.06516727662088304,
+              "b": 0.7006142502517989,
+              "fallback": 0.2342184731273181
+            },
+            "confidence": 0.30166080319343525
+          },
+          "swapped_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.6838069671921854,
+              "b": 0.16241839095066896,
+              "fallback": 0.15377464185714568
+            },
+            "confidence": 0.23265317803248542
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.599957298340265,
+            "probabilities": {
+              "0": 0.058435700674313557,
+              "1": 0.283171300311108,
+              "2": 0.6583929990145785
+            },
+            "confidence": 0.2732622614450372
+          },
+          "second": {
+            "score": 1.6966645138229568,
+            "probabilities": {
+              "0": 0.041309658172887016,
+              "1": 0.22071616983126896,
+              "2": 0.7379741719958439
+            },
+            "confidence": 0.3725304434346133
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.28656838788731553
+          },
+          "second": {
+            "probability": 0.2496301234656827
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "4816",
+      "codex_name": "Code Graph Views and Community Clustering",
+      "gemma_name": "Code Graph Analysis",
+      "fallback": "crates/gcode/src",
+      "member_count": 44,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.7396654505398674,
+              "b": 0.216943183074603,
+              "fallback": 0.0433913663855297
+            },
+            "confidence": 0.37129151740102484
+          },
+          "swapped_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.11326770432622588,
+              "b": 0.860142292310633,
+              "fallback": 0.026590003363141074
+            },
+            "confidence": 0.5697009462467458
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.5607540330171523,
+            "probabilities": {
+              "0": 0.04181402764109433,
+              "1": 0.355617911700659,
+              "2": 0.6025680606582466
+            },
+            "confidence": 0.2666693548391764
+          },
+          "second": {
+            "score": 1.4944755464877453,
+            "probabilities": {
+              "0": 0.05434010857076954,
+              "1": 0.39684423637071586,
+              "2": 0.5488156550585147
+            },
+            "confidence": 0.22236577076476416
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.9257686295391643
+          },
+          "second": {
+            "probability": 0.8615382094310357
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "6031",
+      "codex_name": "Daemon Configuration and Server Startup",
+      "gemma_name": "Application Runtime Configuration",
+      "fallback": "tests #14",
+      "member_count": 89,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.5350578660433264,
+              "b": 0.4470575805544868,
+              "fallback": 0.017884553402186858
+            },
+            "confidence": 0.3023102135564869
+          },
+          "swapped_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.24971876339844104,
+              "b": 0.7113825557713772,
+              "fallback": 0.03889868083018169
+            },
+            "confidence": 0.3491620567838537
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.4806358774895934,
+            "probabilities": {
+              "0": 0.06562494878410163,
+              "1": 0.3881142249422035,
+              "2": 0.5462608262736949
+            },
+            "confidence": 0.2022814174269879
+          },
+          "second": {
+            "score": 1.5028311511367922,
+            "probabilities": {
+              "0": 0.07373262168392629,
+              "1": 0.34970360549535523,
+              "2": 0.5765637728207185
+            },
+            "confidence": 0.20157216367267128
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.1907240253120337
+          },
+          "second": {
+            "probability": 0.09820897952329112
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "4712",
+      "codex_name": "Prompt Storage Rendering and Synchronization",
+      "gemma_name": "Prompt Management and Testing",
+      "fallback": "tests #40",
+      "member_count": 16,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.1729986754741232,
+              "b": 0.8221128627523996,
+              "fallback": 0.004888461773477279
+            },
+            "confidence": 0.5534679370202042
+          },
+          "swapped_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.8850878676741512,
+              "b": 0.10737334056253645,
+              "fallback": 0.007538791763312374
+            },
+            "confidence": 0.650025716891047
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.6563376961389134,
+            "probabilities": {
+              "0": 0.05460855649886506,
+              "1": 0.23444519086335652,
+              "2": 0.7109462526377784
+            },
+            "confidence": 0.3251542623003202
+          },
+          "second": {
+            "score": 1.552744241168503,
+            "probabilities": {
+              "0": 0.06569416443326327,
+              "1": 0.31586742996497064,
+              "2": 0.6184384056017662
+            },
+            "confidence": 0.23532646472639684
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.1753967859238641
+          },
+          "second": {
+            "probability": 0.15700755608687283
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "5253",
+      "codex_name": "Agent Rules and Pipeline Definition Registry",
+      "gemma_name": "Workflow Definitions and Synchronization",
+      "fallback": "tests #11",
+      "member_count": 106,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.011660838287325363,
+              "b": 0.9860786050980431,
+              "fallback": 0.00226055661463152
+            },
+            "confidence": 0.9276322295356838
+          },
+          "swapped_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.9715667258035419,
+              "b": 0.021464704816622916,
+              "fallback": 0.006968569379835285
+            },
+            "confidence": 0.8679362781855444
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.4537243760762175,
+            "probabilities": {
+              "0": 0.1134400147227531,
+              "1": 0.31939559447827615,
+              "2": 0.5671643907989707
+            },
+            "confidence": 0.15067712354074292
+          },
+          "second": {
+            "score": 1.738389420940087,
+            "probabilities": {
+              "0": 0.047176926080022934,
+              "1": 0.1672567268998672,
+              "2": 0.7855663470201099
+            },
+            "confidence": 0.4240363768859391
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.5491571023687412
+          },
+          "second": {
+            "probability": 0.6513548646660542
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "23",
+      "codex_name": "Validation Evidence and Found Work Gates",
+      "gemma_name": "Task validation evidence",
+      "fallback": "src/gobby #14",
+      "member_count": 36,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.8008584240070296,
+              "b": 0.18874024079432905,
+              "fallback": 0.010401335198641561
+            },
+            "confidence": 0.5084339296008673
+          },
+          "swapped_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.02322734313673774,
+              "b": 0.9723396408494412,
+              "fallback": 0.004433016013820903
+            },
+            "confidence": 0.873762155475272
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.5131197191092722,
+            "probabilities": {
+              "0": 0.06152040950191513,
+              "1": 0.36383946188689775,
+              "2": 0.5746401286111872
+            },
+            "confidence": 0.2192359622245894
+          },
+          "second": {
+            "score": 1.351077555197931,
+            "probabilities": {
+              "0": 0.07892312626739975,
+              "1": 0.49107619226726923,
+              "2": 0.4300006814653309
+            },
+            "confidence": 0.16936411451057953
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.14903529447863062
+          },
+          "second": {
+            "probability": 0.0837404052456134
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "17",
+      "codex_name": "Integration Channels and Message History",
+      "gemma_name": "Activity Integrations Tab UI",
+      "fallback": "web/src/components/activity/integrations",
+      "member_count": 17,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.054355089407050576,
+              "b": 0.8980500040302218,
+              "fallback": 0.04759490656272761
+            },
+            "confidence": 0.6360967281833818
+          },
+          "swapped_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.8703553338243422,
+              "b": 0.09427775897964118,
+              "fallback": 0.03536690719601674
+            },
+            "confidence": 0.5797558423098395
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.69883910284967,
+            "probabilities": {
+              "0": 0.051892440378545825,
+              "1": 0.19737601639323837,
+              "2": 0.7507315432282159
+            },
+            "confidence": 0.372809406913135
+          },
+          "second": {
+            "score": 1.7516800234093717,
+            "probabilities": {
+              "0": 0.05027571553584753,
+              "1": 0.1477685455189336,
+              "2": 0.801955738945219
+            },
+            "confidence": 0.444864513155668
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.8037905871912979
+          },
+          "second": {
+            "probability": 0.6913931802337522
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "3514",
+      "codex_name": "MCP Server Management Interface",
+      "gemma_name": "MCP Activity Components",
+      "fallback": "web/src/components/activity/mcp",
+      "member_count": 17,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.22301852337663905,
+              "b": 0.6923331929777792,
+              "fallback": 0.08464828364558175
+            },
+            "confidence": 0.2734290483117784
+          },
+          "swapped_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.559563899906389,
+              "b": 0.3698491538376954,
+              "fallback": 0.0705869462559155
+            },
+            "confidence": 0.19910303178784694
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.7038986737190471,
+            "probabilities": {
+              "0": 0.046301966887519946,
+              "1": 0.20349739250591278,
+              "2": 0.7502006406065672
+            },
+            "confidence": 0.3793321709553018
+          },
+          "second": {
+            "score": 1.6729086400581301,
+            "probabilities": {
+              "0": 0.04712156049913967,
+              "1": 0.23284823894359066,
+              "2": 0.7200302005572697
+            },
+            "confidence": 0.3448044937224587
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.5393471846655956
+          },
+          "second": {
+            "probability": 0.3378586226030372
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "6059",
+      "codex_name": "Session Startup and Handoff Binding",
+      "gemma_name": "Session Handoff Context",
+      "fallback": "src/gobby #15",
+      "member_count": 35,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.9326681814853394,
+              "b": 0.049429602753311666,
+              "fallback": 0.017902215761348986
+            },
+            "confidence": 0.7399674608029602
+          },
+          "swapped_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.018933234070558146,
+              "b": 0.9710896526862408,
+              "fallback": 0.009977113243201077
+            },
+            "confidence": 0.8638622861302889
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.5615723523920804,
+            "probabilities": {
+              "0": 0.0520715037415816,
+              "1": 0.3342846401247565,
+              "2": 0.6136438561336619
+            },
+            "confidence": 0.2537474848553105
+          },
+          "second": {
+            "score": 1.1094789794685567,
+            "probabilities": {
+              "0": 0.11072603480356397,
+              "1": 0.6690689509243155,
+              "2": 0.22020501427212058
+            },
+            "confidence": 0.23015125678732262
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.8875949114621223
+          },
+          "second": {
+            "probability": 0.3960681662740417
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "5929",
+      "codex_name": "Migration and Legacy Removal Checks",
+      "gemma_name": "Phase 5 Contract Tests",
+      "fallback": "tests #41",
+      "member_count": 14,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.8987805315507265,
+              "b": 0.07611831298313684,
+              "fallback": 0.025101155466136768
+            },
+            "confidence": 0.65005984327557
+          },
+          "swapped_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.07765063292161986,
+              "b": 0.8817487932376468,
+              "fallback": 0.040600573840733414
+            },
+            "confidence": 0.5999603349338221
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.6115696955684577,
+            "probabilities": {
+              "0": 0.05365337085859114,
+              "1": 0.2811235627143597,
+              "2": 0.6652230664270491
+            },
+            "confidence": 0.2855996165302047
+          },
+          "second": {
+            "score": 1.1798733521096605,
+            "probabilities": {
+              "0": 0.1434929081701396,
+              "1": 0.5331408315500603,
+              "2": 0.3233662602798001
+            },
+            "confidence": 0.10888741402946756
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.10631886977575758
+          },
+          "second": {
+            "probability": 0.030908958517211163
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    },
+    {
+      "community": "5625",
+      "codex_name": "Hook Enforcement and Tool Recovery",
+      "gemma_name": "Workflow Execution Infrastructure",
+      "fallback": "src/gobby #9",
+      "member_count": 49,
+      "first_order": {
+        "a": "codex",
+        "b": "gemma",
+        "fallback": "fallback"
+      },
+      "swapped_order": {
+        "a": "gemma",
+        "b": "codex",
+        "fallback": "fallback"
+      },
+      "choice": {
+        "answers": {
+          "first_order": {
+            "choice": "b",
+            "probabilities": {
+              "a": 0.06088197725178745,
+              "b": 0.9087428772753093,
+              "fallback": 0.030375145472903233
+            },
+            "confidence": 0.6691346710275792
+          },
+          "swapped_order": {
+            "choice": "a",
+            "probabilities": {
+              "a": 0.8858484801493157,
+              "b": 0.08111930078954177,
+              "fallback": 0.033032219061142426
+            },
+            "confidence": 0.6142586202050628
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "score": {
+        "answers": {
+          "first": {
+            "score": 1.1140683989445974,
+            "probabilities": {
+              "0": 0.1109656008404071,
+              "1": 0.6640003993745883,
+              "2": 0.22503399978500457
+            },
+            "confidence": 0.22493972427357878
+          },
+          "second": {
+            "score": 1.359872749888756,
+            "probabilities": {
+              "0": 0.06488471541254147,
+              "1": 0.5103578192861611,
+              "2": 0.42475746530129743
+            },
+            "confidence": 0.19493824765347179
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      },
+      "carry": {
+        "answers": {
+          "first": {
+            "probability": 0.5732006601591959
+          },
+          "second": {
+            "probability": 0.624293533567992
+          }
+        },
+        "backend_identity": "response:clef:27b",
+        "response_model": "clef:27b"
+      }
+    }
+  ]
+}

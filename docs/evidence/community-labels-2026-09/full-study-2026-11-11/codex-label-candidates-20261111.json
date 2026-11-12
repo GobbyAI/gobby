@@ -1,0 +1,21 @@
+{
+  "author": "Codex, authored directly in session gobby#21986 from saved community file paths",
+  "generation_service_invoked": false,
+  "names": {
+    "103": "Hook Dispatch and Daemon Transport",
+    "5626": "Operator Messaging and Channel Delivery",
+    "67": "Memory Graph Extraction and Retrieval",
+    "4816": "Code Graph Views and Community Clustering",
+    "6031": "Daemon Configuration and Server Startup",
+    "8": "Dashboard Navigation and Activity Controls",
+    "17": "Integration Channels and Message History",
+    "3514": "MCP Server Management Interface",
+    "5929": "Migration and Legacy Removal Checks",
+    "23": "Validation Evidence and Found Work Gates",
+    "6059": "Session Startup and Handoff Binding",
+    "4712": "Prompt Storage Rendering and Synchronization",
+    "90": "Code Search Indexing and Maintenance Commands",
+    "5625": "Hook Enforcement and Tool Recovery",
+    "5253": "Agent Rules and Pipeline Definition Registry"
+  }
+}
