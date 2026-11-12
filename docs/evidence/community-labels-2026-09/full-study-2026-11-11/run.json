@@ -1,0 +1,1396 @@
+{
+  "created_at": "2026-11-11T23:00:01.351221+00:00",
+  "seed": 22604,
+  "no_decisions": false,
+  "wire_api": "systemone",
+  "api_base": "http://127.0.0.1:11434",
+  "reason": null,
+  "evaluated_model": "clef:27b",
+  "evaluated_backend": "response:clef:27b",
+  "min_score": 0.5,
+  "probe": [
+    {
+      "request": {
+        "model": "clef:27b",
+        "state": {
+          "purpose": "Pin the study backend identity"
+        },
+        "questions": {
+          "probe": {
+            "type": "choice",
+            "instructions": "Choose generated.",
+            "criteria": {
+              "generated": "yes",
+              "other": "no"
+            }
+          }
+        }
+      },
+      "response": {
+        "model": "clef:27b",
+        "answers": {
+          "probe": {
+            "type": "choice",
+            "choice": "generated",
+            "probabilities": {
+              "generated": 0.6601723814146353,
+              "other": 0.33982761858536475
+            },
+            "confidence": 0.07534634772404536
+          }
+        },
+        "usage": {
+          "input_tokens": 131,
+          "output_tokens": 0
+        },
+        "prompt_eval_cached_count": 0
+      },
+      "status": 200
+    }
+  ],
+  "samples": {
+    "gobby": [
+      3514,
+      5929,
+      17,
+      4712,
+      103,
+      23,
+      6059,
+      67,
+      4816,
+      5626,
+      8,
+      6031,
+      90,
+      5253,
+      5625
+    ]
+  },
+  "main": [
+    {
+      "corpus": "gobby",
+      "community": 3514,
+      "names": {
+        "D": "web/src/components/activity/mcp",
+        "G": "MCP Activity Components",
+        "J": "MCP Activity Components"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.6340221567524948,
+      "position": 0.7632249887223868
+    },
+    {
+      "corpus": "gobby",
+      "community": 5929,
+      "names": {
+        "D": "tests #41",
+        "G": "Phase 5 Contract Tests",
+        "J": "Phase 5 Contract Tests"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.9330174826256163,
+      "position": 0.3482568952870022
+    },
+    {
+      "corpus": "gobby",
+      "community": 17,
+      "names": {
+        "D": "web/src/components/activity/integrations",
+        "G": "Activity Integrations Tab UI",
+        "J": "Activity Integrations Tab UI"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.7822666102758572,
+      "position": 0.8188735593518107
+    },
+    {
+      "corpus": "gobby",
+      "community": 4712,
+      "names": {
+        "D": "tests #40",
+        "G": "Prompt Management and Testing",
+        "J": "Prompt Management and Testing"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.8939358619186168,
+      "position": 0.3554219918792852
+    },
+    {
+      "corpus": "gobby",
+      "community": 103,
+      "names": {
+        "D": "crates/ghook/src",
+        "G": "Hook dispatch and transport",
+        "J": "Hook dispatch and transport"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.7888669725539501,
+      "position": 0.5450106728471665
+    },
+    {
+      "corpus": "gobby",
+      "community": 23,
+      "names": {
+        "D": "src/gobby #14",
+        "G": "Task validation evidence",
+        "J": "Task validation evidence"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.8985116089702756,
+      "position": 0.35557555547480296
+    },
+    {
+      "corpus": "gobby",
+      "community": 6059,
+      "names": {
+        "D": "src/gobby #15",
+        "G": "Session Handoff Context",
+        "J": "Session Handoff Context"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.884429471266278,
+      "position": 0.37592075376508066
+    },
+    {
+      "corpus": "gobby",
+      "community": 67,
+      "names": {
+        "D": "tests/memory",
+        "G": "Memory Knowledge Graph",
+        "J": "Memory Knowledge Graph"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.8907299003956932,
+      "position": 0.5542141777750492
+    },
+    {
+      "corpus": "gobby",
+      "community": 4816,
+      "names": {
+        "D": "crates/gcode/src",
+        "G": "Code Graph Analysis",
+        "J": "Code Graph Analysis"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.7920364233880538,
+      "position": 0.524751875668334
+    },
+    {
+      "corpus": "gobby",
+      "community": 5626,
+      "names": {
+        "D": "src/gobby/communications",
+        "G": "Communications and Messaging",
+        "J": "Communications and Messaging"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.7024836280789425,
+      "position": 0.8341270979131465
+    },
+    {
+      "corpus": "gobby",
+      "community": 8,
+      "names": {
+        "D": "web/src/components",
+        "G": "Web Interface Components",
+        "J": "Web Interface Components"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.6489504644869108,
+      "position": 0.4118810737157657
+    },
+    {
+      "corpus": "gobby",
+      "community": 6031,
+      "names": {
+        "D": "tests #14",
+        "G": "Application Runtime Configuration",
+        "J": "Application Runtime Configuration"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.8971817423680217,
+      "position": 0.3110454297306477
+    },
+    {
+      "corpus": "gobby",
+      "community": 90,
+      "names": {
+        "D": "crates/gcode/src/commands",
+        "G": "Code Indexing and Search",
+        "J": "Code Indexing and Search"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.7161808778494922,
+      "position": 0.7412293743299717
+    },
+    {
+      "corpus": "gobby",
+      "community": 5253,
+      "names": {
+        "D": "tests #11",
+        "G": "Workflow Definitions and Synchronization",
+        "J": "Workflow Definitions and Synchronization"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.935775911840563,
+      "position": 0.2553187445888532
+    },
+    {
+      "corpus": "gobby",
+      "community": 5625,
+      "names": {
+        "D": "src/gobby #9",
+        "G": "Workflow Execution Infrastructure",
+        "J": "Workflow Execution Infrastructure"
+      },
+      "g_outcome": "written_model",
+      "j_outcome": "gate_admitted",
+      "label_confidence": 0.8516978764249585,
+      "position": 0.3634066444873256
+    }
+  ],
+  "carry_skipped": 0,
+  "events": [
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 3514,
+      "member_signature": "73cbfe425a9cd38e",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5929,
+      "member_signature": "32c7e358d4b30c5c",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 17,
+      "member_signature": "27aeb78f19fc2ee4",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 4712,
+      "member_signature": "f20577ce166771bb",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 103,
+      "member_signature": "3c74ab46bf57b77b",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 23,
+      "member_signature": "ab8bcef5115211d3",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 6059,
+      "member_signature": "87a457c365e52f3e",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 67,
+      "member_signature": "2d5676b36ac789c9",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 4816,
+      "member_signature": "61e15ca135eea8e1",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5626,
+      "member_signature": "8b3da69f3c682a9c",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 8,
+      "member_signature": "b3e276288edccd02",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 6031,
+      "member_signature": "d9d959c7ac0e3652",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 90,
+      "member_signature": "72281c64eb8568ee",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5253,
+      "member_signature": "4cc2ac8df6d237a9",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5625,
+      "member_signature": "0862316b901877af",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "G",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {
+        "written_model": 15
+      }
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 3514,
+      "member_signature": "73cbfe425a9cd38e",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.6340221567524948
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5929,
+      "member_signature": "32c7e358d4b30c5c",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.9330174826256163
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 17,
+      "member_signature": "27aeb78f19fc2ee4",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.7822666102758572
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 4712,
+      "member_signature": "f20577ce166771bb",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.8939358619186168
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 103,
+      "member_signature": "3c74ab46bf57b77b",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.7888669725539501
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 23,
+      "member_signature": "ab8bcef5115211d3",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.8985116089702756
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 6059,
+      "member_signature": "87a457c365e52f3e",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.884429471266278
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 67,
+      "member_signature": "2d5676b36ac789c9",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.8907299003956932
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 4816,
+      "member_signature": "61e15ca135eea8e1",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.7920364233880538
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5626,
+      "member_signature": "8b3da69f3c682a9c",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.7024836280789425
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 8,
+      "member_signature": "b3e276288edccd02",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.6489504644869108
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 6031,
+      "member_signature": "d9d959c7ac0e3652",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.8971817423680217
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 90,
+      "member_signature": "72281c64eb8568ee",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.7161808778494922
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5253,
+      "member_signature": "4cc2ac8df6d237a9",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.935775911840563
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5625,
+      "member_signature": "0862316b901877af",
+      "outcome": "gate_admitted",
+      "decision_mode": "enforce",
+      "decision_confidence": 0.8516978764249585
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "J",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {
+        "gate_admitted": 15
+      }
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 3514,
+      "member_signature": "73cbfe425a9cd38e",
+      "outcome": "sufficient",
+      "mode": "shadow",
+      "position": 0.7632249887223868
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5929,
+      "member_signature": "32c7e358d4b30c5c",
+      "outcome": "insufficient",
+      "mode": "shadow",
+      "position": 0.3482568952870022
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 17,
+      "member_signature": "27aeb78f19fc2ee4",
+      "outcome": "sufficient",
+      "mode": "shadow",
+      "position": 0.8188735593518107
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 4712,
+      "member_signature": "f20577ce166771bb",
+      "outcome": "insufficient",
+      "mode": "shadow",
+      "position": 0.3554219918792852
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 103,
+      "member_signature": "3c74ab46bf57b77b",
+      "outcome": "sufficient",
+      "mode": "shadow",
+      "position": 0.5450106728471665
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 23,
+      "member_signature": "ab8bcef5115211d3",
+      "outcome": "insufficient",
+      "mode": "shadow",
+      "position": 0.35557555547480296
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 6059,
+      "member_signature": "87a457c365e52f3e",
+      "outcome": "insufficient",
+      "mode": "shadow",
+      "position": 0.37592075376508066
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 67,
+      "member_signature": "2d5676b36ac789c9",
+      "outcome": "sufficient",
+      "mode": "shadow",
+      "position": 0.5542141777750492
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 4816,
+      "member_signature": "61e15ca135eea8e1",
+      "outcome": "sufficient",
+      "mode": "shadow",
+      "position": 0.524751875668334
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5626,
+      "member_signature": "8b3da69f3c682a9c",
+      "outcome": "sufficient",
+      "mode": "shadow",
+      "position": 0.8341270979131465
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 8,
+      "member_signature": "b3e276288edccd02",
+      "outcome": "insufficient",
+      "mode": "shadow",
+      "position": 0.4118810737157657
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 6031,
+      "member_signature": "d9d959c7ac0e3652",
+      "outcome": "insufficient",
+      "mode": "shadow",
+      "position": 0.3110454297306477
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 90,
+      "member_signature": "72281c64eb8568ee",
+      "outcome": "sufficient",
+      "mode": "shadow",
+      "position": 0.7412293743299717
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5253,
+      "member_signature": "4cc2ac8df6d237a9",
+      "outcome": "insufficient",
+      "mode": "shadow",
+      "position": 0.2553187445888532
+    },
+    {
+      "event": "code_index.community_label.sufficiency",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5625,
+      "member_signature": "0862316b901877af",
+      "outcome": "insufficient",
+      "mode": "shadow",
+      "position": 0.3634066444873256
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 3514,
+      "member_signature": "73cbfe425a9cd38e",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5929,
+      "member_signature": "32c7e358d4b30c5c",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 17,
+      "member_signature": "27aeb78f19fc2ee4",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 4712,
+      "member_signature": "f20577ce166771bb",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 103,
+      "member_signature": "3c74ab46bf57b77b",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 23,
+      "member_signature": "ab8bcef5115211d3",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 6059,
+      "member_signature": "87a457c365e52f3e",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 67,
+      "member_signature": "2d5676b36ac789c9",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 4816,
+      "member_signature": "61e15ca135eea8e1",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5626,
+      "member_signature": "8b3da69f3c682a9c",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 8,
+      "member_signature": "b3e276288edccd02",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 6031,
+      "member_signature": "d9d959c7ac0e3652",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 90,
+      "member_signature": "72281c64eb8568ee",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5253,
+      "member_signature": "4cc2ac8df6d237a9",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5625,
+      "member_signature": "0862316b901877af",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "sufficiency",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {
+        "written_model": 15
+      }
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 3514,
+      "member_signature": "73cbfe425a9cd38e:carry",
+      "outcome": "kept",
+      "mode": "enforce",
+      "probability": 0.9754836641728087
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {}
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5929,
+      "member_signature": "32c7e358d4b30c5c:carry",
+      "outcome": "regenerated",
+      "mode": "enforce",
+      "probability": 0.17078441790183443
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5929,
+      "member_signature": "32c7e358d4b30c5c:carry",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {
+        "written_model": 1
+      }
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 17,
+      "member_signature": "27aeb78f19fc2ee4:carry",
+      "outcome": "kept",
+      "mode": "enforce",
+      "probability": 0.9640516782107567
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {}
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 4712,
+      "member_signature": "f20577ce166771bb:carry",
+      "outcome": "regenerated",
+      "mode": "enforce",
+      "probability": 0.2247353007352621
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 4712,
+      "member_signature": "f20577ce166771bb:carry",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {
+        "written_model": 1
+      }
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 103,
+      "member_signature": "3c74ab46bf57b77b:carry",
+      "outcome": "kept",
+      "mode": "enforce",
+      "probability": 0.8793541289831708
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {}
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 23,
+      "member_signature": "ab8bcef5115211d3:carry",
+      "outcome": "kept",
+      "mode": "enforce",
+      "probability": 0.7302898704283038
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {}
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 6059,
+      "member_signature": "87a457c365e52f3e:carry",
+      "outcome": "kept",
+      "mode": "enforce",
+      "probability": 0.8365545588915281
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {}
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 67,
+      "member_signature": "2d5676b36ac789c9:carry",
+      "outcome": "kept",
+      "mode": "enforce",
+      "probability": 0.9619649074673171
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {}
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 4816,
+      "member_signature": "61e15ca135eea8e1:carry",
+      "outcome": "kept",
+      "mode": "enforce",
+      "probability": 0.8652240825770433
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {}
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5626,
+      "member_signature": "8b3da69f3c682a9c:carry",
+      "outcome": "regenerated",
+      "mode": "enforce",
+      "probability": 0.1500288243424251
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5626,
+      "member_signature": "8b3da69f3c682a9c:carry",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {
+        "written_model": 1
+      }
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 8,
+      "member_signature": "b3e276288edccd02:carry",
+      "outcome": "kept",
+      "mode": "enforce",
+      "probability": 0.9715639669551474
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {}
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 6031,
+      "member_signature": "d9d959c7ac0e3652:carry",
+      "outcome": "regenerated",
+      "mode": "enforce",
+      "probability": 0.07477004290796138
+    },
+    {
+      "event": "code_index.community_label.outcome",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 6031,
+      "member_signature": "d9d959c7ac0e3652:carry",
+      "outcome": "written_model",
+      "decision_mode": "off",
+      "decision_confidence": null
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {
+        "written_model": 1
+      }
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 90,
+      "member_signature": "72281c64eb8568ee:carry",
+      "outcome": "kept",
+      "mode": "enforce",
+      "probability": 0.9341552994156889
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {}
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5253,
+      "member_signature": "4cc2ac8df6d237a9:carry",
+      "outcome": "kept",
+      "mode": "enforce",
+      "probability": 0.643777325964941
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {}
+    },
+    {
+      "event": "code_index.community_label.carry",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "community_id": 5625,
+      "member_signature": "0862316b901877af:carry",
+      "outcome": "kept",
+      "mode": "enforce",
+      "probability": 0.9343951625409306
+    },
+    {
+      "event": "code_index.community_label.batch",
+      "arm": "carry",
+      "project_id": "d45545c5-ded5-4335-b115-0245752edacf",
+      "outcomes": {}
+    }
+  ],
+  "event_counts": {
+    "G:code_index.community_label.outcome:written_model": 15,
+    "G:code_index.community_label.batch:batch": 1,
+    "J:code_index.community_label.outcome:gate_admitted": 15,
+    "J:code_index.community_label.batch:batch": 1,
+    "sufficiency:code_index.community_label.sufficiency:sufficient": 7,
+    "sufficiency:code_index.community_label.sufficiency:insufficient": 8,
+    "sufficiency:code_index.community_label.outcome:written_model": 15,
+    "sufficiency:code_index.community_label.batch:batch": 1,
+    "carry:code_index.community_label.carry:kept": 11,
+    "carry:code_index.community_label.batch:batch": 15,
+    "carry:code_index.community_label.carry:regenerated": 4,
+    "carry:code_index.community_label.outcome:written_model": 4
+  },
+  "decision_usage": [
+    {
+      "consumer": "community_label_study_probe",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "bc08f596743b",
+      "estimated_tokens": 51,
+      "latency_ms": "337",
+      "outcome": "ok",
+      "arm": "probe"
+    },
+    {
+      "consumer": "community_label",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "15",
+      "schema_hash": "ab574e677fac",
+      "estimated_tokens": 7255,
+      "latency_ms": "9375",
+      "outcome": "ok",
+      "arm": "J"
+    },
+    {
+      "consumer": "community_label_sufficiency",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "15",
+      "schema_hash": "e4dcd5e8f834",
+      "estimated_tokens": 7326,
+      "latency_ms": "9194",
+      "outcome": "ok",
+      "arm": "sufficiency"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "be45d4aa2ca9",
+      "estimated_tokens": 313,
+      "latency_ms": "514",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "5630b7186f3d",
+      "estimated_tokens": 295,
+      "latency_ms": "449",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "fb17125f0d9a",
+      "estimated_tokens": 344,
+      "latency_ms": "512",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "9e8a517a36ff",
+      "estimated_tokens": 237,
+      "latency_ms": "413",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "e6258fe1bd3e",
+      "estimated_tokens": 258,
+      "latency_ms": "470",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "2440291384de",
+      "estimated_tokens": 509,
+      "latency_ms": "545",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "89fa261ca124",
+      "estimated_tokens": 483,
+      "latency_ms": "541",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "1fa1978bce3d",
+      "estimated_tokens": 456,
+      "latency_ms": "610",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "1b7ce621db76",
+      "estimated_tokens": 539,
+      "latency_ms": "747",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "0c316fdc5d07",
+      "estimated_tokens": 404,
+      "latency_ms": "496",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "8b62c21722d1",
+      "estimated_tokens": 649,
+      "latency_ms": "720",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "e140693465ae",
+      "estimated_tokens": 515,
+      "latency_ms": "676",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "875556c62351",
+      "estimated_tokens": 532,
+      "latency_ms": "714",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "babee8456768",
+      "estimated_tokens": 533,
+      "latency_ms": "664",
+      "outcome": "ok",
+      "arm": "carry"
+    },
+    {
+      "consumer": "community_label_carry",
+      "base": "http://127.0.0.1:11434",
+      "model": "clef:27b",
+      "question_count": "1",
+      "schema_hash": "e11e08744728",
+      "estimated_tokens": 547,
+      "latency_ms": "670",
+      "outcome": "ok",
+      "arm": "carry"
+    }
+  ]
+}
