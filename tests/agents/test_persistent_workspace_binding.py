@@ -247,6 +247,33 @@ def test_default_cleanup_clears_flags_without_a_folder_binding(
     assert state["_agent_workspace_injected"] is False
 
 
+def test_default_activation_clears_multiple_stale_sessions_atomically(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    pane = _pane(temp_db, tmp_path, monkeypatch, "default-batch")
+    variables = SessionVariableManager(temp_db)
+    stale_ids = [
+        pane.sessions.register_session(
+            external_id=f"stale-{index}",
+            machine_id=pane.machine_id,
+            source="grok",
+            project_id=pane.project_id,
+        )
+        for index in range(2)
+    ]
+    for session_id in stale_ids:
+        variables.merge_variables(
+            session_id,
+            {"_agent_type": "default", "_agent_workspace_injected": True},
+        )
+
+    assert bind_session_workspace(temp_db, pane.predecessor_id) is None
+    for session_id in stale_ids:
+        assert variables.get_variables(session_id)["_agent_workspace_injected"] is False
+    assert variables.get_variables(pane.predecessor_id)["_agent_workspace_dir"] is None
+
+
 def test_default_cleanup_tolerates_a_concurrently_removed_folder(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
