@@ -1822,19 +1822,21 @@ mod project_rows_focus_toggle_and_reorder {
     use super::*;
 
     #[test]
-    fn project_card_click_focuses_it_and_swaps_the_tab_set() {
-        // upstream `FocusWorkspace` from a workspace-card click, over gclient's
-        // project cards: the press asks the loop to focus the project and swaps
-        // the tab bar to that project's set at once; a release without movement
-        // is the click.
+    fn project_card_click_requests_focus_before_swapping_the_tab_set() {
+        // The press asks the loop to focus the project. Keep the current tabs
+        // until navigation installs the new project's workspace and roster.
         let (ws, mut chrome, _) = project_board();
         let (col, row) = row_cell(&chrome.view.project_hit_areas, "proj-beta");
         assert_eq!(
             route(&ws, &mut chrome, LEFT_DOWN, col, row),
             MouseOutcome::FocusProject("proj-beta".to_string())
         );
-        assert_eq!(chrome.project_tabs.focused.as_deref(), Some("proj-beta"));
-        assert!(chrome.tabs().tabs.is_empty(), "beta has no tabs yet");
+        assert_eq!(chrome.project_tabs.focused.as_deref(), Some("proj-alpha"));
+        assert_eq!(
+            chrome.tabs().tabs.len(),
+            1,
+            "alpha stays visible while waiting"
+        );
         assert_eq!(
             chrome.gesture,
             Some(MouseGesture::ProjectDrag {
@@ -1848,6 +1850,8 @@ mod project_rows_focus_toggle_and_reorder {
             MouseOutcome::Handled
         );
         assert_eq!(chrome.gesture, None);
+        chrome.focus_project("proj-beta");
+        assert!(chrome.tabs().tabs.is_empty(), "beta has no tabs yet");
         chrome.focus_project("proj-alpha");
         assert_eq!(chrome.tabs().tabs.len(), 1, "alpha's tab set survives");
     }

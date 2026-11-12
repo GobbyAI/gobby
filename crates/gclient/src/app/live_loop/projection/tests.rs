@@ -112,6 +112,62 @@ fn bind_pane_a(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chrome) {
 }
 
 #[tokio::test]
+async fn clicking_back_to_a_project_with_reaped_cached_panes_keeps_rendering() {
+    use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+    use ratatui::{backend::TestBackend, layout::Rect, Terminal};
+
+    use crate::app::live_loop::mouse::{route_mouse, MouseOutcome};
+    use crate::app::live_loop::{project_navigation, render::render_live_workspace};
+
+    let mut workspace = split_tab(None);
+    let mut chrome = Chrome::dark();
+    bind_pane_a(&mut workspace, &mut chrome);
+    sync_live_chrome(&mut workspace, &mut chrome);
+    let old_pane = workspace.pane_for_terminal("terminal-a").unwrap();
+    assert!(chrome.tabs().tabs[0]
+        .slots
+        .values()
+        .any(|id| *id == old_pane));
+
+    // Switching projects replaces the roster. The previous project's tab set
+    // remains cached, but its native pane IDs no longer exist.
+    project_navigation::select_project(&mut workspace, &mut chrome, "project-2");
+    workspace.drop_terminal_panes("terminal-a");
+    sync_live_chrome(&mut workspace, &mut chrome);
+    assert_eq!(workspace.pane_count(), 0);
+    chrome.view.sidebar_rect = Rect::new(0, 0, 20, 30);
+    chrome.view.project_hit_areas = vec![("project-1".into(), Rect::new(1, 5, 15, 1))];
+    let click = MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 5,
+        row: 5,
+        modifiers: KeyModifiers::NONE,
+    };
+    assert_eq!(
+        route_mouse(&workspace, &mut chrome, &click),
+        MouseOutcome::FocusProject("project-1".into())
+    );
+
+    // A render can occur while the daemon is still preparing the new project.
+    let mut terminal = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    render_live_workspace(&mut terminal, &mut workspace, &mut chrome).unwrap();
+    assert_eq!(chrome.project_tabs.focused.as_deref(), Some("project-2"));
+
+    // Once navigation installs the project, unresolved terminals keep their
+    // layout slots without exposing the obsolete client pane IDs.
+    project_navigation::select_project(&mut workspace, &mut chrome, "project-1");
+    render_live_workspace(&mut terminal, &mut workspace, &mut chrome).unwrap();
+    assert!(chrome.tabs().tabs[0].slots.is_empty());
+    // A native terminal without a registered session can resolve normally.
+    bind_pane_a(&mut workspace, &mut chrome);
+    sync_live_chrome(&mut workspace, &mut chrome);
+    assert_ne!(workspace.pane_for_terminal("terminal-a"), Some(old_pane));
+    render_live_workspace(&mut terminal, &mut workspace, &mut chrome).unwrap();
+    assert_eq!(chrome.project_tabs.focused.as_deref(), Some("project-1"));
+    assert_eq!(chrome.tabs().tabs[0].slots.len(), 1);
+}
+
+#[tokio::test]
 async fn a_focused_reserved_pane_with_no_terminal_yet_keeps_focus() {
     let mut workspace = split_tab(None);
     let mut chrome = Chrome::dark();

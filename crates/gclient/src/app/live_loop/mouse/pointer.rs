@@ -200,9 +200,8 @@ pub(super) fn down<W: WorkspaceView>(
         }
         Hit::NewTab => MouseOutcome::Action(Action::NewTab),
         Hit::Project(project_id) => {
-            // The tab set swaps at once so the frame after the press shows
-            // the project's tabs; the live loop's focus swap is idempotent.
-            chrome.focus_project(&project_id);
+            // Navigation installs the workspace and roster before showing its
+            // tabs. Cached slots may name panes reaped on the previous switch.
             chrome.gesture = Some(MouseGesture::ProjectDrag {
                 project_id: project_id.clone(),
                 origin_row: mouse.row,
