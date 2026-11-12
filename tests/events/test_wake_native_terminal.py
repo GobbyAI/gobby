@@ -448,6 +448,40 @@ async def test_indeterminate_terminal_wake_records_no_delivery_and_skips_the_pan
 
 
 @pytest.mark.asyncio
+async def test_a_latched_wake_stranded_before_its_enter_is_submitted(
+    managed_chain: ManagedChain,
+    composer_ledger: ComposerLedger,
+) -> None:
+    """A stop between a wake's text and its Enter leaves both the prompt and its latch.
+
+    The ledger proves the composer holds exactly that prompt, so the next wake settles
+    the latch and presses the Enter alone instead of being suppressed by it.
+    """
+    wake_key = f"wake:{managed_chain.row.id}"
+    managed_chain.store.persist_unresolved_write(
+        managed_chain.row.id, wake_key, "automatic", daemon_epoch="earlier-daemon"
+    )
+    terminal_id = str(managed_chain.row.id)
+    composer_ledger.record_spawn(terminal_id, "")
+    composer_ledger.observe_write(
+        terminal_id, origin="automatic", kind="text", payload=CONTINUE_WAKE_MESSAGE
+    )
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        terminal_manager=managed_chain.store,
+        activity_probe=probe_terminal_activity,
+    )
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result["delivered"] is True, result
+    assert managed_chain.native.write_log == [("key", "enter")]
+    assert managed_chain.store.rows[managed_chain.row.id].unresolved_writes == {}
+
+
+@pytest.mark.asyncio
 async def test_latched_wake_is_settled_by_the_delivered_composer_clear(
     managed_chain: ManagedChain,
     caplog: pytest.LogCaptureFixture,

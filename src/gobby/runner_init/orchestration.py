@@ -145,6 +145,7 @@ async def _send_tmux_session_wake(
     submit: bool = False,
     clear_before_submit: bool = False,
     composer_confirmed_empty: bool = False,
+    composer_stranded: bool = False,
     cli_source: str | None = None,
 ) -> datetime | None:
     from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
@@ -192,9 +193,10 @@ async def _send_tmux_session_wake(
         else:
             literal_text = message.rstrip("\n")
             local = is_local_machine(terminal.machine_id)
-            if composer_confirmed_empty:
+            if composer_confirmed_empty or composer_stranded:
                 # The dispatcher holds this same composer lock across the fresh
-                # empty probe and this call. Settle without deleting late input.
+                # probe and this call: the composer is empty, or holds only the
+                # stranded wake whose Enter follows. Settle without deleting input.
                 await _settle_earlier_wake(coordinator, terminal, action_key)
             elif clear_before_submit:
                 await _drain_composer_before_wake(coordinator, terminal, identity, cli_source)

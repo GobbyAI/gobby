@@ -105,6 +105,7 @@ class TmuxSender(Protocol):
         submit: bool = False,
         clear_before_submit: bool = False,
         composer_confirmed_empty: bool = False,
+        composer_stranded: bool = False,
         cli_source: str | None = None,
     ) -> Coroutine[Any, Any, datetime | None]: ...
 
@@ -891,6 +892,10 @@ class WakeDispatcher:
                 # The sender needs the positive proof to settle an old wake latch;
                 # merely opting out of a drain does not supply that proof.
                 send = partial(send, composer_confirmed_empty=True)
+            elif composer == "stranded":
+                # The ledger proves the stranded prompt is all the composer holds, so
+                # the sender may settle that wake's latch before pressing its Enter.
+                send = partial(send, composer_stranded=True)
             try:
                 # A stranded wake already holds this prompt: press its Enter only.
                 submitted_at = await send(
