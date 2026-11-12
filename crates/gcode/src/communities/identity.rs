@@ -24,6 +24,8 @@ pub(crate) struct ImportIdentity {
     pub visible_files: HashSet<String>,
     pub providers: HashMap<String, Vec<String>>,
     pub aliases: HashMap<String, Vec<String>>,
+    /// File partitions resolve relative imports in the importing file's scope.
+    pub scoped_providers: HashMap<String, HashMap<String, Vec<String>>>,
 }
 
 impl ImportIdentity {
@@ -42,6 +44,13 @@ impl ImportIdentity {
     pub(crate) fn unique_provider(&self, module: &str) -> Option<String> {
         match self.providers_for(module).as_slice() {
             [file] => Some(file.clone()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn unique_provider_for(&self, importer: &str, module: &str) -> Option<&str> {
+        match self.scoped_providers.get(importer)?.get(module)?.as_slice() {
+            [file] if self.visible_files.contains(file) => Some(file),
             _ => None,
         }
     }
@@ -77,13 +86,27 @@ impl ImportIdentity {
                     .filter(|file| visible.contains(file)),
             );
         }
+        let mut scoped_providers: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
         for (source, module) in &rows {
-            providers.entry((*module).to_string()).or_default().extend(
+            let mut local = providers.get(*module).cloned().unwrap_or_default();
+            local.extend(
                 resolver
                     .importer_candidates(module, source)
                     .into_iter()
                     .filter(|file| visible.contains(file)),
             );
+            scoped_providers
+                .entry((*source).to_string())
+                .or_default()
+                .insert((*module).to_string(), local.into_iter().collect());
+        }
+        for imports in scoped_providers.values() {
+            for (module, local) in imports {
+                providers
+                    .entry(module.clone())
+                    .or_default()
+                    .extend(local.iter().cloned());
+            }
         }
 
         let mut aliases = visible
@@ -108,6 +131,7 @@ impl ImportIdentity {
                 .map(|(module, files)| (module, files.into_iter().collect()))
                 .collect(),
             aliases,
+            scoped_providers,
         }
     }
 }

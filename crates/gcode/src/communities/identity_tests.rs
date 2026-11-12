@@ -17,6 +17,71 @@ pub(crate) fn identity_from(visible: &[&str], rows: &[(&str, &str)]) -> ImportId
 }
 
 #[test]
+fn relative_imports_in_different_packages_keep_their_local_edges() {
+    let rows = [
+        ("src/alpha/service.py".to_string(), ".models".to_string()),
+        ("src/beta/service.py".to_string(), ".models".to_string()),
+    ];
+    let visible = [
+        "src/alpha/service.py",
+        "src/alpha/models.py",
+        "src/beta/service.py",
+        "src/beta/models.py",
+    ]
+    .map(str::to_string)
+    .into_iter()
+    .collect();
+    let identity =
+        ImportIdentity::from_resolution(&visible, &ImportResolutionContext::default(), &rows);
+    assert_eq!(
+        identity.providers_for(".models"),
+        vec!["src/alpha/models.py", "src/beta/models.py"]
+    );
+    assert_eq!(identity.unique_provider(".models"), None);
+    let partition =
+        crate::communities::partition::build_partition(&identity, &rows).expect("valid imports");
+    let edges = partition
+        .directed
+        .iter()
+        .map(|edge| (edge.importer.as_str(), edge.provider.as_str()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        edges,
+        vec![
+            ("src/alpha/service.py", "src/alpha/models.py"),
+            ("src/beta/service.py", "src/beta/models.py"),
+        ]
+    );
+}
+
+#[test]
+fn missing_relative_import_does_not_borrow_another_packages_provider() {
+    let rows = [
+        ("src/alpha/service.py".to_string(), ".models".to_string()),
+        ("src/beta/service.py".to_string(), ".models".to_string()),
+    ];
+    let visible = [
+        "src/alpha/service.py",
+        "src/alpha/models.py",
+        "src/beta/service.py",
+    ]
+    .map(str::to_string)
+    .into_iter()
+    .collect();
+    let identity =
+        ImportIdentity::from_resolution(&visible, &ImportResolutionContext::default(), &rows);
+    let partition =
+        crate::communities::partition::build_partition(&identity, &rows).expect("valid imports");
+    assert_eq!(partition.directed.len(), 1);
+    assert_eq!(partition.directed[0].importer, "src/alpha/service.py");
+    assert_eq!(partition.directed[0].provider, "src/alpha/models.py");
+    assert_eq!(
+        identity.unique_provider_for("src/beta/service.py", ".models"),
+        None
+    );
+}
+
+#[test]
 fn mcg_identity_build_handles_twenty_thousand_rows() {
     const FILES: usize = 2_000;
     let visible = (0..FILES)

@@ -72,6 +72,7 @@ fn candidate(source: CandidateEndpoint, target: CandidateEndpoint) -> ViewEdgeCa
 
 fn identity() -> ImportIdentity {
     ImportIdentity {
+        scoped_providers: HashMap::new(),
         visible_files: HashSet::from([
             "collision".into(),
             "src/a.py".into(),

@@ -13,7 +13,7 @@ use super::partition::PartitionCommunity;
 /// partition-wide [`dedupe_labels`] pass. Refresh folds it into the stored
 /// partition signature, so a bump makes each project's next `gcode index`
 /// rewrite its labels once.
-pub(crate) const LABEL_ALGORITHM_VERSION: u32 = 2;
+pub(crate) const LABEL_ALGORITHM_VERSION: u32 = 3;
 
 /// The deterministic label for one community.
 ///

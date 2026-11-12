@@ -207,6 +207,7 @@ mod tests {
     #[test]
     fn mcg_import_edge_candidate_uses_identity_provider_not_target_file() {
         let identity = ImportIdentity {
+            scoped_providers: HashMap::new(),
             visible_files: HashSet::from(["src/consumer.py".into(), "src/p.py".into()]),
             providers: HashMap::from([
                 ("p".into(), vec!["src/p.py".into()]),

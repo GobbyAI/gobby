@@ -157,19 +157,19 @@ fn directed_imports(
         if !files.contains(source.as_str()) {
             continue;
         }
-        let Some(provider) = identity.unique_provider(&module) else {
+        let Some(provider) = identity.unique_provider_for(&source, &module) else {
             continue;
         };
-        if provider == source {
+        if provider == source.as_str() {
             continue;
         }
-        if !files.contains(provider.as_str()) {
+        if !files.contains(provider) {
             return Err(PartitionError::ProviderNotVisible {
                 module,
-                file: provider,
+                file: provider.to_string(),
             });
         }
-        *counts.entry((source, provider)).or_default() += 1;
+        *counts.entry((source, provider.to_string())).or_default() += 1;
     }
     Ok(counts
         .into_iter()
