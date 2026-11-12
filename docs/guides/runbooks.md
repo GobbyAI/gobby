@@ -10,22 +10,21 @@ restart adoption, failed runs and stopping a seat.
 
 ## Start Admin
 
-Admin is not a runbook. Type the cold start in any workspace pane:
+Admin is not a runbook. Activate its definition in an operator-opened pane:
 
 ```text
-/gobby admin        Claude, Grok, Droid and AGY
-$gobby admin        Codex
+/gobby agents orchestrator        Claude, Grok, Droid and AGY
+$gobby agents orchestrator        Codex
 ```
 
 The typing pane becomes the Orchestrator. The Orchestrator then spawns the
 Assistant into its sandbox, so no Assistant pane is opened by hand and there is
 no `/gobby assistant` command.
 
-The command only applies the Orchestrator definition to the typing pane and
-opens no second pane. The router calls `gobby-agents:cold_start_admin`, which refuses
-`pane_unavailable` outside a workspace pane and `unsupported_provider` for a CLI
-it cannot launch. Only the space forms cold start: `/gobby:admin` and
-`/gobby admin <request>` load the admin capability reference instead.
+The router calls `gobby-agents:apply_agent_definition` for the current session
+and opens no second pane. Eligible definitions are enabled, support the persona
+surface and require no pipeline. Invalid names return eligible choices without
+changing the session. `/gobby persona <name>` applies only a persona overlay.
 
 ## Message routing
 

@@ -121,9 +121,14 @@ fn hit_test_covers_split_live_layout() {
         .enumerate()
     {
         assert!(rect.height > 0, "{section:?} drawn");
-        let band = match view.sidebar_section_divider_hit_areas.get(index) {
-            Some(Some(_)) => Hit::SidebarSectionDivider { index },
-            _ => Hit::SidebarEmpty,
+        // A section's band is the divider above it, `index - 1`; the first
+        // section's band has none.
+        let band = match index
+            .checked_sub(1)
+            .and_then(|above| view.sidebar_section_divider_hit_areas[above].map(|_| above))
+        {
+            Some(above) => Hit::SidebarSectionDivider { index: above },
+            None => Hit::SidebarEmpty,
         };
         for x in rect.x..rect.right() {
             assert_eq!(at(view, x, rect.y), band, "{section:?} band");
@@ -168,9 +173,12 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(entry, "run:term-alpha");
     assert_eq!(at(view, rect.x, rect.y), Hit::Agent(entry.clone()));
     assert_eq!(at(view, rect.x, rect.y + 1), Hit::Agent(entry.clone()));
-    // The sidebar's first row is the Machines band, its resize handle.
+    // The sidebar's first row is the Machines band, with nothing above it to
+    // trade with; the Projects band below it moves their shared edge.
+    assert_eq!(at(view, sidebar.x, sidebar.y), Hit::SidebarEmpty);
+    let projects = view.sidebar_section_rects[SidebarSection::Projects.index()];
     assert_eq!(
-        at(view, sidebar.x, sidebar.y),
+        at(view, projects.x, projects.y),
         Hit::SidebarSectionDivider { index: 0 }
     );
 

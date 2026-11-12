@@ -107,6 +107,28 @@ class CodeIndexFileStorageMixin:
         )
         return IndexedFile.from_row(row) if row else None
 
+    def get_pinned_file(self, project_id: str, file_path: str) -> tuple[str, IndexedFile] | None:
+        """Read immutable inherited metadata without following the parent's current state.
+
+        Any local state, including a deletion marker, shadows inheritance.
+        """
+        row = self.db.fetchone(
+            """SELECT f.* FROM code_overlay_pins p
+               JOIN code_indexed_files f
+                 ON f.project_id = p.source_project_id
+                AND f.file_path = p.file_path AND f.content_hash = p.content_hash
+               WHERE p.machine_id = %s AND p.overlay_project_id = %s AND p.file_path = %s
+                 AND NOT EXISTS (
+                     SELECT 1 FROM code_indexed_file_states own
+                     WHERE own.machine_id = p.machine_id
+                       AND own.project_id = p.overlay_project_id
+                       AND own.file_path = p.file_path)""",
+            (require_machine_id(), project_id, file_path),
+        )
+        if row is None:
+            return None
+        return str(row["project_id"]), IndexedFile.from_row(row)
+
     def list_files(self, project_id: str) -> list[IndexedFile]:
         """List all indexed files for a project."""
         rows = self.db.fetchall(

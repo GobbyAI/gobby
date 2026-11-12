@@ -67,6 +67,8 @@ def test_discovered_pipeline_yaml_parses(path: Path) -> None:
     ids=lambda path: path.stem,
 )
 def test_discovered_rule_yaml_and_expressions_parse(path: Path) -> None:
+    from gobby.workflows.rule_validation import validate_rule
+
     document = yaml.safe_load(path.read_text())
     for definition in document.get("rules", {}).values():
         definition = dict(definition)
@@ -75,6 +77,8 @@ def test_discovered_rule_yaml_and_expressions_parse(path: Path) -> None:
             definition.setdefault("effects", [effect])
         body, _ = split_rule_definition_data(definition)
         rule = RuleDefinitionBody.model_validate(body)
+        report = validate_rule(body)
+        assert report.valid, report
         assert rule.event
         for expression in [rule.when, *(effect.when for effect in rule.resolved_effects)]:
             if expression is not None:

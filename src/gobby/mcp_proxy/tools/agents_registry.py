@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from gobby.mcp_proxy.tools.admin_cold_start import register_admin_cold_start_tools
 from gobby.mcp_proxy.tools.agents_checkpoint_tools import register_agent_checkpoint_tools
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.agents_lifecycle_tools import register_agent_lifecycle_tools
@@ -137,5 +136,4 @@ def create_agents_registry(
     register_agent_checkpoint_tools(registry, ctx)
     register_agent_spawn_tools(registry, ctx)
     register_runbook_seat_tools(registry, ctx)
-    register_admin_cold_start_tools(registry, ctx)
     return registry

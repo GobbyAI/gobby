@@ -74,7 +74,9 @@ class _Index:
             symbol_count=1 if file_path == "src/provider.py" else 0,
         )
 
-    def get_symbols_for_file(self, project_id: str, file_path: str) -> list[_Symbol]:
+    def get_symbols_for_file(
+        self, project_id: str, file_path: str, *, content_hash: str | None = None
+    ) -> list[_Symbol]:
         assert project_id == self.project_id
         if file_path == "src/provider.py":
             return [_Symbol(id="provider-run", qualified_name="run")]
@@ -308,12 +310,14 @@ def test_consumer_coverage_unions_overlay_and_parent_usages(tmp_path: Path) -> N
             assert project_id in usages_by_project
             return super().get_file(PROJECT_ID, file_path)
 
-        def get_symbols_for_file(self, project_id: str, file_path: str) -> list[_Symbol]:
+        def get_symbols_for_file(
+            self, project_id: str, file_path: str, *, content_hash: str | None = None
+        ) -> list[_Symbol]:
             assert project_id in usages_by_project
-            return super().get_symbols_for_file(PROJECT_ID, file_path)
+            return [_Symbol(id=f"{project_id}-run", qualified_name="run")]
 
         def get_symbol_usages(self, project_id: str, symbol_id: str) -> list[str]:
-            assert symbol_id == "provider-run"
+            assert symbol_id == f"{project_id}-run"
             return usages_by_project[project_id]
 
     _write_source(tmp_path, "tests/test_overlay_consumer.py")

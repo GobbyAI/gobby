@@ -75,11 +75,32 @@ Targets:
 
 Targets:
 - `src/gobby/hooks/event_handlers/_tool.py::*` — scope-reason: extract shared edit attribution handling.
-- `src/gobby/hooks/event_handlers/edit_attribution.py`
-- `src/gobby/tasks/claim_flow.py::*` — scope-reason: resolve release ownership against checkout.
-- `tests/hooks/test_checkout_edit_attribution.py`
+- `src/gobby/hooks/event_handlers/edit_attribution.py::*` — scope-reason: extract cohesive mutation enforcement and recording from the tool-event coordinator.
+- `src/gobby/workflows/checkout_task_attribution.py::*` — scope-reason: centralize frozen checkout ownership and conservative dirty-check exclusions.
+- `src/gobby/workflows/session_edit_ledger.py::*` — scope-reason: use frozen checkout attribution for task ledger writes.
+- `src/gobby/workflows/task_tool_bindings.py::*` — scope-reason: freeze registered checkout ownership at tool start for delayed completion.
+- `src/gobby/mcp_proxy/tools/tasks/_close_context.py::capture_attribution`
+- `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::_uncommitted_refusal`
+- `tests/mcp_proxy/tools/tasks/test_checkout_edit_attribution.py::*` — scope-reason: cover leaf, shared epic, delayed completion, released claims, close/release and main-checkout attribution.
+- `tests/hooks/test_tool_handlers.py::*` — scope-reason: update extracted handler mocks and verify project-definition indexing notification.
+- `tests/hooks/test_opaque_program_attribution.py::*` — scope-reason: migrate the extracted shell checkout helper import.
+- `src/gobby/plans/symbol_targets.py::*` — scope-reason: validate checkout-visible immutable metadata and matching symbols after parent index movement.
+- `src/gobby/plans/symbol_index_scope.py::*` — scope-reason: extract checkout scope resolution and pinned index selection.
+- `src/gobby/code_index/_storage/files.py::CodeIndexFileStorageMixin.get_pinned_file`
+- `src/gobby/code_index/_storage/symbols.py::CodeIndexSymbolStorageMixin.get_symbols_for_file`
+- `tests/plans/test_symbol_targets.py::*` — scope-reason: cover inherited pins after parent advancement and preserve overlay shadowing.
+- `tests/plans/test_consumer_coverage.py::*` — scope-reason: adapt immutable symbol selection fixtures.
+- `tests/plans/test_semantic_lint.py::*` — scope-reason: adapt indexed-symbol storage fixture.
+- `tests/code_index/test_code_index_storage.py::*` — scope-reason: verify immutable metadata and symbols against PostgreSQL with local shadowing.
+- `tests/mcp_proxy/tools/tasks/test_close_attribution.py::*` — scope-reason: extend the existing no-foreign-owner fixture to cover checkout ownership lookup.
+
+Consumers unchanged:
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py` — no-edit-reason: the capture API and returned attribution shape remain unchanged.
+- `tests/mcp_proxy/tools/tasks/test_close_candidate.py` — no-edit-reason: its capture stub and candidate-close contract remain unchanged.
 
 Split `_tool.py` into `src/gobby/hooks/event_handlers/edit_attribution.py` before expanding attribution behavior.
+
+Split checkout/index scope resolution from `src/gobby/plans/symbol_targets.py` into `src/gobby/plans/symbol_index_scope.py` while fixing the validation blocker found during this deliverable. Inherited metadata and symbols must resolve the pinned version even after the parent index advances; local state retains precedence. **Granularity:** this found-work repair is included because project-aware validation of the current deliverable cannot otherwise complete. The existing storage layer owns immutable records; plan validation consumes its explicit pin/hash reads.
 
 **Research context:** The edit ledger currently chooses a task from claim history, even when the edit’s registered checkout identifies another task.
 
@@ -92,6 +113,7 @@ Split `_tool.py` into `src/gobby/hooks/event_handlers/edit_attribution.py` befor
 - Use the same resolution for pre-tool enforcement, delayed completion, ledger recording, close, and claim release.
 - Ignore another claimed task’s worktree dirt when closing the current task. Retain conservative checks for ambiguous or foreign ownership.
 - Extract edit-attribution handling from the large tool-event module while making this change.
+- Notify gcode about maintained project-definition edits; the index owns hidden-path eligibility.
 
 **Primary targets:** the edit ledger, tool-event attribution, close attribution, and claim-release checks.
 
@@ -105,13 +127,49 @@ Split `_tool.py` into `src/gobby/hooks/event_handlers/edit_attribution.py` befor
 Targets:
 - `src/gobby/mcp_proxy/tools/admin_cold_start.py::*` — operation: delete — scope-reason: retire cold-start operation and counterpart launch.
 - `src/gobby/workflows/agent_models.py::*` — scope-reason: remove cold-start fields and their validation.
-- `tests/mcp_proxy/test_definition_activation.py`
+- `src/gobby/workflows/agent_resolver.py::*` — scope-reason: replace alias resolution with eligible current-session choices.
+- `src/gobby/skills/capability_routing.py::*` — scope-reason: route explicit activation commands to existing tools.
+- `src/gobby/hooks/event_handlers/_agent.py::*` — scope-reason: remove alias resolver from typed command routing.
+- `src/gobby/hooks/event_handlers/_tool.py::*` — scope-reason: remove alias resolver from native skill routing.
+- `src/gobby/mcp_proxy/tools/agents_registry.py::*` — scope-reason: remove retired tool registration.
+- `src/gobby/mcp_proxy/tools/agents_spawn_tools.py::*` — scope-reason: treat direct definition tool calls as explicit current-session role changes.
+- `src/gobby/mcp_proxy/tools/apply_agent_definition.py::*` — scope-reason: return eligible choices before mutations for invalid definitions.
+- `src/gobby/install/shared/workflows/agents/orchestrator.yaml::*` — scope-reason: remove retired alias declaration and version its activation contract.
+- `src/gobby/install/shared/workflows/rules/tool-hygiene/agent-activation-authority.yaml::*` — scope-reason: remove retired tool from the declarative authority policy.
+- `src/gobby/install/shared/skills/gobby/SKILL.md`
+- `src/gobby/install/shared/skills/gobby/references/agents/personas.md`
+- `src/gobby/install/shared/skills/gobby/references/pipelines/runbooks.md`
+- `docs/guides/agents.md`
+- `docs/guides/runbooks.md`
+- `docs/reference-audit/agents.json::*` — scope-reason: remove the retired tool from source-audit inventory.
+- `docs/contracts/parity-ledger-status.d/sessions-agents.json::*` — scope-reason: remove retired tool classification before regenerating parity ledger.
+- `docs/contracts/parity-ledger.md`
+- `tests/mcp_proxy/test_admin_cold_start.py::*` — operation: delete — scope-reason: remove tests of the retired operation.
+- `tests/mcp_proxy/tools/test_apply_agent_definition.py::*` — scope-reason: cover public role changes, idempotence and eligible invalid-name choices with synthetic definitions.
+- `tests/skills/test_capability_routing.py::*` — scope-reason: cover explicit activation routing and project override choices.
+- `tests/skills/test_gobby_skill_router.py::*` — scope-reason: cover typed provider activation commands.
+- `tests/hooks/test_tool_handlers.py::*` — scope-reason: cover native skill activation routing.
+- `tests/agents/test_bundled_agent_definition_validity.py::*` — scope-reason: validate discovered YAML generically and parse each rule through the engine dry run.
+- `tests/agents/test_bundled_model_pairing.py::*` — scope-reason: remove obsolete alias-only bundled assertions.
+- `tests/agents/test_bundled_seat_guards.py::*` — scope-reason: remove assertions for deleted model fields.
+- `tests/servers/routes/test_agents_routes.py::*` — scope-reason: remove deleted fields from the API authority inventory fixture.
+- `web/src/components/activity/agents/AgentsTabActions.ts::*` — scope-reason: remove deleted fields from definition duplication authority inventory.
+- `src/gobby/agents/agent_workspaces.py::*` — scope-reason: extract session binding before extending activation policy.
+- `src/gobby/agents/workspace_bindings.py::*` — scope-reason: own explicit activation and session-start binding policy in one focused module.
+- `src/gobby/hooks/event_handlers/_session_start/flow.py::*` — scope-reason: move binder imports to the extracted owner.
+- `src/gobby/hooks/event_handlers/_session_start/materialize.py::*` — scope-reason: move binder imports to the extracted owner.
+- `tests/agents/test_agent_workspaces.py::*` — scope-reason: migrate binding import and preserve workspace characterization.
+- `tests/agents/test_sandbox_workspace_grants_persistent.py::*` — scope-reason: migrate binding import and preserve grants characterization.
+- `tests/hooks/test_session_start_reactivation.py::*` — scope-reason: seed legacy unbound seats directly for compact and resume recovery coverage.
 
 **Research context:** `apply_agent_definition` already applies full definitions. The older cold-start layer adds alias and counterpart-pane behavior.
+
+**Granularity:** one current-session activation outcome owns its router adapters, existing activation tool, eligibility model, removed legacy operation and documentation carriers. The tool explicitly authorizes the existing transactional role-change path; ambient session-start recovery keeps its existing role-change safeguard. Focused synthetic behavior tests preserve persona overlays and idempotence. Bundled rule checks are limited to generic YAML validation and engine dry runs.
 
 **Changes:**
 
 - Route `/gobby agents <definition>` directly through `apply_agent_definition` for the current session.
+- Split session binding from `agent_workspaces.py` into `src/gobby/agents/workspace_bindings.py`; prepare workspace binding, persistence, and injection changes under the same identity lock as activation. Preserve existing folders as recovery data and repeated-activation idempotence.
 - Keep `/gobby persona <persona>` as the persona-overlay operation.
 - Require an enabled definition supporting the persona surface and no pipeline requirement.
 - Remove the `admin` alias, cold-start tool, `cold_start_commands`, and counterpart-opening configuration and code.
@@ -121,7 +179,7 @@ Targets:
 
 **Acceptance:**
 
-- 3.1 - Activation changes the session’s effective identity and enforcement, opens no pane, and is idempotent when repeated. file: `tests/mcp_proxy/test_definition_activation.py`.
+- 3.1 - Activation changes the session’s effective identity and enforcement, opens no pane, and is idempotent when repeated. test: `tests/mcp_proxy/tools/test_apply_agent_definition.py::test_public_activation_switches_current_definition_without_pane`.
 
 ### 4. Clear semantics and default scratch space — new lifecycle work (depends: 3)
 `kind: deliverable`
@@ -154,7 +212,7 @@ Targets:
 
 Targets:
 - `src/gobby/agents/agent_workspaces.py::*` — scope-reason: extract binding and backup owners and integrate stable layout.
-- `src/gobby/agents/workspace_bindings.py`
+- `src/gobby/agents/workspace_bindings.py::*` — scope-reason: extend the extracted binding owner with stable persistent ownership and rotation.
 - `src/gobby/agents/workspace_backups.py`
 - `tests/agents/test_persistent_workspace_rotation.py`
 

@@ -55,7 +55,10 @@ Algorithm-cache version 3 forces the prior stored partition to rebuild. The rele
 policy changed during this work: `land_commit` now generates binary patch versions,
 lockfile entries and pins against the locked integration tip. The manual release
 edits were removed and the pre-land release build cancelled. Rebuild and promotion
-must use the landed identity. Nothing from this source fix is installed yet.
+must use the landed identity. At the time of this initial audit, nothing from this
+source fix was installed. **Follow-up:** gcode 1.9.117 is now built, promoted and
+the partition refreshed; see the [expanded study](../expanded-study-2026-11-11/README.md)
+for corrected population counts, the 169 authored names and completed Clef diagnostics.
 
 The global alias contract was checked in
 `crates/gcode/src/communities/identity.rs:16–21` at

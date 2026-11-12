@@ -42,26 +42,21 @@ def test_reference_contract_3_1_2() -> None:
 @pytest.mark.parametrize(
     ("prompt", "role"),
     [
-        ("/gobby admin", "synthetic-admin-seat"),
-        ("$gobby admin", "synthetic-admin-seat"),
+        ("/gobby agents fixture-guide", "fixture-guide"),
+        ("$gobby agents fixture-guide", "fixture-guide"),
     ],
 )
-def test_typed_operator_command_cold_starts_the_pane(prompt: str, role: str) -> None:
+def test_typed_operator_command_activates_current_session(prompt: str, role: str) -> None:
     handler = AgentEventHandlerMixin()
     handler._skill_manager = HookSkillManager()
     handler._session_manager = MagicMock()
-    roles = {"admin": "synthetic-admin-seat"}
     with (
         patch.object(handler._skill_manager, "discover_core_skills", return_value=[]),
         patch.object(handler, "_skill_not_found_context", return_value="Skill not found."),
-        patch(
-            "gobby.hooks.event_handlers._agent.resolve_cold_start_command",
-            side_effect=lambda _db, name, **_kwargs: roles.get(name),
-        ),
     ):
         result = handler._intercept_skill_command(prompt, project_id="project-1")
     assert result is not None
-    assert f'call_tool("gobby-agents", "cold_start_admin", {{"role": "{role}"}})' in result
+    assert f'call_tool("gobby-agents", "apply_agent_definition", {{"agent": "{role}"}})' in result
 
 
 def test_typed_colon_form_loads_the_admin_capability() -> None:
@@ -71,7 +66,7 @@ def test_typed_colon_form_loads_the_admin_capability() -> None:
     result = handler._intercept_skill_command("/gobby:admin", project_id="project-1")
     assert result is not None
     assert '"get_skill", {"names":["gobby:references/admin/overview.md"]}' in result
-    assert "cold_start_admin" not in result
+    assert "apply_agent_definition" not in result
 
 
 class TestGobbyRouterSkill:

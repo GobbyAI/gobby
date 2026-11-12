@@ -13,13 +13,13 @@ import pytest
 
 from gobby.agents import agent_workspaces, team_teardown
 from gobby.agents.agent_workspaces import (
-    bind_session_workspace,
     commit_workspace,
     ensure_workspace,
     register_agent_workspace_cron,
     workspace_anchor,
     workspace_git_dir,
 )
+from gobby.agents.workspace_bindings import bind_session_workspace
 from gobby.hooks.event_handlers import _agent, _session_end
 from gobby.hooks.event_handlers._session_start import materialize
 from gobby.mcp_proxy.tools.sessions import _terminal

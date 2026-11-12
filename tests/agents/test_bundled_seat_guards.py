@@ -42,9 +42,6 @@ def test_spawner_guarded_definitions_are_spawn_only(path: Path) -> None:
         return
     assert body.supports_surface("spawn")
     assert not body.supports_surface("persona")
-    assert not body.supports_cold_start()
-    assert not body.cold_start_commands
-    assert body.cold_start_counterpart is None
 
 
 @pytest.mark.parametrize("path", _bundled_files(), ids=lambda path: path.stem)

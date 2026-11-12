@@ -512,8 +512,9 @@ async def test_pre_created_start_binds_and_creates_the_workspace_folder(
 ) -> None:
     home = (tmp_path / "gobby-home").resolve()
     monkeypatch.setenv("GOBBY_HOME", str(home))
-    assert (await apply_agent_definition_impl("x", temp_db, session_id))["success"]
     manager = SessionVariableManager(temp_db)
+    # Simulate a seat created before activation began installing workspace policy.
+    manager.merge_variables(session_id, {"_agent_type": "x"})
     assert not manager.get_variables(session_id).get("_agent_workspace_dir")
 
     compact(temp_db, session_id, source)

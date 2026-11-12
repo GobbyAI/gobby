@@ -1321,7 +1321,7 @@ fn an_agent_with_neither_task_nor_status_line_leaves_line_three_blank() {
 }
 
 #[test]
-fn a_task_takes_line_three_over_the_status_line() {
+fn a_task_holder_is_four_lines_with_the_status_under_its_task() {
     let chrome = Chrome::dark();
     let row = SidebarRow {
         definition: "synthetic".into(),
@@ -1331,10 +1331,55 @@ fn a_task_takes_line_three_over_the_status_line() {
         kind: RowKind::Agent,
         ..SidebarRow::default()
     };
+    assert_eq!(row.height(), 4);
     assert_eq!(
         line_text(&row_third_line(&row, 40, &chrome)),
         "   Task 24895: gclient sidebar"
     );
+    assert_eq!(
+        line_text(&row_fourth_line(&row, 40, &chrome)),
+        "   Reviewing the ticker"
+    );
+    // A task holder with no status keeps its fourth line, blank.
+    let quiet = SidebarRow {
+        status_line: None,
+        ..row.clone()
+    };
+    assert_eq!(quiet.height(), 4);
+    assert!(line_text(&row_fourth_line(&quiet, 40, &chrome))
+        .trim()
+        .is_empty());
+}
+
+#[test]
+fn an_agent_without_a_task_is_three_lines_with_the_status_on_line_three() {
+    let chrome = Chrome::dark();
+    let row = SidebarRow {
+        definition: "synthetic".into(),
+        reference: "#15976".into(),
+        status_line: Some("Reviewing the ticker".into()),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    assert_eq!(row.height(), 3);
+    assert_eq!(
+        line_text(&row_third_line(&row, 40, &chrome)),
+        "   Reviewing the ticker"
+    );
+    assert!(line_text(&row_fourth_line(&row, 40, &chrome)).is_empty());
+}
+
+#[test]
+fn the_status_under_a_task_sets_the_marquee_period() {
+    let row = SidebarRow {
+        definition: "synthetic".into(),
+        task: Some(("#1".into(), "t".into())),
+        status_line: Some("a status line far longer than the row is wide".into()),
+        kind: RowKind::Agent,
+        ..SidebarRow::default()
+    };
+    // 23 cells less the 3-cell indent leaves 20 for a 45-cell status.
+    assert_eq!(row_travel(&row, 23), 25);
 }
 
 #[test]

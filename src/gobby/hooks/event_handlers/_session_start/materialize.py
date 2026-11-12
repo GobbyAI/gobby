@@ -327,7 +327,7 @@ def _bind_clear_successor(
             exc,
         )
     try:
-        from gobby.agents.agent_workspaces import bind_session_workspace
+        from gobby.agents.workspace_bindings import bind_session_workspace
 
         bind_session_workspace(
             handler._session_manager.db, successor_id, inherit_from=predecessor_id
@@ -482,7 +482,8 @@ def activate_materialized_session(
                 session_obj = rebound
     if handler._session_manager is not None:
         try:
-            from gobby.agents.agent_workspaces import bind_epic_workspace, bind_session_workspace
+            from gobby.agents.agent_workspaces import bind_epic_workspace
+            from gobby.agents.workspace_bindings import bind_session_workspace
 
             bind_session_workspace(handler._session_manager.db, session_id)
             bind_epic_workspace(handler._session_manager.db, session_id)

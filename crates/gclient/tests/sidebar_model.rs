@@ -783,16 +783,19 @@ fn a_refresh_that_clears_the_status_line_clears_the_agent_row() {
         "no agent row may keep the cleared status line"
     );
 
-    // A task on the seat takes line three over a status line it also reports.
+    // A task on the seat takes line three; the status it also reports moves to
+    // line four, under the task.
     ws.daemon_mut().set_roster(roster(
         json!("Reviewing the ticker"),
         Some(json!({"ref": "#123", "title": "Ticker work"})),
     ));
     ws.reconcile_subscribe_first().expect("claim a task");
     let tasked = sidebar_text(&ws, &mut chrome);
+    let task_at = tasked.find("Task 123: Ticker work");
+    let status_at = tasked.find("Reviewing the ticker");
     assert!(
-        tasked.contains("Task ") && !tasked.contains("Reviewing the ticker"),
-        "a held task must take line three over the status line:\n{tasked}"
+        matches!((task_at, status_at), (Some(task), Some(status)) if task < status),
+        "a held task must sit on line three with the status under it:\n{tasked}"
     );
 }
 

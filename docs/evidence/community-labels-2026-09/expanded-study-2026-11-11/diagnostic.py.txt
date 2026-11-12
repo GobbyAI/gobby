@@ -1,0 +1,165 @@
+"""Fixed-name, full-population diagnostic; it never changes live labels or config."""
+
+import asyncio
+import ast
+import hashlib
+import json
+import random
+import re
+from dataclasses import asdict
+from datetime import UTC, datetime
+from pathlib import Path
+
+from gobby.ai.decisions import ChoiceQuestion, DecisionService, ScoreQuestion
+from gobby.config.ai import DecisionsConfig
+
+ROOT = Path("/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/session-21986")
+SOURCE = Path("/Users/josh/Projects/gobby")
+OUT = ROOT / "expanded-clef-diagnostic-20261111.json"
+MANIFEST = ROOT / "expanded-label-manifest-20261111.json"
+SEED = 25163
+
+
+def caption(member: str) -> tuple[str, str]:
+    """Derive file captions from explicit headings/docstrings, then readable stems."""
+    path = SOURCE / member
+    try:
+        text = path.read_text(errors="replace")[:16000]
+    except OSError:
+        return member, "path_fallback"
+    if path.suffix == ".md":
+        match = re.search(r"(?m)^#{1,2}\s+(.+)$", text)
+        if match:
+            return match.group(1).strip()[:160], "markdown_heading"
+    if path.suffix == ".py":
+        try:
+            summary = ast.get_docstring(ast.parse(path.read_text()))
+        except (SyntaxError, UnicodeError):
+            summary = None
+        if summary:
+            return summary.splitlines()[0].strip()[:160], "module_docstring"
+    if path.suffix == ".rs":
+        match = re.search(r"(?m)^//!\s*(\S.*)$", text)
+        if match:
+            return match.group(1).strip()[:160], "rust_module_comment"
+    stem = path.stem if path.stem not in {"mod", "lib", "index", "__init__"} else path.parent.name
+    title = re.sub(r"[_-]+", " ", stem).strip().capitalize()
+    return title or path.name, "readable_filename"
+
+
+def select_stratified(rows: list[dict], count_per_bucket: int) -> list[dict]:
+    rng = random.Random(SEED)
+    buckets = [[], [], [], [], []]
+    for row in rows:
+        n = row["member_count"]
+        bucket = 0 if n < 5 else 1 if n < 20 else 2 if n < 50 else 3 if n < 100 else 4
+        buckets[bucket].append(row)
+    return [row for bucket in buckets for row in rng.sample(bucket, min(count_per_bucket, len(bucket))) ]
+
+
+async def main() -> None:
+    population_bytes = (ROOT / "population-after-fix-20261111.json").read_bytes()
+    population = json.loads(population_bytes)
+    names_bytes = (ROOT / "population-names-20261111.json").read_bytes()
+    names = json.loads(names_bytes)["names"]
+    rows = population["communities"]
+    groups = [row for row in rows if row["member_count"] >= 3]
+    small = [row for row in rows if row["member_count"] < 3]
+    assert set(names) == {row["community"] for row in groups}
+    manifest = []
+    for row in rows:
+        cid = row["community"]
+        if cid in names:
+            name, kind, derivation = names[cid], "group_name", "codex_direct_path_context"
+        else:
+            parts = [caption(member) for member in row["members"]]
+            name = " / ".join(part[0] for part in parts)
+            kind = "file_caption" if len(parts) == 1 else "paired_file_captions"
+            derivation = [part[1] for part in parts]
+        manifest.append({"community": cid, "member_signature": row["member_signature"],
+                         "member_count": row["member_count"], "name": name,
+                         "kind": kind, "derivation": derivation})
+    MANIFEST.write_text(json.dumps({"population_sha256": hashlib.sha256(population_bytes).hexdigest(),
+                                    "names_sha256": hashlib.sha256(names_bytes).hexdigest(),
+                                    "labels": manifest}, indent=2) + "\n")
+    labels = {row["community"]: row for row in manifest}
+    carry_sample = select_stratified(groups, 6)
+    rng = random.Random(SEED)
+    small_sample = rng.sample([r for r in small if r["member_count"] == 1], 16)
+    small_sample += rng.sample([r for r in small if r["member_count"] == 2], 8)
+    config = DecisionsConfig(wire_api="systemone", api_base="http://127.0.0.1:11434",
+                             model="clef:27b", identity_contract="response_version",
+                             backend_max_state_tokens=16384, timeout_seconds=30)
+    result = {
+        "purpose": "Diagnostic model opinions; human precision and rollout acceptance are not inferred",
+        "started_at": datetime.now(UTC).isoformat(), "seed": SEED,
+        "population_sha256": hashlib.sha256(population_bytes).hexdigest(),
+        "names_sha256": hashlib.sha256(names_bytes).hexdigest(),
+        "manifest_sha256": hashlib.sha256(MANIFEST.read_bytes()).hexdigest(),
+        "wire_api": "systemone", "model": "clef:27b", "api_cost_usd": 0,
+        "local_compute_cost": "unmeasured",
+        "coverage": {"group_names": len(groups), "file_caption_sample": len(small_sample),
+                     "carry_groups": len(carry_sample), "carry_variants_per_group": 4},
+        "limits": ["Full member paths, no source bodies; differs from production 40-path cap",
+                   "Questions within a request are correlated",
+                   "Controls and changes are diagnostics, not human-validated gold labels",
+                   "File captions are explicitly derived, not individually authored semantic names"],
+        "cases": [],
+    }
+
+    def save() -> None:
+        OUT.write_text(json.dumps(result, indent=2) + "\n")
+
+    save()
+    for index, row in enumerate(groups + small_sample):
+        cid = row["community"]
+        name = labels[cid]["name"]
+        # A deliberately remote functional topic, fixed before any responses.
+        wrong = "Restaurant reservations and dinner table seating"
+        options = {"a": name, "b": row["deterministic_name"], "c": wrong}
+        if index % 2:
+            options = {"a": row["deterministic_name"], "b": name, "c": wrong}
+        questions = {
+            "usefulness": ScoreQuestion(f'How useful is "{name}" for locating these files?',
+                                        ("misleading or unhelpful", "partly useful", "clear and useful")),
+            "selection": ChoiceQuestion("Choose the most useful topic name for locating these files.", options),
+            "negative_control": f'The name "{wrong}" usefully describes these files.',
+        }
+        outcomes = await DecisionService(config).evaluate(
+            "community_label_expanded_diagnostic", {"members": row["members"]}, questions)
+        result["cases"].append({"community": cid, "variant": "baseline", "name": name,
+                                "kind": labels[cid]["kind"], "members": row["members"],
+                                "options": options,
+                                "outcomes": {key: asdict(value) for key, value in outcomes.items()}})
+        save()
+        print(f"baseline {index + 1}/{len(groups) + len(small_sample)} community={cid}", flush=True)
+    for index, row in enumerate(carry_sample):
+        cid = row["community"]
+        members = row["members"]
+        donor = next(other for other in groups if other["community"] != cid
+                     and not set(other["members"]) & set(members)
+                     and other["members"][0].split("/")[0] != members[0].split("/")[0])
+        donor_members = donor["members"]
+        variants = {
+            "unchanged": list(members),
+            "reordered": list(reversed(members)),
+            "remove_quarter": members[:max(1, len(members) - max(1, len(members) // 4))],
+            "replace_all": donor_members[:len(members)],
+        }
+        for variant, changed in variants.items():
+            # Always judge the original candidate, never a freshly regenerated name.
+            name = labels[cid]["name"]
+            response = await DecisionService(config).noul(
+                "community_label_expanded_carry", {"members": changed},
+                {"carry": f'The name "{name}" still usefully describes these files.'})
+            result["cases"].append({"community": cid, "variant": variant, "name": name,
+                                    "members": changed, "donor_community": donor["community"],
+                                    "response": asdict(response)})
+            save()
+        print(f"carry {index + 1}/{len(carry_sample)} community={cid}", flush=True)
+    result["finished_at"] = datetime.now(UTC).isoformat()
+    save()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

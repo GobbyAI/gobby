@@ -74,6 +74,12 @@ def _uncommitted_refusal(
         by_root.setdefault(legacy_root, set()).update(legacy)
     dirty: list[str] = []
     for root, paths in sorted(by_root.items()):
+        from gobby.workflows.checkout_task_attribution import checkout_owned_by_other_claim
+
+        if checkout_owned_by_other_claim(
+            ctx.task_manager.db, variables, holder.project_id, task_id, root
+        ):
+            continue
         found = task_dirty_paths(paths, root)
         if found is None:
             if is_ignorable_attributed_root(

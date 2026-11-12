@@ -79,7 +79,7 @@ class TestToolHandlers:
             name.removeprefix("gobby:"), project_id="project-override"
         )
 
-    def test_native_router_cold_starts_only_through_the_gobby_skill(
+    def test_native_router_activates_only_through_the_gobby_skill(
         self, event_handlers: EventHandlers, temp_db: HubDatabase
     ) -> None:
         seed_seat(
@@ -87,7 +87,6 @@ class TestToolHandlers:
             "custom-guide",
             surfaces=["persona"],
             prompts={"persona": "Guide the workspace."},
-            cold_start_commands=["guide"],
         )
         event_handlers._session_manager = MagicMock(spec=HookSessionManager, db=temp_db)
         manager = MagicMock()
@@ -95,11 +94,11 @@ class TestToolHandlers:
         manager.discover_core_skills.return_value = []
         event_handlers._skill_manager = manager
         router = event_handlers._resolve_skill_tool_call(
-            {"tool_input": {"skill": "gobby", "args": "guide"}}
+            {"tool_input": {"skill": "gobby", "args": "agents custom-guide"}}
         )
         assert router is not None
         assert router.context is not None
-        assert 'call_tool("gobby-agents", "cold_start_admin", {"role": "custom-guide"})' in (
+        assert 'call_tool("gobby-agents", "apply_agent_definition", {"agent": "custom-guide"})' in (
             router.context
         )
         assert "User arguments" not in router.context
@@ -109,37 +108,11 @@ class TestToolHandlers:
         assert capability is not None
         assert capability.context is not None
         assert '"names":["gobby:references/admin/overview.md"]' in capability.context
-        assert "cold_start_admin" not in capability.context
+        assert "apply_agent_definition" not in capability.context
         manager.resolve_skill_name.assert_not_called()
-        prompt_context = event_handlers._intercept_skill_command("$gobby guide")
+        prompt_context = event_handlers._intercept_skill_command("$gobby agents custom-guide")
         assert prompt_context is not None
-        assert '"role": "custom-guide"' in prompt_context
-
-    @pytest.mark.parametrize("carrier", ["prompt", "tool"])
-    def test_ambiguous_cold_start_reports_refusal(
-        self, event_handlers: EventHandlers, temp_db: HubDatabase, carrier: str
-    ) -> None:
-        for name in ("guide-one", "guide-two"):
-            seed_seat(
-                temp_db,
-                name,
-                surfaces=["persona"],
-                prompts={"persona": "Guide this project."},
-                cold_start_commands=["guide"],
-            )
-        event_handlers._session_manager = MagicMock(spec=HookSessionManager, db=temp_db)
-        event_handlers._skill_manager = MagicMock()
-        if carrier == "prompt":
-            context = event_handlers._intercept_skill_command("$gobby guide")
-        else:
-            response = event_handlers._resolve_skill_tool_call(
-                {"tool_input": {"skill": "gobby", "args": "guide"}}
-            )
-            assert response is not None
-            context = response.context
-        assert context is not None
-        assert "multiple definitions" in context
-        assert 'call_tool("gobby-agents", "cold_start_admin"' not in context
+        assert '"agent": "custom-guide"' in prompt_context
 
     @pytest.mark.parametrize("router_request", ["help", "missing"])
     def test_native_router_honors_exclusions_without_hiding_unselected_skills(
@@ -489,7 +462,7 @@ class TestToolHandlerEdgeCases:
         with (
             caplog.at_level(logging.WARNING),
             patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+                "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files",
                 side_effect=RuntimeError("primary write failed"),
             ),
         ):
@@ -600,7 +573,7 @@ class TestToolHandlerEdgeCases:
         event.cwd = "/tmp/project"
 
         with patch(
-            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+            "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files"
         ) as record_files:
             response = handlers.handle_after_tool(event)
 
@@ -658,11 +631,11 @@ class TestToolHandlerEdgeCases:
 
         with (
             patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.get_variables",
+                "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.get_variables",
                 return_value=self._claimed("task-123"),
             ),
             patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+                "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files"
             ) as record_files,
         ):
             response = handlers.handle_after_tool(event)
@@ -690,11 +663,11 @@ class TestToolHandlerEdgeCases:
 
         with (
             patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.get_variables",
+                "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.get_variables",
                 return_value=self._claimed("task-123"),
             ),
             patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+                "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files"
             ) as record_files,
         ):
             response = handlers.handle_after_tool(event)
@@ -734,13 +707,13 @@ class TestToolHandlerEdgeCases:
 
         with (
             patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.get_variables",
+                "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.get_variables",
                 return_value=variables,
             ),
             patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+                "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files"
             ) as record_files,
-            patch("gobby.hooks.event_handlers._tool.run_coro_blocking") as commit_check,
+            patch("gobby.hooks.event_handlers.edit_attribution.run_coro_blocking") as commit_check,
         ):
             response = handlers.handle_after_tool(event)
 
@@ -792,7 +765,7 @@ class TestToolHandlerEdgeCases:
         event.cwd = "/tmp/project"
 
         with patch(
-            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+            "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files"
         ) as record_files:
             response = handlers.handle_after_tool(event)
 
@@ -819,7 +792,7 @@ class TestToolHandlerEdgeCases:
         event.project_id = "hook-project"
 
         with patch(
-            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+            "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files"
         ) as record_files:
             response = handlers.handle_after_tool(event)
 
@@ -853,7 +826,7 @@ class TestToolHandlerEdgeCases:
         event.project_id = "hook-project"
 
         with patch(
-            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+            "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files",
             return_value=True,
         ) as record_files:
             response = handlers.handle_after_tool(event)
@@ -899,7 +872,7 @@ class TestToolHandlerEdgeCases:
         with (
             patch.object(handlers, "_notify_code_index", notify_code_index),
             patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+                "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files",
                 return_value=True,
             ) as record_files,
         ):
@@ -938,7 +911,7 @@ class TestToolHandlerEdgeCases:
         with (
             caplog.at_level("WARNING"),
             patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+                "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files",
                 return_value=True,
             ) as record_files,
         ):
@@ -966,7 +939,7 @@ class TestToolHandlerEdgeCases:
         )
 
         with patch(
-            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+            "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files"
         ) as record_files:
             response = handlers.handle_after_tool(event)
 
@@ -990,7 +963,7 @@ class TestToolHandlerEdgeCases:
         )
 
         with patch(
-            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+            "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files"
         ) as record_files:
             response = handlers.handle_after_tool(event)
 
@@ -1029,7 +1002,7 @@ class TestToolHandlerEdgeCases:
         event.project_id = project_id
 
         with patch(
-            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+            "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files",
             return_value=True,
         ) as record_files:
             response = handlers.handle_after_tool(event)
@@ -1082,7 +1055,7 @@ class TestToolHandlerEdgeCases:
         event.project_id = project_id
 
         with patch(
-            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files",
+            "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files",
             return_value=True,
         ) as record_files:
             response = handlers.handle_after_tool(event)
@@ -1349,7 +1322,7 @@ class TestToolHandlerEdgeCases:
         assert event.data["canonical_file_paths"] == [str(target)]
         assert event.data["canonical_edit_file_paths"] == []
         with (
-            patch("gobby.hooks.event_handlers._tool.SessionVariableManager") as manager,
+            patch("gobby.hooks.event_handlers.edit_attribution.SessionVariableManager") as manager,
             patch(
                 "gobby.workflows.task_claim_state.resolve_edit_pair",
                 return_value=(str(tmp_path), "nested"),
@@ -1362,12 +1335,12 @@ class TestToolHandlerEdgeCases:
             with pytest.raises(ValueError, match="live-attributed to #456"):
                 handlers._assert_edit_path_selection(event, "session-123")
 
-    def test_after_tool_edit_attributes_gobby_internal_files(
+    def test_after_tool_edit_attributes_and_indexes_project_definitions(
         self,
         mock_dependencies: dict[str, Any],
         tmp_path: Path,
     ) -> None:
-        """`.gobby` files remain task-owned even though gcode does not index them."""
+        """Maintained project definitions retain ownership and reach index eligibility."""
         write_project_marker(tmp_path, project_id="hook-project", name="hook-project")
         mock_dependencies["task_manager"].list_tasks.return_value = [
             MagicMock()
@@ -1378,7 +1351,7 @@ class TestToolHandlerEdgeCases:
             HookEventType.AFTER_TOOL,
             data={
                 "tool_name": "Write",
-                "tool_input": {"file_path": str(tmp_path / ".gobby" / "tasks.jsonl")},
+                "tool_input": {"file_path": str(tmp_path / ".gobby" / "workflows" / "local.yaml")},
             },
             metadata={"_platform_session_id": "sess-123"},
         )
@@ -1389,29 +1362,29 @@ class TestToolHandlerEdgeCases:
         with (
             patch.object(handlers, "_notify_code_index", notify_code_index),
             patch(
-                "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+                "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files"
             ) as record_files,
         ):
             response = handlers.handle_after_tool(event)
 
         assert response.decision == "allow"
         assert resolve_edit_pair(
-            str(tmp_path / ".gobby" / "tasks.jsonl"),
+            str(tmp_path / ".gobby" / "workflows" / "local.yaml"),
             str(tmp_path),
             project_id="hook-project",
             db=None,
             variables={},
-        ) == (str(tmp_path.resolve()), ".gobby/tasks.jsonl")
+        ) == (str(tmp_path.resolve()), ".gobby/workflows/local.yaml")
         record_files.assert_called_once_with(
             "sess-123",
-            [".gobby/tasks.jsonl"],
+            [".gobby/workflows/local.yaml"],
             checkout_root=str(tmp_path),
             edited_at=event.timestamp.timestamp(),
             started_at=event.timestamp.timestamp(),
             attribute_to_task=True,
         )
         mock_dependencies["session_storage"].mark_had_edits.assert_called_once_with("sess-123")
-        notify_code_index.assert_not_called()
+        notify_code_index.assert_called_once_with(tmp_path.resolve(), ".gobby/workflows/local.yaml")
 
     def test_after_tool_edit_skips_out_of_repo_paths(
         self,
@@ -1461,7 +1434,7 @@ class TestToolHandlerEdgeCases:
         event.project_id = "hook-project"
 
         with patch(
-            "gobby.hooks.event_handlers._tool.SessionVariableManager.record_edited_files"
+            "gobby.hooks.event_handlers.edit_attribution.SessionVariableManager.record_edited_files"
         ) as record_files:
             response = handlers.handle_after_tool(event)
 

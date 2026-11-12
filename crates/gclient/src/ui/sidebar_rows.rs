@@ -100,6 +100,8 @@ impl SidebarRow {
     /// Screen lines the row takes: agents use three, terminals two, others one.
     pub fn height(&self) -> u16 {
         match self.kind {
+            // A task holder carries its status on a fourth line, under the task.
+            RowKind::Agent if self.task.is_some() => 4,
             RowKind::Agent => 3,
             RowKind::Terminal => 2,
             RowKind::Project | RowKind::Worktree | RowKind::Machine | RowKind::Group => 1,
@@ -569,16 +571,16 @@ pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
                 display_width(&row.definition),
                 budget.saturating_sub(pinned_width(row)),
             );
-            // The lead stays put, so only the title's overrun beside it scrolls. With
-            // no task held, line three is the status line, which scrolls in full.
-            let line_three = match task_line(row) {
-                Some((lead, title)) => overrun(
+            // The lead stays put, so only the title's overrun beside it scrolls. The
+            // status line scrolls in full, on line three alone or under the task.
+            let title = task_line(row).map_or(0, |(lead, title)| {
+                overrun(
                     display_width(&title),
                     budget.saturating_sub(display_width(&lead)),
-                ),
-                None => status_line(row).map_or(0, |text| overrun(display_width(&text), budget)),
-            };
-            name.max(line_three)
+                )
+            });
+            let status = status_line(row).map_or(0, |text| overrun(display_width(&text), budget));
+            name.max(title).max(status)
         }
         RowKind::Worktree => overrun(display_width(&row.label), worktree_name_budget(row, width)),
         _ => 0,
@@ -815,19 +817,52 @@ pub(crate) fn row_third_line_with_travel<'a>(
         } else {
             spans.push(Span::styled(truncate_end(&lead, budget), lead_style));
         }
-    } else if let Some(text) = status_line(row) {
-        // With no task held, the status line fills line three and scrolls alone.
-        if budget > 0 {
-            spans.extend(ticker_spans(
-                &[(&text, style)],
-                budget,
-                chrome.ticker,
-                max_travel,
-                chrome.prefs.title_scrolling,
-            ));
-        }
+    } else {
+        // With no task held, the status line fills line three.
+        spans.extend(status_spans(row, budget, chrome, max_travel));
     }
     Line::from(spans)
+}
+
+/// An agent's fourth line: the status line under its task. Only a task holder
+/// has one; it stays blank while the agent reports no status.
+pub fn row_fourth_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
+    row_fourth_line_with_travel(row, width, chrome, chrome.view.title_travel)
+}
+
+pub(crate) fn row_fourth_line_with_travel<'a>(
+    row: &'a SidebarRow,
+    width: u16,
+    chrome: &Chrome,
+    max_travel: usize,
+) -> Line<'a> {
+    if row.height() < 4 {
+        return Line::default();
+    }
+    let budget = usize::from(width).saturating_sub(3 + display_width(&nest_prefix(row)));
+    let mut spans = vec![continuation_indent(row, width, &chrome.palette)];
+    spans.extend(status_spans(row, budget, chrome, max_travel));
+    Line::from(spans)
+}
+
+/// The status line, scrolling alone in `budget` cells; none when blank.
+fn status_spans(
+    row: &SidebarRow,
+    budget: usize,
+    chrome: &Chrome,
+    max_travel: usize,
+) -> Vec<Span<'static>> {
+    let Some(text) = status_line(row).filter(|_| budget > 0) else {
+        return Vec::new();
+    };
+    let style = Style::default().fg(chrome.palette.subtext0);
+    ticker_spans(
+        &[(&text, style)],
+        budget,
+        chrome.ticker,
+        max_travel,
+        chrome.prefs.title_scrolling,
+    )
 }
 
 /// Token spans reduced to the glyph + title + trailing

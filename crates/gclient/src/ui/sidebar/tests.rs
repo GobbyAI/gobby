@@ -358,14 +358,14 @@ fn each_label_band_above_a_visible_section_is_a_resize_handle() {
     terminal
         .draw(|frame| hits = render_sidebar(frame, area, &ws, &chrome))
         .unwrap();
-    // The Machines, Projects and Agents label bands. Terminals has no section
-    // below it to trade with.
+    // A band is its section's top edge: the Projects, Agents and Terminals
+    // bands each trade with the section above. Machines has none above it.
     assert_eq!(
         hits.dividers,
         [
-            Some(Rect::new(0, 0, 25, 1)),
             Some(Rect::new(0, 3, 25, 1)),
             Some(Rect::new(0, 6, 25, 1)),
+            Some(Rect::new(0, 23, 25, 1)),
         ]
     );
 }
