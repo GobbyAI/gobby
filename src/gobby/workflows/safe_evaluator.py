@@ -498,6 +498,7 @@ def build_condition_helpers(
         Dict of function_name -> callable, ready to pass as allowed_funcs.
     """
     from gobby.hooks.code_navigation_recovery import navigation_requires_index
+    from gobby.hooks.credential_file_policy import credential_file_access
     from gobby.hooks.provider_launch_guard import blocks_direct_provider_launch
 
     from .approval_brace_guard import approval_command_word_expansion
@@ -549,6 +550,7 @@ def build_condition_helpers(
             "navigation_requires_index": lambda data, action=None, broad_only=False: (
                 navigation_requires_index(data, _get_variables(ctx), action, broad_only=broad_only)
             ),
+            "credential_file_access": credential_file_access,
             "shell_command_invokes_gcode": shell_command_invokes_gcode,
             "shell_command_runs_ocr_review": shell_command_runs_ocr_review,
             "shell_command_consumes_code_review": shell_command_consumes_code_review,

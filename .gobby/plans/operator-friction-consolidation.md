@@ -310,10 +310,42 @@ Observed checks during implementation: 68 focused ownership/activation/lifecycle
 `kind: deliverable`
 
 Targets:
-- `src/gobby/hooks/credential_file_policy.py`
-- `tests/hooks/test_credential_file_policy.py`
+- `src/gobby/hooks/credential_file_policy.py::*` — scope-reason: credential operand policy and protected path matching are one new module.
+- `src/gobby/workflows/workspace_read_targets.py::*` — scope-reason: expose shared normalized read operands, retain lexical paths, consume every normalized edit path, and extract pattern handling.
+- `src/gobby/workflows/read_path_patterns.py::*` — scope-reason: directly extract bounded pattern expansion and lexical/canonical path resolution from the shared reader.
+- `src/gobby/workflows/condition_helpers_sessions.py::agent_workspace_read_violation`
+- `src/gobby/workflows/safe_evaluator.py::build_condition_helpers`
+- `src/gobby/install/shared/workflows/rules/worker-safety/credential-file-protection.yaml::*` — scope-reason: declare the complete new mandatory policy and default exemption.
+- `src/gobby/install/shared/workflows/rules/worker-safety/no-data-exfiltration.yaml::*` — scope-reason: remove overlapping bootstrap authority and bump the file version.
+- `tests/hooks/test_credential_file_policy.py::*` — scope-reason: synthetic tool, path, identity, and native-child matrix plus normalization regressions.
+- `tests/workflows/test_agent_workspace_scope.py::test_unreadable_directory_and_brace_limit_are_distinct`
 
-**Research context:** Direct tool and shell payloads enter hook normalization; new `credential_file_policy.py` will share normalized path checks, with applicability supplied by definition policy. Use synthetic files and definitions to verify refusals without reading live credentials.
+**Research context:** `WorkflowHookHandler` retrieves stored session variables through trusted `_platform_session_id`; provider-supplied identity fields cannot grant an exemption. Native child payloads retain `agent_id` while using the authenticated parent session. Mandatory rules survive an empty definition selector; YAML supplies `agent_scope: ["*", "!default"]`. `tool_read_targets` reuses existing shell cwd, wrapper, and data-operand parsing. Its credential consumer requests lexical paths as well as resolved paths so named symlinks remain protected; normalized multi-file edit fields are checked in full. Preserve both lexical and canonical configured-home roots. The old spawned-only secret regex loses its overlapping bootstrap alternative so it cannot override the default exemption; other existing protections remain. Directly split pattern expansion and path resolution from `workspace_read_targets.py` into `read_path_patterns.py`; dependencies point from the shell/tool reader into the stateless pattern module, never back. Synthetic fixtures verify behavior without reading live credentials. Bundled YAML receives generic schema validation and engine parsing only.
+
+**Consumer sweep:** `gcode grep -w 'tool_read_targets|_workspace_read_targets|credential_file_access' -m 50` found the new policy, safe-evaluator registry, workspace-scope consumer, new YAML, and synthetic tests; no stale private-name consumer remains. Workspace-scope behavior retains canonical-only resolution by default. Focused parsing and scope tests require no edits.
+
+Consumers unchanged:
+- `tests/workflows/test_agent_workspace_read_parsing.py` — no-edit-reason: unchanged public scope helper; existing regressions verify reader parity.
+- `src/gobby/workflows/dry_run_validation.py` — no-edit-reason: helper registry is additive; call signature and existing entries remain unchanged.
+- `src/gobby/workflows/engine/templating.py` — no-edit-reason: helper registry is additive with no caller contract change.
+- `src/gobby/workflows/step_context.py` — no-edit-reason: helper registry is additive with no caller contract change.
+- `tests/review_learning/test_review_evidence_gate.py` — no-edit-reason: existing helper-registry use has unchanged arguments and entries.
+- `tests/workflows/test_approval_brace_guard.py` — no-edit-reason: existing helper-registry use remains valid.
+- `tests/workflows/test_block_temp_scratchpad_writes.py` — no-edit-reason: existing helper-registry use remains valid.
+- `tests/workflows/test_condition_helpers_paths.py` — no-edit-reason: existing helper-registry use remains valid.
+- `tests/workflows/test_condition_helpers_task_state.py` — no-edit-reason: existing helper-registry use remains valid.
+- `tests/workflows/test_database_deadline_retry.py` — no-edit-reason: existing helper-registry use remains valid.
+- `tests/workflows/test_definition_pin_guard.py` — no-edit-reason: existing helper-registry use remains valid.
+- `tests/workflows/test_handoff_pull_gate.py` — no-edit-reason: existing helper-registry use remains valid.
+- `tests/workflows/test_monolith_guard.py` — no-edit-reason: existing helper-registry use remains valid.
+- `tests/workflows/test_safe_evaluator.py` — no-edit-reason: existing helper-registry use remains valid.
+- `tests/workflows/test_session_transcript_writes.py` — no-edit-reason: existing helper-registry use remains valid.
+- `tests/workflows/test_tdd_gate_retirement.py` — no-edit-reason: existing helper-registry use remains valid.
+- `tests/workflows/test_time_windows.py` — no-edit-reason: existing helper-registry use remains valid.
+
+**Granularity:** This is one credential-access decision with no new persisted state or independent lifecycle owner. Its five production Python targets contain the detector, shared parser extraction, two existing consumers, and helper registration; the YAML declares applicability. Keep them in one security task so no intermediate commit activates an incomplete policy.
+
+**Verification:** Before review fixes, the focused credential/parser/scope and generic YAML run passed 980 cases. Nine additional intended assertion failures reproduced globbed-parent, multi-file edit, and linked-home bypasses; fixes passed 136 credential/parser cases. Repeat focused checks after the pattern extraction, run Ruff/mypy and changed-test audits, then perform project-aware plan validation. Live verification remains content-free and requires both a non-default seat and its native child after activation.
 
 **Changes:**
 

@@ -29,7 +29,7 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.workspace_read_targets import (
     _placeholder_folder,
     _workspace_read_boundary,
-    _workspace_read_targets,
+    tool_read_targets,
 )
 
 if TYPE_CHECKING:
@@ -483,7 +483,7 @@ def agent_workspace_read_violation(
             canonical, session_manager, caller_id, folders
         )
 
-    targets = _workspace_read_targets(event_data, tool_input)
+    targets = tool_read_targets(event_data, tool_input)
     if targets is None:
         return True
     for raw, start in targets:

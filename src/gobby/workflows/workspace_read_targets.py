@@ -10,7 +10,6 @@ import os
 import re
 import shlex
 from collections.abc import Mapping
-from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +18,20 @@ from gobby.hooks._path_scope import current_project_root, current_tool_cwd, reso
 from gobby.hooks._python_pipeline_classifier import _inline_interpreter_parts
 from gobby.hooks.code_navigation import shell_command_name
 from gobby.workflows.condition_helpers_paths import workspace_contains
+from gobby.workflows.read_path_patterns import (
+    EXTGLOB as _EXTGLOB,
+)
+from gobby.workflows.read_path_patterns import (
+    READ_PATTERN as _READ_PATTERN,
+)
+from gobby.workflows.read_path_patterns import (
+    brace_read_words,
+    extglob_read_word,
+    lexical_read_target,
+    pattern_reaches_root,
+    resolve_read_target,
+    shell_dot_read_words,
+)
 
 _SHELL_OPERATORS = re.compile(r"[<>|;&()]")
 # One lexical unit of shell text. Quoted spans, comments and escapes are consumed whole, so a
@@ -610,105 +623,8 @@ def _shell_path_words(command: Any, base: Path | None = None, moved: bool = Fals
     return words
 
 
-_READ_PATTERN = re.compile(r"[*?\[]")
-_EXTGLOB = re.compile(r"[@+?!*]\(")
-_BRACE_RANGE = re.compile(r"(?:-?\d+\.\.-?\d+|[a-zA-Z]\.\.[a-zA-Z])(?:\.\.-?\d+)?")
-_READ_EXPANSION_LIMIT = 256
-
-
-def _brace_read_words(raw: str) -> list[str] | None:
-    """Expand bounded comma alternatives; approximate ranges with a filename glob.
-
-    Non-expanding braces remain literal, including awk/sed program data. Work on
-    complete words before path normalization because alternatives can contain '/'
-    or combine separate dot fragments into '..'. None means the bound was exceeded.
-    """
-    pending = [raw]
-    expanded: list[str] = []
-    budget = _READ_EXPANSION_LIMIT
-    while pending:
-        word = pending.pop()
-        budget -= 1
-        if budget < 0:
-            return None
-        groups: list[list[int]] = []
-        for end, char in enumerate(word):
-            if char == "{":
-                groups.append([end])
-            elif char == "," and groups:
-                groups[-1].append(end)
-            elif char == "}" and groups:
-                positions = groups.pop()
-                start = positions[0]
-                if len(positions) > 1:
-                    bounds = [*positions, end]
-                    alternatives = [
-                        word[a + 1 : b] for a, b in zip(bounds, bounds[1:], strict=False)
-                    ]
-                elif _BRACE_RANGE.fullmatch(word[start + 1 : end]):
-                    alternatives = ["*"]
-                else:
-                    continue
-                if len(pending) + len(alternatives) > budget:
-                    return None
-                pending.extend(word[:start] + choice + word[end + 1 :] for choice in alternatives)
-                break
-        else:
-            expanded.append(word)
-    return expanded
-
-
-def _extglob_read_word(word: str) -> str | None:
-    """Overapproximate filename extglobs without executing a shell.
-
-    Slash-bearing groups change path structure and cannot be inspected as one
-    component. Refuse those rather than silently matching only part of a group.
-    """
-    while match := _EXTGLOB.search(word):
-        depth = 1
-        end = match.end()
-        while end < len(word) and depth:
-            depth += (word[end] == "(") - (word[end] == ")")
-            end += 1
-        if depth or "/" in word[match.end() : end]:
-            return None
-        word = word[: match.start()] + "*" + word[end:]
-    return word
-
-
-def _resolve_read_target(raw: Any, base: Path | None) -> tuple[Path, int | None] | None:
-    """Resolve a pattern and retain where expansion starts; base paths stay literal."""
-    if not isinstance(raw, str) or not raw:
-        return None
-    parts = Path(os.path.expandvars(os.path.expanduser(raw))).parts
-    for index, part in enumerate(parts):
-        if _READ_PATTERN.search(part):
-            prefix = resolve_tool_path(str(Path(*parts[:index])), base)
-            return (
-                (prefix.joinpath(*parts[index:]), len(prefix.parts)) if prefix is not None else None
-            )
-    literal = resolve_tool_path(raw, base)
-    return (literal, None) if literal is not None else None
-
-
-def _shell_dot_read_words(word: str, pattern: str) -> list[str] | None:
-    """Include shell dot/parent matches without enumerating filesystem entries."""
-    originals = Path(word).parts
-    variants = [Path(pattern).parts]
-    for index, part in enumerate(originals):
-        if not (part.startswith(".") or re.search(r"[|(]\.", part)):
-            continue
-        for name in (".", ".."):
-            if part == name or not _read_pattern_matches(name, variants[0][index]):
-                continue
-            variants.extend(parts[:index] + (name,) + parts[index + 1 :] for parts in variants[:])
-            if len(variants) > _READ_EXPANSION_LIMIT:
-                return None
-    return [os.path.join(*parts) for parts in variants]
-
-
-def _workspace_read_targets(
-    event_data: Mapping[str, Any] | None, tool_input: Any
+def tool_read_targets(
+    event_data: Mapping[str, Any] | None, tool_input: Any, *, preserve_lexical: bool = False
 ) -> list[tuple[Path, int | None]] | None:
     """Resolved paths a tool reads: path-like Bash words, or the path fields of a file tool."""
     if not isinstance(tool_input, Mapping):
@@ -722,6 +638,11 @@ def _workspace_read_targets(
             return None
     else:
         raws = [tool_input.get("file_path"), tool_input.get("path")]
+        for source in (data, tool_input):
+            for field in ("file_paths", "canonical_file_paths"):
+                values = source.get(field)
+                if isinstance(values, list):
+                    raws.extend(values)
     inputs = [(raw, base, data.get("tool_name") == "Bash") for raw in raws]
     if data.get("tool_name") == "Glob":
         pattern_base = resolve_tool_path(tool_input.get("path"), base) or base
@@ -734,50 +655,32 @@ def _workspace_read_targets(
         # Check that actual filename too, before inspecting possible expansions.
         if (literal := resolve_tool_path(raw, directory)) is not None:
             paths.append((literal, None))
+        if preserve_lexical and (lexical := lexical_read_target(raw, directory, pattern=False)):
+            paths.append(lexical)
         if not expand:
             continue
-        words = _brace_read_words(os.path.expandvars(os.path.expanduser(raw)))
+        words = brace_read_words(os.path.expandvars(os.path.expanduser(raw)))
         if words is None:
             return None
         for word in words:
-            pattern = _extglob_read_word(word)
+            pattern = extglob_read_word(word)
             if pattern is None:
                 return None
             patterns = (
-                _shell_dot_read_words(word, pattern)
+                shell_dot_read_words(word, pattern)
                 if data.get("tool_name") == "Bash"
                 else [pattern]
             )
             if patterns is None:
                 return None
             for item in patterns:
-                if (path := _resolve_read_target(item, directory)) is not None:
+                if (path := resolve_read_target(item, directory)) is not None:
                     paths.append(path)
+                if preserve_lexical and (
+                    lexical := lexical_read_target(item, directory, pattern=True)
+                ):
+                    paths.append(lexical)
     return list(dict.fromkeys(paths))
-
-
-def _read_pattern_matches(name: str, pattern: str) -> bool:
-    """Conservatively include shell bracket classes and Unicode/case variants."""
-    pattern = re.sub(r"\[.*\]", "*", pattern)
-    return fnmatchcase(name, pattern) or fnmatchcase(name.casefold(), pattern.casefold())
-
-
-def _pattern_reaches_root(parts: tuple[str, ...], root_parts: tuple[str, ...]) -> bool:
-    """Whether a pattern has enough matching components to enter the workspace root."""
-    pending = [(0, 0)]
-    visited: set[tuple[int, int]] = set()
-    while pending:
-        index, depth = pending.pop()
-        if depth == len(root_parts):
-            return True
-        if index == len(parts) or (index, depth) in visited:
-            continue
-        visited.add((index, depth))
-        if parts[index] == "**":
-            pending.extend(((index + 1, depth), (index, depth + 1)))
-        elif _read_pattern_matches(root_parts[depth], parts[index]):
-            pending.append((index + 1, depth + 1))
-    return False
 
 
 def _workspace_read_boundary(target: Path, root: Path, start: int) -> Path | None:
@@ -810,7 +713,7 @@ def _workspace_read_boundary(target: Path, root: Path, start: int) -> Path | Non
         ancestor = workspace_contains(root, prefix)
         if ancestor is None:
             return root
-        if ancestor and _pattern_reaches_root(target.parts[index:], root.parts[index:]):
+        if ancestor and pattern_reaches_root(target.parts[index:], root.parts[index:]):
             return root
         return None
     within = workspace_contains(target, root)

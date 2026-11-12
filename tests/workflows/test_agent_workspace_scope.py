@@ -1754,7 +1754,7 @@ async def test_unreadable_directory_and_brace_limit_are_distinct(
     monkeypatch: pytest.MonkeyPatch,
     failure: str,
 ) -> None:
-    from gobby.workflows import workspace_read_targets as helpers
+    from gobby.workflows import read_path_patterns as helpers
 
     variables = _seat(root / PROJECT, "fixture-worker", 12)
     own = Path(variables["_agent_workspace_dir"])
