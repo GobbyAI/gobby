@@ -1,10 +1,4 @@
-"""A persistent seat's resume grant covers the folder the seat actually writes (#25286).
-
-A persistent definition's clear successor binds its predecessor's folder, which keeps the
-lineage's first sequence number, instead of ``<definition>/session-<own seq>/``. The SRT
-grant a resume rebuilds must name that bound folder: a grant for the successor's own
-sequence number would leave the folder the seat writes outside its sandbox.
-"""
+"""A persistent owner's resume grants its stable live folder, keeping history read-only."""
 
 from __future__ import annotations
 
@@ -21,6 +15,7 @@ from gobby.agents.srt_settings import render_srt_settings
 from gobby.agents.workspace_bindings import bind_session_workspace
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.test_resume_executor import (
     _original_run,
@@ -62,10 +57,10 @@ def _persistent_seat(db: HubDatabase, session_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_resume_of_a_clear_successor_grants_its_inherited_folder(
+async def test_resume_of_a_new_owner_grants_its_stable_folder(
     world: TeamWorld, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The resumed successor writes its predecessor's folder, so that is the folder granted."""
+    """A resumed persistent owner receives only its stable live folder as a write grant."""
     db = world.case.db
     project = world.case.project_id
     AgentDefinitionManager(db).upsert_with_steps(
@@ -85,7 +80,8 @@ async def test_resume_of_a_clear_successor_grants_its_inherited_folder(
     _persistent_seat(db, predecessor)
     _persistent_seat(db, successor)
     first = bind_session_workspace(db, predecessor)
-    inherited = bind_session_workspace(db, successor, inherit_from=predecessor)
+    SessionManager(db).update_status_if_non_terminal(predecessor, "expired")
+    inherited = bind_session_workspace(db, successor)
     own = session_workspace_dir(project, ARCHIVIST, _seq(db, successor))
     # The premise: the successor binds the lineage's folder, not one for its own number.
     assert first is not None

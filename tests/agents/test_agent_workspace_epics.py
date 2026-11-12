@@ -99,6 +99,10 @@ async def _epic_team(world: TeamWorld, title: str) -> tuple[Team, Task, str]:
         child_session_id=sub_developer,
         task_id=leaf.id,
     )
+    for session_id in (*team.seats, sub_developer):
+        SessionVariableManager(world.case.db).merge_variables(
+            session_id, {"_agent_type": "fixture-worker"}
+        )
     return team, leaf, sub_developer
 
 
@@ -145,7 +149,7 @@ async def test_epic_folder_scoped_to_team(world: TeamWorld, engine: RuleEngine) 
 
     for stranger in (*bystander.seats, outsider):
         assert bind_epic_workspace(db, stranger) is None, stranger
-        assert "_agent_workspace_epic_dir" not in _variables(db, stranger)
+        assert _variables(db, stranger).get("_agent_workspace_epic_dir") is None
         SessionVariableManager(db).merge_variables(
             stranger,
             {"_agent_workspace_dir": str(epic_dir.parents[1] / "fixture-worker" / "session-1")},

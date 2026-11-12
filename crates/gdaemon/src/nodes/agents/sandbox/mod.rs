@@ -71,6 +71,8 @@ pub struct PolicyInputs {
     pub definition: Option<String>,
     pub session_seq: Option<u64>,
     pub epic_seq: Option<u64>,
+    /// Stored definition policy; a persistent owner writes its stable current folder.
+    pub persistent_workspace: bool,
     /// Authority resolved from the stored definition by the hub at launch/resume.
     pub read_all_agent_workspaces: bool,
     /// Existing same-definition predecessors selected by the hub's persistence,

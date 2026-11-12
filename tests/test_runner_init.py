@@ -19,10 +19,8 @@ from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.llm.model_registry import ModelInfo
 from gobby.runner import GobbyRunner
-from gobby.runner_init.orchestration import (
-    RETIRED_SYSTEM_CRON_JOBS,
-    _send_tmux_session_wake,
-)
+from gobby.runner_init.cron import RETIRED_SYSTEM_CRON_JOBS
+from gobby.runner_init.orchestration import _send_tmux_session_wake
 from gobby.runner_lifecycle_subsystems import _start_system_automation_loop
 from gobby.runner_maintenance import storage_hygiene
 from gobby.telemetry.span_store import GobbySpanExporter

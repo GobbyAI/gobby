@@ -408,6 +408,14 @@ async def apply_agent_definition_impl(
     pin = definition_pin(body)
     decision = activation_decision(db, stored, agent, pin, relaunch=relaunch, same_pin_noop=True)
     if decision != "apply":
+        if decision == "unchanged":
+            from gobby.agents.persistent_workspaces import WorkspaceOwnershipError
+            from gobby.agents.workspace_bindings import bind_session_workspace
+
+            try:
+                bind_session_workspace(db, session_id)
+            except WorkspaceOwnershipError as exc:
+                return _refusal("workspace_unavailable", str(exc))
         return _activation_receipt(decision, stored.get("_agent_type"), agent)
     try:
         extra = _resolve_task_variables(task_id, task_manager, project_id)
@@ -430,18 +438,23 @@ async def apply_agent_definition_impl(
     collision = colliding_definition_variable_error(variables, changes=changes, extra_vars=overlays)
     if collision:
         return _refusal("variable_collision", collision)
-    committed = commit_definition_changes(
-        db,
-        session_id,
-        agent,
-        changes,
-        expected_agent_type=stored.get("_agent_type"),
-        relaunch=relaunch,
-        same_pin_noop=True,
-        definition_variable_names=set(body.workflows.variables),
-        overlays={**overlays, **(variables or {})},
-        workspace_persistent=body.persistent_workspace,
-    )
+    from gobby.agents.persistent_workspaces import WorkspaceOwnershipError
+
+    try:
+        committed = commit_definition_changes(
+            db,
+            session_id,
+            agent,
+            changes,
+            expected_agent_type=stored.get("_agent_type"),
+            relaunch=relaunch,
+            same_pin_noop=True,
+            definition_variable_names=set(body.workflows.variables),
+            overlays={**overlays, **(variables or {})},
+            workspace_persistent=body.persistent_workspace,
+        )
+    except WorkspaceOwnershipError as exc:
+        return _refusal("workspace_unavailable", str(exc))
     if committed["status"] != "applied":
         return _activation_receipt(committed["status"], committed["agent"], agent)
     from gobby.hooks.session_activation import _ensure_step_instance

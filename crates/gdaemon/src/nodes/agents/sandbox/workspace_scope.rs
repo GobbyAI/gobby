@@ -53,18 +53,20 @@ impl WorkspaceScope {
         let root = paths::resolve_nonstrict(&lexical_root);
         let mut writes = Vec::new();
         let mut reads = Vec::new();
-        if let Some(session_seq) = inputs.session_seq {
-            let anchor = lexical_root.join(&inputs.project_id);
-            let definition = inputs
+        if let (Some(session_seq), Some(definition)) = (
+            inputs.session_seq,
+            inputs
                 .definition
                 .as_deref()
-                .filter(|name| !name.is_empty())
-                .unwrap_or("default");
-            writes.push(
-                anchor
-                    .join(definition)
-                    .join(format!("session-{session_seq}")),
-            );
+                .filter(|name| !name.is_empty() && *name != "default"),
+        ) {
+            let anchor = lexical_root.join(&inputs.project_id);
+            let live = if inputs.persistent_workspace {
+                "current".to_owned()
+            } else {
+                format!("session-{session_seq}")
+            };
+            writes.push(anchor.join(definition).join(live));
             if let Some(epic_seq) = inputs.epic_seq {
                 writes.push(anchor.join("epics").join(format!("epic-{epic_seq}")));
             }

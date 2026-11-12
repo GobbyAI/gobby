@@ -243,12 +243,50 @@ Activation records explicit workflow-variable ownership separately from initiali
 Targets:
 - `src/gobby/agents/agent_workspaces.py::*` — scope-reason: extract binding and backup owners and integrate stable layout.
 - `src/gobby/agents/workspace_bindings.py::*` — scope-reason: extend the extracted binding owner with stable persistent ownership and rotation.
-- `src/gobby/agents/workspace_backups.py`
-- `tests/agents/test_persistent_workspace_rotation.py`
+- `src/gobby/agents/persistent_workspaces.py::*` — scope-reason: own serialized stable-folder acquisition, durable rotation and legacy migration.
+- `src/gobby/agents/workspace_backups.py::*` — scope-reason: extract the complete nightly backup owner and document stable layout.
+- `src/gobby/mcp_proxy/tools/apply_agent_definition.py::*` — scope-reason: acquire workspace ownership during activation and unchanged-definition resume with atomic refusal.
+- `src/gobby/hooks/event_handlers/_session_start/materialize.py::*` — scope-reason: remove obsolete predecessor-binding argument after stable ownership replaces inheritance.
+- `src/gobby/runner_init/orchestration.py::*` — scope-reason: register the extracted nightly backup owner.
+- `src/gobby/runner_init/cron.py::*` — scope-reason: extract cron dependency initialization and handler registration from orchestration.
+- `tests/test_runner_lifecycle.py::*` — scope-reason: move the heartbeat consumer and correct the stale scoped-backfill logger assertion found during characterization.
+- `tests/test_runner_init.py::*` — scope-reason: move the retired-cron constant consumer and characterize unchanged initialization.
+- `src/gobby/install/shared/workflows/rules/roles/inject-agent-workspace.yaml::*` — scope-reason: explain stable current and read-only history recovery with a version bump.
+- `crates/gdaemon/src/nodes/agents/sandbox/mod.rs::*` — scope-reason: represent trusted persistent-workspace policy in native sandbox inputs.
+- `crates/gdaemon/src/nodes/agents/sandbox/workspace_scope.rs::*` — scope-reason: project stable current and default exemption into native sandbox scopes.
+- `crates/gdaemon/src/nodes/agents/launch.rs::*` — scope-reason: retain absent seat-folder authority on native launch.
+- `crates/gdaemon/src/nodes/agents/sandbox/caches/tests.rs::*` — scope-reason: update the synthetic policy constructor.
+- `crates/gdaemon/tests/node_agents.rs::*` — scope-reason: consume persistent policy from the generated parity corpus.
+- `crates/gdaemon/tests/fixtures/node_srt/corpus.json::*` — scope-reason: regenerate synthetic workspace policy cases through the Python oracle.
+- `tests/agents/test_persistent_workspace_binding.py::*` — scope-reason: verify ownership, rotation recovery, collisions, launch admission and default cleanup.
+- `tests/agents/test_agent_workspace_backup_bounds.py::*` — scope-reason: move backup characterization to the extracted owner.
+- `tests/agents/test_agent_workspace_commit_lock.py::*` — scope-reason: move backup lock characterization to the extracted owner.
+- `tests/agents/test_agent_workspace_lifecycle.py::*` — scope-reason: verify stable persistent bindings through lifecycle boundaries.
+- `tests/agents/test_agent_workspace_epics.py::*` — scope-reason: initialize synthetic non-default identities in epic workspace fixtures.
+- `tests/agents/test_agent_workspace_skipped_paths.py::*` — scope-reason: retain exclusion characterization after extraction.
+- `tests/agents/test_agent_workspaces.py::*` — scope-reason: retain nightly-only backup and non-default workspace characterization.
+- `tests/agents/test_sandbox_workspace_grants_persistent.py::*` — scope-reason: verify stable current write grants and historical read scope after takeover.
+- `tests/agents/test_sandbox_workspace_grants.py::*` — scope-reason: verify default exemption while preserving non-default and epic grants.
+- `tests/agents/test_sandbox_workspace_scope.py::*` — scope-reason: verify stable current writes and sibling history reads with synthetic definitions.
+- `tests/agents/test_node_srt_corpus.py::*` — scope-reason: generate and verify synthetic stable-workspace and default-exemption parity cases.
+- `tests/mcp_proxy/tools/test_apply_agent_definition.py::*` — scope-reason: verify public activation ownership refusal and repeat activation.
+- `tests/utils/test_daemon_git_inventory.py::*` — scope-reason: track the moved synchronous Git initializer.
 
 Split `agent_workspaces.py` into `src/gobby/agents/workspace_bindings.py` and `src/gobby/agents/workspace_backups.py` before extending stable ownership.
 
+Move cron initialization from `src/gobby/runner_init/orchestration.py` into `src/gobby/runner_init/cron.py` so the runner remains below the plan's growth threshold after its backup consumer changes. Preserve dependency failures, initialization ordering, handler registration and nightly cadence. Existing runner initialization/lifecycle tests characterize the extraction; a stale test logger target discovered in the baseline is corrected to its existing owner.
+
 **Research context:** `persistent_workspace` already exists, but independent sessions still receive session-numbered folders.
+
+The binding owner is `workspace_bindings.bind_session_workspace`; `definition_workspace_changes` participates in `commit_definition_changes`' identity transaction. New `persistent_workspaces.bind_persistent_workspace` owns the project/definition advisory lock and durable filesystem journal. Live data resides in `<definition>/current`, historical data in sibling `history/session-<seq>`, and ownership metadata in the daemon-only sibling Git directory outside backup content. Launch grants must acquire ownership before exposing current, including before SessionStart has established semantic identity. Default cleanup also clears stale persistent/injection flags when folder bindings are absent. Archive collisions refuse without merging or deleting either copy. Directory renames and journal replacements are fsynced before ownership completes.
+
+Pre-launch ownership records its workspace definition separately from semantic identity, so a default-session cleanup cannot erase a newly admitted persistent launch. Cleanup follows the variable manager's advisory-lock order, rechecks identity under that lock and only removes empty top-level generated default session folders; nested recovery directories remain intact.
+
+Consumer sweep: `gcode grep -w bind_session_workspace -m 50 src/gobby` identified SessionStart agents/flow/materialize plus public activation. Agents and flow already call the unchanged two-argument API; materialize's unused inheritance argument is removed. `gcode grep -w inherit_from -m 40 src/gobby` identified only that obsolete parameter/caller. Native `launch.policy_inputs` explicitly grants no seat-folder authority; preserve that restriction. Native `WorkspaceScope::resolve` and the generated Python/native parity corpus still need stable/default projection semantics for trusted policy inputs; no payload authority is added.
+
+**Granularity:** Keep one leaf because activation, launch grants, rotation and recovery must enforce the same exclusive-owner invariant atomically. The backup extraction moves its existing nightly-only behavior and consumers together to keep the workspace module below the production ceiling; it adds no independent lifecycle or backup trigger. Native changes only project the same folder policy. The resulting modules separately own paths/grants, binding, persistent rotation and nightly backups.
+
+Observed checks during implementation: 68 focused ownership/activation/lifecycle/grant tests passed; synthetic Python corpus regeneration passed on both platform projections; native SRT parity initially failed the new default exemption, then 14 focused native SRT tests passed after alignment. Final static, audit, generic YAML-engine and exact-candidate checks remain required.
 
 **Changes:**
 

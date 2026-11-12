@@ -73,7 +73,7 @@ def _runner_with_static_runtime() -> GobbyRunner:
 def test_pipeline_heartbeat_without_startup_project_is_cross_project(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from gobby.runner_init.orchestration import _init_pipeline_heartbeat
+    from gobby.runner_init.cron import _init_pipeline_heartbeat
 
     runner = SimpleNamespace(
         database=MagicMock(),
@@ -660,7 +660,7 @@ async def test_scoped_tool_backfill_follows_run_mode(
             "gobby.adapters.codex_impl.app_server_adapter.CodexAdapter.is_codex_available",
             return_value=False,
         ),
-        caplog.at_level(logging.INFO, logger="gobby.runner_init.servers"),
+        caplog.at_level(logging.INFO, logger="gobby.runner_init.mcp_stack"),
     ):
         init_servers(runner)
 
