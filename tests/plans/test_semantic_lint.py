@@ -1532,7 +1532,9 @@ class _NoIndexRecord:
     def get_file(self, project_id: str, file_path: str) -> None:
         return None
 
-    def get_symbols_for_file(self, project_id: str, file_path: str) -> list[object]:
+    def get_symbols_for_file(
+        self, project_id: str, file_path: str, *, content_hash: str | None = None
+    ) -> list[object]:
         return []
 
     def get_symbol_usages(self, project_id: str, symbol_id: str) -> list[str]:

@@ -73,6 +73,17 @@ async def capture_attribution(
             logger.debug("Cannot inspect linked paths for %s", task.id, exc_info=True)
     clean_checkouts: dict[str, frozenset[str]] = {}
     for checkout_root, checkout_paths in checkouts.items():
+        from gobby.workflows.checkout_task_attribution import checkout_owned_by_other_claim
+
+        if await asyncio.to_thread(
+            checkout_owned_by_other_claim,
+            ctx.task_manager.db,
+            variables,
+            task.project_id,
+            task.id,
+            checkout_root,
+        ):
+            continue
         if await asyncio.to_thread(
             is_ignorable_attributed_root,
             ctx.task_manager.db,

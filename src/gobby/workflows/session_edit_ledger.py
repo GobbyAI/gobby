@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from gobby.workflows.checkout_fingerprint import path_fingerprints
+from gobby.workflows.checkout_task_attribution import checkout_task_at_start
 
 logger = logging.getLogger(__name__)
 _MutationResult = TypeVar("_MutationResult")
@@ -75,12 +76,10 @@ class SessionEditLedger(ABC):
 
         from gobby.workflows.task_claim_state import (
             TASK_EDIT_LEDGER_KEYS,
-            active_task_id_for_edit,
             assert_task_edit_paths_available,
             attribute_paths_to_task,
             normalize_task_checkout_root,
             record_unclaimed_edits,
-            task_selected_at,
         )
 
         normalized_checkout = normalize_task_checkout_root(checkout_root)
@@ -93,11 +92,7 @@ class SessionEditLedger(ABC):
                 if normalized_checkout is not None
                 else {}
             )
-            task_id = (
-                active_task_id_for_edit(variables)
-                if started_at is None
-                else task_selected_at(variables, started_at)
-            )
+            task_id = checkout_task_at_start(variables, normalized_checkout, started_at)
             if not attribute_to_task:
                 task_id = None
             if started_at is not None and (
@@ -155,6 +150,8 @@ class SessionEditLedger(ABC):
             apply_defaults=True,
             keys=(
                 "claimed_tasks",
+                "task_tool_bindings",
+                "task_tool_turn",
                 "session_edited_files",
                 "session_dirty_files",
                 "session_dirty_file_checkouts",

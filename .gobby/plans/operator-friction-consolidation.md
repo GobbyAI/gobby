@@ -75,11 +75,32 @@ Targets:
 
 Targets:
 - `src/gobby/hooks/event_handlers/_tool.py::*` — scope-reason: extract shared edit attribution handling.
-- `src/gobby/hooks/event_handlers/edit_attribution.py`
-- `src/gobby/tasks/claim_flow.py::*` — scope-reason: resolve release ownership against checkout.
-- `tests/hooks/test_checkout_edit_attribution.py`
+- `src/gobby/hooks/event_handlers/edit_attribution.py::*` — scope-reason: extract cohesive mutation enforcement and recording from the tool-event coordinator.
+- `src/gobby/workflows/checkout_task_attribution.py::*` — scope-reason: centralize frozen checkout ownership and conservative dirty-check exclusions.
+- `src/gobby/workflows/session_edit_ledger.py::*` — scope-reason: use frozen checkout attribution for task ledger writes.
+- `src/gobby/workflows/task_tool_bindings.py::*` — scope-reason: freeze registered checkout ownership at tool start for delayed completion.
+- `src/gobby/mcp_proxy/tools/tasks/_close_context.py::capture_attribution`
+- `src/gobby/mcp_proxy/tools/tasks/_claim_release.py::_uncommitted_refusal`
+- `tests/mcp_proxy/tools/tasks/test_checkout_edit_attribution.py::*` — scope-reason: cover leaf, shared epic, delayed completion, released claims, close/release and main-checkout attribution.
+- `tests/hooks/test_tool_handlers.py::*` — scope-reason: update extracted handler mocks and verify project-definition indexing notification.
+- `tests/hooks/test_opaque_program_attribution.py::*` — scope-reason: migrate the extracted shell checkout helper import.
+- `src/gobby/plans/symbol_targets.py::*` — scope-reason: validate checkout-visible immutable metadata and matching symbols after parent index movement.
+- `src/gobby/plans/symbol_index_scope.py::*` — scope-reason: extract checkout scope resolution and pinned index selection.
+- `src/gobby/code_index/_storage/files.py::CodeIndexFileStorageMixin.get_pinned_file`
+- `src/gobby/code_index/_storage/symbols.py::CodeIndexSymbolStorageMixin.get_symbols_for_file`
+- `tests/plans/test_symbol_targets.py::*` — scope-reason: cover inherited pins after parent advancement and preserve overlay shadowing.
+- `tests/plans/test_consumer_coverage.py::*` — scope-reason: adapt immutable symbol selection fixtures.
+- `tests/plans/test_semantic_lint.py::*` — scope-reason: adapt indexed-symbol storage fixture.
+- `tests/code_index/test_code_index_storage.py::*` — scope-reason: verify immutable metadata and symbols against PostgreSQL with local shadowing.
+- `tests/mcp_proxy/tools/tasks/test_close_attribution.py::*` — scope-reason: extend the existing no-foreign-owner fixture to cover checkout ownership lookup.
+
+Consumers unchanged:
+- `src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py` — no-edit-reason: the capture API and returned attribution shape remain unchanged.
+- `tests/mcp_proxy/tools/tasks/test_close_candidate.py` — no-edit-reason: its capture stub and candidate-close contract remain unchanged.
 
 Split `_tool.py` into `src/gobby/hooks/event_handlers/edit_attribution.py` before expanding attribution behavior.
+
+Split checkout/index scope resolution from `src/gobby/plans/symbol_targets.py` into `src/gobby/plans/symbol_index_scope.py` while fixing the validation blocker found during this deliverable. Inherited metadata and symbols must resolve the pinned version even after the parent index advances; local state retains precedence. **Granularity:** this found-work repair is included because project-aware validation of the current deliverable cannot otherwise complete. The existing storage layer owns immutable records; plan validation consumes its explicit pin/hash reads.
 
 **Research context:** The edit ledger currently chooses a task from claim history, even when the edit’s registered checkout identifies another task.
 
@@ -92,6 +113,7 @@ Split `_tool.py` into `src/gobby/hooks/event_handlers/edit_attribution.py` befor
 - Use the same resolution for pre-tool enforcement, delayed completion, ledger recording, close, and claim release.
 - Ignore another claimed task’s worktree dirt when closing the current task. Retain conservative checks for ambiguous or foreign ownership.
 - Extract edit-attribution handling from the large tool-event module while making this change.
+- Notify gcode about maintained project-definition edits; the index owns hidden-path eligibility.
 
 **Primary targets:** the edit ledger, tool-event attribution, close attribution, and claim-release checks.
 
