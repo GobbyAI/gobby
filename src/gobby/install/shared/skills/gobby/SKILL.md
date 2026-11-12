@@ -1,7 +1,7 @@
 ---
 name: gobby
 description: "Router contract for provider-aware Gobby help and installed skill dispatch."
-version: "4.1.1"
+version: "5.0.0"
 category: core
 triggers: help
 metadata:
@@ -50,7 +50,8 @@ reference requirement. Tool schemas remain authoritative for parameters.
 
 | Request after the trigger | Action |
 | --- | --- |
-| A bare alias declared in an enabled definition's `cold_start_commands` | Cold start this pane with that definition and reuse or open its declared counterpart once |
+| `agents <definition>` | Call `gobby-agents:apply_agent_definition` for the current session |
+| `persona <persona>` | Call `gobby-agents:apply_persona` for a persona overlay |
 | `<capability>` | Load its catalog overview |
 | `<capability> references` | Show topic descriptions, loading conditions and exact `<trigger> <capability> references <topic>` examples |
 | `<capability> references <topic>` | Load exactly that topic |
@@ -59,10 +60,10 @@ reference requirement. Tool schemas remain authoritative for parameters.
 | `skill <skill> [args]` | Explicit standalone dispatch, including capability-name collisions |
 | Unknown name or topic | Show available choices; perform no operation |
 
-Only bare space forms cold start; colon forms and commands with trailing
-requests use ordinary capability/skill routing. The bundled aliases include
-`admin`; installed declarations determine available commands. Otherwise
-capability names take precedence. Singular `skill` escapes to standalone
+Definition activation requires an enabled persona-surface definition without a
+pipeline. Invalid names return eligible choices without changing the session.
+Activation opens no pane; the operator starts unsandboxed panes manually.
+Otherwise capability names take precedence. Singular `skill` escapes to standalone
 resolution; plural `skills` is the skill-management capability. Honor project
 overrides and existing skill-name resolution. These provider forms are supported:
 

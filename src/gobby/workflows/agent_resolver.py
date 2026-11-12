@@ -106,10 +106,10 @@ def _resolve_inherit(body: AgentDefinitionBody, cli_source: str | None) -> Agent
     return body
 
 
-def resolve_cold_start_command(
-    db: HubDatabase, command: str, *, project_id: str | None = None
-) -> str | None:
-    """Resolve a unique alias from enabled interactive definitions in project scope."""
+def current_session_definition_choices(
+    db: HubDatabase, *, project_id: str | None = None
+) -> list[str]:
+    """List enabled interactive definitions after applying project override precedence."""
     matches: list[str] = []
     for row in AgentDefinitionManager(db).list_resolved(project_id=project_id):
         if not row.enabled:
@@ -119,11 +119,9 @@ def resolve_cold_start_command(
             body = _body_from_row(row, row.name)
         except (ValueError, TypeError):
             continue
-        if body.supports_cold_start() and command.casefold() in body.cold_start_commands:
+        if body.supports_current_session_activation():
             matches.append(row.name)
-    if len(matches) > 1:
-        raise AgentResolutionError(f"Cold-start command {command!r} matches multiple definitions")
-    return matches[0] if matches else None
+    return sorted(matches)
 
 
 def resolve_agent_with_row(

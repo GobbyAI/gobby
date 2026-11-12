@@ -79,7 +79,7 @@ class TestToolHandlers:
             name.removeprefix("gobby:"), project_id="project-override"
         )
 
-    def test_native_router_cold_starts_only_through_the_gobby_skill(
+    def test_native_router_activates_only_through_the_gobby_skill(
         self, event_handlers: EventHandlers, temp_db: HubDatabase
     ) -> None:
         seed_seat(
@@ -87,7 +87,6 @@ class TestToolHandlers:
             "custom-guide",
             surfaces=["persona"],
             prompts={"persona": "Guide the workspace."},
-            cold_start_commands=["guide"],
         )
         event_handlers._session_manager = MagicMock(spec=HookSessionManager, db=temp_db)
         manager = MagicMock()
@@ -95,11 +94,11 @@ class TestToolHandlers:
         manager.discover_core_skills.return_value = []
         event_handlers._skill_manager = manager
         router = event_handlers._resolve_skill_tool_call(
-            {"tool_input": {"skill": "gobby", "args": "guide"}}
+            {"tool_input": {"skill": "gobby", "args": "agents custom-guide"}}
         )
         assert router is not None
         assert router.context is not None
-        assert 'call_tool("gobby-agents", "cold_start_admin", {"role": "custom-guide"})' in (
+        assert 'call_tool("gobby-agents", "apply_agent_definition", {"agent": "custom-guide"})' in (
             router.context
         )
         assert "User arguments" not in router.context
@@ -109,37 +108,11 @@ class TestToolHandlers:
         assert capability is not None
         assert capability.context is not None
         assert '"names":["gobby:references/admin/overview.md"]' in capability.context
-        assert "cold_start_admin" not in capability.context
+        assert "apply_agent_definition" not in capability.context
         manager.resolve_skill_name.assert_not_called()
-        prompt_context = event_handlers._intercept_skill_command("$gobby guide")
+        prompt_context = event_handlers._intercept_skill_command("$gobby agents custom-guide")
         assert prompt_context is not None
-        assert '"role": "custom-guide"' in prompt_context
-
-    @pytest.mark.parametrize("carrier", ["prompt", "tool"])
-    def test_ambiguous_cold_start_reports_refusal(
-        self, event_handlers: EventHandlers, temp_db: HubDatabase, carrier: str
-    ) -> None:
-        for name in ("guide-one", "guide-two"):
-            seed_seat(
-                temp_db,
-                name,
-                surfaces=["persona"],
-                prompts={"persona": "Guide this project."},
-                cold_start_commands=["guide"],
-            )
-        event_handlers._session_manager = MagicMock(spec=HookSessionManager, db=temp_db)
-        event_handlers._skill_manager = MagicMock()
-        if carrier == "prompt":
-            context = event_handlers._intercept_skill_command("$gobby guide")
-        else:
-            response = event_handlers._resolve_skill_tool_call(
-                {"tool_input": {"skill": "gobby", "args": "guide"}}
-            )
-            assert response is not None
-            context = response.context
-        assert context is not None
-        assert "multiple definitions" in context
-        assert 'call_tool("gobby-agents", "cold_start_admin"' not in context
+        assert '"agent": "custom-guide"' in prompt_context
 
     @pytest.mark.parametrize("router_request", ["help", "missing"])
     def test_native_router_honors_exclusions_without_hiding_unselected_skills(

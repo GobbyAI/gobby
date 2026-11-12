@@ -220,6 +220,7 @@ def commit_definition_changes(
     same_pin_noop: bool,
     definition_variable_names: set[str] | None = None,
     overlays: dict[str, Any] | None = None,
+    workspace_persistent: bool | None = None,
 ) -> dict[str, Any]:
     """Recheck identity under the step lock and commit exactly one variable merge."""
     from gobby.storage.hub.protocol import AgentStepInstanceMutation
@@ -286,6 +287,12 @@ def commit_definition_changes(
             new_keys |= previous_keys
         delta["_agent_definition_keys"] = sorted(new_keys)
         delta.update(overlays or {})
+        if workspace_persistent is not None:
+            from gobby.agents.workspace_bindings import definition_workspace_changes
+
+            delta.update(
+                definition_workspace_changes(db, session_id, agent, persistent=workspace_persistent)
+            )
         if current.get("_persona_name") and "_persona_name" not in (overlays or {}):
             # SessionStart refreshes seat enforcement while keeping the live persona.
             delta.pop("_active_skill_names", None)
@@ -354,7 +361,10 @@ async def apply_agent_definition_impl(
     if not session_id:
         return _refusal("session_unavailable", "No session context")
     from gobby.storage.sessions import SessionManager
-    from gobby.workflows.agent_resolver import resolve_agent_with_row
+    from gobby.workflows.agent_resolver import (
+        current_session_definition_choices,
+        resolve_agent_with_row,
+    )
     from gobby.workflows.state_manager import SessionVariableManager
 
     stored = SessionVariableManager(db).get_variable_subset(
@@ -364,16 +374,31 @@ async def apply_agent_definition_impl(
     if is_spawned_session(stored, session):
         return _refusal("spawned_session_definition_fixed", "Spawned session definition is fixed")
     project_id, source = _resolve_session_identity(db, session_id, cli_source)
+
+    def refuse_definition(code: str, error: str) -> dict[str, Any]:
+        return {
+            **_refusal(code, error),
+            "choices": current_session_definition_choices(db, project_id=project_id),
+        }
+
     resolved = resolve_agent_with_row(agent, db, cli_source=source, project_id=project_id)
     if resolved is None:
-        return _refusal("unknown_agent_definition", f"Agent definition '{agent}' not found")
+        return refuse_definition(
+            "unknown_agent_definition", f"Agent definition '{agent}' not found"
+        )
     body, row = resolved
     if not row.enabled or not body.enabled:
-        return _refusal("agent_definition_disabled", f"Agent definition '{agent}' is disabled")
+        return refuse_definition(
+            "agent_definition_disabled", f"Agent definition '{agent}' is disabled"
+        )
     if not body.supports_surface("persona"):
-        return _refusal("persona_surface_missing", f"Agent '{agent}' lacks the persona surface")
+        return refuse_definition(
+            "persona_surface_missing", f"Agent '{agent}' lacks the persona surface"
+        )
     if body.workflows.pipeline:
-        return _refusal("pipeline_requires_spawn", f"Agent '{agent}' requires a pipeline spawn")
+        return refuse_definition(
+            "pipeline_requires_spawn", f"Agent '{agent}' requires a pipeline spawn"
+        )
     pin = definition_pin(body)
     decision = activation_decision(db, stored, agent, pin, relaunch=relaunch, same_pin_noop=True)
     if decision != "apply":
@@ -408,6 +433,7 @@ async def apply_agent_definition_impl(
         same_pin_noop=True,
         definition_variable_names=set(body.workflows.variables),
         overlays={**overlays, **(variables or {})},
+        workspace_persistent=body.persistent_workspace,
     )
     if committed["status"] != "applied":
         return _activation_receipt(committed["status"], committed["agent"], agent)

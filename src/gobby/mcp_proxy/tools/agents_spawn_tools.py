@@ -103,7 +103,7 @@ def register_agent_spawn_tools(
         name="apply_agent_definition",
         description=(
             "Activate an agent definition on the current session: prompt, rules, skills, "
-            "variables, tool restrictions and step workflow. A role change requires a relaunch. "
+            "variables, tool restrictions and step workflow without opening another pane. "
         ),
     )
     async def apply_agent_definition(
@@ -119,6 +119,7 @@ def register_agent_spawn_tools(
             variables=variables,
             task_id=task_id,
             task_manager=ctx.task_manager,
+            relaunch=True,
         )
         return result
 

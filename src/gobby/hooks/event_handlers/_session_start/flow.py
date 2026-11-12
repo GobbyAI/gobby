@@ -691,7 +691,8 @@ def handle_pre_created_session(
     if handler._session_manager is not None:
         # Resume and compact reach here, so a seat that predates its binding gets one now.
         try:
-            from gobby.agents.agent_workspaces import bind_epic_workspace, bind_session_workspace
+            from gobby.agents.agent_workspaces import bind_epic_workspace
+            from gobby.agents.workspace_bindings import bind_session_workspace
 
             bind_session_workspace(handler._session_manager.db, session_id)
             bind_epic_workspace(handler._session_manager.db, session_id)

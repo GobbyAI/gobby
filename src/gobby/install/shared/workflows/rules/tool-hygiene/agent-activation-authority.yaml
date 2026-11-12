@@ -1,4 +1,4 @@
-version: "1.1.0"
+version: "2.0.0"
 tags: [gobby, default, tool-hygiene]
 
 rules:
@@ -10,7 +10,7 @@ rules:
     priority: 5
     when: >
       event.data.get('mcp_server') == 'gobby-agents'
-      and event.data.get('mcp_tool') in ['apply_agent_definition', 'apply_persona', 'cold_start_admin']
+      and event.data.get('mcp_tool') in ['apply_agent_definition', 'apply_persona']
       and not (
         operator_session(event.metadata.get('_platform_session_id'))
         or session_has_capability(
@@ -20,8 +20,7 @@ rules:
         mcp_tools:
           - gobby-agents:apply_agent_definition
           - gobby-agents:apply_persona
-          - gobby-agents:cold_start_admin
         reason: >-
-          apply_agent_definition, apply_persona and cold_start_admin require the
+          apply_agent_definition and apply_persona require the
           activate_agent_definitions capability or the operator's terminal.
           Ask an authorized default session to change the definition or persona.

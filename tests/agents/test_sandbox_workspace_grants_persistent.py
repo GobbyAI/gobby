@@ -15,9 +15,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents import resume_executor
-from gobby.agents.agent_workspaces import bind_session_workspace, session_workspace_dir
+from gobby.agents.agent_workspaces import session_workspace_dir
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.srt_settings import render_srt_settings
+from gobby.agents.workspace_bindings import bind_session_workspace
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager

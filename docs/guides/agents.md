@@ -56,9 +56,9 @@ ignores optional `variables` and `task_id`. Task context never claims a task.
 An unknown definition, missing surface, unresolved task, or variable collision
 is refused before writing.
 
-A different definition on an already seated terminal, including a return to
-the base agent, is refused with `role_change_requires_relaunch`. Relaunch the
-pane with the requested definition. Web-chat agent changes restart the CLI
+A different definition on an operator-opened terminal replaces the active
+definition in the same session through `/gobby agents <name>` (`$gobby` in Codex).
+It opens no pane. Web-chat agent changes restart the CLI
 process on the conversation's existing session row and apply the new definition;
 definition-owned variables and the previous step instance are replaced, while
 runtime conversation variables remain. Spawned sessions refuse activation with

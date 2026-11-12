@@ -28,19 +28,12 @@ An activation that writes clears any persona overlay. An `unchanged` receipt
 or a refusal writes nothing and keeps the overlay. To drop the overlay without
 activating a definition, call `apply_persona(agent="default")`.
 
-A session already bound to a non-default definition refuses another definition,
-including a return to the base agent, with `role_change_requires_relaunch`.
-Relaunch the terminal pane with the requested definition. Spawned sessions have
+Use `/gobby agents <definition>` (`$gobby agents <definition>` in Codex) for
+full activation, or `/gobby persona <persona>` for the persona overlay.
+An operator session may switch definitions directly; activation replaces the
+previous definition-owned state and opens no pane. Spawned sessions have
 their definition fixed at spawn and refuse activation with
 `spawned_session_definition_fixed`.
-
-To cold start an operator pane, inspect enabled persona definitions declaring
-`cold_start_commands`, then call `gobby-agents:cold_start_admin` with `role` set
-to the selected definition's name. It applies that definition to the caller's
-session and reuses its live declared `cold_start_counterpart`, or opens one in
-the caller's tab. A new counterpart starts with its declared command and the same provider
-CLI. Re-running reuses the live seat; it never spawns a worker. A definition may
-omit a counterpart. Report the seat refs actually returned.
 
 If resolution fails or the definition lacks the persona surface, report the
 error and list eligible choices. Do not substitute a spawned worker. Check the
@@ -48,5 +41,5 @@ installed definition's scope and source filter when a name is unavailable.
 
 Guide: [Usage surfaces](../../../../../../../../docs/guides/agents.md#usage-surfaces).
 
-_Version: 2.1.0_
+_Version: 3.0.0_
 _Last verified: 2026-11-04_

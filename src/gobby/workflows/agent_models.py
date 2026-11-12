@@ -249,14 +249,6 @@ class AgentDefinitionBody(BaseModel):
     # Grants only the configured, enrolled operator destination, never arbitrary recipients.
     operator_messaging: StrictBool = False
     communications_admin: StrictBool = False
-    cold_start_commands: list[StrictStr] = Field(
-        default_factory=list,
-        description="Bare Gobby command aliases that start this interactive definition.",
-    )
-    cold_start_counterpart: StrictStr | None = Field(
-        default=None,
-        description="Optional enabled definition to reuse or open beside this cold-started pane.",
-    )
     capabilities: list[StrictStr] = Field(
         default_factory=list,
         description=(
@@ -469,28 +461,13 @@ class AgentDefinitionBody(BaseModel):
             raise ValueError(f"Unsupported {info.field_name}: {sorted(unknown)}")
         return list(dict.fromkeys(value))
 
-    @field_validator("cold_start_commands")
-    @classmethod
-    def _normalize_cold_start_commands(cls, value: list[str]) -> list[str]:
-        if any(not name or any(char.isspace() for char in name) for name in value):
-            raise ValueError("cold_start_commands entries must be nonempty single words")
-        normalized = list(dict.fromkeys(name.casefold() for name in value))
-        if any(name in {"help", "skill"} for name in normalized):
-            raise ValueError("cold_start_commands cannot replace help or skill")
-        return normalized
-
     def supports_surface(self, surface: Literal["spawn", "persona"]) -> bool:
         """Return True when the definition explicitly supports the requested usage surface."""
         return surface in self.surfaces
 
-    def supports_cold_start(self) -> bool:
-        """Whether aliases may activate this definition in an interactive pane."""
-        return (
-            self.enabled
-            and self.supports_surface("persona")
-            and not self.workflows.pipeline
-            and bool(self.cold_start_commands)
-        )
+    def supports_current_session_activation(self) -> bool:
+        """Whether an operator may activate this definition in the current session."""
+        return self.enabled and self.supports_surface("persona") and not self.workflows.pipeline
 
     def prompt_for(
         self,

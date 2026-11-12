@@ -8,6 +8,7 @@ import importlib.util
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
@@ -22,6 +23,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.skills.discovery import get_session_skill_exclusions
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 from gobby.workflows.definitions import AgentDefinitionBody, AgentSelector, AgentStepWorkflowBody
@@ -43,13 +45,17 @@ def session_id(temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> str:
     return register_session(temp_db, monkeypatch)
 
 
-def register_session(temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch) -> str:
+def register_session(
+    temp_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, project_id: str | None = None
+) -> str:
     machine = "21000000-0000-4000-8000-000000000001"
     monkeypatch.setattr("gobby.storage.workspace_machine_scope.require_machine_id", lambda: machine)
     LocalMachineManager(temp_db).upsert_seen(machine, TEST_USER_ID)
     return (
         SessionManager(temp_db)
-        .register(external_id=str(uuid4()), machine_id=machine, source="codex", project_id=None)
+        .register(
+            external_id=str(uuid4()), machine_id=machine, source="codex", project_id=project_id
+        )
         .id
     )
 
@@ -973,3 +979,104 @@ def agents_registry(db: HubDatabase) -> InternalToolRegistry:
     ):
         register_agent_spawn_tools(registry, context)
     return registry
+
+
+@pytest.mark.asyncio
+async def test_public_activation_rebinds_workspace_policy(
+    agents_registry: InternalToolRegistry,
+    definitions: dict[str, AgentDefinitionBody],
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    project = LocalProjectManager(temp_db).create("activation-workspace")
+    sid = register_session(temp_db, monkeypatch, project.id)
+    session = SessionManager(temp_db).get(sid)
+    assert session is not None
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    monkeypatch.setattr(
+        "gobby.utils.session_context.get_session_context",
+        lambda: SimpleNamespace(session_id=sid),
+    )
+    definitions["y"] = definitions["y"].model_copy(update={"persistent_workspace": True})
+    manager = SessionVariableManager(temp_db)
+    manager.merge_variables(
+        sid,
+        {
+            "_agent_type": "x",
+            "_agent_workspace_dir": str(tmp_path / "old"),
+            "_agent_workspace_epic_dir": str(tmp_path / "old-epic"),
+            "_agent_workspace_persistent": False,
+            "_agent_workspace_injected": True,
+        },
+    )
+    result = await agents_registry.call("apply_agent_definition", {"agent": "y"})
+    assert result["success"] is True
+    expected = tmp_path / "agents_workspaces" / project.id / "y" / f"session-{session.seq_num}"
+    stored = manager.get_variables(sid)
+    assert stored["_agent_workspace_dir"] == str(expected)
+    assert expected.is_dir()
+    assert stored["_agent_workspace_persistent"] is True
+    assert stored["_agent_workspace_epic_dir"] is None
+    assert stored["_agent_workspace_injected"] is False
+    manager.merge_variables(sid, {"_agent_workspace_injected": True})
+    repeated = await agents_registry.call("apply_agent_definition", {"agent": "y"})
+    assert repeated["status"] == "unchanged"
+    assert manager.get_variables(sid)["_agent_workspace_injected"] is True
+
+
+async def test_public_activation_switches_current_definition_without_pane(
+    agents_registry: InternalToolRegistry,
+    session_id: str,
+    definitions: dict[str, AgentDefinitionBody],
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "gobby.utils.session_context.get_session_context",
+        lambda: SimpleNamespace(session_id=session_id),
+    )
+    first = await agents_registry.call("apply_agent_definition", {"agent": "x"})
+    second = await agents_registry.call("apply_agent_definition", {"agent": "y"})
+    repeated = await agents_registry.call("apply_agent_definition", {"agent": "y"})
+    assert first["success"] is True
+    assert second["success"] is True
+    assert repeated["status"] == "unchanged"
+    stored = SessionVariableManager(temp_db).get_variables(session_id)
+    assert stored["_agent_type"] == "y"
+    assert stored.get("x_only") is None
+    assert stored["_agent_blocked_tools"] == definitions["y"].blocked_tools
+
+
+async def test_unknown_activation_returns_only_eligible_choices_without_mutation(
+    agents_registry: InternalToolRegistry,
+    session_id: str,
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.storage.definitions.agents import AgentDefinitionManager
+
+    manager = AgentDefinitionManager(temp_db)
+    for name, enabled, surfaces in [
+        ("fixture-available", True, ["persona"]),
+        ("fixture-disabled", False, ["persona"]),
+        ("fixture-worker", True, ["spawn"]),
+    ]:
+        body = make_agent_definition(
+            name=name,
+            surfaces=surfaces,
+            prompts={"persona": "Interactive fixture.", "agent": "Worker fixture."},
+        )
+        manager.create(name, body.model_dump(mode="json"), enabled=enabled)
+    monkeypatch.setattr(
+        "gobby.utils.session_context.get_session_context",
+        lambda: SimpleNamespace(session_id=session_id),
+    )
+    variables = SessionVariableManager(temp_db)
+    before = variables.get_variables(session_id)
+    result = await agents_registry.call("apply_agent_definition", {"agent": "fixture-missing"})
+    assert result["success"] is False
+    assert "fixture-available" in result["choices"]
+    assert "fixture-disabled" not in result["choices"]
+    assert "fixture-worker" not in result["choices"]
+    assert variables.get_variables(session_id) == before

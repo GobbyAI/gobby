@@ -575,59 +575,6 @@ def _predecessor_folder_readable(
 _SESSION_LOCATION_SQL = "SELECT project_id, seq_num FROM sessions WHERE id = %s"
 
 
-def _definition_persistent(db: HubDatabase, definition: str | None, project_id: str) -> bool:
-    if definition is None:
-        return False
-    from gobby.storage.definitions import AgentDefinitionManager
-
-    row = AgentDefinitionManager(db).get_by_name(definition, project_id)
-    return row is not None and row.definition_json.get("persistent_workspace") is True
-
-
-def bind_session_workspace(
-    db: HubDatabase, session_id: str, *, inherit_from: str | None = None
-) -> Path | None:
-    """Bind the session's folder once and return it.
-
-    A session keeps the folder it already holds, so compaction and resume reuse it. A persistent
-    definition's clear successor takes its predecessor's folder. Sandboxed clears also keep it:
-    the live process still has its original folder grant. Other sessions get their own sequence.
-    """
-    from gobby.workflows.state_manager import SessionVariableManager
-
-    variables = SessionVariableManager(db)
-    current = variables.get_variables(session_id)
-    bound = current.get(WORKSPACE_DIR_VARIABLE)
-    if isinstance(bound, str) and bound:
-        Path(bound).mkdir(parents=True, exist_ok=True)
-        return Path(bound)
-    location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
-    if location is None or location["project_id"] is None or location["seq_num"] is None:
-        return None
-    definition = current.get("_agent_type")
-    definition = definition if isinstance(definition, str) and definition else None
-    persistent = _definition_persistent(db, definition, location["project_id"])
-    folder: Path | None = None
-    if inherit_from is not None:
-        predecessor = db.execute(
-            "SELECT sandbox_enabled FROM sessions WHERE id = %s", (inherit_from,)
-        ).fetchone()
-        if persistent or (predecessor is not None and predecessor["sandbox_enabled"]):
-            inherited = variables.get_variable_subset(inherit_from, [WORKSPACE_DIR_VARIABLE]).get(
-                WORKSPACE_DIR_VARIABLE
-            )
-            if isinstance(inherited, str) and inherited:
-                folder = Path(inherited)
-    if folder is None:
-        folder = session_workspace_dir(location["project_id"], definition, location["seq_num"])
-    folder.mkdir(parents=True, exist_ok=True)
-    variables.merge_variables(
-        session_id,
-        {WORKSPACE_DIR_VARIABLE: str(folder), WORKSPACE_PERSISTENT_VARIABLE: persistent},
-    )
-    return folder
-
-
 def workspace_handoff_references(db: HubDatabase, session_id: str | None) -> list[str]:
     """The session's bound folder as a handoff reference, so the next session can find it."""
     if session_id is None:
