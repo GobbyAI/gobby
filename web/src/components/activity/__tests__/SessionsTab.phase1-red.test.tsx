@@ -67,9 +67,7 @@ describe("SessionsTab Phase 1 chip contract", () => {
   it("renders session badges with the shared chip class", async () => {
     render(<SessionsTab sessions={[makeSession({ sandbox_enabled: true })]} />);
 
-    await waitFor(() =>
-      expect(screen.getByText("#201")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("#201")).toBeInTheDocument());
 
     expect(screen.getByText("tmux")).toHaveClass(
       "rounded-full",
@@ -111,9 +109,7 @@ describe("SessionsTab Phase 1 chip contract", () => {
       />,
     );
 
-    await waitFor(() =>
-      expect(screen.getByText("#301")).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText("#301")).toBeInTheDocument());
 
     const localBadges = screen.getAllByText("LOCAL");
     expect(localBadges).toHaveLength(2);

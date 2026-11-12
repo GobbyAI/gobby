@@ -395,5 +395,4 @@ describe("useSessionCatalog", () => {
 
     expect(result.current.sessions.some((s) => s.id === "sess-2")).toBe(false);
   });
-
 });

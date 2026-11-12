@@ -831,15 +831,9 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText("#202", IN_ROW),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText("#201", IN_ROW),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText("#205", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#202", IN_ROW)).toBeInTheDocument();
+      expect(screen.getByText("#201", IN_ROW)).toBeInTheDocument();
+      expect(screen.getByText("#205", IN_ROW)).toBeInTheDocument();
     });
 
     expect(screen.queryByText("#203", IN_ROW)).toBeNull();
@@ -850,9 +844,7 @@ describe("SessionsTab", () => {
       target: { value: "paused-ext-1" },
     });
     await waitFor(() => {
-      expect(
-        screen.getByText("#202", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#202", IN_ROW)).toBeInTheDocument();
       expect(screen.queryByText("#201", IN_ROW)).toBeNull();
     });
 
@@ -862,9 +854,7 @@ describe("SessionsTab", () => {
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
-      expect(
-        screen.getByText("#203", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#203", IN_ROW)).toBeInTheDocument();
     });
     expect(
       screen.getByRole("button", { name: "Session actions" }),
@@ -915,9 +905,7 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText("#310", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#310", IN_ROW)).toBeInTheDocument();
     });
 
     const rows = Array.from(document.querySelectorAll(".session-entry"));
@@ -935,9 +923,7 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText("#211", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#211", IN_ROW)).toBeInTheDocument();
     });
 
     expect(screen.queryByText("#210", IN_ROW)).toBeNull();
@@ -974,9 +960,7 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getAllByText("#211").length,
-      ).toBeGreaterThan(0);
+      expect(screen.getAllByText("#211").length).toBeGreaterThan(0);
       expect(
         screen.getByText("Transcript output for parked-web-1"),
       ).toBeInTheDocument();
@@ -993,25 +977,19 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getAllByText("#210").length,
-      ).toBeGreaterThan(0);
+      expect(screen.getAllByText("#210").length).toBeGreaterThan(0);
       expect(
         screen.getByText("Transcript output for main-web-1"),
       ).toBeInTheDocument();
     });
-    expect(
-      screen.getAllByText("#211").length,
-    ).toBeGreaterThan(0);
+    expect(screen.getAllByText("#211").length).toBeGreaterThan(0);
   });
 
   it("renders the Live | Expired status filter as a SegmentedControl", async () => {
     render(<SessionsTab sessions={[LIVE_SESSION]} focusSessionId="live-1" />);
 
     await waitFor(() => {
-      expect(
-        screen.getByText("#201", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#201", IN_ROW)).toBeInTheDocument();
     });
 
     const liveRadio = screen.getByRole("radio", { name: "Live" });
@@ -1054,24 +1032,12 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getAllByText("#201").length,
-      ).toBeGreaterThan(0);
-      expect(
-        screen.getAllByText("#202").length,
-      ).toBeGreaterThan(0);
-      expect(
-        screen.getAllByText("#221").length,
-      ).toBeGreaterThan(0);
-      expect(
-        screen.getAllByText("#222").length,
-      ).toBeGreaterThan(0);
-      expect(
-        screen.getAllByText("#223").length,
-      ).toBeGreaterThan(0);
-      expect(
-        screen.getAllByText("#224").length,
-      ).toBeGreaterThan(0);
+      expect(screen.getAllByText("#201").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("#202").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("#221").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("#222").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("#223").length).toBeGreaterThan(0);
+      expect(screen.getAllByText("#224").length).toBeGreaterThan(0);
     });
 
     const statusDotForRef = (ref: string) => {
@@ -1305,43 +1271,23 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText("#206", IN_ROW),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText("#207", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#206", IN_ROW)).toBeInTheDocument();
+      expect(screen.getByText("#207", IN_ROW)).toBeInTheDocument();
     });
 
-    expect(
-      screen.queryByText("#208", IN_ROW),
-    ).toBeNull();
-    expect(
-      screen.queryByText("#209", IN_ROW),
-    ).toBeNull();
-    expect(
-      screen.queryByText("#212", IN_ROW),
-    ).toBeNull();
+    expect(screen.queryByText("#208", IN_ROW)).toBeNull();
+    expect(screen.queryByText("#209", IN_ROW)).toBeNull();
+    expect(screen.queryByText("#212", IN_ROW)).toBeNull();
 
     fireEvent.click(screen.getByRole("radio", { name: "Expired" }));
 
     await waitFor(() => {
-      expect(
-        screen.queryByText("#206", IN_ROW),
-      ).toBeNull();
-      expect(
-        screen.queryByText("#207", IN_ROW),
-      ).toBeNull();
+      expect(screen.queryByText("#206", IN_ROW)).toBeNull();
+      expect(screen.queryByText("#207", IN_ROW)).toBeNull();
     });
-    expect(
-      screen.queryByText("#208", IN_ROW),
-    ).toBeNull();
-    expect(
-      screen.queryByText("#209", IN_ROW),
-    ).toBeNull();
-    expect(
-      screen.queryByText("#212", IN_ROW),
-    ).toBeNull();
+    expect(screen.queryByText("#208", IN_ROW)).toBeNull();
+    expect(screen.queryByText("#209", IN_ROW)).toBeNull();
+    expect(screen.queryByText("#212", IN_ROW)).toBeNull();
   });
 
   it("defaults to transcript mode, toggles to summary via handoff fallback, and keeps action order", async () => {
@@ -1690,9 +1636,7 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText("#205", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#205", IN_ROW)).toBeInTheDocument();
     });
 
     expect(screen.queryByText("4.6K")).toBeNull();
@@ -1801,9 +1745,7 @@ describe("SessionsTab", () => {
     render(<SessionsTab sessions={[PAUSED_SESSION]} />);
 
     await waitFor(() => {
-      expect(
-        screen.getByText("#202", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#202", IN_ROW)).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
@@ -1825,9 +1767,7 @@ describe("SessionsTab", () => {
     );
 
     await waitFor(() => {
-      expect(
-        screen.getByText("#202", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#202", IN_ROW)).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
@@ -1841,9 +1781,7 @@ describe("SessionsTab", () => {
     render(<TerminalFocusHarness />);
 
     await waitFor(() => {
-      expect(
-        screen.getByText("#202", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#202", IN_ROW)).toBeInTheDocument();
     });
 
     fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
@@ -1885,8 +1823,7 @@ describe("SessionsTab", () => {
         onExpireSession={onExpireSession}
       />,
     );
-    const rowTitle = () =>
-      screen.queryByText("#202", IN_ROW);
+    const rowTitle = () => screen.queryByText("#202", IN_ROW);
 
     await waitFor(() => {
       expect(rowTitle()).toBeInTheDocument();
@@ -1915,9 +1852,7 @@ describe("SessionsTab", () => {
     render(<SessionsTab sessions={[PAUSED_SESSION]} />);
 
     await waitFor(() => {
-      expect(
-        screen.getByText("#202", IN_ROW),
-      ).toBeInTheDocument();
+      expect(screen.getByText("#202", IN_ROW)).toBeInTheDocument();
     });
 
     const trigger = screen.getByRole("button", { name: "Session actions" });
@@ -1999,9 +1934,7 @@ describe("SessionsTab", () => {
 
     const openRowMenu = async () => {
       await waitFor(() => {
-        expect(
-          screen.getByText("#301", IN_ROW),
-        ).toBeInTheDocument();
+        expect(screen.getByText("#301", IN_ROW)).toBeInTheDocument();
       });
       fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
     };
@@ -2082,9 +2015,7 @@ describe("SessionsTab", () => {
         resolveClose?.(false);
       });
       await waitFor(() => {
-        expect(
-          screen.getByText("#301", IN_ROW),
-        ).toBeInTheDocument();
+        expect(screen.getByText("#301", IN_ROW)).toBeInTheDocument();
       });
     });
 
@@ -2116,9 +2047,7 @@ describe("SessionsTab", () => {
         resolveDelete?.(false);
       });
       await waitFor(() => {
-        expect(
-          screen.getByText("#301", IN_ROW),
-        ).toBeInTheDocument();
+        expect(screen.getByText("#301", IN_ROW)).toBeInTheDocument();
       });
     });
 
@@ -2190,9 +2119,7 @@ describe("SessionsTab", () => {
         />,
       );
       await waitFor(() => {
-        expect(
-          screen.getByText("#202", IN_ROW),
-        ).toBeInTheDocument();
+        expect(screen.getByText("#202", IN_ROW)).toBeInTheDocument();
       });
       fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
 

@@ -162,7 +162,7 @@ export function ChatPage({
             projectHasCheckout={projectHasCheckout}
             panelVisible={panelVisible}
             effectiveSessionRef={routing.effectiveSessionRef}
-                        mainSessionSource={
+            mainSessionSource={
               routing.mainSessionMeta?.source ?? chat.provider ?? null
             }
             messageListRef={messageListRef}

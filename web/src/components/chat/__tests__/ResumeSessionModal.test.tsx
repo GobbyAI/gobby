@@ -111,9 +111,7 @@ describe("ResumeSessionModal", () => {
     await act(async () => {
       second.resolve(responseWith([session("new")]));
     });
-    expect(
-      await screen.findByText("project#new"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("project#new")).toBeInTheDocument();
 
     await act(async () => {
       first.resolve(responseWith([session("old")]));
@@ -154,9 +152,7 @@ describe("ResumeSessionModal", () => {
       } as Response);
     });
 
-    expect(
-      await screen.findByText("project#latest"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("project#latest")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
