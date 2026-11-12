@@ -439,12 +439,29 @@ Targets:
 - `src/gobby/status_report/compose.py::*` — scope-reason: coordinate full and delta report artifacts.
 - `src/gobby/status_report/delivery.py`
 - `src/gobby/status_report/activation.py`
+- `src/gobby/status_report/rows.py::*` — scope-reason: project claim holders, idle age and stored task relationships without growing the Git collector.
+- `crates/gcore/assets/schema/migrations/500_status_report_note_eta.sql`
+- `crates/gcore/src/schema/assets.rs::*` — scope-reason: register the note ETA migration and its checksum.
+- `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerate the complete catalog projection for the ETA column.
+- `crates/gcore/src/grant/bundle.rs::*` — scope-reason: refresh the schema identity carried by the grant contract.
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: refresh exact embedded schema identity expectations.
+- `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: verify the CLI identity remains consistent with the embedded schema.
+- `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerate the packaged native schema identity projection.
+- `tests/storage/test_worktree_notes.py::*` — scope-reason: verify optional ETA survives storage and replacement.
+- `tests/mcp_proxy/tools/test_worktrees_notes.py::*` — scope-reason: verify the authenticated note tool normalizes and persists the optional ETA.
+- `src/gobby/storage/worktree_notes.py::*` — scope-reason: persist the optional ETA with the existing reconcile note.
+- `src/gobby/mcp_proxy/tools/worktrees/_notes.py::*` — scope-reason: accept and validate the optional ETA through the authenticated note tool.
+- `tests/status_report/test_collect.py::*` — scope-reason: exercise actual holder attribution, stored role exclusions, epic ordering and idle claims against isolated hub state.
+- `tests/status_report/test_worktree_notes_collect.py::*` — scope-reason: link freshness fixtures to synthetic tasks while preserving every real-Git change assertion.
+- `tests/status_report/test_worktree_notes_render.py::*` — scope-reason: preserve freshness and escaping while extending the row columns.
 - `tests/status_report/test_delivery.py`
 - `tests/status_report/test_activation.py`
 
 **Research context:** Installed project policy supplies report cadence and full/delta windows. The existing status-report package has collection, model, render and compose owners; `compose_status_report` in the communications tools calls its composer, and the status-report-delivery pipeline orchestrates delivery. Extend those owners. New delivery and activation helpers will keep semantic row comparison separate from delivery state; activation records require successful source/binary identity proof. Test with synthetic task, delivery and activation fixtures.
 
 **Granularity:** These are three ordered implementation outcomes under existing #25863. Implement and verify rows first, delivery second and activation third, retaining task-sized commits for the existing task.
+
+Row implementation research: `collect_status` already batches latest attestations and open claim intervals, but the interval projection discards session identity. The new focused row helper will join each unreleased claim to its session and latest bound agent run, retaining unknown identity explicitly when no run exists. Session `last_activity` supplies idle age. Stored `workspace_role` controls exclusions; task type and parent relationships control epic classification and recursive open-leaf counts. Team admission records supply landing targets, and workflow state carries the optional repair task reference. `WorktreeRow.current_note` remains the authority for reconcile-note freshness. Existing real-Git collector fixtures and isolated-hub claim fixtures will verify behavior before implementation; no live project registration is required. Report cadence defaults to 1800 seconds, with a policy override for idle-holder age. Verification is focused status-report pytest plus Ruff, mypy, test-type/quality and suppression audits; these checks are planned, not yet run for this outcome.
 
 Implement three ordered deliverables:
 

@@ -63,6 +63,7 @@ def create_notes_registry(ctx: RegistryContext) -> InternalToolRegistry:
         owner: str,
         next_action: str,
         blocker: str,
+        eta: str | None = None,
     ) -> dict[str, Any]:
         """Record a worktree's owner, next action and blocker, replacing any earlier note.
 
@@ -71,6 +72,7 @@ def create_notes_registry(ctx: RegistryContext) -> InternalToolRegistry:
             owner: Who owns the tree now. Required, single line.
             next_action: The step that moves the tree forward. Required, single line.
             blocker: What blocks the tree, or empty when nothing does. Single line.
+            eta: Optional operator-facing estimate, including its timezone when a clock time.
 
         Returns:
             Dict with success status and the note's timestamp.
@@ -91,6 +93,7 @@ def create_notes_registry(ctx: RegistryContext) -> InternalToolRegistry:
             _text_problem("owner", owner, required=True)
             or _text_problem("next_action", next_action, required=True)
             or _text_problem("blocker", blocker, required=False)
+            or (_text_problem("eta", eta, required=False) if eta is not None else None)
         )
         if problem is not None:
             return {"success": False, "error": problem}
@@ -102,6 +105,7 @@ def create_notes_registry(ctx: RegistryContext) -> InternalToolRegistry:
             next_action=next_action.strip(),
             blocker=blocker.strip(),
             updated_at=written_at,
+            eta=eta.strip() or None if eta is not None else None,
         )
         return {"success": True, "updated_at": written_at.isoformat()}
 

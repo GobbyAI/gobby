@@ -5701,6 +5701,10 @@
       "definition": "text|text|NO|''::text|NEVER"
     },
     {
+      "name": "worktree_notes.eta",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "worktree_notes.next_action",
       "definition": "text|text|NO||NEVER"
     },

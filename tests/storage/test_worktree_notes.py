@@ -44,6 +44,30 @@ def test_note_round_trips_for_its_worktree(
     }
 
 
+def test_note_eta_round_trips_and_can_be_cleared(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    tree = _worktree(temp_db, str(sample_project["id"]), "eta-fixture")
+    store = WorktreeNoteStore(temp_db)
+    store.upsert(
+        tree,
+        owner="fixture-holder",
+        next_action="validate",
+        blocker="",
+        updated_at=WRITTEN_AT,
+        eta="14:45 CT",
+    )
+    assert store.list_for([tree])[tree].eta == "14:45 CT"
+    store.upsert(
+        tree,
+        owner="fixture-holder",
+        next_action="land",
+        blocker="",
+        updated_at=WRITTEN_AT,
+    )
+    assert store.list_for([tree])[tree].eta is None
+
+
 def test_second_write_replaces_every_field(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:

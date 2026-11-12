@@ -28,6 +28,25 @@ def compose_report(
     now: datetime,
 ) -> dict[str, Any]:
     """Collect, render and atomically write the report; return its path and nominal verdict."""
+    from gobby.storage.definitions.rules import RuleDefinitionManager
+    from gobby.tasks.closure_snapshot import installed_project_policy
+
+    store = RuleDefinitionManager(db)
+    policy = installed_project_policy(
+        store.list_effective(project_id), provenance=store.list_all(project_id=project_id)
+    )
+    if policy is None:
+        raise ValueError("Installed project policy is ambiguous or invalid")
+    idle_age = policy.get(
+        "idle_holder_age_seconds", policy.get("report_cadence_seconds", window.total_seconds())
+    )
+    if isinstance(idle_age, bool) or not isinstance(idle_age, (int, float)) or idle_age <= 0:
+        raise ValueError("Idle-holder age must be a positive number of seconds")
+    excluded_roles = policy.get("status_report_excluded_worktree_roles", ["main", "wiki"])
+    if not isinstance(excluded_roles, list) or any(
+        not isinstance(role, str) for role in excluded_roles
+    ):
+        raise ValueError("Report worktree role exclusions must be a list of strings")
     zone = ZoneInfo(operator_timezone)
     data = collect_status(
         db,
@@ -40,6 +59,8 @@ def compose_report(
         runs=active_runs(db),
         worktrees=active_worktrees(db, project_id),
         loadavg=os.getloadavg,
+        idle_holder_age_seconds=float(idle_age),
+        excluded_worktree_roles=tuple(str(role) for role in excluded_roles),
     )
     text = render_markdown(data, zone)
     reports = project_path / ".gobby" / "reports"

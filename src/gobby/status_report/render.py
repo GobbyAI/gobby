@@ -34,6 +34,7 @@ def is_nominal(data: StatusData) -> bool:
         data.attention
         or data.decisions
         or data.stalled
+        or data.idle_holders
         or data.escalated
         or data.gaps
         or _breaching_load(data) is not None
@@ -51,13 +52,26 @@ def render_markdown(data: StatusData, zone: ZoneInfo) -> str:
         "Holds, blocked and escalated", [_attention_line(item) for item in data.attention]
     )
     lines += _section("Stalled seats", [_stalled_line(item) for item in data.stalled])
-    lines += _worktree_section(data)
+    lines += _worktree_section(data, zone)
     if (load := _breaching_load(data)) is not None:
         lines += _section(
             "Load",
             [f"- 5-minute load {load:.1f} is above {data.load_threshold:g} (one sample)"],
         )
     lines += _section("Source gaps", [f"- GAP: {gap}" for gap in data.gaps])
+    lines += _section(
+        "Idle holders",
+        [
+            f"- #{holder.task_seq} {holder.task_title}: {holder.agent or 'unknown agent'} "
+            f"({holder.session_id}, {holder.status or 'unknown state'}), "
+            + (
+                "idle time unknown"
+                if holder.idle_seconds is None
+                else f"idle {_age(timedelta(seconds=holder.idle_seconds))}"
+            )
+            for holder in data.idle_holders
+        ],
+    )
     if is_nominal(data):
         lines.append(_NOMINAL)
     return "\n".join(lines).rstrip() + "\n"
@@ -152,15 +166,16 @@ def _stalled_line(seat: StalledSeat) -> str:
     return f"- {seat.session_ref}: stalled on {task}"
 
 
-def _worktree_section(data: StatusData) -> list[str]:
+def _worktree_section(data: StatusData, zone: ZoneInfo) -> list[str]:
     if not data.worktrees:
         return []
     header = (
         "| Branch | Task | Task state | Ahead / behind base | Dirty files | Live seat "
-        "| Last commit | Owner, next action, blocker |"
+        "| Last commit | Owner, next action, blocker | Claim holder / state | Claimed since "
+        "| Latest attestation | ETA | Landing needs |"
     )
-    rule = "|---|---|---|---|---|---|---|---|"
-    rows = [_worktree_row(row, data.now) for row in data.worktrees]
+    rule = "|" + "---|" * 13
+    rows = [_worktree_row(row, data.now, zone) for row in data.worktrees]
     return ["## Worktrees", header, rule, *rows, ""]
 
 
@@ -174,8 +189,10 @@ def _owner_cell(row: WorktreeRow) -> str:
     return text.replace("|", "\\|")
 
 
-def _worktree_row(row: WorktreeRow, now: datetime) -> str:
+def _worktree_row(row: WorktreeRow, now: datetime, zone: ZoneInfo) -> str:
     task = "none" if row.task_seq is None else f"#{row.task_seq}"
+    if row.task_title:
+        task += " " + row.task_title.replace("|", "\\|")
     state = row.task_state or "none"
     if row.git_error is not None:
         ahead_behind = _GIT_UNAVAILABLE
@@ -188,7 +205,28 @@ def _worktree_row(row: WorktreeRow, now: datetime) -> str:
     else:
         last_commit = f"{_age(now - row.last_commit_at)} ago"
     live = "yes" if row.live_seat else "no"
+    holder = (
+        "unclaimed"
+        if row.holder_session_id is None
+        else (
+            f"{row.holder_agent or 'unknown agent'} ({row.holder_session_id}) / "
+            f"{row.holder_status or 'unknown state'}"
+        )
+    )
+    since = (
+        "none"
+        if row.claimed_at is None
+        else row.claimed_at.astimezone(zone).strftime("%Y-%m-%d %H:%M %Z")
+    )
+    eta = row.current_note.eta or "unknown" if row.current_note is not None else _UNRECONCILED
+    needs = f"target: {row.landing_target or 'unknown'}"
+    if row.open_leaf_count is not None:
+        needs = (
+            f"{row.open_leaf_count} open leaves; repair: {row.integration_leaf or 'unknown'}; "
+            + needs
+        )
     return (
         f"| {row.branch} | {task} | {state} | {ahead_behind} | {dirty} | {live} "
-        f"| {last_commit} | {_owner_cell(row)} |"
+        f"| {last_commit} | {_owner_cell(row)} | {holder.replace('|', '\\|')} | {since} "
+        f"| {row.stage or 'none'} | {eta.replace('|', '\\|')} | {needs.replace('|', '\\|')} |"
     )

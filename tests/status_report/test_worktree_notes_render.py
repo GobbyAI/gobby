@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 
-from gobby.status_report.model import StatusData, WorktreeRow
+from gobby.status_report.model import IdleHolder, StatusData, WorktreeRow
 from gobby.status_report.render import render_markdown
 from gobby.storage.worktree_notes import WorktreeNote
 
@@ -16,6 +17,47 @@ pytestmark = pytest.mark.unit
 CT = ZoneInfo("America/Chicago")
 NOW = datetime(2026, 11, 5, 20, 30, tzinfo=UTC)
 LAST_COMMIT = NOW - timedelta(minutes=12)
+
+
+def test_holder_columns_and_idle_callouts_use_operator_time_and_escape_cells() -> None:
+    row = replace(
+        _row(note=WorktreeNote("fixture", "land", "await build", NOW, eta="14:45 CT")),
+        task_title="Build | synthetic widget",
+        holder_session_id="fixture-session",
+        holder_agent="fixture-builder",
+        holder_status="paused",
+        claimed_at=NOW - timedelta(hours=2),
+        stage="test-after/approved",
+        task_type="epic",
+        open_leaf_count=2,
+        landing_target="fixture-integration",
+    )
+    data = replace(
+        _data(row),
+        idle_holders=(
+            IdleHolder(
+                7,
+                "Build | synthetic widget",
+                "fixture-session",
+                "fixture-builder",
+                "paused",
+                2700,
+            ),
+        ),
+    )
+
+    rendered = render_markdown(data, CT)
+
+    assert "#7 Build \\| synthetic widget" in rendered
+    assert "fixture-builder" in rendered
+    assert "paused" in rendered
+    assert "12:30 CST" in rendered
+    assert "test-after/approved" in rendered
+    assert "14:45 CT" in rendered
+    assert "2 open leaves" in rendered
+    assert "fixture-integration" in rendered
+    assert "## Idle holders" in rendered
+    assert "45m" in rendered.split("## Idle holders", 1)[1]
 
 
 def _data(*rows: WorktreeRow) -> StatusData:
