@@ -382,6 +382,8 @@ Targets:
 - `crates/gclient/src/app/live_loop/terminal_location.rs::*` — scope-reason: resolve authoritative terminal placement without mutating the input loop.
 - `crates/gclient/src/daemon/live.rs::*` — scope-reason: atomically fence navigation requests to their captured connection generation when selecting the outbound channel.
 - `crates/gclient/src/daemon/live_workspace.rs::*` — scope-reason: expose generation-bound workspace attachment while preserving pending-attach cleanup.
+- `crates/gclient/src/daemon/live_connect.rs::*` — scope-reason: retire the replaced socket task and its pending requests when the connection generation advances.
+- `crates/gclient/src/daemon/live_reader.rs::*` — scope-reason: fence inbound subscription updates, outbound sends and resource latches to the owning socket generation.
 - `crates/gclient/src/app/live_loop/projection.rs::*` — scope-reason: own the workspace view adapter beside layout projection.
 - `crates/gclient/src/app/mod.rs::*` — scope-reason: store operation state and expose production reducers to integration fixtures.
 - `crates/gclient/tests/client_loop.rs::*` — scope-reason: exercise asynchronous project flows and repair characterized detach fixtures.
@@ -393,10 +395,13 @@ Targets:
 - `crates/gclient/tests/mock_daemon/project_jobs.rs::*` — scope-reason: pump production job reducers for direct integration calls.
 - `crates/gclient/tests/placed_agent.rs::*` — scope-reason: cover placed and unplaced agent project ownership.
 - `crates/gclient/tests/project_flows.rs::*` — scope-reason: cover cancellation, supersession, reconnect retries and coalesced creation.
+- `crates/gclient/tests/daemon_live.rs::*` — scope-reason: prove a held reply on a retiring socket cannot retarget the replacement connection's workspace filter.
 
 Split `projects.rs` into `crates/gclient/src/app/live_loop/project_operations.rs` before expanding operations.
 
 Security-review follow-up: compensate the subscription side effect of dismissed, superseded or failed navigation; allow pending selection during restoration backoff. Preserve and report in-flight creation results across dismissal and reconnect, and retain request identity so reselection coalesces. Resample authoritative worktree occupants before closing captured tabs and deleting the worktree. Generation checks must share the outbound-channel selection lock, because an HTTP lookup can outlive its original connection.
+
+An already-registered request can also outlive its connection. Retire that socket's task and waiters during generation rollover, release request-local channel senders after enqueue, and check generation under the state lock before publishing inbound state. Resource cleanup belongs to the socket generation that acquired it. Late navigation outcomes request restoration on the current generation; mismatched restoration snapshots use the same backoff as errors, leaving newer pending selection runnable.
 
 **Research context:** `projects.rs::focus_agent`, `create_worktree` and `open_worktree` are called by modal, sidebar and menu input paths. `project_operations.rs::remove_worktree` owns kill-before-close-before-delete ordering. Reuse `jobs.rs::spawn_job`, `JobOutcome` and `LoopJobs::drain_pending_refetch`; keep all daemon waits in jobs and apply results in `jobs_apply.rs::apply_job_outcome`. `project_navigation.rs::dispatch`, `apply` and `resume` separate actual request identity from the newest intent, serialize attachments and reject stale generations. Terminal discovery uses `terminal_location.rs::prepare`; an existing workspace placement wins over the sidebar's assigned project, while unplaced agents retain their assigned project. Newly resolved rows must set `roster_landed` so the loop starts initial attachments. Reuse `MockDaemon`, the held native host, existing responsiveness bound of 1500ms, and production reducers in integration fixtures. The project operation module and navigation module are new extractions in this task; the view adapter moves from the loop into the existing projection owner. Keep source versions untouched: step 1 owns the integration-only mechanical bump.
 

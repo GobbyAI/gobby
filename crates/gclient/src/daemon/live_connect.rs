@@ -104,6 +104,12 @@ impl LiveDaemon {
                     return Ok(state.generation);
                 }
                 state.generation.0 += 1;
+                crate::daemon::live_reader::fail_waiters(
+                    &mut state,
+                    DaemonError::Unavailable { retry_after: None },
+                );
+                state.workspace_attaches.clear();
+                state.attached_workspace = None;
                 state.ready = true;
                 state.last_error = None;
                 state.outbound = Some(outbound);
@@ -113,15 +119,11 @@ impl LiveDaemon {
             let handle = tokio::spawn(async move {
                 run_connection(inner, generation, socket, receiver).await;
             });
-            // Replacing the slot is enough to retire the reader in it, and
-            // that matters when a handshake fails after this point — the
-            // subscribe below timing out under `connect_or_wait` leaves the
-            // previous socket up, because nothing closed it. The generation
-            // above already swapped `state.outbound`, so the old reader's
-            // command channel has no senders left: its `recv` resolves to
-            // `None` and it disconnects itself. One reader feeds the broadcast
-            // channel; `a_timed_out_subscribe_leaves_no_second_reader` pins it.
-            *reader = Some(handle);
+            // Requests may still hold the retiring channel's sender. Explicitly
+            // retire its task; inbound state mutation is also generation-fenced.
+            if let Some(previous) = reader.replace(handle) {
+                previous.abort();
+            }
             generation
         };
         self.subscribe_events().await?;

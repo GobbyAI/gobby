@@ -2114,6 +2114,66 @@ async fn abandoned_workspace_attach_cannot_retarget_the_filter() {
     mock.shutdown().await;
 }
 
+#[tokio::test]
+async fn retiring_socket_attach_reply_cannot_retarget_the_current_filter() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_other_workspace("retired", &[(&["retired-terminal"], "retired-terminal")]);
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect");
+    let generation = daemon.generation();
+    let release = mock.hold_ws("workspace_attach", |body| body["project_id"] == "retired");
+    let retired = tokio::spawn({
+        let daemon = daemon.clone();
+        async move {
+            daemon
+                .attach_workspace_at_generation(None, None, Some("retired"), generation)
+                .await
+        }
+    });
+    poll_until(
+        Duration::from_secs(1),
+        || count_ws_requests(&mock, "workspace_attach") == 1,
+        "retiring socket attach is already registered",
+    )
+    .await;
+    daemon
+        .reconnect(generation)
+        .await
+        .expect("replacement connection");
+    daemon
+        .attach_workspace(None, Some(ATTACHED_WORKSPACE), None)
+        .await
+        .expect("current workspace");
+    let (_, mut events) = daemon.subscribe();
+    release.notify_one();
+    let old_result = retired.await.expect("retired request settles");
+    mock.send_event_and_wait(workspace_event(ATTACHED_WORKSPACE, 1))
+        .await;
+    let event = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if let DaemonEvent::Workspace(event) = events.recv().await.expect("event") {
+                break event;
+            }
+        }
+    })
+    .await;
+    assert_eq!(
+        event.ok().map(|event| event.workspace_id),
+        Some(ATTACHED_WORKSPACE.to_owned()),
+        "a retiring socket reply must not replace the current event filter"
+    );
+    assert!(
+        old_result.is_err(),
+        "a request on the retiring socket must fail rather than publish its reply"
+    );
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close");
+    mock.shutdown().await;
+}
+
 /// #22534: a launch with the daemon down connects-or-waits. The daemon that
 /// is not there yields a handle that is not ready and carries the connect
 /// error, the shape a lost connection leaves for the supervisor; a bad URL or

@@ -327,6 +327,7 @@ impl LiveDaemon {
         .await
         .map_err(|_| request_timed_out(&request))?
         .map_err(|_| DaemonError::Unavailable { retry_after: None })?;
+        drop(outbound);
         timeout_at(deadline, written_rx)
             .await
             .map_err(|_| request_timed_out(&request))?

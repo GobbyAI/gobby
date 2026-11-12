@@ -69,6 +69,66 @@ async fn a_failed_subscription_restore_does_not_starve_pending_project_selection
 }
 
 #[tokio::test]
+async fn a_mismatched_restore_does_not_starve_pending_project_selection() {
+    use gobby_client::app::{
+        apply_project_attachment, dispatch_project_navigation, focus_project, JobResult,
+    };
+    let mock = MockDaemon::start("local-token").await;
+    mock.seed_workspace("original", &[]);
+    mock.seed_other_workspace("superseded", &[(&["second"], "second")]);
+    mock.seed_other_workspace("latest", &[(&["latest"], "latest")]);
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect");
+    let mut workspace = Workspace::live(daemon);
+    let home = tempfile::tempdir().expect("home");
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.select_project("original");
+    workspace.reconcile_subscribe_first().await.expect("model");
+    let mut chrome = Chrome::dark();
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    focus_project(&mut workspace, &mut chrome, "superseded")
+        .await
+        .expect("first");
+    assert!(dispatch_project_navigation(&mut workspace, &sender));
+    focus_project(&mut workspace, &mut chrome, "latest")
+        .await
+        .expect("latest");
+    let JobResult::ProjectAttached(attachment) = receiver.recv().await.expect("first").result
+    else {
+        panic!("attach");
+    };
+    apply_project_attachment(&mut workspace, &mut chrome, true, attachment);
+    assert!(dispatch_project_navigation(&mut workspace, &sender));
+    let JobResult::ProjectAttached(restore) = receiver.recv().await.expect("restore").result else {
+        panic!("restore");
+    };
+    // The visible model changes while the restoration reply is outstanding.
+    let mut snapshot = workspace
+        .daemon()
+        .workspace_snapshot(
+            None,
+            &workspace.workspace_model().expect("model").workspace.id,
+        )
+        .await
+        .expect("snapshot");
+    snapshot.workspace.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee".into();
+    workspace.apply_workspace_snapshot(snapshot);
+    apply_project_attachment(&mut workspace, &mut chrome, true, restore);
+    assert!(dispatch_project_navigation(&mut workspace, &sender));
+    let JobResult::ProjectAttached(attachment) = receiver.recv().await.expect("next").result else {
+        panic!("attach");
+    };
+    apply_project_attachment(&mut workspace, &mut chrome, true, attachment);
+    assert_eq!(
+        workspace.project_id(),
+        Some("latest"),
+        "a mismatched restore must yield to the pending selection"
+    );
+    mock.shutdown().await;
+}
+
+#[tokio::test]
 async fn terminal_metadata_failure_after_attach_restores_visible_workspace_events() {
     use gobby_client::app::{
         apply_project_attachment, dispatch_project_navigation, focus_agent, JobResult,
@@ -273,6 +333,21 @@ async fn removing_a_worktree_refuses_a_terminal_missing_from_the_captured_ui() {
 
 #[tokio::test]
 async fn dismissing_an_in_flight_project_attach_restores_visible_workspace_events() {
+    assert!(
+        assert_dismissed_attach_restores_events(false).await,
+        "dismissal restores the visible event stream"
+    );
+}
+
+#[tokio::test]
+async fn a_retiring_project_attach_restores_visible_workspace_events() {
+    assert!(
+        assert_dismissed_attach_restores_events(true).await,
+        "a stale outcome restores the visible event stream on the replacement connection"
+    );
+}
+
+async fn assert_dismissed_attach_restores_events(reconnect: bool) -> bool {
     use gobby_client::app::{apply_project_attachment, dispatch_project_navigation, JobResult};
     use gobby_client::daemon::{Daemon, DaemonEvent};
 
@@ -318,12 +393,21 @@ async fn dismissing_an_in_flight_project_attach_restores_visible_workspace_event
     .await
     .expect("attachment held");
     chrome.dialog = None;
+    if reconnect {
+        let generation = workspace.daemon().generation();
+        workspace
+            .daemon()
+            .reconnect(generation)
+            .await
+            .expect("reconnect");
+        assert!(!dispatch_project_navigation(&mut workspace, &sender));
+    }
     release.notify_one();
     let outcome = receiver.recv().await.expect("result");
     let JobResult::ProjectAttached(attachment) = outcome.result else {
         panic!("attach result");
     };
-    apply_project_attachment(&mut workspace, &mut chrome, true, attachment);
+    apply_project_attachment(&mut workspace, &mut chrome, !reconnect, attachment);
     mock_daemon::project_jobs::apply_navigation(&mut workspace, &mut chrome).await;
     assert_eq!(workspace.project_id(), Some("original"));
     assert_eq!(
@@ -350,12 +434,9 @@ async fn dismissing_an_in_flight_project_attach_restores_visible_workspace_event
         }
     })
     .await;
-    assert_eq!(
-        delivered.ok().as_deref(),
-        Some(original.as_str()),
-        "dismissing navigation must restore the visible workspace's event stream"
-    );
+    let restored = delivered.ok().as_deref() == Some(original.as_str());
     mock.shutdown().await;
+    restored
 }
 
 #[tokio::test]
@@ -735,6 +816,20 @@ async fn attachment_from_retired_generation_cannot_install_snapshot() {
     assert!(workspace.workspace_model().is_none());
     assert_eq!(workspace.project_id(), None);
     assert!(chrome.toasts.is_empty());
+    assert!(
+        dispatch_project_navigation(&mut workspace, &sender),
+        "a stale outcome requests subscription restoration"
+    );
+    let JobResult::ProjectAttached(restored) = receiver.recv().await.expect("restore").result
+    else {
+        panic!("restoration result");
+    };
+    apply_project_attachment(&mut workspace, &mut chrome, true, restored);
+    assert!(
+        workspace.workspace_model().is_none(),
+        "restoration cannot install the retired candidate"
+    );
+    assert_eq!(workspace.project_id(), None);
     assert!(!dispatch_project_navigation(&mut workspace, &sender));
     mock.shutdown().await;
 }

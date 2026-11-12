@@ -517,7 +517,10 @@ pub fn apply(
         active.request == attachment.request && active.generation == attachment.generation
     }) {
         if matches!(attachment.then, ProjectAction::CreateWorktree(_)) {
-            discard_attachment(workspace, chrome, current_generation, attachment);
+            discard_attachment(workspace, chrome, attachment);
+        } else if !current_generation {
+            workspace.project_navigation.restore =
+                Some((workspace.daemon().generation(), tokio::time::Instant::now()));
         }
         return;
     }
@@ -532,8 +535,10 @@ pub fn apply(
                                 workspace.apply_workspace_snapshot(snapshot);
                                 sync_live_chrome(workspace, chrome);
                             } else {
-                                workspace.project_navigation.restore =
-                                    Some((attachment.generation, tokio::time::Instant::now()));
+                                workspace.project_navigation.restore = Some((
+                                    attachment.generation,
+                                    tokio::time::Instant::now() + std::time::Duration::from_secs(4),
+                                ));
                             }
                         }
                     }
@@ -556,7 +561,7 @@ pub fn apply(
     }
     let navigation = &mut workspace.project_navigation;
     if !current_generation || navigation.serial != active.intent {
-        discard_attachment(workspace, chrome, current_generation, attachment);
+        discard_attachment(workspace, chrome, attachment);
         return;
     }
     if let ProjectAction::OpenProject { path, create } = &attachment.then {
@@ -566,7 +571,7 @@ pub fn apply(
             _ => false,
         };
         if !matches {
-            discard_attachment(workspace, chrome, current_generation, attachment);
+            discard_attachment(workspace, chrome, attachment);
             return;
         }
     }
@@ -576,7 +581,7 @@ pub fn apply(
                 && base.as_str() == request.base.as_deref().unwrap_or_default())
             || workspace.project_id() != Some(request.project.as_str())
         {
-            discard_attachment(workspace, chrome, current_generation, attachment);
+            discard_attachment(workspace, chrome, attachment);
             return;
         }
     }
@@ -642,7 +647,6 @@ pub fn apply(
 fn discard_attachment(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
-    current_generation: bool,
     attachment: ProjectAttachment,
 ) {
     if matches!(attachment.then, ProjectAction::CreateWorktree(_)) {
@@ -661,11 +665,11 @@ fn discard_attachment(
                 attachment.label
             ))),
         }
-    } else if current_generation {
+    } else {
         // The reply also changed the daemon's parametric subscription. Repair
         // that side effect before allowing another navigation request to run.
         workspace.project_navigation.restore =
-            Some((attachment.generation, tokio::time::Instant::now()));
+            Some((workspace.daemon().generation(), tokio::time::Instant::now()));
     }
 }
 

@@ -41,27 +41,41 @@ pub(super) enum Outbound {
 
 struct ConnectionResources {
     inner: Arc<LiveInner>,
+    generation: super::Generation,
     sink_active: bool,
 }
 
 impl ConnectionResources {
-    fn new(inner: Arc<LiveInner>) -> Self {
-        inner.reader_active.store(true, Ordering::Release);
-        inner.sink_active.store(true, Ordering::Release);
+    fn new(inner: Arc<LiveInner>, generation: super::Generation) -> Self {
+        {
+            let state = inner.state();
+            if state.generation == generation {
+                inner.reader_active.store(true, Ordering::Release);
+                inner.sink_active.store(true, Ordering::Release);
+            }
+        }
         Self {
             inner,
+            generation,
             sink_active: true,
         }
     }
 
     fn sink_closed(&mut self) {
-        self.inner.sink_active.store(false, Ordering::Release);
+        let state = self.inner.state();
+        if state.generation == self.generation {
+            self.inner.sink_active.store(false, Ordering::Release);
+        }
         self.sink_active = false;
     }
 }
 
 impl Drop for ConnectionResources {
     fn drop(&mut self) {
+        let state = self.inner.state();
+        if state.generation != self.generation {
+            return;
+        }
         if self.sink_active {
             self.inner.sink_active.store(false, Ordering::Release);
         }
@@ -136,7 +150,7 @@ pub(super) async fn run_connection(
     socket: Socket,
     mut outbound: mpsc::Receiver<Outbound>,
 ) {
-    let mut resources = ConnectionResources::new(Arc::clone(&inner));
+    let mut resources = ConnectionResources::new(Arc::clone(&inner), generation);
     let (mut sink, mut stream) = socket.split();
     let mut fragments = FragmentAssembler::default();
     let mut sweep = interval(Duration::from_millis(100));
@@ -146,6 +160,9 @@ pub(super) async fn run_connection(
             command = outbound.recv() => {
                 match command {
                     Some(Outbound::Message { raw, write_state, written }) => {
+                        if inner.state().generation != generation {
+                            break DaemonError::Unavailable { retry_after: None };
+                        }
                         if write_state
                             .compare_exchange(
                                 WRITE_QUEUED,
@@ -217,7 +234,7 @@ pub(super) async fn run_connection(
                 } else {
                     value
                 };
-                if let Err(error) = handle_inbound(&inner, value) {
+                if let Err(error) = handle_inbound(&inner, generation, value) {
                     break error;
                 }
             }
@@ -247,7 +264,17 @@ fn decode_frame(message: Message) -> Result<Option<Value>, DaemonError> {
     }
 }
 
-fn handle_inbound(inner: &LiveInner, value: Value) -> Result<(), DaemonError> {
+fn handle_inbound(
+    inner: &LiveInner,
+    generation: super::Generation,
+    value: Value,
+) -> Result<(), DaemonError> {
+    // Routing and synchronous publication share the rollover lock. Aborting the
+    // retiring task alone cannot preempt a callback already running on a thread.
+    let mut state = inner.state();
+    if state.generation != generation || state.closed {
+        return Ok(());
+    }
     let kind = message_kind(&value).unwrap_or_default();
     let attachment = value
         .get("attachment_id")
@@ -256,7 +283,6 @@ fn handle_inbound(inner: &LiveInner, value: Value) -> Result<(), DaemonError> {
     let mut reply = None;
     let mut fenced_writes = Vec::new();
     let ignored = {
-        let mut state = inner.state();
         if kind == "terminal_attach_result"
             && value.get("success").and_then(Value::as_bool) == Some(true)
         {
@@ -342,6 +368,7 @@ fn handle_inbound(inner: &LiveInner, value: Value) -> Result<(), DaemonError> {
     if let Some(event) = daemon_event(value)? {
         let _ = inner.events.send(event);
     }
+    drop(state);
     Ok(())
 }
 
@@ -437,7 +464,7 @@ fn disconnect(inner: &LiveInner, generation: super::Generation, error: DaemonErr
     }
 }
 
-fn fail_waiters(state: &mut LiveState, error: DaemonError) {
+pub(super) fn fail_waiters(state: &mut LiveState, error: DaemonError) {
     for (_, waiter) in state.requests.drain() {
         let _ = waiter.send(Err(error.clone()));
     }
