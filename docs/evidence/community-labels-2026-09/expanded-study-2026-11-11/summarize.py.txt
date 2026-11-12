@@ -1,0 +1,78 @@
+"""Validate completed diagnostics and report descriptive statistics, never human precision."""
+
+import hashlib
+import json
+from collections import Counter, defaultdict
+from pathlib import Path
+from statistics import mean
+
+ROOT = Path("/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/session-21986")
+before = json.loads((ROOT / "population-study-20261111/population.json").read_text())
+after_bytes = (ROOT / "population-after-fix-20261111.json").read_bytes()
+after = json.loads(after_bytes)
+manifest_bytes = (ROOT / "expanded-label-manifest-20261111.json").read_bytes()
+manifest = json.loads(manifest_bytes)
+result = json.loads((ROOT / "expanded-clef-diagnostic-20261111.json").read_text())
+assert "finished_at" in result, "Diagnostic still running or interrupted"
+assert result["population_sha256"] == hashlib.sha256(after_bytes).hexdigest()
+assert result["manifest_sha256"] == hashlib.sha256(manifest_bytes).hexdigest()
+assert len(manifest["labels"]) == len(after["communities"]) == 3003
+assert len({row["community"] for row in manifest["labels"]}) == 3003
+baseline = [row for row in result["cases"] if row["variant"] == "baseline"]
+carry = [row for row in result["cases"] if row["variant"] != "baseline"]
+assert len(baseline) == 193 and len(carry) == 120
+assert len({(row["community"], row["variant"]) for row in result["cases"]}) == 313
+before_members = {p: row["member_count"] for row in before["communities"] for p in row["members"]}
+after_members = {p: row["member_count"] for row in after["communities"] for p in row["members"]}
+assert len(after_members) == after["member_total"] == 9468
+opinions = defaultdict(list)
+errors = []
+preferences = Counter()
+for row in baseline:
+    for question, outcome in row["outcomes"].items():
+        if outcome["error"] is not None:
+            errors.append({"community": row["community"], "question": question, "error": outcome["error"]})
+    quality = row["outcomes"]["usefulness"]["answer"]
+    negative = row["outcomes"]["negative_control"]["answer"]
+    selection = row["outcomes"]["selection"]["answer"]
+    if quality is not None:
+        opinions[row["kind"]].append(quality["score"])
+    if negative is not None:
+        opinions["negative_control_probability"].append(negative["probability"])
+    if selection is not None:
+        chosen = row["options"][selection["choice"]]
+        preferences["candidate" if chosen == row["name"] else "negative_control" if selection["choice"] == "c" else "deterministic"] += 1
+for row in carry:
+    original = next(other for other in baseline if other["community"] == row["community"])
+    assert row["name"] == original["name"]
+    expected = set(original["members"])
+    actual = set(row["members"])
+    if row["variant"] in {"unchanged", "reordered"}:
+        assert expected == actual
+    elif row["variant"] == "remove_quarter":
+        assert actual < expected
+    else:
+        assert not expected & actual
+    opinions["carry_" + row["variant"]].append(row["response"]["answers"]["carry"]["probability"])
+assert not errors, errors
+summary = {
+    "communities_before": len(before["communities"]), "communities_after": len(after["communities"]),
+    "singletons_before": sum(n == 1 for n in before_members.values()),
+    "singletons_after": sum(n == 1 for n in after_members.values()),
+    "previous_singletons_now_grouped": sum(n == 1 and after_members.get(p, 0) > 1 for p, n in before_members.items()),
+    "previous_grouped_now_singletons": sum(n > 1 and after_members.get(p) == 1 for p, n in before_members.items()),
+    "added_files": sorted(after_members.keys() - before_members.keys()),
+    "removed_files": sorted(before_members.keys() - after_members.keys()),
+    "label_kinds": dict(Counter(row["kind"] for row in manifest["labels"])),
+    "caption_derivations": dict(Counter(method for row in manifest["labels"]
+                                        if isinstance(row["derivation"], list) for method in row["derivation"])),
+    "diagnostic_cases": len(result["cases"]), "baseline_question_answers": len(baseline) * 3,
+    "carry_answers": len(carry), "errors": errors,
+    "selection_counts": dict(preferences),
+    "opinions": {key: {"n": len(values), "mean": mean(values), "min": min(values), "max": max(values),
+                        "at_least_half": sum(value >= 0.5 for value in values)}
+                 for key, values in opinions.items()},
+    "interpretation": "Descriptive Clef opinions only. A 0.5 split is a diagnostic display, not a new acceptance threshold. No human precision, recall or ship approval inferred.",
+}
+(ROOT / "expanded-study-summary-20261111.json").write_text(json.dumps(summary, indent=2) + "\n")
+print(json.dumps(summary, indent=2))

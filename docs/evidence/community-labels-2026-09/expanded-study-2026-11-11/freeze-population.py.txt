@@ -1,0 +1,44 @@
+"""Freeze corrected live communities separately from the pre-fix evidence."""
+
+import hashlib
+import json
+from collections import Counter
+from datetime import UTC, datetime
+from pathlib import Path
+
+from scripts.community_label_study import _load_communities
+
+PROJECT = "d45545c5-ded5-4335-b115-0245752edacf"
+OUT = Path("/Users/josh/.gobby/agents_workspaces/d45545c5-ded5-4335-b115-0245752edacf/session-21986/population-after-fix-20261111.json")
+
+rows = sorted(_load_communities(PROJECT), key=lambda row: row.community_id)
+communities = [
+    {
+        "community": str(row.community_id),
+        "member_count": row.member_count,
+        "members": row.members,
+        "representatives": row.representatives,
+        "member_signature": row.member_signature,
+        "deterministic_name": row.label_deterministic,
+        "cohesion": row.cohesion,
+        "boundary": row.boundary,
+        "internal_edges": row.internal_edges,
+    }
+    for row in rows
+]
+members = [member for row in rows for member in row.members]
+assert len(members) == len(set(members))
+assert len({row.community_id for row in rows}) == len(rows)
+assert all(row.member_count == len(row.members) for row in rows)
+snapshot = {
+    "project": PROJECT,
+    "frozen_at": datetime.now(UTC).isoformat(),
+    "read_only": True,
+    "indexer_version": "1.9.117",
+    "community_count": len(rows),
+    "member_total": len(members),
+    "size_counts": dict(sorted(Counter(row.member_count for row in rows).items())),
+    "communities": communities,
+}
+OUT.write_text(json.dumps(snapshot, indent=2) + "\n")
+print(json.dumps({"communities": len(rows), "files": len(members), "singletons": sum(row.member_count == 1 for row in rows), "sha256": hashlib.sha256(OUT.read_bytes()).hexdigest()}))
