@@ -20,6 +20,7 @@ from gobby.status_report.model import (
     StatusData,
     WorktreeRow,
 )
+from gobby.status_report.rows import claim_holders, enrich_rows, idle_holders
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._queries import projected_task_state_sql
@@ -47,7 +48,7 @@ _LATEST_ATTESTATIONS_SQL = """
 SELECT DISTINCT ON (c.task_id) c.task_id, c.created_at, c.body
 FROM task_comments c
 JOIN tasks t ON t.id = c.task_id
-WHERE t.project_id = %s AND t.closed_at IS NULL AND c.author_type = 'task_attestation'
+WHERE t.project_id = %s AND c.author_type = 'task_attestation'
   AND NOT EXISTS (
     SELECT 1 FROM task_comments correction
     WHERE correction.task_id = c.task_id
@@ -117,10 +118,17 @@ def collect_status(
     runs: Sequence[AgentRun],
     worktrees: Sequence[Worktree],
     loadavg: Callable[[], tuple[float, float, float]],
+    idle_holder_age_seconds: float = 1800,
+    excluded_worktree_roles: Sequence[str] = ("main", "wiki"),
 ) -> StatusData:
     """Gather every report input. An unreadable receipt becomes a gap; a corrupt attestation store
     fails the run instead of being guessed at."""
     gaps: list[str] = []
+    worktrees = tuple(
+        tree
+        for tree in worktrees
+        if tree.task_id is not None and tree.workspace_role not in excluded_worktree_roles
+    )
     if len(runs) >= _RUN_LIMIT:
         gaps.append(
             f"live runs - listing reached the {_RUN_LIMIT}-run cap; runs beyond it are not "
@@ -130,6 +138,7 @@ def collect_status(
     open_rows = db.fetchall(_OPEN_TASKS_SQL, (project_id,))
     latest = _latest_attestations(db, project_id)
     claims = _open_claims(db, project_id)
+    holders = claim_holders(db, project_id)
     refs = _task_refs(db, _referenced_task_ids(runs, worktrees))
     notes = WorktreeNoteStore(db).list_for([str(worktree.id) for worktree in worktrees])
 
@@ -156,10 +165,19 @@ def collect_status(
         attention=attention,
         decisions=decisions,
         stalled=_stalled(runs, refs),
-        worktrees=_worktrees(worktrees, runs, refs, integration_branch, gaps, notes),
+        worktrees=enrich_rows(
+            db,
+            project_id,
+            _worktrees(worktrees, runs, refs, integration_branch, gaps, notes),
+            worktrees,
+            holders,
+            latest,
+            integration_branch,
+        ),
         load_5m=_load_5m(loadavg, gaps),
         load_threshold=load_threshold,
         gaps=tuple(gaps),
+        idle_holders=idle_holders(holders, now, idle_holder_age_seconds),
     )
 
 

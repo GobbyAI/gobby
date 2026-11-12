@@ -69,6 +69,7 @@ async def test_set_note_persists_owner_next_action_and_blocker(
             "owner": "dev-1",
             "next_action": "rerun the focused tests",
             "blocker": "waiting on review",
+            "eta": "  14:45 CT  ",
         },
     )
 
@@ -80,6 +81,7 @@ async def test_set_note_persists_owner_next_action_and_blocker(
         "waiting on review",
     )
     assert note.updated_at >= before
+    assert note.eta == "14:45 CT"
 
 
 @pytest.mark.asyncio

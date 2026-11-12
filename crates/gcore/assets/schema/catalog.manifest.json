@@ -4213,6 +4213,50 @@
       "definition": "text|text|NO||NEVER"
     },
     {
+      "name": "status_report_runs.artifact_digest",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "status_report_runs.created_at",
+      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
+    },
+    {
+      "name": "status_report_runs.delivered_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
+      "name": "status_report_runs.destination_key",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "status_report_runs.file_path",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "status_report_runs.id",
+      "definition": "bigint|int8|NO||NEVER"
+    },
+    {
+      "name": "status_report_runs.machine_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "status_report_runs.message_id",
+      "definition": "uuid|uuid|YES||NEVER"
+    },
+    {
+      "name": "status_report_runs.mode",
+      "definition": "text|text|NO||NEVER"
+    },
+    {
+      "name": "status_report_runs.project_id",
+      "definition": "uuid|uuid|NO||NEVER"
+    },
+    {
+      "name": "status_report_runs.snapshot",
+      "definition": "jsonb|jsonb|YES||NEVER"
+    },
+    {
       "name": "step_executions.approval_timeout_seconds",
       "definition": "integer|int4|YES||NEVER"
     },
@@ -5701,6 +5745,10 @@
       "definition": "text|text|NO|''::text|NEVER"
     },
     {
+      "name": "worktree_notes.eta",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "worktree_notes.next_action",
       "definition": "text|text|NO||NEVER"
     },
@@ -7129,6 +7177,30 @@
     {
       "name": "spans.spans_pkey",
       "definition": "PRIMARY KEY (span_id)"
+    },
+    {
+      "name": "status_report_runs.status_report_runs_check",
+      "definition": "CHECK ((delivered_at IS NULL) = (message_id IS NULL))"
+    },
+    {
+      "name": "status_report_runs.status_report_runs_check1",
+      "definition": "CHECK (delivered_at IS NULL OR snapshot IS NOT NULL AND artifact_digest IS NOT NULL)"
+    },
+    {
+      "name": "status_report_runs.status_report_runs_file_path_key",
+      "definition": "UNIQUE (file_path)"
+    },
+    {
+      "name": "status_report_runs.status_report_runs_mode_check",
+      "definition": "CHECK (mode = ANY (ARRAY['full'::text, 'delta'::text]))"
+    },
+    {
+      "name": "status_report_runs.status_report_runs_pkey",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "status_report_runs.status_report_runs_project_id_fkey",
+      "definition": "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE"
     },
     {
       "name": "step_executions.step_executions_approval_token_key",
@@ -9517,6 +9589,18 @@
     {
       "name": "spans_pkey",
       "definition": "CREATE UNIQUE INDEX spans_pkey ON $schema.spans USING btree (span_id)"
+    },
+    {
+      "name": "status_report_delivered_full_idx",
+      "definition": "CREATE INDEX status_report_delivered_full_idx ON $schema.status_report_runs USING btree (project_id, machine_id, destination_key, id DESC) WHERE ((mode = 'full'::text) AND (delivered_at IS NOT NULL))"
+    },
+    {
+      "name": "status_report_runs_file_path_key",
+      "definition": "CREATE UNIQUE INDEX status_report_runs_file_path_key ON $schema.status_report_runs USING btree (file_path)"
+    },
+    {
+      "name": "status_report_runs_pkey",
+      "definition": "CREATE UNIQUE INDEX status_report_runs_pkey ON $schema.status_report_runs USING btree (id)"
     },
     {
       "name": "step_executions_approval_token_key",

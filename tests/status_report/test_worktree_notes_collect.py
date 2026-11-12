@@ -20,6 +20,7 @@ import pytest
 
 from gobby.status_report.collect import collect_status
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktree_notes import WorktreeNoteStore
 from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -123,7 +124,10 @@ def test_note_written_before_a_change_is_unreconciled(
 ) -> None:
     project_id = str(sample_project["id"])
     repo = _checkout(tmp_path / "wt")
-    tree = LocalWorktreeManager(temp_db).create(project_id, "task-7", str(repo), base_branch=BRANCH)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Synthetic note owner")
+    tree = LocalWorktreeManager(temp_db).create(
+        project_id, "task-7", str(repo), base_branch=BRANCH, task_id=str(task.id)
+    )
     note_at = datetime.now(UTC)
     change(repo)
     _note(temp_db, tree.id, note_at)
@@ -144,7 +148,10 @@ def test_note_written_after_a_change_is_current(
 ) -> None:
     project_id = str(sample_project["id"])
     repo = _checkout(tmp_path / "wt")
-    tree = LocalWorktreeManager(temp_db).create(project_id, "task-7", str(repo), base_branch=BRANCH)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Synthetic note owner")
+    tree = LocalWorktreeManager(temp_db).create(
+        project_id, "task-7", str(repo), base_branch=BRANCH, task_id=str(task.id)
+    )
     change(repo)
     note_at = datetime.now(UTC)
     _note(temp_db, tree.id, note_at)
@@ -164,7 +171,10 @@ def test_collecting_status_does_not_rewrite_the_index_into_a_stale_note(
     _git(repo, "add", "staged.txt")
     # Stale stat data makes `git status` want to refresh and rewrite the index.
     os.utime(repo / "keep.txt", None)
-    tree = LocalWorktreeManager(temp_db).create(project_id, "task-7", str(repo), base_branch=BRANCH)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Synthetic note owner")
+    tree = LocalWorktreeManager(temp_db).create(
+        project_id, "task-7", str(repo), base_branch=BRANCH, task_id=str(task.id)
+    )
     _note(temp_db, tree.id, datetime.now(UTC))
 
     first = _collect_row(temp_db, project_id, tmp_path)
@@ -188,7 +198,10 @@ def test_clean_tree_compares_the_note_with_the_last_commit(
 ) -> None:
     project_id = str(sample_project["id"])
     repo = _checkout(tmp_path / "wt")
-    tree = LocalWorktreeManager(temp_db).create(project_id, "task-7", str(repo), base_branch=BRANCH)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Synthetic note owner")
+    tree = LocalWorktreeManager(temp_db).create(
+        project_id, "task-7", str(repo), base_branch=BRANCH, task_id=str(task.id)
+    )
     _note(temp_db, tree.id, note_at)
 
     row = _collect_row(temp_db, project_id, tmp_path)
@@ -202,7 +215,10 @@ def test_renamed_file_counts_once_and_the_rename_is_a_change(
 ) -> None:
     project_id = str(sample_project["id"])
     repo = _checkout(tmp_path / "wt")
-    tree = LocalWorktreeManager(temp_db).create(project_id, "task-7", str(repo), base_branch=BRANCH)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Synthetic note owner")
+    tree = LocalWorktreeManager(temp_db).create(
+        project_id, "task-7", str(repo), base_branch=BRANCH, task_id=str(task.id)
+    )
     _note(temp_db, tree.id, datetime.now(UTC) - timedelta(days=1))
     _rename(repo)
 

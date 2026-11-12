@@ -138,6 +138,14 @@ async def _send(
             "gobby.mcp_proxy.tools.communications.get_project_context",
             return_value={"project_path": str(project_root)},
         ),
+        patch(
+            "gobby.mcp_proxy.tools.communications_reports.get_current_session_id",
+            return_value=session_id,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.communications_reports.get_project_context",
+            return_value={"id": project_id, "project_path": str(project_root)},
+        ),
     ):
         if not daemon:
             result: dict[str, Any] = await handler(channel=channel, file_path=str(file_path))

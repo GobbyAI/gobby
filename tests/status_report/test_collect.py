@@ -14,9 +14,12 @@ from uuid import uuid4
 import pytest
 
 from gobby.status_report.collect import collect_status
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
+from gobby.workflows.agent_models import AgentStepWorkflowBody
+from gobby.workflows.step_instances import AgentStepInstance, AgentStepInstanceManager
 from tests.fixtures.agent_sessions import AgentSessions
 
 pytestmark = pytest.mark.integration
@@ -24,6 +27,205 @@ pytestmark = pytest.mark.integration
 NOW = datetime(2026, 11, 5, 20, 30, tzinfo=UTC)
 WINDOW = timedelta(minutes=30)
 BRANCH = "0.5.0"
+
+
+def test_epic_row_reports_the_recorded_repair_task_and_target(
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
+) -> None:
+    project_id = str(sample_project["id"])
+    tasks = LocalTaskManager(temp_db)
+    epic = tasks.create_task(project_id, "Synthetic delivery root", task_type="epic")
+    repair = tasks.create_task(project_id, "Synthetic repair", parent_task_id=str(epic.id))
+    owner = AgentSessions(temp_db, project_id).add("fixture-coordinator")
+    AgentStepInstanceManager(temp_db).replace_for_session(
+        AgentStepInstance(
+            id=str(uuid4()),
+            session_id=owner,
+            agent_name="fixture-coordinator",
+            snapshot=AgentStepWorkflowBody.model_validate({"steps": [{"name": "inspect"}]}),
+            variables={"integration_leaf_id": str(repair.id)},
+        )
+    )
+    tree = LocalWorktreeManager(temp_db).create(
+        project_id,
+        "arbitrary-parent",
+        str(_repo(tmp_path / "root")),
+        task_id=str(epic.id),
+        agent_session_id=owner,
+        base_branch=BRANCH,
+    )
+
+    data = _collect(temp_db, project_id, tmp_path, worktrees=(tree,))
+
+    (row,) = data.worktrees
+    assert getattr(row, "integration_leaf", None) == f"#{repair.seq_num} open"
+    assert row.landing_target == BRANCH
+    assert row.open_leaf_count == 1
+
+
+def test_worktree_reports_actual_claim_holder_and_idle_session(
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
+) -> None:
+    project_id = str(sample_project["id"])
+    task = LocalTaskManager(temp_db).create_task(project_id, "Repair the synthetic widget")
+    seats = AgentSessions(temp_db, project_id)
+    holder = seats.add("fixture-builder")
+    checkout_owner = seats.add("fixture-inspector")
+    LocalAgentRunManager(temp_db).create(
+        parent_session_id=checkout_owner,
+        provider="test",
+        prompt="Synthetic holder",
+        child_session_id=holder,
+        agent_name="fixture-builder",
+    )
+    claimed_at = NOW - timedelta(hours=2)
+    _claim(temp_db, str(task.id), holder, claimed_at)
+    temp_db.execute(
+        "UPDATE sessions SET status = 'paused', last_activity = %s WHERE id = %s",
+        (NOW - timedelta(minutes=45), holder),
+    )
+    _attest(temp_db, str(task.id), kind="test-after", result="approved", at=NOW, sequence=1)
+    repo = _repo(tmp_path / "claimed")
+    tree = LocalWorktreeManager(temp_db).create(
+        project_id,
+        "fixture-branch",
+        str(repo),
+        base_branch=BRANCH,
+        task_id=str(task.id),
+        agent_session_id=checkout_owner,
+    )
+
+    data = _collect(temp_db, project_id, tmp_path, worktrees=(tree,))
+
+    (row,) = data.worktrees
+    assert getattr(row, "task_title", None) == task.title
+    assert row.holder_session_id == holder
+    assert row.holder_agent == "fixture-builder"
+    assert row.holder_status == "paused"
+    assert row.claimed_at == claimed_at
+    assert row.stage == "test-after/approved"
+    (idle,) = data.idle_holders
+    assert idle.task_seq == task.seq_num
+    assert idle.task_title == task.title
+    assert idle.session_id == holder
+    assert idle.idle_seconds == 2700
+
+
+def test_worktree_exclusions_follow_stored_roles_and_tasks_precede_epics(
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
+) -> None:
+    project_id = str(sample_project["id"])
+    tasks = LocalTaskManager(temp_db)
+    epic = tasks.create_task(project_id, "Synthetic parent", task_type="epic")
+    leaf = tasks.create_task(project_id, "Synthetic child", parent_task_id=str(epic.id))
+    trees = LocalWorktreeManager(temp_db)
+    epic_tree = trees.create(
+        project_id,
+        "arbitrary-parent",
+        str(_repo(tmp_path / "parent")),
+        task_id=str(epic.id),
+    )
+    leaf_tree = trees.create(
+        project_id,
+        "arbitrary-child",
+        str(_repo(tmp_path / "child")),
+        task_id=str(leaf.id),
+    )
+    main_tree = trees.create(
+        project_id,
+        "unrecognizable-a",
+        str(_repo(tmp_path / "a")),
+        task_id=str(leaf.id),
+        workspace_role="main",
+    )
+    wiki_tree = trees.create(
+        project_id,
+        "unrecognizable-b",
+        str(_repo(tmp_path / "b")),
+        task_id=str(leaf.id),
+        workspace_role="wiki",
+    )
+    unlinked_tree = trees.create(project_id, "unrecognizable-c", str(_repo(tmp_path / "c")))
+
+    data = _collect(
+        temp_db,
+        project_id,
+        tmp_path,
+        worktrees=(epic_tree, main_tree, wiki_tree, unlinked_tree, leaf_tree),
+    )
+
+    assert [row.task_seq for row in data.worktrees] == [leaf.seq_num, epic.seq_num]
+    assert data.worktrees[1].open_leaf_count == 1
+
+
+def test_retained_tree_reports_closed_task_attestation(
+    temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path
+) -> None:
+    project_id = str(sample_project["id"])
+    task = LocalTaskManager(temp_db).create_task(project_id, "Synthetic closed work")
+    tree = LocalWorktreeManager(temp_db).create(
+        project_id, "retained", str(_repo(tmp_path / "retained")), task_id=str(task.id)
+    )
+    _attest(temp_db, str(task.id), kind="closing", result="approved", at=NOW, sequence=1)
+    _set_task(
+        temp_db,
+        str(task.id),
+        "closed_at = %s, closed_reason = %s, state_bucket = 'closed'",
+        NOW,
+        "completed",
+    )
+
+    data = _collect(temp_db, project_id, tmp_path, worktrees=(tree,))
+
+    assert data.worktrees[0].stage == "closing/approved"
+    assert not any(row.seq == task.seq_num for row in data.in_flight)
+
+
+def test_landing_target_uses_admitted_parent_instead_of_creation_base(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.agents.team_admission_records import TeamBinding
+
+    project_id = str(sample_project["id"])
+    task = LocalTaskManager(temp_db).create_task(project_id, "Synthetic delivery")
+    tree = LocalWorktreeManager(temp_db).create(
+        project_id,
+        "candidate",
+        str(_repo(tmp_path / "candidate")),
+        task_id=str(task.id),
+        base_branch="old-creation-base",
+    )
+    epic = TeamBinding(
+        team_id="fixture-parent",
+        task_id="fixture-root",
+        project_id=project_id,
+        branch="epic/current",
+        base_branch=BRANCH,
+        worktree_id=None,
+        worktree_path=str(tmp_path / "parent"),
+        mode="epic",
+    )
+    child = TeamBinding(
+        team_id="fixture-child",
+        task_id=str(task.id),
+        project_id=project_id,
+        branch="candidate",
+        base_branch="old-creation-base",
+        worktree_id=tree.id,
+        worktree_path=tree.worktree_path,
+        parent_team_id=epic.team_id,
+    )
+    monkeypatch.setattr("gobby.agents.team_lifecycle.task_team", lambda db, task_id: child)
+    monkeypatch.setattr(
+        "gobby.agents.team_admission_records.team_binding", lambda db, team_id: epic
+    )
+
+    data = _collect(temp_db, project_id, tmp_path, worktrees=(tree,))
+
+    assert data.worktrees[0].landing_target == "epic/current"
 
 
 def _iso(value: datetime) -> str:
@@ -369,7 +571,10 @@ def test_worktree_rows_report_drift_dirty_files_and_last_commit(
     _git(repo, "commit", "-q", "-m", "upstream", when=NOW - timedelta(minutes=20))
     _git(repo, "checkout", "-q", "task-7")
     (repo / "scratch.txt").write_text("untracked\n")
-    LocalWorktreeManager(temp_db).create(project_id, "task-7", str(repo), base_branch=BRANCH)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Synthetic Git work")
+    LocalWorktreeManager(temp_db).create(
+        project_id, "task-7", str(repo), base_branch=BRANCH, task_id=str(task.id)
+    )
     worktrees = LocalWorktreeManager(temp_db).list_worktrees(project_id=project_id)
 
     data = _collect(temp_db, project_id, tmp_path, worktrees=tuple(worktrees))
@@ -406,7 +611,10 @@ def test_worktree_that_is_not_a_checkout_is_a_gap_with_unknown_git_cells(
     project_id = str(sample_project["id"])
     gone = tmp_path / "gone"
     gone.mkdir()
-    LocalWorktreeManager(temp_db).create(project_id, "task-8", str(gone), base_branch=BRANCH)
+    task = LocalTaskManager(temp_db).create_task(project_id, "Synthetic missing checkout")
+    LocalWorktreeManager(temp_db).create(
+        project_id, "task-8", str(gone), base_branch=BRANCH, task_id=str(task.id)
+    )
     worktrees = LocalWorktreeManager(temp_db).list_worktrees(project_id=project_id)
 
     data = _collect(temp_db, project_id, tmp_path, worktrees=tuple(worktrees))

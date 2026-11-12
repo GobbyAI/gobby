@@ -15,6 +15,7 @@ class WorktreeNote:
     next_action: str
     blocker: str
     updated_at: datetime
+    eta: str | None = None
 
 
 class WorktreeNoteStore:
@@ -31,18 +32,20 @@ class WorktreeNoteStore:
         next_action: str,
         blocker: str,
         updated_at: datetime,
+        eta: str | None = None,
     ) -> None:
         self.db.execute(
             """
-            INSERT INTO worktree_notes (worktree_id, owner, next_action, blocker, updated_at)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO worktree_notes (worktree_id, owner, next_action, blocker, updated_at, eta)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (worktree_id) DO UPDATE SET
                 owner = EXCLUDED.owner,
                 next_action = EXCLUDED.next_action,
                 blocker = EXCLUDED.blocker,
-                updated_at = EXCLUDED.updated_at
+                updated_at = EXCLUDED.updated_at,
+                eta = EXCLUDED.eta
             """,
-            (worktree_id, owner, next_action, blocker, updated_at),
+            (worktree_id, owner, next_action, blocker, updated_at, eta),
         )
 
     def list_for(self, worktree_ids: Sequence[str]) -> dict[str, WorktreeNote]:
@@ -50,7 +53,7 @@ class WorktreeNoteStore:
             return {}
         rows = self.db.fetchall(
             """
-            SELECT worktree_id, owner, next_action, blocker, updated_at
+            SELECT worktree_id, owner, next_action, blocker, updated_at, eta
             FROM worktree_notes
             WHERE worktree_id = ANY(%s::uuid[])
             """,
@@ -62,6 +65,7 @@ class WorktreeNoteStore:
                 next_action=row["next_action"],
                 blocker=row["blocker"],
                 updated_at=row["updated_at"],
+                eta=row["eta"],
             )
             for row in rows
         }

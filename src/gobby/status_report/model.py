@@ -67,6 +67,16 @@ class StalledSeat:
 
 
 @dataclass(frozen=True)
+class IdleHolder:
+    task_seq: int
+    task_title: str
+    session_id: str
+    agent: str | None
+    status: str | None
+    idle_seconds: float | None
+
+
+@dataclass(frozen=True)
 class WorktreeRow:
     branch: str
     task_seq: int | None
@@ -80,6 +90,16 @@ class WorktreeRow:
     # The tree's last commit or dirty change; None when git could not say.
     change_at: datetime | None = None
     note: WorktreeNote | None = None
+    task_title: str | None = None
+    holder_session_id: str | None = None
+    holder_agent: str | None = None
+    holder_status: str | None = None
+    claimed_at: datetime | None = None
+    stage: str | None = None
+    task_type: str | None = None
+    open_leaf_count: int | None = None
+    landing_target: str | None = None
+    integration_leaf: str | None = None
 
     @property
     def current_note(self) -> WorktreeNote | None:
@@ -106,3 +126,7 @@ class StatusData:
     load_5m: float | None
     load_threshold: float
     gaps: tuple[str, ...]
+    idle_holders: tuple[IdleHolder, ...] = ()
+    report_mode: str = "full"
+    baseline_at: datetime | None = None
+    removed: tuple[str, ...] = ()
