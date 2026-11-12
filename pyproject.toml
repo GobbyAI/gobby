@@ -185,6 +185,7 @@ gobby = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["src"]
 python_files = ["test_*.py", "run_*_sandbox.py"]
@@ -335,7 +336,7 @@ dev = [
     # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
     "pygments>=2.20.0",
     "pytest>=9.2.0",
-    "pytest-asyncio>=1.2.0",
+    "pytest-asyncio>=1.4.1",
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.14.0",
     "pytest-xdist>=3.8.0",
