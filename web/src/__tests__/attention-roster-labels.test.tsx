@@ -70,9 +70,7 @@ describe("useSessionAttention roster labels", () => {
 
     const { result } = renderHook(() => useSessionAttention());
 
-    await waitFor(() =>
-      expect(result.current.rosterBySession.size).toBe(2),
-    );
+    await waitFor(() => expect(result.current.rosterBySession.size).toBe(2));
     expect(result.current.rosterBySession.get("session-1")).toEqual({
       definition: "dev-team-lead",
       task: {
