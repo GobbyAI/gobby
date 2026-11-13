@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import errno
 import os
 import re
+import signal
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import KeysView
 from pathlib import Path
@@ -421,7 +424,10 @@ def test_helper_never_takes_the_fork_path(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX sessions")
-def test_a_session_leader_starts_without_forking(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("setsid_unavailable", [False, True])
+def test_a_session_leader_starts_without_forking(
+    monkeypatch: pytest.MonkeyPatch, setsid_unavailable: bool
+) -> None:
     def forbidden(*args: Any, **kwargs: Any) -> int:
         raise AssertionError("fork_exec forks the whole daemon")
 
@@ -430,6 +436,8 @@ def test_a_session_leader_starts_without_forking(monkeypatch: pytest.MonkeyPatch
 
     def recording_posix_spawn(path: str, argv: Any, env: Any, **kwargs: Any) -> int:
         spawned.append(kwargs)
+        if setsid_unavailable and kwargs.get("setsid"):
+            raise NotImplementedError("posix_spawn: setsid unavailable on this platform")
         return real_posix_spawn(path, argv, env, **kwargs)
 
     monkeypatch.setattr(subprocess, "_fork_exec", forbidden)
@@ -445,12 +453,13 @@ def test_a_session_leader_starts_without_forking(monkeypatch: pytest.MonkeyPatch
     pid, (stdout, stderr), returncode = asyncio.run(lead_a_session())
 
     assert (int(stdout), stderr, returncode) == (pid, b"late\n", 0)
-    assert [kwargs["setsid"] for kwargs in spawned] == [True]
+    assert spawned[0]["setsid"] is True
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX sessions")
+@pytest.mark.parametrize("setsid_unavailable", [False, True])
 def test_a_session_leader_takes_a_directory_and_its_input_without_forking(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setsid_unavailable: bool
 ) -> None:
     def forbidden(*args: Any, **kwargs: Any) -> int:
         raise AssertionError("fork_exec forks the whole daemon")
@@ -459,7 +468,9 @@ def test_a_session_leader_takes_a_directory_and_its_input_without_forking(
     real_posix_spawn = os.posix_spawn
 
     def recording_posix_spawn(path: str, argv: Any, env: Any, **kwargs: Any) -> int:
-        spawned.append((path, kwargs["setsid"]))
+        spawned.append((path, bool(kwargs.get("setsid"))))
+        if setsid_unavailable and kwargs.get("setsid"):
+            raise NotImplementedError("posix_spawn: setsid unavailable on this platform")
         return real_posix_spawn(path, argv, env, **kwargs)
 
     monkeypatch.setattr(subprocess, "_fork_exec", forbidden)
@@ -475,8 +486,120 @@ def test_a_session_leader_takes_a_directory_and_its_input_without_forking(
     stdout, stderr = asyncio.run(lead_from(tmp_path))
 
     assert (stdout, stderr) == (f"{tmp_path.resolve()}\nthe prompt\n".encode(), b"")
-    # The directory goes through the sh trampoline, still one posix_spawn leading a session.
-    assert spawned == [("/bin/sh", True)]
+    assert spawned[0] == ("/bin/sh", True)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sessions")
+@pytest.mark.parametrize("cancel_count", [1, 2])
+def test_cancelled_session_spawn_reaps_its_process(
+    monkeypatch: pytest.MonkeyPatch, cancel_count: int
+) -> None:
+    started = threading.Event()
+    release = threading.Event()
+    pids: list[int] = []
+    real_posix_spawn = os.posix_spawn
+
+    def delayed_spawn(path: str, argv: Any, env: Any, **kwargs: Any) -> int:
+        if kwargs.get("setsid"):
+            raise NotImplementedError("posix_spawn: setsid unavailable on this platform")
+        pid = real_posix_spawn(path, argv, env, **kwargs)
+        pids.append(pid)
+        started.set()
+        assert release.wait(5), "spawn cancellation never released its worker"
+        return pid
+
+    monkeypatch.setattr(os, "posix_spawn", delayed_spawn)
+
+    async def cancel_spawn() -> None:
+        task = asyncio.create_task(
+            spawn.create_session_exec(sys.executable, "-c", "import time; time.sleep(30)")
+        )
+        try:
+            assert await asyncio.to_thread(started.wait, 5), "no child was spawned"
+            for _ in range(cancel_count):
+                task.cancel()
+                # Deliver each cancellation while the spawn worker is still held.
+                await asyncio.sleep(0)
+        finally:
+            release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(cancel_spawn())
+    assert len(pids) == 1
+    with pytest.raises(ProcessLookupError):
+        os.kill(pids[0], 0)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sessions")
+def test_fallback_session_is_ready_for_immediate_group_kill(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    real_posix_spawn = os.posix_spawn
+
+    def unsupported_setsid(path: str, argv: Any, env: Any, **kwargs: Any) -> int:
+        if kwargs.get("setsid"):
+            raise NotImplementedError("posix_spawn: setsid unavailable on this platform")
+        return real_posix_spawn(path, argv, env, **kwargs)
+
+    monkeypatch.setattr(os, "posix_spawn", unsupported_setsid)
+
+    async def kill_group() -> None:
+        process = await spawn.create_session_exec(
+            sys.executable, "-c", "import time; time.sleep(30)"
+        )
+        try:
+            assert os.getsid(process.pid) == process.pid
+            os.killpg(process.pid, 9)
+        finally:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.communicate()
+        assert await process.wait() == -9
+
+    asyncio.run(kill_group())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sessions")
+def test_fallback_restores_target_signal_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    real_posix_spawn = os.posix_spawn
+
+    def unsupported_setsid(path: str, argv: Any, env: Any, **kwargs: Any) -> int:
+        if kwargs.get("setsid"):
+            raise NotImplementedError("posix_spawn: setsid unavailable on this platform")
+        return real_posix_spawn(path, argv, env, **kwargs)
+
+    monkeypatch.setattr(os, "posix_spawn", unsupported_setsid)
+
+    async def signal_child() -> None:
+        process = await spawn.create_session_exec("/bin/sh", "-c", "kill -PIPE $$; printf survived")
+        assert await process.communicate() == (b"", b"")
+        assert await process.wait() == -signal.SIGPIPE
+
+    asyncio.run(signal_child())
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX sessions")
+@pytest.mark.parametrize("setsid_unavailable", [False, True])
+def test_session_spawn_reports_exec_format_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, setsid_unavailable: bool
+) -> None:
+    invalid = tmp_path / "invalid-command"
+    invalid.write_text("invalid executable\n")
+    invalid.chmod(0o755)
+    real_posix_spawn = os.posix_spawn
+
+    def spawn_with_optional_setsid(path: str, argv: Any, env: Any, **kwargs: Any) -> int:
+        if setsid_unavailable and kwargs.get("setsid"):
+            raise NotImplementedError("posix_spawn: setsid unavailable on this platform")
+        return real_posix_spawn(path, argv, env, **kwargs)
+
+    monkeypatch.setattr(os, "posix_spawn", spawn_with_optional_setsid)
+    with pytest.raises(OSError) as error:
+        asyncio.run(spawn.create_session_exec(str(invalid)))
+    assert error.value.errno == errno.ENOEXEC
 
 
 @pytest.mark.skipif(os.name != "posix", reason="POSIX sessions")

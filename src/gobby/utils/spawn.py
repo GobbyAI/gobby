@@ -20,6 +20,7 @@ import os
 import shutil
 import signal
 import subprocess  # nosec B404 # the helper owns daemon spawns
+import sys
 import tempfile
 import threading
 import time
@@ -399,16 +400,57 @@ class SpawnedSession:
             if stdin_file is None:
                 # The child never reads the daemon's own stdin.
                 file_actions.append((os.POSIX_SPAWN_OPEN, 0, os.devnull, os.O_RDONLY, 0))
-            pid = os.posix_spawn(
-                argv[0],
-                argv,
-                env,
-                file_actions=file_actions,
-                # A session of its own, as start_new_session: a terminal read
-                # cannot stop the child with SIGTTIN, and killpg reaches its group.
-                setsid=True,
-                setsigdef=reset_signals,
-            )
+            try:
+                pid = os.posix_spawn(
+                    argv[0],
+                    argv,
+                    env,
+                    file_actions=file_actions,
+                    # A session of its own, as start_new_session: a terminal read
+                    # cannot stop the child with SIGTTIN, and killpg reaches its group.
+                    setsid=True,
+                    setsigdef=reset_signals,
+                )
+            except NotImplementedError:
+                # Some Python builds lack POSIX_SPAWN_SETSID even on Linux.
+                # The spawned interpreter creates the session before exec, keeping
+                # the same PID and avoiding a fork in the daemon.
+                ready_read, ready_write = os.pipe()
+                with os.fdopen(ready_read, "rb", buffering=0) as ready:
+                    try:
+                        trampoline = (
+                            "import os,sys,signal\nos.setsid()\nos.set_inheritable(3,False)\n"
+                            "os.write(3,b'1')\n"
+                            "for name in ('SIGPIPE','SIGXFZ','SIGXFSZ'):\n"
+                            " if hasattr(signal,name): "
+                            "signal.signal(getattr(signal,name),signal.SIG_DFL)\n"
+                            "try:\n os.execv(sys.argv[1], sys.argv[1:])\n"
+                            "except OSError as exc:\n"
+                            " os.write(3,str(exc.errno).encode()); os._exit(127)\n"
+                        )
+                        ready_actions = [*file_actions, (os.POSIX_SPAWN_DUP2, ready_write, 3)]
+                        if ready_write != 3:
+                            ready_actions.append((os.POSIX_SPAWN_CLOSE, ready_write))
+                        pid = os.posix_spawn(
+                            sys.executable,
+                            (sys.executable, "-I", "-S", "-c", trampoline, *argv),
+                            env,
+                            file_actions=ready_actions,
+                            setsigdef=reset_signals,
+                        )
+                    finally:
+                        os.close(ready_write)
+                    # EOF follows exec's close-on-exec, so the session and command
+                    # are ready before publishing the PID. Preserve exec failures.
+                    outcome = ready.read()
+                    if outcome != b"1":
+                        os.waitpid(pid, 0)
+                        if outcome.startswith(b"1"):
+                            error = int(outcome[1:])
+                            raise OSError(error, os.strerror(error), argv[0]) from None
+                        raise RuntimeError(
+                            "session trampoline exited before creating its session"
+                        ) from None
         except Exception:
             for file in owned:
                 file.close()
@@ -529,9 +571,37 @@ async def create_session_exec(
     command, executable, _ = _spawn_plan(argv, cwd, process_env)
     if executable is None:
         raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), command[0])
-    return AsyncSpawnedSession(
-        SpawnedSession.spawn((executable, *command[1:]), env=process_env, input_bytes=input_bytes)
+    spawning = asyncio.create_task(
+        asyncio.to_thread(
+            SpawnedSession.spawn,
+            (executable, *command[1:]),
+            env=process_env,
+            input_bytes=input_bytes,
+        )
     )
+    try:
+        process = await asyncio.shield(spawning)
+    except asyncio.CancelledError:
+        # The worker may already own a child. Settle it before propagating cancellation.
+        async def settle() -> None:
+            try:
+                child = await spawning
+            except Exception:
+                # A failed spawn has already closed its owned descriptors.
+                return
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(child.pid, signal.SIGKILL)
+            await asyncio.to_thread(child.communicate)
+
+        cleanup = asyncio.create_task(settle())
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                continue
+        cleanup.result()
+        raise
+    return AsyncSpawnedSession(process)
 
 
 def seal_inherited_descriptors() -> None:

@@ -37,11 +37,12 @@ use gobby_daemon::nodes::agents::{
 use gobby_daemon::state::NodeServices;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+#[cfg(target_os = "macos")]
+use std::os::unix::net::UnixStream;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
-    os::unix::net::UnixStream,
     path::{Path, PathBuf},
     process::Command,
     sync::atomic::{AtomicUsize, Ordering},
@@ -1246,14 +1247,11 @@ async fn retry_removals_defers_to_a_held_removal_lock() -> Result<()> {
     drop(held);
     // A child another test forks shares the lock's descriptor until it execs, so the release
     // can trail the drop; a busy retry keeps the record, as the next pass would.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
+    wait_until(Duration::from_secs(10), || async {
         workspace::retry_removals(&agents).await?;
-        if !record.path.exists() || Instant::now() >= deadline {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+        Ok(!record.path.exists())
+    })
+    .await?;
     assert!(
         !agents
             .state
@@ -1267,8 +1265,8 @@ async fn retry_removals_defers_to_a_held_removal_lock() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn removal_lock_follows_the_tree_it_guards() -> Result<()> {
+#[tokio::test]
+async fn removal_lock_follows_the_tree_it_guards() -> Result<()> {
     let root = tempfile::tempdir()?;
     let real = root.path().join("real");
     fs::create_dir_all(real.join("wt"))?;
@@ -1283,16 +1281,11 @@ fn removal_lock_follows_the_tree_it_guards() -> Result<()> {
     // Cancellation: dropping a guard (a cancelled removal) releases the lock. A child another
     // test forks shares the lock's descriptor until it execs, so the release can trail the drop.
     drop(held);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let again = loop {
-        let again = RemovalLock::acquire(&real.join("wt"))?;
-        if again.is_some() || Instant::now() >= deadline {
-            break again;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    assert!(again.is_some(), "a dropped guard releases the lock");
-    drop(again);
+    wait_until(Duration::from_secs(10), || async {
+        Ok(RemovalLock::acquire(&real.join("wt"))?.is_some())
+    })
+    .await
+    .context("a dropped guard releases the lock")?;
 
     // A missing tree: the lock is released and its file is removed, as nothing is left to guard.
     let gone = real.join("gone");
@@ -1488,20 +1481,36 @@ async fn timed_out_sync_leaves_no_child_running() -> Result<()> {
         .context("the sync never started its child")?
         .trim()
         .parse()?;
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while process_alive(pid) && Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    let stopped = wait_until(Duration::from_secs(5), || async { Ok(!process_alive(pid)) }).await;
     let alive = process_alive(pid);
     if alive {
         // SAFETY: the pid is the test's own `sleep`, so killing it cannot hit another process.
         unsafe { libc::kill(pid, libc::SIGKILL) };
     }
     assert!(
-        !alive,
+        stopped.is_ok() && !alive,
         "a timed-out sync leaves no child running (pid {pid})"
     );
     Ok(())
+}
+
+/// Poll external kernel state with a bounded deadline, rather than assuming a delay suffices.
+async fn wait_until<F, Fut>(limit: Duration, mut ready: F) -> Result<()>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<bool>>,
+{
+    tokio::time::timeout(limit, async {
+        let mut poll = tokio::time::interval(Duration::from_millis(20));
+        loop {
+            if ready().await? {
+                return Ok(());
+            }
+            poll.tick().await;
+        }
+    })
+    .await
+    .context("condition did not become ready before the deadline")?
 }
 
 #[tokio::test]
@@ -3111,6 +3120,7 @@ esac
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn run_key_of(run_root: &Path) -> Result<String> {
     Ok(run_root
         .file_name()
