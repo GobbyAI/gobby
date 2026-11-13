@@ -55,7 +55,8 @@ pub(crate) async fn handshake(
     body: Bytes,
 ) -> Response<Body> {
     match issue(&state, &headers, &body).await {
-        Ok(reply) | Err(reply) => reply,
+        Ok(reply) => reply,
+        Err(reply) => *reply,
     }
 }
 
@@ -63,29 +64,31 @@ async fn issue(
     state: &RuntimeState,
     headers: &HeaderMap,
     body: &[u8],
-) -> Result<Response<Body>, Response<Body>> {
+) -> Result<Response<Body>, Box<Response<Body>>> {
     let request: HandshakeRequest = serde_json::from_slice(body).map_err(|_| invalid_request())?;
     let token = deployment_token(&state.home);
     let fence = read_fence(&state.pool, &token)
         .await
         .map_err(internal)?
         .ok_or_else(grant_unavailable)?;
-    let (local_machine, daemon_machine) = local_machine(&state.home).map_err(|error| *error)?;
+    let (local_machine, daemon_machine) = local_machine(&state.home)?;
     let forwarded = headers
         .get(MACHINE_HEADER)
         .and_then(|value| value.to_str().ok())
         .unwrap_or(local_machine.as_str());
     if forwarded.is_empty() || request.machine_id != forwarded {
-        return Err(rejection(
+        return Err(Box::new(rejection(
             "claims_mismatch",
             "operator machine_id must match the authenticated machine",
-        ));
+        )));
     }
     let Some(project) = admitted_project(&state.pool, &request.project_id).await? else {
-        return Err(rejection("claims_mismatch", "project is not admitted"));
+        return Err(Box::new(rejection(
+            "claims_mismatch",
+            "project is not admitted",
+        )));
     };
-    let overlay = overlay_claim(request.code_overlay_project_id.as_deref(), project)
-        .map_err(|error| *error)?;
+    let overlay = overlay_claim(request.code_overlay_project_id.as_deref(), project)?;
     let session = match request.session_id.as_deref() {
         Some(session) => Some(Uuid::parse_str(session).map_err(|_| credential_failed())?),
         None => None,
@@ -115,8 +118,7 @@ async fn issue(
             + Duration::from_secs(u64::try_from(valid_until).unwrap_or_default()),
     };
     let issued = issue_principal(&state.pool, &store, &principal, random_password()).await?;
-    let dsn = interactive_dsn(&database_url, &issued.role_name, &issued.password)
-        .map_err(|error| *error)?;
+    let dsn = interactive_dsn(&database_url, &issued.role_name, &issued.password)?;
     let capabilities = capabilities_from_snapshot(
         &active.document.active_values,
         &secrets,
@@ -175,7 +177,10 @@ fn local_machine(home: &Path) -> Result<(String, Uuid), Box<Response<Body>>> {
     Ok((machine, uuid))
 }
 
-async fn admitted_project(pool: &Pool, project_id: &str) -> Result<Option<Uuid>, Response<Body>> {
+async fn admitted_project(
+    pool: &Pool,
+    project_id: &str,
+) -> Result<Option<Uuid>, Box<Response<Body>>> {
     let Ok(project) = Uuid::parse_str(project_id) else {
         return Ok(None);
     };
@@ -210,7 +215,7 @@ pub(crate) async fn active_secrets(
     store: &SecretStore,
     token: &str,
     active: &ActiveState,
-) -> Result<BTreeMap<String, Option<String>>, Response<Body>> {
+) -> Result<BTreeMap<String, Option<String>>, Box<Response<Body>>> {
     let mut secrets = BTreeMap::new();
     for (key, binding) in &active.document.active_bindings {
         let plaintext = match &binding.sealed {
@@ -261,7 +266,7 @@ async fn issue_principal(
     store: &SecretStore,
     principal: &Principal<'_>,
     fresh: String,
-) -> Result<Issued, Response<Body>> {
+) -> Result<Issued, Box<Response<Body>>> {
     let mut client = pool.get().await.map_err(|_| credential_failed())?;
     let auth = auth_schema(&client).await?;
     client
@@ -344,7 +349,7 @@ async fn issue_principal(
             .try_get(0)
             .map_err(internal)?;
         if !stored {
-            return Err(credential_failed());
+            return Err(Box::new(credential_failed()));
         }
         fresh
     };
@@ -356,13 +361,13 @@ async fn issue_principal(
     })
 }
 
-async fn auth_schema(client: &Client) -> Result<String, Response<Body>> {
+async fn auth_schema(client: &Client) -> Result<String, Box<Response<Body>>> {
     let row = client
         .query_one("SELECT current_schema()::text", &[])
         .await
         .map_err(|_| credential_failed())?;
     let schema: String = row.try_get(0).map_err(|_| credential_failed())?;
-    quote_identifier(&auth_schema_for(&schema)).map_err(|_| credential_failed())
+    quote_identifier(&auth_schema_for(&schema)).map_err(|_| Box::new(credential_failed()))
 }
 
 /// Random 32 bytes, base64url without padding, as Python's `secrets.token_urlsafe(32)`.

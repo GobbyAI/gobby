@@ -63,7 +63,7 @@ pub(crate) async fn runtime_config(
     match interactive_revoked(&state, &grant, &token).await {
         Ok(false) => {}
         Ok(true) => return rejection_response(Rejection::Revoked),
-        Err(response) => return response,
+        Err(response) => return *response,
     }
     match active_state(&state.pool, &token).await {
         Ok(Some(active)) => {
@@ -135,7 +135,7 @@ async fn interactive_revoked(
     state: &RuntimeState,
     grant: &GrantBundle,
     token: &str,
-) -> Result<bool, Response<Body>> {
+) -> Result<bool, Box<Response<Body>>> {
     if grant.principal.kind != PrincipalKind::Interactive {
         return Ok(false);
     }
@@ -146,19 +146,19 @@ async fn interactive_revoked(
         Ok(machine) => machine,
         Err(error) => {
             eprintln!("gdaemon runtime: machine id unreadable: {error}");
-            return Err(grant_unavailable());
+            return Err(Box::new(grant_unavailable()));
         }
     };
     let Ok(machine) = uuid::Uuid::parse_str(machine.trim()) else {
-        return Err(grant_unavailable());
+        return Err(Box::new(grant_unavailable()));
     };
     let Ok(project) = uuid::Uuid::parse_str(&grant.principal.project_id) else {
-        return Err(malformed_grant());
+        return Err(Box::new(malformed_grant()));
     };
     let Ok(generation) = i32::try_from(generation) else {
-        return Err(internal(format!(
+        return Err(Box::new(internal(format!(
             "credential generation {generation} is outside i32"
-        )));
+        ))));
     };
     let client = state.pool.get().await.map_err(internal)?;
     let schema_row = client
@@ -184,7 +184,9 @@ async fn interactive_revoked(
         .map_err(internal)?;
     match row {
         None => Ok(true),
-        Some(row) => row.try_get::<_, bool>(0).map_err(internal),
+        Some(row) => row
+            .try_get::<_, bool>(0)
+            .map_err(|error| Box::new(internal(error))),
     }
 }
 

@@ -360,19 +360,24 @@ async def answering_shell(live: LiveTerminal) -> LiveTerminal:
     return live
 
 
+async def _coherent_screen(live: LiveTerminal) -> str:
+    """Probe a frame; the caller's bounded wait retries transient captures."""
+    try:
+        snapshot = await live.runtime.snapshot(live.terminal, lines=80)
+    except HostCommandError as exc:
+        # Concurrent PTY output can invalidate a capture before it completes.
+        if exc.error in {"capture_busy", "capture_invalidated"}:
+            return ""
+        raise
+    return snapshot.text
+
+
 async def wait_for_text(live: LiveTerminal, needle: str, *, description: str) -> str:
     """Wait until ``needle`` is on the terminal's screen and return the screen."""
 
     async def painted() -> str:
-        try:
-            snapshot = await live.runtime.snapshot(live.terminal, lines=80)
-        except HostCommandError as exc:
-            # The host rejects a capture changed by concurrent PTY output. This
-            # bounded screen wait observes the next coherent frame instead.
-            if exc.error in {"capture_busy", "capture_invalidated"}:
-                return ""
-            raise
-        return snapshot.text if needle in snapshot.text else ""
+        screen = await _coherent_screen(live)
+        return screen if needle in screen else ""
 
     return await wait_for_awaited_condition(
         painted, timeout=SCREEN_TIMEOUT, interval=0.05, description=description
@@ -410,8 +415,7 @@ async def observed_size(live: LiveTerminal) -> tuple[int, int]:
     pattern = re.compile(rf"(\d+) (\d+)-SIZE-{token}")
 
     async def painted() -> re.Match[str] | None:
-        snapshot = await live.runtime.snapshot(live.terminal, lines=80)
-        return pattern.search(snapshot.text)
+        return pattern.search(await _coherent_screen(live))
 
     match = await wait_for_awaited_condition(
         painted, timeout=SCREEN_TIMEOUT, interval=0.05, description="stty size on the screen"
