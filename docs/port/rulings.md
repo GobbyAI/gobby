@@ -312,3 +312,20 @@ Source: AskUserQuestion answers and chat messages in session gobby#19401.
     A's restored hub holds the chunk tasks, idle. Later that evening, on the closure rule that
     refuses a superseded close while a commit is linked (D31): "rule off". The rule is switched off
     for the disposition pass and on again before the push.
+25. CI does not gate the port (Josh, 2026-11-13 ~14:00 CT, in session gobby#19401's own pane). On
+    the red CI that 0.9.0 inherited at the cut: "why do we care about python ci if we're porting? I
+    want to avoid sidequests." Then, to the proposal that CI on 0.9.0 be advisory and a chunk's gate
+    be its own local validation: "agreed, we don't worry about CI until we get near the end of the
+    port when we're validating it". Then: "do we have a capture of what failed at CI so the porting
+    agents can discern whether it's a bad test or bad behavior?" That capture is
+    docs/port/ci-baseline-at-cut.md.
+    The map author's reading, which Josh corrects where it is wrong. Until the port's final
+    validation, a red CI run on 0.9.0 blocks no landing, no close and no cutover, and nobody fixes
+    CI as a task of its own. This overrides the map and the protocol wherever they make CI a
+    condition: start gate item 9's 'both workflows treated as required' and item 11's 'fixed on
+    0.9.0 before the first chunk lands', D34's default, D85, protocol step 8's CI check and each
+    cutover's refusal to activate a commit whose CI is red. Their text is not rewritten. A chunk's
+    gate is protocol step 6's local validation. A failure listed in the baseline is old; a chunk
+    that works in the code behind a listed failure fixes it as found work, and a failure that is
+    not listed and that the chunk caused is that chunk's to fix. Josh says when the final
+    validation begins.
