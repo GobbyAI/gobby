@@ -1,11 +1,11 @@
 header:
   plan_id: gcode-graphify-parity-delta
-  plan_hash: 9f4a3dd3fc5ee19e8c1249c97d98b585dfd0cab7587765173c49eb6eb6720e0d
+  plan_hash: 3cc99991b6db992711a440cfecdc1ea33c61b6b0f1b7ff53177346db2be5343d
   root_task_ref: '22948'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-13T00:20:31Z'
+  generated_at: '2026-11-06T15:22:40Z'
   task_tree_source: db
-  task_tree_source_hash: 6e5d13b21f30a58abadbe9ea4e1f95910f029e9f11352e6455ef71f314ce107e
+  task_tree_source_hash: 176b6be3dfecbd052aace8d49f6558075de6f697f5a103bc69cdf3bb3c4dadfa
   evidence_summary: []
   evidence: []
 rows:
@@ -115,5 +115,329 @@ rows:
       of equal size with ids 10 and 2 as `community:2` then `community:10`, after
       any larger community. test: `crat...'
     matched_artifact_ref: crates/gcode/src/commands/graph/view/mcg/tests.rs::mcg_orders_size_ties_by_community_id
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: fc779eb0259a3410a72906dc8484489f4246b2b70b624835f53fb2bbc7031b20
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25815'
+    validation_criteria_snippet: '2.1.1: The record gives the runtime root and its
+      ownership receipt with owner task `#22948`, the commit and SHA-256 of every
+      dated copy, and each edit against ...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 6c938f3f0af61216a6a8182ea9df6466178b51cf87d4cbd1385a722bf832a377
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25815'
+    validation_criteria_snippet: '2.1.1: The record gives the runtime root and its
+      ownership receipt with owner task `#22948`, the commit and SHA-256 of every
+      dated copy, and each edit against ...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 6c3f3861412c85df70d0519e3818450f121b0f3db108064d7ea0651ce4c4ad71
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25815'
+    validation_criteria_snippet: '2.1.1: The record gives the runtime root and its
+      ownership receipt with owner task `#22948`, the commit and SHA-256 of every
+      dated copy, and each edit against ...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: da236986d4d66bfb3bd8569279118054154bb6be5a099c121d4978c4fe41ce1e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25815'
+    validation_criteria_snippet: '2.1.1: The record gives the runtime root and its
+      ownership receipt with owner task `#22948`, the commit and SHA-256 of every
+      dated copy, and each edit against ...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: a94b934fcfafca8fe4cbdf05bd7a4d1acdc5721e7dddd834ebb18676643dc84d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25815'
+    validation_criteria_snippet: '2.1.1: The record gives the runtime root and its
+      ownership receipt with owner task `#22948`, the commit and SHA-256 of every
+      dated copy, and each edit against ...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/provisioning.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.6
+  plan_node_hash: fcd27db7fc1b9e89729f47ad519d74e70901c9fe6781bb12f7adfaccb4acf4fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25815'
+    validation_criteria_snippet: '2.1.1: The record gives the runtime root and its
+      ownership receipt with owner task `#22948`, the commit and SHA-256 of every
+      dated copy, and each edit against ...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/harness/test_runtime_boundary.py::test_symlink_record_verifies_target_without_following
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: 74389e50f397d32dc0e2ecd555b518e10ecdf286fc32f85f0c44df69a60a3ddc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25816'
+    validation_criteria_snippet: '2.2.1: The report gives both tools'' identities
+      from `provisioning.md`, the corpus commits, and six interleaved pairs for each
+      timed comparison with equal AB an...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/report.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 7e9068b67ab0c0648cb2ce63decb77050450a61d5a44cf1e09828ba5f6223ccd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25816'
+    validation_criteria_snippet: '2.2.1: The report gives both tools'' identities
+      from `provisioning.md`, the corpus commits, and six interleaved pairs for each
+      timed comparison with equal AB an...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/report.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 516bc0cd03fcfd932de0f39d7a8cf54f822b2cd59569efaa02c518c3712bc395
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25816'
+    validation_criteria_snippet: '2.2.1: The report gives both tools'' identities
+      from `provisioning.md`, the corpus commits, and six interleaved pairs for each
+      timed comparison with equal AB an...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/report.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: ab6c56bba03f2cbb491b0adb5f0495e3c958ff80588932145099bde65fee4753
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25816'
+    validation_criteria_snippet: '2.2.1: The report gives both tools'' identities
+      from `provisioning.md`, the corpus commits, and six interleaved pairs for each
+      timed comparison with equal AB an...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/report.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: 671e946c8e327b4fce64cd2ba84ba21d7777e8890dfea7b9d16e61c11cbabcd1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25816'
+    validation_criteria_snippet: '2.2.1: The report gives both tools'' identities
+      from `provisioning.md`, the corpus commits, and six interleaved pairs for each
+      timed comparison with equal AB an...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/report.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: a5930dc5a6ea4f1fa549b3fe221d9abaab6505c71e45e1d0b6a3e637fa69e69b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25816'
+    validation_criteria_snippet: '2.2.1: The report gives both tools'' identities
+      from `provisioning.md`, the corpus commits, and six interleaved pairs for each
+      timed comparison with equal AB an...'
+    matched_artifact_ref: docs/evidence/gcode-graphify-rerun-2026-11/report.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: c5904a05d51b52f51e10036878c2a7ed3f72b74b46c77e1c74348fa04c0046e2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25817'
+    validation_criteria_snippet: '2.3.1: The report records the `--no-decisions` branch
+      and Josh''s 2026-11-05 selection, both script SHA-256 values, the C1 readiness
+      counts, the 30 sampled comm...'
+    matched_artifact_ref: docs/evidence/community-labels-2026-09/label-quality.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 0717e68812c70eb433b20e52bc9366d6f8fd6a986204457d8eda62cf7d7449b9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25817'
+    validation_criteria_snippet: '2.3.1: The report records the `--no-decisions` branch
+      and Josh''s 2026-11-05 selection, both script SHA-256 values, the C1 readiness
+      counts, the 30 sampled comm...'
+    matched_artifact_ref: docs/evidence/community-labels-2026-09/label-quality.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: 2822e487961a146dc5b8c2cf9f9d0b119c2082fb471c91b16c48ac12771b8d92
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25817'
+    validation_criteria_snippet: '2.3.1: The report records the `--no-decisions` branch
+      and Josh''s 2026-11-05 selection, both script SHA-256 values, the C1 readiness
+      counts, the 30 sampled comm...'
+    matched_artifact_ref: docs/evidence/community-labels-2026-09/study-2026-11/sheet.rated.csv
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: 60b7c6661cc35e1b4dd0c1469bb98cd7a8d97d2de502cebc894f6fa4a4fd3a63
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25817'
+    validation_criteria_snippet: '2.3.1: The report records the `--no-decisions` branch
+      and Josh''s 2026-11-05 selection, both script SHA-256 values, the C1 readiness
+      counts, the 30 sampled comm...'
+    matched_artifact_ref: docs/guides/llm-features.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: 31a56e373aa39dc4ddf89c2e684b61b4c997735a354a343f1eb94396fa58fe13
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25817'
+    validation_criteria_snippet: '2.3.1: The report records the `--no-decisions` branch
+      and Josh''s 2026-11-05 selection, both script SHA-256 values, the C1 readiness
+      counts, the 30 sampled comm...'
+    matched_artifact_ref: docs/evidence/community-labels-2026-09/study-rating-instructions-2026-10-26.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.1
+  plan_node_hash: e450ae627a3f0bb03f14cd9bc6f310158a1c269fc0087c1c1492c9887f21fe9d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25818'
+    validation_criteria_snippet: '2.4.1: With Box routed to its own endpoint, the
+      Box record names `consumer` `gobby-decisions:evaluate`, carries the tool''s
+      `questions` argument with the absolu...'
+    matched_artifact_ref: tests/scripts/test_decisions_live_capture.py::test_capture_box_runs_through_registered_evaluate_tool
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.2
+  plan_node_hash: 1573779bca7e18d5875e905e062a6234ed1d517e36bde4d408897e83fb4ce980
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25818'
+    validation_criteria_snippet: '2.4.1: With Box routed to its own endpoint, the
+      Box record names `consumer` `gobby-decisions:evaluate`, carries the tool''s
+      `questions` argument with the absolu...'
+    matched_artifact_ref: tests/scripts/test_decisions_live_capture.py::test_capture_box_rejects_unsupported_image_through_the_tool
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.3
+  plan_node_hash: 953381f4b8e81f1f6edda2292440cc0be25496e8568e71308364c5424b65a361
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25818'
+    validation_criteria_snippet: '2.4.1: With Box routed to its own endpoint, the
+      Box record names `consumer` `gobby-decisions:evaluate`, carries the tool''s
+      `questions` argument with the absolu...'
+    matched_artifact_ref: tests/scripts/test_decisions_live_capture.py::test_capture_box_failure_does_not_block_raw_probes
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.4
+  plan_node_hash: bf512afa1ec58c8aa3ac0be395bffe5ab4d176d85fcd8f495bc546b1273ad4f6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25818'
+    validation_criteria_snippet: '2.4.1: With Box routed to its own endpoint, the
+      Box record names `consumer` `gobby-decisions:evaluate`, carries the tool''s
+      `questions` argument with the absolu...'
+    matched_artifact_ref: tests/scripts/test_decisions_live_capture.py::test_capture_output_omits_key_and_image
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.5
+  plan_node_hash: df416d202c48356348207f9f3c549a7096e31e1eaa2c2b431eb4f78d92cc4f46
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25818'
+    validation_criteria_snippet: '2.4.1: With Box routed to its own endpoint, the
+      Box record names `consumer` `gobby-decisions:evaluate`, carries the tool''s
+      `questions` argument with the absolu...'
+    matched_artifact_ref: tests/scripts/test_decisions_live_capture.py::test_capture_records_bounded_redacted_http_errors
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.6
+  plan_node_hash: d5e8e94967c6a0b54d6ceb586d5e3f04b68795215cd71691bae67e6b6ab63009
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25818'
+    validation_criteria_snippet: '2.4.1: With Box routed to its own endpoint, the
+      Box record names `consumer` `gobby-decisions:evaluate`, carries the tool''s
+      `questions` argument with the absolu...'
+    matched_artifact_ref: tests/scripts/test_decisions_live_capture.py::test_capture_records_every_shape_and_probe
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.1
+  plan_node_hash: f5b0d41c9459a6c0d9c19c7171fca0e1f97a1681c5480f6233cdb37d5d119333
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25819'
+    validation_criteria_snippet: '2.5.1: The dated capture section records Choice,
+      Noul and Score sent to `clef:27b` at `http://127.0.0.1:11434` on `systemone`,
+      and a Box record sent to `typesa...'
+    matched_artifact_ref: docs/evidence/decisions/systemone-live.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.2
+  plan_node_hash: 2f9ea6390926be93d3ac8c58963f365030b8ca40a3bed2edf86b5f3f9a288e73
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25819'
+    validation_criteria_snippet: '2.5.1: The dated capture section records Choice,
+      Noul and Score sent to `clef:27b` at `http://127.0.0.1:11434` on `systemone`,
+      and a Box record sent to `typesa...'
+    matched_artifact_ref: docs/evidence/decisions/wire-contracts.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.3
+  plan_node_hash: 2aed1968a44dd791d7928c4c319d9dfa192d0dcda0af60fc04948cf7d7bf9fd0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25819'
+    validation_criteria_snippet: '2.5.1: The dated capture section records Choice,
+      Noul and Score sent to `clef:27b` at `http://127.0.0.1:11434` on `systemone`,
+      and a Box record sent to `typesa...'
+    matched_artifact_ref: docs/evidence/decisions/wire-contracts.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.4
+  plan_node_hash: 671fff35ef6b09550f270ec6d0951fb47307e2af95fdf0d3d85073d3f31ca232
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25819'
+    validation_criteria_snippet: '2.5.1: The dated capture section records Choice,
+      Noul and Score sent to `clef:27b` at `http://127.0.0.1:11434` on `systemone`,
+      and a Box record sent to `typesa...'
+    matched_artifact_ref: docs/evidence/decisions/box-red-square-2026-11.png
   deferral_target: null
   detail: ''

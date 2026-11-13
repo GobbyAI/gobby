@@ -1,0 +1,700 @@
+header:
+  plan_id: remote-terminal-attach
+  plan_hash: bd107b64f4763afb246a0e5e999cb9cf8b1f8c71aa3d8b9d56d6be32fbc6c801
+  root_task_ref: '20202'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-27T19:05:36Z'
+  task_tree_source: db
+  task_tree_source_hash: e0d18bfce2784a1685397f3ba4e5a45f8dc344a539e35c2c934c449bc7386e5a
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: c4df7c5dd7db40a10a1ca29b5d1af338135d8aa78e2f9d5c5b8b95a4dd33c028
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25207'
+    validation_criteria_snippet: '1.1.1: `terminal.relay` and `terminal.resize` commands
+      and their `{}` and error replies round-trip byte-identically in Rust at contract
+      version 5. test: `crate...'
+    matched_artifact_ref: crates/gdaemon/tests/node_command_parity.rs::v5_terminal_commands_round_trip
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 9b744e8442e9a451073bb3f4eda6313b0d3b431e213eabb56145c6a0293d07f1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25207'
+    validation_criteria_snippet: '1.1.1: `terminal.relay` and `terminal.resize` commands
+      and their `{}` and error replies round-trip byte-identically in Rust at contract
+      version 5. test: `crate...'
+    matched_artifact_ref: tests/hub/test_node_command_parity.py::test_v5_terminal_commands_round_trip
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: b00bc48e6820f7c119b66cd86997b1619c639a0b8d6b4cd95f4d031c493bd1da
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25207'
+    validation_criteria_snippet: '1.1.1: `terminal.relay` and `terminal.resize` commands
+      and their `{}` and error replies round-trip byte-identically in Rust at contract
+      version 5. test: `crate...'
+    matched_artifact_ref: crates/gdaemon/tests/node_internal_route.rs::malformed_requests_send_nothing
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 77b365a7eea62d71809fe6bf32af33fb0318d276a01a5dd37b9f3387ce23395c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25207'
+    validation_criteria_snippet: '1.1.1: `terminal.relay` and `terminal.resize` commands
+      and their `{}` and error replies round-trip byte-identically in Rust at contract
+      version 5. test: `crate...'
+    matched_artifact_ref: crates/gdaemon/src/node_commands/terminal.rs
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: 8fdccbcc26ed0c4b576a33ebdeaaf72eec07598a3c5e99af786360e52eeb37f1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25207'
+    validation_criteria_snippet: '1.1.1: `terminal.relay` and `terminal.resize` commands
+      and their `{}` and error replies round-trip byte-identically in Rust at contract
+      version 5. test: `crate...'
+    matched_artifact_ref: terminal.resize
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: 76ec8fb1d1c9029e50cd37363baacb321b8d001e12061e14e62f45785b50c0ca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25207'
+    validation_criteria_snippet: '1.1.1: `terminal.relay` and `terminal.resize` commands
+      and their `{}` and error replies round-trip byte-identically in Rust at contract
+      version 5. test: `crate...'
+    matched_artifact_ref: crates/gdaemon/tests/node_command_parity.rs::relay_payload_debug_redacts_token
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 0604a83de13670008058ae03c506b2a72b4b9fdf230638bc3941c28851aa4778
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25208'
+    validation_criteria_snippet: '1.2.1: `terminal.relay` for a launched run attaches
+      the host terminal, opens the relay socket with the token header, then answers
+      `{}`. test: `crates/gdaemon/t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_relay.rs::relay_attaches_and_dials_before_reply
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 19d571802c1e35e83278eecc90e1770184720d8c65d4218fc28d97b15ce10d55
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25208'
+    validation_criteria_snippet: '1.2.1: `terminal.relay` for a launched run attaches
+      the host terminal, opens the relay socket with the token header, then answers
+      `{}`. test: `crates/gdaemon/t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_relay.rs::relay_failure_dispositions
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 808f9d33089f4b2136870fe0204a363da80b08958be5b3c545c2e9953faf164f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25208'
+    validation_criteria_snippet: '1.2.1: `terminal.relay` for a launched run attaches
+      the host terminal, opens the relay socket with the token header, then answers
+      `{}`. test: `crates/gdaemon/t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_relay.rs::relay_forwards_frames_and_filters_client_messages
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 1a5a7f7d2d33cf2fa2e96406d54ad8e2451c486c867c9820e342b645ef3eb776
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25208'
+    validation_criteria_snippet: '1.2.1: `terminal.relay` for a launched run attaches
+      the host terminal, opens the relay socket with the token header, then answers
+      `{}`. test: `crates/gdaemon/t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_relay.rs::relay_does_not_hold_the_run_queue
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 62383cdea28e17ddf2c11301dfc91934594d67540fbac188852068d9aa99d647
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25208'
+    validation_criteria_snippet: '1.2.1: `terminal.relay` for a launched run attaches
+      the host terminal, opens the relay socket with the token header, then answers
+      `{}`. test: `crates/gdaemon/t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_relay.rs::relay_close_detaches_once
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: 3a234922b76c8857659d61c549dbebd9579fc9512b391e3e888681a24b9ae7f1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25208'
+    validation_criteria_snippet: '1.2.1: `terminal.relay` for a launched run attaches
+      the host terminal, opens the relay socket with the token header, then answers
+      `{}`. test: `crates/gdaemon/t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_relay.rs::relay_stderr_carries_no_secrets
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.7
+  plan_node_hash: cd9c11f447fd0baec9bc2e61deda0c43a7880c4c4671d16df0a60709d7a673bb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25208'
+    validation_criteria_snippet: '1.2.1: `terminal.relay` for a launched run attaches
+      the host terminal, opens the relay socket with the token header, then answers
+      `{}`. test: `crates/gdaemon/t...'
+    matched_artifact_ref: crates/gdaemon/tests/node_relay.rs::relay_setup_is_bounded_and_cleans_up
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: 3dce9f5c311fa8b4d2e1bdf9dfff0616197a12e1976ee8dd59c1dd1d203f0e5d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25209'
+    validation_criteria_snippet: '1.3.1: `terminal.resize` for a launched run sends
+      the host `resize` for its host terminal and answers `{}`. test: `crates/gdaemon/tests/node_resize.rs::resize_...'
+    matched_artifact_ref: crates/gdaemon/tests/node_resize.rs::resize_reaches_host_control
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: 5dc49c47f7ef7d5fed57d0daa8ae228cb379583825a9bdc8dcdd3b36e061de6e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25209'
+    validation_criteria_snippet: '1.3.1: `terminal.resize` for a launched run sends
+      the host `resize` for its host terminal and answers `{}`. test: `crates/gdaemon/tests/node_resize.rs::resize_...'
+    matched_artifact_ref: crates/gdaemon/tests/node_resize.rs::resize_failure_dispositions
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: a74a2cf62103370c15e0bfdca7681209c5ff2bb3ccc482de6e2f3fdf2b11288f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25209'
+    validation_criteria_snippet: '1.3.1: `terminal.resize` for a launched run sends
+      the host `resize` for its host terminal and answers `{}`. test: `crates/gdaemon/tests/node_resize.rs::resize_...'
+    matched_artifact_ref: crates/gdaemon/tests/node_resize.rs::resize_orders_with_writes
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 8c6812c0d6291f5510db165e1821ebc8e602911cb33ad85832ea1c38c8ce525c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25210'
+    validation_criteria_snippet: '2.1.1: A minted token is accepted once from its
+      machine on its channel within 10 s, and the socket reaches the waiter. test:
+      `crates/gdaemon/tests/terminal_rel...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::token_accepts_once
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 2619c6624da693b51730ebe448d18e2896e24516a5162edad6f01e1ff95de3a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25210'
+    validation_criteria_snippet: '2.1.1: A minted token is accepted once from its
+      machine on its channel within 10 s, and the socket reaches the waiter. test:
+      `crates/gdaemon/tests/terminal_rel...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::invalid_tokens_are_indistinguishable
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: e36962a77ba818bc2bf3aae42b79a47e48b4f32d6b1f0ede2ba4fc74204cfc57
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25210'
+    validation_criteria_snippet: '2.1.1: A minted token is accepted once from its
+      machine on its channel within 10 s, and the socket reaches the waiter. test:
+      `crates/gdaemon/tests/terminal_rel...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::dropped_waiter_revokes_token
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: c4c7137f079819491a362db640c385b4aa38bb737537b4775d99bb3418b3f4e4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25210'
+    validation_criteria_snippet: '2.1.1: A minted token is accepted once from its
+      machine on its channel within 10 s, and the socket reaches the waiter. test:
+      `crates/gdaemon/tests/terminal_rel...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::sender_closed_follows_channel_end
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: 8218767c280db9741a1b55095410d0435234c5e86fd8f98a51da3f039848ba71
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25210'
+    validation_criteria_snippet: '2.1.1: A minted token is accepted once from its
+      machine on its channel within 10 s, and the socket reaches the waiter. test:
+      `crates/gdaemon/tests/terminal_rel...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::relay_route_is_hub_only
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.6
+  plan_node_hash: 7b8aaea7c44f2819f76dc2af2d56c7f5bb81bc924c20a7c3c6c798092922ffb5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25210'
+    validation_criteria_snippet: '2.1.1: A minted token is accepted once from its
+      machine on its channel within 10 s, and the socket reaches the waiter. test:
+      `crates/gdaemon/tests/terminal_rel...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::pending_relays_are_capped_per_connection
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: f88a873ea79db9c81c16ccf6dfa5289978d5b5cc4e06d491204f293f4885ce6a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25211'
+    validation_criteria_snippet: '2.2.1: `open` for an owned machine with a live channel
+      returns frames from the node''s relay socket, and sent allowlisted messages
+      reach the node. test: `crates...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::open_relays_frames_both_ways
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 1faf22bc8c0d8f747d621944b3e45fc845b8217685ef0a0059e3379a52dac2cb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25211'
+    validation_criteria_snippet: '2.2.1: `open` for an owned machine with a live channel
+      returns frames from the node''s relay socket, and sent allowlisted messages
+      reach the node. test: `crates...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::open_refusals_send_nothing
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 51fbd2bae81092671d49e79426b8f806dc1387ea796051964b786a4ed474c20d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25211'
+    validation_criteria_snippet: '2.2.1: `open` for an owned machine with a live channel
+      returns frames from the node''s relay socket, and sent allowlisted messages
+      reach the node. test: `crates...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::open_failures_revoke_token
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 7055d1c98837e418f26adc6bf552f3abe33da6a0b842a1b39bf4c8589df7c884
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25211'
+    validation_criteria_snippet: '2.2.1: `open` for an owned machine with a live channel
+      returns frames from the node''s relay socket, and sent allowlisted messages
+      reach the node. test: `crates...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::channel_loss_ends_live_relay
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: 0bbb4619c65e8a69025852d6490c78cdeb17579f6c9290fbd931b487b109934e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25211'
+    validation_criteria_snippet: '2.2.1: `open` for an owned machine with a live channel
+      returns frames from the node''s relay socket, and sent allowlisted messages
+      reach the node. test: `crates...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::write_sends_terminal_write
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: aea6f89e024a63d2e7e991144d6096216aaa25f6443e466a3e2f3da54ced3fe1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25211'
+    validation_criteria_snippet: '2.2.1: `open` for an owned machine with a live channel
+      returns frames from the node''s relay socket, and sent allowlisted messages
+      reach the node. test: `crates...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::relay_stderr_carries_no_secrets
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.7
+  plan_node_hash: edbc77756bcf7054f25fe8a4d885dc4a9476e7aea610d329092f928042c099fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25211'
+    validation_criteria_snippet: '2.2.1: `open` for an owned machine with a live channel
+      returns frames from the node''s relay socket, and sent allowlisted messages
+      reach the node. test: `crates...'
+    matched_artifact_ref: crates/gdaemon/tests/terminal_relay.rs::resize_sends_terminal_resize
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: 412d8c60db3c2140e7bce8d321fd17518b0268e46c55e3d8b79fb0815e41094c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25212'
+    validation_criteria_snippet: '3.1.1: A hub caller''s inventory lists rows from
+      every machine it owns and none from another owner''s machine. test: `crates/gterminals/tests/inventory.rs::inven...'
+    matched_artifact_ref: crates/gterminals/tests/inventory.rs::inventory_is_owner_wide
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 7b8d0cc531d1c19db2e97868fabd71bf52133dfab9d1a2f3855b0227e6a3f652
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25212'
+    validation_criteria_snippet: '3.1.1: A hub caller''s inventory lists rows from
+      every machine it owns and none from another owner''s machine. test: `crates/gterminals/tests/inventory.rs::inven...'
+    matched_artifact_ref: crates/gterminals/tests/inventory.rs::remote_rows_have_no_locator
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: c5c5aee3cc5c76d523a0353d3f8c55f571ce18fea21540645ac407e6783656a8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25212'
+    validation_criteria_snippet: '3.1.1: A hub caller''s inventory lists rows from
+      every machine it owns and none from another owner''s machine. test: `crates/gterminals/tests/inventory.rs::inven...'
+    matched_artifact_ref: crates/gterminals/tests/inventory.rs::row_read_is_owner_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: 90c919e58b1c41fc03431b6a532bcd69424ef4b50f759dd7e3165d16b6fc29dc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25212'
+    validation_criteria_snippet: '3.1.1: A hub caller''s inventory lists rows from
+      every machine it owns and none from another owner''s machine. test: `crates/gterminals/tests/inventory.rs::inven...'
+    matched_artifact_ref: crates/gterminals/tests/inventory.rs::no_user_keeps_local_scope
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: 13cb6fddcbd012d4648cc98ff1212771fcd3c02a3a18c38c3b6cbe0aa2cebbd3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25212'
+    validation_criteria_snippet: '3.1.1: A hub caller''s inventory lists rows from
+      every machine it owns and none from another owner''s machine. test: `crates/gterminals/tests/inventory.rs::inven...'
+    matched_artifact_ref: 'attach: null'
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: 0edfa3205f1712b130fec22cfdc0840b07742411acfc21c95012e3e0f634f9f1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25213'
+    validation_criteria_snippet: '3.2.1: A proxied attach of an owned remote row delivers
+      the node''s history and live frames as `terminal_frame` messages. test: `crates/gterminals/tests/remote_...'
+    matched_artifact_ref: crates/gterminals/tests/remote_attach.rs::remote_attach_streams_frames
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: c13100551144b7513a8a10a669060ccd24f94d23b06dd2785b4c616dd4ecc435
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25213'
+    validation_criteria_snippet: '3.2.1: A proxied attach of an owned remote row delivers
+      the node''s history and live frames as `terminal_frame` messages. test: `crates/gterminals/tests/remote_...'
+    matched_artifact_ref: crates/gterminals/tests/remote_attach.rs::remote_attach_refusals
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: f11749769a369c58caf059d2187b5ce728d48915807bf027dcc167ad894761aa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25213'
+    validation_criteria_snippet: '3.2.1: A proxied attach of an owned remote row delivers
+      the node''s history and live frames as `terminal_frame` messages. test: `crates/gterminals/tests/remote_...'
+    matched_artifact_ref: crates/gterminals/tests/remote_attach.rs::remote_backpressure_closes_only_the_slow_socket
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: d1055cca4a3c5d75b87c50f39d59029502c37e1492dbfe94e44f99a1f3a9598e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25213'
+    validation_criteria_snippet: '3.2.1: A proxied attach of an owned remote row delivers
+      the node''s history and live frames as `terminal_frame` messages. test: `crates/gterminals/tests/remote_...'
+    matched_artifact_ref: crates/gterminals/tests/remote_attach.rs::remote_close_finalizes_once
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.5
+  plan_node_hash: 237ea58a6098c99401c14b47bf3c577997cac0600a2ecdc6f1b364b9fc22d409
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25213'
+    validation_criteria_snippet: '3.2.1: A proxied attach of an owned remote row delivers
+      the node''s history and live frames as `terminal_frame` messages. test: `crates/gterminals/tests/remote_...'
+    matched_artifact_ref: crates/gterminals/tests/remote_attach.rs::only_hub_family_has_remote_link
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.6
+  plan_node_hash: 255f752c02337e2200204869ea7da3bfa22247bbf774f06590cee5bd90e87f9c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25213'
+    validation_criteria_snippet: '3.2.1: A proxied attach of an owned remote row delivers
+      the node''s history and live frames as `terminal_frame` messages. test: `crates/gterminals/tests/remote_...'
+    matched_artifact_ref: node_offline
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: e14a347150f5684ae108908b263f65370dde2b5b34d557606c813b7a544d0828
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25214'
+    validation_criteria_snippet: '3.3.1: Input on a remote attachment reaches the
+      link as one write with its kind, data and submit flag, and never the local write
+      route. test: `crates/gterminal...'
+    matched_artifact_ref: crates/gterminals/tests/remote_attach.rs::remote_input_uses_terminal_write
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.2
+  plan_node_hash: 0b97c89c78b4f537cd1de01880ce458e356677b59f23990e950897e0a8570145
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25214'
+    validation_criteria_snippet: '3.3.1: Input on a remote attachment reaches the
+      link as one write with its kind, data and submit flag, and never the local write
+      route. test: `crates/gterminal...'
+    matched_artifact_ref: crates/gterminals/tests/remote_attach.rs::remote_input_refusals
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.3
+  plan_node_hash: 02e1accd842091b3f85760cc608e0adb181d843611f291bcf50e846578bab2a6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25214'
+    validation_criteria_snippet: '3.3.1: Input on a remote attachment reaches the
+      link as one write with its kind, data and submit flag, and never the local write
+      route. test: `crates/gterminal...'
+    matched_artifact_ref: crates/gterminals/tests/remote_attach.rs::remote_paste_uses_terminal_write
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.4
+  plan_node_hash: 63833cc4489b8a984d4fe9d137d0fa19fef2698bc0e88775ce3e18633157febe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25214'
+    validation_criteria_snippet: '3.3.1: Input on a remote attachment reaches the
+      link as one write with its kind, data and submit flag, and never the local write
+      route. test: `crates/gterminal...'
+    matched_artifact_ref: crates/gterminals/tests/remote_attach.rs::remote_sizing_follows_the_election
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.5
+  plan_node_hash: 0ef706c6778fdb2c90fa9c7d4478c3a2b36dc9b041d89af2fcccb9c6f2d4b619
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25214'
+    validation_criteria_snippet: '3.3.1: Input on a remote attachment reaches the
+      link as one write with its kind, data and submit flag, and never the local write
+      route. test: `crates/gterminal...'
+    matched_artifact_ref: crates/gterminals/tests/remote_attach.rs::remote_control_applies_no_host_grant
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: 5a54fe3c08c1fe79821e395b7ab6d68e04f373921a509b21673ba472bc73f561
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25215'
+    validation_criteria_snippet: '4.1.1: Selecting another machine''s agent attaches
+      that machine''s workspace (node argument set to its machine) and focuses the
+      agent''s pane. test: `crates/gclie...'
+    matched_artifact_ref: crates/gclient/tests/remote_agent_open.rs::remote_agent_opens_in_owning_workspace
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: 856bbc0bb366f6b7ae69833564bdc14be824a8e87c987d2cec421b99de3642ec
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25215'
+    validation_criteria_snippet: '4.1.1: Selecting another machine''s agent attaches
+      that machine''s workspace (node argument set to its machine) and focuses the
+      agent''s pane. test: `crates/gclie...'
+    matched_artifact_ref: crates/gclient/tests/remote_agent_open.rs::local_agent_returns_to_local_workspace
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 611be1e43b1664cfb938386f83fd92c435faf667314b8bc3bc2cbeebfe6203e9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25215'
+    validation_criteria_snippet: '4.1.1: Selecting another machine''s agent attaches
+      that machine''s workspace (node argument set to its machine) and focuses the
+      agent''s pane. test: `crates/gclie...'
+    matched_artifact_ref: crates/gclient/tests/remote_agent_open.rs::remote_agent_row_shows_machine_token
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: 5df68e80c90797361e70d48191e6d35772265f33d4abd390c57570cf8433ff77
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25215'
+    validation_criteria_snippet: '4.1.1: Selecting another machine''s agent attaches
+      that machine''s workspace (node argument set to its machine) and focuses the
+      agent''s pane. test: `crates/gclie...'
+    matched_artifact_ref: crates/gclient/tests/remote_agent_open.rs::terminal_rows_follow_attached_machine
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.5
+  plan_node_hash: 5bb618e814a5e62bf7302f3d6ea5f07f70d6369220dca474bfbec2a0a10a1147
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25215'
+    validation_criteria_snippet: '4.1.1: Selecting another machine''s agent attaches
+      that machine''s workspace (node argument set to its machine) and focuses the
+      agent''s pane. test: `crates/gclie...'
+    matched_artifact_ref: crates/gclient/tests/remote_agent_open.rs::unplaced_remote_agent_opens_in_owning_default_workspace
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.6
+  plan_node_hash: 57b15f73dec05feb2f20e587dec45cb34afc5e69ae1dbe4406ab01d5f7f97704
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25215'
+    validation_criteria_snippet: '4.1.1: Selecting another machine''s agent attaches
+      that machine''s workspace (node argument set to its machine) and focuses the
+      agent''s pane. test: `crates/gclie...'
+    matched_artifact_ref: crates/gclient/tests/remote_agent_open.rs::remote_open_never_lands_in_previous_machine_workspace
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: 683257bdeaf9266a9d11d9870107f4b8c4cd7f4ebad4deea79194236b83f9d2b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25216'
+    validation_criteria_snippet: '5.1.1: The S4.3 row and the Stage 0 paragraph name
+      this plan and no #19600 wait. behavior: "remote-terminal-attach" in `ROADMAP.md`.
+      5.1.2: No passage outside ...'
+    matched_artifact_ref: remote-terminal-attach
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: a0f06394e1a0386026c3dea7a78d35a82ef9d50e7795d19ec6d01a0bff5ab58d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25216'
+    validation_criteria_snippet: '5.1.1: The S4.3 row and the Stage 0 paragraph name
+      this plan and no #19600 wait. behavior: "remote-terminal-attach" in `ROADMAP.md`.
+      5.1.2: No passage outside ...'
+    matched_artifact_ref: ROADMAP.md
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: 04ef8895ed0e4e904087cc4ea7bbe4b774f0e6dfb9f989bf5803ef09d369f1dd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25216'
+    validation_criteria_snippet: '5.1.1: The S4.3 row and the Stage 0 paragraph name
+      this plan and no #19600 wait. behavior: "remote-terminal-attach" in `ROADMAP.md`.
+      5.1.2: No passage outside ...'
+    matched_artifact_ref: node_version
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.1
+  plan_node_hash: 339dde31c4661a85739a39e460772055c758337e8de8e1c2a664c8f0c7699ca7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25217'
+    validation_criteria_snippet: '5.2.1: The hub''s inventory lists the node''s terminal
+      with `attach: null`, and a proxied attach streams its frames. test: `tests/e2e/test_remote_terminal_attach...'
+    matched_artifact_ref: tests/e2e/test_remote_terminal_attach_live.py::test_remote_attach_streams_node_frames
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.2
+  plan_node_hash: 0faec63f51a2693a37f30f344737dba608337ea0a68ff183d4dbee458b5c3987
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25217'
+    validation_criteria_snippet: '5.2.1: The hub''s inventory lists the node''s terminal
+      with `attach: null`, and a proxied attach streams its frames. test: `tests/e2e/test_remote_terminal_attach...'
+    matched_artifact_ref: tests/e2e/test_remote_terminal_attach_live.py::test_remote_input_round_trips
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.3
+  plan_node_hash: 9f4455f2acb2bce0a86cdd3a7af4c919522b9dcd1bd8e0f95540a88eb847c7f4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25217'
+    validation_criteria_snippet: '5.2.1: The hub''s inventory lists the node''s terminal
+      with `attach: null`, and a proxied attach streams its frames. test: `tests/e2e/test_remote_terminal_attach...'
+    matched_artifact_ref: tests/e2e/test_remote_terminal_attach_live.py::test_node_loss_finalizes_and_refuses
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.4
+  plan_node_hash: b37dfdd05f230b9cd17b58c2e3d33b3005987f559a33f0f5017e177b2faa762b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25217'
+    validation_criteria_snippet: '5.2.1: The hub''s inventory lists the node''s terminal
+      with `attach: null`, and a proxied attach streams its frames. test: `tests/e2e/test_remote_terminal_attach...'
+    matched_artifact_ref: tests/e2e/test_remote_terminal_attach_live.py::test_gclient_opens_remote_agent
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.5
+  plan_node_hash: 7a434e18de874be88a21edb0d23e81f9052e74e64e8638dfd8f9aedd0c2c8fb3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25217'
+    validation_criteria_snippet: '5.2.1: The hub''s inventory lists the node''s terminal
+      with `attach: null`, and a proxied attach streams its frames. test: `tests/e2e/test_remote_terminal_attach...'
+    matched_artifact_ref: tests/e2e/test_remote_terminal_attach_live.py::test_remote_pty_follows_elected_size
+  deferral_target: null
+  detail: ''

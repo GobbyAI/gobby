@@ -1,0 +1,470 @@
+crates/gcode/src/communities/refresh_tests.rs:481:                "INSERT INTO tasks(id, project_id, title, claimed_by_session_id, validation_criteria)
+crates/gcore/assets/config/runtime_config_contract.json:6286:      "description": "Pattern name to list of validation criteria templates. Templates can use placeholders like {unit_tests}, {type_check}, {lint}.",
+crates/gcore/assets/schema/baseline.sql:3889:    validation_criteria text,
+crates/gcore/assets/schema/baseline.sql:4669:    ADD CONSTRAINT tasks_require_validation_criteria CHECK (((task_type = 'epic'::text) OR (NULLIF(btrim(validation_criteria), ''::text) IS NOT NULL))) NOT VALID;
+crates/gcore/assets/schema/catalog.manifest.json:4800:      "name": "tasks.validation_criteria",
+crates/gcore/assets/schema/catalog.manifest.json:7194:      "name": "tasks.tasks_require_validation_criteria",
+crates/gcore/assets/schema/catalog.manifest.json:7195:      "definition": "CHECK (task_type = 'epic'::text OR NULLIF(btrim(validation_criteria), ''::text) IS NOT NULL) NOT VALID"
+crates/gcore/assets/schema/migrations/476_runbook_review_state.sql:45:ALTER TABLE tasks DROP CONSTRAINT tasks_require_validation_criteria;
+crates/gcore/assets/schema/migrations/476_runbook_review_state.sql:50:ALTER TABLE tasks ADD CONSTRAINT tasks_require_validation_criteria
+crates/gcore/assets/schema/migrations/476_runbook_review_state.sql:51:    CHECK (task_type = 'epic' OR NULLIF(btrim(validation_criteria), '') IS NOT NULL) NOT VALID;
+crates/gcore/assets/schema/migrations/477_runbook_task_states.sql:26:ALTER TABLE tasks DROP CONSTRAINT tasks_require_validation_criteria;
+crates/gcore/assets/schema/migrations/477_runbook_task_states.sql:58:ALTER TABLE tasks ADD CONSTRAINT tasks_require_validation_criteria
+crates/gcore/assets/schema/migrations/477_runbook_task_states.sql:59:    CHECK (task_type = 'epic' OR NULLIF(btrim(validation_criteria), '') IS NOT NULL) NOT VALID;
+crates/gcore/src/schema/runner_tests.rs:1436:            "INSERT INTO tasks(id, project_id, title, validation_criteria, closed_at, closed_reason) \
+crates/gcore/src/schema/runner_tests.rs:1448:            "INSERT INTO tasks(id, project_id, title, validation_criteria, labels) \
+crates/gcore/src/schema/runner_tests.rs:1518:            "INSERT INTO tasks(id, project_id, title, validation_criteria, validation_status, \
+crates/gcore/src/schema/runner_tests.rs:1634:    client.batch_execute("ALTER TABLE tasks DROP CONSTRAINT tasks_require_validation_criteria")?;
+crates/gcore/src/schema/runner_tests.rs:1636:        "INSERT INTO tasks(id, project_id, title, task_type, validation_criteria) \
+crates/gcore/src/schema/runner_tests.rs:1641:        "INSERT INTO tasks(id, project_id, title, task_type, validation_criteria, closed_at, \
+crates/gcore/src/schema/runner_tests.rs:1646:        "ALTER TABLE tasks ADD CONSTRAINT tasks_require_validation_criteria CHECK \
+crates/gcore/src/schema/runner_tests.rs:1647:         (((task_type = 'epic'::text) OR (NULLIF(btrim(validation_criteria), ''::text) \
+crates/gcore/src/schema/runner_tests.rs:1657:            "SELECT validation_criteria, review_status, closed_reason, state_bucket \
+crates/gcore/src/schema/runner_tests.rs:1668:         WHERE conrelid = 'tasks'::regclass AND conname = 'tasks_require_validation_criteria'",
+crates/gcore/src/schema/runner_tests.rs:1674:        "CHECK (task_type = 'epic'::text OR NULLIF(btrim(validation_criteria), ''::text) \
+crates/gcore/src/schema/runner_tests.rs:1811:        "INSERT INTO tasks(id, project_id, title, validation_criteria) \
+crates/gcore/src/schema/runner_tests.rs:1949:            "INSERT INTO tasks(id, project_id, title, isolation, validation_criteria) \
+crates/gterminal/vendor/libghostty-vt/HACKING.md:415:#### VM Acceptance Criteria
+docs/architecture/gobby-v1.0.0-roadmap.md:77:| Ref | Type | Title | Validation criteria (summary) |
+docs/architecture/gobby-v1.0.0-roadmap.md:198:- `list_tasks parent_task_id=#21363 label=found-work` returns FW.1–FW.3 with validation criteria set.
+docs/architecture/interactive-persona-scope.md:38:Task `#21088` owns the runtime and focused-test changes. Its acceptance criteria cover
+docs/archive/tasks_decomposition.md:63:| `generate_validation_criteria` | 632-694 | Generate criteria via AI |
+docs/contracts/plan-coverage.md:416:with validation criteria that list the original acceptance items, a `blocked-by`
+docs/contracts/plan-coverage.md:432:has concrete scope and validation criteria, and is reasonably expected to fit
+docs/contracts/plan-coverage.md:560:  validation_criteria: <one-line pass/fail>
+docs/contracts/plan-coverage.md:578:| `validation_criteria` | str | One-line pass/fail |
+docs/contracts/plan-coverage.md:631:  validation criteria requiring red, green, refactor/final-green, exact command,
+docs/contracts/plan-coverage.md:640:  own acceptance criteria.
+docs/design/task-authority-audit.md:77:| update_task | none | rewrite foreign `validation_criteria`, `affected_files`, parent, priority | G |
+docs/evidence/flatten-baseline-419/new.dump.sql:3772:    validation_criteria text,
+docs/evidence/flatten-baseline-419/new.dump.sql:4382:    ADD CONSTRAINT tasks_require_validation_criteria CHECK (((task_type = 'epic'::text) OR (NULLIF(btrim(validation_criteria), ''::text) IS NOT NULL))) NOT VALID;
+docs/evidence/flatten-baseline-419/old.dump.sql:3772:    validation_criteria text,
+docs/evidence/flatten-baseline-419/old.dump.sql:4382:    ADD CONSTRAINT tasks_require_validation_criteria CHECK (((task_type = 'epic'::text) OR (NULLIF(btrim(validation_criteria), ''::text) IS NOT NULL))) NOT VALID;
+docs/evidence/flatten-baseline-420/canonical.normalized.sql:382:ALTER TABLE __schema__.tasks ADD CONSTRAINT tasks_require_validation_criteria CHECK (((task_type = 'epic'::text) OR (NULLIF(btrim(validation_criteria), ''::text) IS NOT NULL))) NOT VALID;
+docs/evidence/flatten-baseline-420/canonical.normalized.sql:856:CREATE TABLE __schema__.tasks (CONSTRAINT tasks_allow_automation_check CHECK ((allow_automation = ANY (ARRAY[false, true]))), CONSTRAINT tasks_blocked_by_merge_check CHECK ((blocked_by_merge = ANY (ARRAY[false, true]))), CONSTRAINT tasks_implementation_domain_check CHECK (((implementation_domain IS NULL) OR (implementation_domain = ANY (ARRAY['backend'::text, 'frontend'::text, 'fullstack'::text])))), CONSTRAINT tasks_is_escalated_check CHECK ((is_escalated = ANY (ARRAY[false, true]))), CONSTRAINT tasks_isolation_check CHECK ((isolation = ANY (ARRAY['none'::text, 'worktree'::text, 'clone'::text]))), CONSTRAINT tasks_merge_in_progress_check CHECK ((merge_in_progress = ANY (ARRAY[false, true]))), CONSTRAINT tasks_state_bucket_check CHECK ((state_bucket = ANY (ARRAY['ready'::text, 'in_progress'::text, 'needs_review'::text, 'review_approved'::text, 'closed'::text, 'escalated'::text]))), CONSTRAINT tasks_unattended_check CHECK ((unattended = ANY (ARRAY[false, true]))), CONSTRAINT tasks_validation_status_check CHECK ((validation_status = ANY (ARRAY['pending'::text, 'valid'::text, 'invalid'::text, 'error'::text]))), additional_skills jsonb, allow_automation boolean DEFAULT false NOT NULL, assigned_agent text, blocked_by_merge boolean DEFAULT false NOT NULL, category text, claimed_by_session_id uuid, closed_at timestamp with time zone, closed_commit_sha text, closed_in_session_id uuid, closed_reason text, commits jsonb, compacted_at timestamp with time zone, created_at timestamp with time zone DEFAULT now() NOT NULL, created_in_session_id uuid, description text, dispatch_failure_count integer DEFAULT 0, due_date date, escalated_at timestamp with time zone, escalation_reason text, github_issue_number integer, github_pr_number integer, github_repo text, id uuid NOT NULL, implementation_domain text, is_escalated boolean DEFAULT false NOT NULL, isolation text DEFAULT 'worktree'::text NOT NULL, labels jsonb, linear_issue_id text, linear_team_id text, merge_in_progress boolean DEFAULT false NOT NULL, parent_task_id uuid, path_cache text, priority integer DEFAULT 2, project_id uuid NOT NULL, seq_num integer, start_date date, state_bucket text DEFAULT 'ready'::text NOT NULL, task_type text DEFAULT 'task'::text, title text NOT NULL, unattended boolean DEFAULT false NOT NULL, updated_at timestamp with time zone DEFAULT now() NOT NULL, validation_criteria text, validation_fail_count integer DEFAULT 0, validation_feedback text, validation_override_reason text, validation_status text);
+docs/evidence/flatten-baseline-420/new.dump.sql:3772:    validation_criteria text,
+docs/evidence/flatten-baseline-420/new.dump.sql:4382:    ADD CONSTRAINT tasks_require_validation_criteria CHECK (((task_type = 'epic'::text) OR (NULLIF(btrim(validation_criteria), ''::text) IS NOT NULL))) NOT VALID;
+docs/evidence/flatten-baseline-420/old.dump.sql:3772:    validation_criteria text,
+docs/evidence/flatten-baseline-420/old.dump.sql:4382:    ADD CONSTRAINT tasks_require_validation_criteria CHECK (((task_type = 'epic'::text) OR (NULLIF(btrim(validation_criteria), ''::text) IS NOT NULL))) NOT VALID;
+docs/evidence/pre-flatten/migrated-fresh.normalized.sql:314:ALTER TABLE __schema__.tasks ADD CONSTRAINT tasks_require_validation_criteria CHECK (((task_type = 'epic'::text) OR (NULLIF(btrim(validation_criteria), ''::text) IS NOT NULL))) NOT VALID;
+docs/evidence/pre-flatten/migrated-fresh.normalized.sql:693:CREATE TABLE __schema__.tasks (CONSTRAINT tasks_allow_automation_check CHECK ((allow_automation = ANY (ARRAY[false, true]))), CONSTRAINT tasks_blocked_by_merge_check CHECK ((blocked_by_merge = ANY (ARRAY[false, true]))), CONSTRAINT tasks_implementation_domain_check CHECK (((implementation_domain IS NULL) OR (implementation_domain = ANY (ARRAY['backend'::text, 'frontend'::text, 'fullstack'::text])))), CONSTRAINT tasks_is_escalated_check CHECK ((is_escalated = ANY (ARRAY[false, true]))), CONSTRAINT tasks_isolation_check CHECK ((isolation = ANY (ARRAY['none'::text, 'worktree'::text, 'clone'::text]))), CONSTRAINT tasks_merge_in_progress_check CHECK ((merge_in_progress = ANY (ARRAY[false, true]))), CONSTRAINT tasks_state_bucket_check CHECK ((state_bucket = ANY (ARRAY['ready'::text, 'in_progress'::text, 'needs_review'::text, 'review_approved'::text, 'closed'::text, 'escalated'::text]))), CONSTRAINT tasks_unattended_check CHECK ((unattended = ANY (ARRAY[false, true]))), CONSTRAINT tasks_validation_status_check CHECK ((validation_status = ANY (ARRAY['pending'::text, 'valid'::text, 'invalid'::text, 'error'::text]))), additional_skills jsonb, allow_automation boolean DEFAULT false NOT NULL, assigned_agent text, blocked_by_merge boolean DEFAULT false NOT NULL, category text, claimed_by_session_id uuid, closed_at timestamp with time zone, closed_commit_sha text, closed_in_session_id uuid, closed_reason text, commits jsonb, compacted_at timestamp with time zone, created_at timestamp with time zone NOT NULL, created_in_session_id uuid, description text, dispatch_failure_count integer DEFAULT 0, due_date date, escalated_at timestamp with time zone, escalation_reason text, github_issue_number integer, github_pr_number integer, github_repo text, id uuid NOT NULL, implementation_domain text, is_escalated boolean DEFAULT false NOT NULL, isolation text DEFAULT 'worktree'::text NOT NULL, labels jsonb, linear_issue_id text, linear_team_id text, merge_in_progress boolean DEFAULT false NOT NULL, parent_task_id uuid, path_cache text, priority integer DEFAULT 2, project_id uuid NOT NULL, seq_num integer, start_date date, state_bucket text DEFAULT 'ready'::text NOT NULL, task_type text DEFAULT 'task'::text, title text NOT NULL, unattended boolean DEFAULT false NOT NULL, updated_at timestamp with time zone NOT NULL, validation_criteria text, validation_fail_count integer DEFAULT 0, validation_feedback text, validation_override_reason text, validation_status text);
+docs/guides/README.md:147:| [spec-writing.md](spec-writing.md) | Writing task specifications and validation criteria |
+docs/guides/cli-commands.md:560:| `tasks create` | `--description`, `--validation-criteria` (required except epics), `--priority`, `--type`, `--depends-on`, `--project` |
+docs/guides/cli-commands.md:561:| `tasks update` | `--title`, `--validation-criteria`, `--priority`, `--parent`, `--task-type` |
+docs/guides/configuration.md:774:the verification section when generating validation criteria.
+docs/guides/http-endpoints.md:474:and `validation_criteria`.
+docs/guides/remote-docker-acceptance.md:180:as required by the historical acceptance criteria.
+docs/guides/spec-writing.md:199:target, acceptance criteria, and behavior-pinning or test-infrastructure scope.
+docs/guides/spec-writing.md:233:| `validation_criteria` | One-line pass/fail check |
+docs/guides/task-expansion.md:177:- `tasks[].validation`: validation criteria copied onto the created task.
+docs/guides/task-expansion.md:327:  validation_criteria: User model exists and tests cover core behavior.
+docs/guides/task-expansion.md:338:  validation_criteria: Auth handler exists.
+docs/guides/task-expansion.md:396:  `tdd:required`, and validation criteria for red, green,
+docs/guides/tasks.md:23:type, category, parent, labels, and validation criteria. The workflow-facing
+docs/guides/tasks.md:68:    "validation_criteria": "Task examples match registered schemas and all guide links resolve.",
+docs/guides/tasks.md:73:`create_task` requires `title`, `category`, and nonempty `validation_criteria`
+docs/guides/tasks.md:78:| `code` | Implementation work. Requires `validation_criteria` and `implementation_domain` (`backend`, `frontend`, or `fullstack`). |
+docs/guides/tasks.md:354:results for independent review. Acceptance criteria are authored task data;
+docs/guides/tasks.md:396:gobby tasks create "Title" --validation-criteria CRITERIA [-d DESCRIPTION] [-p PRIORITY] [-t TYPE] [-D BLOCKER]
+docs/guides/tasks.md:397:gobby tasks update TASK [--title TITLE] [--validation-criteria CRITERIA] [--priority N] [--parent TASK] [--task-type TYPE]
+docs/guides/tdd-enforcement.md:15:- validation criteria requiring red evidence, minimal green evidence,
+docs/guides/tdd-enforcement.md:30:additional skill, or has validation criteria requiring TDD.
+docs/guides/tdd-enforcement.md:66:Plan authors describe behavior and acceptance criteria. They do not add filler
+docs/guides/tdd-enforcement.md:95:- TDD validation criteria require red, green, refactor/final-green, exact
+docs/plans/abandoned/UI.md:742:  validation_criteria: string | null;
+docs/plans/abandoned/cli-test-battery.md:179:| MCP equivalent | `generate_validation_criteria` | Compare output |
+docs/plans/abandoned/drawbridge-enhancements.md:69:| — | `validation_criteria` | `"Visual change matches the annotation screenshot and comment description"` |
+docs/plans/abandoned/drawbridge-enhancements.md:150:        validation_criteria="Visual change matches the annotation screenshot and comment description",
+docs/plans/abandoned/drawbridge-enhancements.md:301:- `create_task` — supports `task_type: "epic"`, `parent_task_id`, `labels`, `category`, `validation_criteria`
+docs/plans/abandoned/drawbridge-enhancements.md:305:- `validate_task` — validation criteria set at import time
+docs/plans/abandoned/implementation-v2.md:105:- `spec-review.md` — heuristics for checking spec-vs-work: does the diff implement what the plan described, are there scope creeps, missing acceptance criteria. Explicitly NOT code-quality review (that's qa-reviewer's job).
+docs/plans/abandoned/planning-agents.md:170:  clear user personas, prioritized user stories with acceptance criteria,
+docs/plans/abandoned/planning-agents.md:199:  - Write acceptance criteria as Given/When/Then
+docs/plans/abandoned/planning-agents.md:529:**gobby-prd**: Full PRD workflow — ingest brief, extract and question requirements, create user stories (As a/I want/So that + Given/When/Then acceptance criteria), MoSCoW prioritization, NFRs with measurable targets, success metrics. Ends with self-review against validation checklist. Output: `prd.md`.
+docs/plans/abandoned/postgresql-migration.md:361:## Acceptance Criteria
+docs/plans/abandoned/ui/phase-0-tui.md:59:- [ ] Display full task details (title, description, validation_criteria)
+docs/plans/completed/TASKS.md:58:    validation_criteria TEXT,         -- Natural language prompt for validating completion
+docs/plans/completed/TASKS.md:432:    For user stories: Creates acceptance criteria as subtasks
+docs/plans/completed/TASKS.md:436:    Returns root task ID and full task tree with validation criteria.
+docs/plans/completed/TASKS.md:461:    Validate task completion against its validation_criteria.
+docs/plans/completed/TASKS.md:481:    - validation_criteria (if set)
+docs/plans/completed/TASKS.md:585:  infer_validation: true                # Auto-generate validation_criteria for subtasks
+docs/plans/completed/TASKS.md:681:    **Validation Criteria:** {validation_criteria}
+docs/plans/completed/TASKS.md:691:    Evaluate whether the task has been completed according to the validation criteria.
+docs/plans/completed/TASKS.md:714:1. When a task has `validation_criteria` set, validation can be triggered:
+docs/plans/completed/TASKS.md:1150:    For user stories: Creates acceptance criteria as subtasks
+docs/plans/completed/TASKS.md:1441:> Uses configured `task_validation` provider. Validates task completion against `validation_criteria`.
+docs/plans/completed/TASKS.md:1446:- [x] Add `validation_criteria` column to tasks table
+docs/plans/completed/TASKS.md:1459:- [x] Implement `generate_criteria()` method - LLM-generates validation criteria from task title/description
+docs/plans/completed/TASKS.md:1487:- [x] Add `generate_validation_criteria` tool with `--all` support for bulk generation
+docs/plans/completed/TASKS.md:1546:| 8 | **Validation criteria format** | Natural language prompt | Simple, flexible. LLM evaluates against current state. No rigid schema needed. |
+docs/plans/completed/adversary-convergence.md:88:  section contracts`), 13 (`manifest-validation-criteria-completeness`), 15
+docs/plans/completed/adversary-convergence.md:89:  (`manifest-criteria-save-retention`), 16 (`manifest-validation-criteria-fidelity`) —
+docs/plans/completed/adversary-convergence.md:151:"Section X's validation criteria omit obligation Y" can be emitted against any plan of any
+docs/plans/completed/cc-worktrees.md:67:| **Validation** | None | Diff-based validation criteria checked on close |
+docs/plans/completed/enhancements.md:350:│  - Acceptance criteria from task                            │
+docs/plans/completed/enhancements.md:357:│  - Checks acceptance criteria                               │
+docs/plans/completed/enhancements.md:459:      Fix the issues and ensure all validation criteria pass.
+docs/plans/completed/gobby-skills.md:375:**Acceptance Criteria:**
+docs/plans/completed/gobby-skills.md:436:**Acceptance Criteria:**
+docs/plans/completed/gobby-skills.md:526:**Acceptance Criteria:**
+docs/plans/completed/gobby-skills.md:658:**Acceptance Criteria:**
+docs/plans/completed/gobby-skills.md:781:**Acceptance Criteria:**
+docs/plans/completed/gobby-skills.md:901:**Acceptance Criteria:**
+docs/plans/completed/gobby-skills.md:1102:**Acceptance Criteria:**
+docs/plans/completed/gobby-tasks-separation-of-concerns.md:22:| 6 | **Validation** | `task_validation.py` | `validate_task`, `get_validation_status`, `reset_validation_count`, `get_validation_history`, `get_recurring_issues`, `clear_validation_history`, `de_escalate_task`, `generate_validation_criteria`, `run_fix_attempt`, `validate_and_fix` | 10 |
+docs/plans/completed/gobby-tasks-separation-of-concerns.md:81:| `generate_validation_criteria` | AI-generate criteria |
+docs/plans/completed/gobby-tasks-separation-of-concerns.md:85:**Verdict: Mixed concern.** The first 7 tools are task-centric (query/update validation state on the task entity). But `run_fix_attempt` and `validate_and_fix` spawn agents — they're orchestration in disguise. `generate_validation_criteria` calls LLM. This registry mixes data access with workflow execution.
+docs/plans/completed/hook-normalization-v2.md:420:## Acceptance Criteria
+docs/plans/completed/impeccable-ux-agents-draft.md:45:- `src/gobby/install/shared/skills/plan-draft-ux/SKILL.md` — UX authoring methodology. Uses the shared grammar; adds UX-specific deliverable-section archetypes (information architecture, component inventory, interaction model, motion plan, content strategy, visual system). Defines validation_criteria patterns for the new acceptance kinds. Documents the `impeccable shape` steering command as the recommended brief-structuring tool.
+docs/plans/completed/impeccable-ux-agents-draft.md:62:- Manifest emission rules updated for UX-flavored entries (e.g., `category: design`, validation_criteria patterns specific to design kinds).
+docs/plans/completed/migration-flattening-0.4.0-launch.md:108:## Acceptance Criteria
+docs/plans/completed/review-signal-learning.md:207:exists and the tier/target escalates, **`update_task`** its `description`, `validation_criteria`,
+docs/plans/completed/review-signal-learning.md:213:IDs**; `validation_criteria` = guardrail acceptance; labels `guardrail`, `review-learning`,
+docs/plans/completed/review-signal-learning.md:313:  validation_criteria/labels) on an existing open `pattern:<key>` task; non-promotable never counts.
+docs/plans/completed/strangler-fig-decomposition.md:55:**Acceptance Criteria:**
+docs/plans/completed/strangler-fig-decomposition.md:118:**Acceptance Criteria:**
+docs/plans/completed/strangler-fig-decomposition.md:166:**Acceptance Criteria:**
+docs/plans/completed/task-expansion-v2.md:12:| Validation criteria | Move from `create_task` to `enrich_task` (was 6+ sec) |
+docs/plans/completed/task-expansion-v2.md:108:| `validate-criteria.md` | Validation criteria generation | `enrich_task` tool |
+docs/plans/completed/task-expansion-v2.md:199:3. Remove validation criteria auto-generation (lines 427-447)
+docs/plans/completed/task-expansion-v2.md:413:    validation_criteria: str  # Generated here, not in create_task
+docs/plans/completed/task-expansion-v2.md:428:    generates validation criteria, and stores findings in expansion_context.
+docs/plans/completed/task-expansion-v2.md:452:        Generate validation_criteria field (moved from create_task)
+docs/plans/completed/task-expansion-v2.md:471:          "validation_criteria": "## Deliverable\n- [ ] ...",
+docs/plans/completed/task-expansion-v2.md:499:6. Parent's `validation_criteria` updated to "All child tasks completed" (parent becomes container)
+docs/plans/completed/task-expansion-v2.md:510:    Parent's validation_criteria updated to "All child tasks completed".
+docs/plans/completed/task-expansion-v2.md:580:# Templated validation criteria for TDD phases
+docs/plans/completed/task-expansion-v2.md:584:- [ ] Test coverage addresses acceptance criteria from parent task
+docs/plans/completed/task-expansion-v2.md:639:    original_criteria = task.validation_criteria
+docs/plans/completed/task-expansion-v2.md:644:        validation_criteria=TDD_CRITERIA_RED,  # Templated
+docs/plans/completed/task-expansion-v2.md:651:        validation_criteria=original_criteria,  # Inherited from parent
+docs/plans/completed/task-expansion-v2.md:659:        validation_criteria=TDD_CRITERIA_BLUE,  # Templated
+docs/plans/completed/task-expansion-v2.md:665:    task.validation_criteria = PARENT_CRITERIA
+docs/plans/completed/task-expansion-v2.md:689:    Validation criteria:
+docs/plans/completed/task-expansion-v2.md:692:    - Green (implement): Inherits parent's original validation_criteria
+docs/plans/completed/task-expansion-v2.md:817:  generates validation criteria, and stores findings in expansion_context.
+docs/plans/completed/task-expansion-v2.md:828:  --no-validation         Skip validation criteria generation
+docs/plans/completed/task-expansion-v2.md:1277:| `~/.gobby/prompts/validate-criteria.md` | Validation criteria prompt |
+docs/plans/completed/task-expansion-v2.md:1413:#   Generated validation criteria
+docs/plans/completed/task-expansion-v3.md:97:| TDD sandwich (3x tasks) | TDD as validation criteria |
+docs/plans/completed/task-expansion-v3.md:229:            validation_criteria=subtask.get("validation"),
+docs/plans/completed/task-expansion-v3.md:344:# - Validation criteria include "tests pass"
+docs/plans/completed/task-expansion-v3.md:379:3. TDD requirement is explicit in task validation criteria
+docs/plans/completed/task-lifecycle-v2.md:163:### Acceptance criteria
+docs/plans/completed/task-lifecycle-v2.md:204:### Acceptance criteria
+docs/plans/completed/task-lifecycle-v2.md:242:### Acceptance criteria
+docs/plans/completed/task-lifecycle-v2.md:270:### Acceptance criteria
+docs/plans/completed/task-lifecycle-v2.md:296:### Acceptance criteria
+docs/plans/completed/task-lifecycle-v2.md:324:### Acceptance criteria
+docs/plans/completed/task-lifecycle-v2.md:342:### Acceptance criteria
+docs/plans/completed/web-chat-fixes.md:9:Task execution truth now lives in the expanded Gobby tasks under `#11509`. Use the task records for current scope, dependencies, and validation criteria; treat this document as planning context only.
+docs/plans/completed/web-chat-fixes.md:128:All visual verification uses the `playwright-cli` skill via MCP. Each task's validation criteria must include Playwright steps.
+docs/plans/cross-repo-submit-profile.md:95:## Acceptance Criteria
+docs/plans/gcode-ask-fix.md:1010:  evidence met the unchanged acceptance criteria. Post-close memory review is complete.
+docs/reference-audit/tasks.json:1431:      "finding": "Docs creation example omitted validation_criteria and implied only code required criteria.",
+docs/reference-audit/tasks.json:1432:      "evidence": "create_task registered schema; _crud._task_invariant_error; criteria_contract.require_validation_criteria",
+docs/reference-audit/tasks.json:1441:      "finding": "Shell examples used unquoted #N references and CLI option tables omitted validation criteria.",
+docs/research/activity-panel-live-terminal-live-review-2026-07-29.md:11:The review compared the plan's acceptance criteria with the current terminal
+docs/research/fieldy-voice-loop-review-queue-2026-09-29.md:115:#22719's validation criteria describe the old "turn recordings into agent work" design. If Josh picks Plan, the criteria need rewriting for the review-only flow before any implementation.
+docs/research/grok-adversary-prompt-example.md:10:- PLAN_FILE: path to the Markdown plan (numbered acceptance criteria), or `(unavailable)`.
+docs/research/grok-adversary-prompt-example.md:98:   `## Acceptance criteria` as a derived checklist: judge each criterion MET or
+docs/reviews/TRIAGE.md:6:- **Task anatomy:** each fix task carries the source review file and commit (`covers:<file>` label), the merged unit id (`Unit UNNN`), `Where:` file:line pointers, a single committed fix approach, concrete validation criteria, and `implementation_domain`.
+docs/reviews/TRIAGE.md:742:- #16202 (U496, `docs/reviews/mcp_proxy-tools.md`) — Enforce code-task validation_criteria invariant in update_task
+docs/reviews/TRIAGE.md:1160:- #16873 (U855, `docs/reviews/tasks.md`) — Treat missing validation_criteria on leaf code tasks as a hard validation gate
+docs/reviews/llm-prompts.md:99:- **Where:** `src/gobby/tasks/expansion/_compile.py:457` (`normalized = file_path.lstrip("./")`), `:459,472` (`repo_path / normalized`); paths from `extract_mentioned_files` (`src/gobby/tasks/commits.py:391`) over `task.title`/`description`/`validation_criteria`
+docs/reviews/mcp_proxy-tools.md:268:### [IMPORTANT] `update_task` bypasses the category='code' ⇒ validation_criteria invariant
+docs/reviews/mcp_proxy-tools.md:270:- **Failure mode:** `create_task` rejects code tasks without criteria/domain; `update_task` sets `category="code"` with no check and accepts `validation_criteria=""`. A code task without criteria skips LLM validation on close (`_lifecycle_close.py:270`).
+docs/reviews/plans-sync.md:152:- **Why it matters:** the gate reports `valid` for leaves whose validation criteria never reference the artifact; symbols ending in `run`/`main`/`parse` match almost anything.
+docs/reviews/quality-subsystems.md:165:- **Where:** `src/gobby/review_learning/promotion.py:242-257` (`_find_existing_task` matches only `pattern:{key}` + group labels — decision/target ignored), `:213-226` (update rewrites title/category/target/validation_criteria), `:225` (clears `implementation_domain` via explicit `None` → SET NULL at `src/gobby/storage/tasks/_updates.py:158`)
+docs/reviews/support-infra.md:29:- **Failure mode:** Setting `telemetry.llm_tracing.enabled: true` does nothing in a running daemon. Repo-wide proof: the only production caller of any `init_telemetry` is `runner_init/storage.py:43`, importing from `gobby.telemetry.logging`; nothing in src imports the package-level one (`git grep "from gobby.telemetry import"` → only `inject_into_env` and `shutdown_telemetry`). The `LoggingInstrumentor` bridge at `__init__.py:100` is equally unreachable. The LangWatch epic's validation criteria ("init_telemetry calls setup_llm_instrumentors when llm_tracing.enabled") were validated against the wrong function.
+docs/reviews/tasks.md:29:### [IMPORTANT] LLM validation gate is silently skipped whenever `task.validation_criteria` is empty
+docs/reviews/tasks.md:30:- **Where:** `mcp_proxy/tools/tasks/_lifecycle_close.py:270` (`if is_leaf and ctx.task_validator and task.validation_criteria:`); criteria is required only at `_crud.py:115` for `category=="code"`; expansion sets it from an optional manifest field (`expansion/_apply.py:201`, may be None); storage `create_task` doesn't enforce it.
+docs/reviews/tasks.md:31:- **Failure mode:** A leaf task reaching close with falsy `validation_criteria` bypasses the entire LLM validation block. Expansion-created code tasks (manifest omits `validation`), dispatch/build-created tasks, non-`code` categories, and storage-direct creations can all close with zero LLM validation — the commit/edit checks still run, so broken code can be committed and the task closed without the validator ever evaluating the diff. The TaskValidator-side analogue of the upstream close-gate poisoning.
+docs/reviews/tasks.md:55:- **Where:** `expansion/_compile.py:443-475` (`_build_file_context`) — paths from `extract_mentioned_files(task_payload)` over title/description/validation_criteria; normalized only with `lstrip("./")` (`:455`) then `repo_path / normalized` (`:458`), read up to 3500 chars (`_common.py:349`) with **no containment check**.
+docs/reviews/tasks.md:106:1. **Gates keyed on session-global flags or optional data, not task-scoped truth.** `task_has_commits` is a per-session boolean any of three tools can set (the Blocker), never checked against the closing task. The LLM validation gate hinges on a free-text `validation_criteria` enforced at one boundary for one category. Both are "absence/optional treated as permission," echoing the upstream "absence-of-signal = success" findings.
+docs/reviews/web/components-a.md:49:- **Why it matters:** In an active system (agents/dispatcher constantly updating tasks) the tab flashes "Loading tasks…" repeatedly and typing into Description/Validation criteria is lossy — direct user-edit data loss, the exact class the optimistic-edit machinery was built to prevent.
+src/gobby/agents/team_teardown.py:666:            validation_criteria=(
+src/gobby/agents/team_teardown.py:710:            validation_criteria=(
+src/gobby/cli/tasks/_crud_mutations.py:10:from gobby.tasks.criteria_text import TaskCriteriaError, require_validation_criteria
+src/gobby/cli/tasks/_crud_mutations.py:18:    validation_criteria: str | None,
+src/gobby/cli/tasks/_crud_mutations.py:32:        validation_criteria = require_validation_criteria(task_type, validation_criteria)
+src/gobby/cli/tasks/_crud_mutations.py:55:            validation_criteria=validation_criteria,
+src/gobby/cli/tasks/_crud_mutations.py:100:    validation_criteria: str | None,
+src/gobby/cli/tasks/_crud_mutations.py:121:    if validation_criteria is not None:
+src/gobby/cli/tasks/_crud_mutations.py:122:        kwargs["validation_criteria"] = validation_criteria
+src/gobby/cli/tasks/crud.py:166:    "--validation-criteria",
+src/gobby/cli/tasks/crud.py:176:    validation_criteria: str | None,
+src/gobby/cli/tasks/crud.py:194:        validation_criteria=validation_criteria,
+src/gobby/cli/tasks/crud.py:215:@click.option("--validation-criteria", help="New observable completion criteria")
+src/gobby/cli/tasks/crud.py:239:    validation_criteria: str | None,
+src/gobby/cli/tasks/crud.py:258:        validation_criteria,
+src/gobby/config/features.py:219:    Used by task expansion to generate precise validation criteria with actual commands.
+src/gobby/config/tasks.py:5:- PatternCriteriaConfig: Pattern-specific validation criteria templates
+src/gobby/config/tasks.py:50:    """Configuration for pattern-specific validation criteria templates.
+src/gobby/config/tasks.py:52:    Defines validation criteria templates for common development patterns like
+src/gobby/config/tasks.py:82:        description="Pattern name to list of validation criteria templates. "
+src/gobby/config/tasks.py:131:        description="Pattern-specific validation criteria templates",
+src/gobby/feedback/actions.py:71:        validation_criteria: str | None = ...,
+src/gobby/feedback/actions.py:369:            validation_criteria=(
+src/gobby/install/shared/prompts/expansion/system.md:38:      "validation": "Specific validation criteria using project commands when possible",
+src/gobby/install/shared/prompts/expansion/system.md:73:9. For TDD-required code/config work, emit one implementation task with `additional_skills: ["test-driven-development"]`, a `tdd:required` label if labels are present, and validation criteria requiring red, green, refactor/final-green, exact test command, test-quality audit evidence, and test-types audit (mypy ratchet) evidence for Python test changes.
+src/gobby/install/shared/prompts/expansion/system.md:84:    identify that file as new in the test intent and validation criteria.
+src/gobby/install/shared/prompts/external_validation/agent.md:10:  criteria_section:
+src/gobby/install/shared/prompts/external_validation/agent.md:13:    description: Acceptance criteria or task description section
+src/gobby/install/shared/prompts/external_validation/agent.md:32:Validate whether the code changes satisfy the acceptance criteria. You have access to tools to:
+src/gobby/install/shared/prompts/external_validation/agent.md:40:{{ criteria_section }}{{ priority_section }}{{ symbol_section }}
+src/gobby/install/shared/prompts/external_validation/agent.md:46:1. Review the changes against the acceptance criteria
+src/gobby/install/shared/prompts/external_validation/external.md:10:  criteria_section:
+src/gobby/install/shared/prompts/external_validation/external.md:13:    description: Acceptance criteria or task description section
+src/gobby/install/shared/prompts/external_validation/external.md:32:{{ criteria_section }}{{ priority_section }}{{ symbol_section }}
+src/gobby/install/shared/prompts/external_validation/external.md:38:1. Review each change against the acceptance criteria
+src/gobby/install/shared/prompts/external_validation/spawn.md:14:  criteria_section:
+src/gobby/install/shared/prompts/external_validation/spawn.md:17:    description: Acceptance criteria or task description section
+src/gobby/install/shared/prompts/external_validation/spawn.md:51:{{ criteria_section }}{{ category_section }}{{ priority_section }}{{ symbol_section }}
+src/gobby/install/shared/prompts/external_validation/system.md:8:You are an independent QA validator reviewing code changes. You have no prior context about this task — evaluate purely from the acceptance criteria and the changes provided.
+src/gobby/install/shared/prompts/validation/criteria.md:2:name: validation-criteria
+src/gobby/install/shared/prompts/validation/criteria.md:3:description: Prompt for generating validation criteria from task description
+src/gobby/install/shared/prompts/validation/criteria.md:15:Generate validation criteria for this task.
+src/gobby/install/shared/skills/annotate/SKILL.md:60:and implementation domain, with observable validation criteria. Infer dependencies
+src/gobby/install/shared/skills/architecture/SKILL.md:59:Do not write implementation tasks or PRD acceptance criteria. Keep the brief
+src/gobby/install/shared/skills/architecture/SKILL.md:113:Do NOT write `### N.N` task sections or PRD acceptance criteria.
+src/gobby/install/shared/skills/gobby/references/agents/procedures/code-reviewer.md:12:- Test review. Before implementation, review the Test Writer's exact linked test SHA against the stored criteria and its authenticated RED evidence. Check that the failures demonstrate the required behavior and that assertions do not merely mirror the implementation. Record the verdict with the existing review step and epoch rejection counter, then send it in the verdict order above. An approved test SHA moves the claim to the Developer automatically; it does not authorize landing unfinished implementation. Review the later implementation SHA independently.
+src/gobby/install/shared/skills/gobby/references/plan/approval.md:7:Before manifest handoff, verify a real nonblank `**Plan ID:** <id>` outside fences and reject any `covers:unknown:` label. Preserve every acceptance item in source order in server-derived validation criteria; never summarize away obligations.
+src/gobby/install/shared/skills/gobby/references/tasks/closing.md:11:1. Finish the task, resolve owned findings, and check its acceptance criteria.
+src/gobby/install/shared/skills/gobby/references/tasks/closing.md:70:Developers and independent reviewers remain responsible for acceptance criteria,
+src/gobby/install/shared/skills/gobby/references/tasks/creation.md:11:Every task type except `epic` requires meaningful `validation_criteria`, including
+src/gobby/install/shared/skills/gobby/references/tasks/creation.md:26:    "validation_criteria": "Task examples match registered schemas and all links resolve.",
+src/gobby/install/shared/skills/gobby/references/tasks/overview.md:16:acceptance criteria. A listing is bounded by its schema's limit; do not assume
+src/gobby/install/shared/skills/prd/SKILL.md:7:triggers: prd, product requirements, acceptance criteria
+src/gobby/install/shared/skills/prd/SKILL.md:20:PRD should define goal, users, scope, explicit non-scope, acceptance criteria,
+src/gobby/install/shared/skills/prd/SKILL.md:30:5. Write acceptance criteria that can become plan deliverables.
+src/gobby/install/shared/skills/prd/SKILL.md:51:### Acceptance Criteria
+src/gobby/install/shared/skills/tech-writer/SKILL.md:168:against the task's acceptance criteria, and close. Closing a docs task
+src/gobby/install/shared/workflows/agents/consolidator.yaml:37:    - Apply directed folds and retirements only. For each approved proposal: merge the union of the folded task's validation criteria into the survivor with update_task; record the fold in a dated section of the survivor's description; close the folded task with close_task(reason=superseded, superseded_by=<survivor>), or reason=moot for a retirement; then report each applied fold to Triage. Never close a task as done or wont_do.
+src/gobby/install/shared/workflows/agents/developer.yaml:34:    - TDD. Before any behavior-bearing production write, resolve every named behavior test across the leaf's stored criteria and retain each exact node's authenticated RED after its relevant test edit. Skill completion permits test/stub preparation; writing one acceptance file never opens this barrier. Only explicitly stored regression-only: criteria proven unchanged against the claim baseline may use GREEN alone. Test-only writes and mechanically verified behavior-free API stubs may prepare RED; shell and mixed implementation writes share the leaf-wide guard. Close needs the same per-test chronology and later GREEN for every named test. Preserve original RED through compaction; never replay it.
+src/gobby/install/shared/workflows/agents/epic-reviewer.yaml:56:      docs/build epic, use the task Discovery Brief, validation criteria, and full
+src/gobby/install/shared/workflows/agents/epic-reviewer.yaml:59:      validation criteria. Filesystem reads are expected in the review step.
+src/gobby/install/shared/workflows/agents/epic-reviewer.yaml:191:        use the Discovery Brief, validation criteria, and descendant task set as
+src/gobby/install/shared/workflows/agents/test-writer.yaml:23:    - Start. Send your session ref to your Dev Manager with `gobby-agents:send_message(target="session", target_id=<Dev Manager session ref from your launch prompt>)`. Then read the task with `gobby-tasks:get_task` and load `test-driven-development` plus the skills its paths need. Claim a single task with `gobby-tasks:claim_task` before you edit. An epic (`task_type` `epic`) has no acceptance criteria and is never claimed by a seat: wait with `gobby-agents:wait_for_coordination` on your Dev Manager until it names a leaf, then claim only that leaf.
+src/gobby/install/shared/workflows/agents/test-writer.yaml:24:    - Tests. Write the smallest tests that pin the task's acceptance criteria and run them. Keep each expected assertion failure as the RED evidence; fix collection, environment or compile failures before treating a run as RED. Write no production code beyond a behavior-free stub a test needs to compile.
+src/gobby/install/shared/workflows/agents/test-writer.yaml:26:    - Backstop. If the task's record shows an out-of-order implementation link (an `out_of_order_link` incident recorded before its test step was approved), map the existing tests at the candidate SHA to the task's validation criteria, add tests only for the gaps, commit them, link the commit, record the test step with that map in its feedback, and send the combined SHA to your Dev Manager as `EVENT=CANDIDATE`. The tests-first path above is unchanged.
+src/gobby/install/shared/workflows/agents/test-writer.yaml:169:        Write the smallest tests that pin the claimed task's acceptance criteria and run
+src/gobby/install/shared/workflows/pipelines/team-planning.yaml:148:        validation_criteria: "The plan file is decision-complete, passes gobby plans validate, and carries its consensus and manifest stamps."
+src/gobby/install/shared/workflows/variables/gobby-default-variables.yaml:51:    description: "Acceptance test paths derived from claimed task validation criteria"
+src/gobby/mcp_proxy/tools/tasks/_crud.py:36:from gobby.tasks.criteria_text import TaskCriteriaError, require_validation_criteria
+src/gobby/mcp_proxy/tools/tasks/_crud.py:51:    validation_criteria: str | None,
+src/gobby/mcp_proxy/tools/tasks/_crud.py:54:    supplied_validation_criteria: str | None,
+src/gobby/mcp_proxy/tools/tasks/_crud.py:58:        require_validation_criteria(task_type, validation_criteria)
+src/gobby/mcp_proxy/tools/tasks/_crud.py:61:    if supplied_validation_criteria is not None:
+src/gobby/mcp_proxy/tools/tasks/_crud.py:62:        findings = (*malformed_test_reference_findings(supplied_validation_criteria),)
+src/gobby/mcp_proxy/tools/tasks/_crud.py:94:        validation_criteria: str | None = None,
+src/gobby/mcp_proxy/tools/tasks/_crud.py:118:            validation_criteria: Acceptance criteria for validating completion.
+src/gobby/mcp_proxy/tools/tasks/_crud.py:180:            validation_criteria,
+src/gobby/mcp_proxy/tools/tasks/_crud.py:182:            supplied_validation_criteria=validation_criteria,
+src/gobby/mcp_proxy/tools/tasks/_crud.py:231:            "validation_criteria": validation_criteria,
+src/gobby/mcp_proxy/tools/tasks/_crud.py:372:        brief="Create a new task. Requires: title, session_id, category, validation_criteria (every task_type except 'epic')",
+src/gobby/mcp_proxy/tools/tasks/_crud.py:418:                    "description": "Task domain: 'code' (implementation — also requires implementation_domain), 'config' (configuration files), 'docs' (documentation), 'refactor' (code restructuring, including updating existing tests), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification). Category does not affect the validation_criteria requirement, which applies to every task_type except 'epic'.",
+src/gobby/mcp_proxy/tools/tasks/_crud.py:421:                "validation_criteria": {
+src/gobby/mcp_proxy/tools/tasks/_crud.py:423:                    "description": "Acceptance criteria for task completion. REQUIRED for every task_type except 'epic' — creation fails without it, whatever the category. Describe what 'done' looks like — validate_task checks the diff against this. Reference named tests as `test: path::test_symbol` and evidence files as `file: path`. A backticked command span is a mandatory exact close command; pipelines, placeholders, redirections, and trailing punctuation are rejected.",
+src/gobby/mcp_proxy/tools/tasks/_crud.py:511:        description="Get task details including dependencies. Task ID can be #N (e.g., #1), path (e.g., 1.2.3), or UUID. Returns an actionable card by default, including description, validation_criteria, labels, state, and dependency summaries; set brief=false for the full task record.",
+src/gobby/mcp_proxy/tools/tasks/_crud.py:521:                    "description": "If true (default), return the actionable card: identity, description, validation_criteria, labels, state, execution settings, and dependency summaries. If false, also return project and session ids, commits, closure, validation, merge and dispatch details, escalation fields, GitHub/Linear links, dates, and full dependency rows.",
+src/gobby/mcp_proxy/tools/tasks/_crud.py:537:        validation_criteria: str | None = None,
+src/gobby/mcp_proxy/tools/tasks/_crud.py:577:        effective_validation_criteria = (
+src/gobby/mcp_proxy/tools/tasks/_crud.py:578:            validation_criteria
+src/gobby/mcp_proxy/tools/tasks/_crud.py:579:            if validation_criteria is not None
+src/gobby/mcp_proxy/tools/tasks/_crud.py:580:            else current_task.validation_criteria
+src/gobby/mcp_proxy/tools/tasks/_crud.py:590:            effective_validation_criteria,
+src/gobby/mcp_proxy/tools/tasks/_crud.py:592:            supplied_validation_criteria=validation_criteria,
+src/gobby/mcp_proxy/tools/tasks/_crud.py:607:        if validation_criteria is not None:
+src/gobby/mcp_proxy/tools/tasks/_crud.py:608:            kwargs["validation_criteria"] = validation_criteria
+src/gobby/mcp_proxy/tools/tasks/_crud.py:694:                "validation_criteria": {
+src/gobby/mcp_proxy/tools/tasks/_crud.py:696:                    "description": "Acceptance criteria for validating task completion. Cannot be cleared on any task_type except 'epic'. Reference named tests as `test: path::test_symbol` and evidence files as `file: path`. A backticked command span is a mandatory exact close command; pipelines, placeholders, redirections, and trailing punctuation are rejected.",
+src/gobby/mcp_proxy/tools/tasks/_crud.py:706:                    "description": "Task domain: 'code' (implementation — also requires implementation_domain), 'config' (configuration files), 'docs' (documentation), 'refactor' (code restructuring, including updating existing tests), 'test' (test-writing), 'research' (investigation), 'planning' (design/architecture), or 'manual' (manual verification). Category does not affect the validation_criteria requirement, which applies to every task_type except 'epic'.",
+src/gobby/mcp_proxy/tools/tasks/_formatters.py:159:        "validation_criteria": _task_value(task, "validation_criteria"),
+src/gobby/mcp_proxy/tools/tasks/_task_scope.py:176:        for reference in extract_artifact_references(task.validation_criteria or "", kind):
+src/gobby/plans/_artifact_refs.py:25:def artifact_referenced(item: AcceptanceItem, validation_criteria: str) -> bool:
+src/gobby/plans/_artifact_refs.py:27:        return _file_referenced(item.artifact_ref, validation_criteria)
+src/gobby/plans/_artifact_refs.py:29:        return _symbol_referenced(item.artifact_ref, validation_criteria)
+src/gobby/plans/_artifact_refs.py:31:        return _test_referenced(item.artifact_ref, validation_criteria)
+src/gobby/plans/_artifact_refs.py:33:        return _behavior_referenced(item, validation_criteria)
+src/gobby/plans/_artifact_refs.py:37:def _file_referenced(artifact_ref: str, validation_criteria: str) -> bool:
+src/gobby/plans/_artifact_refs.py:39:    if any(_contains_path_ref(validation_criteria, candidate) for candidate in candidates):
+src/gobby/plans/_artifact_refs.py:41:    if any(_path_parts_referenced(validation_criteria, candidate) for candidate in candidates):
+src/gobby/plans/_artifact_refs.py:44:    return bool(markers) and all(marker in validation_criteria for marker in markers)
+src/gobby/plans/_artifact_refs.py:47:def _symbol_referenced(artifact_ref: str, validation_criteria: str) -> bool:
+src/gobby/plans/_artifact_refs.py:52:        _contains_ref(validation_criteria, candidate) for candidate in candidates if candidate
+src/gobby/plans/_artifact_refs.py:56:def _test_referenced(artifact_ref: str, validation_criteria: str) -> bool:
+src/gobby/plans/_artifact_refs.py:57:    if _contains_ref(validation_criteria, artifact_ref):
+src/gobby/plans/_artifact_refs.py:61:            _contains_path_ref(validation_criteria, path)
+src/gobby/plans/_artifact_refs.py:62:            or _path_parts_referenced(validation_criteria, path)
+src/gobby/plans/_artifact_refs.py:64:        and _contains_ref(validation_criteria, test_name)
+src/gobby/plans/_artifact_refs.py:69:def _behavior_referenced(item: AcceptanceItem, validation_criteria: str) -> bool:
+src/gobby/plans/_artifact_refs.py:71:        _contains_ref(validation_criteria, ref, case_sensitive=False)
+src/gobby/plans/_artifact_refs.py:80:        _contains_path_ref(validation_criteria, candidate)
+src/gobby/plans/_artifact_refs.py:81:        or _path_parts_referenced(validation_criteria, candidate)
+src/gobby/plans/_artifact_refs.py:86:        _contains_ref(validation_criteria, task_ref, case_sensitive=False)
+src/gobby/plans/_task_store.py:22:    validation_criteria: str
+src/gobby/plans/_task_store.py:43:            "validation_criteria": record.validation_criteria,
+src/gobby/plans/_task_store.py:110:        validation_criteria=task.validation_criteria or task.description or "",
+src/gobby/plans/_task_store.py:131:        validation_criteria=_first_string(raw, "validation_criteria", "validation", "description"),
+src/gobby/plans/coverage.py:84:    validation_criteria_snippet: str
+src/gobby/plans/coverage.py:145:    leaf_validation_criteria: str,
+src/gobby/plans/coverage.py:167:    if not artifact_referenced(item, leaf_validation_criteria):
+src/gobby/plans/coverage.py:365:        result = validate_covers(record, task.validation_criteria, task.ref, plan_doc)
+src/gobby/plans/coverage.py:368:            validation_criteria_snippet=_snippet(task.validation_criteria),
+src/gobby/plans/coverage.py:558:                                validation_criteria_snippet=str(exc),
+src/gobby/plans/coverage.py:568:            result = validate_covers(record, task.validation_criteria, task.ref, plan_doc)
+src/gobby/plans/coverage.py:579:                            validation_criteria_snippet=result.detail,
+src/gobby/plans/coverage.py:593:            validation_criteria_snippet="",
+src/gobby/plans/coverage.py:598:        validation_criteria_snippet=str(raw.get("validation_criteria_snippet", "")),
+src/gobby/plans/coverage.py:764:                "validation_criteria": record.validation_criteria,
+src/gobby/plans/coverage_manifest.py:424:        "validation_criteria_snippet": _attr(leaf, "validation_criteria_snippet"),
+src/gobby/plans/deferral.py:18:    "validation_criteria_does_not_duplicate",
+src/gobby/plans/deferral.py:100:    validation_criteria = _task_validation_criteria(task)
+src/gobby/plans/deferral.py:102:        if not artifact_referenced(item, validation_criteria):
+src/gobby/plans/deferral.py:108:                "validation_criteria_does_not_duplicate",
+src/gobby/plans/deferral.py:109:                f"task validation criteria do not duplicate artifact {item.artifact_ref!r}",
+src/gobby/plans/deferral.py:172:def _task_validation_criteria(task: dict[str, Any]) -> str:
+src/gobby/plans/deferral.py:173:    value = task.get("validation_criteria", "")
+src/gobby/plans/manifest_emitter.py:150:        entry["validation_criteria"] = "\n".join(
+src/gobby/plans/manifest_emitter.py:171:                    str(entry["validation_criteria"]),
+src/gobby/plans/manifest_emitter.py:398:        "validation_criteria": validation,
+src/gobby/plans/manifest_parser.py:23:    "validation_criteria",
+src/gobby/plans/manifest_parser.py:34:    validation_criteria: str
+src/gobby/plans/manifest_parser.py:233:        validation_criteria=str(raw["validation_criteria"]),
+src/gobby/projects/purge.py:108:# tasks_require_validation_criteria is NOT VALID: legacy rows without criteria
+src/gobby/projects/purge.py:112:    "validation_criteria = CASE"
+src/gobby/projects/purge.py:113:    " WHEN task_type = 'epic' OR NULLIF(btrim(validation_criteria), '') IS NOT NULL"
+src/gobby/projects/purge.py:114:    " THEN validation_criteria"
+src/gobby/projects/purge.py:115:    " ELSE 'Legacy task: validation criteria were not recorded before they became required.'"
+src/gobby/servers/routes/agent_spawn.py:148:    # Validation criteria
+src/gobby/servers/routes/agent_spawn.py:149:    if task.validation_criteria:
+src/gobby/servers/routes/agent_spawn.py:150:        parts.append(f"\n### Validation Criteria\n{task.validation_criteria}")
+src/gobby/servers/routes/tasks.py:65:    validation_criteria: str | None = Field(default=None, description="Acceptance criteria")
+src/gobby/servers/routes/tasks.py:96:    validation_criteria: str | None = Field(default=None, description="New validation criteria")
+src/gobby/servers/routes/tasks.py:316:                validation_criteria=request_data.validation_criteria,
+src/gobby/storage/tasks/_close.py:17:from gobby.tasks.criteria_text import normalized_validation_criteria
+src/gobby/storage/tasks/_close.py:21:_LEGACY_VALIDATION_CRITERIA = (
+src/gobby/storage/tasks/_close.py:22:    "Legacy task: validation criteria were not recorded before they became required."
+src/gobby/storage/tasks/_close.py:100:               validation_criteria = CASE
+src/gobby/storage/tasks/_close.py:102:                        OR NULLIF(btrim(validation_criteria), '') IS NOT NULL
+src/gobby/storage/tasks/_close.py:103:                   THEN validation_criteria
+src/gobby/storage/tasks/_close.py:116:            _LEGACY_VALIDATION_CRITERIA,
+src/gobby/storage/tasks/_close.py:224:                and normalized_validation_criteria(parent["validation_criteria"]) is not None
+src/gobby/storage/tasks/_creation.py:24:from gobby.tasks.criteria_text import require_validation_criteria
+src/gobby/storage/tasks/_creation.py:41:    validation_criteria: str | None = None,
+src/gobby/storage/tasks/_creation.py:64:            validation_criteria=validation_criteria,
+src/gobby/storage/tasks/_creation.py:83:    validation_criteria: str | None = None,
+src/gobby/storage/tasks/_creation.py:104:            validation_criteria=validation_criteria,
+src/gobby/storage/tasks/_creation.py:150:    validation_criteria: str | None = None,
+src/gobby/storage/tasks/_creation.py:166:    validation_criteria = require_validation_criteria(task_type, validation_criteria)
+src/gobby/storage/tasks/_creation.py:192:                    validation_criteria, review_fail_count,
+src/gobby/storage/tasks/_creation.py:210:                    validation_criteria,
+src/gobby/storage/tasks/_decomposition.py:22:        validation_criteria: str | None = None,
+src/gobby/storage/tasks/_decomposition.py:40:            validation_criteria: Observable acceptance criteria for every non-epic task.
+src/gobby/storage/tasks/_decomposition.py:71:            validation_criteria=validation_criteria,
+src/gobby/storage/tasks/_manager.py:179:        validation_criteria: str | None = None,
+src/gobby/storage/tasks/_manager.py:198:            validation_criteria=validation_criteria,
+src/gobby/storage/tasks/_manager.py:218:        validation_criteria: str | None = None,
+src/gobby/storage/tasks/_manager.py:236:            validation_criteria=validation_criteria,
+src/gobby/storage/tasks/_models.py:281:    validation_criteria: str | None = None
+src/gobby/storage/tasks/_models.py:365:            validation_criteria=(
+src/gobby/storage/tasks/_models.py:366:                row["validation_criteria"] if "validation_criteria" in keys else None
+src/gobby/storage/tasks/_models.py:426:            "validation_criteria": self.validation_criteria,
+src/gobby/storage/tasks/_update_facade.py:11:from gobby.tasks.criteria_text import require_validation_criteria
+src/gobby/storage/tasks/_update_facade.py:44:        validation_criteria: MaybeUnset[str | None] = UNSET,
+src/gobby/storage/tasks/_update_facade.py:64:        if task_type is not UNSET or validation_criteria is not UNSET:
+src/gobby/storage/tasks/_update_facade.py:69:            if validation_criteria is UNSET:
+src/gobby/storage/tasks/_update_facade.py:70:                effective_criteria = current_task.validation_criteria
+src/gobby/storage/tasks/_update_facade.py:73:                    validation_criteria if isinstance(validation_criteria, str) else None
+src/gobby/storage/tasks/_update_facade.py:75:            effective_criteria = require_validation_criteria(
+src/gobby/storage/tasks/_update_facade.py:79:            if validation_criteria is not UNSET:
+src/gobby/storage/tasks/_update_facade.py:80:                validation_criteria = effective_criteria
+src/gobby/storage/tasks/_update_facade.py:109:                validation_criteria=validation_criteria,
+src/gobby/storage/tasks/_updates.py:93:    validation_criteria: MaybeUnset[str | None] = UNSET,
+src/gobby/storage/tasks/_updates.py:161:    if validation_criteria is not UNSET:
+src/gobby/storage/tasks/_updates.py:162:        updates.append("validation_criteria = %s")
+src/gobby/storage/tasks/_updates.py:163:        params.append(validation_criteria)
+src/gobby/storage/tasks/_updates.py:292:    validation_criteria: MaybeUnset[str | None] = UNSET,
+src/gobby/storage/tasks/_updates.py:359:        validation_criteria=validation_criteria,
+src/gobby/sync/task_review_serialization.py:18:    validation_criteria: str | None
+src/gobby/sync/task_review_serialization.py:29:        "criteria": task.validation_criteria,
+src/gobby/sync/task_review_serialization.py:90:        "validation_criteria": value.get("criteria"),
+src/gobby/sync/tasks.py:15:from gobby.tasks.criteria_text import require_validation_criteria
+src/gobby/sync/tasks.py:550:                        validation_criteria = require_validation_criteria(
+src/gobby/sync/tasks.py:552:                            review["validation_criteria"],
+src/gobby/sync/tasks.py:610:                            "validation_criteria": validation_criteria,
+src/gobby/tasks/acceptance_references.py:1:"""Parse test and file references in task acceptance criteria."""
+src/gobby/tasks/commits.py:448:    """Extract file paths mentioned in task title, description, and validation_criteria.
+src/gobby/tasks/commits.py:455:        task: Task dictionary with title, description, and optionally validation_criteria.
+src/gobby/tasks/commits.py:472:    if task.get("validation_criteria"):
+src/gobby/tasks/commits.py:473:        text_parts.append(task["validation_criteria"])
+src/gobby/tasks/commits.py:517:        task: Task dictionary with title, description, and optionally validation_criteria.
+src/gobby/tasks/commits.py:528:    if task.get("validation_criteria"):
+src/gobby/tasks/commits.py:529:        text_parts.append(task["validation_criteria"])
+src/gobby/tasks/criteria_text.py:10:def normalized_validation_criteria(value: str | None) -> str | None:
+src/gobby/tasks/criteria_text.py:18:def require_validation_criteria(task_type: str, value: str | None) -> str | None:
+src/gobby/tasks/criteria_text.py:20:    normalized = normalized_validation_criteria(value)
+src/gobby/tasks/criteria_text.py:23:            "Every non-epic task requires nonempty validation_criteria. "
+src/gobby/tasks/expansion/_apply.py:178:                    validation_criteria=epic_validation,
+src/gobby/tasks/expansion/_apply.py:234:                    validation_criteria=task_item.get("validation"),
+src/gobby/tasks/expansion/_compile.py:397:            "validation": task_item.get("validation") or task_item.get("validation_criteria"),
+src/gobby/tasks/expansion/_compile.py:502:        "validation_criteria": task.validation_criteria,
+src/gobby/tasks/expansion/_compile.py:532:            task.validation_criteria,
+src/gobby/tasks/expansion/_contract.py:247:    validation = _contract_validation_criteria(entry, section)
+src/gobby/tasks/expansion/_contract.py:278:def _contract_validation_criteria(entry: ManifestEntry, section: PlanSection) -> str:
+src/gobby/tasks/expansion/_contract.py:279:    lines = [entry.validation_criteria.strip()]
+src/gobby/tasks/expansion/_deferrals.py:36:    ``needs-planning`` hold label, validation criteria that duplicate its original
+src/gobby/tasks/expansion/_deferrals.py:114:            validation_criteria=validation,
+src/gobby/tasks/expansion/_reconcile.py:265:        validation_criteria=task_item.get("validation"),
+src/gobby/tasks/import_criteria.py:1:"""Observable validation criteria for externally imported tasks."""
+src/gobby/tasks/import_criteria.py:6:def external_issue_validation_criteria(source: str, reference: str) -> str:
+src/gobby/tasks/prompts/expand-task.md:17:| validation_criteria | string | No | How to verify this subtask is complete |
+src/gobby/tasks/prompts/expand-task.md:33:      "validation_criteria": "Run migrations and verify tables exist"
+src/gobby/tasks/prompts/expand-task.md:42:      "validation_criteria": "Unit tests for all repository methods pass"
+src/gobby/tasks/prompts/expand-task.md:51:      "validation_criteria": "Integration tests for all endpoints pass"
+src/gobby/tasks/prompts/expand-task.md:69:4. **Testing**: Every coding subtask should have a category and validation_criteria.
+src/gobby/tasks/prompts/expand-task.md:76:## Validation Criteria Rules
+src/gobby/tasks/prompts/expand-task.md:78:For each subtask, generate precise validation criteria in the `validation_criteria` field.
+src/gobby/tasks/related_tests.py:60:    validation_criteria: str | None = None,
+src/gobby/tasks/related_tests.py:66:    search_text = f"{task_title} {validation_criteria or ''} {task_description or ''}"
+src/gobby/tasks/tree_builder.py:177:        validation_criteria = node.get("validation_criteria")
+src/gobby/tasks/tree_builder.py:191:                validation_criteria=validation_criteria,
+src/gobby/workflows/claimed_task_extra_skills.py:42:    validation_criteria: str | None,
+src/gobby/workflows/claimed_task_extra_skills.py:47:    text = (validation_criteria or "").lower()
+src/gobby/workflows/claimed_task_extra_skills.py:75:            validation_criteria = _string_field(task, "validation_criteria")
+src/gobby/workflows/claimed_task_extra_skills.py:85:                validation_criteria=validation_criteria,
+src/gobby/workflows/claimed_task_extra_skills.py:91:            if validation_criteria:
+src/gobby/workflows/claimed_task_extra_skills.py:92:                for reference in extract_artifact_references(validation_criteria, "test"):
+web/src/components/activity/TasksTabActions.ts:20:  validation_criteria?: string;
+web/src/components/activity/__tests__/TasksTab.events.test.tsx:488:        validation_criteria: null,
+web/src/components/activity/__tests__/TasksTab.setup.ts:98:      validation_criteria: null,
+web/src/components/activity/__tests__/TasksTab.test.tsx:368:        validation_criteria: null,
+web/src/components/activity/__tests__/TasksTab.test.tsx:460:        validation_criteria: null,
+web/src/components/activity/__tests__/TasksTab.test.tsx:556:        validation_criteria: null,
+web/src/components/activity/__tests__/TasksTab.test.tsx:564:        validation_criteria: null,
+web/src/components/activity/__tests__/TasksTab.test.tsx:662:        validation_criteria: "Verify the lower pane layout",
+web/src/components/activity/__tests__/TasksTab.test.tsx:690:      (screen.getByLabelText("Validation criteria") as HTMLTextAreaElement)
+web/src/components/activity/__tests__/TasksTabDetailPanel.test.tsx:134:    expect(getByLabelText("Validation criteria")).toBeTruthy();
+web/src/components/activity/__tests__/TasksTabDetailPanel.test.tsx:164:          validation_criteria: null,
+web/src/components/activity/__tests__/fixtures.ts:31:    validation_criteria: null,
+web/src/components/activity/taskFieldRouting.ts:18:  "validation_criteria",
+web/src/components/activity/taskFieldRouting.ts:46: *                category/labels/validation_criteria)
+web/src/components/activity/taskdetail/TaskDetailEditableCore.tsx:18: * labels, description, validation criteria); every commit routes through the
+web/src/components/activity/taskdetail/TaskDetailEditableCore.tsx:52:  const validationCriteria = task.validation_criteria ?? "";
+web/src/components/activity/taskdetail/TaskDetailEditableCore.tsx:85:          <StaticBlock label="Validation criteria" value={validationCriteria} />
+web/src/components/activity/taskdetail/TaskDetailEditableCore.tsx:176:          Validation criteria
+web/src/components/activity/taskdetail/TaskDetailEditableCore.tsx:180:          ariaLabel="Validation criteria"
+web/src/components/activity/taskdetail/TaskDetailEditableCore.tsx:181:          placeholder="No validation criteria"
+web/src/components/activity/taskdetail/TaskDetailEditableCore.tsx:183:          disabled={edit.isFieldPending(task.id, "validation_criteria")}
+web/src/components/activity/taskdetail/TaskDetailEditableCore.tsx:187:              field: "validation_criteria",
+web/src/components/tasks/TaskCreateForm.tsx:45:  validation_criteria?: string;
+web/src/components/tasks/TaskCreateForm.tsx:144:        params.validation_criteria = validationCriteria.trim();
+web/src/components/tasks/TaskCreateForm.tsx:326:            <FormField label="Validation Criteria">
+web/src/lib/__tests__/taskNormalization.test.ts:14:        validation_criteria: null,
+web/src/lib/__tests__/taskNormalization.test.ts:24:      { id: "task-1", validation_criteria: ["run tests"] },
+web/src/lib/taskNormalization.ts:32:  validation_criteria?: string | null;
+web/src/lib/taskNormalization.ts:118:  validation_criteria: isOptionalString,
+web/src/types/tasks.ts:78:  validation_criteria: string | null;
+web/tests/fixtures/webChatRestorePlan.ts:44:  validation_criteria: "Refresh keeps claimed task state visible.",

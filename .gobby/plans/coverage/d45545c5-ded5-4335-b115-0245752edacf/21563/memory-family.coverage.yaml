@@ -1,0 +1,2059 @@
+header:
+  plan_id: memory-family
+  plan_hash: 816746ce89728d8173f9bb6057f69cd394de3dadcc287468535f02f260d7e5cb
+  root_task_ref: '21563'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-11-02T06:36:10Z'
+  task_tree_source: db
+  task_tree_source_hash: bda4db740bf371c9533c591c2003b70a0d436b38f5343ba157cc661577b74528
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '0.1'
+  item_id: 0.1.1
+  plan_node_hash: cd62f666d4d31aaa7e49cfd43969873053571773fee8e2ac17f5a9cf2cb337af
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25538'
+    validation_criteria_snippet: '0.1.1: The corpus inventory equals the exact 80-key
+      ledger predicate, every key has a success case and a representative failure
+      case, and a key outside the fam...'
+    matched_artifact_ref: tests/contracts/test_memory_parity_corpus.py::test_inventory_matches_memory_ledger
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.2
+  plan_node_hash: 6b7d8356c40911bc4019be7c0b37b8fcb65a1622f34f62ec4ebc46dfe0007dee
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25538'
+    validation_criteria_snippet: '0.1.1: The corpus inventory equals the exact 80-key
+      ledger predicate, every key has a success case and a representative failure
+      case, and a key outside the fam...'
+    matched_artifact_ref: tests/contracts/test_memory_parity_corpus.py::test_collection_is_reproducible
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.3
+  plan_node_hash: 5f2c845fb3fdc26563da272d9a7129fcf65517b977ebc423da6a29dc241219b6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25538'
+    validation_criteria_snippet: '0.1.1: The corpus inventory equals the exact 80-key
+      ledger predicate, every key has a success case and a representative failure
+      case, and a key outside the fam...'
+    matched_artifact_ref: tests/contracts/test_memory_parity_corpus.py::test_http_admission_matrix
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.4
+  plan_node_hash: 50654057fc7dfa4f814d08079f3f9663027da2799c16715771e4ee909e22c33e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25538'
+    validation_criteria_snippet: '0.1.1: The corpus inventory equals the exact 80-key
+      ledger predicate, every key has a success case and a representative failure
+      case, and a key outside the fam...'
+    matched_artifact_ref: tests/contracts/test_memory_parity_corpus.py::test_debt_waivers_are_behavior_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.5
+  plan_node_hash: eef32c65f0cb69253834833eb511a6c25d959d2e8a18f1031df0e98ae49de9d3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25538'
+    validation_criteria_snippet: '0.1.1: The corpus inventory equals the exact 80-key
+      ledger predicate, every key has a success case and a representative failure
+      case, and a key outside the fam...'
+    matched_artifact_ref: tests/contracts/test_memory_parity_corpus.py::test_waiver_does_not_hide_unrelated_diff
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 28b42c3c052074800c8031a7d7443ea36faf2064e6f1bad984f076ba1eea41d4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25539'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/memories` matches list scope,
+      filters, ordering, limit, offset and payload. test: `crates/gmemory/tests/records.rs::list_matches_python`....'
+    matched_artifact_ref: crates/gmemory/tests/records.rs::list_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: d48e0e935abaaa88f88eea235606afc9d85ad19688000ee729a075bdc260736d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25539'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/memories` matches list scope,
+      filters, ordering, limit, offset and payload. test: `crates/gmemory/tests/records.rs::list_matches_python`....'
+    matched_artifact_ref: crates/gmemory/tests/records.rs::get_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: a75ae0b9d34dd3a7b9f9b89398a53dcc0b2000414407e3155ed9d690775777b1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25539'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/memories` matches list scope,
+      filters, ordering, limit, offset and payload. test: `crates/gmemory/tests/records.rs::list_matches_python`....'
+    matched_artifact_ref: crates/gmemory/tests/records.rs::stats_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 238ea64857e1d778945c9620b942304756e3d75451e2863d01ed7237ad3e989b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25539'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/memories` matches list scope,
+      filters, ordering, limit, offset and payload. test: `crates/gmemory/tests/records.rs::list_matches_python`....'
+    matched_artifact_ref: crates/gmemory/tests/records.rs::family_shell_and_placement
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: b7bb72de40f716d84ffa5fc98c94b043a28edf1c8f5be37226298f88da30639a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25539'
+    validation_criteria_snippet: '1.1.1: `HTTP GET /api/memories` matches list scope,
+      filters, ordering, limit, offset and payload. test: `crates/gmemory/tests/records.rs::list_matches_python`....'
+    matched_artifact_ref: crates/gmemory/tests/records.rs::unexpected_read_errors_are_safe_and_waived
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 85318d663160ec689fa8a33a0f0d5213219fd93540d502fcbcd2fd41967f8999
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25540'
+    validation_criteria_snippet: '1.2.1: `HTTP GET /api/memories/graph` matches nodes,
+      crossref edges, limits and project scoping. test: `crates/gmemory/tests/graph_reads.rs::memory_graph_match...'
+    matched_artifact_ref: crates/gmemory/tests/graph_reads.rs::memory_graph_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 9e0e15f447daf412e698b35df4a99a260707b62339f5db60ee18ef249eebd346
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25540'
+    validation_criteria_snippet: '1.2.1: `HTTP GET /api/memories/graph` matches nodes,
+      crossref edges, limits and project scoping. test: `crates/gmemory/tests/graph_reads.rs::memory_graph_match...'
+    matched_artifact_ref: crates/gmemory/tests/graph_reads.rs::graph_counts_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: d7285dadecd7cfafbf946f6005178dd373f375e7c821fb848770fdef7c66292d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25540'
+    validation_criteria_snippet: '1.2.1: `HTTP GET /api/memories/graph` matches nodes,
+      crossref edges, limits and project scoping. test: `crates/gmemory/tests/graph_reads.rs::memory_graph_match...'
+    matched_artifact_ref: crates/gmemory/tests/graph_reads.rs::entities_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: a1d9c7245c016bfc0956a4fa0a195e34c2dd63f61433b273730e8f9f5e76a70e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25540'
+    validation_criteria_snippet: '1.2.1: `HTTP GET /api/memories/graph` matches nodes,
+      crossref edges, limits and project scoping. test: `crates/gmemory/tests/graph_reads.rs::memory_graph_match...'
+    matched_artifact_ref: crates/gmemory/tests/graph_reads.rs::neighbors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 5f610237fc7851df06bec50ff58a7ac0d58bb5ae2b7bf42866b59b9aeefd3768
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25540'
+    validation_criteria_snippet: '1.2.1: `HTTP GET /api/memories/graph` matches nodes,
+      crossref edges, limits and project scoping. test: `crates/gmemory/tests/graph_reads.rs::memory_graph_match...'
+    matched_artifact_ref: crates/gmemory/tests/graph_reads.rs::cluster_expansion_and_safe_errors
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: 02cb742771703fc3f327eafc26b097b9dab4cf9d10dd9f6b5627e3554e71b9f2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25540'
+    validation_criteria_snippet: '1.2.1: `HTTP GET /api/memories/graph` matches nodes,
+      crossref edges, limits and project scoping. test: `crates/gmemory/tests/graph_reads.rs::memory_graph_match...'
+    matched_artifact_ref: crates/gmemory/tests/graph_reads.rs::entity_vector_search_skips_other_dimensions
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: 8c0f2fdac51bb13e9989c7b934b80c3cee36134242e9b5d0684eac162294f1c3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25541'
+    validation_criteria_snippet: '1.3.1: `HTTP GET /api/memories/search` matches ranking,
+      scores, diagnostics, filters, limit and min-score across semantic, keyword and
+      graph legs, and each BM2...'
+    matched_artifact_ref: crates/gmemory/tests/search.rs::search_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: c7c3f60f3870a864c1a70194353d980a2cd85e7f53dd852057d08a8fd0107d7e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25541'
+    validation_criteria_snippet: '1.3.1: `HTTP GET /api/memories/search` matches ranking,
+      scores, diagnostics, filters, limit and min-score across semantic, keyword and
+      graph legs, and each BM2...'
+    matched_artifact_ref: crates/gmemory/tests/search.rs::degraded_search_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: 37c3808559d047054aa62173d2dac0bf05585ff840c5323714fe8652b5aa7d41
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25541'
+    validation_criteria_snippet: '1.3.1: `HTTP GET /api/memories/search` matches ranking,
+      scores, diagnostics, filters, limit and min-score across semantic, keyword and
+      graph legs, and each BM2...'
+    matched_artifact_ref: crates/gmemory/tests/search.rs::surfaced_stats_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: 1b0874d27dd23dc0d8d8a9300f09815123cf1175d0c93ba86ef8ae8c03467990
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25541'
+    validation_criteria_snippet: '1.3.1: `HTTP GET /api/memories/search` matches ranking,
+      scores, diagnostics, filters, limit and min-score across semantic, keyword and
+      graph legs, and each BM2...'
+    matched_artifact_ref: crates/gmemory/tests/search.rs::qdrant_retrieval_returns_vectors
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: 9bdce1fd1c300e6ff6df7463fadababb10ee7ba8f70503c12d46ee17a32c5193
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25541'
+    validation_criteria_snippet: '1.3.1: `HTTP GET /api/memories/search` matches ranking,
+      scores, diagnostics, filters, limit and min-score across semantic, keyword and
+      graph legs, and each BM2...'
+    matched_artifact_ref: crates/gmemory/tests/search.rs::unexpected_search_error_is_safe_and_waived
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.6
+  plan_node_hash: 8257670ac6a4fe3b5e804710de09a5db0f3dcd2246db3ad190114c478db0bef9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25541'
+    validation_criteria_snippet: '1.3.1: `HTTP GET /api/memories/search` matches ranking,
+      scores, diagnostics, filters, limit and min-score across semantic, keyword and
+      graph legs, and each BM2...'
+    matched_artifact_ref: crates/gmemory/tests/search.rs::compare_backend_rolls_back_surfaced_stats
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 88344af0596257225ccd1c4a4ee8e8d9a174da25d3d20a6ad911dc401e6ee964
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25542'
+    validation_criteria_snippet: '2.1.1: `append_change`, `watermark` and `projection_targets`
+      produce Python''s rows and target sets for memory and tool sources, inside and
+      outside a caller tra...'
+    matched_artifact_ref: crates/gcore/tests/embedding_generation.rs::ledger_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 683656a60a79997d8dbb169f830ee87698fbaa9223ee0ab312d3accf0146ffe1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25542'
+    validation_criteria_snippet: '2.1.1: `append_change`, `watermark` and `projection_targets`
+      produce Python''s rows and target sets for memory and tool sources, inside and
+      outside a caller tra...'
+    matched_artifact_ref: crates/gcore/tests/embedding_generation.rs::serving_lease_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: f9740c9bc6066ee1caf076bffe6ef024be79030022bd7f2b6de26339096f15fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25542'
+    validation_criteria_snippet: '2.1.1: `append_change`, `watermark` and `projection_targets`
+      produce Python''s rows and target sets for memory and tool sources, inside and
+      outside a caller tra...'
+    matched_artifact_ref: crates/gcore/tests/embedding_generation.rs::instance_identity_and_retarget
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: a3326eb429ddda181804555a17d738798cdf7da606b2c554cf5fccf515727d46
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25542'
+    validation_criteria_snippet: '2.1.1: `append_change`, `watermark` and `projection_targets`
+      produce Python''s rows and target sets for memory and tool sources, inside and
+      outside a caller tra...'
+    matched_artifact_ref: crates/gcore/tests/embedding_generation.rs::managed_renewal_backoff_and_fence
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: 1bfbf468a0a83af3abd0791411dac4f807d0dfc33f106764135513483378ac35
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25542'
+    validation_criteria_snippet: '2.1.1: `append_change`, `watermark` and `projection_targets`
+      produce Python''s rows and target sets for memory and tool sources, inside and
+      outside a caller tra...'
+    matched_artifact_ref: crates/gcore/tests/embedding_generation.rs::managed_reacquire_or_rebuild
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: fac818737f9bea937f1fe0b13f2a470ff2e3f00aad14481cbd4856ecc6edddc7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::create_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: a5e8214970bdb7f2b6852c5ee13a75a7da439ee86ae1b4faa21807e7dca37863
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::update_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: c7f481566f59027caf6d80ad1032e7fd72d88b9efd492e6d7c46fad2ff05c564
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::delete_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 073ff7437e29516e1ec871fd7b6dc9e3b8608f08b082376d14045021f924fe33
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::restore_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: d400e402ee1b2aeb4d78ad7e149e486e774d09a33343501a18dd7f587444df63
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::promote_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: 01125df21cdb34ebd8e61686ed5a3c41e9a561f891dcc11313f51f1fb285c909
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::demote_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.7
+  plan_node_hash: bb183f072376be5262b7c0ccd510d0b0a8a9fa4743363ca0acfa52dfe34dea85
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::move_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.8
+  plan_node_hash: c4ed0748aff592e4f2646ec305ca3d81c43d5fce7084a1fdb32c579e89e58884
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::create_policy_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.9
+  plan_node_hash: 397a9e3c9d0941905f7c54641b56d725916982ea80e21a7a3cda8f365aa4b866
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::fence_lease_and_dual_write
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.10
+  plan_node_hash: 24b4cf8315b52b34f73f2f9802222626dcd8a93d873cd3bb35a1bc099225c9c0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::unexpected_write_errors_are_safe_and_waived
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.11
+  plan_node_hash: bb529e517c2c84510d68db563ecea468ca8af5c4a0ba93f5ddb0d398f5dc1066
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::fenced_write_keeps_repair_intent_until_successor
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.12
+  plan_node_hash: d19ace99916213cdccc0a8876ffaeefa77a0764f1d8bcde5b6e3ab34bc51ae08
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25543'
+    validation_criteria_snippet: '2.2.1: `HTTP POST /api/memories` matches row, vector,
+      crossref, graph enqueue and ledger effects, and validation failures write nothing.
+      test: `crates/gmemory/...'
+    matched_artifact_ref: crates/gmemory/tests/writes.rs::stale_projection_loses_to_newer_writes
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: a746b0dc39c2bc2f3e9b684d5c7acceca209912ace5867c51d141065d4d7eae3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25544'
+    validation_criteria_snippet: '2.3.1: `HTTP POST /api/memories/invalidate` matches
+      the clear report and starts a tracked rebuild; a running job refuses to clear
+      with the coalesced 202. test:...'
+    matched_artifact_ref: crates/gmemory/tests/maintenance.rs::invalidate_is_tracked_and_waived
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: 726008760beb28fc6d20fd74700f4ba45d7c3b31844c916596af996a12635cd6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25544'
+    validation_criteria_snippet: '2.3.1: `HTTP POST /api/memories/invalidate` matches
+      the clear report and starts a tracked rebuild; a running job refuses to clear
+      with the coalesced 202. test:...'
+    matched_artifact_ref: crates/gmemory/tests/maintenance.rs::reconcile_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: 0fe089405b63596ae7c5418f9188de31b2f539474d5e8c9b1993ef824521a2df
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25544'
+    validation_criteria_snippet: '2.3.1: `HTTP POST /api/memories/invalidate` matches
+      the clear report and starts a tracked rebuild; a running job refuses to clear
+      with the coalesced 202. test:...'
+    matched_artifact_ref: crates/gmemory/tests/maintenance.rs::crossref_rebuild_reports_failures
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.4
+  plan_node_hash: 1f1db5d0fa50961e576fdfe6a47f84f2afd760ac7ad7be462f8d9fdd0a8e9bbe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25544'
+    validation_criteria_snippet: '2.3.1: `HTTP POST /api/memories/invalidate` matches
+      the clear report and starts a tracked rebuild; a running job refuses to clear
+      with the coalesced 202. test:...'
+    matched_artifact_ref: crates/gmemory/tests/maintenance.rs::reindex_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.5
+  plan_node_hash: 38d2802be36fef75732f47013399375cbd5f3999185b5b94d1a58e56e78ea706
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25544'
+    validation_criteria_snippet: '2.3.1: `HTTP POST /api/memories/invalidate` matches
+      the clear report and starts a tracked rebuild; a running job refuses to clear
+      with the coalesced 202. test:...'
+    matched_artifact_ref: crates/gmemory/tests/maintenance.rs::unexpected_maintenance_errors_are_safe_and_waived
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.6
+  plan_node_hash: 21e8139d046ff7d6c542b77649d0d2316196d2c8d20acfa9f396d8d0f4d5629f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25544'
+    validation_criteria_snippet: '2.3.1: `HTTP POST /api/memories/invalidate` matches
+      the clear report and starts a tracked rebuild; a running job refuses to clear
+      with the coalesced 202. test:...'
+    matched_artifact_ref: crates/gmemory/tests/maintenance.rs::projection_repair_clears_flags_after_reacquire
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.7
+  plan_node_hash: 004a5708a412be86e6172000664d1a4b103254a2afbdf5b28e6ecd7336423a61
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25544'
+    validation_criteria_snippet: '2.3.1: `HTTP POST /api/memories/invalidate` matches
+      the clear report and starts a tracked rebuild; a running job refuses to clear
+      with the coalesced 202. test:...'
+    matched_artifact_ref: crates/gmemory/tests/maintenance.rs::stale_reconciliation_keeps_newer_repair_intent
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.1
+  plan_node_hash: d127b67a328a8a5a2faa9c8f4f88e63a983b9cd8472d049b720b05d54e8e37af
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25545'
+    validation_criteria_snippet: '2.4.1: `HTTP POST /api/memories/graph/rebuild` matches
+      foreground and background rebuilds, coalescing onto a running job, and FalkorDB
+      effects. test: `crates/g...'
+    matched_artifact_ref: crates/gmemory/tests/graph_writes.rs::graph_rebuild_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.2
+  plan_node_hash: 5d4a00428629dbaa4eddecbdd039b3b04c1742f1ca51d999e8130689e99766a5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25545'
+    validation_criteria_snippet: '2.4.1: `HTTP POST /api/memories/graph/rebuild` matches
+      foreground and background rebuilds, coalescing onto a running job, and FalkorDB
+      effects. test: `crates/g...'
+    matched_artifact_ref: crates/gmemory/tests/graph_writes.rs::rebuild_status_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.3
+  plan_node_hash: 1dc9f96a16ef04a4ea26c38ca5e1baf6da365277364acf768f888cb733f32417
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25545'
+    validation_criteria_snippet: '2.4.1: `HTTP POST /api/memories/graph/rebuild` matches
+      foreground and background rebuilds, coalescing onto a running job, and FalkorDB
+      effects. test: `crates/g...'
+    matched_artifact_ref: crates/gmemory/tests/graph_writes.rs::graph_clear_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.4
+  plan_node_hash: 78f1dc616df453e87466b0da6bc5358dfb621be6f70eab55f0404faf9961fc92
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25545'
+    validation_criteria_snippet: '2.4.1: `HTTP POST /api/memories/graph/rebuild` matches
+      foreground and background rebuilds, coalescing onto a running job, and FalkorDB
+      effects. test: `crates/g...'
+    matched_artifact_ref: crates/gmemory/tests/graph_writes.rs::extraction_and_densify_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.5
+  plan_node_hash: 5b4bc6f5f5bb2663c9842cac81778b2e4ed5b01be09ab5245ce1e84a21d60edf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25545'
+    validation_criteria_snippet: '2.4.1: `HTTP POST /api/memories/graph/rebuild` matches
+      foreground and background rebuilds, coalescing onto a running job, and FalkorDB
+      effects. test: `crates/g...'
+    matched_artifact_ref: crates/gmemory/tests/graph_writes.rs::prompt_rendering_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.6
+  plan_node_hash: 52074bb582ffeb641bfd7229bca676c33fe935726cdbb4946c1a74b44b44c27a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25545'
+    validation_criteria_snippet: '2.4.1: `HTTP POST /api/memories/graph/rebuild` matches
+      foreground and background rebuilds, coalescing onto a running job, and FalkorDB
+      effects. test: `crates/g...'
+    matched_artifact_ref: crates/gmemory/tests/graph_writes.rs::unexpected_graph_errors_are_safe_and_waived
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.7
+  plan_node_hash: 81a3612a04369d026dc53ffc1e9797860aae7410c88703ebe464caabedba1f84
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25545'
+    validation_criteria_snippet: '2.4.1: `HTTP POST /api/memories/graph/rebuild` matches
+      foreground and background rebuilds, coalescing onto a running job, and FalkorDB
+      effects. test: `crates/g...'
+    matched_artifact_ref: crates/gmemory/tests/graph_writes.rs::unsupported_graph_prompt_refuses_rebuild
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.8
+  plan_node_hash: a039c7d8aafd3297219572b3a7d482ece423fa354b5f21232cf23d27464335dd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25545'
+    validation_criteria_snippet: '2.4.1: `HTTP POST /api/memories/graph/rebuild` matches
+      foreground and background rebuilds, coalescing onto a running job, and FalkorDB
+      effects. test: `crates/g...'
+    matched_artifact_ref: crates/gmemory/tests/graph_writes.rs::stale_entity_vectors_reembed_on_reconcile
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.1
+  plan_node_hash: c63a896c33179c4999c797f43b180a0bdb3c37885f84027bbd79a39eaa4e2af1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25546'
+    validation_criteria_snippet: '2.5.1: On fixture embeddings the labels, noise set,
+      cluster sizes and silhouette score match scikit-learn''s output, up to the relabelling
+      Python applies. test:...'
+    matched_artifact_ref: crates/gmemory/tests/clustering.rs::hdbscan_matches_sklearn_fixture
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.2
+  plan_node_hash: e00912678d5bed1824f4fc503cf5910a6ae0b711413eba576b3cd11da403c60b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25546'
+    validation_criteria_snippet: '2.5.1: On fixture embeddings the labels, noise set,
+      cluster sizes and silhouette score match scikit-learn''s output, up to the relabelling
+      Python applies. test:...'
+    matched_artifact_ref: crates/gmemory/tests/clustering.rs::recluster_persists_labels
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.3
+  plan_node_hash: 8098b2430f33ca330bdf6c7ff62d689030a71af4f9078c3ece2f77820a3a3971
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25546'
+    validation_criteria_snippet: '2.5.1: On fixture embeddings the labels, noise set,
+      cluster sizes and silhouette score match scikit-learn''s output, up to the relabelling
+      Python applies. test:...'
+    matched_artifact_ref: hdbscan pinned to =0.12.0 and building on Rust 1.88
+  deferral_target: null
+  detail: ''
+- section_id: '2.5'
+  item_id: 2.5.4
+  plan_node_hash: 89d7c96652ea21a16d32fd826c87167385228f1db38ad8e08859536043ef8e72
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25546'
+    validation_criteria_snippet: '2.5.1: On fixture embeddings the labels, noise set,
+      cluster sizes and silhouette score match scikit-learn''s output, up to the relabelling
+      Python applies. test:...'
+    matched_artifact_ref: crates/gmemory/tests/clustering.rs::invalid_vectors_are_noise
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: be807f135e748d24a74c5dd420092641ecf3d1e0d8d13498483c99fe483ea783
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25547'
+    validation_criteria_snippet: '3.1.1: `rebuild` fills the named collection with
+      one point per live memory from the target embedder, under the fence, and Python''s
+      `batch_upsert` rebuild yield...'
+    matched_artifact_ref: crates/gmemory/tests/rebuild_seam.rs::rebuild_matches_python_point_set
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 7a8bd37c6443f5fb84ab3a9cfe9d63953ef3aed9995639161c979bc1394b5fce
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25547'
+    validation_criteria_snippet: '3.1.1: `rebuild` fills the named collection with
+      one point per live memory from the target embedder, under the fence, and Python''s
+      `batch_upsert` rebuild yield...'
+    matched_artifact_ref: crates/gmemory/tests/rebuild_seam.rs::project_change_upserts_and_deletes
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 6b6ddc0c02f0b77066ed42593e91876d9f00ddcc2f7044addf84262560c014c5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25547'
+    validation_criteria_snippet: '3.1.1: `rebuild` fills the named collection with
+      one point per live memory from the target embedder, under the fence, and Python''s
+      `batch_upsert` rebuild yield...'
+    matched_artifact_ref: crates/gmemory/tests/rebuild_seam.rs::producers_dual_write_while_armed
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: f087fa0d6d351a729d5ee20724d504bc1eb0d4d040511cfdf119b0527bf0bd7e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25547'
+    validation_criteria_snippet: '3.1.1: `rebuild` fills the named collection with
+      one point per live memory from the target embedder, under the fence, and Python''s
+      `batch_upsert` rebuild yield...'
+    matched_artifact_ref: crates/gmemory/tests/rebuild_seam.rs::seam_trait_object_reaches_memories_and_stays_acyclic
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: a05a1ba8a21b630c438564f018eb92814045711c4aa6679b8dd901db44b39e49
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25547'
+    validation_criteria_snippet: '3.1.1: `rebuild` fills the named collection with
+      one point per live memory from the target embedder, under the fence, and Python''s
+      `batch_upsert` rebuild yield...'
+    matched_artifact_ref: crates/gmemory/tests/rebuild_seam.rs::entity_vectors_stage_promote_and_discard
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.6
+  plan_node_hash: fe7e753251e5211ec11e4eb268fcb55035caf2389880862bfbe2a5c0b13ba6f9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25547'
+    validation_criteria_snippet: '3.1.1: `rebuild` fills the named collection with
+      one point per live memory from the target embedder, under the fence, and Python''s
+      `batch_upsert` rebuild yield...'
+    matched_artifact_ref: crates/gmemory/tests/rebuild_seam.rs::entity_vector_staging_failures_recover
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: 70b82eeb0d78bc8a961cf9f0b9810f08edd83eb3a7d924b5a4fb5ecb3c9dc56b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25548'
+    validation_criteria_snippet: '4.1.1: Run creation, admission conflicts, status
+      transitions and checkpoints match Python''s rows. test: `crates/gmemory/tests/dream_apply.rs::run_store_matches...'
+    matched_artifact_ref: crates/gmemory/tests/dream_apply.rs::run_store_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: edfb5c5631acf6bc6e3a7d7a0b5b57e8c39c6d6a4ecacdd746b34f6a2abf01ba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25548'
+    validation_criteria_snippet: '4.1.1: Run creation, admission conflicts, status
+      transitions and checkpoints match Python''s rows. test: `crates/gmemory/tests/dream_apply.rs::run_store_matches...'
+    matched_artifact_ref: crates/gmemory/tests/dream_apply.rs::apply_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 5117049e0de1e0c04a3d3f8465f311136f951a4cb8b46562ad9b99845ab1354d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25548'
+    validation_criteria_snippet: '4.1.1: Run creation, admission conflicts, status
+      transitions and checkpoints match Python''s rows. test: `crates/gmemory/tests/dream_apply.rs::run_store_matches...'
+    matched_artifact_ref: crates/gmemory/tests/dream_apply.rs::revert_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: fd084ecc32f765c76bb0195bc599e94edbd9738681421bd7021e6d3fc66123d8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25548'
+    validation_criteria_snippet: '4.1.1: Run creation, admission conflicts, status
+      transitions and checkpoints match Python''s rows. test: `crates/gmemory/tests/dream_apply.rs::run_store_matches...'
+    matched_artifact_ref: crates/gmemory/tests/dream_apply.rs::purge_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.5
+  plan_node_hash: 21bd4b746b2c39a609541626f67dd6624a0c6bd4fd5bb574611a6fc413976e3b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25548'
+    validation_criteria_snippet: '4.1.1: Run creation, admission conflicts, status
+      transitions and checkpoints match Python''s rows. test: `crates/gmemory/tests/dream_apply.rs::run_store_matches...'
+    matched_artifact_ref: crates/gmemory/tests/dream_apply.rs::stale_plan_and_revert_fences
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: 3cd5c0f7ca53e47b79084010a5271fc2a8a1a4211e66e3c738eba2906250c469
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25549'
+    validation_criteria_snippet: '4.2.1: Candidate selection, batching and the plan
+      request match Python for a fixture scope, and the stubbed plan is validated
+      with Python''s floors. test: `crat...'
+    matched_artifact_ref: crates/gmemory/tests/dream_sweep.rs::planning_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: cd95667191b621ddab8bdf7dabc665de5a9e49d3eadb90f9e4fb8ded8055a47f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25549'
+    validation_criteria_snippet: '4.2.1: Candidate selection, batching and the plan
+      request match Python for a fixture scope, and the stubbed plan is validated
+      with Python''s floors. test: `crat...'
+    matched_artifact_ref: crates/gmemory/tests/dream_sweep.rs::related_evidence_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: f56028dc632746ce63b6c7d80de63aaef294a4260c060f4b50f290860efc6e90
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25549'
+    validation_criteria_snippet: '4.2.1: Candidate selection, batching and the plan
+      request match Python for a fixture scope, and the stubbed plan is validated
+      with Python''s floors. test: `crat...'
+    matched_artifact_ref: crates/gmemory/tests/dream_sweep.rs::sweep_orchestration_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: d10383855cd6e67efa5cf73735c3956f53c1e5e95abcef190bf052f2d9fb6e9b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25549'
+    validation_criteria_snippet: '4.2.1: Candidate selection, batching and the plan
+      request match Python for a fixture scope, and the stubbed plan is validated
+      with Python''s floors. test: `crat...'
+    matched_artifact_ref: crates/gmemory/tests/dream_sweep.rs::prompt_errors_match_python_isolation
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.1
+  plan_node_hash: a5e85e28120c296037d92014a421cc5198c92cdf2ab111fe4e36de41ab556a21
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25550'
+    validation_criteria_snippet: '4.3.1: `HTTP POST /memory/dream` matches 202 admission,
+      200 coalescing, 409 conflict, 400 invalid options, 500 failed launch and 503
+      unavailable coordinator, f...'
+    matched_artifact_ref: crates/gmemory/tests/dream_routes.rs::dream_trigger_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.2
+  plan_node_hash: 112e2210fcdfd17424dd172ee3f5360c6caa367235969579da4ae7ca989848e9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25550'
+    validation_criteria_snippet: '4.3.1: `HTTP POST /memory/dream` matches 202 admission,
+      200 coalescing, 409 conflict, 400 invalid options, 500 failed launch and 503
+      unavailable coordinator, f...'
+    matched_artifact_ref: crates/gmemory/tests/dream_routes.rs::dream_status_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.3
+  plan_node_hash: 800ebeff574ababf56f31bc1c536eb2a608b2a88e93375ed75fd8b9b0f0d17ac
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25550'
+    validation_criteria_snippet: '4.3.1: `HTTP POST /memory/dream` matches 202 admission,
+      200 coalescing, 409 conflict, 400 invalid options, 500 failed launch and 503
+      unavailable coordinator, f...'
+    matched_artifact_ref: crates/gmemory/tests/dream_routes.rs::dream_revert_status_is_waived
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.4
+  plan_node_hash: 1ef0f207ebf9fcbcc73565e308985382393149f31303ffffaec9e74d1bc16553
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25550'
+    validation_criteria_snippet: '4.3.1: `HTTP POST /memory/dream` matches 202 admission,
+      200 coalescing, 409 conflict, 400 invalid options, 500 failed launch and 503
+      unavailable coordinator, f...'
+    matched_artifact_ref: crates/gmemory/tests/dream_routes.rs::aggregate_reports_and_hub_only_construction
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.5
+  plan_node_hash: 8e6395a48fa56b81c700d486146155e859fb26b8849ccdfceb72e8c7bc2b5caf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25550'
+    validation_criteria_snippet: '4.3.1: `HTTP POST /memory/dream` matches 202 admission,
+      200 coalescing, 409 conflict, 400 invalid options, 500 failed launch and 503
+      unavailable coordinator, f...'
+    matched_artifact_ref: crates/gmemory/tests/dream_routes.rs::unsupported_dream_prompt_status_is_waived
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: fa0c62148dddbd2a6dcc7dc44d96c8a975ce93c6ab33d32c7c19944501d87d78
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25551'
+    validation_criteria_snippet: '5.1.1: Recording matches Python''s identity, normalization,
+      tags, rendered content, deduplication and validation refusals, and a concurrent
+      Python writer on the...'
+    matched_artifact_ref: crates/gmemory/tests/review_learning.rs::record_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: 4700d6ea6afcdefc93d1ddb607ee03734231553c32d1ebb975c57e92844a35a9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25551'
+    validation_criteria_snippet: '5.1.1: Recording matches Python''s identity, normalization,
+      tags, rendered content, deduplication and validation refusals, and a concurrent
+      Python writer on the...'
+    matched_artifact_ref: crates/gmemory/tests/review_learning.rs::recall_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: 35a0647bea034d6d1033b26dfa5a65423d684ae3b730aac803c3eb424b56a8d1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25551'
+    validation_criteria_snippet: '5.1.1: Recording matches Python''s identity, normalization,
+      tags, rendered content, deduplication and validation refusals, and a concurrent
+      Python writer on the...'
+    matched_artifact_ref: crates/gmemory/tests/review_learning.rs::check_keys_and_retire_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.1
+  plan_node_hash: a0f801c93c7ec8093707d22614d789cc67a3de0d2bb6660568a733d051d48e5e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25552'
+    validation_criteria_snippet: '6.1.1: Through the sessions API, the access upsert
+      and the review acknowledgement produce Python''s rows for all three keys, including
+      identity replacement, tri...'
+    matched_artifact_ref: crates/gmemory/tests/session_records.rs::writes_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.2
+  plan_node_hash: 7a6ab6b342bdc6e54120c3b8166a3758e1c8abf19e1bdc6610a11b6c1de142b8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25552'
+    validation_criteria_snippet: '6.1.1: Through the sessions API, the access upsert
+      and the review acknowledgement produce Python''s rows for all three keys, including
+      identity replacement, tri...'
+    matched_artifact_ref: crates/gmemory/tests/session_records.rs::python_and_native_writes_both_land
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.3
+  plan_node_hash: 575c41ad3e63887e142269d3df196fc36efb86f244a9ecf5f4819396815c30c7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25552'
+    validation_criteria_snippet: '6.1.1: Through the sessions API, the access upsert
+      and the review acknowledgement produce Python''s rows for all three keys, including
+      identity replacement, tri...'
+    matched_artifact_ref: crates/gmemory/tests/session_records.rs::reads_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.1
+  plan_node_hash: 5c367d9e021f4eec94bc5cc1a682ff7ab7f6d6c9e13772516b2e37bf730d603a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::backup_memories_uses_project_backup_path
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.2
+  plan_node_hash: 334ba2758909d4e3ece2e37895d8aa0cff1b138d4430cc3967f3697099f252cb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::create_memory_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.3
+  plan_node_hash: 3f20a033c9e07e967e89299eb48ce859c1026dc73a1b49ffdcb4e39b80c01aea
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::delete_memory_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.4
+  plan_node_hash: b04bbda11420ecc5d8864647236d7263890f6f48b6d93c411f294f22cd73ffc8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::demote_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.5
+  plan_node_hash: 5298e578c27009f3e35b9986da545cb8fa25d9bd7aca8037e08c658dbe6275b6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::densify_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.6
+  plan_node_hash: 888360049bdce677dba46f43817db5d97e5fe6003777a2229e869dff3ffea451
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::get_memory_records_access
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.7
+  plan_node_hash: 7550559259640bde99decde807dba74c5881cb919c9c8d7224b8864d2ac4e6c9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::get_related_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.8
+  plan_node_hash: d9702a62ac12ca28a8965729d218aff7245e71a6a8e9a4dc08aa9212998a98b6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::list_memories_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.9
+  plan_node_hash: 60805ae1f2ce95dada010c6c4d5dd80679c90acbfb3880ed043feeb4a0f5f022
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::memory_dream_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.10
+  plan_node_hash: de8ad47906cdfe1cb22bca9038691b93d15291639445d28a3796dac039f66f20
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::dream_decisions_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.11
+  plan_node_hash: 45de3f307f3d6defd0d04d9c7a4d7f07a8dceee585f98231427b6510a0e762a2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::dream_revert_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.12
+  plan_node_hash: 89f9d8fbc3782f38f268426f23e0188b89ddbc8280938d640b585356db693297
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::dream_status_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.13
+  plan_node_hash: 1f3880d7ddb8d97dca409af97f2b14013011bacebad0a8ae65042ce55b17132c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::memory_stats_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.14
+  plan_node_hash: 884ae8c0ae943982c9e4a7be5d2fa208d64b8c89dfb01eaca594b1a39dbaf5db
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::move_memory_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.15
+  plan_node_hash: 612ae7aee5a156a3f9f331f5a45cd93f62089a4cf11fd26dc2d3f60c945a2ee9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::promote_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.16
+  plan_node_hash: b29882fc05eb53c43d12fb1446cd48c44f2e9b721d44841389d83dcc95f7c0b0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::rebuild_crossrefs_reports_failures
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.17
+  plan_node_hash: 1a4e2d01b04f70101a8edcb00042877e681ad2fd45562369f5f39e14f48440dd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::rebuild_knowledge_graph_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.18
+  plan_node_hash: fe9d276b111fb66a314e43759471dd8d43f2c131a494c2d0c3518f412d463fb1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::recluster_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.19
+  plan_node_hash: 5468b4ce67ef89ed7fa4f99cba2d3cfd088b1b7bf1dcc3096ba6dc10434464c2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::reindex_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.20
+  plan_node_hash: 4b231632ca2ccf92f16548bd372587a45a71864d826279d95f5a882c7ea88df8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::restore_memories_uses_project_backup_path
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.21
+  plan_node_hash: 52e9e107c5f69df693dfe457c0b7934eecb4b9d249044dd1868c647fe2d96a6e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::restore_memory_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.22
+  plan_node_hash: 966d2dc21f896eda7aa180892c68228fd299073e9967d9858e5da1b6b103ef65
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::review_task_memories_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.23
+  plan_node_hash: 2e2f6d889b84fddd85a03eb3d844023e8cdb2b6cb00d7dc25ef5b44818dca4ba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::search_knowledge_graph_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.24
+  plan_node_hash: b6e9cca84ea206e511e583ec681f3780cad63a9ed6ad23f1af29491559dbe312
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::search_memories_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.25
+  plan_node_hash: 1296c94c2558a95c8a0f3fae102109c4476e1beb8a5cbfd8d0b58e4edb3f39b1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::surface_memories_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.26
+  plan_node_hash: 0771affb217a6b9cad20dc4e68be474fde0de96fe25454465ab9fec382266035
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::update_memory_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.27
+  plan_node_hash: 68678e2fe5b89002224033d59f73e87511f4ac2df8832c6cc4a8ba6d8d8f4cb0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::catalog_and_validation_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.28
+  plan_node_hash: 20d9e176b0cc1ab9fe8f026217863e3f5f2bb056b4a71adb72c203d48338400b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25553'
+    validation_criteria_snippet: '6.2.1: `MCP gobby-memory:backup_memories` writes
+      the current project''s backup, or the personal project''s when none is current,
+      under its exact waiver. test: `c...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_memory.rs::tool_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.1
+  plan_node_hash: 73055196df093e9e3a6e2dadfe729a564a8c12b516679be7611f789fe6b85533
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25554'
+    validation_criteria_snippet: '6.3.1: `MCP gobby-review-learning:list_check_keys`
+      matches results. test: `crates/gmemory/tests/mcp_review.rs::list_check_keys_matches_python`.
+      6.3.2: `MCP gob...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_review.rs::list_check_keys_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.2
+  plan_node_hash: f4a787d1805c797a5f32342049435bc649d273fde1765e9c69019e297aabc4f2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25554'
+    validation_criteria_snippet: '6.3.1: `MCP gobby-review-learning:list_check_keys`
+      matches results. test: `crates/gmemory/tests/mcp_review.rs::list_check_keys_matches_python`.
+      6.3.2: `MCP gob...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_review.rs::recall_context_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.3
+  plan_node_hash: 3e6c69a79e8ed7501f6e2e2ee7f3e6394d377f386ef7cebbb8444502ac82ee23
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25554'
+    validation_criteria_snippet: '6.3.1: `MCP gobby-review-learning:list_check_keys`
+      matches results. test: `crates/gmemory/tests/mcp_review.rs::list_check_keys_matches_python`.
+      6.3.2: `MCP gob...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_review.rs::recall_by_class_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.4
+  plan_node_hash: 01f81b2794b881291c06db8d3454c116ca2847b60ffd2a731cef194c40b35c70
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25554'
+    validation_criteria_snippet: '6.3.1: `MCP gobby-review-learning:list_check_keys`
+      matches results. test: `crates/gmemory/tests/mcp_review.rs::list_check_keys_matches_python`.
+      6.3.2: `MCP gob...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_review.rs::recall_for_files_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.5
+  plan_node_hash: cb16c1f32658d8ae383b9f4b3df4627eca873ebbc6bc9864c8f468a1360a2195
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25554'
+    validation_criteria_snippet: '6.3.1: `MCP gobby-review-learning:list_check_keys`
+      matches results. test: `crates/gmemory/tests/mcp_review.rs::list_check_keys_matches_python`.
+      6.3.2: `MCP gob...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_review.rs::record_lesson_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.6
+  plan_node_hash: ca5af8a9c16eefd95af4d101312b239a9d2117862f0b9ad789c4e5816c4015f4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25554'
+    validation_criteria_snippet: '6.3.1: `MCP gobby-review-learning:list_check_keys`
+      matches results. test: `crates/gmemory/tests/mcp_review.rs::list_check_keys_matches_python`.
+      6.3.2: `MCP gob...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_review.rs::retire_lesson_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.7
+  plan_node_hash: 34fd09d61cbac15e37ecb543f4c953c402bbea513d8beac6ff66e06385583274
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25554'
+    validation_criteria_snippet: '6.3.1: `MCP gobby-review-learning:list_check_keys`
+      matches results. test: `crates/gmemory/tests/mcp_review.rs::list_check_keys_matches_python`.
+      6.3.2: `MCP gob...'
+    matched_artifact_ref: crates/gmemory/tests/mcp_review.rs::catalog_and_safe_errors_match
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.1
+  plan_node_hash: 03203e74f81d562b922d2469fda9bc8c5a22ccfd02d4c091d59a36ee49fa2d27
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::memory_group_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.2
+  plan_node_hash: 778d32e4fc0cfd74b7165820bb760b9063ae5658bffe96c595323bfffdafb24d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::create_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.3
+  plan_node_hash: bad2d06ddfb98addd62848a93eb407de03fe2d87968994d0d5e41c698be4b337
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::recall_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.4
+  plan_node_hash: 64abc8197a5301987b34a6f001d3bd3ef91b0ae655e92a2d1c9d2e3952039ddc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::delete_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.5
+  plan_node_hash: c778fe3712880601c8f5ef8ecf0a11f7aefb0ad028698f399df576ad76c9c8f0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::list_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.6
+  plan_node_hash: 9b23f038a32fedfc4d72f8b9d39de4011d5dcdf01f08cc729ea18b414931b02a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::show_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.7
+  plan_node_hash: 56ec8b5f186e5ea7ea040c4ce32966ed12f3c46553eeaf5a326413fbb720ca4d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::update_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.8
+  plan_node_hash: 34965ffc0aa6cfb7c8d6bdc2356e6c0f24aa48ff29985fbd82fdf23c9dce0dee
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::stats_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.9
+  plan_node_hash: a646d5f8d84ef407cb0f2bc5588c2cf322ec19c9c8946d2442d9c1d29c5e674a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::backfill_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.10
+  plan_node_hash: 5303fdff30c57ac27933a58de1fda9bc79c385c06b545ffa85ebc9b9aa699b1e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::dedupe_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.11
+  plan_node_hash: d16898a4ecdb959fdfbcc3979754c3655154acb1d5768041d8e54e0a155bb18f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::export_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.12
+  plan_node_hash: 48b67864fa2053619ffbeb0609d61bea9c854b7d282597e1b905a8ce583778a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::backup_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.1'
+  item_id: 7.1.13
+  plan_node_hash: 085c9df9ee1bf57321723426d1024d110a75f3aad00cf6d01ad7b48913e1320b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25555'
+    validation_criteria_snippet: '7.1.1: `CLI gobby memory` matches group help and
+      dispatch. test: `crates/gmemory/tests/cli_records.rs::memory_group_matches_python`.
+      7.1.2: `CLI gobby memory c...'
+    matched_artifact_ref: crates/gmemory/tests/cli_records.rs::restore_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.1
+  plan_node_hash: 6cc54fc6883957e7e2aca8054b777fdb12e59c1ebe97e1969ea938c93bd9ca34
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25556'
+    validation_criteria_snippet: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+      output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+      7.2.2: `...'
+    matched_artifact_ref: crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.2
+  plan_node_hash: 291642b75a7b02fac76d148f8c7720afeb8413aa8de4d52a936f0c91a05a6025
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25556'
+    validation_criteria_snippet: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+      output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+      7.2.2: `...'
+    matched_artifact_ref: crates/gmemory/tests/cli_daemon.rs::graph_counts_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.3
+  plan_node_hash: d8eadab6f9878bc267c6df5ef7691c8b342bd408d9a52cc46c35e3ef7f815485
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25556'
+    validation_criteria_snippet: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+      output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+      7.2.2: `...'
+    matched_artifact_ref: crates/gmemory/tests/cli_daemon.rs::rebuild_graph_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.4
+  plan_node_hash: e735f8ea9ebb9385d2e4db9988bfc38587f81577c54aa03953c74fc50fae9535
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25556'
+    validation_criteria_snippet: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+      output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+      7.2.2: `...'
+    matched_artifact_ref: crates/gmemory/tests/cli_daemon.rs::invalidate_reports_running_rebuild
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.5
+  plan_node_hash: 19aaff40b0e2459aa9549e6dddf1eea6a908e7d6479c482620c8c3928df274c9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25556'
+    validation_criteria_snippet: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+      output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+      7.2.2: `...'
+    matched_artifact_ref: crates/gmemory/tests/cli_daemon.rs::rebuild_crossrefs_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.6
+  plan_node_hash: 390498fd251fe051a27467371e38224455f9e65841ec200b31993eb22b68c710
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25556'
+    validation_criteria_snippet: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+      output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+      7.2.2: `...'
+    matched_artifact_ref: crates/gmemory/tests/cli_daemon.rs::reconcile_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.7
+  plan_node_hash: 6c83e4c0e7fc80c978749e5ee23e69e956c505aa16d41bc33efd5e0613551e54
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25556'
+    validation_criteria_snippet: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+      output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+      7.2.2: `...'
+    matched_artifact_ref: crates/gmemory/tests/cli_daemon.rs::reindex_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.8
+  plan_node_hash: 4967186e91b02a237e83ed57e852d8e691bac3f4a9201efda1455bd057ca89c9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25556'
+    validation_criteria_snippet: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+      output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+      7.2.2: `...'
+    matched_artifact_ref: crates/gmemory/tests/cli_daemon.rs::dream_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.9
+  plan_node_hash: d17cb0aab9b08da2f107e2147d8d05a49b2ddc69dc4d3895696662b838c0eb84
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25556'
+    validation_criteria_snippet: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+      output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+      7.2.2: `...'
+    matched_artifact_ref: crates/gmemory/tests/cli_daemon.rs::dream_status_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.10
+  plan_node_hash: f9bfb193528b470b1721b139c19f6fc8afcc10059f6bbf0ffd601a7b2c9fc20f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25556'
+    validation_criteria_snippet: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+      output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+      7.2.2: `...'
+    matched_artifact_ref: crates/gmemory/tests/cli_daemon.rs::dream_revert_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.2'
+  item_id: 7.2.11
+  plan_node_hash: 4ad44df108c31d33eb10a8a5d2cef9079bbe7faa697f31ed654d84771e12abe4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25556'
+    validation_criteria_snippet: '7.2.1: `CLI gobby memory clear-graph` matches confirmation,
+      output and errors. test: `crates/gmemory/tests/cli_daemon.rs::clear_graph_matches_python`.
+      7.2.2: `...'
+    matched_artifact_ref: crates/gmemory/tests/cli_daemon.rs::daemon_errors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.1
+  plan_node_hash: 78bf7503cbb46c56d76f7872ce5c853ba7d05d114a6b217fbbf7908aa78a0063
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25557'
+    validation_criteria_snippet: '7.3.1: The graph queue job processes at most `batch_size`
+      pending memories per interval in order, marks successes processed, records failures,
+      and removes a me...'
+    matched_artifact_ref: crates/gmemory/tests/background.rs::graph_queue_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.2
+  plan_node_hash: 3746f488bb9c3d96e5216cfce8c814a67a56672cdfb26151d8805fc419068c68
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25557'
+    validation_criteria_snippet: '7.3.1: The graph queue job processes at most `batch_size`
+      pending memories per interval in order, marks successes processed, records failures,
+      and removes a me...'
+    matched_artifact_ref: crates/gmemory/tests/background.rs::dream_hidden_purge_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.3
+  plan_node_hash: 42fb398b91b263d1356e695389ff378fd4ae41d6c5b05325b3fa39ed0a0ceedc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25557'
+    validation_criteria_snippet: '7.3.1: The graph queue job processes at most `batch_size`
+      pending memories per interval in order, marks successes processed, records failures,
+      and removes a me...'
+    matched_artifact_ref: crates/gmemory/tests/background.rs::reconcile_job_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.4
+  plan_node_hash: b0e639407771d768b7a0bdd6f9b4ebc54d4552b417422c58c1fe267b6387f437
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25557'
+    validation_criteria_snippet: '7.3.1: The graph queue job processes at most `batch_size`
+      pending memories per interval in order, marks successes processed, records failures,
+      and removes a me...'
+    matched_artifact_ref: crates/gmemory/tests/background.rs::startup_jobs_finish_before_serving
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.5
+  plan_node_hash: 03d19534c477970504bc646dafdd02b79a624910a3e163369446d977179d4686
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25557'
+    validation_criteria_snippet: '7.3.1: The graph queue job processes at most `batch_size`
+      pending memories per interval in order, marks successes processed, records failures,
+      and removes a me...'
+    matched_artifact_ref: crates/gmemory/tests/background.rs::jobs_follow_the_memory_route
+  deferral_target: null
+  detail: ''
+- section_id: '7.3'
+  item_id: 7.3.6
+  plan_node_hash: 7b8a1e7127c9e9fe811699bdfa0b89537d160de833dd028e04ccdd8e8171386f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25557'
+    validation_criteria_snippet: '7.3.1: The graph queue job processes at most `batch_size`
+      pending memories per interval in order, marks successes processed, records failures,
+      and removes a me...'
+    matched_artifact_ref: tests/memory/test_native_job_ownership.py::test_python_jobs_follow_the_memory_latch
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.1
+  plan_node_hash: d10d1699ef19bf4fb81720b82ecc39705ebdb6ad1bfd72c9047a16a102410c22
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25558'
+    validation_criteria_snippet: '8.1.1: Agent tokens with matching, mismatched, revoked
+      and expired identity get Python''s outcomes on the two graph rows and are refused
+      on the other 23. test: ...'
+    matched_artifact_ref: crates/gmemory/tests/admission.rs::agent_token_rows_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.2
+  plan_node_hash: 6faec9b66a3a8c83ff97f29f83ee7b316949091ec14b91d97c90695e5256fab8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25558'
+    validation_criteria_snippet: '8.1.1: Agent tokens with matching, mismatched, revoked
+      and expired identity get Python''s outcomes on the two graph rows and are refused
+      on the other 23. test: ...'
+    matched_artifact_ref: crates/gmemory/tests/admission.rs::operator_and_browser_classes_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.3
+  plan_node_hash: 2cbadac9d4e9cce96eeda511c01942797d9c41c49c10f51b333588ffdf943c40
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25558'
+    validation_criteria_snippet: '8.1.1: Agent tokens with matching, mismatched, revoked
+      and expired identity get Python''s outcomes on the two graph rows and are refused
+      on the other 23. test: ...'
+    matched_artifact_ref: crates/gmemory/tests/admission.rs::admission_fails_closed_without_shared_seam
+  deferral_target: null
+  detail: ''
+- section_id: '8.1'
+  item_id: 8.1.4
+  plan_node_hash: 889ee9dfb553598da942e210993b1e30347c6efcc75bf1770bce3a51b5055def
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25558'
+    validation_criteria_snippet: '8.1.1: Agent tokens with matching, mismatched, revoked
+      and expired identity get Python''s outcomes on the two graph rows and are refused
+      on the other 23. test: ...'
+    matched_artifact_ref: memory admission security gate
+  deferral_target: null
+  detail: ''
+- section_id: '8.2'
+  item_id: 8.2.1
+  plan_node_hash: cca4b6e02b272e9d838d85a1ea703c5aaae31aecdda7414386d50a8a0ac5301f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25559'
+    validation_criteria_snippet: '8.2.1: Proxy, compare and native states affect only
+      the memory HTTP rows and the two MCP servers; compare runs read rows only, effectful
+      rows run once, and rol...'
+    matched_artifact_ref: crates/gdaemon/tests/memory_cutover.rs::memory_cutover_is_scoped_and_single_effect
+  deferral_target: null
+  detail: ''
+- section_id: '8.2'
+  item_id: 8.2.2
+  plan_node_hash: 31c6080ca1d4a202e1f46d397367657ff1b6488fb207faab7941d0c48ce81ec6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25559'
+    validation_criteria_snippet: '8.2.1: Proxy, compare and native states affect only
+      the memory HTTP rows and the two MCP servers; compare runs read rows only, effectful
+      rows run once, and rol...'
+    matched_artifact_ref: tests/e2e/test_memory_native.py::test_memory_rows_work_without_python_backend
+  deferral_target: null
+  detail: ''
+- section_id: '8.2'
+  item_id: 8.2.3
+  plan_node_hash: 64b0448de23c8555619f0ef9b762d4227bb500e53891d136cdcf9f3887ff4773
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25559'
+    validation_criteria_snippet: '8.2.1: Proxy, compare and native states affect only
+      the memory HTTP rows and the two MCP servers; compare runs read rows only, effectful
+      rows run once, and rol...'
+    matched_artifact_ref: crates/gdaemon/tests/memory_cutover.rs::waiver_readiness_gates_memory_activation
+  deferral_target: null
+  detail: ''
+- section_id: '8.2'
+  item_id: 8.2.4
+  plan_node_hash: e2cbfe111a1f65fff9310ba9645311563ef20edd438a4f30b0a47e1ee6c1a4c9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25559'
+    validation_criteria_snippet: '8.2.1: Proxy, compare and native states affect only
+      the memory HTTP rows and the two MCP servers; compare runs read rows only, effectful
+      rows run once, and rol...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '8.2'
+  item_id: 8.2.5
+  plan_node_hash: 6d1f5b40f76164dfe16e382d6bbc7807ba412b00b39f48dac77697c7cda5eced
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25559'
+    validation_criteria_snippet: '8.2.1: Proxy, compare and native states affect only
+      the memory HTTP rows and the two MCP servers; compare runs read rows only, effectful
+      rows run once, and rol...'
+    matched_artifact_ref: memory activation evidence
+  deferral_target: null
+  detail: ''
+- section_id: '8.3'
+  item_id: 8.3.1
+  plan_node_hash: f450c2b69bb0d194940405e50f99ca64da5bd35d05aeecc452f8bd223568cf21
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25560'
+    validation_criteria_snippet: '8.3.1: The public launcher forwards literal arguments,
+      cwd, configuration and exit status, including unknown options, Unicode, help
+      and errors, to the resolved...'
+    matched_artifact_ref: tests/cli/test_memory_native_forwarding.py::test_launcher_only_forwards
+  deferral_target: null
+  detail: ''
+- section_id: '8.3'
+  item_id: 8.3.2
+  plan_node_hash: 6a8d8119f59b5ab14db1885968a159ce5f6fcc22c2512fd899233140bf1ac9fd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25560'
+    validation_criteria_snippet: '8.3.1: The public launcher forwards literal arguments,
+      cwd, configuration and exit status, including unknown options, Unicode, help
+      and errors, to the resolved...'
+    matched_artifact_ref: tests/cli/test_memory_native_forwarding.py::test_retired_callbacks_have_native_coverage
+  deferral_target: null
+  detail: ''
+- section_id: '8.4'
+  item_id: 8.4.1
+  plan_node_hash: 34135a9e958228ad6b150d66d289aee9af72b4530dfabded69be269a43c60f69
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25561'
+    validation_criteria_snippet: '8.4.1: The 74 memory rows are `delegated` with notes
+      citing their leaf, tests and waiver IDs, and every other record is unchanged.
+      behavior: "74 delegated memo...'
+    matched_artifact_ref: 74 delegated memory parity rows
+  deferral_target: null
+  detail: ''
+- section_id: '8.4'
+  item_id: 8.4.2
+  plan_node_hash: 622eda8e4a3249565d999ca28f604750bf54a50b377a8cd7aaf7ed98b2ed9084
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25561'
+    validation_criteria_snippet: '8.4.1: The 74 memory rows are `delegated` with notes
+      citing their leaf, tests and waiver IDs, and every other record is unchanged.
+      behavior: "74 delegated memo...'
+    matched_artifact_ref: 6 delegated review-learning parity rows
+  deferral_target: null
+  detail: ''
+- section_id: '8.4'
+  item_id: 8.4.3
+  plan_node_hash: c81e5b6da177c5b5c03990940c6dc61410bb26f47d4b1a9554fcb755f5ac75ca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25561'
+    validation_criteria_snippet: '8.4.1: The 74 memory rows are `delegated` with notes
+      citing their leaf, tests and waiver IDs, and every other record is unchanged.
+      behavior: "74 delegated memo...'
+    matched_artifact_ref: tests/test_parity_ledger.py::test_committed_ledger_matches_current_public_inventory
+  deferral_target: null
+  detail: ''
+- section_id: '8.4'
+  item_id: 8.4.4
+  plan_node_hash: ecceef6c5cd7f07c21d53c73248603a92b7d7bf61277f81a93efb1c0bdb93729
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25561'
+    validation_criteria_snippet: '8.4.1: The 74 memory rows are `delegated` with notes
+      citing their leaf, tests and waiver IDs, and every other record is unchanged.
+      behavior: "74 delegated memo...'
+    matched_artifact_ref: native memory operation
+  deferral_target: null
+  detail: ''
+- section_id: '8.5'
+  item_id: 8.5.1
+  plan_node_hash: fecca6eebc42e3f4157012cc63d6d580bc560b2abad07e8f989604341a353d48
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25562'
+    validation_criteria_snippet: '8.5.1: A Proxy or Compare selection for each of
+      the three keys refuses start with an error naming the key, an absent entry resolves
+      Native, and `native` starts...'
+    matched_artifact_ref: crates/gmemory/tests/native_only.rs::retired_backends_refuse_start
+  deferral_target: null
+  detail: ''
+- section_id: '8.5'
+  item_id: 8.5.2
+  plan_node_hash: 8264686955902861446d0155ea170b863b394e1eccd093088443b823c122dad8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25562'
+    validation_criteria_snippet: '8.5.1: A Proxy or Compare selection for each of
+      the three keys refuses start with an error naming the key, an absent entry resolves
+      Native, and `native` starts...'
+    matched_artifact_ref: tests/servers/test_memory_python_retired.py::test_python_memory_routes_are_retired
+  deferral_target: null
+  detail: ''
+- section_id: '8.5'
+  item_id: 8.5.3
+  plan_node_hash: a318c05584f0a88819b2b71799da25eafa1cae14ea2061a513adc64d7d1c2ea4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25562'
+    validation_criteria_snippet: '8.5.1: A Proxy or Compare selection for each of
+      the three keys refuses start with an error naming the key, an absent entry resolves
+      Native, and `native` starts...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '8.5'
+  item_id: 8.5.4
+  plan_node_hash: 8d7c787eb3bad23fae2117a9b1785daafc822a81a3ed5b53cc19c17f47eccf0c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25562'
+    validation_criteria_snippet: '8.5.1: A Proxy or Compare selection for each of
+      the three keys refuses start with an error naming the key, an absent entry resolves
+      Native, and `native` starts...'
+    matched_artifact_ref: memory native-only selection
+  deferral_target: null
+  detail: ''
+- section_id: '8.6'
+  item_id: 8.6.1
+  plan_node_hash: b4095f4251854388917fb6eb308c82057909ee15dff68d58649f980e4e934e5f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25563'
+    validation_criteria_snippet: '8.6.1: No module remains under `gobby.memory`, `gobby.review_learning`,
+      `gobby.storage.memories*`, `gobby.sync.memories` or the eight memory tool modules;
+      impo...'
+    matched_artifact_ref: tests/servers/test_memory_python_retired.py::test_python_memory_services_are_retired
+  deferral_target: null
+  detail: ''
+- section_id: '8.6'
+  item_id: 8.6.2
+  plan_node_hash: 920e86e56481946a67623aaf119235006289c87cd2eab55ef280345a8f825159
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25563'
+    validation_criteria_snippet: '8.6.1: No module remains under `gobby.memory`, `gobby.review_learning`,
+      `gobby.storage.memories*`, `gobby.sync.memories` or the eight memory tool modules;
+      impo...'
+    matched_artifact_ref: tests/test_runner_lifecycle.py::test_runner_runs_without_python_memory
+  deferral_target: null
+  detail: ''
+- section_id: '8.6'
+  item_id: 8.6.3
+  plan_node_hash: 590c98be37b55431498e741e3278243d084e7a66338f46599132967f933214ec
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25563'
+    validation_criteria_snippet: '8.6.1: No module remains under `gobby.memory`, `gobby.review_learning`,
+      `gobby.storage.memories*`, `gobby.sync.memories` or the eight memory tool modules;
+      impo...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '8.6'
+  item_id: 8.6.4
+  plan_node_hash: e22891a2be04fa2d70bdbb0adcb0ddc93e6aa4fd9fc8043d442ee902f1d44b70
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25563'
+    validation_criteria_snippet: '8.6.1: No module remains under `gobby.memory`, `gobby.review_learning`,
+      `gobby.storage.memories*`, `gobby.sync.memories` or the eight memory tool modules;
+      impo...'
+    matched_artifact_ref: memory Python retirement
+  deferral_target: null
+  detail: ''

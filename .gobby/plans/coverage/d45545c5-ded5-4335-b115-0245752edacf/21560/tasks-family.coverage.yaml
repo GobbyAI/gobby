@@ -1,0 +1,2203 @@
+header:
+  plan_id: tasks-family
+  plan_hash: 1a8cb7ac545f5f03e1232fdba0635ccd1a5ce096c0b465d95a7767c8808042fd
+  root_task_ref: '21560'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-11-02T06:46:46Z'
+  task_tree_source: db
+  task_tree_source_hash: 9525f27962388fd811ad596898cddc15a766e39ef42e56a4bd3fffd24bbd120c
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '0.1'
+  item_id: 0.1.1
+  plan_node_hash: 685bed9e01b27e47e414a391d5af87ff6c6b4d8a5ac94a1f6f31a2a283f345f7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25499'
+    validation_criteria_snippet: '0.1.1: `gobby tasks compact` and `gobby tasks clean`
+      no longer exist and `gobby.storage.compaction` is not importable. test: `tests/cli/test_tasks_cli.py::test...'
+    matched_artifact_ref: tests/cli/test_tasks_cli.py::test_retired_task_commands_are_absent
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.2
+  plan_node_hash: df5067d6a4e572e2dcb1ee0651c9ac54151e554139de9f4f9c6f12be56116b1f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25499'
+    validation_criteria_snippet: '0.1.1: `gobby tasks compact` and `gobby tasks clean`
+      no longer exist and `gobby.storage.compaction` is not importable. test: `tests/cli/test_tasks_cli.py::test...'
+    matched_artifact_ref: tests/cli/test_tasks_cli.py::TestDoctorCommand.test_doctor_reports_cycles_and_invalid_projects
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.3
+  plan_node_hash: e5d2aac432489f7b65aaa017f6519eaa89aa90725cc503e8dc3f7518ebee5792
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25499'
+    validation_criteria_snippet: '0.1.1: `gobby tasks compact` and `gobby tasks clean`
+      no longer exist and `gobby.storage.compaction` is not importable. test: `tests/cli/test_tasks_cli.py::test...'
+    matched_artifact_ref: tests/utils/test_db_validation.py::test_validate_all_reports_projects_and_cycles
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.4
+  plan_node_hash: 1672a4015de22e0b0896a2a9a15d3ede853248d3d94cc4cca58b8661af8b50f7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25499'
+    validation_criteria_snippet: '0.1.1: `gobby tasks compact` and `gobby tasks clean`
+      no longer exist and `gobby.storage.compaction` is not importable. test: `tests/cli/test_tasks_cli.py::test...'
+    matched_artifact_ref: docs/contracts/parity-ledger.md
+  deferral_target: null
+  detail: ''
+- section_id: '0.1'
+  item_id: 0.1.5
+  plan_node_hash: e554625cf99a8520fc9f0914b28e738ffdbe4f8f9011b3c93ba6b271a3381e6c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25499'
+    validation_criteria_snippet: '0.1.1: `gobby tasks compact` and `gobby tasks clean`
+      no longer exist and `gobby.storage.compaction` is not importable. test: `tests/cli/test_tasks_cli.py::test...'
+    matched_artifact_ref: docs/guides/cli-commands.md
+  deferral_target: null
+  detail: ''
+- section_id: '0.2'
+  item_id: 0.2.1
+  plan_node_hash: 3e5fe141f94b57e88ef9012b1211070468d67bebf3eeaf9ae480cd322b3e73ce
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25500'
+    validation_criteria_snippet: '0.2.1: All seventeen routes and their error branches
+      are recorded with Python origin, rows and normalization limited to IDs and clocks.
+      test: `tests/contracts/...'
+    matched_artifact_ref: tests/contracts/test_tasks_oracle.py::test_http_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '0.2'
+  item_id: 0.2.2
+  plan_node_hash: 14c510ff0a4b4894222524a289c292d52f09a869455118bdbdbb70bbef097fcb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25500'
+    validation_criteria_snippet: '0.2.1: All seventeen routes and their error branches
+      are recorded with Python origin, rows and normalization limited to IDs and clocks.
+      test: `tests/contracts/...'
+    matched_artifact_ref: tests/contracts/test_tasks_oracle.py::test_browser_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '0.2'
+  item_id: 0.2.3
+  plan_node_hash: 12f416ef65032980cb24e02b989a59a91da8496aed3bcd2e43c108c8196ebfa2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25500'
+    validation_criteria_snippet: '0.2.1: All seventeen routes and their error branches
+      are recorded with Python origin, rows and normalization limited to IDs and clocks.
+      test: `tests/contracts/...'
+    matched_artifact_ref: tests/contracts/test_tasks_oracle.py::test_task_events_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '0.2'
+  item_id: 0.2.4
+  plan_node_hash: 0ba03579699199b3d21f0b6d30d194a4c52bf31054f66f8d57a39cd91ed32757
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25500'
+    validation_criteria_snippet: '0.2.1: All seventeen routes and their error branches
+      are recorded with Python origin, rows and normalization limited to IDs and clocks.
+      test: `tests/contracts/...'
+    matched_artifact_ref: tests/contracts/http/manifest.json
+  deferral_target: null
+  detail: ''
+- section_id: '0.3'
+  item_id: 0.3.1
+  plan_node_hash: f0210d472926e9719274f068e5c9d6408d1b6804dfa5b84cde989ea3f0fd113e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25501'
+    validation_criteria_snippet: '0.3.1: Service vectors reproduce Python reads, writes,
+      lifecycle effects, lifecycle-event rows and session-variable bookkeeping at
+      a frozen instant. test: `tes...'
+    matched_artifact_ref: tests/contracts/test_tasks_oracle.py::test_service_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '0.3'
+  item_id: 0.3.2
+  plan_node_hash: 6ab8b0a67859f48c72e7125b6a8bd5a5bf9b6abd3d34912186e66e4cda5b5346
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25501'
+    validation_criteria_snippet: '0.3.1: Service vectors reproduce Python reads, writes,
+      lifecycle effects, lifecycle-event rows and session-variable bookkeeping at
+      a frozen instant. test: `tes...'
+    matched_artifact_ref: tests/contracts/test_tasks_oracle.py::test_authority_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '0.3'
+  item_id: 0.3.3
+  plan_node_hash: 1ab6ac47f1146de0f080b35ba550899e168b9287f800a1e72ff83a8d00fb7bd6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25501'
+    validation_criteria_snippet: '0.3.1: Service vectors reproduce Python reads, writes,
+      lifecycle effects, lifecycle-event rows and session-variable bookkeeping at
+      a frozen instant. test: `tes...'
+    matched_artifact_ref: tests/contracts/test_tasks_oracle.py::test_mcp_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '0.3'
+  item_id: 0.3.4
+  plan_node_hash: ccdda5824e829b0cc9ca840f9efd62ca17824bf58dfdf9ac466700dfd2060729
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25501'
+    validation_criteria_snippet: '0.3.1: Service vectors reproduce Python reads, writes,
+      lifecycle effects, lifecycle-event rows and session-variable bookkeeping at
+      a frozen instant. test: `tes...'
+    matched_artifact_ref: tests/contracts/test_tasks_oracle.py::test_cli_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '0.3'
+  item_id: 0.3.5
+  plan_node_hash: b41880e06a569c5b36d88db0a2a0a294ef5749d4ef9d4f2517e8687d43169758
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25501'
+    validation_criteria_snippet: '0.3.1: Service vectors reproduce Python reads, writes,
+      lifecycle effects, lifecycle-event rows and session-variable bookkeeping at
+      a frozen instant. test: `tes...'
+    matched_artifact_ref: docs/contracts/parity-waivers.json
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: fd5768d946ff475abe9ca9f9203a99d958a0d105bb3c7f537e6f99233c63ec31
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25502'
+    validation_criteria_snippet: '1.1.1: Task rows round-trip from PostgreSQL to the
+      `to_dict` and `to_brief` shapes in 0.3''s vectors. test: `crates/gtasks/tests/refs.rs::row_projections_match_...'
+    matched_artifact_ref: crates/gtasks/tests/refs.rs::row_projections_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 03247064259049d398b6112ef2db52528c6d7cb73c55de68fa49098293dd6f4c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25502'
+    validation_criteria_snippet: '1.1.1: Task rows round-trip from PostgreSQL to the
+      `to_dict` and `to_brief` shapes in 0.3''s vectors. test: `crates/gtasks/tests/refs.rs::row_projections_match_...'
+    matched_artifact_ref: crates/gtasks/tests/refs.rs::reference_resolution_matches_policy
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 0263c47fead49773ae40d43873353ed98f5fd1619a375b7d47dfe9732260dcdb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25502'
+    validation_criteria_snippet: '1.1.1: Task rows round-trip from PostgreSQL to the
+      `to_dict` and `to_brief` shapes in 0.3''s vectors. test: `crates/gtasks/tests/refs.rs::row_projections_match_...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 99b64f5df8c7e3ee2174dc65feed77be09c8671a7d3a4eefd8412a400872cf00
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25503'
+    validation_criteria_snippet: '1.2.1: Listing filters, sort orders, default and
+      compact views and pagination match 0.3''s vectors. test: `crates/gtasks/tests/reads.rs::list_matches_python`.
+      1...'
+    matched_artifact_ref: crates/gtasks/tests/reads.rs::list_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 485e2a04806e8a469270f60bbab7edf354318b7fe3325bd26458643591627a5d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25503'
+    validation_criteria_snippet: '1.2.1: Listing filters, sort orders, default and
+      compact views and pagination match 0.3''s vectors. test: `crates/gtasks/tests/reads.rs::list_matches_python`.
+      1...'
+    matched_artifact_ref: crates/gtasks/tests/reads.rs::readiness_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: c7cc13b076198518dfd539ccc4abb69a809414c13e96962660dd6c387ac384c8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25503'
+    validation_criteria_snippet: '1.2.1: Listing filters, sort orders, default and
+      compact views and pagination match 0.3''s vectors. test: `crates/gtasks/tests/reads.rs::list_matches_python`.
+      1...'
+    matched_artifact_ref: crates/gtasks/tests/reads.rs::search_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 1f8cc18ce4362b6aa84bfc9785444ffb53aae504e0d17373d5412e5f1efc591f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25503'
+    validation_criteria_snippet: '1.2.1: Listing filters, sort orders, default and
+      compact views and pagination match 0.3''s vectors. test: `crates/gtasks/tests/reads.rs::list_matches_python`.
+      1...'
+    matched_artifact_ref: crates/gtasks/tests/reads.rs::dependency_graph_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: 5cd6d9937cc0682e44cf6cc9e2f6ac6533ec3758422f17117d27cdc88629c3f1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25504'
+    validation_criteria_snippet: '1.3.1: Task cards, full records, session links and
+      comment lists match Python. test: `crates/gtasks/tests/detail.rs::task_detail_matches_python`.
+      1.3.2: Artifa...'
+    matched_artifact_ref: crates/gtasks/tests/detail.rs::task_detail_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: 462b0432b14d0370e912d89531e8823932a317fb0bb1919842cd1b3a2e2bca20
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25504'
+    validation_criteria_snippet: '1.3.1: Task cards, full records, session links and
+      comment lists match Python. test: `crates/gtasks/tests/detail.rs::task_detail_matches_python`.
+      1.3.2: Artifa...'
+    matched_artifact_ref: crates/gtasks/tests/detail.rs::files_and_artifacts_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: 3c7762a6c6ea3837c7941a4a8e06e6db8a4f72c3d8ff0fdfdb574b640e71b13e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25504'
+    validation_criteria_snippet: '1.3.1: Task cards, full records, session links and
+      comment lists match Python. test: `crates/gtasks/tests/detail.rs::task_detail_matches_python`.
+      1.3.2: Artifa...'
+    matched_artifact_ref: crates/gtasks/tests/detail.rs::task_diff_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: df07c05b2666f0a970217d9ab5d0660c0a7b36a5d5fb4311b3cc67a48945166e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25504'
+    validation_criteria_snippet: '1.3.1: Task cards, full records, session links and
+      comment lists match Python. test: `crates/gtasks/tests/detail.rs::task_detail_matches_python`.
+      1.3.2: Artifa...'
+    matched_artifact_ref: crates/gtasks/tests/detail.rs::suggestion_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 744ea92043c7bdce306f7f3bad817122fc81cda2496d6358995dbda56a1dccf5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25505'
+    validation_criteria_snippet: '2.1.1: Every transition reproduces 0.3''s Python
+      result for every caller relationship 0.3 enumerates, except the cited D5, D6,
+      D7, D9 and D10 replacements. test...'
+    matched_artifact_ref: crates/gtasks/tests/authority.rs::table_matches_python_relationships
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 9e47f2de2afaca6c9ac356e7295239b055de6a9fbff4a02979ec9fd7da1324fc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25505'
+    validation_criteria_snippet: '2.1.1: Every transition reproduces 0.3''s Python
+      result for every caller relationship 0.3 enumerates, except the cited D5, D6,
+      D7, D9 and D10 replacements. test...'
+    matched_artifact_ref: crates/gtasks/tests/authority.rs::unlisted_pairs_fail_closed
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 67c0f98f4d06985242eff49e256cecaf5e11d45db513dbb0ecb81cc7af6fb21a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25505'
+    validation_criteria_snippet: '2.1.1: Every transition reproduces 0.3''s Python
+      result for every caller relationship 0.3 enumerates, except the cited D5, D6,
+      D7, D9 and D10 replacements. test...'
+    matched_artifact_ref: crates/gtasks/tests/authority.rs::gate_labels_follow_q9
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 1943f861236d3359a3a31401c2d8c8dd2d8cc9022bae4fd6d41fad0b07f8e6ed
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25505'
+    validation_criteria_snippet: '2.1.1: Every transition reproduces 0.3''s Python
+      result for every caller relationship 0.3 enumerates, except the cited D5, D6,
+      D7, D9 and D10 replacements. test...'
+    matched_artifact_ref: crates/gtasks/tests/authority.rs::grounds_are_recorded
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: bb49e002aff40cb779c4b40ca2957b42442d8b604640c9e1aa172c0de88fe29f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25505'
+    validation_criteria_snippet: '2.1.1: Every transition reproduces 0.3''s Python
+      result for every caller relationship 0.3 enumerates, except the cited D5, D6,
+      D7, D9 and D10 replacements. test...'
+    matched_artifact_ref: docs/contracts/task-authority.md
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.6
+  plan_node_hash: 0f7aa6276732dd7647fe322e132b9a87ef498f48811f1852a026e5e486251e52
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25505'
+    validation_criteria_snippet: '2.1.1: Every transition reproduces 0.3''s Python
+      result for every caller relationship 0.3 enumerates, except the cited D5, D6,
+      D7, D9 and D10 replacements. test...'
+    matched_artifact_ref: crates/gtasks/tests/authority.rs::readiness_and_auto_link_authority
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.7
+  plan_node_hash: 6c0dac82bb7fefd7e1dc35454ebbf1ab8d7f6f62654c1db4fb6633b844d299ac
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25505'
+    validation_criteria_snippet: '2.1.1: Every transition reproduces 0.3''s Python
+      result for every caller relationship 0.3 enumerates, except the cited D5, D6,
+      D7, D9 and D10 replacements. test...'
+    matched_artifact_ref: crates/gtasks/tests/authority.rs::tool_route_principals
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: 3536677998ee6a656bfd701cd7798b32788c64004c34072edb6437f8a888d25c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25506'
+    validation_criteria_snippet: '2.2.1: Native protection refuses exactly where Python
+      does: a foreign claim, a protected label or a listed subtree root on the task
+      or any ancestor, each check...'
+    matched_artifact_ref: crates/gtasks/tests/policy.rs::protection_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: d8e35705cb6f2bf6b78b5523e84d80692ef6d5ae5d23b063ec88b8b6b32a9184
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25506'
+    validation_criteria_snippet: '2.2.1: Native protection refuses exactly where Python
+      does: a foreign claim, a protected label or a listed subtree root on the task
+      or any ancestor, each check...'
+    matched_artifact_ref: crates/gtasks/tests/policy.rs::protection_follows_declared_opt_in
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: e764eb79d8ad008e06074289b786e31ac87f026aef741dc72e4a27595395004b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25506'
+    validation_criteria_snippet: '2.2.1: Native protection refuses exactly where Python
+      does: a foreign claim, a protected label or a listed subtree root on the task
+      or any ancestor, each check...'
+    matched_artifact_ref: crates/gtasks/tests/policy.rs::policy_loading_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: a7de57b928dea8a65b7355f1ab4a2ddd069a1acee3790f250165a086450bd4a2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25507'
+    validation_criteria_snippet: '3.1.1: Create, update, reparent, delete with cascade
+      and unlink, labels and description sections match 0.3''s rows and errors. test:
+      `crates/gtasks/tests/write....'
+    matched_artifact_ref: crates/gtasks/tests/write.rs::task_writes_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: a21a705b7d5c8beb4b31f426e3232b22ffbc29f7cfb29011883b5c4b3dcff855
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25507'
+    validation_criteria_snippet: '3.1.1: Create, update, reparent, delete with cascade
+      and unlink, labels and description sections match 0.3''s rows and errors. test:
+      `crates/gtasks/tests/write....'
+    matched_artifact_ref: crates/gtasks/tests/write.rs::writes_share_python_locks
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: 1c7092435ff86354386c2efefd9eb92282fd7ad97bfc63e5f86ef65edaea2be1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25507'
+    validation_criteria_snippet: '3.1.1: Create, update, reparent, delete with cascade
+      and unlink, labels and description sections match 0.3''s rows and errors. test:
+      `crates/gtasks/tests/write....'
+    matched_artifact_ref: crates/gtasks/tests/write.rs::expansion_write_service_is_atomic
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: 9bcbd9278b8d9da56c43d0fd7b9270ddd8e4adc12c20a042ee858c811854a9bd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25507'
+    validation_criteria_snippet: '3.1.1: Create, update, reparent, delete with cascade
+      and unlink, labels and description sections match 0.3''s rows and errors. test:
+      `crates/gtasks/tests/write....'
+    matched_artifact_ref: docs/contracts/tasks-services.md
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: e948f90189f36281eb423d0aeeaa1693008aeeac0ef064d0fd3ea1a5ca2eb9b0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25507'
+    validation_criteria_snippet: '3.1.1: Create, update, reparent, delete with cascade
+      and unlink, labels and description sections match 0.3''s rows and errors. test:
+      `crates/gtasks/tests/write....'
+    matched_artifact_ref: crates/gtasks/tests/write.rs::write_service_checks_caller_principal
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: a5d66eb14d9ac9f2836ef7435fba346c9cff488ff20c7b2f38e60aca57ad7aff
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25508'
+    validation_criteria_snippet: '3.2.1: Edge adds and removes match 0.3''s rows and
+      errors on every lane. test: `crates/gtasks/tests/deps.rs::dependency_edges_match_python`.
+      3.2.2: An edge that...'
+    matched_artifact_ref: crates/gtasks/tests/deps.rs::dependency_edges_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: 3e517ba9fce19b01ee58bda37cf2dd6d58928a1cf6e6744deccaeb0b7c9322f0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25508'
+    validation_criteria_snippet: '3.2.1: Edge adds and removes match 0.3''s rows and
+      errors on every lane. test: `crates/gtasks/tests/deps.rs::dependency_edges_match_python`.
+      3.2.2: An edge that...'
+    matched_artifact_ref: crates/gtasks/tests/deps.rs::cycles_refused_under_lock
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: 340c3933e68ec48d6df9cac25da0a070a8a49ac85ace4094abec3ac306537a38
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25508'
+    validation_criteria_snippet: '3.2.1: Edge adds and removes match 0.3''s rows and
+      errors on every lane. test: `crates/gtasks/tests/deps.rs::dependency_edges_match_python`.
+      3.2.2: An edge that...'
+    matched_artifact_ref: crates/gtasks/tests/deps.rs::edge_readiness_authority
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: b871f48def5391504842975e15c6e5dd37d53d493c3cdb792028c247a2681809
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25509'
+    validation_criteria_snippet: '3.3.1: Affected-file writes with each source tag
+      match Python. test: `crates/gtasks/tests/files.rs::affected_files_match_python`.
+      3.3.2: Single and atomic arti...'
+    matched_artifact_ref: crates/gtasks/tests/files.rs::affected_files_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.2
+  plan_node_hash: bddd3ae43171f8dd8b332339ebdf71b5ffc862169bc614381bc36ce5d862f8d1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25509'
+    validation_criteria_snippet: '3.3.1: Affected-file writes with each source tag
+      match Python. test: `crates/gtasks/tests/files.rs::affected_files_match_python`.
+      3.3.2: Single and atomic arti...'
+    matched_artifact_ref: crates/gtasks/tests/files.rs::artifacts_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.1
+  plan_node_hash: b5792c0b6abe087fb21c20cf9daf08956719c0f2e22c81b957ae6070c84e2ddd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25510'
+    validation_criteria_snippet: '3.4.1: Comment adds, lists and deletes match 0.3''s
+      rows and errors, including the reserved-author refusals on add and delete. test:
+      `crates/gtasks/tests/commen...'
+    matched_artifact_ref: crates/gtasks/tests/comments.rs::comments_match_python
+  deferral_target: null
+  detail: ''
+- section_id: 3.4a
+  item_id: 3.4a.1
+  plan_node_hash: b0b31c3b2f71dbbd1d8e8475184548f02bc1b045577a31341d63b610091fbce2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25511'
+    validation_criteria_snippet: '3.4a.1: Recording matches 0.3''s rows and refusals
+      for writer grants, scope, closed tasks, idempotency keys, supersession by the
+      original author only, sequence ...'
+    matched_artifact_ref: crates/gtasks/tests/attestations.rs::record_attestation_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: 3.4a
+  item_id: 3.4a.2
+  plan_node_hash: 30c1423fc8b6bff97730d76c34bfcd20a4d749c1ca5f077332c4657c0b6eaa10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25511'
+    validation_criteria_snippet: '3.4a.1: Recording matches 0.3''s rows and refusals
+      for writer grants, scope, closed tasks, idempotency keys, supersession by the
+      original author only, sequence ...'
+    matched_artifact_ref: crates/gtasks/tests/attestations.rs::attestation_history_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.1
+  plan_node_hash: 2ca740ccd61f49bb29dacc9780a6598a741ca009769bc7f3c09c14f256012c01
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25512'
+    validation_criteria_snippet: '3.5.1: Claim, release, hand-off, delegation and
+      session links match 0.3''s rows and refusals, and claims return the assignment
+      target. test: `crates/gtasks/test...'
+    matched_artifact_ref: crates/gtasks/tests/claim.rs::claim_lifecycle_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.2
+  plan_node_hash: 88209a61e6e187f94173632d4a1eaf536a84c14450d3bd94d9b7ed4c166795be
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25512'
+    validation_criteria_snippet: '3.5.1: Claim, release, hand-off, delegation and
+      session links match 0.3''s rows and refusals, and claims return the assignment
+      target. test: `crates/gtasks/test...'
+    matched_artifact_ref: crates/gtasks/tests/claim.rs::takeover_requires_recorded_ground
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.3
+  plan_node_hash: 97c173deb7e4790ea1bedb8c15e68d99a597aa04a05719b2a6a0b1355adbb61e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25512'
+    validation_criteria_snippet: '3.5.1: Claim, release, hand-off, delegation and
+      session links match 0.3''s rows and refusals, and claims return the assignment
+      target. test: `crates/gtasks/test...'
+    matched_artifact_ref: crates/gtasks/tests/claim.rs::session_variables_commit_with_claims
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.4
+  plan_node_hash: 3865c77f403e7caf9350e6fee8f94c29743f8fe77373f1c99e4d78dd19cac384
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25512'
+    validation_criteria_snippet: '3.5.1: Claim, release, hand-off, delegation and
+      session links match 0.3''s rows and refusals, and claims return the assignment
+      target. test: `crates/gtasks/test...'
+    matched_artifact_ref: crates/gtasks/tests/claim.rs::release_rules_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.6'
+  item_id: 3.6.1
+  plan_node_hash: bfd0e35aaf5226334e9a4abe45891126da057f41a44c8d86bf22eba244da10a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25513'
+    validation_criteria_snippet: '3.6.1: Escalate, de-escalate and reopen match 0.3''s
+      rows, lifecycle events and errors, including re-escalation releasing the claim.
+      test: `crates/gtasks/tests/...'
+    matched_artifact_ref: crates/gtasks/tests/status.rs::status_transitions_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.6'
+  item_id: 3.6.2
+  plan_node_hash: 84c187e4da8f24a28fa98761459f6be8ab34740a3ebfbac95bc5131e895aaef6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25513'
+    validation_criteria_snippet: '3.6.1: Escalate, de-escalate and reopen match 0.3''s
+      rows, lifecycle events and errors, including re-escalation releasing the claim.
+      test: `crates/gtasks/tests/...'
+    matched_artifact_ref: crates/gtasks/tests/status.rs::status_outcomes_carry_notice_data
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.1
+  plan_node_hash: 8ff8c1e9165afae4e3b94c33824b642dc09924995133406f219df7c51982b057
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::close_refusals_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.2
+  plan_node_hash: 1b05b3e1d903c9e44e177c8dddf2930df3009e0f9eab44076f2265bdaea06188
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::close_finalization_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.3
+  plan_node_hash: 8ab856f23712bfbfbd6f1cead3121c810448a4b0e6159bad0fed14970386e463
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::repair_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.7
+  plan_node_hash: 58e0bb804faf98845caea0ccbbc85dbe8f89b6e45a4418b1e293847f8cced756
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::closure_snapshot_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.8
+  plan_node_hash: 2bef4e53787a248ccfe318c0d671a4e91fd18bc2021a2c54f2e2f5ce86a66656
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::scripted_decision_drives_close
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.4
+  plan_node_hash: b68902c5a207e9057209191bb80348b8c6dcba02bac6697dd86e4bfbf16f1424
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::epic_close_archives_plan
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.6
+  plan_node_hash: d5adf7797bc6bc2db3ec5a65d42d85390304dfad44a8d0edec10ee809b76be42
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::plan_archive_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.5
+  plan_node_hash: 8378fe37ced960d5a2f771a9ef90ccf3c655e3279cdbf2527fd499c6f84bfc4e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::remote_session_close_refused_locally
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.9
+  plan_node_hash: e6512c9520533a1b4722500f0b063695238698403189da74fd04abd2a229eac8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::landing_target_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.10
+  plan_node_hash: d4ea9183dfebf6dd3c4f62c4f952ed44f8a9b3c9f32569173a40b345347c2571
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::close_locks_hold_through_write
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.11
+  plan_node_hash: 6876299e9c1ca4253f5ab748945b18eed7c66bd041ccb5028beaf3f0bd88b468
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::incomplete_children_refuse_stale
+  deferral_target: null
+  detail: ''
+- section_id: '3.7'
+  item_id: 3.7.12
+  plan_node_hash: 0f8e5fac544e89248e8d0c54020b19d07833f55aec39d380031f578e8e0b7cea
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25514'
+    validation_criteria_snippet: '3.7.1: Every pre-policy refusal matches 0.3''s result
+      in `_evaluate_close` order, and a refused close writes nothing. test: `crates/gtasks/tests/close.rs::close...'
+    matched_artifact_ref: crates/gtasks/tests/close.rs::blocked_ancestor_keeps_leaf_closed
+  deferral_target: null
+  detail: ''
+- section_id: '3.8'
+  item_id: 3.8.1
+  plan_node_hash: 94ee4c2df30f6f64a3a43681c812f8fbb93ef199a106d33e11ab8915ae07c949
+  status: deferred
+  leaves: []
+  deferral_target: '#21546'
+  detail: deferral is valid
+- section_id: '3.8'
+  item_id: 3.8.2
+  plan_node_hash: 51b3ef777baf87d33620a3746b13fcecd28ac52af5d01ef40670fc7136088ab6
+  status: deferred
+  leaves: []
+  deferral_target: '#21546'
+  detail: deferral is valid
+- section_id: '3.8'
+  item_id: 3.8.3
+  plan_node_hash: b1d45f56cb1b982ebebff26d3c2bfde2c74969c7672e63c1eee1bf9d6f33e84a
+  status: deferred
+  leaves: []
+  deferral_target: '#21546'
+  detail: deferral is valid
+- section_id: '3.8'
+  item_id: 3.8.4
+  plan_node_hash: 3354f6a88d3ad8550225a5f65ee62af550056ab70aa763b604069cfedd1ae47e
+  status: deferred
+  leaves: []
+  deferral_target: '#21546'
+  detail: deferral is valid
+- section_id: '3.8'
+  item_id: 3.8.5
+  plan_node_hash: 5b300124f1f3a01c3beddcd40370a26b79e2c41cc8c29751cd9a29f8bea65ba5
+  status: deferred
+  leaves: []
+  deferral_target: '#21546'
+  detail: deferral is valid
+- section_id: '3.9'
+  item_id: 3.9.1
+  plan_node_hash: 2a844bd1b6f29e0789582ad746b73c2344ac5230dd10cc64eeaed1b5e729b60a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25515'
+    validation_criteria_snippet: '3.9.1: Link, unlink, list and auto-link match 0.3''s
+      rows and errors. test: `crates/gtasks/tests/commits.rs::commit_links_match_python`.
+      3.9.2: Observed-file up...'
+    matched_artifact_ref: crates/gtasks/tests/commits.rs::commit_links_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.9'
+  item_id: 3.9.2
+  plan_node_hash: cb871bc46313568bc0bacd455c237be5fffaad36e147433dd8fa4d459d10184e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25515'
+    validation_criteria_snippet: '3.9.1: Link, unlink, list and auto-link match 0.3''s
+      rows and errors. test: `crates/gtasks/tests/commits.rs::commit_links_match_python`.
+      3.9.2: Observed-file up...'
+    matched_artifact_ref: crates/gtasks/tests/commits.rs::observed_files_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.9'
+  item_id: 3.9.3
+  plan_node_hash: 7bf4d8802e78df00265305624412223d19f555c75c04720fcacdbf4559672a60
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25515'
+    validation_criteria_snippet: '3.9.1: Link, unlink, list and auto-link match 0.3''s
+      rows and errors. test: `crates/gtasks/tests/commits.rs::commit_links_match_python`.
+      3.9.2: Observed-file up...'
+    matched_artifact_ref: crates/gtasks/tests/commits.rs::auto_link_lane_authority
+  deferral_target: null
+  detail: ''
+- section_id: '3.10'
+  item_id: 3.10.1
+  plan_node_hash: e277b29c631d6630d6f56e9d7f4c38bd1127a53d3b42433fe1dfc28e8a3af355
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25516'
+    validation_criteria_snippet: '3.10.1: Landing reproduces Python''s results, receipts
+      and landing-message rows for clean, already-landed, disjoint-tip merge, conflict,
+      base-update, schema-car...'
+    matched_artifact_ref: crates/gtasks/tests/landing.rs::land_commit_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.10'
+  item_id: 3.10.2
+  plan_node_hash: 1bec4f200b382d1d84749d8b0ee7af0f770080da2149fb2cdcab061000c4ee35
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25516'
+    validation_criteria_snippet: '3.10.1: Landing reproduces Python''s results, receipts
+      and landing-message rows for clean, already-landed, disjoint-tip merge, conflict,
+      base-update, schema-car...'
+    matched_artifact_ref: crates/gtasks/tests/landing.rs::landing_recovers_from_reflog
+  deferral_target: null
+  detail: ''
+- section_id: '3.10'
+  item_id: 3.10.3
+  plan_node_hash: 947cca78c0651531fef04b3aa8fcc083d156b5b4cd8e02deac37383c504ae66a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25516'
+    validation_criteria_snippet: '3.10.1: Landing reproduces Python''s results, receipts
+      and landing-message rows for clean, already-landed, disjoint-tip merge, conflict,
+      base-update, schema-car...'
+    matched_artifact_ref: crates/gtasks/tests/landing.rs::landing_snapshot_and_target_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.11'
+  item_id: 3.11.1
+  plan_node_hash: 7cf888b9a0a5689b0c3188e3e00ad70a15aeedabb428094e7b8244ef25c26e22
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25517'
+    validation_criteria_snippet: '3.11.1: Native backup writes Python''s JSONL, including
+      attestation history, to the default path only, and native and Python restore
+      each other''s files identica...'
+    matched_artifact_ref: crates/gtasks/tests/ops.rs::backup_round_trips_with_python
+  deferral_target: null
+  detail: ''
+- section_id: '3.11'
+  item_id: 3.11.2
+  plan_node_hash: dbefbe8bf8114019b53e6536c1aaf747fabbd2f083e6054fced0b64c648c6c7b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25517'
+    validation_criteria_snippet: '3.11.1: Native backup writes Python''s JSONL, including
+      attestation history, to the default path only, and native and Python restore
+      each other''s files identica...'
+    matched_artifact_ref: crates/gtasks/tests/ops.rs::restore_is_operator_only
+  deferral_target: null
+  detail: ''
+- section_id: '3.11'
+  item_id: 3.11.3
+  plan_node_hash: 3fe2b3fd21c50c2d80f44e0914039567631d493472dad3d7ec37e594805d8687
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25517'
+    validation_criteria_snippet: '3.11.1: Native backup writes Python''s JSONL, including
+      attestation history, to the default path only, and native and Python restore
+      each other''s files identica...'
+    matched_artifact_ref: crates/gtasks/tests/ops.rs::ops_reports_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: e24f6241245e1f133da3d9a82b225b9c14a224f10a8118876a165521bd50b3a9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::list_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: 50b8d767e27f76e58b4f08529905ac9bca8d20f81583a4b3c2d5f4cbeb6194ff
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::create_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: f223b298a421cbcbd2b7cdffda178fb271293572e8957e92e6381edc5f1af59e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::get_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: 15d531c6d6198925aa8ed3a607c4ba91a02c0d12b626e6eb94871881ec735745
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::patch_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.5
+  plan_node_hash: 4ac4b9b611de815bd8444e40466338b50833293c2163beddf0d45a7d4714d39c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::delete_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.6
+  plan_node_hash: 791bead071b650eb2aede64db1354146f18c02aa09fb5e890b094794d5b9642e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::list_comments_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.7
+  plan_node_hash: e6c5b61d1729076969087f315706bcf891b3c1944322d9668a3fc298e46802de
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::add_comment_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.8
+  plan_node_hash: 1ccec57dc241bedfdb17f0f6d5868d30bf65f3794627763b06082b92e03fc09a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::delete_comment_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.9
+  plan_node_hash: 7306ab5ae46ec6fcd515b1b14cb6bc6ad8196c56d06310e05d552c248cd913d3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::list_dependencies_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.10
+  plan_node_hash: 33de1e221a8a2611d048d97ca7967ec87ba62ef1995d4a6bac6763e5b77d309d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::add_dependency_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.11
+  plan_node_hash: 7b0eac05108966fd2c9c049348193b6e79f95f44b3d3a6db1a237b646cbb18d2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::remove_dependency_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.12
+  plan_node_hash: 834dda7f8400a6151b375ada44964344de4d2e52155fc529275b5ea6e30f7741
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::claim_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.13
+  plan_node_hash: 881a8b7ce3052043c1b9281a90fcab7e0a02a6a4d746e046cf66bbd9d1aa48d4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::release_claim_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.14
+  plan_node_hash: 209f413bbfdacffe559cf33efd261e1a0f191130794b4556f5225ac8edc940ad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::close_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.15
+  plan_node_hash: 999b5b52bd06b4e2c6c0362a8ad972f3e8e3ea566b666c1b14c1fb0e81d43449
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::escalate_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.16
+  plan_node_hash: f4104d0c73b29561f42360290354d3885ab9e9bc928be029e075d1e42a04598d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::reopen_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.17
+  plan_node_hash: 1ca786922cd79929dccf6221463e7f149094b63fcf3b11084b6a031cd9811c02
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::de_escalate_route_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.18
+  plan_node_hash: d80bfe0a05e0ba1b509528d8908609b1ed44abb113bc0041580cd3147441bab5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::events_follow_commit_like_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.19
+  plan_node_hash: 5ceac719c5817afe42e7e769b45b895cc631ea54adc2d9c16b240385d3b8ce3d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25518'
+    validation_criteria_snippet: '4.1.1: `GET /api/tasks` matches 0.2''s filters,
+      ordering, pagination and errors. test: `crates/gtasks/tests/http.rs::list_route_matches_python`.
+      4.1.2: `POST /a...'
+    matched_artifact_ref: crates/gtasks/tests/http.rs::claims_are_exact_and_key_only
+  deferral_target: null
+  detail: ''
+- section_id: 4.1a
+  item_id: 4.1a.1
+  plan_node_hash: 67f9dd6a5ca99658327eff5ae56acec52fabaee6e031d5f4746cb6bbfac739c2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25519'
+    validation_criteria_snippet: '4.1a.1: A subscribed native WebSocket client receives
+      bridge-published Tasks frames exactly as it receives Python-published ones.
+      test: `crates/gdaemon/tests/t...'
+    matched_artifact_ref: crates/gdaemon/tests/tasks_bridge.rs::task_events_reach_broker_subscribers
+  deferral_target: null
+  detail: ''
+- section_id: 4.1a
+  item_id: 4.1a.2
+  plan_node_hash: 67a1a2073c4aeccf7431ea1ec316b337fbbdee69ed2782ec06c4f0f4ec274a09
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25519'
+    validation_criteria_snippet: '4.1a.1: A subscribed native WebSocket client receives
+      bridge-published Tasks frames exactly as it receives Python-published ones.
+      test: `crates/gdaemon/tests/t...'
+    matched_artifact_ref: crates/gdaemon/tests/tasks_bridge.rs::tasks_family_registers_passive
+  deferral_target: null
+  detail: ''
+- section_id: 4.1a
+  item_id: 4.1a.3
+  plan_node_hash: e5d6a195120f8584ce54e1d81f9fc7591230c0fa35fab5dba94fc830ef5b9760
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25519'
+    validation_criteria_snippet: '4.1a.1: A subscribed native WebSocket client receives
+      bridge-published Tasks frames exactly as it receives Python-published ones.
+      test: `crates/gdaemon/tests/t...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: 02ab8d0489f57d42ea90d43553f6a59ef348eb6fc883c69a82ab86dc29e68288
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25520'
+    validation_criteria_snippet: '4.2.1: Read and write comparisons detect a tampered
+      response or post-image, skip concurrent changes and never repeat a mutation.
+      test: `crates/gtasks/tests/com...'
+    matched_artifact_ref: crates/gtasks/tests/compare.rs::compare_is_side_effect_free_and_race_aware
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.6
+  plan_node_hash: c64ae70d5895d6fac519c59ea39c2c3e2c855889a73ac62259334f1aa86526e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25520'
+    validation_criteria_snippet: '4.2.1: Read and write comparisons detect a tampered
+      response or post-image, skip concurrent changes and never repeat a mutation.
+      test: `crates/gtasks/tests/com...'
+    matched_artifact_ref: crates/gtasks/tests/compare.rs::relation_and_membership_races_skip
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: d8a898062ca6b9e8df228be9ca749cbe9c512e2192049b850bf9b9111fc4e596
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25520'
+    validation_criteria_snippet: '4.2.1: Read and write comparisons detect a tampered
+      response or post-image, skip concurrent changes and never repeat a mutation.
+      test: `crates/gtasks/tests/com...'
+    matched_artifact_ref: tests/e2e/test_tasks_family.py::test_native_tasks_corpus_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: c0d6f23070a6d62be25fc6047bcad4241a5a18c7970569d30050ad1544e2e0fe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25520'
+    validation_criteria_snippet: '4.2.1: Read and write comparisons detect a tampered
+      response or post-image, skip concurrent changes and never repeat a mutation.
+      test: `crates/gtasks/tests/com...'
+    matched_artifact_ref: tests/e2e/test_tasks_family.py::test_compare_has_coverage_without_double_effects
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: 45ad0cc46bf8e97e461f06babb08cd7f4ea265bf7e149b040295a0d2340e39d6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25520'
+    validation_criteria_snippet: '4.2.1: Read and write comparisons detect a tampered
+      response or post-image, skip concurrent changes and never repeat a mutation.
+      test: `crates/gtasks/tests/com...'
+    matched_artifact_ref: tests/e2e/test_tasks_family.py::test_node_routes_tasks_to_hub
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.5
+  plan_node_hash: a11a62edc973353e22ecaf1fff9012c1c5c80cfcec72c275131459d415e4baae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25520'
+    validation_criteria_snippet: '4.2.1: Read and write comparisons detect a tampered
+      response or post-image, skip concurrent changes and never repeat a mutation.
+      test: `crates/gtasks/tests/com...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.1
+  plan_node_hash: dd36f5d00a47afd3054fb81c20d2633cecccc787925a9589de8fa32766e30867
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25521'
+    validation_criteria_snippet: '4.3.1: Activation is refused unless 4.2''s readiness
+      report passes. test: `crates/gdaemon/tests/tasks_cutover.rs::readiness_gates_tasks_activation`.
+      4.3.2: Nati...'
+    matched_artifact_ref: crates/gdaemon/tests/tasks_cutover.rs::readiness_gates_tasks_activation
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.2
+  plan_node_hash: f8d8ac94efbf2c96d3a3b667aec31b7a90ccd328413e3720eab7f14d22ce80a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25521'
+    validation_criteria_snippet: '4.3.1: Activation is refused unless 4.2''s readiness
+      report passes. test: `crates/gdaemon/tests/tasks_cutover.rs::readiness_gates_tasks_activation`.
+      4.3.2: Nati...'
+    matched_artifact_ref: crates/gdaemon/tests/tasks_cutover.rs::tasks_backend_switch_is_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.3
+  plan_node_hash: 043c4ac190d16a92ba6dd4bd88a44e353f324fe7f0b7e56da2cd6b50dbc40895
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25521'
+    validation_criteria_snippet: '4.3.1: Activation is refused unless 4.2''s readiness
+      report passes. test: `crates/gdaemon/tests/tasks_cutover.rs::readiness_gates_tasks_activation`.
+      4.3.2: Nati...'
+    matched_artifact_ref: tests/e2e/test_tasks_family.py::test_native_routes_without_python_backend
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.4
+  plan_node_hash: adfdad4017bb970878690404e4db6b3c10630257fb96b70b275ba94ca6114766
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25521'
+    validation_criteria_snippet: '4.3.1: Activation is refused unless 4.2''s readiness
+      report passes. test: `crates/gdaemon/tests/tasks_cutover.rs::readiness_gates_tasks_activation`.
+      4.3.2: Nati...'
+    matched_artifact_ref: Tasks activation evidence
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.5
+  plan_node_hash: fd3b32b9dcb6c143d005ba70e6ce92cc0b1e35f491261fd401a8f80927e4237e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25521'
+    validation_criteria_snippet: '4.3.1: Activation is refused unless 4.2''s readiness
+      report passes. test: `crates/gdaemon/tests/tasks_cutover.rs::readiness_gates_tasks_activation`.
+      4.3.2: Nati...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.1
+  plan_node_hash: 8dfd6c9bf49a7c3ee2b4986e57a3a4a6155ffa943cf563e8e400ad3de0008b02
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25522'
+    validation_criteria_snippet: '4.4.1: Ordinary cookies reproduce 0.2''s admission,
+      payloads, errors and effects on the fifteen claimed routes through #24967''s
+      verifier only. test: `crates/gda...'
+    matched_artifact_ref: crates/gdaemon/tests/tasks_browser.rs::ordinary_cookie_routes_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.2
+  plan_node_hash: b5a85ab5e463f14a48f9f07d8555ae344e284105d01a52069a98cc4c5c1a9120
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25522'
+    validation_criteria_snippet: '4.4.1: Ordinary cookies reproduce 0.2''s admission,
+      payloads, errors and effects on the fifteen claimed routes through #24967''s
+      verifier only. test: `crates/gda...'
+    matched_artifact_ref: crates/gdaemon/tests/tasks_browser.rs::managed_cookie_authority_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.3
+  plan_node_hash: 28b0d936ad962195c9fea91ae924ad27972629e3e1abbfc2aca4897e7ed32c08
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25522'
+    validation_criteria_snippet: '4.4.1: Ordinary cookies reproduce 0.2''s admission,
+      payloads, errors and effects on the fifteen claimed routes through #24967''s
+      verifier only. test: `crates/gda...'
+    matched_artifact_ref: crates/gdaemon/tests/tasks_browser.rs::browser_admission_fails_closed
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.4
+  plan_node_hash: cb450cdd39d327554b3920eaafb203d2ebd1f4ae339ad8f573426491f4579c95
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25522'
+    validation_criteria_snippet: '4.4.1: Ordinary cookies reproduce 0.2''s admission,
+      payloads, errors and effects on the fifteen claimed routes through #24967''s
+      verifier only. test: `crates/gda...'
+    matched_artifact_ref: crates/gdaemon/tests/tasks_browser.rs::cors_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.5
+  plan_node_hash: 07031f718a820bfc6a2007d0e40819648a2dd01cac6c107f52243173b09854ef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25522'
+    validation_criteria_snippet: '4.4.1: Ordinary cookies reproduce 0.2''s admission,
+      payloads, errors and effects on the fifteen claimed routes through #24967''s
+      verifier only. test: `crates/gda...'
+    matched_artifact_ref: Tasks browser admission security gate
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.6
+  plan_node_hash: cfc2dd43c54e8383ec6767db4d8a357a90e78399967abd0b50921e9746743c81
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25522'
+    validation_criteria_snippet: '4.4.1: Ordinary cookies reproduce 0.2''s admission,
+      payloads, errors and effects on the fifteen claimed routes through #24967''s
+      verifier only. test: `crates/gda...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: 997301add46fb5e50c2159db174427f9d987157125194b29357354949872a570
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: fba471dc610b21f2b7542d1865a968c429b2b1bd215b32df4a6e8794491fab4f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::get_dependency_tree_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: 70db6f5b0a518085a91116d31a3ee00e9489975aed2e65090483363313f0f4c9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::get_session_tasks_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.4
+  plan_node_hash: 6908a0d51e6e0a740bd62df23e12cffeb2114908392cf9743b7df6f54e0103c0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::get_task_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.5
+  plan_node_hash: 6e9855e5a65f72b9e6ae701ca2975a83eb793c8bd8b74a0f0ffc770f752d92f4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::get_task_diff_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.6
+  plan_node_hash: b68090f13b6bd0e8734f91e7d73ebb3666a8601ceec74b44904f3bc454dbc942
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::get_task_sessions_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.7
+  plan_node_hash: 1558d6cf13bf07eb10c1225976f758af308bd87319f1cacb3b68f251e30330e5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::list_blocked_tasks_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.8
+  plan_node_hash: b8c161d19fae1d1af252c15527ac72ae89e12ccf1be68cccd67f0af6839987dd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::list_ready_tasks_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.9
+  plan_node_hash: afc7ec2744defe61ecdac7edc36a10826cefb2c5c75e1085245f2ba0b60b9d24
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::list_tasks_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.10
+  plan_node_hash: bd6b5e9adf3255f86bdd57fe1d3976990edf44b952ca2f50b887ae436a001d3e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::search_tasks_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.11
+  plan_node_hash: 2908bb894f6b69ff85efec6f5ab8be408de05520550cf3bf6e49c802e0dfe9b5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::suggest_next_task_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.12
+  plan_node_hash: 86a42c9428854278fb8de0fd7317c3c7afdf35f1e90c8121dceebfb084d71996
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::read_catalog_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.13
+  plan_node_hash: ac30c841559f8d0438036979f404ea5edf87ddaf8215b89576d80c260611aa87
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::read_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.14
+  plan_node_hash: e190e141f7efb9408909ff332fd3e27a1d68f8b5050a1bfdabf9f4f79725f20a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.15
+  plan_node_hash: 6fd5e97d49be5d7cb0219eb3f0802c2578320416f5304beb97d8e42d36b253b4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25523'
+    validation_criteria_snippet: '5.1.1: `check_dependency_cycles` matches 0.3''s
+      results and errors. test: `crates/gtasks/tests/mcp_reads.rs::check_dependency_cycles_matches_python`.
+      5.1.2: `ge...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_reads.rs::read_tools_resolve_principals
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.1
+  plan_node_hash: 0047459cf8ee26c154e64c1eddda0cca16de7dc0f3ca1c2f22bdb79f5c1a7894
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.2
+  plan_node_hash: d707f7a0a96cb59be67ece0fe92fa1d7a2a63b0cfd7e844027e8d3c6971938dc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::release_task_claim_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.3
+  plan_node_hash: 9fdf0975f0a1fc1c23112f6c8aca9a377d9639cf8ad92a70e5237dff01d9aec2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::hand_off_task_claim_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.4
+  plan_node_hash: 08bf955ff55c83fa90359e35cefdacccb85da8799a8a2b5850892a8a02b9f02b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::delegate_task_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.5
+  plan_node_hash: 9838fca0de40ff267b18b55f6ade0932283710b9be0c25eab25fea07d40619ca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::link_task_to_session_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.6
+  plan_node_hash: 678065dd004435fb3d1070042a863624d76c4aafcb580a85210d6be0696ca11c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::escalate_task_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.7
+  plan_node_hash: b3c0de4a2b7f0e02e94ed600433ab736217a6a491a4f1cb7eb78f21fdf78bc53
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::de_escalate_task_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.8
+  plan_node_hash: 78188c5309e49634b4e6558d52c89fb461fbcf2ca9eacbf9823b89bbd2fc0cae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::reopen_task_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.9
+  plan_node_hash: d44db7a2471ac068364348785b04cd83d8c27a3682d5c09cd17fa6bb9076de42
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::close_task_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.10
+  plan_node_hash: c09ebe063a63ea58fa00ea1eac89970beabfd9a17c5b39e718151d962ab3c9d3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::repair_closed_candidate_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.11
+  plan_node_hash: eae89d6c5d8678a9aac2e90c1930dc4d853a2ad219bfe4fbc52343045f269426
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::record_attestation_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.12
+  plan_node_hash: d47673702eaace5816ff018f4d3c2b87ee668d453bf623670f58fc365e746b6d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::list_attestations_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.13
+  plan_node_hash: 4c2e20f54da3f08002f463cd540031da5dcc7939151c1d08236ef81718cf3b15
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::task_progress_notices_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.14
+  plan_node_hash: bbe38ba01d9c5981aac311d528b53028e8998d73419bec643b5605e13b6f1de1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::lifecycle_catalog_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.15
+  plan_node_hash: d511ce5a76aa824ebab8f3c947e0d63c392f64add5bccb7ed4d78646d4969bf3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_lifecycle.rs::lifecycle_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.16
+  plan_node_hash: b63f3dd08a3d766237d6c3df1582c4980496d4afd6591d081d677421437d1ced
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25524'
+    validation_criteria_snippet: '5.2.1: `claim_task` matches 0.3 and asserts `tasks.mcp-claim-task.takeover-grounds`.
+      test: `crates/gtasks/tests/mcp_lifecycle.rs::claim_task_matches_python`. 5...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.1
+  plan_node_hash: 68e734a95fd99f18b28e9d632aad59e74dc0422878118b9b0af9d3c173a88109
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::create_task_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.2
+  plan_node_hash: 46714ef1ec0b8d474c1a93a6ad8b7773a8b0b9048466e9cad7d1fad252d39b4d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::update_task_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.3
+  plan_node_hash: 60d06c0498c8c0186780dcf4c43a40e0de0520cf982c98de64ea1e502c7b6980
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::delete_task_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.4
+  plan_node_hash: 667957c31e06c76bad7a219044b65c0e953c76dfdf95c6541591932e46a43084
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::add_label_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.5
+  plan_node_hash: 2c665a8eabb16a82652401f14cf2561d37cfa7ccbd7dac91f4739c058da0ea4d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::remove_label_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.6
+  plan_node_hash: 63cbb588c1ebe7b326c6ee83c2222e4b55c49f3efec92c70ac0a9b61fedbb7b4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::add_dependency_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.7
+  plan_node_hash: 2f754ae1c6e725e6009005d982ded28f64e275853b86e0d2059b7d0b3f6f6edd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::remove_dependency_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.8
+  plan_node_hash: e88379c3d4dbe55c289a3e71881419ca4a5b79995a8508f1fd037db20e1e9f0e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::link_commit_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.9
+  plan_node_hash: 2fc19e1bdc073896575c40bc0e6dfb91c7a5a359c861bd9fdc1e7ec546df4192
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::unlink_commit_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.10
+  plan_node_hash: 858639cb1fe42c18ff2086631c02b364180fe3ee533e5140d3a41e8e3e3ad641
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::auto_link_commits_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.11
+  plan_node_hash: 2653363c5e940550ddfc1b2ee42565eb506934f27b318c23cdb04e4520365888
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::update_observed_files_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.12
+  plan_node_hash: 19c2f621c05c0140ea27ee4fe5a884bbf4bd2538aa9c99c632a455bd2fa30206
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::backup_tasks_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.13
+  plan_node_hash: 5618268131b2c8149d5b773c0c2fcd35001b4fb877da2942efe887dd1e6d190a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::mutation_catalog_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.14
+  plan_node_hash: e25607c04e439106a9332d49919e65a32b2214702d58a7791788083bdbd1f243
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_mutations.rs::mutation_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.15
+  plan_node_hash: eb9db675c66b4e31c90e0f31d8e5b452a9b89f39784c8c5c076bd19417ea13d5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25525'
+    validation_criteria_snippet: '5.3.1: `create_task` matches rows and errors and
+      asserts its gate-label-authority entry. test: `crates/gtasks/tests/mcp_mutations.rs::create_task_matches_pytho...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.1
+  plan_node_hash: 56e57881221fed8fff2cadda6991419c41d9713fdc1a02aa29eec7b20a879463
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.2
+  plan_node_hash: 310034c38cf5bc65497baff5a10976d8a3536454a70b26b75dae4900780c39d7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::clear_isolation_pair_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.3
+  plan_node_hash: 4e97301542adb2e2f9fe5587625b9c89f0485133fd6b0c4d8cc1740f97c356eb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::find_file_overlaps_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.4
+  plan_node_hash: 315c5c792d381ccff78f5ac2466e0e3310f026cadf85345aedfed99a652fcae9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::get_affected_files_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.5
+  plan_node_hash: 59ddb3195ef7f529e03698adad097f4601fde34be5805d578a1709fa6008145a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::get_artifacts_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.6
+  plan_node_hash: 3fe04386cd9b772de44ab45450eb4cc13540fc9dd35cb5a3afd2383dfc8c2f63
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::land_commit_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.7
+  plan_node_hash: 3d38867c1bc7762e192efdd277760b42230c57fffbf92be5b392085c9deaafd6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::reindex_tasks_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.8
+  plan_node_hash: 67d8a01392b7a25e48f2214bd9d5d68fffca665da1111b2da506905fa7a1c8be
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::set_affected_files_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.9
+  plan_node_hash: 497d809e9c66ffcc843ec23e47c880d469197ac405663d7e0546050bf7edbca5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::set_artifact_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.10
+  plan_node_hash: 7eb48addd28bbf7514044bc97cecc7ecc062131367aadc684a8f8f6a697def3d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::set_artifacts_atomic_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.11
+  plan_node_hash: f48a063ec8babfaa1f5aa230f6dcd3a08851768766c814d198d957039abbd830
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::set_landing_freeze_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.12
+  plan_node_hash: 1f3bce91a8a49f9e167ca287deb9605bc6f176dc5334d9a83d77b8aa2a4b464d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::ops_server_accepts_expansion_definitions
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.13
+  plan_node_hash: e8217bc57372401b92b02c5f75303b7f67d5ed20d37be36690bb8054075fd56a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::ops_catalog_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.14
+  plan_node_hash: 170525e1434409436f62039b9f714c157bfc38dfc8092a4d46a1cc6ef83391f3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::ops_internal_errors_are_safe
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.15
+  plan_node_hash: b0594fc4f1217a57d6fcf883a075007e2ffc0937601e387ccef23097f902404e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.16
+  plan_node_hash: fb815b2cf4f527ba07ebaeff2ead31f61b1d3b055e7b5ec9e3a4088f4a983103
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::doctor_tasks_is_operator_only
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.17
+  plan_node_hash: 02e862bfcb54937ccb8c23f3c0468b75b5f725a354b16e66be863eea13ac1b37
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::get_task_stats_is_operator_only
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.18
+  plan_node_hash: c683ca28fa643a54fe516fd1b2dac0f1af9b919393ae34c80927adf374d0090a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::get_validation_history_is_operator_only
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.19
+  plan_node_hash: 33bef57caac7ccb8741def1703c1413356d4106db03653a0243c78a21f203fba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25526'
+    validation_criteria_snippet: '5.4.1: `append_description_section` matches section
+      writes. test: `crates/gtasks/tests/mcp_ops.rs::append_description_section_matches_python`.
+      5.4.2: `clear_is...'
+    matched_artifact_ref: crates/gtasks/tests/mcp_ops.rs::restore_tasks_is_operator_only
+  deferral_target: null
+  detail: ''
+- section_id: '5.5'
+  item_id: 5.5.1
+  plan_node_hash: fd3dd8ab9049db50fe63326b6e047e5012ec72219a3ebd6027229155e1784385
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25527'
+    validation_criteria_snippet: '5.5.1: Every CLI verb''s data result and typed error
+      in 0.3''s vectors is reproduced by its mapped tool, called as `Operator` with
+      the mapped arguments and proje...'
+    matched_artifact_ref: crates/gtasks/tests/cli_api_map.rs::cli_verbs_match_public_tools
+  deferral_target: null
+  detail: ''
+- section_id: '5.5'
+  item_id: 5.5.2
+  plan_node_hash: 9585adb6825984a53394b6c8f342b7a9b0f43299914ef3d213b642131da19e64
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25527'
+    validation_criteria_snippet: '5.5.1: Every CLI verb''s data result and typed error
+      in 0.3''s vectors is reproduced by its mapped tool, called as `Operator` with
+      the mapped arguments and proje...'
+    matched_artifact_ref: docs/contracts/tasks-services.md
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.1
+  plan_node_hash: fa8c670dd330df459ba40f8ff6486e7d647400dc94e1d4e6708dadf415c8ed0d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25528'
+    validation_criteria_snippet: '6.1.1: Exactly fifteen HTTP rows are `delegated`,
+      and the claim, close, MCP, team-progress, CLI and expansion rows stay `proxied`
+      with the owner notes and waiv...'
+    matched_artifact_ref: Tasks parity ownership
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.2
+  plan_node_hash: dd51d0f2fc410d14332fe50d1e5abe700bfea434d7c57c4daf31e381d477b515
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25528'
+    validation_criteria_snippet: '6.1.1: Exactly fifteen HTTP rows are `delegated`,
+      and the claim, close, MCP, team-progress, CLI and expansion rows stay `proxied`
+      with the owner notes and waiv...'
+    matched_artifact_ref: docs/contracts/parity-ledger.md
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.3
+  plan_node_hash: 5845170ed44d34f07e14b4f48ee9d991623e797251ccd6c0eddfc16d3e8b0ab2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#25528'
+    validation_criteria_snippet: '6.1.1: Exactly fifteen HTTP rows are `delegated`,
+      and the claim, close, MCP, team-progress, CLI and expansion rows stay `proxied`
+      with the owner notes and waiv...'
+    matched_artifact_ref: docs/contracts/parity-waivers.json
+  deferral_target: null
+  detail: ''

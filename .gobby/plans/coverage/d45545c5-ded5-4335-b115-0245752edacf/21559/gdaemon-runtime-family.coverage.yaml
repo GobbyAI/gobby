@@ -1,0 +1,2427 @@
+header:
+  plan_id: gdaemon-runtime-family
+  plan_hash: c2553552e69ddbfe34e0bb803fb5ea2d05e8d7ea45423554c135c5a7413e541c
+  root_task_ref: '21559'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-14T23:56:57Z'
+  task_tree_source: db
+  task_tree_source_hash: e4a105c4c4edf6ea99a99fe101cf9749b29b2f88b4c2cb7ff683ccdb1fa6607a
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: e5b62da3423a312c6f2b94bed3974ed6d84101d915a72dbc5c30d00ed2ebc798
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24442'
+    validation_criteria_snippet: '1.1.1: gcore exposes `RouteFamily<S>` and `ProxiedCheck`
+      behind `route-family`, with defaults `default_backend = Proxy`, `claims = true`
+      and `check_proxied = S...'
+    matched_artifact_ref: crates/gcore/src/route_family.rs
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 6259be5de7a3bafa62d33da3bb0f451b4ba205d9367aac69b420c5bc470b81f5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24442'
+    validation_criteria_snippet: '1.1.1: gcore exposes `RouteFamily<S>` and `ProxiedCheck`
+      behind `route-family`, with defaults `default_backend = Proxy`, `claims = true`
+      and `check_proxied = S...'
+    matched_artifact_ref: crates/gdaemon/src/front_door/routes.rs::unclaimed_requests_are_proxied_under_every_backend
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: a66178d97705f8fe873c46600a72465e53eb33a042abd5849ea62be5b2b8ec88
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24442'
+    validation_criteria_snippet: '1.1.1: gcore exposes `RouteFamily<S>` and `ProxiedCheck`
+      behind `route-family`, with defaults `default_backend = Proxy`, `claims = true`
+      and `check_proxied = S...'
+    matched_artifact_ref: crates/gdaemon/src/front_door/routes.rs::health_family_honors_proxy_native_and_compare
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: bf6dcda6b7bcad55ce09134d4070fbf54d414946544cb391707464d7b1f7dfd1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24442'
+    validation_criteria_snippet: '1.1.1: gcore exposes `RouteFamily<S>` and `ProxiedCheck`
+      behind `route-family`, with defaults `default_backend = Proxy`, `claims = true`
+      and `check_proxied = S...'
+    matched_artifact_ref: crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: 3f8a20856edfa81b5b3a81bf254c862a9007e52dd8aa036d04664241638ee9cf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24442'
+    validation_criteria_snippet: '1.1.1: gcore exposes `RouteFamily<S>` and `ProxiedCheck`
+      behind `route-family`, with defaults `default_backend = Proxy`, `claims = true`
+      and `check_proxied = S...'
+    matched_artifact_ref: crates/gdaemon/src/front_door/routes.rs::absent_route_takes_the_family_default
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.6
+  plan_node_hash: 3fd7b18584aa645222d07337975f78dd71e45697414798f6e39cd8733bb3623d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24442'
+    validation_criteria_snippet: '1.1.1: gcore exposes `RouteFamily<S>` and `ProxiedCheck`
+      behind `route-family`, with defaults `default_backend = Proxy`, `claims = true`
+      and `check_proxied = S...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.7
+  plan_node_hash: 196152b9e0ebe51c3dee8d2b52d5a464515724a3a85be785b623d20cc5180722
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24442'
+    validation_criteria_snippet: '1.1.1: gcore exposes `RouteFamily<S>` and `ProxiedCheck`
+      behind `route-family`, with defaults `default_backend = Proxy`, `claims = true`
+      and `check_proxied = S...'
+    matched_artifact_ref: crates/gcore/src/bootstrap/front_door.rs
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 130befc901057ebeea8f9c0dde47ee4e7dc06778227dedba238bd75b3827227a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24443'
+    validation_criteria_snippet: '1.2.1: `serve::run` builds exactly one pool, used
+      by the resolver, the lease and hub node routes, and neither `auth.rs` nor `lease/mod.rs`
+      calls `Pool::build`....'
+    matched_artifact_ref: crates/gdaemon/src/serve.rs
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 0f925575a56b91ad61a35bd64a235d4bf87e6fb826ba50f2b812c0b2f42b1143
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24443'
+    validation_criteria_snippet: '1.2.1: `serve::run` builds exactly one pool, used
+      by the resolver, the lease and hub node routes, and neither `auth.rs` nor `lease/mod.rs`
+      calls `Pool::build`....'
+    matched_artifact_ref: crates/gdaemon/tests/lease.rs::failed_transaction_and_drop_release_the_dedicated_session
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 06081e50fc962d4696aaccbf3e332afa802df4c2ed6098ecb486d723a335bcf1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24443'
+    validation_criteria_snippet: '1.2.1: `serve::run` builds exactly one pool, used
+      by the resolver, the lease and hub node routes, and neither `auth.rs` nor `lease/mod.rs`
+      calls `Pool::build`....'
+    matched_artifact_ref: crates/gdaemon/tests/lease.rs::epoch_and_secret_rotate_together
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: e68296741217cc028ba01612b9bcc19425322ed279ec062dcc585ba793bf7fbe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24443'
+    validation_criteria_snippet: '1.2.1: `serve::run` builds exactly one pool, used
+      by the resolver, the lease and hub node routes, and neither `auth.rs` nor `lease/mod.rs`
+      calls `Pool::build`....'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::postgres_resolver_and_resolverless_door_fail_closed
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 55b2b7e4ec425eed0e5ced7d8418b57bfa7905f3dbd4355337a294c8b0e175ff
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24443'
+    validation_criteria_snippet: '1.2.1: `serve::run` builds exactly one pool, used
+      by the resolver, the lease and hub node routes, and neither `auth.rs` nor `lease/mod.rs`
+      calls `Pool::build`....'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 1dee6b6997e466b5d1a56fa9fe83a3cfe88793d054c993f251d92316c48529a6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24444'
+    validation_criteria_snippet: '2.1.1: A claimed GET in Compare mode returns the
+      proxied response and records `match`, or `diff` with a pointer and no values.
+      test: `crates/gdaemon/tests/comp...'
+    matched_artifact_ref: crates/gdaemon/tests/compare.rs::get_compare_records_match_and_diff_without_values
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 440b7d56a9e55415caf8efc6af043c5f5daa8bea8691ff759ed553479dacaf90
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24444'
+    validation_criteria_snippet: '2.1.1: A claimed GET in Compare mode returns the
+      proxied response and records `match`, or `diff` with a pointer and no values.
+      test: `crates/gdaemon/tests/comp...'
+    matched_artifact_ref: crates/gdaemon/tests/compare.rs::json_bodies_compare_by_value
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 312701fffd42c1ef62c3cf6cb003764b405d09dfccfbcfb3f500c16d80a3edbd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24444'
+    validation_criteria_snippet: '2.1.1: A claimed GET in Compare mode returns the
+      proxied response and records `match`, or `diff` with a pointer and no values.
+      test: `crates/gdaemon/tests/comp...'
+    matched_artifact_ref: crates/gdaemon/tests/compare.rs::non_get_requests_run_only_the_proxied_leg
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 3191cab109f665026649627b4728a392247233ab02e0660490690229f9852eed
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24444'
+    validation_criteria_snippet: '2.1.1: A claimed GET in Compare mode returns the
+      proxied response and records `match`, or `diff` with a pointer and no values.
+      test: `crates/gdaemon/tests/comp...'
+    matched_artifact_ref: crates/gdaemon/tests/compare.rs::native_failure_returns_the_proxied_response
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: fae57030f3edfb4e48777e0677bbe7670f7292d429fed2acc5ab050f43769bb6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24444'
+    validation_criteria_snippet: '2.1.1: A claimed GET in Compare mode returns the
+      proxied response and records `match`, or `diff` with a pointer and no values.
+      test: `crates/gdaemon/tests/comp...'
+    matched_artifact_ref: crates/gdaemon/tests/compare.rs::report_fails_on_mismatch_and_empty_window
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.6
+  plan_node_hash: 1b7299907b4062984a67504ff1ab9aa34198aeed601aace03bd9d97b2b2218fb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24444'
+    validation_criteria_snippet: '2.1.1: A claimed GET in Compare mode returns the
+      proxied response and records `match`, or `diff` with a pointer and no values.
+      test: `crates/gdaemon/tests/comp...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.7
+  plan_node_hash: 1a276497ff583e4614f5980fcccacfe0ce431961847bf3dcc37c34cc2613738e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24444'
+    validation_criteria_snippet: '2.1.1: A claimed GET in Compare mode returns the
+      proxied response and records `match`, or `diff` with a pointer and no values.
+      test: `crates/gdaemon/tests/comp...'
+    matched_artifact_ref: crates/gdaemon/tests/compare.rs::unreachable_backend_records_skipped
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: 489c2669dd7b9184a95127dba2f223169df55b799b210b9d063c13ba58d4891e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24445'
+    validation_criteria_snippet: '2.2.1: The migration creates `config_active_state`
+      keyed by `deployment_token`, not accessible to PUBLIC, with select, insert and
+      update for `gobby_daemon_runt...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/469_config_active_state.sql
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: b3083447beb065ce1804b6a219e4273cb0a24ea5fce402c44ddb36ce2b8498c9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24445'
+    validation_criteria_snippet: '2.2.1: The migration creates `config_active_state`
+      keyed by `deployment_token`, not accessible to PUBLIC, with select, insert and
+      update for `gobby_daemon_runt...'
+    matched_artifact_ref: tests/config/test_config_active_state.py::test_every_bundle_swap_publishes
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: f979d1f0e2bbdb65579ec733b1d4e7c7fd831761cda9807815495e473f72e7c7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24445'
+    validation_criteria_snippet: '2.2.1: The migration creates `config_active_state`
+      keyed by `deployment_token`, not accessible to PUBLIC, with select, insert and
+      update for `gobby_daemon_runt...'
+    matched_artifact_ref: tests/config/test_config_active_state.py::test_document_seals_bindings
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 40c22b3ebe4b3529df680933559dcae19e413ea66733240ac9266d6754d66fd0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24445'
+    validation_criteria_snippet: '2.2.1: The migration creates `config_active_state`
+      keyed by `deployment_token`, not accessible to PUBLIC, with select, insert and
+      update for `gobby_daemon_runt...'
+    matched_artifact_ref: tests/config/test_config_active_state.py::test_failed_publish_retries_on_poll
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.5
+  plan_node_hash: 193303a0d3c67a441aadb38c73bbeac9cf313970b5be9e312a131e5538a40a32
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24445'
+    validation_criteria_snippet: '2.2.1: The migration creates `config_active_state`
+      keyed by `deployment_token`, not accessible to PUBLIC, with select, insert and
+      update for `gobby_daemon_runt...'
+    matched_artifact_ref: tests/config/test_config_active_state.py::test_publish_upserts_one_row_per_deployment
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.6
+  plan_node_hash: 3d3a5c44b02ac0856cee1faa941a37868e79bd1a96724ec1b160b72043cdfc0d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24445'
+    validation_criteria_snippet: '2.2.1: The migration creates `config_active_state`
+      keyed by `deployment_token`, not accessible to PUBLIC, with select, insert and
+      update for `gobby_daemon_runt...'
+    matched_artifact_ref: crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.7
+  plan_node_hash: fab3df9f21c32e6cd692f7d0b1e364d86c3a348fc9a4d6d6ef57b6941c56ebe5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24445'
+    validation_criteria_snippet: '2.2.1: The migration creates `config_active_state`
+      keyed by `deployment_token`, not accessible to PUBLIC, with select, insert and
+      update for `gobby_daemon_runt...'
+    matched_artifact_ref: crates/gcore/tests/catalog_manifest_freshness.rs::catalog_manifest_is_fresh_for_embedded_assets
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.8
+  plan_node_hash: 6e5739ace65cd00b80d096627cf607f10e0ba7940433168e68afc7953e9daecf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24445'
+    validation_criteria_snippet: '2.2.1: The migration creates `config_active_state`
+      keyed by `deployment_token`, not accessible to PUBLIC, with select, insert and
+      update for `gobby_daemon_runt...'
+    matched_artifact_ref: tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.9
+  plan_node_hash: 49bba81d5ebdfc9cdc504a8824efe1976b34a33a353f9bb80dbfb5c1e9272027
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24445'
+    validation_criteria_snippet: '2.2.1: The migration creates `config_active_state`
+      keyed by `deployment_token`, not accessible to PUBLIC, with select, insert and
+      update for `gobby_daemon_runt...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.1
+  plan_node_hash: 9f13c09a02852b80a33cabf2859eb4ccdc14d9d57afb86307705c89640ba0aa2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24446'
+    validation_criteria_snippet: '3.1.1: `crates/gruntime` builds as workspace member
+      `gobby-runtime` (publish false, workspace version) and gdaemon links it. file:
+      `crates/gruntime/Cargo.toml`...'
+    matched_artifact_ref: crates/gruntime/Cargo.toml
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.2
+  plan_node_hash: 4904300e98d44efbca01040b8cdf935ad140066a8c2920a85eb8e6dae6f63427
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24446'
+    validation_criteria_snippet: '3.1.1: `crates/gruntime` builds as workspace member
+      `gobby-runtime` (publish false, workspace version) and gdaemon links it. file:
+      `crates/gruntime/Cargo.toml`...'
+    matched_artifact_ref: crates/gruntime/tests/config.rs::effective_config_matches_python_projection
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.3
+  plan_node_hash: c04dee1b1427c6fea038e388277b1ca35ec5005bdf4b0fa1626b7a178be19991
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24446'
+    validation_criteria_snippet: '3.1.1: `crates/gruntime` builds as workspace member
+      `gobby-runtime` (publish false, workspace version) and gdaemon links it. file:
+      `crates/gruntime/Cargo.toml`...'
+    matched_artifact_ref: crates/gruntime/tests/config.rs::claims_follow_the_route_table
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.5
+  plan_node_hash: 27ae6d62f2193c69e25485641e64ebc45dafdb505d46a314aa3ea7aa4604815f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24446'
+    validation_criteria_snippet: '3.1.1: `crates/gruntime` builds as workspace member
+      `gobby-runtime` (publish false, workspace version) and gdaemon links it. file:
+      `crates/gruntime/Cargo.toml`...'
+    matched_artifact_ref: crates/gruntime/tests/config.rs::missing_row_is_unavailable_and_database_failure_fails
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.4
+  plan_node_hash: e7fc964cce8ba5a707c7252c4e122c76ab5d8529a2f04038824acb7b46bd68c7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24446'
+    validation_criteria_snippet: '3.1.1: `crates/gruntime` builds as workspace member
+      `gobby-runtime` (publish false, workspace version) and gdaemon links it. file:
+      `crates/gruntime/Cargo.toml`...'
+    matched_artifact_ref: crates/gruntime/tests/config.rs::unresolved_values_are_omitted
+  deferral_target: null
+  detail: ''
+- section_id: '3.1'
+  item_id: 3.1.6
+  plan_node_hash: f7861ef9880e4de289a2235c06054a21948d4a51a1eeb1eb885479b98cdc5a8e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24446'
+    validation_criteria_snippet: '3.1.1: `crates/gruntime` builds as workspace member
+      `gobby-runtime` (publish false, workspace version) and gdaemon links it. file:
+      `crates/gruntime/Cargo.toml`...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.1
+  plan_node_hash: 67b53592af9182a48453c7423c311896a8fe4cadc0f4d0949504ebfdd9b332bb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24447'
+    validation_criteria_snippet: '3.2.1: `sign_grant` reproduces a Python-signed grant''s
+      checksum and signature byte for byte, and `signature_matches` accepts it. test:
+      `crates/gcore/src/grant/...'
+    matched_artifact_ref: crates/gcore/src/grant/presentation/tests.rs::signature_matches_python_vector
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.2
+  plan_node_hash: 4b4ff788023c9eb269ddd8664cb526c581342e658a70cfa64042a3b73bee7bf5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24447'
+    validation_criteria_snippet: '3.2.1: `sign_grant` reproduces a Python-signed grant''s
+      checksum and signature byte for byte, and `signature_matches` accepts it. test:
+      `crates/gcore/src/grant/...'
+    matched_artifact_ref: crates/gcore/src/grant/presentation/tests.rs::rejection_matrix_maps_codes_to_statuses
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.3
+  plan_node_hash: 266106dfb7b488351faac5c333ad39888a93c12c30ca4794849ed9b4ac243531
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24447'
+    validation_criteria_snippet: '3.2.1: `sign_grant` reproduces a Python-signed grant''s
+      checksum and signature byte for byte, and `signature_matches` accepts it. test:
+      `crates/gcore/src/grant/...'
+    matched_artifact_ref: crates/gcore/src/grant/presentation/tests.rs::checks_run_in_python_order
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.4
+  plan_node_hash: e5f78637c5459e4a57d17cc59d0383a48ca6de030680706c5582025798ed6d1e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24447'
+    validation_criteria_snippet: '3.2.1: `sign_grant` reproduces a Python-signed grant''s
+      checksum and signature byte for byte, and `signature_matches` accepts it. test:
+      `crates/gcore/src/grant/...'
+    matched_artifact_ref: crates/gruntime/tests/grant.rs::runtime_config_presents_interactive_grants
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.5
+  plan_node_hash: b0cddf928555923f00dcdcfd8126023dabafa429e5d3aed0f92393f645ea08bb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24447'
+    validation_criteria_snippet: '3.2.1: `sign_grant` reproduces a Python-signed grant''s
+      checksum and signature byte for byte, and `signature_matches` accepts it. test:
+      `crates/gcore/src/grant/...'
+    matched_artifact_ref: crates/gruntime/tests/grant.rs::malformed_and_missing_grant_headers_are_forwarded
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.6
+  plan_node_hash: ab4f3c0f071beac18a752d382262617fa06a587fdfc5ca639be553048f6efdca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24447'
+    validation_criteria_snippet: '3.2.1: `sign_grant` reproduces a Python-signed grant''s
+      checksum and signature byte for byte, and `signature_matches` accepts it. test:
+      `crates/gcore/src/grant/...'
+    matched_artifact_ref: crates/gruntime/tests/grant.rs::presentation_rejections_follow_python_order_without_the_backend
+  deferral_target: null
+  detail: ''
+- section_id: '3.2'
+  item_id: 3.2.7
+  plan_node_hash: a3d1d647a7d33b711b32108618bb9447858584721e7ae827557e9a6f95de4759
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24447'
+    validation_criteria_snippet: '3.2.1: `sign_grant` reproduces a Python-signed grant''s
+      checksum and signature byte for byte, and `signature_matches` accepts it. test:
+      `crates/gcore/src/grant/...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.1
+  plan_node_hash: 47802439a2279bf51985f65407cca3dce91be824b1fd936c7110a3deba685426
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24448'
+    validation_criteria_snippet: '3.3.1: Rust opens the Python-sealed token and decrypts
+      the Python-encrypted secret from the committed vector. test: `crates/gruntime/tests/secrets.rs::opens_py...'
+    matched_artifact_ref: crates/gruntime/tests/secrets.rs::opens_python_sealed_vector
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.2
+  plan_node_hash: 09b368273e111f0028c59dae2b0e99d3672a0dba5fd050a0008f0ba12830b6c7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24448'
+    validation_criteria_snippet: '3.3.1: Rust opens the Python-sealed token and decrypts
+      the Python-encrypted secret from the committed vector. test: `crates/gruntime/tests/secrets.rs::opens_py...'
+    matched_artifact_ref: tests/storage/test_secret_seal_vector.py::test_python_opens_rust_sealed_vector
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.3
+  plan_node_hash: 8af33181365a000f54e8d0834f445b80b51700b1470b79cd088db330838547c8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24448'
+    validation_criteria_snippet: '3.3.1: Rust opens the Python-sealed token and decrypts
+      the Python-encrypted secret from the committed vector. test: `crates/gruntime/tests/secrets.rs::opens_py...'
+    matched_artifact_ref: crates/gruntime/tests/secrets.rs::unwraps_both_postures
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.4
+  plan_node_hash: 7542f7e5b5c56c447218f44cb73b8cd05300892091c19b559a17a6d5cdb8c556
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24448'
+    validation_criteria_snippet: '3.3.1: Rust opens the Python-sealed token and decrypts
+      the Python-encrypted secret from the committed vector. test: `crates/gruntime/tests/secrets.rs::opens_py...'
+    matched_artifact_ref: crates/gruntime/tests/secrets.rs::concurrent_envelope_initialization_converges
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.5
+  plan_node_hash: 725286cf35c8be712112e7b9f2cd35b014f411ce91427be421b88b0b556f3d41
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24448'
+    validation_criteria_snippet: '3.3.1: Rust opens the Python-sealed token and decrypts
+      the Python-encrypted secret from the committed vector. test: `crates/gruntime/tests/secrets.rs::opens_py...'
+    matched_artifact_ref: crates/gruntime/tests/secrets.rs::open_rejects_wrong_aad_and_truncation
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.6
+  plan_node_hash: d54e483aea31fd33c4885267f6427868c0ecc4d0848271f4eb1ee9d1feac444c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24448'
+    validation_criteria_snippet: '3.3.1: Rust opens the Python-sealed token and decrypts
+      the Python-encrypted secret from the committed vector. test: `crates/gruntime/tests/secrets.rs::opens_py...'
+    matched_artifact_ref: crates/gruntime/tests/secrets.rs::missing_envelope_with_existing_secrets_fails_closed
+  deferral_target: null
+  detail: ''
+- section_id: '3.3'
+  item_id: 3.3.7
+  plan_node_hash: 95110b2937d1a6a620a41404c3a3fea07c1cb9d8f14e66d3ea34d73c50b7fdd5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24448'
+    validation_criteria_snippet: '3.3.1: Rust opens the Python-sealed token and decrypts
+      the Python-encrypted secret from the committed vector. test: `crates/gruntime/tests/secrets.rs::opens_py...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.1
+  plan_node_hash: 8123c6dc8f7fd9ac8a930f630d47c51ae1302659195594598ced2397fb86a2e4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24449'
+    validation_criteria_snippet: '3.4.1: An identified operator handshake returns
+      a signed interactive grant whose payload fields equal Python''s for the same
+      database state. test: `crates/grunt...'
+    matched_artifact_ref: crates/gruntime/tests/handshake.rs::interactive_handshake_issues_signed_grant
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.2
+  plan_node_hash: 13b8d347dc0088052282cf836b88d59fb74f0e2489bb91c93b8c130ff57c85d2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24449'
+    validation_criteria_snippet: '3.4.1: An identified operator handshake returns
+      a signed interactive grant whose payload fields equal Python''s for the same
+      database state. test: `crates/grunt...'
+    matched_artifact_ref: crates/gruntime/tests/handshake.rs::reused_principal_returns_the_sealed_password
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.3
+  plan_node_hash: 12249ed73eb726a91318b898455ac2e5b0be4e5b1f9ca1226aa4a7613d0545a0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24449'
+    validation_criteria_snippet: '3.4.1: An identified operator handshake returns
+      a signed interactive grant whose payload fields equal Python''s for the same
+      database state. test: `crates/grunt...'
+    matched_artifact_ref: crates/gruntime/tests/handshake.rs::handshake_rejections_match_python_codes
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.4
+  plan_node_hash: b30eef101fa6735fd7c5f4b46b9061baa6f760f9744db29a9606dbcf5ba303f5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24449'
+    validation_criteria_snippet: '3.4.1: An identified operator handshake returns
+      a signed interactive grant whose payload fields equal Python''s for the same
+      database state. test: `crates/grunt...'
+    matched_artifact_ref: crates/gruntime/tests/handshake.rs::callerless_handshakes_are_not_claimed
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.5
+  plan_node_hash: 507ccec748e07b6bdc527eae6347266d617b6df9c9bfb97120b578a2fa783933
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24449'
+    validation_criteria_snippet: '3.4.1: An identified operator handshake returns
+      a signed interactive grant whose payload fields equal Python''s for the same
+      database state. test: `crates/grunt...'
+    matched_artifact_ref: crates/gruntime/tests/capabilities.rs::capabilities_match_python_vectors
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.6
+  plan_node_hash: 82ccff2f42b94f79b028943227b24aeead58a5c802436ebd9a4b55c4c3468b62
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24449'
+    validation_criteria_snippet: '3.4.1: An identified operator handshake returns
+      a signed interactive grant whose payload fields equal Python''s for the same
+      database state. test: `crates/grunt...'
+    matched_artifact_ref: tests/runtime_grants/test_capability_vectors.py::test_vectors_match_python_capabilities
+  deferral_target: null
+  detail: ''
+- section_id: '3.4'
+  item_id: 3.4.7
+  plan_node_hash: 2b6e2d9875c4dbc759c3c13dc6d4438c6d6dc5b71214614c2fa16eabac0ed26b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24449'
+    validation_criteria_snippet: '3.4.1: An identified operator handshake returns
+      a signed interactive grant whose payload fields equal Python''s for the same
+      database state. test: `crates/grunt...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.1
+  plan_node_hash: cd1e9d13fdc1604806f6b449ebc03152cd5f5a9b52e835fbf2b997332b682e50
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24450'
+    validation_criteria_snippet: '3.5.1: A Python-issued grant for the request records
+      `verified`. test: `crates/gruntime/tests/verify.rs::python_issued_grant_verifies`.
+      3.5.2: A tampered capab...'
+    matched_artifact_ref: crates/gruntime/tests/verify.rs::python_issued_grant_verifies
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.2
+  plan_node_hash: a6f84c037ac06e094a8cd4f2d4a24aca63cb6158e31dbf79f557ba2777fa78e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24450'
+    validation_criteria_snippet: '3.5.1: A Python-issued grant for the request records
+      `verified`. test: `crates/gruntime/tests/verify.rs::python_issued_grant_verifies`.
+      3.5.2: A tampered capab...'
+    matched_artifact_ref: crates/gruntime/tests/verify.rs::mismatches_name_the_field_without_values
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.3
+  plan_node_hash: 3006a2192dacba2de28964d88c33cb5c318397d04f0cc72bedef43b5d8288860
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24450'
+    validation_criteria_snippet: '3.5.1: A Python-issued grant for the request records
+      `verified`. test: `crates/gruntime/tests/verify.rs::python_issued_grant_verifies`.
+      3.5.2: A tampered capab...'
+    matched_artifact_ref: crates/gruntime/tests/verify.rs::moved_config_revision_skips
+  deferral_target: null
+  detail: ''
+- section_id: '3.5'
+  item_id: 3.5.4
+  plan_node_hash: eb67d52d2aec72fe4d634ffba75145b527255204f548da3b5250e8b520a43df5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24450'
+    validation_criteria_snippet: '3.5.1: A Python-issued grant for the request records
+      `verified`. test: `crates/gruntime/tests/verify.rs::python_issued_grant_verifies`.
+      3.5.2: A tampered capab...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: 1ee06e7a8d1b01ece3125ca03a9ef1bcc5cd7b2379cd6c01cf255aaadb75e28d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24451'
+    validation_criteria_snippet: '4.1.1: The migration defines `managed_principal_revoked(uuid,
+      integer)` owned by `gobby_agent_issuer`, not executable by PUBLIC and executable
+      by `gobby_daemon...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/470_managed_principal_revoked.sql
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: 9ffaa8d39a955da42684f5ecf2f69b79798afc749e5dd9faa45bf531db93886d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24451'
+    validation_criteria_snippet: '4.1.1: The migration defines `managed_principal_revoked(uuid,
+      integer)` owned by `gobby_agent_issuer`, not executable by PUBLIC and executable
+      by `gobby_daemon...'
+    matched_artifact_ref: tests/storage/test_managed_revocation_read.py::test_managed_generation_revoked_follows_revoked_at
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 2901f700c98a9175cf4aa21883a6aece2ec73a3d56f1d56e21ccf40b0af38955
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24451'
+    validation_criteria_snippet: '4.1.1: The migration defines `managed_principal_revoked(uuid,
+      integer)` owned by `gobby_agent_issuer`, not executable by PUBLIC and executable
+      by `gobby_daemon...'
+    matched_artifact_ref: tests/storage/test_managed_revocation_read.py::test_principal_callback_reads_managed_revocation_from_the_database
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: ed2959346db09e865508be518684885f058e403290d4b4c1817006f47a44b3e7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24451'
+    validation_criteria_snippet: '4.1.1: The migration defines `managed_principal_revoked(uuid,
+      integer)` owned by `gobby_agent_issuer`, not executable by PUBLIC and executable
+      by `gobby_daemon...'
+    matched_artifact_ref: crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.5
+  plan_node_hash: a4bd3893040fcedf5a21125afe30a896fe971120b43de568d0b3bd8f30f1e7cc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24451'
+    validation_criteria_snippet: '4.1.1: The migration defines `managed_principal_revoked(uuid,
+      integer)` owned by `gobby_agent_issuer`, not executable by PUBLIC and executable
+      by `gobby_daemon...'
+    matched_artifact_ref: crates/gcore/tests/catalog_manifest_freshness.rs::catalog_manifest_is_fresh_for_embedded_assets
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.6
+  plan_node_hash: 71fd2a3255878a7532058d03f4cc9cc7989cdfa234c5d86051161136d553ab87
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24451'
+    validation_criteria_snippet: '4.1.1: The migration defines `managed_principal_revoked(uuid,
+      integer)` owned by `gobby_agent_issuer`, not executable by PUBLIC and executable
+      by `gobby_daemon...'
+    matched_artifact_ref: tests/runtime_grants/test_golden_vectors.py::test_grant_vectors_round_trip
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.7
+  plan_node_hash: 92b13e7bae2c07e8c679526cf3bbbf2bf975036c673af1ddbd06050ff22568fe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24451'
+    validation_criteria_snippet: '4.1.1: The migration defines `managed_principal_revoked(uuid,
+      integer)` owned by `gobby_agent_issuer`, not executable by PUBLIC and executable
+      by `gobby_daemon...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: 4c7dbbb9318cff7184792955e7b1bc53a79f3ccd0f0a812696c5dd3cb503fd6e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24452'
+    validation_criteria_snippet: '4.2.1: `classify` returns Python''s classification
+      for every committed vector. test: `crates/gruntime/tests/agent.rs::classification_matches_python_vectors`.
+      4....'
+    matched_artifact_ref: crates/gruntime/tests/agent.rs::classification_matches_python_vectors
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: 2e1840ae1ad950f73d3e6b7a8e6bccdc1c37ab1e9de825ace5266757cada37de
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24452'
+    validation_criteria_snippet: '4.2.1: `classify` returns Python''s classification
+      for every committed vector. test: `crates/gruntime/tests/agent.rs::classification_matches_python_vectors`.
+      4....'
+    matched_artifact_ref: crates/gruntime/tests/agent.rs::mint_reproduces_python_tokens
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: 0e4ac29ce31fbabf900987716a57e765b9ab8dab3297d0c7325fb2b011c88c16
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24452'
+    validation_criteria_snippet: '4.2.1: `classify` returns Python''s classification
+      for every committed vector. test: `crates/gruntime/tests/agent.rs::classification_matches_python_vectors`.
+      4....'
+    matched_artifact_ref: crates/gruntime/tests/agent.rs::liveness_and_identity_follow_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: c1599e7d0d959c7271d017d0017594b369bc526e34d217f9292a9c0a0ec938ef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24452'
+    validation_criteria_snippet: '4.2.1: `classify` returns Python''s classification
+      for every committed vector. test: `crates/gruntime/tests/agent.rs::classification_matches_python_vectors`.
+      4....'
+    matched_artifact_ref: crates/gruntime/tests/agent.rs::agent_caller_gate_forwards_what_python_owns
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.5
+  plan_node_hash: d393929dec68c652c366b870a6a0919b2beb06a6938d27c8391531096b7b9e5e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24452'
+    validation_criteria_snippet: '4.2.1: `classify` returns Python''s classification
+      for every committed vector. test: `crates/gruntime/tests/agent.rs::classification_matches_python_vectors`.
+      4....'
+    matched_artifact_ref: tests/runtime_grants/test_agent_token_vectors.py::test_vectors_match_python_classification
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.6
+  plan_node_hash: 31072cdbc67a21fd50c3c615fba1aed9c2ff1a78c2fb2a25c3a74bb49ec1c548
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24452'
+    validation_criteria_snippet: '4.2.1: `classify` returns Python''s classification
+      for every committed vector. test: `crates/gruntime/tests/agent.rs::classification_matches_python_vectors`.
+      4....'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.1
+  plan_node_hash: 11bae6cb0f137a3671bd8bb0a55dffca9e2fce9a5e14bd5580bd9d3c9e65f702
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24453'
+    validation_criteria_snippet: '4.3.1: A managed challenge returns Python''s proof
+      for the same key, nonce and claims, with `no-store`. test: `crates/gruntime/tests/challenge.rs::managed_proof...'
+    matched_artifact_ref: crates/gruntime/tests/challenge.rs::managed_proof_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.2
+  plan_node_hash: 218ecf9c28b485ec27d828e7a44cbe806f49d592a5c0842780bf6a83f64d4bc7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24453'
+    validation_criteria_snippet: '4.3.1: A managed challenge returns Python''s proof
+      for the same key, nonce and claims, with `no-store`. test: `crates/gruntime/tests/challenge.rs::managed_proof...'
+    matched_artifact_ref: crates/gruntime/tests/challenge.rs::challenge_rejections_follow_python_order
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.3
+  plan_node_hash: 96f2a6048504d9ed1daba5059e2552a7396cbc243567feb286242130c8556d93
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24453'
+    validation_criteria_snippet: '4.3.1: A managed challenge returns Python''s proof
+      for the same key, nonce and claims, with `no-store`. test: `crates/gruntime/tests/challenge.rs::managed_proof...'
+    matched_artifact_ref: crates/gruntime/tests/challenge.rs::proxied_proof_is_recomputed
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.4
+  plan_node_hash: eadfded08ac8f6b01e7a6778276bba1cae865376a1e66328580ce0059bf775bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24453'
+    validation_criteria_snippet: '4.3.1: A managed challenge returns Python''s proof
+      for the same key, nonce and claims, with `no-store`. test: `crates/gruntime/tests/challenge.rs::managed_proof...'
+    matched_artifact_ref: crates/gruntime/tests/config.rs::claims_follow_the_route_table
+  deferral_target: null
+  detail: ''
+- section_id: '4.3'
+  item_id: 4.3.5
+  plan_node_hash: 3a99adeedf436da24ca41a3ecee7e190066fb987cd921d6d3f3c4dd7319187d9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24453'
+    validation_criteria_snippet: '4.3.1: A managed challenge returns Python''s proof
+      for the same key, nonce and claims, with `no-store`. test: `crates/gruntime/tests/challenge.rs::managed_proof...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.1
+  plan_node_hash: 77535c943210e0db24c01dc8f56ee007e38ef0327fc761fb5cc690056a61020b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24454'
+    validation_criteria_snippet: '4.4.1: `issue` and `issue_maintenance` each leave
+      a live binding whose scoped DSN logs in as the issued role, with a 0600 `bootstrap.json`
+      in a 0700 execution ...'
+    matched_artifact_ref: crates/gruntime/tests/managed.rs::issuance_materializes_a_private_bootstrap
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.2
+  plan_node_hash: f0d6fa285310a86fa0025e043f9caeb3c02744d09873ce051b7f7af20a8e7deb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24454'
+    validation_criteria_snippet: '4.4.1: `issue` and `issue_maintenance` each leave
+      a live binding whose scoped DSN logs in as the issued role, with a 0600 `bootstrap.json`
+      in a 0700 execution ...'
+    matched_artifact_ref: crates/gruntime/tests/managed.rs::bootstrap_bytes_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.3
+  plan_node_hash: b85ea717b907fdef2d25d8f2295aa34d5d65a29b724add6bc216ee2f45e60af1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24454'
+    validation_criteria_snippet: '4.4.1: `issue` and `issue_maintenance` each leave
+      a live binding whose scoped DSN logs in as the issued role, with a 0600 `bootstrap.json`
+      in a 0700 execution ...'
+    matched_artifact_ref: crates/gruntime/tests/managed.rs::issuance_failures_roll_back_and_map_codes
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.4
+  plan_node_hash: 1ed6a29d5037d0bfe856ff389161f8dedcaa68e816d0a9988e2dbd04003c5746
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24454'
+    validation_criteria_snippet: '4.4.1: `issue` and `issue_maintenance` each leave
+      a live binding whose scoped DSN logs in as the issued role, with a 0600 `bootstrap.json`
+      in a 0700 execution ...'
+    matched_artifact_ref: crates/gruntime/tests/managed.rs::blocked_revocation_records_a_retry
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.5
+  plan_node_hash: cde7314251deb2c59f38eccf1c2816846039608a69fdad1c2b2f0affe0124c77
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24454'
+    validation_criteria_snippet: '4.4.1: `issue` and `issue_maintenance` each leave
+      a live binding whose scoped DSN logs in as the issued role, with a 0600 `bootstrap.json`
+      in a 0700 execution ...'
+    matched_artifact_ref: tests/storage/test_managed_bootstrap_vector.py::test_vector_matches_python_bootstrap_writers
+  deferral_target: null
+  detail: ''
+- section_id: '4.4'
+  item_id: 4.4.6
+  plan_node_hash: 37f99b3c3325d47544b5d35ecfad351986fd162000647ae5e023e8ed9a32b525
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24454'
+    validation_criteria_snippet: '4.4.1: `issue` and `issue_maintenance` each leave
+      a live binding whose scoped DSN logs in as the issued role, with a 0600 `bootstrap.json`
+      in a 0700 execution ...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.1
+  plan_node_hash: 8ede8125b85564f377b6d97df0f5be5ae8190eb45562921c352821b79ba86300
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24455'
+    validation_criteria_snippet: '4.5.1: Rotation issues the successor and rewrites
+      `grant.json` with the successor credential and a fresh capability, and the predecessor
+      drains. test: `crates/...'
+    matched_artifact_ref: crates/gruntime/tests/rotation.rs::rotation_rewrites_the_launch_grant
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.2
+  plan_node_hash: c0bf8f12c7abb2fbc97a21fa7f17fd0cbd1ffd2a4d5431836576af57fe40c8e6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24455'
+    validation_criteria_snippet: '4.5.1: Rotation issues the successor and rewrites
+      `grant.json` with the successor credential and a fresh capability, and the predecessor
+      drains. test: `crates/...'
+    matched_artifact_ref: crates/gruntime/tests/rotation.rs::failed_rewrite_restores_the_predecessor
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.3
+  plan_node_hash: 5dc85340242c9f5ebdb080dd9dd51e95e550d35c5a76d1e171226eb674794274
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24455'
+    validation_criteria_snippet: '4.5.1: Rotation issues the successor and rewrites
+      `grant.json` with the successor credential and a fresh capability, and the predecessor
+      drains. test: `crates/...'
+    matched_artifact_ref: crates/gruntime/tests/rotation.rs::rewrite_matches_python_bytes
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.4
+  plan_node_hash: ad393b32ade51ed8abf7b209a686eee103a78c50242cadf949ccfb608ab0f6af
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24455'
+    validation_criteria_snippet: '4.5.1: Rotation issues the successor and rewrites
+      `grant.json` with the successor credential and a fresh capability, and the predecessor
+      drains. test: `crates/...'
+    matched_artifact_ref: tests/runtime_grants/test_managed_grant_rewrite_vector.py::test_vector_matches_python_rewrite
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.5
+  plan_node_hash: 93c353690748cfa1c598aace1b3e3167b1d46dc39c3a0a44ea989d21fa7acc81
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24455'
+    validation_criteria_snippet: '4.5.1: Rotation issues the successor and rewrites
+      `grant.json` with the successor credential and a fresh capability, and the predecessor
+      drains. test: `crates/...'
+    matched_artifact_ref: crates/gruntime/tests/rotation.rs::drain_reuse_follows_python
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.6
+  plan_node_hash: 78a0f1bcc92a7ad35a693487272a35dc3ceeef74d52a4c7ca19a1194517c25fa
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24455'
+    validation_criteria_snippet: '4.5.1: Rotation issues the successor and rewrites
+      `grant.json` with the successor credential and a fresh capability, and the predecessor
+      drains. test: `crates/...'
+    matched_artifact_ref: crates/gruntime/tests/rotation.rs::lost_generation_race_changes_nothing
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.7
+  plan_node_hash: 54e5d09d587b106894a077e8d27989849b3c62e8d6d61ed990e9f789e508caba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24455'
+    validation_criteria_snippet: '4.5.1: Rotation issues the successor and rewrites
+      `grant.json` with the successor credential and a fresh capability, and the predecessor
+      drains. test: `crates/...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.1
+  plan_node_hash: 4557dcb643053963b013e6dbfc8315bb872cb36a8b6cf17644e3ac379e3dbecc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24456'
+    validation_criteria_snippet: '4.6.1: An agent_run, a tool_chat and a maintenance
+      handshake each return a signed grant whose principal and TTL equal Python''s
+      for the same token and database ...'
+    matched_artifact_ref: crates/gruntime/tests/managed_handshake.rs::agent_handshakes_issue_managed_grants
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.2
+  plan_node_hash: 1536f24f5e6447e51abb377d0ba04f9e4a14935bd69dfbe217103a44ffa21e01
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24456'
+    validation_criteria_snippet: '4.6.1: An agent_run, a tool_chat and a maintenance
+      handshake each return a signed grant whose principal and TTL equal Python''s
+      for the same token and database ...'
+    matched_artifact_ref: crates/gruntime/tests/managed_handshake.rs::repeat_handshake_rotates_or_reuses
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.3
+  plan_node_hash: c3262a3bd44023aa6a9b942403a3a6218b2d42438d09318c2d8cce178e2e2754
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24456'
+    validation_criteria_snippet: '4.6.1: An agent_run, a tool_chat and a maintenance
+      handshake each return a signed grant whose principal and TTL equal Python''s
+      for the same token and database ...'
+    matched_artifact_ref: crates/gruntime/tests/managed_handshake.rs::claims_must_match_the_body
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.4
+  plan_node_hash: 0a4103b7a2409ab992595536c3c549bf9e054d9efa2cadae2533c9c02e008814
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24456'
+    validation_criteria_snippet: '4.6.1: An agent_run, a tool_chat and a maintenance
+      handshake each return a signed grant whose principal and TTL equal Python''s
+      for the same token and database ...'
+    matched_artifact_ref: crates/gruntime/tests/managed_handshake.rs::proxied_managed_grants_are_checked
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.5
+  plan_node_hash: 6e7be2f8a96a7096f255b2e078433f2b5c90b8cdb428bca4f2ad4600c5603fda
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24456'
+    validation_criteria_snippet: '4.6.1: An agent_run, a tool_chat and a maintenance
+      handshake each return a signed grant whose principal and TTL equal Python''s
+      for the same token and database ...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '4.7'
+  item_id: 4.7.1
+  plan_node_hash: 0b65c05864ab4c3bf48548325bc9fcfcb55ae86cbee5986630537c81a2f29d56
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24457'
+    validation_criteria_snippet: '4.7.1: An agent presenting its managed grant receives
+      `{config_revision, settings}`, and after the generation is revoked it receives
+      403 `revoked`. test: `crat...'
+    matched_artifact_ref: crates/gruntime/tests/managed_presentation.rs::managed_grants_present_until_revoked
+  deferral_target: null
+  detail: ''
+- section_id: '4.7'
+  item_id: 4.7.2
+  plan_node_hash: e72d0d418207d59517755d090f9ff59a204a2e357e101fb341738ecbebf0557b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24457'
+    validation_criteria_snippet: '4.7.1: An agent presenting its managed grant receives
+      `{config_revision, settings}`, and after the generation is revoked it receives
+      403 `revoked`. test: `crat...'
+    matched_artifact_ref: crates/gruntime/tests/managed_presentation.rs::inactive_runs_are_rejected_before_presentation
+  deferral_target: null
+  detail: ''
+- section_id: '4.7'
+  item_id: 4.7.3
+  plan_node_hash: 4bf9e83fe22045214349dbd3a9107f5c116bca521727cd86103e2c359e50ca0f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24457'
+    validation_criteria_snippet: '4.7.1: An agent presenting its managed grant receives
+      `{config_revision, settings}`, and after the generation is revoked it receives
+      403 `revoked`. test: `crat...'
+    matched_artifact_ref: crates/gruntime/tests/managed_presentation.rs::operator_rows_claim_every_principal_kind
+  deferral_target: null
+  detail: ''
+- section_id: '4.7'
+  item_id: 4.7.4
+  plan_node_hash: 91c4f91c07dac0efa2d68b8851031640153589750dc99aa97aa8d0b89c57d756
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24457'
+    validation_criteria_snippet: '4.7.1: An agent presenting its managed grant receives
+      `{config_revision, settings}`, and after the generation is revoked it receives
+      403 `revoked`. test: `crat...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.1
+  plan_node_hash: dc2dd339bbba0dc78a992989a1a4a9194a99d1f94db2c0baf8f01cf473dda63a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24458'
+    validation_criteria_snippet: '5.1.1: `GET /api/config/schema` returns `public_config_schema()`:
+      every public exact key and public pattern, no `key` member, inside the draft
+      2020-12 wrapper....'
+    matched_artifact_ref: crates/gruntime/tests/config.rs::schema_serves_the_public_contract_projection
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.2
+  plan_node_hash: 393106584f316f11b900eb18241b8b349f34fa35b6e6930f02f6a72e22e3b832
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24458'
+    validation_criteria_snippet: '5.1.1: `GET /api/config/schema` returns `public_config_schema()`:
+      every public exact key and public pattern, no `key` member, inside the draft
+      2020-12 wrapper....'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_public_schema_derives_from_contract
+  deferral_target: null
+  detail: ''
+- section_id: '5.1'
+  item_id: 5.1.3
+  plan_node_hash: 052de64126a13ff7fd885b93fb9153d41ed812ddd782753a4ffedcf4d007a4ae
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24458'
+    validation_criteria_snippet: '5.1.1: `GET /api/config/schema` returns `public_config_schema()`:
+      every public exact key and public pattern, no `key` member, inside the draft
+      2020-12 wrapper....'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.1
+  plan_node_hash: f64d5de34bdff048e5dd9f4c1026a64568d6d291dbf0cf9e54c0eac8ee66a52c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24459'
+    validation_criteria_snippet: '5.2.1: Listing returns the global secrets in database
+      order with Python''s timestamp format (whole-second and fractional cases) and
+      the sorted categories. test:...'
+    matched_artifact_ref: crates/gruntime/tests/secret_routes.rs::listing_matches_python_shape
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.2
+  plan_node_hash: 5e83b8a0965f61d54f28af851d69b52f75e6ace5be5a1e03bf1930156621f342
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24459'
+    validation_criteria_snippet: '5.2.1: Listing returns the global secrets in database
+      order with Python''s timestamp format (whole-second and fractional cases) and
+      the sorted categories. test:...'
+    matched_artifact_ref: crates/gruntime/tests/secret_routes.rs::deletion_follows_references
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.3
+  plan_node_hash: 0fcc0c75c0d29cc889a95f9cd9c681b05b19bdca0a510d7a3a9c506c61d25484
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24459'
+    validation_criteria_snippet: '5.2.1: Listing returns the global secrets in database
+      order with Python''s timestamp format (whole-second and fractional cases) and
+      the sorted categories. test:...'
+    matched_artifact_ref: crates/gruntime/tests/secret_routes.rs::embedding_switch_blocks_key_deletion
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.4
+  plan_node_hash: d91e036b47b6787e360a9e40dea23e77232fea9175f45edefbd4c01eddc036ab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24459'
+    validation_criteria_snippet: '5.2.1: Listing returns the global secrets in database
+      order with Python''s timestamp format (whole-second and fractional cases) and
+      the sorted categories. test:...'
+    matched_artifact_ref: crates/gruntime/tests/secret_routes.rs::proxied_deletions_are_checked
+  deferral_target: null
+  detail: ''
+- section_id: '5.2'
+  item_id: 5.2.5
+  plan_node_hash: 49e71d067c63243135ba0859c5b9b0e88069e2d0f28a666bdf811457305572a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24459'
+    validation_criteria_snippet: '5.2.1: Listing returns the global secrets in database
+      order with Python''s timestamp format (whole-second and fractional cases) and
+      the sorted categories. test:...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.1
+  plan_node_hash: 63254761c97b57e075d72dab4b9c9a0b30ec3eb4d5d9d11688633734a3cb920a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24460'
+    validation_criteria_snippet: '5.3.1: A long-lived `PromptLoader` that already
+      loaded a prompt returns the new content on its next `load()` after an override
+      is written through `PUT /api/con...'
+    matched_artifact_ref: tests/servers/routes/test_configuration_prompts.py::test_route_override_reaches_a_long_lived_loader
+  deferral_target: null
+  detail: ''
+- section_id: '5.3'
+  item_id: 5.3.2
+  plan_node_hash: c257c282c2f00fa45d992d1ecf2933e153b15f4c6665a5918ac2c680bd2d9d02
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24460'
+    validation_criteria_snippet: '5.3.1: A long-lived `PromptLoader` that already
+      loaded a prompt returns the new content on its next `load()` after an override
+      is written through `PUT /api/con...'
+    matched_artifact_ref: src/gobby/prompts/loader.py
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.1
+  plan_node_hash: 9a30f87e73a5f09ca4c6baeb42a3db559d67211771e0257db188d21631dbeaf0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24461'
+    validation_criteria_snippet: '5.4.1: A UI-style body-only save keeps the overridden
+      record''s variables, description and version, and a save that sets `variables`
+      replaces them. test: `tests...'
+    matched_artifact_ref: tests/servers/routes/test_configuration_prompts.py::test_body_only_save_keeps_metadata
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.2
+  plan_node_hash: 7e0b1fa4624b0eb87728ef01c28ccc473d577e869a41f6ef8ee56609f1f16da9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24461'
+    validation_criteria_snippet: '5.4.1: A UI-style body-only save keeps the overridden
+      record''s variables, description and version, and a save that sets `variables`
+      replaces them. test: `tests...'
+    matched_artifact_ref: tests/servers/routes/test_configuration_prompts.py::test_frontmatter_led_body_is_rejected
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.3
+  plan_node_hash: dad2efa766afd34d8b4c858fe4dbbfd9ae608b404fa8fed22c31c921073f22c1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24461'
+    validation_criteria_snippet: '5.4.1: A UI-style body-only save keeps the overridden
+      record''s variables, description and version, and a save that sets `variables`
+      replaces them. test: `tests...'
+    matched_artifact_ref: tests/servers/routes/test_configuration_prompts.py::test_python_routes_match_the_corpus
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.4
+  plan_node_hash: 434009ac7c6cc77cdf61089bc5d5cc426ac595c84b716d541609f8ee472c2dac
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24461'
+    validation_criteria_snippet: '5.4.1: A UI-style body-only save keeps the overridden
+      record''s variables, description and version, and a save that sets `variables`
+      replaces them. test: `tests...'
+    matched_artifact_ref: crates/gruntime/tests/prompts.rs::native_routes_match_the_corpus
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.5
+  plan_node_hash: 397a8b5539ff69db4cdbf935eeb2b6d7307693270aff26005acdfc36275cd6ba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24461'
+    validation_criteria_snippet: '5.4.1: A UI-style body-only save keeps the overridden
+      record''s variables, description and version, and a save that sets `variables`
+      replaces them. test: `tests...'
+    matched_artifact_ref: crates/gruntime/tests/prompts.rs::daemon_project_scopes_prompts
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.6
+  plan_node_hash: f5534ce7594ca43b8b610ad569f5792b4cd06b79e78f99b4f03a598343138606
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24461'
+    validation_criteria_snippet: '5.4.1: A UI-style body-only save keeps the overridden
+      record''s variables, description and version, and a save that sets `variables`
+      replaces them. test: `tests...'
+    matched_artifact_ref: crates/gruntime/tests/prompts.rs::proxied_prompt_writes_are_checked
+  deferral_target: null
+  detail: ''
+- section_id: '5.4'
+  item_id: 5.4.7
+  plan_node_hash: f767d16b09197c8aaace9bb2da4fcfffa6e4192d8046410d323a2088541a81b0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24461'
+    validation_criteria_snippet: '5.4.1: A UI-style body-only save keeps the overridden
+      record''s variables, description and version, and a save that sets `variables`
+      replaces them. test: `tests...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.5'
+  item_id: 5.5.1
+  plan_node_hash: 413e11e6dfaf18b0a47ac9316ce67f5d696f028813caa281b5844d4438a17e06
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24462'
+    validation_criteria_snippet: '5.5.1: Native export bytes equal every committed
+      vector. test: `crates/gruntime/tests/export.rs::emitter_matches_python_vectors`.
+      5.5.2: Each vector equals the...'
+    matched_artifact_ref: crates/gruntime/tests/export.rs::emitter_matches_python_vectors
+  deferral_target: null
+  detail: ''
+- section_id: '5.5'
+  item_id: 5.5.2
+  plan_node_hash: acea573c4e7e241c290e4d1ed82285351e01da385181d3d68c68411a09be63b8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24462'
+    validation_criteria_snippet: '5.5.1: Native export bytes equal every committed
+      vector. test: `crates/gruntime/tests/export.rs::emitter_matches_python_vectors`.
+      5.5.2: Each vector equals the...'
+    matched_artifact_ref: tests/config/test_yaml_export_vectors.py::test_vectors_match_python_dump
+  deferral_target: null
+  detail: ''
+- section_id: '5.5'
+  item_id: 5.5.3
+  plan_node_hash: 3dda7a12d7793516f67209f4d8d8f8cc1c8e756efd572c1adf6dc2aa341f7e46
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24462'
+    validation_criteria_snippet: '5.5.1: Native export bytes equal every committed
+      vector. test: `crates/gruntime/tests/export.rs::emitter_matches_python_vectors`.
+      5.5.2: Each vector equals the...'
+    matched_artifact_ref: crates/gruntime/tests/export.rs::export_filters_and_masks_like_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.5'
+  item_id: 5.5.4
+  plan_node_hash: ddc7b873e4a8f032dd103aaf4adc5affdd3e3e33819e685884dfbd92298f86ab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24462'
+    validation_criteria_snippet: '5.5.1: Native export bytes equal every committed
+      vector. test: `crates/gruntime/tests/export.rs::emitter_matches_python_vectors`.
+      5.5.2: Each vector equals the...'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_no_restricted_key_matches_a_contract_pattern
+  deferral_target: null
+  detail: ''
+- section_id: '5.5'
+  item_id: 5.5.5
+  plan_node_hash: 20314145c3faebc4ec956f76ca7ad68fa6c0b893932c537f165533deead1dab3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24462'
+    validation_criteria_snippet: '5.5.1: Native export bytes equal every committed
+      vector. test: `crates/gruntime/tests/export.rs::emitter_matches_python_vectors`.
+      5.5.2: Each vector equals the...'
+    matched_artifact_ref: crates/gruntime/tests/export.rs::proxied_exports_are_checked
+  deferral_target: null
+  detail: ''
+- section_id: '5.5'
+  item_id: 5.5.6
+  plan_node_hash: a64cb841840ced501dd919a759a8a183b675a176d896e49679656a0acc4abc79
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24462'
+    validation_criteria_snippet: '5.5.1: Native export bytes equal every committed
+      vector. test: `crates/gruntime/tests/export.rs::emitter_matches_python_vectors`.
+      5.5.2: Each vector equals the...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.6'
+  item_id: 5.6.1
+  plan_node_hash: 17029bee3294b69588440bc912fe78661753c76f3b147216daecbc47ec06714d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24463'
+    validation_criteria_snippet: '5.6.1: Native `GET /api/config/values` returns each
+      vector''s Python body, including masked and unset reference keys, masked structured
+      fields, and public-only ...'
+    matched_artifact_ref: crates/gruntime/tests/active_reads.rs::values_match_python_vectors
+  deferral_target: null
+  detail: ''
+- section_id: '5.6'
+  item_id: 5.6.2
+  plan_node_hash: 34ebd7e63c1e929dbc5bde30833ae2d266a977c31c70a670d700fc6a4516dfcb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24463'
+    validation_criteria_snippet: '5.6.1: Native `GET /api/config/values` returns each
+      vector''s Python body, including masked and unset reference keys, masked structured
+      fields, and public-only ...'
+    matched_artifact_ref: crates/gruntime/tests/active_reads.rs::ui_settings_and_approvals_match_python_vectors
+  deferral_target: null
+  detail: ''
+- section_id: '5.6'
+  item_id: 5.6.3
+  plan_node_hash: 106c932d0c01505d6e6ea86b65b0819e1b6103067c2094a3bf964915e100d31d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24463'
+    validation_criteria_snippet: '5.6.1: Native `GET /api/config/values` returns each
+      vector''s Python body, including masked and unset reference keys, masked structured
+      fields, and public-only ...'
+    matched_artifact_ref: tests/servers/routes/test_active_read_vectors.py::test_vectors_match_python_routes
+  deferral_target: null
+  detail: ''
+- section_id: '5.6'
+  item_id: 5.6.4
+  plan_node_hash: f841e4f8ac3c88dc1b52a4f590a5221aed898356824984ce86eb745efc2620a9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24463'
+    validation_criteria_snippet: '5.6.1: Native `GET /api/config/values` returns each
+      vector''s Python body, including masked and unset reference keys, masked structured
+      fields, and public-only ...'
+    matched_artifact_ref: crates/gruntime/tests/active_reads.rs::missing_row_and_failures_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.6'
+  item_id: 5.6.5
+  plan_node_hash: b8296c259d056113723e02731bd5a13f4708a44fe523fa0ba703fce5db2d8b51
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24463'
+    validation_criteria_snippet: '5.6.1: Native `GET /api/config/values` returns each
+      vector''s Python body, including masked and unset reference keys, masked structured
+      fields, and public-only ...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.7'
+  item_id: 5.7.1
+  plan_node_hash: 655f427974816771ddb45ae9784e7e265d0aa6c1a5c960a78b4b6ad039c6101d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24464'
+    validation_criteria_snippet: '5.7.1: The checked-in validation carrier equals
+      the generator''s output, and the generator fails on a node type, node key or
+      union shape the interpreter does no...'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_checked_in_validation_carrier_matches_registry
+  deferral_target: null
+  detail: ''
+- section_id: '5.7'
+  item_id: 5.7.2
+  plan_node_hash: 3bc7b7df629b0d0809fef710da60af513d5054f4faeeedf44b73d81b47c63bc9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24464'
+    validation_criteria_snippet: '5.7.1: The checked-in validation carrier equals
+      the generator''s output, and the generator fails on a node type, node key or
+      union shape the interpreter does no...'
+    matched_artifact_ref: tests/config/test_config_validation_corpus.py::test_per_key_corpus_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.7'
+  item_id: 5.7.3
+  plan_node_hash: 1708432cc7e80e52beefcb24df572f21d35c226bb6c017c089d1aa5757b1b42a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24464'
+    validation_criteria_snippet: '5.7.1: The checked-in validation carrier equals
+      the generator''s output, and the generator fails on a node type, node key or
+      union shape the interpreter does no...'
+    matched_artifact_ref: tests/config/test_config_validation_corpus.py::test_corpus_covers_error_types_and_functions
+  deferral_target: null
+  detail: ''
+- section_id: '5.7'
+  item_id: 5.7.4
+  plan_node_hash: c75a7747cb679fa6638272acaf6ca8ee5e7d62abcc8208e799e40bd434f2adf1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24464'
+    validation_criteria_snippet: '5.7.1: The checked-in validation carrier equals
+      the generator''s output, and the generator fails on a node type, node key or
+      union shape the interpreter does no...'
+    matched_artifact_ref: crates/gruntime/tests/validation.rs::per_key_corpus_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.7'
+  item_id: 5.7.5
+  plan_node_hash: f65b175c268fcff55a56b2b74e56516f678682a52143546bd1d1a7d22cdfc500
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24464'
+    validation_criteria_snippet: '5.7.1: The checked-in validation carrier equals
+      the generator''s output, and the generator fails on a node type, node key or
+      union shape the interpreter does no...'
+    matched_artifact_ref: crates/gruntime/tests/validation.rs::per_key_functions_have_ports
+  deferral_target: null
+  detail: ''
+- section_id: '5.7'
+  item_id: 5.7.6
+  plan_node_hash: 3b2ad4acfe67fd5a9a8213608b59b108ee833dd24aea9dc680d3c1470eb2b1df
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24464'
+    validation_criteria_snippet: '5.7.1: The checked-in validation carrier equals
+      the generator''s output, and the generator fails on a node type, node key or
+      union shape the interpreter does no...'
+    matched_artifact_ref: crates/gruntime/tests/validation.rs::json_tree_matches_python_vectors
+  deferral_target: null
+  detail: ''
+- section_id: '5.7'
+  item_id: 5.7.7
+  plan_node_hash: efb688bf306b94ee5e74530c6a33fb50ec7fa050944906e702a8cd2ea50dfa1b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24464'
+    validation_criteria_snippet: '5.7.1: The checked-in validation carrier equals
+      the generator''s output, and the generator fails on a node type, node key or
+      union shape the interpreter does no...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.7'
+  item_id: 5.7.8
+  plan_node_hash: d8e75da65f8179ea8f8c5e414d41bd0ee9baf6588eade83249fd73d7e073c2ef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24464'
+    validation_criteria_snippet: '5.7.1: The checked-in validation carrier equals
+      the generator''s output, and the generator fails on a node type, node key or
+      union shape the interpreter does no...'
+    matched_artifact_ref: tests/config/test_persistence.py::test_backup_path_is_stored_as_written
+  deferral_target: null
+  detail: ''
+- section_id: '5.7'
+  item_id: 5.7.9
+  plan_node_hash: fbeacbabea53700708e6c247a8aa2aba6ec3fb20d01df92fcb76fc52e2618ccb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24464'
+    validation_criteria_snippet: '5.7.1: The checked-in validation carrier equals
+      the generator''s output, and the generator fails on a node type, node key or
+      union shape the interpreter does no...'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry
+  deferral_target: null
+  detail: ''
+- section_id: '5.8'
+  item_id: 5.8.1
+  plan_node_hash: 099c70484a291640971128a56fc69679beeffaf73acc6d6c82935c5262a08b53
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24465'
+    validation_criteria_snippet: '5.8.1: Every tree case''s `detail` matches `DaemonConfig.model_validate`,
+      and strict JSON validation of the same tree gives the same detail. test: `tests/config...'
+    matched_artifact_ref: tests/config/test_candidate_validation_corpus.py::test_trees_match_lax_and_strict_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.8'
+  item_id: 5.8.2
+  plan_node_hash: ce0a6592eb4a00fdc28ec64771efe36ca08a95b85f2e28c73b7bddf4b5724878
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24465'
+    validation_criteria_snippet: '5.8.1: Every tree case''s `detail` matches `DaemonConfig.model_validate`,
+      and strict JSON validation of the same tree gives the same detail. test: `tests/config...'
+    matched_artifact_ref: tests/config/test_candidate_validation_corpus.py::test_mutations_match_validate_candidate
+  deferral_target: null
+  detail: ''
+- section_id: '5.8'
+  item_id: 5.8.3
+  plan_node_hash: 6926422928e674b25ca9fa89169fd0750434826cadec18f89b16bcbeb724e48e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24465'
+    validation_criteria_snippet: '5.8.1: Every tree case''s `detail` matches `DaemonConfig.model_validate`,
+      and strict JSON validation of the same tree gives the same detail. test: `tests/config...'
+    matched_artifact_ref: tests/config/test_candidate_validation_corpus.py::test_corpus_covers_ports_and_failures
+  deferral_target: null
+  detail: ''
+- section_id: '5.8'
+  item_id: 5.8.4
+  plan_node_hash: fa584f6a89d3b751f3ac744a727bcdfdd25977ccea10afa8dd01185e6787f950
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24465'
+    validation_criteria_snippet: '5.8.1: Every tree case''s `detail` matches `DaemonConfig.model_validate`,
+      and strict JSON validation of the same tree gives the same detail. test: `tests/config...'
+    matched_artifact_ref: tests/config/test_candidate_validation_corpus.py::test_python_validator_changes
+  deferral_target: null
+  detail: ''
+- section_id: '5.8'
+  item_id: 5.8.5
+  plan_node_hash: b9ff9bb6c8ccf79da9ff7118b5bbf44ae7b6cd7ab732c8aa2341ab744530df7e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24465'
+    validation_criteria_snippet: '5.8.1: Every tree case''s `detail` matches `DaemonConfig.model_validate`,
+      and strict JSON validation of the same tree gives the same detail. test: `tests/config...'
+    matched_artifact_ref: crates/gruntime/tests/candidate.rs::trees_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.8'
+  item_id: 5.8.6
+  plan_node_hash: 75aba01914b0ad787a3590127ab23763b1937c8279f77da5a31298a4c7ccdc3e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24465'
+    validation_criteria_snippet: '5.8.1: Every tree case''s `detail` matches `DaemonConfig.model_validate`,
+      and strict JSON validation of the same tree gives the same detail. test: `tests/config...'
+    matched_artifact_ref: crates/gruntime/tests/candidate.rs::mutations_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.8'
+  item_id: 5.8.7
+  plan_node_hash: ece70e413e387c8b29a0c5ca2bda1d4549750e3ca75e122c8297d60eabdff39e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24465'
+    validation_criteria_snippet: '5.8.1: Every tree case''s `detail` matches `DaemonConfig.model_validate`,
+      and strict JSON validation of the same tree gives the same detail. test: `tests/config...'
+    matched_artifact_ref: crates/gruntime/tests/candidate.rs::all_functions_have_ports
+  deferral_target: null
+  detail: ''
+- section_id: '5.8'
+  item_id: 5.8.8
+  plan_node_hash: 4a937c0088aa80121e3e7b5dc24e8f54d8208ea0b165ce416d831b54f323663f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24465'
+    validation_criteria_snippet: '5.8.1: Every tree case''s `detail` matches `DaemonConfig.model_validate`,
+      and strict JSON validation of the same tree gives the same detail. test: `tests/config...'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry
+  deferral_target: null
+  detail: ''
+- section_id: '5.8'
+  item_id: 5.8.9
+  plan_node_hash: 390b5345ada89c42ac35733fe032f1706097b9272ea6e90b81b0b8e60d2fb143
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24465'
+    validation_criteria_snippet: '5.8.1: Every tree case''s `detail` matches `DaemonConfig.model_validate`,
+      and strict JSON validation of the same tree gives the same detail. test: `tests/config...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.9'
+  item_id: 5.9.1
+  plan_node_hash: 60396d87f74994a509b1534fee0b7cf4a1c42300efc2faa6333a18c7c436882f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24466'
+    validation_criteria_snippet: '5.9.1: Every corpus case matches Python''s PATCH
+      route: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_values_patch_co...'
+    matched_artifact_ref: tests/servers/routes/test_values_patch_corpus.py::test_cases_match_python_route
+  deferral_target: null
+  detail: ''
+- section_id: '5.9'
+  item_id: 5.9.2
+  plan_node_hash: df2895188202b997246ff39840cce07c44c72f5553db7976735f4103f647d48e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24466'
+    validation_criteria_snippet: '5.9.1: Every corpus case matches Python''s PATCH
+      route: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_values_patch_co...'
+    matched_artifact_ref: tests/servers/routes/test_config_values_api.py::test_revision_domain_and_exhaustion_contract
+  deferral_target: null
+  detail: ''
+- section_id: '5.9'
+  item_id: 5.9.3
+  plan_node_hash: 3068500128306f00217474e56fc81f0d52f8948cfa7b1a4f6804861e15673dd5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24466'
+    validation_criteria_snippet: '5.9.1: Every corpus case matches Python''s PATCH
+      route: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_values_patch_co...'
+    matched_artifact_ref: crates/gruntime/tests/values_patch.rs::cases_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.9'
+  item_id: 5.9.4
+  plan_node_hash: a984ec875cc865ea5caa4e61c3fa0cdaa73341a50090835d0b9f890be95575de
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24466'
+    validation_criteria_snippet: '5.9.1: Every corpus case matches Python''s PATCH
+      route: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_values_patch_co...'
+    matched_artifact_ref: crates/gruntime/tests/values_patch.rs::commit_serializes_and_releases_like_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.9'
+  item_id: 5.9.5
+  plan_node_hash: e8341f6990ba6513a3ddb979c4668d8404e4050063172ba2bdf9715767541969
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24466'
+    validation_criteria_snippet: '5.9.1: Every corpus case matches Python''s PATCH
+      route: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_values_patch_co...'
+    matched_artifact_ref: crates/gruntime/tests/values_patch.rs::write_wait_answers_or_reports_reconcile_failed
+  deferral_target: null
+  detail: ''
+- section_id: '5.9'
+  item_id: 5.9.6
+  plan_node_hash: 0656437893c07a1d45926d96db446098a5bfc3d08a91cb9b63b215811d6bdfb5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24466'
+    validation_criteria_snippet: '5.9.1: Every corpus case matches Python''s PATCH
+      route: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_values_patch_co...'
+    matched_artifact_ref: crates/gruntime/tests/values_patch.rs::check_proxied_verifies_python_writes
+  deferral_target: null
+  detail: ''
+- section_id: '5.9'
+  item_id: 5.9.7
+  plan_node_hash: 237d3c487e2bf1922355e669904a4055956ac26991a593b1eff80d59274ebbd2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24466'
+    validation_criteria_snippet: '5.9.1: Every corpus case matches Python''s PATCH
+      route: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_values_patch_co...'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_checked_in_validation_carrier_matches_registry
+  deferral_target: null
+  detail: ''
+- section_id: '5.9'
+  item_id: 5.9.8
+  plan_node_hash: f5b03e815da01d28ff26502c9c52bc5c4597d4bf5304042f6769a838850615da
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24466'
+    validation_criteria_snippet: '5.9.1: Every corpus case matches Python''s PATCH
+      route: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_values_patch_co...'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry
+  deferral_target: null
+  detail: ''
+- section_id: '5.9'
+  item_id: 5.9.9
+  plan_node_hash: 7ad42c6742dbae1ce344d968485e595ee10a8460597320461c5ed3ff7feeda70
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24466'
+    validation_criteria_snippet: '5.9.1: Every corpus case matches Python''s PATCH
+      route: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_values_patch_co...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.10'
+  item_id: 5.10.1
+  plan_node_hash: 24ae2bf0f3b59a3f74a208a9e3472b2c96eab7673633671dbcf4ce964744ddd4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24467'
+    validation_criteria_snippet: '5.10.1: Every corpus case matches Python''s secrets
+      POST: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_secret_save_c...'
+    matched_artifact_ref: tests/servers/routes/test_secret_save_corpus.py::test_cases_match_python_route
+  deferral_target: null
+  detail: ''
+- section_id: '5.10'
+  item_id: 5.10.2
+  plan_node_hash: ae435668f6f698f6bf54fe37b4cdcaae0d82c33e6f12360f921400d133285375
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24467'
+    validation_criteria_snippet: '5.10.1: Every corpus case matches Python''s secrets
+      POST: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_secret_save_c...'
+    matched_artifact_ref: crates/gruntime/tests/secret_save.rs::cases_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.10'
+  item_id: 5.10.3
+  plan_node_hash: f67250d215251be363f3e0fd59a9f5823bfd80c9096fba0b3de38abf4db128c7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24467'
+    validation_criteria_snippet: '5.10.1: Every corpus case matches Python''s secrets
+      POST: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_secret_save_c...'
+    matched_artifact_ref: crates/gruntime/tests/secret_save.rs::save_serializes_and_rolls_back
+  deferral_target: null
+  detail: ''
+- section_id: '5.10'
+  item_id: 5.10.4
+  plan_node_hash: c2054ee8b50d2fdeb47ffaf1ab37743bce8ba930aeb7a3545e9e62ede2697e5d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24467'
+    validation_criteria_snippet: '5.10.1: Every corpus case matches Python''s secrets
+      POST: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_secret_save_c...'
+    matched_artifact_ref: crates/gruntime/tests/secret_save.rs::proxied_saves_are_checked
+  deferral_target: null
+  detail: ''
+- section_id: '5.10'
+  item_id: 5.10.5
+  plan_node_hash: b58c3b493048744cf7579a94f4bbfbd5dabbe045d0c4b89faff5d6ef4ede4526
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24467'
+    validation_criteria_snippet: '5.10.1: Every corpus case matches Python''s secrets
+      POST: status, body, resulting rows, secrets and notification. test: `tests/servers/routes/test_secret_save_c...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.11'
+  item_id: 5.11.1
+  plan_node_hash: 75d098a1fd081da93f3f27183c49577b1b18b6d8f2710d28610debf37b77040a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24468'
+    validation_criteria_snippet: '5.11.1: `yaml12.load` gives every vector''s value,
+      error message or non-string key. test: `tests/config/test_yaml12_vectors.py::test_vectors_match_loader`.
+      5.11...'
+    matched_artifact_ref: tests/config/test_yaml12_vectors.py::test_vectors_match_loader
+  deferral_target: null
+  detail: ''
+- section_id: '5.11'
+  item_id: 5.11.2
+  plan_node_hash: f3c30f3ac590e630d3fa85246c120c7c0cee1eef99387e6b6af2c9422d48e1bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24468'
+    validation_criteria_snippet: '5.11.1: `yaml12.load` gives every vector''s value,
+      error message or non-string key. test: `tests/config/test_yaml12_vectors.py::test_vectors_match_loader`.
+      5.11...'
+    matched_artifact_ref: crates/gruntime/tests/yaml12.rs::vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.11'
+  item_id: 5.11.3
+  plan_node_hash: 51a03fcc34b70d5411035fd9388cd1baa057f1e94a03b175b93ea61b7941a495
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24468'
+    validation_criteria_snippet: '5.11.1: `yaml12.load` gives every vector''s value,
+      error message or non-string key. test: `tests/config/test_yaml12_vectors.py::test_vectors_match_loader`.
+      5.11...'
+    matched_artifact_ref: tests/servers/routes/test_config_yaml_replace.py::test_import_reads_yaml_1_2
+  deferral_target: null
+  detail: ''
+- section_id: '5.11'
+  item_id: 5.11.4
+  plan_node_hash: 0b6e4f3acafb3a970e08d61ed06457fa4990181aaf8bdef6a1fe3aae48688ed5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24468'
+    validation_criteria_snippet: '5.11.1: `yaml12.load` gives every vector''s value,
+      error message or non-string key. test: `tests/config/test_yaml12_vectors.py::test_vectors_match_loader`.
+      5.11...'
+    matched_artifact_ref: tests/config/test_yaml_export_vectors.py::test_vectors_match_python_dump
+  deferral_target: null
+  detail: ''
+- section_id: '5.11'
+  item_id: 5.11.5
+  plan_node_hash: 87701a96bda4a27298e158213a83ee8db74edc3753926f50975b4f6b7b3ea184
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24468'
+    validation_criteria_snippet: '5.11.1: `yaml12.load` gives every vector''s value,
+      error message or non-string key. test: `tests/config/test_yaml12_vectors.py::test_vectors_match_loader`.
+      5.11...'
+    matched_artifact_ref: crates/gruntime/tests/export.rs::emitter_matches_python_vectors
+  deferral_target: null
+  detail: ''
+- section_id: '5.11'
+  item_id: 5.11.6
+  plan_node_hash: d3c0b85b9e42d710f158cba138aa7ec27df0c0aec4ad32d3002e8f02f5f206ea
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24468'
+    validation_criteria_snippet: '5.11.1: `yaml12.load` gives every vector''s value,
+      error message or non-string key. test: `tests/config/test_yaml12_vectors.py::test_vectors_match_loader`.
+      5.11...'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry
+  deferral_target: null
+  detail: ''
+- section_id: '5.11'
+  item_id: 5.11.7
+  plan_node_hash: dd6beda26b283eb84f6018bec73a3f6ff913bf9cf55c2b8e531e2778872f044b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24468'
+    validation_criteria_snippet: '5.11.1: `yaml12.load` gives every vector''s value,
+      error message or non-string key. test: `tests/config/test_yaml12_vectors.py::test_vectors_match_loader`.
+      5.11...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.12'
+  item_id: 5.12.1
+  plan_node_hash: 0c8dc53eb74fcdf9ff2ace2a13145fdaedf8c73dd30ec29283ba21866ef58fdd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24469'
+    validation_criteria_snippet: '5.12.1: Every corpus case matches Python''s template
+      PUT and import POST: status, body, resulting rows, secrets and notification.
+      test: `tests/servers/routes/te...'
+    matched_artifact_ref: tests/servers/routes/test_yaml_documents_corpus.py::test_cases_match_python_routes
+  deferral_target: null
+  detail: ''
+- section_id: '5.12'
+  item_id: 5.12.2
+  plan_node_hash: 67ab356fc095020e8f7bcfe0c2b921d37fb5a600c9340052a205c6be83016985
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24469'
+    validation_criteria_snippet: '5.12.1: Every corpus case matches Python''s template
+      PUT and import POST: status, body, resulting rows, secrets and notification.
+      test: `tests/servers/routes/te...'
+    matched_artifact_ref: tests/servers/routes/test_config_yaml_replace.py::test_yaml_revision_domain_and_exhaustion
+  deferral_target: null
+  detail: ''
+- section_id: '5.12'
+  item_id: 5.12.3
+  plan_node_hash: eedd2c37d54f0bd8ee38139b0d89d8e618362aa8a84c2d8efc12f6b9209463a7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24469'
+    validation_criteria_snippet: '5.12.1: Every corpus case matches Python''s template
+      PUT and import POST: status, body, resulting rows, secrets and notification.
+      test: `tests/servers/routes/te...'
+    matched_artifact_ref: crates/gruntime/tests/documents.rs::cases_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.12'
+  item_id: 5.12.4
+  plan_node_hash: 0f0050eedd6a755c056231f3504d3104c52cdc0d3927945ceebde7d59315cbbe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24469'
+    validation_criteria_snippet: '5.12.1: Every corpus case matches Python''s template
+      PUT and import POST: status, body, resulting rows, secrets and notification.
+      test: `tests/servers/routes/te...'
+    matched_artifact_ref: crates/gruntime/tests/documents.rs::replace_scopes_to_daemon_keys
+  deferral_target: null
+  detail: ''
+- section_id: '5.12'
+  item_id: 5.12.5
+  plan_node_hash: d4be30041647be7d2f56fd3f306d63deafd76bf6c024451a1634dbf193da8f0a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24469'
+    validation_criteria_snippet: '5.12.1: Every corpus case matches Python''s template
+      PUT and import POST: status, body, resulting rows, secrets and notification.
+      test: `tests/servers/routes/te...'
+    matched_artifact_ref: crates/gruntime/tests/documents.rs::check_proxied_verifies_python_documents
+  deferral_target: null
+  detail: ''
+- section_id: '5.12'
+  item_id: 5.12.6
+  plan_node_hash: 9f36110b9a3f124f015421b21036fa16b60930b6bedc263733fc0bb65d65fc79
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24469'
+    validation_criteria_snippet: '5.12.1: Every corpus case matches Python''s template
+      PUT and import POST: status, body, resulting rows, secrets and notification.
+      test: `tests/servers/routes/te...'
+    matched_artifact_ref: tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry
+  deferral_target: null
+  detail: ''
+- section_id: '5.12'
+  item_id: 5.12.7
+  plan_node_hash: 752cf79572cf924f91f336efd3ace4c85e07579f95303edeac75025da8c72c96
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24469'
+    validation_criteria_snippet: '5.12.1: Every corpus case matches Python''s template
+      PUT and import POST: status, body, resulting rows, secrets and notification.
+      test: `tests/servers/routes/te...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.13'
+  item_id: 5.13.1
+  plan_node_hash: 77f09f765724dd34b03efd6aa89a9660c0f0713c64d83214e700e8db93a7e5c5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24470'
+    validation_criteria_snippet: '5.13.1: Python''s probe chains give every corpus
+      case''s outcome, fake log and retry delays, and leave no fake process running.
+      test: `tests/ai/test_endpoint_pro...'
+    matched_artifact_ref: tests/ai/test_endpoint_probe_corpus.py::test_cases_match_python_probes
+  deferral_target: null
+  detail: ''
+- section_id: '5.13'
+  item_id: 5.13.2
+  plan_node_hash: 5857d8f166865bbb353ab7fc17571c37fca737036b1492a0e9e410e94bd7c867
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24470'
+    validation_criteria_snippet: '5.13.1: Python''s probe chains give every corpus
+      case''s outcome, fake log and retry delays, and leave no fake process running.
+      test: `tests/ai/test_endpoint_pro...'
+    matched_artifact_ref: tests/ai/test_endpoint_probe_corpus.py::test_g_format_vectors_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.13'
+  item_id: 5.13.3
+  plan_node_hash: cb40038ccd3f7112b0f42a9c2792bc876e20192db2142abad5826f2dbda1d23e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24470'
+    validation_criteria_snippet: '5.13.1: Python''s probe chains give every corpus
+      case''s outcome, fake log and retry delays, and leave no fake process running.
+      test: `tests/ai/test_endpoint_pro...'
+    matched_artifact_ref: crates/gruntime/tests/endpoint_probe.rs::cases_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.13'
+  item_id: 5.13.4
+  plan_node_hash: 77e813e690215029fe1714f00f1d9573949c774628d4c992ac4585af98231287
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24470'
+    validation_criteria_snippet: '5.13.1: Python''s probe chains give every corpus
+      case''s outcome, fake log and retry delays, and leave no fake process running.
+      test: `tests/ai/test_endpoint_pro...'
+    matched_artifact_ref: crates/gruntime/tests/endpoint_probe.rs::format_g_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.13'
+  item_id: 5.13.5
+  plan_node_hash: 2c99235a2c5cce36f7fadbdde6875dadcd2bdb284e9899cf4c31472589319f05
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24470'
+    validation_criteria_snippet: '5.13.1: Python''s probe chains give every corpus
+      case''s outcome, fake log and retry delays, and leave no fake process running.
+      test: `tests/ai/test_endpoint_pro...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.14'
+  item_id: 5.14.1
+  plan_node_hash: f0e630ab555e22246d2bbac8449d282fc229761162b8b0d6f5c074cec8880c7d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24471'
+    validation_criteria_snippet: '5.14.1: Every corpus case matches Python''s activate
+      PUT: status, body, rows, secrets, notification and fake log, with an invalid
+      endpoint and a vLLM catalog fa...'
+    matched_artifact_ref: tests/servers/routes/test_endpoint_activation_corpus.py::test_cases_match_python_route
+  deferral_target: null
+  detail: ''
+- section_id: '5.14'
+  item_id: 5.14.2
+  plan_node_hash: c64f1224257a32e9982c3ed88d9f249a7d0fa44d0a264b1ad43655d8f682b09d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24471'
+    validation_criteria_snippet: '5.14.1: Every corpus case matches Python''s activate
+      PUT: status, body, rows, secrets, notification and fake log, with an invalid
+      endpoint and a vLLM catalog fa...'
+    matched_artifact_ref: crates/gruntime/tests/activation.rs::cases_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.14'
+  item_id: 5.14.3
+  plan_node_hash: 671de70b9ae91ff9c137d254b5d7db968b443af0876c769ea3d37c96842ece59
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24471'
+    validation_criteria_snippet: '5.14.1: Every corpus case matches Python''s activate
+      PUT: status, body, rows, secrets, notification and fake log, with an invalid
+      endpoint and a vLLM catalog fa...'
+    matched_artifact_ref: crates/gruntime/tests/activation.rs::path_segments_route_like_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.14'
+  item_id: 5.14.4
+  plan_node_hash: 4871b79ee5ec158582a4918ebd250785f17aabc78922276f3ea344568ec4c396
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24471'
+    validation_criteria_snippet: '5.14.1: Every corpus case matches Python''s activate
+      PUT: status, body, rows, secrets, notification and fake log, with an invalid
+      endpoint and a vLLM catalog fa...'
+    matched_artifact_ref: crates/gruntime/tests/activation.rs::proxied_activations_are_checked
+  deferral_target: null
+  detail: ''
+- section_id: '5.14'
+  item_id: 5.14.5
+  plan_node_hash: 4042d66979cc2a1cfbb7c2fc3c902b3470364a576f1ebf7e8e9277901a25809c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24471'
+    validation_criteria_snippet: '5.14.1: Every corpus case matches Python''s activate
+      PUT: status, body, rows, secrets, notification and fake log, with an invalid
+      endpoint and a vLLM catalog fa...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.15'
+  item_id: 5.15.1
+  plan_node_hash: ba4dcf20adb446a2c441085fe80e1cba0f75dadfed473c20a4a18bcbdce0f99c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24472'
+    validation_criteria_snippet: '5.15.1: The checked-in builtins carrier equals the
+      generator''s output. test: `tests/config/test_validation_detection_corpus.py::test_checked_in_builtins_match_...'
+    matched_artifact_ref: tests/config/test_validation_detection_corpus.py::test_checked_in_builtins_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.15'
+  item_id: 5.15.2
+  plan_node_hash: 11d24f6eb53a6656134bc4ed8aedaf6dc7a9bfe54d846d3d10ed3049b5647946
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24472'
+    validation_criteria_snippet: '5.15.1: The checked-in builtins carrier equals the
+      generator''s output. test: `tests/config/test_validation_detection_corpus.py::test_checked_in_builtins_match_...'
+    matched_artifact_ref: tests/config/test_validation_detection_corpus.py::test_cases_match_python_classifier
+  deferral_target: null
+  detail: ''
+- section_id: '5.15'
+  item_id: 5.15.3
+  plan_node_hash: 409099b2d457684aace66662b33420c6b78f8cd0f22ce8beaa0de09923ffd5ac
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24472'
+    validation_criteria_snippet: '5.15.1: The checked-in builtins carrier equals the
+      generator''s output. test: `tests/config/test_validation_detection_corpus.py::test_checked_in_builtins_match_...'
+    matched_artifact_ref: crates/gruntime/tests/classifier.rs::cases_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.15'
+  item_id: 5.15.4
+  plan_node_hash: 4576c66bb192b4a330fdb6059a769369fa47c8ae93adbfedb1c94227eac3a21c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24472'
+    validation_criteria_snippet: '5.15.1: The checked-in builtins carrier equals the
+      generator''s output. test: `tests/config/test_validation_detection_corpus.py::test_checked_in_builtins_match_...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '5.16'
+  item_id: 5.16.1
+  plan_node_hash: a92dbeee0b5334998ca34ec08998b7f4fd16a21af0c6d5b781d5ed739ebcb531
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24473'
+    validation_criteria_snippet: '5.16.1: Every corpus case matches Python''s preview:
+      status and body, with lax booleans in `config` answered 400. test: `tests/servers/routes/test_validation_de...'
+    matched_artifact_ref: tests/servers/routes/test_validation_detection_preview_corpus.py::test_cases_match_python_route
+  deferral_target: null
+  detail: ''
+- section_id: '5.16'
+  item_id: 5.16.2
+  plan_node_hash: d1a175ac2b8a641f6e9561d54d97294641af494714226029b25dcaa23526e19e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24473'
+    validation_criteria_snippet: '5.16.1: Every corpus case matches Python''s preview:
+      status and body, with lax booleans in `config` answered 400. test: `tests/servers/routes/test_validation_de...'
+    matched_artifact_ref: crates/gruntime/tests/validation_preview.rs::cases_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '5.16'
+  item_id: 5.16.3
+  plan_node_hash: 8d1cc85e93a2e84e370b7493bc20c812d8fd3564e3aa174fd97742d9c56b8eb8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24473'
+    validation_criteria_snippet: '5.16.1: Every corpus case matches Python''s preview:
+      status and body, with lax booleans in `config` answered 400. test: `tests/servers/routes/test_validation_de...'
+    matched_artifact_ref: crates/gruntime/tests/validation_preview.rs::proxied_previews_are_checked
+  deferral_target: null
+  detail: ''
+- section_id: '5.16'
+  item_id: 5.16.4
+  plan_node_hash: 079b75d4b16e0527fc165014f7e0c3f8996545ddd113f92f4edbb685a3bdb45f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24473'
+    validation_criteria_snippet: '5.16.1: Every corpus case matches Python''s preview:
+      status and body, with lax booleans in `config` answered 400. test: `tests/servers/routes/test_validation_de...'
+    matched_artifact_ref: tests/config/test_live_policy_consumers.py::test_validation_detection_uses_runtime_snapshot
+  deferral_target: null
+  detail: ''
+- section_id: '5.16'
+  item_id: 5.16.5
+  plan_node_hash: 55a62ccc25afdd739fe11b917f9f6c4a494403fb3aee7ff0f3793899a83fdf20
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24473'
+    validation_criteria_snippet: '5.16.1: Every corpus case matches Python''s preview:
+      status and body, with lax booleans in `config` answered 400. test: `tests/servers/routes/test_validation_de...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.1
+  plan_node_hash: 67e97172ca4522bf57ada4547cbe401990fc51631f78b65fcb026eac2f25b524
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24474'
+    validation_criteria_snippet: '6.1.1: `RuntimeFamily::default_backend()` returns
+      `Native`. 1.1.5 proves an absent entry takes the default and an entry overrides
+      it, and 6.3 proves it end to ...'
+    matched_artifact_ref: crates/gruntime/tests/family.rs::runtime_defaults_to_native
+  deferral_target: null
+  detail: ''
+- section_id: '6.1'
+  item_id: 6.1.2
+  plan_node_hash: 834a3427fbd8c63480c08fcae5afdc0a808733035c01f91dd002dce5d17327a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24474'
+    validation_criteria_snippet: '6.1.1: `RuntimeFamily::default_backend()` returns
+      `Native`. 1.1.5 proves an absent entry takes the default and an entry overrides
+      it, and 6.3 proves it end to ...'
+    matched_artifact_ref: tests/install/test_version_pins.py::test_managed_bin_pins_match_crate_versions
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.1
+  plan_node_hash: 1ecdf74e311cf2deda4a8733ff7ace7fcbb50dbdab3f68e6fc1eed8fac917286
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24475'
+    validation_criteria_snippet: '6.2.1: The manifest declares `runtime` native with
+      origin python, owns the handshake, config and new cases, and no longer lists
+      `config` or `runtime_handshake`...'
+    matched_artifact_ref: tests/contracts/http/manifest.json
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.2
+  plan_node_hash: acf09d654692e89f5dc6c0bf8990112605b1f069d7bab029bedc540a42f4c9a7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24475'
+    validation_criteria_snippet: '6.2.1: The manifest declares `runtime` native with
+      origin python, owns the handshake, config and new cases, and no longer lists
+      `config` or `runtime_handshake`...'
+    matched_artifact_ref: tests/contracts/http/runtime_config.json
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.3
+  plan_node_hash: 4cf9252f280eee67b730c8f844063088b86b119d7c6c46b9ee2eacbab4733893
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24475'
+    validation_criteria_snippet: '6.2.1: The manifest declares `runtime` native with
+      origin python, owns the handshake, config and new cases, and no longer lists
+      `config` or `runtime_handshake`...'
+    matched_artifact_ref: tests/contracts/test_http_corpus.py::test_case_replays_equal
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.4
+  plan_node_hash: baec27fe84d8b6f02b08a4e4f1bfee8df65cf47e3ca392071bc4a1418d29cc1e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24475'
+    validation_criteria_snippet: '6.2.1: The manifest declares `runtime` native with
+      origin python, owns the handshake, config and new cases, and no longer lists
+      `config` or `runtime_handshake`...'
+    matched_artifact_ref: crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases
+  deferral_target: null
+  detail: ''
+- section_id: '6.2'
+  item_id: 6.2.5
+  plan_node_hash: 015e2a86252c9e7aa8a3cee29fb990c506f1dc7993d103db6c78ebef42229fea
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24475'
+    validation_criteria_snippet: '6.2.1: The manifest declares `runtime` native with
+      origin python, owns the handshake, config and new cases, and no longer lists
+      `config` or `runtime_handshake`...'
+    matched_artifact_ref: tests/contracts/http/config_effective.json
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.1
+  plan_node_hash: 7b117aa8c242f8f968d7195d57f4fce9f8be2f79e107235be752fda42e60234e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24476'
+    validation_criteria_snippet: '6.3.1: Compare mode serves Python''s responses and
+      records `match` for every claimed GET, including the P5 reads, and `verified`
+      for the handshake, the managed ...'
+    matched_artifact_ref: tests/e2e/test_runtime_family.py::test_compare_mode_records_zero_mismatches
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.2
+  plan_node_hash: 7dd5f85e2a4cfd862c339e21ac7f58383b07586b87baba87fda0973a187cc290
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24476'
+    validation_criteria_snippet: '6.3.1: Compare mode serves Python''s responses and
+      records `match` for every claimed GET, including the P5 reads, and `verified`
+      for the handshake, the managed ...'
+    matched_artifact_ref: tests/e2e/test_runtime_family.py::test_native_routes_survive_backend_kill
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.3
+  plan_node_hash: a2f0aa08d186688eed74b29e3747aafa587a74c4c216efe6a5541f11317704f3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24476'
+    validation_criteria_snippet: '6.3.1: Compare mode serves Python''s responses and
+      records `match` for every claimed GET, including the P5 reads, and `verified`
+      for the handshake, the managed ...'
+    matched_artifact_ref: tests/e2e/test_runtime_family.py::test_route_flip_and_rollback_need_no_redeploy
+  deferral_target: null
+  detail: ''
+- section_id: '6.3'
+  item_id: 6.3.4
+  plan_node_hash: 6e387e8f6916c2884cc512f0753a5559bce0a2b9df3af13e49ccec5361421486
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24476'
+    validation_criteria_snippet: '6.3.1: Compare mode serves Python''s responses and
+      records `match` for every claimed GET, including the P5 reads, and `verified`
+      for the handshake, the managed ...'
+    matched_artifact_ref: tests/e2e/test_runtime_family.py::test_managed_handshake_and_rotation_survive_backend_kill
+  deferral_target: null
+  detail: ''
+- section_id: '6.4'
+  item_id: 6.4.1
+  plan_node_hash: 1d88573979e592c29dfd716ea8cfb6728e53753cda28ebaee57df40e0e090b41
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24477'
+    validation_criteria_snippet: '6.4.1: "Daemon family crates" documents the seam,
+      the claims and proxied-check hooks, the compare log and the corpus split. file:
+      `crates/AGENTS.md`. 6.4.2: Th...'
+    matched_artifact_ref: crates/AGENTS.md
+  deferral_target: null
+  detail: ''
+- section_id: '6.4'
+  item_id: 6.4.2
+  plan_node_hash: 62e8d9de6b6d1a10a17c53a52f3e3e7a65077d62c4ca85cc08e8e3e8523c204d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#24477'
+    validation_criteria_snippet: '6.4.1: "Daemon family crates" documents the seam,
+      the claims and proxied-check hooks, the compare log and the corpus split. file:
+      `crates/AGENTS.md`. 6.4.2: Th...'
+    matched_artifact_ref: docs/guides/configuration.md
+  deferral_target: null
+  detail: ''
