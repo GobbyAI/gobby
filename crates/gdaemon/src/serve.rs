@@ -723,19 +723,18 @@ mod tests {
     #[cfg(unix)]
     struct ExhaustedListener {
         listener: TcpListener,
-        emfiles: std::sync::atomic::AtomicUsize,
+        emfiles: std::sync::Mutex<usize>,
     }
 
     #[cfg(unix)]
     impl AcceptSource for ExhaustedListener {
         fn accept(&self) -> impl Future<Output = std::io::Result<(TcpStream, SocketAddr)>> + Send {
-            use std::sync::atomic::Ordering;
-            let exhausted = self
-                .emfiles
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                    left.checked_sub(1)
-                })
-                .is_ok();
+            let exhausted = {
+                let mut left = self.emfiles.lock().expect("fixture exhaustion counter");
+                let exhausted = *left > 0;
+                *left = left.saturating_sub(1);
+                exhausted
+            };
             async move {
                 if exhausted {
                     return Err(std::io::Error::from_raw_os_error(libc::EMFILE));

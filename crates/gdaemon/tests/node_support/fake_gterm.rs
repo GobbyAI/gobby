@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
+    os::unix::process::CommandExt,
     path::Path,
     process::{Child, Command},
     sync::{
@@ -77,7 +78,8 @@ impl FakeGterm {
                 .success(),
             "sign fixture executable"
         );
-        let mut process = Command::new(&binary).arg("600").spawn()?;
+        // Multicall coreutils selects the applet by argv[0], even after copying.
+        let mut process = Command::new(&binary).arg0("sleep").arg("600").spawn()?;
         let setup = (|| -> Result<UnixListener> {
             std::fs::write(home.join("gterm.pid"), process.id().to_string())?;
             std::fs::write(home.join("gterm-control.token"), format!("{TOKEN}\n"))?;

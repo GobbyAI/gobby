@@ -1,5 +1,4 @@
 use super::*;
-use super::{BackendChild, BackendConfig, lock_reporting};
 use crate::lease::NamedLock;
 use std::{sync::Mutex as StdMutex, time::Duration};
 use tokio::time::timeout;
@@ -172,13 +171,12 @@ async fn bounded_spawn_leaves_the_runtime_free_while_a_child_is_stalled() {
         Duration::from_millis(500),
     );
     tokio::pin!(spawn);
-    tokio::select! {
-        biased;
-        _ = &mut spawn => {
-            panic!("spawn finished before the timer; the stalled child blocked the runtime")
-        }
-        () = tokio::time::sleep(Duration::from_millis(50)) => {}
-    }
+    assert!(
+        timeout(Duration::from_millis(50), &mut spawn)
+            .await
+            .is_err(),
+        "spawn finished before the timer; the stalled child blocked the runtime"
+    );
     assert!(
         spawn.await.is_err(),
         "a stalled child must miss the deadline"
