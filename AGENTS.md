@@ -83,7 +83,10 @@ how the system behaves so you can work with it instead of being surprised by it.
    index returns ranked, token-cheap results. Hooks teach it once per context,
    redirect broad source reads to `gcode outline`/`gcode symbol-at`, and fail open
    when gcode cannot serve the checkout.
-10. No backward compatibility. 0.5.0 has not shipped; there is nothing to preserve.
+10. No backward compatibility with shipped releases; during the port, rows that Rust
+    writes stay readable by Python while it exists and by each cutover's pinned
+    generation, and schema steps after the tmux purge stay expand-only until
+    CP-FINAL-CUT (D19, D22, D129).
 11. Agent depth limit of 5 — no deeper recursive agent chains.
 12. Cross-session messaging goes through `gobby-agents:send_message`. Reserve
     `gobby-sessions:send_keys` for terminal control. Waits are event-driven: use
@@ -226,8 +229,8 @@ minutes. Target the relevant file or package.
   needing daemon behavior starts an isolated test daemon with temporary state and
   ports.
 - Markers: `unit`, `slow`, `integration`, `e2e`, `cli`.
-- Coverage is enforced at 80% only by CI (pushes to `main`/`0.5.0` and PRs targeting
-  them); the pre-push hook runs lint/format/type/ts/frontend checks and no pytest.
+- Coverage is enforced at 80% only by CI (pushes to `main`/`0.5.0`/`0.9.0` and PRs
+  targeting them); the pre-push hook runs lint/format/type/ts/frontend checks and no pytest.
 - Daemon logs: `~/.gobby/logs/`.
 
 ## Repository Guidelines
@@ -279,11 +282,10 @@ state inconsistent.
   `target/release/`; and the stamped coherent set is exactly `gcode`, `gdaemon`,
   `ghook`, so other `gobby-core` dependents such as `gclient` must be rebuilt alongside
   them but are promoted separately.
-  Source branches do not edit managed binary versions, lockfile version entries,
-  or managed pins. `land_commit` generates `0.0.1` patch bumps against the locked
-  `0.5.0` tip for each affected binary dependency closure, updating `Cargo.lock`
-  and managed pins in a verified mechanical commit. Epic-child landings do not
-  bump. Maintenance version floors derive from the managed pins.
+  `land_commit` generates version bumps only when the landing branch is named
+  `0.5.0`, so on `0.9.0` each commit carries its own bumps of managed binary
+  versions, lockfile version entries and managed pins, under D39 of the port map
+  (`docs/port/map-v2.md`). Maintenance version floors derive from the managed pins.
   This covers `gcode`, `gdaemon`, `ghook`, `gclient`, `gmcp`, and `gterm`, including
   unpublished managed binaries; publishing remains separate. Unpublished binaries (`UNPUBLISHED_MANAGED_BINS` in
   `src/gobby/install/version_pins.py`) go through the checkout build on every
