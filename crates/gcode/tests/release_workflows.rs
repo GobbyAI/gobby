@@ -18,10 +18,10 @@ const RELEASE_WORKFLOWS: [(&str, &str); 2] = [
 
 const GH_RELEASE_CREATE: &str = r#"gh release create "$tag" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag"#;
 const TAIKI_INSTALL_ACTION_SHA: &str = "f5b277aa8941a90c16bc1cd6ab9363e0502b7d31";
-const ACTIONS_CHECKOUT_SHA: &str = "34e114876b0b11c390a56381ad16ebd13914f8d5";
+const ACTIONS_CHECKOUT_SHA: &str = "3d3c42e5aac5ba805825da76410c181273ba90b1";
 const DTOLNAY_RUST_TOOLCHAIN_SHA: &str = "29eef336d9b2848a0b548edc03f92a220660cdb8";
-const ACTIONS_CACHE_SHA: &str = "0057852bfaa89a56745cba8c7296529d2fc39830";
-const ACTIONS_UPLOAD_ARTIFACT_SHA: &str = "ea165f8d65b6e75b540449e92b4886f43607fa02";
+const ACTIONS_CACHE_SHA: &str = "55cc8345863c7cc4c66a329aec7e433d2d1c52a9";
+const ACTIONS_UPLOAD_ARTIFACT_SHA: &str = "cf430e030ddbb5b0abf93d22962f4752f3646cd9";
 
 #[test]
 fn ci_postgres_job_runs_all_gcode_tests_serially() {

@@ -30,7 +30,7 @@ jobs:
       GOBBY_POSTGRES_TEST_PORT: "60892"
       GOBBY_POSTGRES_TEST_USER: gobby_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Initialize isolated test machine identity
         run: |
@@ -118,7 +118,7 @@ jobs:
           exit 1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
         with:
           enable-cache: true
 
@@ -126,9 +126,9 @@ jobs:
         run: uv python install 3.13
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 

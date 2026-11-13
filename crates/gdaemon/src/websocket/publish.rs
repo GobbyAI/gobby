@@ -101,7 +101,7 @@ mod tests;
 async fn bind(native: &NativeWs, token: &str, headers: &HeaderMap, body: Body) -> Response<Body> {
     let body = match read_bounded(headers, body, BIND_LIMIT).await {
         Ok(body) => body,
-        Err(refusal) => return refusal,
+        Err(refusal) => return *refusal,
     };
     let Some(settings) = parse_object::<Settings>(&body) else {
         return status_only(StatusCode::BAD_REQUEST);
@@ -122,7 +122,7 @@ async fn publish(
 ) -> Response<Body> {
     let body = match read_bounded(headers, body, PUBLISH_LIMIT).await {
         Ok(body) => body,
-        Err(refusal) => return refusal,
+        Err(refusal) => return *refusal,
     };
     // The parse scales with the body, so it runs on the blocking pool. Parsed
     // on the worker, it holds that worker for the whole body and delays every
@@ -182,20 +182,20 @@ async fn read_bounded(
     headers: &HeaderMap,
     body: Body,
     limit: usize,
-) -> Result<Bytes, Response<Body>> {
+) -> Result<Bytes, Box<Response<Body>>> {
     let declared = headers
         .get(CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<usize>().ok());
     if declared.is_some_and(|length| length > limit) {
-        return Err(status_only(StatusCode::PAYLOAD_TOO_LARGE));
+        return Err(Box::new(status_only(StatusCode::PAYLOAD_TOO_LARGE)));
     }
     match Limited::new(body, limit).collect().await {
         Ok(collected) => Ok(collected.to_bytes()),
         Err(error) if error.is::<LengthLimitError>() => {
-            Err(status_only(StatusCode::PAYLOAD_TOO_LARGE))
+            Err(Box::new(status_only(StatusCode::PAYLOAD_TOO_LARGE)))
         }
-        Err(_) => Err(status_only(StatusCode::BAD_REQUEST)),
+        Err(_) => Err(Box::new(status_only(StatusCode::BAD_REQUEST))),
     }
 }
 
