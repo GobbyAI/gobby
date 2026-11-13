@@ -308,6 +308,7 @@ class TestMailboxDirectSend:
             submit: bool = False,
             clear_before_submit: bool = False,
             composer_confirmed_empty: bool = False,
+            composer_stranded: bool = False,
             cli_source: str | None = None,
         ) -> None:
             assert message == CONTINUE_WAKE_MESSAGE

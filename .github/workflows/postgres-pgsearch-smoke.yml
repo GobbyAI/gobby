@@ -32,6 +32,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Initialize isolated test machine identity
+        run: |
+          mkdir -p "${RUNNER_TEMP}/gobby-home"
+          uuidgen | tr '[:upper:]' '[:lower:]' > "${RUNNER_TEMP}/gobby-home/machine_id"
+          echo "GOBBY_HOME=${RUNNER_TEMP}/gobby-home" >> "$GITHUB_ENV"
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:

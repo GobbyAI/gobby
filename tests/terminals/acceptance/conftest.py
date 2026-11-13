@@ -30,6 +30,7 @@ import pytest
 from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.terminals import Terminal
+from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.host_manager import TerminalHostManager
 from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
 from gobby.terminals.runtime import (
@@ -39,6 +40,7 @@ from gobby.terminals.runtime import (
     TerminalSpawnRequest,
 )
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+from gobby.utils.machine_id import require_machine_id
 from tests._timing import wait_for_awaited_condition
 from tests.terminals.fakes import make_memory_terminal
 
@@ -154,7 +156,8 @@ async def native_host(
     """Start one freshly built ``gterm host`` for a single test."""
     socket_dir = short_dir("h")
     (socket_dir / "bootstrap.yaml").write_text(
-        "api_key: acceptance-frame-token\n", encoding="utf-8"
+        f"api_key: acceptance-frame-token\nfiles_home: {socket_dir / 'files'}\n",
+        encoding="utf-8",
     )
     (socket_dir / "bootstrap.yaml").chmod(0o600)
     # Frames authenticate against GOBBY_HOME, independently of --socket-dir.
@@ -282,7 +285,7 @@ def terminal_from_prepared(
         backend="native",
         ownership="gobby",
         state="live",
-        machine_id=str(uuid4()),
+        machine_id=require_machine_id(),
         project_id=str(uuid4()),
         created_at=now,
         updated_at=now,
@@ -361,7 +364,14 @@ async def wait_for_text(live: LiveTerminal, needle: str, *, description: str) ->
     """Wait until ``needle`` is on the terminal's screen and return the screen."""
 
     async def painted() -> str:
-        snapshot = await live.runtime.snapshot(live.terminal, lines=80)
+        try:
+            snapshot = await live.runtime.snapshot(live.terminal, lines=80)
+        except HostCommandError as exc:
+            # The host rejects a capture changed by concurrent PTY output. This
+            # bounded screen wait observes the next coherent frame instead.
+            if exc.error in {"capture_busy", "capture_invalidated"}:
+                return ""
+            raise
         return snapshot.text if needle in snapshot.text else ""
 
     return await wait_for_awaited_condition(

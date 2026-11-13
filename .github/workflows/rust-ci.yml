@@ -45,6 +45,12 @@ jobs:
     name: Check & Test
     runs-on: ubuntu-latest
     steps:
+      - name: Initialize isolated test machine identity
+        run: |
+          mkdir -p "${RUNNER_TEMP}/gobby-home"
+          uuidgen | tr '[:upper:]' '[:lower:]' > "${RUNNER_TEMP}/gobby-home/machine_id"
+          echo "GOBBY_HOME=${RUNNER_TEMP}/gobby-home" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false
@@ -287,6 +293,12 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
+      - name: Initialize isolated test machine identity
+        run: |
+          mkdir -p "${RUNNER_TEMP}/gobby-home"
+          uuidgen | tr '[:upper:]' '[:lower:]' > "${RUNNER_TEMP}/gobby-home/machine_id"
+          echo "GOBBY_HOME=${RUNNER_TEMP}/gobby-home" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           persist-credentials: false

@@ -48,10 +48,16 @@ def _postgres_url_for_schema(database_url: str, schema: str) -> str:
     return f"{database_url}{separator}options=-csearch_path%3D{schema}"
 
 
-def _seed_runtime_state(postgres_db: Any) -> None:
-    """Seed the PostgreSQL-owned runtime config: production UI on, test-only services off."""
+def _seed_runtime_state(postgres_db: Any, gobby_home: Path) -> None:
+    """Seed config and authority for this contained backend's isolated deployment."""
+    from gobby.deployment import deployment_token
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
+    postgres_db.execute(
+        "INSERT INTO deployment_runtime "
+        "(deployment_token, fencing_epoch, grant_signing_secret) VALUES (%s, %s, %s)",
+        (deployment_token(gobby_home), 1, secrets.token_hex(32)),
+    )
     mutations = ConfigMutations(postgres_db)
     mutations.patch_internal(
         expected_revision=mutations.repository.current_revision(),
@@ -96,7 +102,7 @@ def _bind_high_port_socket(attempts: int = 100) -> socket.socket:
 
 def _allocate_high_port() -> int:
     with _bind_high_port_socket() as sock:
-        return sock.getsockname()[1]
+        return int(sock.getsockname()[1])
 
 
 def _allocate_distinct_high_ports() -> tuple[int, int]:
@@ -128,6 +134,9 @@ def _write_config(
                 f"daemon_port: {http_port}",
                 "test_mode: true",
                 'bind_host: "127.0.0.1"',
+                # This test launches a contained backend, without the native proxy.
+                "front_door:",
+                "  enabled: false",
                 f"websocket_port: {ws_port}",
                 "ui_port: 60889",
                 "websocket:",
@@ -158,7 +167,7 @@ def _write_config(
     )
 
 
-def _wait_for_index(http_port: int, process: subprocess.Popen[object], log_path: Path) -> str:
+def _wait_for_index(http_port: int, process: subprocess.Popen[bytes], log_path: Path) -> str:
     deadline = time.monotonic() + 60
     url = f"http://127.0.0.1:{http_port}/"
     last_error = ""
@@ -169,7 +178,7 @@ def _wait_for_index(http_port: int, process: subprocess.Popen[object], log_path:
             )
         try:
             with urllib.request.urlopen(url, timeout=1.0) as response:  # nosec B310
-                body = response.read().decode("utf-8", errors="replace")
+                body: str = response.read().decode("utf-8", errors="replace")
             if "<html" in body.lower():
                 return body
             last_error = f"root response did not look like HTML: {body[:200]!r}"
@@ -191,7 +200,6 @@ def test_installed_wheel_serves_packaged_index_html(
     worker schema from the shared Postgres fixtures stands in for a ``gobby install``.
     """
     wheel = _resolve_wheel_path()
-    _seed_runtime_state(postgres_db)
     database_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
 
     venv = tmp_path / "venv"
@@ -206,6 +214,7 @@ def test_installed_wheel_serves_packaged_index_html(
     home = tmp_path / "home"
     gobby_home = home / ".gobby"
     gobby_home.mkdir(parents=True)
+    _seed_runtime_state(postgres_db, gobby_home)
     config_path = tmp_path / "config.yaml"
     files_home = tmp_path / "files"
     files_home.mkdir()

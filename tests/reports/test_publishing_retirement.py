@@ -9,7 +9,7 @@ import pytest
 from gobby.config.cron import CronConfig
 from gobby.feedback.storage import FeedbackReviewStore
 from gobby.memory.dream.storage import MemoryDreamStore
-from gobby.runner_init.orchestration import RETIRED_SYSTEM_CRON_JOBS
+from gobby.runner_init.cron import RETIRED_SYSTEM_CRON_JOBS
 from gobby.scheduler.executor import CronExecutor
 from gobby.scheduler.scheduler import CronRunRejected, CronScheduler
 from gobby.storage.cron import CronJobStorage, SystemRowProtected

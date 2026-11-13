@@ -46,24 +46,43 @@ mod serial_db {
         home
     }
 
-    fn attach_managed_grant(
+    fn attach_interactive_grant(
         command: &mut Command,
         home: &Path,
         project_id: &str,
         connections: gobby_core::grant::DirectConnections,
-    ) {
+    ) -> super::pin_collaborator::Collaborator {
         let machine = std::fs::read_to_string(home.join("machine_id")).expect("read machine id");
-        let grant =
+        let mut grant =
             gobby_core::grant::managed_direct_grant(project_id, machine.trim(), &connections);
-        let path = gobby_core::grant::write_managed_bootstrap(&home.join("grants"), &grant)
-            .expect("write managed grant");
-        // The grant fixture's execution id is fixed; an inherited managed-session
-        // run id would fail the identity check before the scope under test runs.
+        // This projection regression runs as the fixture's database owner, not a
+        // provisioned agent role. Match the contained interactive CLI fixture below.
+        grant.principal.kind = gobby_core::grant::PrincipalKind::Interactive;
+        grant.principal.execution_id = None;
+        grant.principal.session_id = None;
+        grant.deployment.token = gobby_core::grant::deployment_token(home);
+        std::fs::write(
+            home.join("bootstrap.yaml"),
+            format!("api_key: {}\n", super::pin_collaborator::TOKEN),
+        )
+        .expect("test API key");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind collaborator");
+        let service = super::pin_collaborator::Collaborator::start(
+            listener,
+            grant.with_checksum(),
+            String::new(),
+        );
+        // A contained interactive CLI must not inherit the launching agent's identity.
         command
+            .env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP")
+            .env_remove("GOBBY_SESSION_ID")
+            .env_remove("GOBBY_PARENT_SESSION_ID")
+            .env_remove("GOBBY_AGENT_API_TOKEN")
             .env_remove("GOBBY_AGENT_RUN_ID")
             .env_remove("GOBBY_MANAGED_EXECUTION_ID")
             .env("GOBBY_HOME", home)
-            .env("GOBBY_MANAGED_EXECUTION_BOOTSTRAP", path);
+            .env("GOBBY_DAEMON_URL", &service.url);
+        service
     }
 
     /// Deterministic uuid for a seeded child row of `project_id`.
@@ -115,11 +134,6 @@ mod serial_db {
         )
         .expect("delete local indexed file state");
 
-        // The managed grant's DSN role must hold exactly one live principal binding
-        // for the project; the hub's RLS helpers raise on zero or duplicate rows.
-        test_env::seed_test_principal_binding(&mut conn, PROJECT_ID)
-            .expect("bind managed principal to the fixture project");
-
         let home = isolated_gobby_home(project.path());
         let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
         command
@@ -134,7 +148,7 @@ mod serial_db {
                 FILE_PATH,
                 "--allow-missing-indexed-file",
             ]);
-        attach_managed_grant(
+        let _service = attach_interactive_grant(
             &mut command,
             &home,
             PROJECT_ID,

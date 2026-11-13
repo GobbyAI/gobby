@@ -18,7 +18,7 @@ import pytest
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start import AgentActivationResult
 from gobby.hooks.event_handlers._session_start.context import classify_session_start_context
-from gobby.hooks.event_handlers._session_start.flow import _log_session_start_timing
+from gobby.hooks.event_handlers._session_start.diagnostics import _log_session_start_timing
 from gobby.hooks.event_handlers._session_start.handoff import resolve_session_start_identity
 from gobby.hooks.event_handlers._session_start.materialize import session_start_should_defer
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
@@ -1438,7 +1438,9 @@ class TestSessionStartNewSession:
             "parent_pid": 10322,
             "parent_create_time": 1.0,
         }
-        predecessor = SimpleNamespace(id="predecessor-sess", terminal_context=term)
+        predecessor = SimpleNamespace(
+            id="predecessor-sess", terminal_context=term, agent_run_id=None
+        )
         mock_resolve_clear.return_value = SimpleNamespace(
             predecessor=predecessor,
             attempt_id="attempt-1",
@@ -2075,7 +2077,10 @@ def test_resolve_agent_name_reads_config_without_resolving_secrets(
     assert resolve_agent_name(handler, "session-1", None) == "gobby"
     assert repository.read.call_count == 1
     assert repository.read.call_args == call(resolve_secrets=False)
-    variables.get_variable_subset.assert_called_once_with("session-1", ("_agent_type",))
+    assert variables.get_variable_subset.call_args_list == [
+        call("session-1", ("_agent_type",)),
+        call("session-1", ("_clear_identity_reset",)),
+    ]
 
 
 def _cli_process(pid: int) -> dict[str, object]:
