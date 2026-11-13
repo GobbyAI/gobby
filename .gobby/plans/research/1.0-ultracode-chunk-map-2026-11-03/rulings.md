@@ -271,3 +271,44 @@ Source: AskUserQuestion answers and chat messages in session gobby#19401.
     row answered differently, so the approval takes every default (ruling 5). It widens ruling 6's
     worktree condition: every linked worktree counts except 0.5.0 and wiki, whenever it was opened.
     No port work starts and no chunk task is created until the start gate clears.
+24. Cut, machines and the tmux purge (Josh, 2026-11-12, in session gobby#19401's own pane). At
+    ~10:00 CT: "Ok, I think we're done with as much as we're going to change. Need to update the 1.0
+    port plan, update the task list, and prep the backup so we can get everthing off this laptop".
+    His answers that day, in order:
+    - On the start gate work still open (#25603, #23591, #24821, #24820 and the worktree
+      fix/root-review-ci-e2e-25833): "waived, I'm pushing right now, will be a minute".
+    - On the tmux purge, which had not run: "I did want to remove the tmux stuff. I thought agents
+      were done with that already." On running it as the first port work on 0.9.0: "yeah that's
+      fine, we'll leave it as part of the port".
+    - On the machines: "I think I'm going to copy to the machine at Game Goblins first, so it can
+      run independently. Then I'm going to copy everything to my Omarchy linux box with an AMD 395+
+      and 128GB of memory, but for now the plan is port work on this machine, and 0.5.0 with game
+      goblins". Later: "the game goblins copy will not be making edits to gobby"; "I really just
+      want to set up the port and get it done without it interfering with game goblins' daily
+      responsibilities, and I really need to get this on a separate machine so i can just let the
+      porting agents work and not get distracted by sidequests."; and "I'm not going to be working
+      on game-goblins on the port machine, and I'm not going to be connected to an agent via
+      telegram on the game-goblins machine."
+    - On the cut: "last push happening now, that will be the version", and "once the push is done,
+      I can copy everything over thunderbolt to the macbook pro here at game goblins". That push
+      left origin's 0.5.0 at 0256724f1f.
+    - On where the chunk tasks are created: "Here, before the backup".
+    - On one more piece of port work: "File a task for removing /clear handoffs after we get the move done
+      and are working on the port." and "add it to the port work". The task is #25935 (D130).
+    The map author's reading, which Josh corrects where it is wrong. 0256724f1f is the cut SHA, and
+    nothing lands on 0.5.0 after it, so the commits the start gate planned for 0.5.0 before the cut
+    become 0.9.0's first commits. Start gate items 1 and 2 are waived, and ruling 23's worktree
+    condition with them. Ruling 8's purge moves onto 0.9.0 as its first chunk, TMUX-PURGE (D129).
+    Ruling 18's two machines stay with these roles: P, the port machine, is this laptop now and the
+    Linux machine later (D128); A is the Game Goblins MacBook Pro, restored from P's backup, on
+    0.5.0 at the cut SHA, where nobody edits gobby. So no 0.9.0-gg branch is forked, A gets no
+    policy commit, nothing flows from A to P, and ruling 21's numbering offset is not run unless
+    Josh asks (D40). Nothing is scrubbed on either machine; on A the gobby project's seat-launching
+    cron jobs and its Telegram channel are disabled before its first daemon start. That evening, on
+    the cut: "create branch 0.9.0", then "you push." and "I'd like you to fix the task list for the
+    1.0 port before pushing to origin. you have the ability to push to origin on my authorization."
+    So 0.9.0 was created at the cut SHA that evening, its first commits and the chunk tasks come
+    before its push, and the backup that seeds A is taken after the push, as Josh first answered;
+    A's restored hub holds the chunk tasks, idle. Later that evening, on the closure rule that
+    refuses a superseded close while a commit is linked (D31): "rule off". The rule is switched off
+    for the disposition pass and on again before the push.

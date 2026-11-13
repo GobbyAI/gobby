@@ -2,7 +2,7 @@
  "root": 21542,
  "backup_mtime": "2026-11-03T15:46:47.680759+00:00",
  "max_updated_at": "2026-11-03T15:44:34.456001+00:00",
- "delta_note": "Tasks under #21542 created or changed after the 2026-11-03T15:46Z backup, from list_tasks updated_since 15:44Z (64 rows checked; only #25629 is new, #25577 is still open).",
+ "delta_note": "Tasks under #21542 created or changed after the 2026-11-03T15:46Z backup, from list_tasks updated_since 15:44Z (64 rows checked; only #25629 is new, #25577 is still open). Refreshed 2026-11-12 against the task backup of 2026-11-12T21:17Z: #25629 closed as done on 2026-11-05 and left this list, #22075's protected label is now deferred-by-user, and #25935 was added that day on Josh's word (D130); no other node was added or changed.",
  "nodes": [
   {
    "ref": "#21544",
@@ -4960,7 +4960,7 @@
     "watchdog",
     "close-review",
     "follow-up",
-    "deferred-by-josh"
+    "deferred-by-user"
    ],
    "status": "escalated"
   },
@@ -7193,13 +7193,16 @@
    "status": "open"
   },
   {
-   "ref": "#25629",
-   "seq": 25629,
-   "title": "Research: ultracode chunk map for the 1.0 Rust port on branch 0.9.0",
-   "type": "research_spike",
+   "ref": "#25935",
+   "seq": 25935,
+   "title": "Remove /clear handoffs",
+   "type": "task",
    "parent_ref": "#21542",
-   "path": "21542.25629",
-   "labels": [],
+   "path": "21542.25935",
+   "labels": [
+    "gobby-1.0",
+    "needs-planning"
+   ],
    "status": "open"
   }
  ]

@@ -155,18 +155,18 @@
   },
   {
    "ref": "#25486",
-   "disposition": "start_gate",
-   "target": "tmux purge #25486 finishes on 0.5.0 before the cut (ruling 8; start_gate[2]): plan task-25486.md executed, its stale needs-planning label and HOLD text cleared",
-   "rationale": "Prefill null (orphan). Ruling 8 puts the tmux purge on 0.5.0 as part of the start gate (no 0.9.0 chunk carries tmux), and start_gate[2] requires it finished before the cut with its stale needs-planning label and HOLD text cleared. The audit and verifier (verify §2.7) found its stamped plan task-25486.md (M1 463b7c2ff9) awaiting Josh's expansion approval (criterion 1), which is 0.5.0 work.",
+   "disposition": "chunk",
+   "target": "TMUX-PURGE",
+   "rationale": "Ruling 24 and D129, 2026-11-12: the purge did not run on 0.5.0 before the cut, so it is the first 0.9.0 chunk, TMUX-PURGE, and this epic is that chunk's own task: no chunk task is created for it, it is not closed as superseded, and TMUX-PURGE's session expands it from its plan task-25486.md (M1 463b7c2ff9) and closes it as done. Before ruling 24 this node was a start gate item under ruling 8.",
    "prefill_disposition": null,
    "prefill_target": null,
    "changed": true
   },
   {
    "ref": "#25577",
-   "disposition": "start_gate",
-   "target": "#25577 closed done on 0.5.0 by the session that holds #25486, before the cut (start_gate[2]; D31 done close)",
-   "rationale": "Prefill null (orphan). The verifier corrected it to done (verify §2.8): claim released, approved attestation 9d651d38 on M1 463b7c2ff9, plan unchanged since. start_gate[2] has the session that holds #25486 close it on 0.5.0 with independent-review and validation attestations, and D31 names it among the done closes.",
+   "disposition": "chunk",
+   "target": "TMUX-PURGE",
+   "rationale": "Ruling 24 and D129, 2026-11-12: TMUX-PURGE's session refreshes the purge plan under this task and closes it as done (step (a) of that chunk's goal), and D31 names it among the done closes outside the chunk-task pass. Before ruling 24 it was to close on 0.5.0 before the cut; its approved attestation 9d651d38 on M1 463b7c2ff9 stands.",
    "prefill_disposition": null,
    "prefill_target": null,
    "changed": true
@@ -181,10 +181,10 @@
    "changed": true
   },
   {
-   "ref": "#25629",
-   "disposition": "start_gate",
-   "target": "#25629 closes on 0.5.0 with Josh's map approval (start_gate[9], ruling 23), before the cut; the map-approval commit carrying docs/port/ (start_gate[15]) follows in start_gate[20]'s order, under its own task",
-   "rationale": "Prefill null (orphan). This is the chunk-map research spike itself: its deliverable is the map, and its validation needs a disposition for every open #21542 node and Josh's approval (audit). It finishes on 0.5.0 with Josh's one approval (start_gate[9], ruling 5), given on 2026-11-05 (ruling 23). The map-approval commit that carries docs/port/ (start_gate[15]) follows in start_gate[20]'s order, because its line-cite recheck has to run right before it, and coverage_selfcheck lists this node as start gate.",
+   "ref": "#25935",
+   "disposition": "decision",
+   "target": "D130",
+   "rationale": "Josh, 2026-11-12: 'File a task for removing /clear handoffs after we get the move done and are working on the port.' and 'add it to the port work'. No chunk owns it yet: D130 keeps it open as a child of #21542 until its plan is approved as a change to this map.",
    "prefill_disposition": null,
    "prefill_target": null,
    "changed": true

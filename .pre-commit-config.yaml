@@ -21,8 +21,10 @@ repos:
       # byte-identical to the upstream dist archives, and trailing whitespace
       # in `vendor/patches/*.patch` context lines is part of the diff. The
       # hand-maintained `*.patches.md` and `*.vendor.json` stay in scope.
+      # `docs/port/map-v2.md` is rendered from `map-v2.json`, where one ledger
+      # selector ends in a space.
       - id: trailing-whitespace
-        exclude: ^(?:\.gobby/|crates/gterminal/vendor/(?:libghostty-vt|portable-pty|patches)/)
+        exclude: ^(?:\.gobby/|docs/port/map-v2\.md$|crates/gterminal/vendor/(?:libghostty-vt|portable-pty|patches)/)
       - id: end-of-file-fixer
         exclude: >-
           ^(?:\.gobby/|crates/gterminal/vendor/(?:libghostty-vt|portable-pty|patches)/|tests/prompts/fixtures/handoff_session_end_golden\.md$)
