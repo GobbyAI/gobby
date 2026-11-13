@@ -1,4 +1,4 @@
-version: "4.0.1"
+version: "4.1.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -30,7 +30,7 @@ rules:
               {"epic": "#24822", "name": "Gobby Annotate", "lang": "Web/iOS", "description": "Annotate work. #22225 stays under #22978 until the operator moves it."},
               {"epic": "#21542", "name": "Gobby 1.0", "lang": "Rust", "description": "gdaemon front door, strangler port, hub and node, including hub mode (#21575)."}
             ],
-            "integration_branch": "0.5.0",
+            "integration_branch": "0.9.0",
             "deferral_labels": ["deferred-by-user"],
             "security_paths": [
               "crates/gclient/src/daemon/**",
@@ -273,7 +273,7 @@ rules:
               "Full Rust port"
             ],
             "role_guidance": {"dev-team-lead":"Developer escalation (operator, 2026-11-05): when independent review has rejected a developer's candidate twice on the same task, replace that developer with a stronger model. Have it end its run with end_agent_run, carrying a handoff that names the rejected candidates and every open finding. Then relaunch dev-team with your team_id and developer_provider=codex, developer_model=gpt-6.1-sol, developer_reasoning_effort=medium. The new developer claims the task, reads both rejections, and continues from the latest candidate. When that task closes, have the escalated developer end its run, then relaunch dev-team with your team_id and no developer model inputs, so the next task gets the normal developer. Report each escalation and return to Triage.","consolidator":"Scope (operator, 2026-11-05, until the open worktrees clear): only the epics that have worktrees: #25603 Friction (with #25662 Non-blocking friction), #23591 Provider quota ledger, #24820 Code index, #24821 Terminal and client, and #23220. Do not touch #21542 Gobby 1.0, #24822 Gobby Annotate or #24819 Rust port candidates. Route proposals to the epic they belong to inside that scope. Check stale candidates against current evidence before retirement proposals. Exclude #22225 Annotate and #22978 triage and its whole subtree, including #22360 post-1.0 deferrals, and all plan-expanded epic subtrees.","orchestrator":"1.0 path reference (operator-approved #25460): .gobby/plans/research/rust-port-order-v2-2026-10-31.md; tree plan: .gobby/plans/task-25460.md. Read by reference; do not paste. Never claim or close #25609 (Friction placeholder). The gusto and lightspeed MCP connections belong to game-goblins; no gobby seat gets them.","archivist":"1.0 path reference (operator-approved #25460): .gobby/plans/research/rust-port-order-v2-2026-10-31.md; tree plan: .gobby/plans/task-25460.md. Read by reference; do not paste.","assistant":"1.0 path reference (operator-approved #25460): .gobby/plans/research/rust-port-order-v2-2026-10-31.md; tree plan: .gobby/plans/task-25460.md. Read by reference; do not paste."},
-            "release_guidance": "Crate releases. Source branches do not edit managed binary versions, lockfile version entries or managed pins. When integrating into 0.5.0, land_commit generates a +0.0.1 patch bump against the locked integration tip for every affected managed binary dependency closure, including unpublished managed binaries, with Cargo.lock and MANAGED_BIN_VERSION_PINS updated. Child landings into an epic branch do not bump. Publishing remains separate. The gcode maintenance floors derive from the gcode pin.",
+            "release_guidance": "Crate releases. land_commit generates version bumps only when the landing branch is named 0.5.0, so on 0.9.0 each commit carries its own bumps of managed binary versions, lockfile version entries and managed pins, under D39 of the port map (docs/port/map-v2.md). Publishing remains separate. The gcode maintenance floors derive from the gcode pin.",
             "spend_policy": "Operator ruling (Josh, 2026-11-10): OpenRouter spend under $10 needs no operator approval; report every known OpenRouter spend to the operator through the Assistant (amount, model and task). OpenRouter spend of $10 or more, and every other paid spend of any amount, needs operator approval first.",
             "handoff_reason_template": "Handed off: reviewer LAND at <sha>, waiting on ...; not an operator decision. The configured closer completes landing and closure.",
             "workspace_layout": {
@@ -314,7 +314,7 @@ rules:
         template: |
           ## General Project Operating Policy
           - Read project_policy for domain roots, integration branch, operator route, quiet hours and release guidance.
-          - Integration 0.5.0. Push: the operator and sessions running the default agent definition may push. Other definitions follow their runbook push policy.
+          - Integration 0.9.0. Push: the operator and sessions running the default agent definition may push. Other definitions follow their runbook push policy.
           - Claim before editing; preserve foreign files and stage only owned task paths.
           - Follow TDD where applicable, focused validation and OCR self-review. Record truthful completion evidence and close with the commit SHA.
           - Test runs on a shared host: run `uv sync --frozen` once per checkout (plain `uv sync` may rewrite uv.lock and is refused), then `uv run --no-sync pytest ...`, because a plain `uv run` waits silently on the shared sync lock. A seat that can't write the checkout's `target/` sets CARGO_TARGET_DIR to its own writable target and builds gdaemon there once before running tests that need it. A run that prints nothing is waiting on a lock or a build, so don't count it as a hang or a failure.
@@ -349,7 +349,7 @@ rules:
           ## Project Operating Policy
           - Operator: resolve_operator_conversation(channel="gobby-telegram"); no hardcoded IDs.
           - Before routing/launch/handoff: get_variable(name="project_policy") for roots/agent_model_defaults/default_model_denylist/workspace_layout. Every seat reads project_policy.role_guidance.<its definition name> before work, when present. A spawn that names no model takes its agent_model_defaults entry; pass model= only to override it. Runbooks pass their required inputs only; bundles inherit, project-agnostic.
-          - Integration 0.5.0. Push: the operator and sessions running the default agent definition may push. Other seats push only for the exact SHA the operator approves, and only the Orchestrator runs git push origin <sha>:refs/heads/0.5.0.
+          - Integration 0.9.0. Push: the operator and sessions running the default agent definition may push. Other seats push only for the exact SHA the operator approves, and only the Orchestrator runs git push origin <sha>:refs/heads/0.9.0.
           - Critical path: the 1.0 full Rust port (#21542) in port order: runner retirement (R0-R7 under #21544), Stage 2 families, Stage 3 (#21571, #21573, #21574), then hub/node multi-machine control. #25603 carries live runbook fixes and live Python fixes. Stage launches by load/backlog. New tasks go under their domain root; #24819 is deferred. Found work to ORCH: low unless blocking critical-path work/landing; only blockers preempt; fold findings existing work resolves.
           - The operator alone moves/sweeps/folds/reparents #22978 Triage subtree, #22225 Annotate or operator-placed tasks. Check parent; never change deferred-by-user.
           - One task/seat includes pending candidates; read-only prep allowed. Directed reviewer-LANDed waits use project_policy.handoff_reason_template; the configured closer completes landing and closure.
