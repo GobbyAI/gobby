@@ -268,6 +268,10 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Install annotation build dependencies
+        run: npm ci
+        working-directory: gobby-annotate
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:

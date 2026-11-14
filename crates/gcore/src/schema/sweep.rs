@@ -42,8 +42,15 @@ pub fn sweep_test_schemas(
     let mut dropped = 0;
     for candidate in candidates {
         let schema_name: String = candidate.get(0);
+        // Companion auth schemas share their parent hub's lifetime and lease.
+        let lease_schema = schema_name
+            .strip_suffix("_agent_auth")
+            .unwrap_or(&schema_name);
         let lease_acquired: bool = client
-            .query_one("SELECT pg_try_advisory_lock(hashtext($1))", &[&schema_name])?
+            .query_one(
+                "SELECT pg_try_advisory_lock(hashtext($1))",
+                &[&lease_schema],
+            )?
             .get(0);
         if !lease_acquired {
             continue;
@@ -51,7 +58,7 @@ pub fn sweep_test_schemas(
 
         let sweep_result = sweep_candidate(client, &schema_name, cutoff_epoch);
         let unlock_result =
-            client.query_one("SELECT pg_advisory_unlock(hashtext($1))", &[&schema_name]);
+            client.query_one("SELECT pg_advisory_unlock(hashtext($1))", &[&lease_schema]);
         match sweep_result {
             Ok(was_dropped) => {
                 unlock_result?;

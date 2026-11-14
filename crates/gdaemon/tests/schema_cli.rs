@@ -139,11 +139,20 @@ fn sweep_drops_only_aged_unlocked_test_schemas() -> Result<()> {
         database_url: database_url.clone(),
         name: format!("gobby_test_0_{process_id}_live_cafebabe"),
     };
+    let stale_auth = ScratchSchema {
+        database_url: database_url.clone(),
+        name: format!("{}_agent_auth", stale.name),
+    };
+    let live_auth = ScratchSchema {
+        database_url: database_url.clone(),
+        name: format!("{}_agent_auth", live.name),
+    };
     let mut admin = connect_readwrite(&database_url).context("connect to test PostgreSQL")?;
     SchemaRunner::new(&mut admin, &authority.name)?.apply()?;
     admin.batch_execute(&format!(
-        "CREATE SCHEMA \"{}\"; CREATE SCHEMA \"{}\"",
-        stale.name, live.name,
+        "CREATE SCHEMA \"{}\"; CREATE SCHEMA \"{}\"; \
+         CREATE SCHEMA \"{}\"; CREATE SCHEMA \"{}\"",
+        stale.name, live.name, stale_auth.name, live_auth.name,
     ))?;
     admin.query_one("SELECT pg_advisory_lock(hashtext($1))", &[&live.name])?;
 
@@ -170,10 +179,27 @@ fn sweep_drops_only_aged_unlocked_test_schemas() -> Result<()> {
             &[&live.name],
         )?
         .get(0);
+    let stale_auth_exists: bool = admin
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)",
+            &[&stale_auth.name],
+        )?
+        .get(0);
+    let live_auth_exists: bool = admin
+        .query_one(
+            "SELECT EXISTS(SELECT 1 FROM pg_namespace WHERE nspname = $1)",
+            &[&live_auth.name],
+        )?
+        .get(0);
     admin.query_one("SELECT pg_advisory_unlock(hashtext($1))", &[&live.name])?;
 
     assert!(!stale_exists);
     assert!(live_exists);
+    assert!(!stale_auth_exists);
+    assert!(
+        live_auth_exists,
+        "a live hub's lease must protect its auth schema"
+    );
     Ok(())
 }
 

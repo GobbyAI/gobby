@@ -8,7 +8,6 @@ Tests cover:
 """
 
 import json
-from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -58,15 +57,10 @@ def _write_remote_bootstrap() -> Path:
 
 
 @pytest.fixture(autouse=True)
-def _restore_bootstrap() -> Iterator[None]:
-    bootstrap = get_gobby_home() / "bootstrap.yaml"
-    previous = bootstrap.read_bytes() if bootstrap.exists() else None
-    yield
-    if previous is None:
-        bootstrap.unlink(missing_ok=True)
-    else:
-        bootstrap.write_bytes(previous)
-        bootstrap.chmod(0o600)
+def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    home = tmp_path / "gobby-home"
+    home.mkdir()
+    monkeypatch.setenv("GOBBY_HOME", str(home))
 
 
 def _hold_maintenance() -> PidFileClaim:
