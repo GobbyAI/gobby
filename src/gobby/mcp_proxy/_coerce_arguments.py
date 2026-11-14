@@ -62,11 +62,25 @@ def _decode_legacy_escapes(value: str) -> str | None:
             end = raw.find("}", index + 1)
             if end == -1:
                 return None
+            name = raw[index + 1 : end]
+            lookup_name = name
+            # Keep the shared Rust/Python contract independent of changes to
+            # CPython's algorithmic Unicode-name lookup between patch releases.
+            if name.upper().startswith("CJK UNIFIED IDEOGRAPH-"):
+                suffix = name.removeprefix("CJK UNIFIED IDEOGRAPH-")
+                if not 4 <= len(suffix) <= 5 or any(
+                    digit not in "0123456789ABCDEF" for digit in suffix
+                ):
+                    return None
+                lookup_name = f"CJK UNIFIED IDEOGRAPH-{int(suffix, 16):04X}"
             try:
-                named = unicodedata.lookup(raw[index + 1 : end])
+                named = unicodedata.lookup(lookup_name)
             except KeyError:
                 return None
             if len(named) != 1:
+                return None
+            canonical_name = unicodedata.name(named, "")
+            if canonical_name.startswith("HANGUL SYLLABLE ") and name != canonical_name:
                 return None
             decoded.append(named)
             index = end + 1
