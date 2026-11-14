@@ -139,6 +139,10 @@ jobs:
         run: npm ci
         working-directory: web
 
+      - name: Install annotation integration dependencies
+        run: npm ci
+        working-directory: gobby-annotate
+
       # Python integration tests invoke the actual schema authority and Ask CLI.
       - name: Build Python test native helpers
         run: |
