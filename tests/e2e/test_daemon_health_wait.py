@@ -334,8 +334,8 @@ def _write_records_every(
 
     def write(now: float) -> None:
         nonlocal written
-        if until is not None and now > until:
-            return
+        if until is not None:
+            now = min(now, until)
         while written < int(now // every):
             written += 1
             record = {"stage": f"stage {written}", "state": state}

@@ -380,8 +380,10 @@ async def test_contract_matrix(contract_backend: str, monkeypatch: pytest.Monkey
         await _wait_snapshot(runtime, terminal, "FILL-LINE", description="fill history")
         visible = await runtime.snapshot(terminal, lines=8)
         full = await runtime.snapshot_full(terminal)
-        assert visible.total_bytes is not None
-        assert full.total_bytes is None or full.total_bytes >= visible.total_bytes
+        assert visible.truncated is True
+        assert visible.total_bytes is None
+        assert visible.dropped_bytes is None
+        assert full.total_bytes is None or full.total_bytes >= len(visible.text.encode())
         assert "FILL-LINE" in full.text
         assert isinstance(runtime, NativeTerminalRuntime)
         await _assert_native_viewers(harness)

@@ -173,9 +173,9 @@ class OwnerClient:
     def __init__(self, socket: Path, session: str, cols: int, rows: int) -> None:
         self.pid, self.fd = os.forkpty()
         if self.pid == 0:
+            fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
             os.environ["TERM"] = "xterm-256color"
             os.execvp("tmux", ["tmux", "-S", str(socket), "attach-session", "-t", session])
-        fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._drain, daemon=True)
         self._thread.start()
@@ -326,6 +326,50 @@ def isolated_tmux(tmp_path: Path) -> Iterator[IsolatedTmux]:
     try:
         server.start()
         yield server
+    finally:
+        server.close()
+
+
+def test_owner_client_sets_geometry_before_exec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_tmux = shutil.which("tmux")
+    assert real_tmux is not None
+    geometry = tmp_path / "geometry.json"
+    wrapper = tmp_path / "tmux"
+    wrapper.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "if 'attach-session' in sys.argv:\n"
+        f"    with open({str(geometry)!r}, 'w') as stream:\n"
+        "        json.dump(list(os.get_terminal_size(0)), stream)\n"
+        f"os.execv({real_tmux!r}, [{real_tmux!r}, *sys.argv[1:]])\n"
+    )
+    wrapper.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
+    forkpty = os.forkpty
+
+    def child_executes_first() -> tuple[int, int]:
+        pid, fd = forkpty()
+        if pid:
+            try:
+                wait_for_condition(
+                    geometry.exists,
+                    timeout=5.0,
+                    description="child terminal geometry captured before parent resumes",
+                )
+            except BaseException:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+                os.close(fd)
+                raise
+        return pid, fd
+
+    monkeypatch.setattr(os, "forkpty", child_executes_first)
+    server = IsolatedTmux(tmp_path)
+    try:
+        server.start()
+        assert json.loads(geometry.read_text()) == [OWNER_COLS, OWNER_ROWS]
     finally:
         server.close()
 

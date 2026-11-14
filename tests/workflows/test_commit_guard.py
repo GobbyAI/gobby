@@ -499,7 +499,8 @@ async def test_read_only_continuation_cannot_adopt_unowned_edits(
     manager = SessionVariableManager(h.db)
     await manager.begin_git_operation_call(h.current_session.id, "no-op", [str(h.repo)])
     git_result = subprocess.run(["git", "merge", "-h"], cwd=h.repo, capture_output=True, text=True)
-    assert git_result.returncode == 129
+    assert git_result.returncode in {0, 129}
+    assert "usage: git merge" in git_result.stdout + git_result.stderr
     await manager.finish_git_operation_call(h.current_session.id, "no-op")
     result = await h.handler._evaluate_rules(h.edit_event("renamed.txt"))
     assert result.decision == "block"

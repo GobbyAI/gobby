@@ -1563,7 +1563,8 @@ async def test_host_crash_reaps_sighup_ignoring_tree(
     sample_project: dict[str, Any],
 ) -> None:
     import signal
-    import time
+
+    import psutil
 
     from gobby.terminals.host_protocol import write_pidfile
 
@@ -1610,7 +1611,7 @@ async def test_host_crash_reaps_sighup_ignoring_tree(
     try:
         os.read(ready_r, 2)
         os.close(ready_r)
-        start_time = time.time()
+        start_time = psutil.Process(leader).create_time()
         row = _pending(terminals, sample_project["id"])
         recorded = terminals.record_process(
             row.id,
