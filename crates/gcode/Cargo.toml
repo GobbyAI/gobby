@@ -1,6 +1,6 @@
 [package]
 name = "gobby-code"
-version = "1.9.118"
+version = "1.9.119"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -12,6 +12,10 @@ readme = "README.md"
 keywords = ["code-search", "ast", "code-index", "developer-tools", "gobby"]
 categories = ["command-line-utilities", "development-tools"]
 autotests = false
+
+# Signal handling uses audited Unix FFI, so the workspace's unsafe-code ban
+# does not apply to this crate. Declare that non-inheritance explicitly.
+[lints]
 
 [lib]
 name = "gobby_code"

@@ -8,6 +8,9 @@
 #[path = "common/mod.rs"]
 mod common;
 
+#[path = "fixtures/host_process.rs"]
+mod host_process_fixture;
+
 #[path = "node_support/mod.rs"]
 mod node_support;
 

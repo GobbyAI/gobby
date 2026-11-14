@@ -186,9 +186,7 @@ impl Drop for Lock {
         }
         let held = lock_state(&self.held);
         // Release only the directory this holder created; another owner's lock stays.
-        let ours = identity(&self.path).is_ok_and(|current| {
-            (current.dev, current.ino) == (held.identity.dev, held.identity.ino)
-        });
+        let ours = identity(&self.path).is_ok_and(|current| current == held.identity);
         if ours {
             let _ = fs::remove_dir(&self.path);
         }
@@ -392,6 +390,24 @@ mod tests {
         let data: Value = serde_json::from_slice(&fs::read(&path)?)?;
         assert_eq!(data["slow"], Value::Bool(true), "{data}");
         assert_eq!(data["fast"], Value::Bool(true), "{data}");
+        Ok(())
+    }
+
+    #[test]
+    fn changed_lock_timestamp_aborts_without_removing_the_lock() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("claude.json");
+        let lock = dir.path().join("claude.json.lock");
+        fs::write(&path, "{\"kept\":true}\n")?;
+        let result = update_with(&path, PYTHON_TIMING, |data| {
+            // Keep the same inode while changing the ownership identity.
+            fs::File::open(&lock)?.set_modified(std::time::SystemTime::UNIX_EPOCH)?;
+            data.insert("ours".into(), Value::Bool(true));
+            Ok(())
+        });
+        assert!(result.is_err(), "changed ownership must abort the write");
+        assert_eq!(fs::read_to_string(&path)?, "{\"kept\":true}\n");
+        assert!(lock.is_dir(), "cleanup must preserve a compromised lock");
         Ok(())
     }
 

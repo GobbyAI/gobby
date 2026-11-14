@@ -64,7 +64,8 @@ class TestExecuteSpawnDroid:
 
     @pytest.mark.asyncio
     async def test_droid_terminal_requires_session_manager(self) -> None:
-        result = await execute_spawn(_droid_request())
+        with patch("shutil.which", return_value="/usr/local/bin/droid"):
+            result = await execute_spawn(_droid_request())
 
         assert result.success is False
         assert "session_manager is required" in (result.error or "")

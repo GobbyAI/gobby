@@ -1478,7 +1478,7 @@ class TestRtkSandboxGrants:
         workspace.mkdir()
         binary.parent.mkdir(parents=True)
         binary.touch()
-        defaults = platform_paths(home=home)
+        defaults = platform_paths(env={}, home=home)
         defaults.config_dir.mkdir(parents=True)
         custom_database = tmp_path / "rtk-state" / "history.db"
         custom_tee = tmp_path / "rtk-state" / "tee"
@@ -1486,7 +1486,7 @@ class TestRtkSandboxGrants:
             f'[tracking]\ndatabase_path = "{custom_database}"\n[tee]\ndirectory = "{custom_tee}"\n',
             encoding="utf-8",
         )
-        expected = platform_paths(home=home)
+        expected = platform_paths(env={}, home=home)
         expected.data_dir.mkdir(parents=True, exist_ok=True)
 
         paths = await compute_sandbox_paths(

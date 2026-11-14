@@ -481,6 +481,7 @@ def test_real_cargo_stale_checkout_and_incremental_rebuild(tmp_path: Path) -> No
         "CARGO_HOME": str(home),
         "CARGO_TARGET_DIR": str(target),
         "CARGO_BUILD_JOBS": "3",
+        "CARGO_TERM_COLOR": "never",
         "TMPDIR": str(temp),
     }
     env.pop("CARGO_BUILD_TARGET_DIR", None)

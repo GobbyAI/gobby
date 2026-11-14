@@ -1,0 +1,37 @@
+name: Isolated Rust test PostgreSQL
+description: Build the pinned pg_search image and start a runner-local test database.
+runs:
+  using: composite
+  steps:
+    - name: Start isolated PostgreSQL
+      shell: bash
+      run: |
+        pg_search_version="$(jq -er '.pg_search_version' src/gobby/data/postgres-pgsearch/version.json)"
+        pg_search_sha256="$(jq -er '.pg_search_sha256' src/gobby/data/postgres-pgsearch/version.json)"
+        docker build \
+          --build-arg PG_SEARCH_VERSION="$pg_search_version" \
+          --build-arg PG_SEARCH_SHA256="$pg_search_sha256" \
+          -t gobby-rust-postgres-test:18-pgsearch \
+          src/gobby/data/postgres-pgsearch
+        docker run --detach --name gobby-rust-postgres-test \
+          --publish 127.0.0.1:60892:5432 \
+          --env POSTGRES_DB=gobby_test \
+          --env POSTGRES_USER=gobby_test \
+          --env POSTGRES_PASSWORD=gobby_test \
+          --tmpfs /var/lib/postgresql:rw,size=3g,nr_inodes=6000000 \
+          --health-cmd "pg_isready -U gobby_test -d gobby_test" \
+          --health-interval 2s --health-timeout 2s --health-retries 30 \
+          gobby-rust-postgres-test:18-pgsearch \
+          postgres -c shared_preload_libraries=pg_search,pgaudit \
+          -c max_locks_per_transaction=256
+        for _ in {1..60}; do
+          status="$(docker inspect --format '{{.State.Health.Status}}' gobby-rust-postgres-test)"
+          if [ "$status" = healthy ]; then
+            echo "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test" >> "$GITHUB_ENV"
+            echo "GOBBY_TEST_PROTECT=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          sleep 2
+        done
+        docker logs gobby-rust-postgres-test
+        exit 1

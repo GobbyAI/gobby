@@ -206,7 +206,12 @@ fn native_inputs(gobby_home: &Path, workspace: &Path) -> PolicyInputs {
     let mut inputs =
         inputs_with_build_root(gobby_home, Path::new("/gobby-test/GobbyBuild"), workspace);
     inputs.run_id = "r1".into();
-    inputs.platform = "darwin".into();
+    inputs.platform = if cfg!(target_os = "macos") {
+        "darwin"
+    } else {
+        "linux"
+    }
+    .into();
     inputs.allow_run_unix_sockets = true;
     inputs
         .env

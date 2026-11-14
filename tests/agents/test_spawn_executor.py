@@ -1649,6 +1649,7 @@ class TestExecuteSpawnSandbox:
         mock_session_manager._storage.db.execute.side_effect = fetch_session_row
         request = SpawnRequest(
             prompt="Test with sandbox",
+            agent_name="sandbox-test-seat",
             cwd=str(tmp_path),
             provider="claude",
             session_id="sess",

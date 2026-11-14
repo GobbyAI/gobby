@@ -5,6 +5,7 @@ on:
     branches: [main, "0.5.0", "0.9.0"]
     paths:
       - ".config/nextest.toml"
+      - ".github/actions/test-postgres/**"
       - ".github/workflows/rust-ci.yml"
       - ".github/workflows/release-gcode.yml"
       - ".github/workflows/release-gcore.yml"
@@ -22,6 +23,7 @@ on:
     branches: [main, "0.9.0"]
     paths:
       - ".config/nextest.toml"
+      - ".github/actions/test-postgres/**"
       - ".github/workflows/rust-ci.yml"
       - ".github/workflows/release-gcode.yml"
       - ".github/workflows/release-gcore.yml"
@@ -54,6 +56,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+
+      - name: Start isolated Rust test database
+        uses: ./.github/actions/test-postgres
 
       - name: Install uv for Python interoperability tests
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
@@ -119,7 +124,9 @@ jobs:
         run: cargo clippy -p gobby-daemon --all-targets -- -D warnings
 
       - name: Test (gobby-daemon)
-        run: cargo nextest run --profile ci -p gobby-daemon
+        run: |
+          GOBBY_DATABASE_URL="$DATABASE_URL" cargo run -p gobby-daemon --bin gdaemon -- schema apply
+          cargo nextest run --profile ci -p gobby-daemon
 
       # gobby-terminal: Zig-free default-features gate, then vt-engine, then the
       # default-features Windows cross lint
@@ -303,6 +310,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Start isolated Rust test database
+        uses: ./.github/actions/test-postgres
+
       - name: Install uv for Python interoperability tests
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
         with:
@@ -345,6 +355,7 @@ jobs:
 
       - name: Generate LCOV report
         run: |
+          GOBBY_DATABASE_URL="$DATABASE_URL" cargo run -p gobby-daemon --bin gdaemon -- schema apply
           cargo llvm-cov clean --workspace
           cargo llvm-cov --no-report nextest --workspace --profile ci -E 'not binary(catalog_manifest_freshness)'
           cargo llvm-cov report --lcov --output-path lcov.info

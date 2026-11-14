@@ -3,7 +3,6 @@ use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
-    os::unix::process::CommandExt,
     path::Path,
     process::{Child, Command},
     sync::{
@@ -68,7 +67,7 @@ impl FakeGterm {
     pub async fn start_with_inventory(home: &Path, inventory: Vec<Value>) -> Result<Self> {
         let binary = home.join("bin/gterm");
         std::fs::create_dir_all(binary.parent().context("binary parent")?)?;
-        std::fs::copy("/bin/sleep", &binary)?;
+        crate::host_process_fixture::install(&binary)?;
         #[cfg(target_os = "macos")]
         anyhow::ensure!(
             Command::new("/usr/bin/codesign")
@@ -78,8 +77,7 @@ impl FakeGterm {
                 .success(),
             "sign fixture executable"
         );
-        // Multicall coreutils selects the applet by argv[0], even after copying.
-        let mut process = Command::new(&binary).arg0("sleep").arg("600").spawn()?;
+        let mut process = Command::new(&binary).spawn()?;
         let setup = (|| -> Result<UnixListener> {
             std::fs::write(home.join("gterm.pid"), process.id().to_string())?;
             std::fs::write(home.join("gterm-control.token"), format!("{TOKEN}\n"))?;

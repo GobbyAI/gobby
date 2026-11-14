@@ -3,6 +3,7 @@
 #[path = "node_support/checkout_tests.rs"]
 mod checkout_tests;
 use super::node_support::fake_gterm;
+#[cfg(target_os = "macos")]
 #[path = "node_support/fd_constructor_tests.rs"]
 mod fd_constructor_tests;
 #[path = "node_support/fd_hygiene.rs"]
@@ -1697,6 +1698,12 @@ fn srt_host_platform() -> &'static str {
     }
 }
 
+fn srt_case_on_host(case: &Value) -> bool {
+    case["platform"]
+        .as_str()
+        .is_none_or(|platform| platform == srt_host_platform())
+}
+
 /// One case's tree, named the way the Python replay names its layout.
 struct SrtTree {
     layout: BTreeMap<&'static str, String>,
@@ -1991,7 +1998,7 @@ fn srt_trusted_credential_authorities_add_to_default_denials() -> Result<()> {
     let corpus = srt_corpus()?;
     let case = srt_entries(&corpus, "cases")?
         .iter()
-        .find(|case| case["platform"] == srt_host_platform())
+        .find(|case| srt_case_on_host(case))
         .context("no host corpus case")?;
     let root = tempfile::tempdir()?;
     let tree = SrtTree::new(root.path())?;
@@ -2045,7 +2052,7 @@ fn srt_gobby_home_override_denies_bound_and_canonical_break_glass_paths() -> Res
     let corpus = srt_corpus()?;
     let case = srt_entries(&corpus, "cases")?
         .iter()
-        .find(|case| case["platform"] == srt_host_platform())
+        .find(|case| srt_case_on_host(case))
         .context("no host corpus case")?;
     let root = tempfile::tempdir()?;
     let tree = SrtTree::new(root.path())?;
@@ -2095,7 +2102,7 @@ fn srt_canonical_break_glass_paths_are_denied_without_authorities() -> Result<()
     let corpus = srt_corpus()?;
     let case = srt_entries(&corpus, "cases")?
         .iter()
-        .find(|case| case["platform"] == srt_host_platform())
+        .find(|case| srt_case_on_host(case))
         .context("no host corpus case")?;
     let root = tempfile::tempdir()?;
     let tree = SrtTree::new(root.path())?;
@@ -2132,7 +2139,7 @@ fn srt_trusted_credential_authority_grants_are_refused() -> Result<()> {
     let corpus = srt_corpus()?;
     let case = srt_entries(&corpus, "cases")?
         .iter()
-        .find(|case| case["platform"] == srt_host_platform())
+        .find(|case| srt_case_on_host(case))
         .context("no host corpus case")?;
     let root = tempfile::tempdir()?;
     let tree = SrtTree::new(root.path())?;
@@ -2171,7 +2178,7 @@ fn srt_runtime_rechecks_authorities_after_early_external_validation() -> Result<
     let corpus = srt_corpus()?;
     let case = srt_entries(&corpus, "cases")?
         .iter()
-        .find(|case| case["platform"] == srt_host_platform())
+        .find(|case| srt_case_on_host(case))
         .context("no host corpus case")?;
     let root = tempfile::tempdir()?;
     let tree = SrtTree::new(root.path())?;
@@ -2236,10 +2243,7 @@ fn srt_settings_match_python_corpus() -> Result<()> {
 
     let root = tempfile::tempdir()?;
     for case in cases {
-        if case["platform"]
-            .as_str()
-            .is_some_and(|platform| platform != srt_host_platform())
-        {
+        if !srt_case_on_host(case) {
             continue;
         }
         let name = srt_text(case, "name")?;

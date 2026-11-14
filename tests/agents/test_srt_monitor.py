@@ -239,6 +239,12 @@ def monitor_harness(
             .replace("spawn('/usr/bin/log', [", f"spawn({json.dumps(str(fake_log))}, [")
             .replace("execFileAsync('/bin/ps',", f"execFileAsync({json.dumps(str(fake_ps))},")
             .replace("function sharedTransport(", "export function sharedTransport(")
+            # The harness emulates Darwin monitoring on every host. Apple Git
+            # shim resolution is exercised separately from monitor ownership.
+            .replace(
+                "async function darwinGitEnvironment(env) {",
+                "async function darwinGitEnvironment(env) { return env;",
+            )
             .replace(
                 "const backlogLimit = 32 * 1024 * 1024",
                 "const backlogLimit = 32768"

@@ -1,5 +1,9 @@
 //! Jobs and terminal authority exist only while the native runtime is active.
 
+#[cfg(test)]
+#[path = "../tests/fixtures/host_process.rs"]
+mod host_process_fixture;
+
 use anyhow::{Context, Result};
 use gobby_core::{
     bootstrap::HubDatabaseBootstrap,
@@ -182,7 +186,7 @@ mod tests {
             let home = tempfile::tempdir_in(fixture_home.path())?;
             // The host's installed process-identity contract requires basename gterm.
             let binary = home.path().join("gterm");
-            std::fs::copy("/bin/sleep", &binary)?;
+            super::host_process_fixture::install(&binary)?;
             #[cfg(target_os = "macos")]
             anyhow::ensure!(
                 std::process::Command::new("/usr/bin/codesign")
