@@ -106,7 +106,7 @@ async def test_later_module_execution_retains_startup_timing(
     def load_runtime(name: str, *args: Any, **kwargs: Any) -> Any:
         if name != import_name:
             return original_import(name, *args, **kwargs)
-        exec(compile(definition, "isolated_startup_module.py", "exec"), imported.__dict__)
+        exec(compile(definition, "<isolated_startup_module>", "exec"), imported.__dict__)
         monkeypatch.setitem(sys.modules, module_name, imported)
         return imported
 
