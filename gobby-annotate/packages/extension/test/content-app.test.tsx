@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { activate } from "../src/content";
 import type { Batch } from "../src/drafts";
 
@@ -15,11 +15,16 @@ const batch: Batch = {
 let deactivate: (() => void) | undefined;
 let release: (() => void) | undefined;
 
+beforeEach(() => {
+  vi.spyOn(window, "scrollTo").mockImplementation(() => {});
+});
+
 afterEach(() => {
   deactivate?.();
   deactivate = undefined;
   release = undefined;
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 

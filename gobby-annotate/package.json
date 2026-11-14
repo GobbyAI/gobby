@@ -43,6 +43,9 @@
     "vite": "8.3.3",
     "vitest": "5.0.3"
   },
+  "overrides": {
+    "minimatch": "^11.0.1"
+  },
   "allowScripts": {
     "esbuild@0.28.2": true,
     "fsevents@2.3.3": false
