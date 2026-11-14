@@ -248,7 +248,10 @@ async def _await_terminal_result[T](result: Future[T]) -> T:
     wrapped = asyncio.wrap_future(result)
     # The owned task logs failures even if cancellation removes its caller.
     wrapped.add_done_callback(lambda future: None if future.cancelled() else future.exception())
-    return await asyncio.shield(wrapped)
+    # wait preserves owned work on caller cancellation without shield's raw
+    # exception logging callback on Python 3.14.
+    await asyncio.wait([wrapped])
+    return wrapped.result()
 
 
 async def run_terminal_delivery[T](

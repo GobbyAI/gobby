@@ -127,7 +127,8 @@ async def test_waiting_caller_cancellation_preserves_owned_operation(
         release.set()
         await terminal_delivery.drain_shielded_terminal_deliveries()
     assert "Submitted terminal delivery failed for agent cancelled-caller" in caplog.text
-    assert "failure after caller cancellation" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert "failure after caller cancellation" not in caplog.text
 
 
 @pytest.mark.asyncio

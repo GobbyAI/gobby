@@ -2973,6 +2973,9 @@ async def test_daemon_codex_text_generate_adapter_uses_configured_deadline(
         return "ignored"
 
     monkeypatch.setattr(text_generation_adapters, "_run_cli_text_generation_command", fake_run_cli)
+    monkeypatch.setattr(
+        "gobby.ai._text_generation_adapters.shutil.which", lambda _name: "/bin/codex"
+    )
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(

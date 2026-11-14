@@ -58,6 +58,7 @@ services:
     image: qdrant/qdrant:latest
     environment:
       - QDRANT__LOG_LEVEL=${GOBBY_QDRANT_LOG_LEVEL:-WARN}
+      - QDRANT__TELEMETRY_DISABLED=true
     ports:
       - "127.0.0.1:${GOBBY_QDRANT_TEST_HTTP_PORT:-26333}:6333"
       - "127.0.0.1:${GOBBY_QDRANT_TEST_GRPC_PORT:-26334}:6334"

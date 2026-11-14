@@ -57,7 +57,7 @@ export const SandboxManager = {
     })
   },
   getSandboxViolationStore: () => store,
-  wrapWithSandboxArgv: async command => ({ argv: ['/bin/sh', '-c', command], env: {} }),
+  wrapWithSandboxArgv: async command => ({ argv: ['/bin/sh', '-c', 'exec ' + command], env: {} }),
   reset: async () => transport.kill(),
 }
 """
