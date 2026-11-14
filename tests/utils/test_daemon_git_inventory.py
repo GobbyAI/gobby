@@ -460,7 +460,7 @@ def test_source_scan_keeps_no_parsed_tree_alive() -> None:
     # Parsed trees retained after a scan put millions of AST objects on the GC heap;
     # every later gc.collect() then took tens of seconds and stalled session teardown.
     _sync_git_inventory()
-    live_trees = [obj for obj in gc.get_objects() if isinstance(obj, ast.Module)]
+    live_trees = [obj for obj in gc.get_objects() if issubclass(type(obj), ast.Module)]
     assert not live_trees, f"{len(live_trees)} parsed source trees outlived the scan"
 
 
