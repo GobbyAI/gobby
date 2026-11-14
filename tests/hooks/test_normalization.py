@@ -1,6 +1,8 @@
 """Tests for shared MCP field normalization."""
 
 import json
+import shlex
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +24,14 @@ from gobby.mcp_proxy._call_tool_wrapper import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture
+def absolute_rg(tmp_path: Path) -> str:
+    """Provide a readable native program without requiring a host rg install."""
+    program = tmp_path / "rg"
+    program.symlink_to(sys.executable)
+    return shlex.quote(str(program))
 
 
 class TestMcpPrefixParsing:
@@ -3671,15 +3681,16 @@ def test_stdin_only_search_scope_preserves_in_repo_siblings(tmp_path: Path, comm
         "grep --binary-files text P",
         "grep --group-separator x -A 1 P",
         "grep -r --color P",
-        "/opt/homebrew/bin/rg -t py P",
-        "/opt/homebrew/bin/rg -t -e P",
+        "ABSOLUTE_RG -t py P",
+        "ABSOLUTE_RG -t -e P",
         "/usr/bin/grep --dir recurse P",
     ],
 )
 @pytest.mark.parametrize("change_directory", [False, True])
 def test_search_pattern_options_preserve_explicit_repo_path(
-    tmp_path: Path, search: str, change_directory: bool
+    tmp_path: Path, search: str, change_directory: bool, absolute_rg: str
 ) -> None:
+    search = search.replace("ABSOLUTE_RG", absolute_rg)
     repo = tmp_path / "repo"
     outside = tmp_path / "outside"
     path = repo / "a.py"
@@ -3726,15 +3737,21 @@ def test_git_grep_pattern_options_preserve_revision_scope(
     ("command", "searches_root", "kind"),
     [
         ("rg P < /dev/null", True, "search"),
-        ("/opt/homebrew/bin/rg P < /dev/null", True, "search"),
+        ("ABSOLUTE_RG P < /dev/null", True, "search"),
         ("echo x | rg P < /dev/null", True, "search"),
         ("echo P | rg P", False, "execute"),
         ("rg P <<< P", False, "search"),
     ],
 )
 def test_rg_null_stdin_preserves_search_root(
-    tmp_path: Path, command: str, searches_root: bool, kind: str, change_directory: bool
+    tmp_path: Path,
+    command: str,
+    searches_root: bool,
+    kind: str,
+    change_directory: bool,
+    absolute_rg: str,
 ) -> None:
+    command = command.replace("ABSOLUTE_RG", absolute_rg)
     repo = tmp_path / "repo"
     outside = tmp_path / "outside"
     search_root = outside if change_directory else repo

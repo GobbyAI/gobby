@@ -166,6 +166,7 @@ async def test_node_plan_scratch_resolves_on_node_only(
     (tmp_path / "node-temp").symlink_to(hub_wide)
     cwd = str(tmp_path)
     _fact(node, cwd, "/node/repo")
+    _fact(node, "/tmp", "/node/tmp")
 
     def allowed(*paths: str) -> bool:
         return plan_write_paths_allowed(
