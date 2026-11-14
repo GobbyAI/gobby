@@ -260,13 +260,17 @@ def daemon_route(temp_db: HubDatabase) -> Iterator[HookRoute]:
     )
     auth_service = cast(Any, server.auth_service)
     auth_service.managed_signing_key = MagicMock(return_value=SIGNING_KEY)
-    manager = HookManager(database=temp_db, session_manager=sessions, config=DaemonConfig())
-    server.app.state.hook_manager = manager
-    try:
-        with TestClient(server.app) as client:
-            yield HookRoute(client=client, auth_service=auth_service, server=server)
-    finally:
-        manager.shutdown()
+    # The in-process server owns readiness; never probe the user's daemon port.
+    with patch("gobby.hooks.factory.HealthMonitor", autospec=True) as monitor:
+        monitor.return_value.get_cached_status.return_value = (True, None, "running", None)
+        monitor.return_value.check_now.return_value = True
+        manager = HookManager(database=temp_db, session_manager=sessions, config=DaemonConfig())
+        server.app.state.hook_manager = manager
+        try:
+            with TestClient(server.app) as client:
+                yield HookRoute(client=client, auth_service=auth_service, server=server)
+        finally:
+            manager.shutdown()
 
 
 def _session_start_response(

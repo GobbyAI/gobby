@@ -12,7 +12,16 @@ from tests.e2e.conftest import prepare_daemon_env
 pytestmark = pytest.mark.e2e
 
 
-def test_nested_daemon_discards_parent_agent_identity(tmp_path: Path) -> None:
+def test_nested_daemon_discards_parent_agent_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "tests.fixtures.gdaemon_binary.build_checkout_gdaemon",
+        lambda *_args: tmp_path / "checkout" / "gdaemon",
+    )
+    monkeypatch.setattr(
+        "tests.e2e.conftest._isolated_native_bin_dir", lambda *_args: tmp_path / "bin"
+    )
     inherited_names = [
         *ALL_TERMINAL_ENV_VARS,
         "GOBBY_MANAGED_EXECUTION_BOOTSTRAP",

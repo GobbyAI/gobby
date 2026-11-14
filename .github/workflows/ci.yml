@@ -475,7 +475,7 @@ jobs:
         run: cargo build -p gobby-terminal --features vt-engine --bin gterm
 
       - name: Run the host-driven acceptance suite
-        run: uv run pytest tests/terminals/acceptance
+        run: uv run pytest tests/terminals/acceptance tests/gclient/test_mark_assets.py
 
   security:
     name: Security Scan

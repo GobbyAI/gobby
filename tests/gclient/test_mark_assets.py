@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 MARKS = ROOT / "crates/gclient/assets/marks"
 LOGO = ROOT / "web/public/logo.png"
@@ -30,6 +32,7 @@ def data_lines(path: Path, kind: str, cols: int, rows: int) -> list[str]:
     return data
 
 
+@pytest.mark.skipif(sys.platform != "darwin", reason="Wordmark generation uses a macOS system font")
 def test_generators_regenerate_grids_byte_identically() -> None:
     assert (MARKS / "mask2.py").is_file()
     assert (MARKS / "wordmark.py").is_file()
@@ -60,15 +63,20 @@ def test_wordmark_assets_have_the_committed_dimensions_and_roles() -> None:
     assert set("".join(shadow)) == set("ad.")
 
 
-def test_dark_and_light_terminal_renders_match_generators() -> None:
-    for theme in ("dark", "light"):
-        rendered = generate("mask2.py", str(LOGO), "56", "16", f"ansi-{theme}")
-        assert rendered == (MARKS / "renders" / f"goblin-33x16-{theme}.ans").read_bytes()
-        assert b"\x1b[" in rendered
-        for variant, name in (("braille", "wordmark-braille"), ("shadow", "wordmark-shadow")):
-            rendered = generate("wordmark.py", variant, f"ansi-{theme}", "lower")
-            assert rendered == (MARKS / "renders" / f"{name}-{theme}.ans").read_bytes()
-            assert b"\x1b[" in rendered
+@pytest.mark.parametrize("theme", ["dark", "light"])
+def test_dark_and_light_terminal_renders_match_generators(theme: str) -> None:
+    rendered = generate("mask2.py", str(LOGO), "56", "16", f"ansi-{theme}")
+    assert rendered == (MARKS / "renders" / f"goblin-33x16-{theme}.ans").read_bytes()
+    assert b"\x1b[" in rendered
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Wordmark generation uses a macOS system font")
+@pytest.mark.parametrize("theme", ["dark", "light"])
+@pytest.mark.parametrize("variant", ["braille", "shadow"])
+def test_wordmark_terminal_renders_match_generator(theme: str, variant: str) -> None:
+    rendered = generate("wordmark.py", variant, f"ansi-{theme}", "lower")
+    assert rendered == (MARKS / "renders" / f"wordmark-{variant}-{theme}.ans").read_bytes()
+    assert b"\x1b[" in rendered
 
 
 def test_readme_documents_roles_homes_and_regeneration() -> None:

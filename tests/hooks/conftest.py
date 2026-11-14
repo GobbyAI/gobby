@@ -31,6 +31,7 @@ def mock_dependencies() -> dict[str, Any]:
     workflow_handler = MagicMock()
     workflow_handler.evaluate.return_value = HookResponse(decision="allow", context="")
     session_storage = MagicMock()
+    session_storage.db.fetchone.return_value = None
     session_manager = session_storage
     session_storage.find_parent.return_value = None
     session_storage.find_by_external_id.return_value = None
@@ -118,13 +119,18 @@ def manager_with_mocks(mock_components: MagicMock) -> Iterator[HookManager]:
         patch("gobby.storage.inter_session_messages.InterSessionMessageManager"),
     ):
         mock_factory.create.return_value = mock_components
+        # Pre-warm the mock before the manager starts health monitoring.
+        mock_components.health_monitor.get_cached_status.return_value = (
+            True,
+            "ready",
+            "ready",
+            None,
+        )
+        mock_components.health_monitor.check_now.return_value = True
         manager = HookManager(
             daemon_host="localhost",
             daemon_port=60887,
         )
-        # Pre-warm health monitor cache
-        manager._health_monitor.get_cached_status.return_value = (True, "ready", "ready", None)
-        manager._health_monitor.check_now.return_value = True
         yield manager
 
 

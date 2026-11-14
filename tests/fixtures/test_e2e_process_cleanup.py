@@ -244,6 +244,7 @@ def test_prepare_daemon_env_records_current_test_owner(
         "tests.fixtures.gdaemon_binary.build_checkout_gdaemon",
         lambda *_args: tmp_path / "checkout" / "gdaemon",
     )
+    monkeypatch.setattr(e2e_fixtures, "_isolated_native_bin_dir", lambda *_args: tmp_path / "bin")
 
     env = e2e_fixtures.prepare_daemon_env(
         {"GOBBY_E2E_OWNER_PID": "456", "GOBBY_E2E_OWNER_CREATE_TIME": "100.0"},
