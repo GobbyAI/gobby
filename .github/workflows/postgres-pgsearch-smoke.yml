@@ -142,9 +142,15 @@ jobs:
       # Python integration tests invoke the actual schema authority and Ask CLI.
       - name: Build Python test native helpers
         run: |
-          cargo build -p gobby-daemon -p gobby-code
-          cargo build -p gobby-daemon --example pid_claim_fixture
+          cargo build --workspace --bins --features gobby-terminal/vt-engine
+          cargo build -p gobby-daemon --examples
+          native_bin_dir="$RUNNER_TEMP/gobby-test-bin"
+          mkdir -p "$native_bin_dir"
+          for binary in gcode gdaemon ghook gterm gclient gmcp; do
+            install -m 755 "$GITHUB_WORKSPACE/target/debug/$binary" "$native_bin_dir/$binary"
+          done
           echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
+          echo "GOBBY_NATIVE_BIN_DIR=$native_bin_dir" >> "$GITHUB_ENV"
 
       - name: Run pre-push suite
         run: ./pre-push-test.sh

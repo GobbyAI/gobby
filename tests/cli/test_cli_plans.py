@@ -76,7 +76,9 @@ class _FakeIndex:
         content_hash = hashlib.sha256(source_path.read_bytes()).hexdigest()
         return SimpleNamespace(content_hash=content_hash, symbol_count=0)
 
-    def get_symbols_for_file(self, project_id: str, file_path: str) -> list[_Symbol]:
+    def get_symbols_for_file(
+        self, project_id: str, file_path: str, *, content_hash: str | None = None
+    ) -> list[_Symbol]:
         assert project_id == self.primary_project_id
         assert file_path == "docs/demo.md"
         return []

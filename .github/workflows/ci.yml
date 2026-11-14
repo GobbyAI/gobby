@@ -339,15 +339,23 @@ jobs:
       - name: Install dependencies
         run: uv sync --dev
 
-      # gcode joins gdaemon here because tests/servers/routes/test_ask.py drives the
-      # real CLI against the authenticated Ask service and resolves the binary
-      # strictly, so a missing target/debug/gcode errors those tests rather than
-      # skipping them.
+      - name: Setup Zig 0.16.0
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29
+        with:
+          version: 0.16.0
+
+      # E2E daemons need the whole native set inside their isolated homes.
       - name: Build gdaemon schema authority and the gcode CLI
         run: |
-          cargo build -p gobby-daemon -p gobby-code
-          cargo build -p gobby-daemon --example pid_claim_fixture
+          cargo build --workspace --bins --features gobby-terminal/vt-engine
+          cargo build -p gobby-daemon --examples
+          native_bin_dir="$RUNNER_TEMP/gobby-test-bin"
+          mkdir -p "$native_bin_dir"
+          for binary in gcode gdaemon ghook gterm gclient gmcp; do
+            install -m 755 "$GITHUB_WORKSPACE/target/debug/$binary" "$native_bin_dir/$binary"
+          done
           echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
+          echo "GOBBY_NATIVE_BIN_DIR=$native_bin_dir" >> "$GITHUB_ENV"
 
       - name: Verify packaged gdaemon schema identity
         run: |

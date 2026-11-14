@@ -736,10 +736,7 @@ async fn supervisor_death_gives_backend_eof() -> Result<()> {
         let home = TempDir::new()?;
         let command =
             serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", EOF_BACKEND])?;
-        let executable = std::env::current_exe()?;
-        let peer_path = executable
-            .parent()
-            .context("test target directory")?
+        let peer_path = Path::new(env!("CARGO_BIN_EXE_gdaemon"))
             .parent()
             .context("debug target directory")?
             .join("examples/backend_supervisor_fixture");
@@ -1165,7 +1162,9 @@ async fn silent_backend_wait_writes_progress_to_startup_timings() -> Result<()> 
         let (stop, rx) = watch::channel(false);
         let task = tokio::spawn(async move { supervisor.run(rx).await });
         let observed = timeout(Duration::from_secs(10), async {
+            let mut poll = tokio::time::interval(Duration::from_millis(50));
             loop {
+                poll.tick().await;
                 let text = std::fs::read_to_string(&timings).unwrap_or_default();
                 let progress = text
                     .lines()
@@ -1175,7 +1174,6 @@ async fn silent_backend_wait_writes_progress_to_startup_timings() -> Result<()> 
                 if progress >= 3 {
                     return progress;
                 }
-                tokio::time::sleep(Duration::from_millis(50)).await;
             }
         })
         .await;

@@ -139,7 +139,9 @@ class _FreshZeroSymbolIndex:
         content_hash = hashlib.sha256(self.source_path.read_bytes()).hexdigest()
         return SimpleNamespace(content_hash=content_hash, symbol_count=0)
 
-    def get_symbols_for_file(self, project_id: str, file_path: str) -> list[object]:
+    def get_symbols_for_file(
+        self, project_id: str, file_path: str, *, content_hash: str | None = None
+    ) -> list[object]:
         assert project_id == self.primary_project_id
         assert file_path == "src/foo.py"
         return []

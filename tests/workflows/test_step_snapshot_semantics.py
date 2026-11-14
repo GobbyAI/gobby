@@ -101,7 +101,8 @@ CREATE TABLE IF NOT EXISTS session_variables (
 _TYPED_SQL = """
 CREATE TABLE IF NOT EXISTS sessions (
     id uuid PRIMARY KEY,
-    project_id uuid
+    project_id uuid,
+    seq_num bigint DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS session_variable_defaults (
     id uuid PRIMARY KEY,

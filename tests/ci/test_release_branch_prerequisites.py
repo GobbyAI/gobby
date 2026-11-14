@@ -33,7 +33,8 @@ def _falkor_harness(
         + "\nload_pytest_falkordb_settings\n"
         + 'printf \'%s\\n\' "$PYTEST_FALKORDB_HOST" "$PYTEST_FALKORDB_PORT" "$PYTEST_FALKORDB_PASSWORD"\n'
     )
-    env = {key: value for key, value in os.environ.items() if key not in _FALKOR_KEYS}
+    inherited_keys = {*_FALKOR_KEYS, "GOBBY_FALKORDB_TEST_PORT", "GOBBY_FALKORDB_TEST_PASSWORD"}
+    env = {key: value for key, value in os.environ.items() if key not in inherited_keys}
     env.update(settings)
     env["HOME"] = str(tmp_path)
     return subprocess.run(
@@ -105,6 +106,62 @@ def test_release_workflow_provisions_pre_push_tools_and_falkor(repo_root: Path) 
     assert "rm -sfv" not in cleanup["run"]
     assert "docker rm -f" in cleanup["run"]
     assert "${GOBBY_POSTGRES_TEST_CONTAINER}" in cleanup["run"]
+
+
+@pytest.mark.parametrize("explicit", [False, True], ids=["installed", "checkout"])
+def test_pre_push_keeps_native_binaries_when_isolating_home(
+    repo_root: Path, tmp_path: Path, explicit: bool
+) -> None:
+    script = (repo_root / "pre-push-test.sh").read_text()
+    start = script.index("elif DATABASE_URL=") + len("elif ")
+    end = script.index("uv_run pytest", start)
+    env = {key: value for key, value in os.environ.items() if key != "GOBBY_NATIVE_BIN_DIR"}
+    original_home = tmp_path / "original"
+    isolated_home = tmp_path / "isolated"
+    env["HOME"] = str(original_home)
+    env["PYTEST_ISOLATION_DIR"] = str(isolated_home)
+    expected = tmp_path / "checkout-bin" if explicit else original_home / ".gobby/bin"
+    if explicit:
+        env["GOBBY_NATIVE_BIN_DIR"] = str(expected)
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            script[start:end] + 'bash -c \'printf "%s\\n" "$GOBBY_NATIVE_BIN_DIR" "$HOME"\'',
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [str(expected), str(isolated_home / "home")]
+
+
+@pytest.mark.parametrize(
+    ("filename", "job_name", "build_name"),
+    [
+        ("ci.yml", "test", "Build gdaemon schema authority and the gcode CLI"),
+        ("postgres-pgsearch-smoke.yml", "release-branch-ci", "Build Python test native helpers"),
+    ],
+)
+def test_python_ci_provisions_complete_native_binaries(
+    repo_root: Path, filename: str, job_name: str, build_name: str
+) -> None:
+    workflow: dict[str, Any] = yaml.safe_load(
+        (repo_root / ".github/workflows" / filename).read_text()
+    )
+    steps = workflow["jobs"][job_name]["steps"]
+    names = [step.get("name", "") for step in steps]
+    build_index = names.index(build_name)
+    assert names.index("Setup Zig 0.16.0") < build_index
+    build = steps[build_index]["run"]
+    assert "--workspace" in build
+    assert "--bins" in build
+    assert "--features gobby-terminal/vt-engine" in build
+    assert "GOBBY_NATIVE_BIN_DIR=$native_bin_dir" in build
+    assert '>> "$GITHUB_ENV"' in build
 
 
 def test_pre_push_shell_syntax(repo_root: Path) -> None:

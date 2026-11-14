@@ -1,5 +1,6 @@
 """Native binary dir selection for e2e daemons, kept outside the e2e autouse-fixture subtree."""
 
+import json
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -13,6 +14,14 @@ pytestmark = pytest.mark.unit
 
 GDAEMON = native_bin_name("gdaemon")
 GTERM = native_bin_name("gterm")
+_IDENTITY: dict[str, int | str] = {
+    "runner_protocol": 1,
+    "baseline_version": 1,
+    "latest_version": 2,
+    "baseline_checksum": "a" * 64,
+    "latest_checksum": "b" * 64,
+    "assets_root_hash": "c" * 64,
+}
 
 
 @pytest.mark.parametrize("pinned", [False, True], ids=["default-bin", "explicit-pin"])
@@ -49,7 +58,8 @@ def test_daemon_bin_dir_is_isolated_and_locks_are_private(
 
 def _executable(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!/bin/sh\n# {path}\n")
+    identity = json.dumps(_IDENTITY)
+    path.write_text(f"#!/bin/sh\n# {path}\ncat <<'JSON'\n{identity}\nJSON\n")
     path.chmod(0o755)
     return path
 
@@ -118,7 +128,7 @@ def test_checkout_gdaemon_survives_pinned_gterm_dir(
         assert not (bin_dir / GTERM).is_symlink()
         assert (bin_dir / GTERM).read_bytes() == (installed_dir / GTERM).read_bytes()
         assert not os.path.samefile(bin_dir / GTERM, installed_dir / GTERM)
-        assert not (bin_dir / IDENTITY_STAMP_NAME).exists()
+        assert json.loads((bin_dir / IDENTITY_STAMP_NAME).read_text()) == _IDENTITY
     assert first != second
     assert sorted(entry.name for entry in installed_dir.iterdir()) == before
     assert dict(os.environ) == environ_before
@@ -147,7 +157,7 @@ def test_pinned_files_are_copied_with_their_modes(
         assert not os.path.samefile(copied, pinned)
         assert copied.stat().st_mode == pinned.stat().st_mode
     assert (bin_dir / GDAEMON).resolve() == checkout_gdaemon.resolve()
-    assert not (bin_dir / IDENTITY_STAMP_NAME).exists()
+    assert json.loads((bin_dir / IDENTITY_STAMP_NAME).read_text()) == _IDENTITY
 
 
 @pytest.mark.parametrize("pinned_to", ["none", "checkout", "installed"])
@@ -168,4 +178,4 @@ def test_checkout_gdaemon_is_isolated_under_test_home(
     isolated = Path(env[NATIVE_BIN_DIR_ENV])
     assert isolated.is_relative_to(tmp_path)
     assert (isolated / GDAEMON).resolve() == checkout_gdaemon.resolve()
-    assert not (isolated / IDENTITY_STAMP_NAME).exists()
+    assert json.loads((isolated / IDENTITY_STAMP_NAME).read_text()) == _IDENTITY
