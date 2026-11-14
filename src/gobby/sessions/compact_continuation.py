@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
@@ -912,6 +912,26 @@ async def shutdown_compact_continuations() -> None:
         await asyncio.gather(*tasks, return_exceptions=True)
 
 
+class _QueuedCoroutine:
+    """Close work discarded by a loop before its callback can transfer ownership."""
+
+    def __init__(self, coro: Coroutine[Any, Any, Any]) -> None:
+        self.coro: Coroutine[Any, Any, Any] | None = coro
+
+    def __call__(self) -> None:
+        coro, self.coro = self.coro, None
+        if coro is not None:
+            try:
+                _schedule_coroutine(coro)
+            except BaseException:
+                coro.close()
+                raise
+
+    def __del__(self) -> None:
+        if self.coro is not None:
+            self.coro.close()
+
+
 def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:
     try:
         running_loop = asyncio.get_running_loop()
@@ -933,7 +953,7 @@ def _schedule_coroutine(coro: Any, *, loop: Any | None = None) -> bool:
             try:
                 # Create and retain the task on its owner loop, including calls
                 # dispatched from synchronous MCP/tool workers.
-                loop.call_soon_threadsafe(_schedule_coroutine, coro)
+                loop.call_soon_threadsafe(_QueuedCoroutine(coro))
                 return True
             except Exception:
                 logger.debug(
