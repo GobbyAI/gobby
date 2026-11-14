@@ -466,6 +466,75 @@ async fn spawn_bounded(
     }
 }
 
+fn inherited_descriptor_bound() -> io::Result<i32> {
+    // Resolve the fallback bound before fork: sysconf and directory iteration
+    // may allocate. Existing handles can exceed a subsequently lowered limit.
+    // SAFETY: sysconf reads the current process limit and takes no pointers.
+    let limit = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
+    let mut bound = i32::try_from(limit)
+        .ok()
+        .filter(|limit| *limit > 0)
+        .ok_or_else(|| io::Error::other("cannot determine backend descriptor bound"))?;
+    for entry in std::fs::read_dir("/dev/fd")? {
+        if let Some(fd) = entry?
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<i32>().ok())
+        {
+            let end = fd
+                .checked_add(1)
+                .ok_or_else(|| io::Error::other("descriptor bound overflow"))?;
+            bound = bound.max(end);
+        }
+    }
+    Ok(bound)
+}
+
+/// Mark inherited handles for closure at exec without closing Rust's exec-error pipe early.
+///
+/// # Safety
+/// Call only in the fork child before exec, with a bound resolved in its parent.
+unsafe fn seal_inherited_descriptors(bound: i32) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    {
+        // SAFETY: this syscall changes only this fork child's descriptor flags.
+        if unsafe {
+            libc::syscall(
+                libc::SYS_close_range,
+                3_u32,
+                u32::MAX,
+                libc::CLOSE_RANGE_CLOEXEC,
+            )
+        } == 0
+        {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        if !matches!(error.raw_os_error(), Some(libc::ENOSYS | libc::EINVAL)) {
+            return Err(error);
+        }
+    }
+    for fd in 3..bound {
+        // SAFETY: fcntl is async-signal-safe and checks each integer descriptor.
+        let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
+        if flags < 0 {
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::EBADF) {
+                continue;
+            }
+            return Err(error);
+        }
+        // SAFETY: the descriptor is open in this single-threaded fork child;
+        // preserve its flags while making it close on the forthcoming exec.
+        if flags & libc::FD_CLOEXEC == 0
+            && unsafe { libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
 struct BackendChild {
     child: Child,
     group: Option<i32>,
@@ -507,12 +576,13 @@ impl BackendChild {
         if let Some(fd) = secret_fd {
             command.env("GOBBY_FRONT_DOOR_SECRET_FD", fd.to_string());
         }
+        let descriptor_bound = inherited_descriptor_bound()?;
         // SAFETY: this closure runs only in the child after fork. It calls only
-        // async-signal-safe fcntl and reads captured integers. Every owned FD
-        // (PID lock, lease sockets, write ends) stays CLOEXEC; only the liveness
-        // read end and the secret read end intentionally survive exec.
+        // async-signal-safe descriptor operations and reads captured integers.
+        // Seal all inherited FDs; only the liveness and secret read ends survive.
         unsafe {
             command.pre_exec(move || {
+                seal_inherited_descriptors(descriptor_bound)?;
                 for fd in std::iter::once(read_fd).chain(secret_fd) {
                     let flags = libc::fcntl(fd, libc::F_GETFD);
                     if flags < 0 || libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {

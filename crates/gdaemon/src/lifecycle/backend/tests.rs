@@ -3,6 +3,71 @@ use crate::lease::NamedLock;
 use std::{sync::Mutex as StdMutex, time::Duration};
 use tokio::time::timeout;
 
+#[tokio::test]
+async fn backend_exec_seals_inherited_descriptors() -> anyhow::Result<()> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+
+    let home = tempfile::tempdir()?;
+    let source = std::fs::File::open("/dev/null")?;
+    // SAFETY: F_DUPFD duplicates a live owned descriptor. The successful result
+    // is uniquely owned below; unlike F_DUPFD_CLOEXEC it deliberately survives exec.
+    let raw = unsafe { libc::fcntl(source.as_raw_fd(), libc::F_DUPFD, 512) };
+    if raw < 0 {
+        return Err(io::Error::last_os_error().into());
+    }
+    // SAFETY: the successful duplication returned a new, unowned descriptor.
+    let inherited = unsafe { OwnedFd::from_raw_fd(raw) };
+    let program = r#"import errno,os,sys
+try:
+    os.fstat(int(sys.argv[1]))
+except OSError as error:
+    assert error.errno == errno.EBADF
+else:
+    raise AssertionError('inherited descriptor survived backend exec')
+assert os.read(int(os.environ['GOBBY_SUPERVISOR_FD']),4096).endswith(b'\n')
+"#;
+    let command = serde_json::to_string(&[
+        "uv",
+        "run",
+        "--no-sync",
+        "python",
+        "-c",
+        program,
+        &raw.to_string(),
+    ])?;
+    let config = BackendConfig::from_command_json(home.path(), Some(&command))?;
+    let mut backend = BackendChild::spawn(&config).await?;
+    let status = timeout(Duration::from_secs(10), backend.child.wait()).await??;
+    backend.finish_stderr().await;
+    assert!(
+        status.success(),
+        "backend stderr: {}",
+        backend.last_line.borrow().as_str()
+    );
+    drop(inherited);
+    Ok(())
+}
+
+#[tokio::test]
+async fn sealed_backend_exec_still_reports_spawn_errors() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    let command = serde_json::to_string(&[home.path().join("absent-executable")])?;
+    let config = BackendConfig::from_command_json(home.path(), Some(&command))?;
+    let result = BackendChild::spawn(&config).await;
+    let error = match result {
+        Ok(_) => anyhow::bail!("missing executable unexpectedly spawned"),
+        Err(error) => error,
+    };
+    assert_eq!(
+        error
+            .root_cause()
+            .downcast_ref::<io::Error>()
+            .map(io::Error::kind),
+        Some(io::ErrorKind::NotFound)
+    );
+    Ok(())
+}
+
 /// A lease lock held by another task is reported each interval while it stays held, and taking
 /// it succeeds once the holder releases it.
 #[tokio::test]
