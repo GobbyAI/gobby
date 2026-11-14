@@ -278,12 +278,13 @@ def _commit(repo: Path, name: str, text: str, message: str) -> None:
 
 def _conflict_base_merge(worktree: Path, ref: str = "integration") -> None:
     """Merge `ref` into the task branch; `shared.txt` conflicts and stays unresolved."""
-    subprocess.run(
-        ["git", "merge", "--no-edit", ref],
+    result = subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "merge", "--no-edit", ref],
         cwd=worktree,
         capture_output=True,
         check=False,
     )
+    assert result.returncode == 1, result.stderr.decode()
 
 
 def _start_conflicting_base_merge(worktree: Path) -> None:

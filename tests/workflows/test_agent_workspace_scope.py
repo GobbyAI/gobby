@@ -884,8 +884,8 @@ async def test_rg_preprocessor_write_or_opaque_scope_is_preserved(
     ("arguments", "expected"),
     [
         ("--pre=cat foo {target}", "allow"),
-        # A binary invoked by path has no readable-script proof; keep it opaque.
-        ("--pre /usr/bin/cat foo {target}", "block"),
+        # An unreadable program invoked by path has no proof; keep it opaque.
+        ("--pre {opaque} foo {target}", "block"),
         ("--pre touch --no-pre foo {target}", "allow"),
         ("--no-pre --pre touch foo {target}", "block"),
         ("--pre touch --pre cat foo {target}", "allow"),
@@ -901,7 +901,9 @@ async def test_rg_preprocessor_proof_follows_option_values_and_order(
     variables = _seat(root / PROJECT, "fixture-seat", 12)
     seat = Path(variables["_agent_workspace_dir"])
     seat.mkdir(parents=True)
-    command = "rg " + arguments.format(target=seat / ".gobby/config.yaml")
+    command = "rg " + arguments.format(
+        target=seat / ".gobby/config.yaml", opaque=seat / "missing-preprocessor"
+    )
     response = await _decide(workspace_write_engine, _shell(command, seat), variables)
     assert response.decision == expected, response.reason
 
