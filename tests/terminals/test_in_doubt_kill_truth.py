@@ -174,20 +174,26 @@ async def test_in_doubt_registry_claims_defers_and_releases() -> None:
     assert registry.release(terminal_id) == []
     assert registry.defer(terminal_id, first) is False
 
-    stop = asyncio.Event()
+    stop = threading.Event()
+    started = threading.Event()
     observed: list[bool] = []
 
     def poll() -> None:
-        while not stop.is_set():
+        observed.append(registry.holds(terminal_id))
+        started.set()
+        while not stop.wait(0.001):
             observed.append(registry.holds(terminal_id))
 
     poller = asyncio.create_task(asyncio.to_thread(poll))
-    for _ in range(200):
-        registry.claim(terminal_id)
-        await asyncio.sleep(0)
-        registry.release(terminal_id)
-    stop.set()
-    await poller
+    try:
+        assert await asyncio.to_thread(started.wait, 5.0)
+        for _ in range(200):
+            registry.claim(terminal_id)
+            await asyncio.sleep(0)
+            registry.release(terminal_id)
+    finally:
+        stop.set()
+        await poller
     assert observed
     assert set(observed) <= {True, False}
     assert registry.holds(terminal_id) is False
