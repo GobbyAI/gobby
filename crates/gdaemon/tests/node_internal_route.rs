@@ -78,22 +78,28 @@ async fn live_with(db: &ChannelDb, timing: ChannelTiming) -> Result<(ChannelHub,
 // If HTTP completes early, assert its contract before waiting for a frame. RED
 // therefore reaches an application assertion, rather than a fixture timeout.
 async fn command(peer: &mut ChannelPeer, http: &mut JoinHandle<Response<Body>>) -> Value {
+    tokio::select! {
+        result = &mut *http => {
+            let status = result.unwrap().status();
+            assert_eq!(status, StatusCode::OK, "command must reach the node before HTTP completes");
+            panic!("HTTP completed before node replied");
+        }
+        frame = command_frame(peer) => frame,
+    }
+}
+
+async fn command_frame(peer: &mut ChannelPeer) -> Value {
     timeout(TIMEOUT, async {
         loop {
-            tokio::select! {
-                result = &mut *http => {
-                    let status = result.unwrap().status();
-                    assert_eq!(status, StatusCode::OK, "command must reach the node before HTTP completes");
-                    panic!("HTTP completed before node replied");
-                }
-                frame = peer.next() => match frame.unwrap().unwrap() {
-                    Message::Text(text) => return serde_json::from_str(&text).unwrap(),
-                    Message::Ping(data) => peer.send(Message::Pong(data)).await.unwrap(),
-                    other => panic!("expected command, got {other:?}"),
-                }
+            match peer.next().await.unwrap().unwrap() {
+                Message::Text(text) => return serde_json::from_str(&text).unwrap(),
+                Message::Ping(data) => peer.send(Message::Pong(data)).await.unwrap(),
+                other => panic!("expected command, got {other:?}"),
             }
         }
-    }).await.expect("command frame")
+    })
+    .await
+    .expect("command frame")
 }
 
 fn reply(frame: &Value) -> Value {
@@ -159,9 +165,10 @@ async fn offline_and_timeout() -> Result<()> {
         ack(&mut peer, db.machine).await?;
         let mut body = cancel();
         body["timeout_ms"] = json!(40);
-        let mut http = call(&hub.door, body, db.machine);
-        let frame = command(&mut peer, &mut http).await;
+        let http = call(&hub.door, body, db.machine);
         let answer = response(timeout(TIMEOUT, http).await??, StatusCode::OK).await;
+        // A timed-out request may complete before the peer reads its queued frame.
+        let frame = command_frame(&mut peer).await;
         assert_eq!(answer["request_id"], frame["request_id"]);
         assert_eq!(answer["error"]["code"], "node_timeout");
         assert!(answer["error"]["stage"].is_null());
@@ -191,9 +198,11 @@ async fn pending_commands_end_with_channel() -> Result<()> {
         }
         for dropped in [false, true] {
             let mut body = cancel();
-            body["timeout_ms"] = json!(40);
-            let mut http = call(&hub.door, body, db.machine);
-            let expired = command(&mut replacement, &mut http).await;
+            if !dropped {
+                body["timeout_ms"] = json!(40);
+            }
+            let http = call(&hub.door, body, db.machine);
+            let expired = command_frame(&mut replacement).await;
             if dropped {
                 http.abort();
                 assert!(http.await.unwrap_err().is_cancelled());
