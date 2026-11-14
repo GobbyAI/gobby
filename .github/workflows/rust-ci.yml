@@ -126,6 +126,7 @@ jobs:
       - name: Test (gobby-daemon)
         run: |
           GOBBY_DATABASE_URL="$DATABASE_URL" cargo run -p gobby-daemon --bin gdaemon -- schema apply
+          cargo build -p gobby-daemon --example backend_supervisor_fixture
           cargo nextest run --profile ci -p gobby-daemon
 
       # gobby-terminal: Zig-free default-features gate, then vt-engine, then the
@@ -356,9 +357,13 @@ jobs:
       - name: Generate LCOV report
         run: |
           GOBBY_DATABASE_URL="$DATABASE_URL" cargo run -p gobby-daemon --bin gdaemon -- schema apply
-          cargo llvm-cov clean --workspace
-          cargo llvm-cov --no-report nextest --workspace --profile ci -E 'not binary(catalog_manifest_freshness)'
-          cargo llvm-cov report --lcov --output-path lcov.info
+          (
+            eval "$(cargo llvm-cov show-env --sh)"
+            cargo llvm-cov clean --workspace
+            cargo build -p gobby-daemon --example backend_supervisor_fixture
+            cargo nextest run --workspace --profile ci -E 'not binary(catalog_manifest_freshness)'
+            cargo llvm-cov report --lcov --output-path lcov.info
+          )
 
       - name: Upload LCOV artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

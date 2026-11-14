@@ -253,7 +253,7 @@ fn a_native_launch_sets_no_cargo_wrapper_or_incremental_key_and_keeps_the_socket
     // The run tmp socket grant predates sccache (#21752) and stays.
     assert_eq!(
         socket_root.as_deref(),
-        Some("/gobby-test/run/sandbox/r1/tmp")
+        cfg!(target_os = "macos").then_some("/gobby-test/run/sandbox/r1/tmp")
     );
     assert_eq!(env, plain_cargo_env());
 }
@@ -310,7 +310,7 @@ fn a_compiled_native_policy_builds_plain_incremental() -> Result<()> {
         );
         assert_eq!(
             policy.sandbox.allow_unix_sockets.contains(&run_tmp),
-            socket_granted
+            socket_granted && cfg!(target_os = "macos")
         );
     }
     Ok(())
