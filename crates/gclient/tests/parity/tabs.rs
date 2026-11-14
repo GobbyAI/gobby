@@ -217,8 +217,7 @@ fn every_tab_carries_the_rolled_up_state_of_its_agents() {
         Some(palette().peach)
     );
     // The same rule parts the last tab from the `+` one column on.
-    for idx in 0..3 {
-        let rect = hits.tabs[idx].1;
+    for (_, rect) in &hits.tabs[..3] {
         let rule = cell(&term, rect.right(), rect.y);
         assert_eq!(rule.symbol(), "│", "tab row: {row:?}");
         assert_eq!(rule.style().fg, Some(palette().line));
