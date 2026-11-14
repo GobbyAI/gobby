@@ -6,8 +6,8 @@ import asyncio
 import fcntl
 import json
 import os
+import pty
 import shutil
-import signal
 import struct
 import subprocess
 import sys
@@ -171,21 +171,57 @@ class OwnerClient:
     """A live tmux client attached at a chosen PTY geometry."""
 
     def __init__(self, socket: Path, session: str, cols: int, rows: int) -> None:
-        self.pid, self.fd = os.forkpty()
-        if self.pid == 0:
-            fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
-            os.environ["TERM"] = "xterm-256color"
-            os.execvp("tmux", ["tmux", "-S", str(socket), "attach-session", "-t", session])
+        self.fd, slave = pty.openpty()
+        try:
+            fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+            self._process = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    "import fcntl, os, sys, termios; "
+                    "fcntl.ioctl(0, termios.TIOCSCTTY, 0); "
+                    "os.execvp(sys.argv[1], sys.argv[1:])",
+                    "tmux",
+                    "-S",
+                    str(socket),
+                    "attach-session",
+                    "-t",
+                    session,
+                ],
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                start_new_session=True,
+                env={**os.environ, "TERM": "xterm-256color"},
+            )
+        except BaseException:
+            os.close(self.fd)
+            raise
+        finally:
+            os.close(slave)
+        self.pid = self._process.pid
         self._stop = threading.Event()
+        self._output = bytearray()
+        self._output_lock = threading.Lock()
         self._thread = threading.Thread(target=self._drain, daemon=True)
         self._thread.start()
 
     def _drain(self) -> None:
         while not self._stop.is_set():
             try:
-                os.read(self.fd, 4096)
+                data = os.read(self.fd, 4096)
             except OSError:
                 return
+            if not data:
+                return
+            with self._output_lock:
+                self._output.extend(data)
+                del self._output[:-8192]
+
+    def diagnostics(self) -> str:
+        with self._output_lock:
+            output = self._output.decode(errors="replace")
+        return f"owner exit={self._process.poll()}, output={output!r}"
 
     def resize(self, cols: int, rows: int) -> None:
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
@@ -193,7 +229,7 @@ class OwnerClient:
     def close(self) -> None:
         self._stop.set()
         try:
-            os.kill(self.pid, signal.SIGTERM)
+            self._process.terminate()
         except ProcessLookupError:
             pass
         try:
@@ -201,9 +237,11 @@ class OwnerClient:
         except OSError:
             pass
         try:
-            os.waitpid(self.pid, 0)
-        except ChildProcessError:
-            return
+            self._process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            self._process.wait(timeout=5.0)
+        self._thread.join(timeout=1.0)
 
 
 class IsolatedTmux:
@@ -267,6 +305,7 @@ class IsolatedTmux:
             timeout=5.0,
             interval=0.05,
             description="owner client geometry",
+            on_timeout=owner.diagnostics,
         )
         wait_for_condition(
             lambda: "GOBBY-EXT-BOOT" in self.capture(),
@@ -347,25 +386,6 @@ def test_owner_client_sets_geometry_before_exec(
     )
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{os.environ['PATH']}")
-    forkpty = os.forkpty
-
-    def child_executes_first() -> tuple[int, int]:
-        pid, fd = forkpty()
-        if pid:
-            try:
-                wait_for_condition(
-                    geometry.exists,
-                    timeout=5.0,
-                    description="child terminal geometry captured before parent resumes",
-                )
-            except BaseException:
-                os.kill(pid, signal.SIGKILL)
-                os.waitpid(pid, 0)
-                os.close(fd)
-                raise
-        return pid, fd
-
-    monkeypatch.setattr(os, "forkpty", child_executes_first)
     server = IsolatedTmux(tmp_path)
     try:
         server.start()
