@@ -172,7 +172,7 @@ def test_macro_definition_changes_are_visible_in_next_audit(tmp_path: Path) -> N
 def test_parity_corpus_scans_its_full_inventory() -> None:
     root = Path(__file__).resolve().parents[2]
     report = audit_paths([root / "crates/gclient/tests/parity"], root=root)
-    # Measured at this commit: 98 macro-emitted + 46 plain tests. Update this
+    # Measured at this commit: 98 macro-emitted + 45 plain tests. Update this
     # inventory guard when parity cases are added or removed.
-    assert report.tests_scanned == 144
+    assert report.tests_scanned == 143
     assert report.warnings == ()

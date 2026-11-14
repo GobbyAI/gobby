@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -42,8 +43,13 @@ class WorkspaceRoutes:
 
 @pytest.fixture
 def routes(
-    temp_db: HubDatabase, sample_project: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> WorkspaceRoutes:
+    managed_root = tmp_path / "worktrees"
+    monkeypatch.setattr("gobby.worktrees.creation.WORKTREES_ROOT", managed_root)
     hub_machine = require_machine_id()
     node_machine = str(uuid4())
     machines = LocalMachineManager(temp_db)
@@ -62,7 +68,7 @@ def routes(
         worktree = worktrees.create(
             project_id=project_id,
             branch_name=f"feature/{uuid4().hex}",
-            worktree_path=f"/node-only/{uuid4()}/worktree",
+            worktree_path=str(managed_root / str(uuid4()) / "worktree"),
         )
         clone = clones.create(
             project_id=project_id,

@@ -193,6 +193,8 @@ timing.
 | `stop_failure` | A turn ended with an API/runtime failure |
 | `pre_compact` | Before context compaction |
 | `post_compact` | After context compaction, where supported |
+| `pre_model_switch` | Before a provider changes the selected model |
+| `post_model_switch` | After a provider changes the selected model |
 | `before_tool_selection` | Before a model chooses tools |
 | `before_model` | Before a model call |
 | `after_model` | After a model call |

@@ -1,6 +1,6 @@
 [package]
 name = "gobby-client"
-version = "0.1.135"
+version = "0.1.136"
 edition = "2021"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -55,3 +55,6 @@ tokio = { version = "1", features = ["test-util"] }
 [[test]]
 name = "suite"
 path = "tests/suite.rs"
+
+# Native platform integrations keep their unsafe boundaries local.
+[lints]

@@ -89,6 +89,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
 
     for name in (
         "ai",
+        "agent_build",
         "skills",
         "skill_description",
         "voice",

@@ -1,6 +1,6 @@
 [package]
 name = "gobby-terminal"
-version = "0.1.31"
+version = "0.1.32"
 edition = "2021"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -84,3 +84,6 @@ path = "tests/suite.rs"
 name = "gterm"
 path = "src/bin/gterm.rs"
 required-features = ["vt-engine"]
+
+# Native platform integrations keep their unsafe boundaries local.
+[lints]
