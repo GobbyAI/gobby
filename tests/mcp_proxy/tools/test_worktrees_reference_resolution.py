@@ -8,6 +8,8 @@ so prefixes act on the matching worktree and unmatched refs fail cleanly.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -130,6 +132,13 @@ def _recording_storage(events: list[tuple[str, str]]) -> MagicMock:
 
     stub.get = MagicMock(side_effect=_lookup("get"))
     stub.claim_if_available = MagicMock(side_effect=_lookup("claim_if_available"))
+
+    @contextmanager
+    def lock_for_removal(worktree_id: str) -> Iterator[None]:
+        stub.get(worktree_id)
+        yield None
+
+    stub.lock_for_removal.side_effect = lock_for_removal
     return stub
 
 

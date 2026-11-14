@@ -75,6 +75,13 @@ def _tree_removed_by_git_delete(git_manager: MagicMock) -> Iterator[None]:
 def mock_worktree_storage() -> MagicMock:
     storage = MagicMock()
     storage.resolve_reference.side_effect = lambda ref: ref
+
+    @contextmanager
+    def lock_for_removal(worktree_id: str) -> Iterator[Worktree | None]:
+        yield storage.get(worktree_id)
+
+    storage.lock_for_removal.side_effect = lock_for_removal
+    storage.db.fetchall.return_value = []
     return storage
 
 
@@ -1009,14 +1016,17 @@ async def test_delete_worktree_not_found(
 
 @pytest.mark.asyncio
 async def test_delete_worktree_path_not_exists(
-    registry: InternalToolRegistry, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
+    registry: InternalToolRegistry,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+    tmp_path: Path,
 ) -> None:
     """Test delete_worktree when path doesn't exist (orphaned DB record)."""
     wt = Worktree(
         id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
         project_id="p1",
         branch_name="b1",
-        worktree_path="/nonexistent",
+        worktree_path=str(tmp_path / "nonexistent"),
         base_branch="main",
         status="active",
         created_at=_VALID_TIMESTAMP,
@@ -1053,13 +1063,16 @@ async def test_delete_worktree_path_not_exists(
 
 @pytest.mark.asyncio
 async def test_delete_worktree_missing_path_listing_failure_preserves_record(
-    registry: InternalToolRegistry, mock_worktree_storage: MagicMock, mock_git_manager: MagicMock
+    registry: InternalToolRegistry,
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+    tmp_path: Path,
 ) -> None:
     wt = Worktree(
         id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
         project_id="p1",
         branch_name="b1",
-        worktree_path="/nonexistent",
+        worktree_path=str(tmp_path / "nonexistent"),
         base_branch="main",
         status="active",
         created_at=_VALID_TIMESTAMP,
@@ -1088,12 +1101,13 @@ async def test_delete_worktree_missing_path_branch_lookup_failure_preserves_reco
     registry: InternalToolRegistry,
     mock_worktree_storage: MagicMock,
     mock_git_manager: MagicMock,
+    tmp_path: Path,
 ) -> None:
     wt = Worktree(
         id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
         project_id="p1",
         branch_name="b1",
-        worktree_path="/nonexistent",
+        worktree_path=str(tmp_path / "nonexistent"),
         base_branch="main",
         status="active",
         created_at=_VALID_TIMESTAMP,
@@ -1155,12 +1169,13 @@ async def test_delete_worktree_existing_path_without_git_manager_preserves_recor
 @pytest.mark.asyncio
 async def test_delete_worktree_missing_path_without_git_manager_preserves_stale_record(
     mock_worktree_storage: MagicMock,
+    tmp_path: Path,
 ) -> None:
     wt = Worktree(
         id="eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01",
         project_id="p1",
         branch_name="b1",
-        worktree_path="/nonexistent",
+        worktree_path=str(tmp_path / "nonexistent"),
         base_branch="main",
         status="active",
         created_at=_VALID_TIMESTAMP,

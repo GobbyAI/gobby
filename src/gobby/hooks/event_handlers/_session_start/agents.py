@@ -197,6 +197,7 @@ def activate_default_agent(
         "is_spawned_agent",
         "_agent_definition_hash",
         "_agent_definition_keys",
+        "_agent_definition_explicit_keys",
     }
     variables_count = len([k for k in changes if k not in internal_keys])
 

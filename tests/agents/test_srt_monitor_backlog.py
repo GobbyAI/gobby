@@ -10,9 +10,11 @@ import shlex
 import signal
 import socket
 import stat
+import subprocess
 from dataclasses import replace
 from pathlib import Path
 
+import psutil
 import pytest
 
 from gobby.agents import srt_monitor
@@ -21,6 +23,41 @@ from tests.agents.test_srt_monitor import MonitorHarness, _subscribe, _wait_path
 
 __all__ = ["monitor_harness"]
 pytestmark = pytest.mark.unit
+
+
+def test_shared_transport_handles_socket_reset(monitor_harness: MonitorHarness) -> None:
+    harness = monitor_harness
+    socket_path = str(harness.root / "reset.sock")
+    script = (
+        f"import {{ sharedTransport }} from {json.dumps(harness.runner.as_uri())};\n"
+        f"const transport = sharedTransport({json.dumps(socket_path)}, '_reset_SBX', "
+        "() => console.log('monitor failed'));\n"
+        "await transport.ready.catch(() => {});\n"
+    )
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind(socket_path)
+        server.listen(1)
+        server.settimeout(15)
+        child = subprocess.Popen(
+            [str(harness.node), "--input-type=module", "-e", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            connection, _ = server.accept()
+            with connection, selectors.DefaultSelector() as selector:
+                selector.register(connection, selectors.EVENT_READ)
+                assert selector.select(timeout=15)
+                # Close with unread registration data: Linux resets the peer,
+                # and readline forwards that socket error to its Interface.
+            stdout, stderr = child.communicate(timeout=15)
+            assert child.returncode == 0, stderr
+            assert stdout.strip() == "monitor failed"
+        finally:
+            if child.poll() is None:
+                child.kill()
+                child.wait(timeout=5)
 
 
 def test_duplicate_denial_storm_keeps_counts_with_bounded_backlog(
@@ -232,20 +269,25 @@ def test_killed_runner_retains_unacknowledged_backlog_and_stops_provider(
     active = directory / "killed_SBX.srt-backlog.jsonl.active"
     retained = directory / "killed_SBX.srt-backlog.jsonl"
     message = "Sandbox: provider deny file-read-data /pending _killed_SBX"
+    providers: list[tuple[int, float]] = []
     try:
         assert child.stdout is not None
         with selectors.DefaultSelector() as selector:
             selector.register(child.stdout, selectors.EVENT_READ)
             assert selector.select(timeout=15)
             assert json.loads(child.stdout.readline()) is None
+        for name in ("_killed_SBX.pid", "_killed_SBX.child.pid"):
+            pid = int((harness.root / name).read_text().split()[0])
+            providers.append((pid, psutil.Process(pid).create_time()))
         child.send_signal(signal.SIGSTOP)
         initial_bytes = active.stat().st_size
         harness.event(message)
         _wait_path(active, minimum_bytes=initial_bytes + 1)
         child.kill()
+        _wait_path(retained)
+        assert srt_monitor._children[-1].poll() is None
         child.communicate(timeout=15)
         assert child.returncode == -signal.SIGKILL
-        _wait_path(retained)
         records = [json.loads(line) for line in retained.read_text().splitlines()]
         assert records[0]["monitorBacklog"]["runKey"] == "killed_SBX"
         assert [record["message"] for record in records[1:]] == [message]
@@ -254,6 +296,14 @@ def test_killed_runner_retains_unacknowledged_backlog_and_stops_provider(
                 application.connect(str(harness.root / "ki.s"))
         assert not active.exists()
     finally:
+        print((harness.root / "violations-monitor.log").read_text()[-4096:])
+        for pid, created in providers:
+            try:
+                process = psutil.Process(pid)
+                if process.create_time() == created:
+                    process.kill()
+            except psutil.NoSuchProcess:
+                pass
         if child.poll() is None:
             child.send_signal(signal.SIGCONT)
             harness.finish()

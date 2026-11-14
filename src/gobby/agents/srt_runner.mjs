@@ -399,6 +399,7 @@ async function monitor(socketPath, readyFd, retentionDirectory) {
       socket.destroy()
     }, monitorRegistrationTimeoutMs)
     const lines = createInterface({ input: socket, crlfDelay: Infinity })
+    lines.on('error', () => socket.destroy())
     lines.on('line', line => {
       state.queue = state.queue.then(async () => {
         const request = JSON.parse(line)
@@ -562,6 +563,7 @@ function sharedTransport(socketPath, suffix, failed, runKey = process.env.GOBBY_
       } else throw new Error('invalid shared monitor record')
     } catch (error) { fail(error) }
   })
+  lines.once('error', fail)
   socket.once('error', fail)
   socket.once('close', () => fail(new Error('shared violation monitor disconnected')))
   transport.providerStarted = pid => new Promise((resolve, reject) => {

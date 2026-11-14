@@ -44,6 +44,8 @@ def _make_event_handlers() -> EventHandlers:
     session_storage = MagicMock()
     session_storage.db = MagicMock()
     session_storage.db.fetchall.return_value = []
+    session_storage.db.fetchone.return_value = None
+    session_storage.db.execute.return_value.fetchone.return_value = None
     session_manager = session_storage
 
     return EventHandlers(
@@ -77,8 +79,11 @@ def _configure_scoped_reads(mock_svm_cls: MagicMock, mock_svm: MagicMock) -> Non
 
 def _get_merged_changes(mock_svm: MagicMock) -> dict[str, Any]:
     """Extract the changes dict passed to merge_variables."""
-    mock_svm.merge_variables.assert_called_once()
-    changes = mock_svm.merge_variables.call_args[0][1]
+    activation_calls = [
+        call for call in mock_svm.merge_variables.call_args_list if "_agent_type" in call.args[1]
+    ]
+    assert len(activation_calls) == 1
+    changes = activation_calls[0].args[1]
     assert isinstance(changes, dict)
     return changes
 

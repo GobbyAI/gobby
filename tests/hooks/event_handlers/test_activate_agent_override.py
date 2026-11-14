@@ -192,12 +192,12 @@ class TestAgentNameOverride:
             agent_name_override="my-agent",
         )
 
-        # Verify SessionVariableManager.merge_variables was called with _agent_type
-        mock_svm.merge_variables.assert_called_once()
-        call_args = mock_svm.merge_variables.call_args
-        assert call_args[0][0] == "sess-1"
-        changes = call_args[0][1]
-        assert changes["_agent_type"] == "my-agent"
+        activations = [
+            (call.args[0], call.args[1]["_agent_type"])
+            for call in mock_svm.merge_variables.call_args_list
+            if "_agent_type" in call.args[1]
+        ]
+        assert activations == [("sess-1", "my-agent")]
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.storage.definitions.variables.SessionVariableDefaultManager")
