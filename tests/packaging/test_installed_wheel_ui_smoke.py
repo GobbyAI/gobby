@@ -203,10 +203,19 @@ def test_installed_wheel_serves_packaged_index_html(
     database_url = _postgres_url_for_schema(postgres_database_url, postgres_schema)
 
     venv = tmp_path / "venv"
-    subprocess.run([sys.executable, "-m", "venv", str(venv)], check=True, timeout=120)
+    subprocess.run(["uv", "venv", "--python", sys.executable, str(venv)], check=True, timeout=120)
     python = _venv_python(venv)
     subprocess.run(
-        [str(python), "-m", "pip", "install", str(wheel)],
+        [
+            "uv",
+            "pip",
+            "install",
+            "--project",
+            str(Path(__file__).resolve().parents[2]),
+            "--python",
+            str(python),
+            str(wheel),
+        ],
         check=True,
         timeout=300,
     )
