@@ -206,7 +206,13 @@ impl Drop for TestTmux {
 fn prepared_test_gterm() -> PathBuf {
     let binary = std::env::current_exe()
         .expect("current test binary")
-        .parent()
+        .ancestors()
+        .find(|path| {
+            matches!(
+                path.file_name().and_then(|name| name.to_str()),
+                Some("deps" | "build")
+            )
+        })
         .and_then(Path::parent)
         .expect("target profile directory")
         .join("gterm");

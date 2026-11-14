@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
@@ -7,10 +7,10 @@ use tempfile::TempDir;
 
 use super::process_is_host;
 
-/// Copies `source` to `<dir>/gterm`, signed like the host_lifecycle fixture.
-fn named_gterm(dir: &Path, source: &str) -> PathBuf {
+/// Copies the shell to `<dir>/gterm`, signed like the host_lifecycle fixture.
+fn named_gterm(dir: &Path) -> PathBuf {
     let binary = dir.join("gterm");
-    std::fs::copy(source, &binary).unwrap();
+    std::fs::copy("/bin/sh", &binary).unwrap();
     #[cfg(target_os = "macos")]
     assert!(
         Command::new("/usr/bin/codesign")
@@ -28,8 +28,11 @@ fn named_gterm(dir: &Path, source: &str) -> PathBuf {
 #[tokio::test]
 async fn live_gterm_is_the_host() {
     let dir = TempDir::new().unwrap();
-    let mut child = Command::new(named_gterm(dir.path(), "/bin/sleep"))
-        .arg("600")
+    // A copied multicall coreutils binary can dispatch by its new name.
+    // A shell builtin blocks without spawning another process.
+    let mut child = Command::new(named_gterm(dir.path()))
+        .args(["-c", "read -r line"])
+        .stdin(Stdio::piped())
         .spawn()
         .unwrap();
     let observed = process_is_host(child.id()).await;
@@ -41,11 +44,15 @@ async fn live_gterm_is_the_host() {
 #[tokio::test]
 async fn gterm_stays_the_host_after_its_binary_is_replaced_and_unlinked() {
     let dir = TempDir::new().unwrap();
-    let binary = named_gterm(dir.path(), "/bin/sleep");
-    let mut child = Command::new(&binary).arg("600").spawn().unwrap();
+    let binary = named_gterm(dir.path());
+    let mut child = Command::new(&binary)
+        .args(["-c", "read -r line"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
     // Promotion renames a new inode over the name; then the name goes away too.
     let staged = dir.path().join(".gterm.new");
-    std::fs::copy("/bin/sleep", &staged).unwrap();
+    std::fs::copy("/bin/sh", &staged).unwrap();
     std::fs::rename(&staged, &binary).unwrap();
     std::fs::remove_file(&binary).unwrap();
     let observed = process_is_host(child.id()).await;
@@ -60,7 +67,8 @@ async fn gterm_stays_the_host_after_its_binary_is_replaced_and_unlinked() {
 #[tokio::test]
 async fn reaped_gterm_is_not_the_host() {
     let dir = TempDir::new().unwrap();
-    let mut child = Command::new(named_gterm(dir.path(), "/usr/bin/true"))
+    let mut child = Command::new(named_gterm(dir.path()))
+        .args(["-c", "exit 0"])
         .spawn()
         .unwrap();
     let pid = child.id();
@@ -74,7 +82,8 @@ async fn reaped_gterm_is_not_the_host() {
 #[tokio::test]
 async fn zombie_gterm_is_not_the_host() {
     let dir = TempDir::new().unwrap();
-    let mut child = Command::new(named_gterm(dir.path(), "/usr/bin/true"))
+    let mut child = Command::new(named_gterm(dir.path()))
+        .args(["-c", "exit 0"])
         .spawn()
         .unwrap();
     // Wait for the exit but leave the child unreaped, so it stays a zombie. The

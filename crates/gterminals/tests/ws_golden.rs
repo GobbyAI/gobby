@@ -715,6 +715,10 @@ fn python_constants() -> Vec<(String, f64)> {
         .lines()
         .filter_map(|line| {
             let (name, rest) = line.split_once(": Final[")?;
+            // Encoder batching sizes do not change wire admission limits.
+            if matches!(name, "CANONICAL_PIECE_CHARS" | "PAYLOAD_BLOCK_BYTES") {
+                return None;
+            }
             let (_, expr) = rest.split_once("] = ")?;
             let value = expr.trim();
             if value.starts_with("frozenset") {

@@ -29,6 +29,7 @@ runs:
           if [ "$status" = healthy ]; then
             echo "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test" >> "$GITHUB_ENV"
             echo "GOBBY_TEST_POSTGRES_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test" >> "$GITHUB_ENV"
+            echo "GOBBY_TERMINALS_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test" >> "$GITHUB_ENV"
             echo "GOBBY_TEST_PROTECT=1" >> "$GITHUB_ENV"
             exit 0
           fi

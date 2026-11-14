@@ -8,7 +8,7 @@ command = ["cargo", "build", "-p", "gobby-terminal", "--features", "vt-engine", 
 [[profile.default.scripts]]
 filter = '''package(gobby-client) & binary(suite) & (
     test(=frame_source_live::direct_frames_verify_epoch_and_render) |
-    test(=frame_source_live::granted_direct_input_echoes_and_revoke_refuses) |
+    test(=frame_source_live::direct_input_echoes_without_a_grant) |
     test(=frame_source_live::tmux_pane_attaches_through_host_observer)
 )'''
 setup = 'gclient-test-gterm'
