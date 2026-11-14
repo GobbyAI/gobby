@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import logging
 import os
 import re
@@ -152,6 +151,8 @@ def _retain_monitor_backlog(run_id: str, gobby_home: Path) -> Path | None:
     Active queues are left to the broker; it publishes a closed snapshot by
     linking it without overwriting. Broker startup recovers late/crash snapshots.
     """
+    import fcntl
+
     if re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", run_id) is None:
         return None
     source = srt_socket_directory(gobby_home) / f"{run_id}.srt-backlog.jsonl"

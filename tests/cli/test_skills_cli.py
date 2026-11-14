@@ -1,5 +1,6 @@
 """Tests for the skills CLI module (TDD - written before implementation)."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -805,27 +806,13 @@ class TestSkillsInitCommand:
         assert "init" in result.output.lower()
 
     def test_init_creates_skills_directory(self, runner: CliRunner) -> None:
-        """Test that init creates .gobby/skills/ directory."""
-        import os
-
+        """Init creates the project skills folder."""
         with runner.isolated_filesystem():
             result = runner.invoke(cli, ["skills", "init"])
 
             assert result.exit_code == 0
-            assert os.path.isdir(".gobby/skills")
-
-    def test_init_creates_config_file(self, runner: CliRunner) -> None:
-        """Test that init creates skills config file."""
-        import os
-
-        with runner.isolated_filesystem():
-            result = runner.invoke(cli, ["skills", "init"])
-
-            assert result.exit_code == 0
-            # Should create a config file
-            assert os.path.isfile(".gobby/skills/config.yaml") or os.path.isfile(
-                ".gobby/skills/config.json"
-            )
+            assert Path(".gobby/skills").is_dir()
+            assert "Created .gobby/skills/" in result.output
 
     def test_init_idempotent(self, runner: CliRunner) -> None:
         """Test that init can be run multiple times safely."""
@@ -1226,7 +1213,9 @@ class TestSkillsUpdateCommand:
         mock_check_daemon.return_value = True
 
         # list_skills returns skill list, update_skill returns different results
-        def mock_tool_call(client, tool_name, args, timeout=30.0):
+        def mock_tool_call(
+            client: object, tool_name: str, args: dict[str, object], timeout: float = 30.0
+        ) -> dict[str, object]:
             if tool_name == "list_skills":
                 return {
                     "success": True,

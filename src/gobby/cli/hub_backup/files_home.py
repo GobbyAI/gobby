@@ -53,6 +53,27 @@ class WalkEntry:
     ino: int = 0
     nlink: int = 1
     mode: int = 0
+    mtime_ns: int = 0
+    ctime_ns: int = 0
+
+    def matches_file(self, metadata: os.stat_result) -> bool:
+        return (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_size,
+            metadata.st_nlink,
+            metadata.st_mode,
+            metadata.st_mtime_ns,
+            metadata.st_ctime_ns,
+        ) == (
+            self.dev,
+            self.ino,
+            self.size,
+            self.nlink,
+            self.mode,
+            self.mtime_ns,
+            self.ctime_ns,
+        )
 
 
 @dataclass
@@ -158,6 +179,8 @@ def _entry_from_lstat(path: Path, rel: str, *, is_dir: bool) -> WalkEntry:
         ino=stat_result.st_ino,
         nlink=stat_result.st_nlink,
         mode=stat_result.st_mode,
+        mtime_ns=stat_result.st_mtime_ns,
+        ctime_ns=stat_result.st_ctime_ns,
     )
 
 
@@ -329,18 +352,15 @@ def _emit_entries(
         try:
             stat_result = os.fstat(descriptor)
             changed = (
-                stat_result.st_dev,
-                stat_result.st_ino,
-                stat_result.st_size,
-                stat_result.st_nlink,
-            ) != (entry.dev, entry.ino, entry.size, entry.nlink) or special_file_reason(
-                stat_result
-            ) is not None
+                not entry.matches_file(stat_result) or special_file_reason(stat_result) is not None
+            )
             if changed:
                 raise FilesHomeArchiveError("swap", "files_home entry changed after prewalk")
             handle = os.fdopen(descriptor, "rb")
             descriptor = -1
             tar.addfile(info, handle)
+            if not entry.matches_file(os.fstat(handle.fileno())):
+                raise FilesHomeArchiveError("swap", "files_home entry changed while archiving")
         finally:
             if handle is not None:
                 handle.close()

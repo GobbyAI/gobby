@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.session_models import Session
+from gobby.storage.sessions._query_filters import build_session_filters
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -26,12 +27,6 @@ class _ManagerState(Protocol):
 _TaskRefsByRole = dict[str, list[int]]
 _Sessions = list[Session]
 
-
-_TASK_REF_ROLE_COLUMNS: dict[str, str] = {
-    "claimed": "claimed_by_session_id",
-    "created": "created_in_session_id",
-    "closed": "closed_in_session_id",
-}
 
 # Keep Session.from_row's required metadata while omitting conversation bodies.
 # NULL aliases satisfy its full-row constructor without fetching those values.
@@ -103,119 +98,6 @@ def _read_session_page(
     return [Session.from_row(row) for row in rows]
 
 
-def _build_session_filters(
-    project_id: str | None,
-    status: str | None,
-    source: str | None,
-    *,
-    machine_id: str | None = None,
-    sources: Sequence[str] | None = None,
-    statuses: Sequence[str] | None = None,
-    modes: Sequence[str] | None = None,
-    models: Sequence[str] | None = None,
-    session_seq_min: int | None = None,
-    session_seq_max: int | None = None,
-    task_ref_min: int | None = None,
-    task_ref_max: int | None = None,
-    task_ref_roles: Sequence[str] | None = None,
-    created_after: str | None = None,
-    created_before: str | None = None,
-    agent_type: str | None = None,
-) -> tuple[list[str], list[Any]]:
-    conditions: list[str] = []
-    params: list[Any] = []
-
-    if agent_type:
-        # The seat definition a session was typed with, stored as its _agent_type variable.
-        conditions.append(
-            "id IN (SELECT session_id FROM session_variables "
-            "WHERE variables ->> '_agent_type' = %s)"
-        )
-        params.append(agent_type)
-
-    if status == "deleted":
-        conditions.append("status = 'deleted'")
-    else:
-        conditions.append("status != 'deleted'")
-        if status:
-            conditions.append("status = %s")
-            params.append(status)
-        if statuses:
-            placeholders = ",".join(["%s"] * len(statuses))
-            conditions.append(f"status IN ({placeholders})")
-            params.extend(statuses)
-
-    if project_id:
-        conditions.append("project_id = %s")
-        params.append(project_id)
-    if source:
-        conditions.append("source = %s")
-        params.append(source)
-    if machine_id:
-        conditions.append("machine_id = %s")
-        params.append(machine_id)
-    if sources:
-        placeholders = ",".join(["%s"] * len(sources))
-        conditions.append(f"source IN ({placeholders})")
-        params.extend(sources)
-
-    # Mode resolves to agent_depth: interactive = depth 0, auto = depth >= 1.
-    # Empty / both = no filter (the user wants everything).
-    if modes:
-        unique_modes = set(modes)
-        if "interactive" in unique_modes and "auto" not in unique_modes:
-            conditions.append("agent_depth = 0")
-        elif "auto" in unique_modes and "interactive" not in unique_modes:
-            conditions.append("agent_depth >= 1")
-        # "both selected" or "neither selected" → no filter
-
-    if models:
-        placeholders = ",".join(["%s"] * len(models))
-        conditions.append(f"model IN ({placeholders})")
-        params.extend(models)
-
-    if session_seq_min is not None:
-        conditions.append("seq_num >= %s")
-        params.append(session_seq_min)
-    if session_seq_max is not None:
-        conditions.append("seq_num <= %s")
-        params.append(session_seq_max)
-
-    # Task-ref overlap: a session matches if any task with seq_num in
-    # [min, max] is linked to it via any of the selected roles. Default role
-    # is "claimed" — the most useful axis ("which sessions worked on tasks
-    # in range X").
-    if task_ref_min is not None or task_ref_max is not None:
-        roles = list(task_ref_roles) if task_ref_roles else ["claimed"]
-        role_clauses: list[str] = []
-        for role in roles:
-            col = _TASK_REF_ROLE_COLUMNS.get(role)
-            if col is None:
-                continue
-            bounds: list[str] = []
-            if task_ref_min is not None:
-                bounds.append("seq_num >= %s")
-                params.append(task_ref_min)
-            if task_ref_max is not None:
-                bounds.append("seq_num <= %s")
-                params.append(task_ref_max)
-            bound_sql = " AND ".join(bounds)
-            role_clauses.append(
-                f"EXISTS (SELECT 1 FROM tasks WHERE {col} = sessions.id AND {bound_sql})"  # nosec B608
-            )
-        if role_clauses:
-            conditions.append(f"({' OR '.join(role_clauses)})")
-
-    if created_after:
-        conditions.append("created_at >= %s")
-        params.append(created_after)
-    if created_before:
-        conditions.append("created_at < %s")
-        params.append(created_before)
-
-    return conditions, params
-
-
 class _QueryMixin:
     def list(
         self: _ManagerState,
@@ -273,7 +155,7 @@ class _QueryMixin:
         Returns:
             List of Session instances
         """
-        conditions, params = _build_session_filters(
+        conditions, params = build_session_filters(
             project_id,
             status,
             source,
@@ -315,7 +197,7 @@ class _QueryMixin:
         Task refs remain unloaded until the caller invokes load_task_refs().
         ``agent_type`` keeps sessions whose ``_agent_type`` variable equals it.
         """
-        conditions, params = _build_session_filters(
+        conditions, params = build_session_filters(
             project_id, status, source, machine_id=machine_id, agent_type=agent_type
         )
         return _read_session_page(self.db, conditions, params, limit, _BRIEF_SESSION_COLUMNS)
@@ -335,7 +217,7 @@ class _QueryMixin:
         inclusive, so a paging caller resumes where it stopped even as other
         sessions are updated or created between pages.
         """
-        conditions, params = _build_session_filters(project_id, status, source)
+        conditions, params = build_session_filters(project_id, status, source)
         if from_created_at is not None and from_id is not None:
             conditions.append("(created_at < %s OR (created_at = %s AND id <= %s))")
             params.extend([from_created_at, from_created_at, from_id])
@@ -374,7 +256,7 @@ class _QueryMixin:
         Returns:
             Count of matching sessions
         """
-        conditions, params = _build_session_filters(
+        conditions, params = build_session_filters(
             project_id,
             status,
             source,
@@ -399,7 +281,7 @@ class _QueryMixin:
         Returns:
             Dictionary mapping status to count
         """
-        conditions, params = _build_session_filters(project_id, None, None)
+        conditions, params = build_session_filters(project_id, None, None)
         where_clause = f"WHERE {' AND '.join(conditions)}"
         rows = self.db.fetchall(
             f"""

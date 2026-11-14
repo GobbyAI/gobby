@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shlex
 from pathlib import Path
 from typing import Any
@@ -267,7 +268,12 @@ def test_grok_build_command_omits_unlimited_max_turns() -> None:
 @pytest.mark.asyncio
 async def test_grok_adapter_captures_narrative_from_json(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    native_bin = tmp_path / "native-bin"
+    native_bin.mkdir()
+    monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(native_bin))
+
     async def fake_run(
         provider_name: str,
         command: list[str],
@@ -276,7 +282,7 @@ async def test_grok_adapter_captures_narrative_from_json(
         timeout_seconds: float,
         env_overrides: dict[str, str],
     ) -> str:
-        assert ".gobby/bin" in env_overrides["PATH"]
+        assert env_overrides["PATH"].split(os.pathsep)[0] == str(native_bin)
         return '{"text":"## Auth\\n\\nNarrative citing src/auth.rs:10.","stopReason":"EndTurn"}'
 
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)

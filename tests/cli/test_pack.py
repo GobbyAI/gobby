@@ -9,6 +9,7 @@ import os
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import IO
 from unittest.mock import MagicMock, call, patch
 
 import click
@@ -799,8 +800,9 @@ class TestFilesHomePack:
         assert result.exit_code == 0, result.output
         assert out_path.stat().st_size > 0
 
+    @pytest.mark.parametrize("mutation", ["replace", "rewrite", "during-copy"])
     def test_6_2_25_swap_after_prewalk_leaves_no_archive(
-        self, pack_env: PackEnv, tmp_path: Path, runner: CliRunner
+        self, pack_env: PackEnv, tmp_path: Path, runner: CliRunner, mutation: str
     ) -> None:
         from gobby.cli.hub_backup.files_home import FilesHomeArchiveHooks
 
@@ -808,8 +810,20 @@ class TestFilesHomePack:
         target = pack_env.files_home / "USER.md"
 
         def _swap(_entries: object) -> None:
-            target.unlink()
+            if mutation == "during-copy":
+                return
+            if mutation == "replace":
+                target.unlink()
             target.write_text("swapped", encoding="utf-8")
+
+        addfile = tarfile.TarFile.addfile
+
+        def _copy(
+            archive: tarfile.TarFile, info: tarfile.TarInfo, fileobj: IO[bytes] | None = None
+        ) -> None:
+            if mutation == "during-copy" and info.name.endswith("/USER.md"):
+                target.write_text("swapped", encoding="utf-8")
+            addfile(archive, info, fileobj)
 
         out_path = tmp_path / "out.tar.gz"
         with (
@@ -819,6 +833,7 @@ class TestFilesHomePack:
                 "gobby.cli.hub_backup.files_home._active_hooks",
                 FilesHomeArchiveHooks(after_prewalk=_swap),
             ),
+            patch.object(tarfile.TarFile, "addfile", _copy),
         ):
             result = runner.invoke(pack, [str(out_path)])
         assert result.exit_code != 0

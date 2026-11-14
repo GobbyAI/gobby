@@ -45,12 +45,8 @@ def _clear_spawn_session(sessions: SessionManager, predecessor: Session) -> Sess
         predecessor.machine_id,
         predecessor.source,
         project_id=predecessor.project_id,
-        agent_depth=predecessor.agent_depth,
+        agent_depth=0,
     )
-    if predecessor.agent_run_id is not None:
-        sessions.update_terminal_pickup_metadata(
-            successor.id, agent_run_id=predecessor.agent_run_id
-        )
     attempt = uuid4().hex
     stage_clear_attempt(
         sessions.db,
@@ -60,10 +56,17 @@ def _clear_spawn_session(sessions: SessionManager, predecessor: Session) -> Sess
         terminal_context=None,
         chat_context=None,
     )
-    assert take_clear_handoff_marker(
+    transferred = take_clear_handoff_marker(
         sessions.db, predecessor.id, attempt_id=attempt, successor_id=successor.id
     )
     updated = sessions.get(successor.id)
+    if predecessor.agent_run_id is not None:
+        assert not transferred
+        assert updated is not None
+        assert updated.parent_session_id is None and updated.agent_run_id is None
+        assert updated.agent_depth == 0
+        return predecessor
+    assert transferred
     assert updated is not None and updated.parent_session_id == predecessor.id
     return updated
 
@@ -71,7 +74,7 @@ def _clear_spawn_session(sessions: SessionManager, predecessor: Session) -> Sess
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cleared", ["root", "coordinator", "caller"])
 @pytest.mark.parametrize("allowed", [False, True], ids=["forbidden-target", "allowed-target"])
-async def test_spawn_scope_survives_clear(
+async def test_spawn_scope_respects_clear_lifecycle(
     spawn_caller: _SpawnCaller,
     cleared: str,
     allowed: bool,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import fcntl
 import hashlib
 import json
 import logging
@@ -178,6 +177,8 @@ _CONTAINER_FIELDS = frozenset(
 
 @contextmanager
 def _sidecar_lock(sidecar: str) -> Iterator[None]:
+    import fcntl
+
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
     with open(sidecar + ".lock", "a") as handle:
         fcntl.flock(handle, fcntl.LOCK_EX)

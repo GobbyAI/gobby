@@ -28,6 +28,7 @@ from ._registration_cache import _RegistrationCacheMixin
 from ._renumber import _RenumberMixin
 from ._session_mapping_cache import SessionMappingKey, _put_session_mapping
 from ._terminal import _TerminalMixin
+from ._terminal_lineage import _TerminalLineageMixin
 from ._transcript import _TranscriptMixin
 from ._update_sentinel import UNSET, UnsetType
 from ._usage import _UsageMixin
@@ -51,6 +52,7 @@ class SessionManager(
     _TranscriptMixin,
     _UsageMixin,
     _TerminalMixin,
+    _TerminalLineageMixin,
 ):
     """Manager for local session storage."""
 

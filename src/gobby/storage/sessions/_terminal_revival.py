@@ -21,10 +21,10 @@ from gobby.utils.datetime import utc_now
 from ._constants import LIVE_SESSION_STATUSES, get_logger, past_terminal_revival_horizon
 from ._contested_expiry import (
     clear_contested_terminal_expiry,
-    read_session_variables,
     session_has_active_native_subagent,
 )
 from ._operator_claim_hold import clear_operator_claim_hold
+from ._terminal_lineage import clear_successor_of
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -99,7 +99,7 @@ class _TerminalRevivalMixin:
         if current.status not in {*TERMINAL_OWNER_STATUSES, "expired"}:
             return current
 
-        successor_id = _clear_successor_of(self.db, current)
+        successor_id = clear_successor_of(self.db, current)
         if successor_id is not None:
             # The CLI cleared this session and a successor bound to the pane, so
             # the row is finished by construction. A late hook still carrying its
@@ -372,36 +372,3 @@ class _TerminalRevivalMixin:
                 )
 
         return self.get(session_id)
-
-
-def _clear_successor_of(db: HubDatabase, current: Session) -> str | None:
-    """Return the session that succeeded this row through a clear, if any.
-
-    A staged clear names its successor in the consumed clear marker. A native clear has
-    no marker: its successor links this row as parent and runs in the same CLI process.
-    A spawned child also links its parent but runs in its own process, so it never
-    matches.
-    """
-    # Module-level imports would be circular: both modules import this package.
-    from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
-    from gobby.sessions.handoff_identity import terminal_process_contexts_match
-
-    variables = read_session_variables(db, current.id, keys=(CLEAR_ATTEMPT_VARIABLE,))
-    marker = variables.get(CLEAR_ATTEMPT_VARIABLE) if variables else None
-    consumed_by = marker.get("consumed_by") if isinstance(marker, dict) else None
-    if isinstance(consumed_by, str) and consumed_by and consumed_by != current.id:
-        return consumed_by
-    if not current.terminal_context:
-        return None
-    rows = db.fetchall(
-        """
-        SELECT id, terminal_context FROM sessions
-        WHERE parent_session_id = %s AND id <> %s AND source = %s
-          AND session_type = 'terminal' AND status = ANY(%s)
-        """,
-        (current.id, current.id, current.source, list(LIVE_SESSION_STATUSES)),
-    )
-    for row in rows:
-        if terminal_process_contexts_match(row["terminal_context"], current.terminal_context):
-            return str(row["id"])
-    return None

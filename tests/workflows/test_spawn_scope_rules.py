@@ -193,7 +193,7 @@ class TestLimitSpawnableAgents:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("cleared", ["root", "coordinator", "caller"])
     @pytest.mark.parametrize("allowed", [False, True], ids=["forbidden-target", "allowed-target"])
-    async def test_rule_spawn_scope_survives_clear(
+    async def test_rule_spawn_scope_respects_clear_lifecycle(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
@@ -208,11 +208,7 @@ class TestLimitSpawnableAgents:
             predecessor.machine_id,
             predecessor.source,
             project_id=predecessor.project_id,
-            agent_depth=predecessor.agent_depth,
-        )
-        session_manager.update_terminal_pickup_metadata(
-            successor.id,
-            agent_run_id=predecessor.agent_run_id,
+            agent_depth=0,
         )
         attempt = uuid4().hex
         stage_clear_attempt(
@@ -223,10 +219,19 @@ class TestLimitSpawnableAgents:
             terminal_context=None,
             chat_context=None,
         )
-        assert take_clear_handoff_marker(
+        transferred = take_clear_handoff_marker(
             temp_db, predecessor.id, attempt_id=attempt, successor_id=successor.id
         )
-        caller_id = callers["lister"].id if cleared == "coordinator" else successor.id
+        if cleared == "caller":
+            assert not transferred
+            unbound = session_manager.get(successor.id)
+            assert unbound is not None
+            assert unbound.agent_run_id is None and unbound.parent_session_id is None
+            assert unbound.agent_depth == 0
+            caller_id = predecessor.id
+        else:
+            assert transferred
+            caller_id = callers["lister"].id if cleared == "coordinator" else successor.id
         target = "spawn-scope-worker" if allowed else "spawn-scope-other"
         response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
             _spawn_event(caller_id, "spawn_agent", target),
@@ -598,7 +603,7 @@ class TestLimitSpawnNetworkOverride:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("owner", ["default", "fixture-coordinator"])
-    async def test_clear_successor_keeps_the_runs_authority(
+    async def test_refused_clear_does_not_authorize_borrowed_run(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
@@ -617,7 +622,7 @@ class TestLimitSpawnNetworkOverride:
             terminal_context=None,
             chat_context=None,
         )
-        assert take_clear_handoff_marker(
+        assert not take_clear_handoff_marker(
             temp_db, predecessor.id, attempt_id=attempt, successor_id=successor.id
         )
 
@@ -627,7 +632,14 @@ class TestLimitSpawnNetworkOverride:
             variables={},
         )
 
-        assert response.decision == "allow"
+        assert response.decision == "block"
+        assert response.reason is not None and LIMIT_SPAWN_NETWORK_OVERRIDE in response.reason
+        original = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(predecessor.id, "spawn_agent", "spawn-scope-worker", network="trusted"),
+            session_id=predecessor.id,
+            variables={},
+        )
+        assert original.decision == "allow"
 
     def test_missing_caller_identity_refuses_an_override(
         self, session_manager: SessionManager

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
 import re
@@ -345,6 +344,8 @@ def ensure_srt_monitor(
     The private socket is outside managed execution grants. A live incompatible
     broker is never replaced under its subscribers.
     """
+    import fcntl
+
     directory = srt_mux_tmpdir()
     # Version-addressed sockets let the old cohort drain during a component
     # update without killing its monitoring or blocking the new cohort.

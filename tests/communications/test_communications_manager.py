@@ -38,6 +38,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.agent_definitions import seed_seat
 
@@ -102,9 +103,7 @@ async def test_operator_dm_clears_topic_thread_without_detaching(
     )
     assert handler is not None
     try:
-        with patch(
-            "gobby.mcp_proxy.tools.communications.get_current_session_id", return_value=caller.id
-        ):
+        with session_context_for_test(caller.id):
             if attachment:
                 report = tmp_path / "gobby-digest-2026-09-27.md"
                 report.write_text("# Systems nominal\n")
@@ -112,7 +111,7 @@ async def test_operator_dm_clears_topic_thread_without_detaching(
                 result = await handler(channel=channel.name, file_path=str(report))
             else:
                 result = await handler(channel=channel.name, content="**Status**")
-        assert result["success"] is True
+        assert result["success"] is True, result
         sent = (adapter.send_attachment if attachment else adapter.send_message).call_args.args[0]
         assert sent.session_id == caller.id
         assert sent.metadata_json["platform_destination"] == "42"

@@ -68,6 +68,7 @@ class RecordingGateway(GcodeGateway):
         self.calls: list[tuple[Path, tuple[str, ...], float | None]] = []
         self.envs: list[dict[str, str] | None] = []
         self.outcomes: deque[GcodeCommandResult | BaseException] = deque()
+        self.call_recorded = asyncio.Event()
 
     async def incremental_index(
         self,
@@ -80,6 +81,7 @@ class RecordingGateway(GcodeGateway):
     ) -> GcodeCommandResult:
         self.calls.append((project_root, tuple(files), timeout))
         self.envs.append(dict(env) if env is not None else None)
+        self.call_recorded.set()
         if not self.outcomes:
             return _result(timeout_seconds=timeout or 0.01)
         outcome = self.outcomes.popleft()
@@ -108,6 +110,7 @@ class FirstCallBlockingGateway(RecordingGateway):
     ) -> GcodeCommandResult:
         self.calls.append((project_root, tuple(files), timeout))
         self.envs.append(dict(env) if env is not None else None)
+        self.call_recorded.set()
         self.active_calls += 1
         self.max_active_calls = max(self.max_active_calls, self.active_calls)
         try:
@@ -159,19 +162,20 @@ def _cancel_scheduled_callback(trigger: CodeIndexTrigger, root_key: str) -> None
 
 
 async def _wait_for_call_count(gateway: RecordingGateway, expected: int) -> None:
-    for _ in range(20):
-        if len(gateway.calls) >= expected:
-            return
-        await _next_loop_turn()
-    pytest.fail(f"expected {expected} gateway calls, received {len(gateway.calls)}")
+    async with asyncio.timeout(5):
+        while len(gateway.calls) < expected:
+            gateway.call_recorded.clear()
+            await gateway.call_recorded.wait()
 
 
-async def _wait_for_suspension(trigger: CodeIndexTrigger, root_key: str) -> None:
-    for _ in range(20):
-        if root_key in trigger._suspended_by_root:
-            return
-        await _next_loop_turn()
-    pytest.fail(f"expected a suspended batch for {root_key}")
+async def _wait_for_suspension(
+    trigger: CodeIndexTrigger, root_key: str, gateway: RecordingGateway
+) -> None:
+    await _wait_for_call_count(gateway, 1)
+    tasks = tuple(trigger._active_tasks_by_root.get(root_key, ()))
+    async with asyncio.timeout(5):
+        await asyncio.gather(*tasks)
+    assert root_key in trigger._suspended_by_root
 
 
 async def _wait_for_scheduled_callback(
@@ -301,7 +305,7 @@ async def test_flush_passes_overlay_claim_to_launch_factory(tmp_path: Path) -> N
         loop=asyncio.get_running_loop(),
         retry_base_seconds=5.0,
         retry_max_seconds=10.0,
-        index_timeout_seconds=0.01,
+        index_timeout_seconds=5.0,
         gcode_gateway=gateway,
         daemon_config_breaker=breaker,
         launch_factory=cast(Any, RecordingLaunchFactory()),
@@ -310,7 +314,7 @@ async def test_flush_passes_overlay_claim_to_launch_factory(tmp_path: Path) -> N
     worktree.mkdir()
     gateway.outcomes.append(_result(returncode=2, stderr='{"error":"checkout_required"}'))
     trigger.notify_file_changed(str(worktree / "src" / "foo.py"), "parent-project", str(worktree))
-    await _wait_for_suspension(trigger, str(worktree))
+    await _wait_for_suspension(trigger, str(worktree), gateway)
     assert opened == [("parent-project", None)]
 
     (worktree / ".gobby").mkdir()
@@ -352,7 +356,7 @@ async def test_checkout_failure_waits_for_changed_file(
 
     with caplog.at_level(logging.WARNING, logger="gobby.code_index.trigger"):
         harness.trigger.notify_file_changed(str(file_path), "proj-1", root_key)
-        await _wait_for_suspension(harness.trigger, root_key)
+        await _wait_for_suspension(harness.trigger, root_key, harness.gateway)
         assert harness.trigger._pending_by_root[root_key] == {"src/foo.py"}
         assert root_key not in harness.trigger._scheduled_by_root
 
@@ -385,7 +389,7 @@ async def test_checkout_marker_repair_wakes_suspended_batch_with_same_overlay_id
     harness.gateway.outcomes.append(_result(returncode=2, stderr='{"error":"checkout_mismatch"}'))
 
     harness.trigger.notify_file_changed("src/foo.py", "proj-1", root_key)
-    await _wait_for_suspension(harness.trigger, root_key)
+    await _wait_for_suspension(harness.trigger, root_key, harness.gateway)
     assert harness.trigger._suspended_by_root[root_key].overlay_id == overlay_id
 
     marker.write_text(
