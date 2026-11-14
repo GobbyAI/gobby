@@ -115,17 +115,20 @@ def hook_client(receipts_db: HubDatabase) -> Iterator[TestClient]:
     )
     # Preconfigured managers are reused by the lifespan instead of being rebuilt,
     # which is what keeps this HookManager pointed at the test hub.
-    manager = HookManager(
-        database=receipts_db,
-        session_manager=sessions,
-        config=DaemonConfig(),
-    )
-    server.app.state.hook_manager = manager
-    try:
-        with TestClient(server.app) as client:
-            yield client
-    finally:
-        manager.shutdown()
+    with patch("gobby.hooks.factory.HealthMonitor", autospec=True) as monitor:
+        monitor.return_value.get_cached_status.return_value = (True, None, "running", None)
+        monitor.return_value.check_now.return_value = True
+        manager = HookManager(
+            database=receipts_db,
+            session_manager=sessions,
+            config=DaemonConfig(),
+        )
+        server.app.state.hook_manager = manager
+        try:
+            with TestClient(server.app) as client:
+                yield client
+        finally:
+            manager.shutdown()
 
 
 def _create_session(db: HubDatabase, session_id: str) -> None:
