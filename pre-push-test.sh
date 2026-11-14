@@ -487,7 +487,14 @@ echo ">>> Running Cargo workspace tests..."
 CARGO_REPORT="$REPORTS_DIR/cargo-$TIMESTAMP.txt"
 CARGO_EXIT=0
 if {
-    cargo nextest run --profile ci --workspace --no-default-features -E 'not binary(catalog_manifest_freshness)' &&
+    # Rust fixtures need the isolated hub before the later pytest section.
+    RUST_TEST_DATABASE_URL=$(resolve_pytest_database_url) &&
+        RUST_TEST_DATABASE_URL="${RUST_TEST_DATABASE_URL/@localhost:/@127.0.0.1:}" &&
+        DATABASE_URL="$RUST_TEST_DATABASE_URL" \
+            GOBBY_TEST_PROTECT=1 \
+            GOBBY_TEST_POSTGRES_URL="$RUST_TEST_DATABASE_URL" \
+            GOBBY_TERMINALS_TEST_DATABASE_URL="$RUST_TEST_DATABASE_URL" \
+            cargo nextest run --profile ci --workspace --no-default-features -E 'not binary(catalog_manifest_freshness)' &&
         cargo test --doc --workspace --no-default-features
 } 2>&1 | tee "$CARGO_REPORT"; then
     echo "✓ Cargo tests passed"
@@ -548,6 +555,9 @@ echo ">>> Running pytest with coverage..."
 PYTEST_ISOLATION_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gobby-pre-push-${TIMESTAMP}.XXXXXX")
 PYTEST_REPORT="$REPORTS_DIR/pytest-$TIMESTAMP.txt"
 PYTEST_EXIT=0
+# The native-bin fallback intentionally uses the caller's HOME; only pytest
+# receives the isolated HOME in its child environment.
+# shellcheck disable=SC2097,SC2098
 if ! PYTEST_DATABASE_URL=$(resolve_pytest_database_url); then
     PYTEST_EXIT=1
     echo "✗ Failed to resolve PostgreSQL DATABASE_URL for pytest"

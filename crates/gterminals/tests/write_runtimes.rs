@@ -5,7 +5,7 @@ use super::common;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -68,7 +68,8 @@ impl FakeHost {
     fn start(script: Script, bad_pid: bool) -> Self {
         let dir = TempDir::new().unwrap();
         let binary = dir.path().join("gterm");
-        std::fs::copy("/bin/sleep", &binary).unwrap();
+        // A shell builtin keeps the named host alive without multicall dispatch.
+        std::fs::copy("/bin/bash", &binary).unwrap();
         #[cfg(target_os = "macos")]
         assert!(
             Command::new("/usr/bin/codesign")
@@ -80,7 +81,11 @@ impl FakeHost {
                 .success(),
             "identity fixture executable must be signed before launch"
         );
-        let process = Command::new(&binary).arg("600").spawn().unwrap();
+        let process = Command::new(&binary)
+            .args(["-c", "read -r line"])
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
         let pid = process.id();
         std::fs::write(dir.path().join("gterm.pid"), pid.to_string()).unwrap();
         std::fs::write(dir.path().join("gterm-control.token"), format!("{TOKEN}\n")).unwrap();

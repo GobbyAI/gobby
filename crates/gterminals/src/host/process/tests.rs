@@ -10,7 +10,8 @@ use super::process_is_host;
 /// Copies the shell to `<dir>/gterm`, signed like the host_lifecycle fixture.
 fn named_gterm(dir: &Path) -> PathBuf {
     let binary = dir.join("gterm");
-    std::fs::copy("/bin/sh", &binary).unwrap();
+    // macOS /bin/sh launches another executable, changing the process name.
+    std::fs::copy("/bin/bash", &binary).unwrap();
     #[cfg(target_os = "macos")]
     assert!(
         Command::new("/usr/bin/codesign")
@@ -52,7 +53,7 @@ async fn gterm_stays_the_host_after_its_binary_is_replaced_and_unlinked() {
         .unwrap();
     // Promotion renames a new inode over the name; then the name goes away too.
     let staged = dir.path().join(".gterm.new");
-    std::fs::copy("/bin/sh", &staged).unwrap();
+    std::fs::copy("/bin/bash", &staged).unwrap();
     std::fs::rename(&staged, &binary).unwrap();
     std::fs::remove_file(&binary).unwrap();
     let observed = process_is_host(child.id()).await;

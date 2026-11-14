@@ -17,7 +17,14 @@ fn link_artifacts_live_under_the_cargo_target_dir() {
         .and_then(Path::parent)
         .expect("crates/gterminal -> workspace");
     let output = Command::new("cargo")
-        .args(["build", "-p", "gobby-terminal", "--features", "vt-engine"])
+        .args([
+            "build",
+            "-p",
+            "gobby-terminal",
+            "--features",
+            "vt-engine",
+            "--message-format=json",
+        ])
         .current_dir(workspace)
         .env("CARGO_TARGET_DIR", &target_dir)
         .env("CARGO_TERM_COLOR", "never")
@@ -29,17 +36,29 @@ fn link_artifacts_live_under_the_cargo_target_dir() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let build_dir = target_dir.join("debug/build");
-    let script_outputs: Vec<PathBuf> = fs::read_dir(&build_dir)
-        .expect("read build dir")
-        .map(|entry| entry.expect("build dir entry").path())
-        .filter(|dir| {
-            dir.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("gobby-terminal-"))
+    let package_suffix = format!("#{}@{}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+    let script_outputs: Vec<PathBuf> = serde_json::Deserializer::from_slice(&output.stdout)
+        .into_iter::<serde_json::Value>()
+        .filter_map(|message| {
+            let message = message.expect("Cargo JSON message");
+            if message["reason"] != "build-script-executed"
+                || !message["package_id"]
+                    .as_str()
+                    .is_some_and(|id| id.ends_with(&package_suffix))
+            {
+                return None;
+            }
+            let out_dir = Path::new(message["out_dir"].as_str().expect("build-script out_dir"));
+            Some(
+                out_dir
+                    .parent()
+                    .expect("build-script directory")
+                    .to_path_buf(),
+            )
         })
-        .map(|dir| dir.join("output"))
-        .filter(|output| output.is_file())
+        // Cargo 1.100 moved the captured directives from output to run/stdout.
+        .flat_map(|dir| [dir.join("run/stdout"), dir.join("output")])
+        .filter(|path| path.is_file())
         .collect();
     assert_eq!(
         script_outputs.len(),
