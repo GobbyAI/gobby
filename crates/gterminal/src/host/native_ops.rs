@@ -34,10 +34,11 @@ impl std::fmt::Display for KillGroupError {
 }
 
 pub(crate) fn kill_group(pgid: i32, signal: i32) -> Result<(), KillGroupError> {
-    if pgid <= 0 {
+    if pgid <= 1 {
         return Err(KillGroupError::InvalidPgid);
     }
-    // SAFETY: positive process groups are required above; libc reports any OS error.
+    // SAFETY: pgid > 1 excludes killpg(1), which becomes the kill(-1) broadcast.
+    // libc reports any OS error for the remaining process group selectors.
     if unsafe { libc::killpg(pgid, signal) } == 0 {
         Ok(())
     } else {
@@ -84,7 +85,7 @@ enum KillSignal {
 
 /// Signal the group (TERM first unless `Kill`), SIGKILL it after `grace`, and report whether it is gone.
 async fn terminate_group(pgid: i32, grace: Duration, signal: KillSignal) -> bool {
-    if pgid <= 0 {
+    if pgid <= 1 {
         return false;
     }
     if signal == KillSignal::Term {
@@ -503,6 +504,19 @@ impl HostState {
         extra: &Map<String, Value>,
         grace_ms: Option<u64>,
     ) -> Value {
+        self.kill_with(extra, grace_ms, terminate_group).await
+    }
+
+    async fn kill_with<F, Fut>(
+        self: &Arc<Self>,
+        extra: &Map<String, Value>,
+        grace_ms: Option<u64>,
+        terminate: F,
+    ) -> Value
+    where
+        F: FnOnce(i32, Duration, KillSignal) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = bool> + Send,
+    {
         // Absent means TERM: Python callers send kill without the field.
         let signal = match extra.get("signal") {
             None => KillSignal::Term,
@@ -546,7 +560,7 @@ impl HostState {
         let grace = Duration::from_millis(grace_ms);
         let proof = tokio::spawn(async move {
             let _gate = gate;
-            let proven = terminate_group(pgid, grace, signal).await;
+            let proven = terminate(pgid, grace, signal).await;
             let mut inner = state.inner.lock().await;
             let retired = if proven {
                 remove_terminal_slot(&mut inner, &identity, None)

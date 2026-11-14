@@ -4,6 +4,7 @@ use crate::host::snapshot::{snapshot_mode, truncate_snapshot};
 use crate::host::state::{insert_native_slot, HostState};
 use crate::protocol::SnapshotMode;
 use serde_json::{json, Map, Value};
+use std::os::unix::process::CommandExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -35,13 +36,25 @@ async fn listed(state: &HostState, host_terminal_id: &str) -> bool {
         .any(|row| row["host_terminal_id"] == host_terminal_id)
 }
 
+struct LiveGroup(std::process::Child);
+
+impl Drop for LiveGroup {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn live_group() -> LiveGroup {
+    let mut command = std::process::Command::new("sleep");
+    command.arg("30").process_group(0);
+    LiveGroup(command.spawn().expect("spawn owned process group"))
+}
+
 #[tokio::test]
 async fn unproven_kill_stays_listed_and_refuses_overlap() {
-    // SAFETY: geteuid has no preconditions.
-    if unsafe { libc::geteuid() } == 0 {
-        eprintln!("skipped: as root, signalling process group 1 would reach init");
-        return;
-    }
+    let mut child = live_group();
+    let pgid = i32::try_from(child.0.id()).expect("pid fits pgid");
     let (shutdown, _) = watch::channel(false);
     let state = HostState::new(
         HostConfig::default(),
@@ -55,23 +68,29 @@ async fn unproven_kill_stays_listed_and_refuses_overlap() {
     {
         let mut inner = state.inner.lock().await;
         let identity = inner.by_host_id["ht-unprovable"].clone();
-        // A group this user may not signal answers every probe with EPERM,
-        // so its death can never be proven.
-        inner.terminals.get_mut(&identity).expect("slot").pgid = 1;
+        inner.terminals.get_mut(&identity).expect("slot").pgid = pgid;
     }
     let target = object(json!({"host_terminal_id": "ht-unprovable"}));
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let (release, held) = tokio::sync::oneshot::channel();
     let first = tokio::spawn({
         let state = Arc::clone(&state);
         let target = target.clone();
-        async move { state.kill(&target, Some(0)).await }
-    });
-    tokio::time::timeout(Duration::from_secs(1), async {
-        while slot_killing(&state, "ht-unprovable").await != Some(true) {
-            tokio::task::yield_now().await;
+        async move {
+            state
+                .kill_with(&target, Some(0), move |target_pgid, _, _| async move {
+                    assert_eq!(target_pgid, pgid);
+                    started.send(()).expect("announce proof");
+                    held.await.expect("release proof");
+                    false
+                })
+                .await
         }
-    })
-    .await
-    .expect("kill marks the slot in flight");
+    });
+    tokio::time::timeout(Duration::from_secs(1), ready)
+        .await
+        .expect("proof starts")
+        .expect("proof announced");
 
     assert!(
         listed(&state, "ht-unprovable").await,
@@ -87,6 +106,7 @@ async fn unproven_kill_stays_listed_and_refuses_overlap() {
         .await;
     assert_eq!(commit["error"], "not_found", "{commit}");
 
+    release.send(()).expect("release unproven result");
     let outcome = first.await.expect("kill task");
     assert_eq!(outcome["error"], "kill_unproven", "{outcome}");
     assert!(
@@ -100,15 +120,14 @@ async fn unproven_kill_stays_listed_and_refuses_overlap() {
         inner.terminals[identity].kill_unproven,
         "unproven kill left no mark for a later leader exit"
     );
+    child.0.kill().expect("kill owned group");
+    child.0.wait().expect("reap owned group");
 }
 
 #[tokio::test]
 async fn leader_exit_after_unproven_kill_waits_for_its_group() {
-    // SAFETY: geteuid has no preconditions.
-    if unsafe { libc::geteuid() } == 0 {
-        eprintln!("skipped: as root, process group 1 probes as signallable");
-        return;
-    }
+    let mut child = live_group();
+    let pgid = i32::try_from(child.0.id()).expect("pid fits pgid");
     let (shutdown, _) = watch::channel(false);
     let state = HostState::new(
         HostConfig::default(),
@@ -123,10 +142,9 @@ async fn leader_exit_after_unproven_kill_waits_for_its_group() {
         let mut inner = state.inner.lock().await;
         let identity = inner.by_host_id["ht-lingering"].clone();
         let slot = inner.terminals.get_mut(&identity).expect("slot");
-        // A kill that could not prove the group gone, whose group still
-        // answers probes (EPERM reads as alive).
+        // A kill that could not prove the owned group gone.
         slot.kill_unproven = true;
-        slot.pgid = 1;
+        slot.pgid = pgid;
         identity
     };
 
@@ -141,15 +159,8 @@ async fn leader_exit_after_unproven_kill_waits_for_its_group() {
         "slot of a live group dropped"
     );
 
-    let mut reaped = std::process::Command::new("true")
-        .spawn()
-        .expect("spawn true");
-    let dead_pgid = i32::try_from(reaped.id()).expect("pid fits pgid");
-    reaped.wait().expect("reap true");
-    {
-        let mut inner = state.inner.lock().await;
-        inner.terminals.get_mut(&identity).expect("slot").pgid = dead_pgid;
-    }
+    child.0.kill().expect("kill owned group");
+    child.0.wait().expect("reap owned group");
     assert!(
         state
             .settle_leader_exit(&identity, "ht-lingering", Some(0), false)
@@ -261,8 +272,6 @@ async fn kill_that_removes_the_slot_first_leaves_the_exit_watcher_silent() {
 #[cfg(feature = "vt-engine")]
 #[tokio::test]
 async fn shutdown_drain_reaches_a_group_retained_after_an_unproven_kill() {
-    use std::os::unix::process::CommandExt;
-
     let (shutdown, _) = watch::channel(false);
     let state = HostState::new(
         HostConfig::default(),
@@ -305,7 +314,9 @@ async fn shutdown_drain_reaches_a_group_retained_after_an_unproven_kill() {
 }
 
 #[test]
-fn kill_group_refuses_non_positive_pgid() {
+fn kill_group_refuses_broadcast_and_non_positive_pgid() {
+    // Signal zero safely exercises the broadcast selector before the guard exists.
+    assert!(matches!(kill_group(1, 0), Err(KillGroupError::InvalidPgid)));
     assert!(matches!(
         kill_group(0, libc::SIGTERM),
         Err(KillGroupError::InvalidPgid)
