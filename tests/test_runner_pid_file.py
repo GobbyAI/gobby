@@ -969,6 +969,16 @@ class TestInheritedClaim:
 
 
 class TestStartStopBarriers:
+    @pytest.fixture(autouse=True)
+    def activation_preflight(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # These tests exercise singleton barriers after activation preflight.
+        monkeypatch.setattr(
+            "gobby.releases.activation.agent_activation_refusal", lambda _operation: None
+        )
+        monkeypatch.setattr(
+            "gobby.storage.schema_divergence.binary_set_apply_refusal", lambda *_args: None
+        )
+
     def test_start_refuses_maintenance_before_services(self, tmp_path: Path) -> None:
         pid_file = tmp_path / "gobby.pid"
         claim = claim_pid_file(pid_file, role="maintenance")

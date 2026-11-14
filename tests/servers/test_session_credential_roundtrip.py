@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterator
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,6 +42,14 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 # The test process stands in for the session's CLI, so the row names its real start time.
 _STARTED = psutil.Process(os.getpid()).create_time()
+
+
+@pytest.fixture(autouse=True)
+def ready_health_monitor() -> Iterator[None]:
+    with patch("gobby.hooks.factory.HealthMonitor", autospec=True) as monitor:
+        monitor.return_value.get_cached_status.return_value = (True, None, "running", None)
+        monitor.return_value.check_now.return_value = True
+        yield
 
 
 @pytest.mark.parametrize("in_tmux", [False, True])

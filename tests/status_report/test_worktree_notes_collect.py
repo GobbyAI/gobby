@@ -128,7 +128,8 @@ def test_note_written_before_a_change_is_unreconciled(
     tree = LocalWorktreeManager(temp_db).create(
         project_id, "task-7", str(repo), base_branch=BRANCH, task_id=str(task.id)
     )
-    note_at = datetime.now(UTC)
+    # Linux metadata clocks can lag the wall clock by a filesystem timestamp tick.
+    note_at = datetime.now(UTC) - timedelta(seconds=1)
     change(repo)
     _note(temp_db, tree.id, note_at)
 

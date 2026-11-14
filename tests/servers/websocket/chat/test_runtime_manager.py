@@ -361,10 +361,10 @@ class TestWebChatRuntimeManager:
         assert isinstance(session, CodexManagedChatSession)
 
         backend = manager._codex_endpoint_backends["openrouter"]
-        backend.start = AsyncMock()
         backend._health.available = True
         client = backend.client
         assert client is not None
+        client.start = AsyncMock()
         assert "mcp_servers.gobby.required=true" in client._config_overrides
         assert "mcp_servers.gobby.enabled=true" in client._config_overrides
         client.start_thread = AsyncMock(

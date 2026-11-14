@@ -237,15 +237,17 @@ async def test_git_commands_start_their_own_process_group_without_forking(
     assert isinstance(streamed, GitOk)
     assert b"".join(chunks) == b"show"
     git = str(tmp_path / "git")
-    assert [(path, argv[:3]) for path, argv, _kwargs, _thread in spawn_calls] == [
+    # Builds without POSIX_SPAWN_SETSID also spawn the session trampoline.
+    git_calls = [call for call in spawn_calls if call[0] == git]
+    assert [(path, argv[:3]) for path, argv, _kwargs, _thread in git_calls] == [
         (git, (git, "-C", str(tmp_path)))
     ] * 3
-    assert spawn_calls[0][1][3:] == ("rev-parse", "HEAD")
+    assert git_calls[0][1][3:] == ("rev-parse", "HEAD")
     # Its own session, as Popen's start_new_session: killpg still reaches the group, and a
     # credential prompt cannot stop Git with SIGTTIN from the daemon's terminal.
     assert all(
         kwargs.get("setsid") is True and "setpgroup" not in kwargs
-        for _path, _argv, kwargs, _thread in spawn_calls
+        for _path, _argv, kwargs, _thread in git_calls
     )
     assert loop_thread not in {thread for _path, _argv, _kwargs, thread in spawn_calls}
 

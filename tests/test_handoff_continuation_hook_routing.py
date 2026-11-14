@@ -12,8 +12,8 @@ from uuid import uuid4
 
 import pytest
 
-from gobby.utils.native_bin import local_native_bin_path
 from tests.e2e.handoff_continuation_launch import provider_launch, seat_environment
+from tests.native_binary_selection import select_native_binary
 
 pytestmark = [pytest.mark.integration, pytest.mark.cli]
 
@@ -65,8 +65,9 @@ def receiver() -> Iterator[tuple[int, Queue[dict[str, object]]]]:
 def test_native_hooks_override_ambient_daemon_url(
     tmp_path: Path, provider: str, event: str
 ) -> None:
-    binary = local_native_bin_path("ghook")
-    assert binary.is_file(), f"{provider}: installed ghook required for CLI routing contract"
+    selected = select_native_binary("ghook", required=True)
+    assert selected is not None
+    binary = selected.path
     with receiver() as (foreign_port, foreign), receiver() as (isolated_port, isolated):
         ambient = {
             "HOME": str(tmp_path / "normal-home"),

@@ -243,21 +243,16 @@ def _clear_invoking_agent_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
     from gobby.utils.local_token import GOBBY_MANAGED_EXECUTION_ID_ENV
 
-    for name in (
-        constants.GOBBY_SESSION_ID,
-        constants.GOBBY_PARENT_SESSION_ID,
-        constants.GOBBY_AGENT_RUN_ID,
-        constants.GOBBY_AGENT_API_TOKEN,
+    identity_names = {
+        name
+        for name in constants.ALL_TERMINAL_ENV_VARS
+        if name.startswith("GOBBY_") and name != "GOBBY_DAEMON_URL"
+    } | {
         GOBBY_MANAGED_EXECUTION_ID_ENV,
         MANAGED_EXECUTION_BOOTSTRAP_ENV,
-        constants.GOBBY_WORKFLOW_NAME,
-        constants.GOBBY_PROJECT_ID,
-        constants.GOBBY_AGENT_DEPTH,
-        constants.GOBBY_MAX_AGENT_DEPTH,
-        constants.GOBBY_PROMPT,
-        constants.GOBBY_PROMPT_FILE,
         *constants.IDENTITY_ENV_VARS,
-    ):
+    }
+    for name in identity_names:
         monkeypatch.delenv(name, raising=False)
 
 
@@ -649,6 +644,8 @@ def _init_git_repo(repo_path: Path) -> None:
         timeout=10,
     )
     (repo_path / "README.md").write_text("test project\n")
+    for name, value in (("user.name", "Gobby Tests"), ("user.email", "gobby-tests@example.com")):
+        subprocess.run(["git", "config", name, value], cwd=repo_path, check=True, timeout=10)
     subprocess.run(["git", "add", "README.md"], cwd=repo_path, check=True, timeout=10)
     subprocess.run(
         [

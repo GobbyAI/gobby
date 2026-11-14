@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import time
 from pathlib import Path
 from threading import Event, Thread
@@ -28,7 +29,9 @@ from gobby.utils.machine_id import require_machine_id
 
 pytestmark = pytest.mark.unit
 
-COMMIT = "51151d39d1f7d0a882e08eec2a936052f03f901d"
+COMMIT = subprocess.check_output(
+    ["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[3], text=True
+).strip()
 
 
 def _service(temp_db: HubDatabase) -> ExpansionService:
