@@ -186,7 +186,7 @@ pub(super) fn audited_query_embedding(
         )));
     }
     #[cfg(feature = "ai")]
-    let embedding = {
+    {
         let mut source = gobby_core::ai_context::LocalAiConfigSource::empty();
         let mut context = AiContext::resolve(Some(ctx.project_id.clone()), &mut source);
         context.bindings.embed.api_base = Some(expected_endpoint.to_string());
@@ -200,26 +200,26 @@ pub(super) fn audited_query_embedding(
                 result.model, result.dim
             )));
         }
-        result.embeddings.into_iter().next().ok_or_else(|| {
+        let embedding = result.embeddings.into_iter().next().ok_or_else(|| {
             VectorLifecycleError::EmbeddingResponse(
                 "daemon embedding response was empty".to_string(),
             )
-        })?
-    };
-    #[cfg(not(feature = "ai"))]
-    let embedding = {
-        let _ = (ctx, query, expected_endpoint, expected_model);
-        return Err(VectorLifecycleError::EmbeddingResponse(
-            "gcode built without the ai feature".to_string(),
-        ));
-    };
-    if embedding.len() != expected_dimension {
-        return Err(VectorLifecycleError::EmbeddingResponse(format!(
-            "query embedding returned {} dimension(s), expected {expected_dimension}",
-            embedding.len()
-        )));
+        })?;
+        if embedding.len() != expected_dimension {
+            return Err(VectorLifecycleError::EmbeddingResponse(format!(
+                "query embedding returned {} dimension(s), expected {expected_dimension}",
+                embedding.len()
+            )));
+        }
+        Ok(embedding)
     }
-    Ok(embedding)
+    #[cfg(not(feature = "ai"))]
+    {
+        let _ = (query, expected_dimension);
+        Err(VectorLifecycleError::EmbeddingResponse(
+            "gcode built without the ai feature".to_string(),
+        ))
+    }
 }
 
 #[cfg(feature = "ai")]

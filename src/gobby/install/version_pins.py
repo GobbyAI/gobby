@@ -5,7 +5,7 @@ from __future__ import annotations
 MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     # Floors track shipped helper versions.
     "ghook": "0.9.83",
-    "gcode": "1.9.121",
+    "gcode": "1.9.122",
     "gdaemon": "0.4.169",
     "gterm": "0.1.34",
     "gclient": "0.1.139",
