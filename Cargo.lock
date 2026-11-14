@@ -2405,7 +2405,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-client"
-version = "0.1.138"
+version = "0.1.139"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2640,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-terminal"
-version = "0.1.33"
+version = "0.1.34"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -2662,7 +2662,6 @@ dependencies = [
  "tracing-subscriber",
  "unicode-width",
  "uuid",
- "widestring",
  "windows-sys 0.61.2",
  "wmi",
  "yaml_serde",

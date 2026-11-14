@@ -139,6 +139,44 @@ def test_pre_push_keeps_native_binaries_when_isolating_home(
     assert result.stdout.splitlines() == [str(expected), str(isolated_home / "home")]
 
 
+@pytest.mark.parametrize("explicit", [False, True], ids=["default", "explicit"])
+def test_pre_push_keeps_rust_toolchain_when_isolating_home(
+    repo_root: Path, tmp_path: Path, explicit: bool
+) -> None:
+    script = (repo_root / "pre-push-test.sh").read_text()
+    start = script.index("elif DATABASE_URL=") + len("elif ")
+    end = script.index("uv_run pytest", start)
+    env = {
+        key: value for key, value in os.environ.items() if key not in {"CARGO_HOME", "RUSTUP_HOME"}
+    }
+    original_home = tmp_path / "original home"
+    isolated_home = tmp_path / "isolated home"
+    env["HOME"] = str(original_home)
+    env["PYTEST_ISOLATION_DIR"] = str(isolated_home)
+    cargo_home = tmp_path / "cargo cache" if explicit else original_home / ".cargo"
+    rustup_home = tmp_path / "rust toolchain" if explicit else original_home / ".rustup"
+    if explicit:
+        env.update(CARGO_HOME=str(cargo_home), RUSTUP_HOME=str(rustup_home))
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            script[start:end] + 'bash -c \'printf "%s\\n" "$CARGO_HOME" "$RUSTUP_HOME" "$HOME"\'',
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [
+        str(cargo_home),
+        str(rustup_home),
+        str(isolated_home / "home"),
+    ]
+
+
 @pytest.mark.parametrize(
     ("filename", "job_name", "build_name"),
     [

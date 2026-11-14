@@ -555,8 +555,8 @@ echo ">>> Running pytest with coverage..."
 PYTEST_ISOLATION_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gobby-pre-push-${TIMESTAMP}.XXXXXX")
 PYTEST_REPORT="$REPORTS_DIR/pytest-$TIMESTAMP.txt"
 PYTEST_EXIT=0
-# The native-bin fallback intentionally uses the caller's HOME; only pytest
-# receives the isolated HOME in its child environment.
+# Toolchain and native-bin fallbacks use the caller's HOME so fixture builds
+# retain rustup and offline Cargo dependencies while pytest gets an isolated HOME.
 # shellcheck disable=SC2097,SC2098
 if ! PYTEST_DATABASE_URL=$(resolve_pytest_database_url); then
     PYTEST_EXIT=1
@@ -602,6 +602,8 @@ elif DATABASE_URL="$PYTEST_DATABASE_URL" \
     GOBBY_GROK_AUDIT_TRANSCRIPTS_DIR="$PWD/tests/sessions/transcripts/fixtures/grok_audit" \
     GOBBY_TEST_PROTECT=1 \
     GOBBY_NATIVE_BIN_DIR="${GOBBY_NATIVE_BIN_DIR:-$HOME/.gobby/bin}" \
+    CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" \
+    RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}" \
     HOME="$PYTEST_ISOLATION_DIR/home" \
     GOBBY_HOME="$PYTEST_ISOLATION_DIR/gobby-home" \
     GOBBY_DATABASE_PATH="$PYTEST_ISOLATION_DIR/test.db" \
