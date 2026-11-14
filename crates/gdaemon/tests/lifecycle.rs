@@ -718,13 +718,18 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
     .await
 }
 
-const EOF_BACKEND: &str = r#"import os,pathlib,json
+const EOF_BACKEND: &str = r#"import os,pathlib,json,stat
 home=pathlib.Path(os.environ['GOBBY_HOME']); fd=int(os.environ['GOBBY_SUPERVISOR_FD'])
 opened=[]
+details={}
 for candidate in range(3,512):
-    try: os.fstat(candidate); opened.append(candidate)
+    try:
+        info=os.fstat(candidate); opened.append(candidate)
+        details[str(candidate)]={'mode':stat.S_IFMT(info.st_mode),'device':info.st_dev,'inode':info.st_ino}
+        if pathlib.Path('/proc/self/fd').is_dir():
+            details[str(candidate)]['target']=os.readlink('/proc/self/fd/'+str(candidate))
     except OSError: pass
-(home/'descriptors').write_text(json.dumps({'pid':os.getpid(),'open':opened,'liveness':fd}))
+(home/'descriptors').write_text(json.dumps({'pid':os.getpid(),'open':opened,'liveness':fd,'details':details,'cargo_makeflags':os.environ.get('CARGO_MAKEFLAGS'),'makeflags':os.environ.get('MAKEFLAGS')}))
 assert os.read(fd,4096).endswith(b'\n')
 assert os.read(fd,1)==b''
 (home/'eof').write_text('EOF')
@@ -760,7 +765,7 @@ async fn supervisor_death_gives_backend_eof() -> Result<()> {
         assert_eq!(
             report["open"],
             json!([report["liveness"]]),
-            "only liveness read FD survives exec"
+            "only liveness read FD survives exec: {report}"
         );
         assert!(claim_pid_file(&home.path().join("gobby.pid"), Role::Maintenance)?.is_none());
         peer.start_kill()?;
