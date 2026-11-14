@@ -754,6 +754,15 @@ async def test_create_worktree_merge_and_delete_succeeds_with_one_committed_file
     worktree_path = tmp_path / "worktree"
     repo_path.joinpath(".gobby").mkdir(parents=True)
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo_path, check=True, timeout=10)
+    subprocess.run(
+        ["git", "config", "user.name", "Gobby Tests"], cwd=repo_path, check=True, timeout=10
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "gobby-tests@example.com"],
+        cwd=repo_path,
+        check=True,
+        timeout=10,
+    )
     project_id = "11111111-1111-4111-8111-111111110002"
     project_json = repo_path / ".gobby" / "project.json"
     project_json.write_text(json.dumps({"id": project_id, "name": "test-project"}) + "\n")
@@ -801,6 +810,7 @@ async def test_create_worktree_merge_and_delete_succeeds_with_one_committed_file
     mock_worktree_storage.get.return_value = worktree
     mock_worktree_storage.mark_merged.return_value = True
     mock_worktree_storage.delete.return_value = True
+    mock_worktree_storage.lock_for_removal.return_value.__enter__.return_value = worktree
     git_manager = WorktreeGitManager(repo_path)
     registry = create_worktrees_registry(
         worktree_storage=mock_worktree_storage,

@@ -78,6 +78,7 @@ from gobby.servers.routes.mcp.session_claim import (
 )
 from gobby.sessions.clear_run_lineage import current_run_session_id, earlier_clear_session_id
 from gobby.telemetry.instruments import inc_counter
+from gobby.utils.git import run_thread_to_completion
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 
@@ -880,7 +881,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 if lease_renewal is not None:
                     lease_renewal.cancel()
                 if envelope_id and owner_token:
-                    await asyncio.to_thread(
+                    await run_thread_to_completion(
                         release_envelope_processing_claim,
                         envelope_id,
                         owner_token=owner_token,

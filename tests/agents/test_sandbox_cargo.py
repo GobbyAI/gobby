@@ -295,7 +295,9 @@ def test_shell_startup_restores_cargo_launcher(
     assert result.stdout.splitlines() == [str(assets / "cargo-bin" / "cargo"), shell]
     assert resumed["GOBBY_CARGO_ORIGINAL_BASH_ENV"] == str(original_bash)
     assert resumed["GOBBY_CARGO_ORIGINAL_ZDOTDIR"] == str(home)
-    assert all(path.stat().st_mode & 0o222 == 0 for path in (assets / "cargo-shell").iterdir())
+    # System zsh startup may also create a writable .zcompdump in ZDOTDIR.
+    for name in ("bash-env", ".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout"):
+        assert (assets / "cargo-shell" / name).stat().st_mode & 0o222 == 0
 
 
 @pytest.mark.parametrize("flags", ["-lc", "-lic"])
