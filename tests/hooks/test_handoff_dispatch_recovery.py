@@ -368,7 +368,8 @@ def test_dead_dispatch_whose_compact_landed_continues_without_resubmitting(
     assert _receipts(hub_db) == 1
 
 
-def test_dead_compact_dispatch_past_the_in_flight_window_fails_for_reconciliation(
+@pytest.mark.asyncio
+async def test_dead_compact_dispatch_past_the_in_flight_window_fails_for_reconciliation(
     hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     session_manager = _session_manager(hub_db, "claude")
@@ -380,17 +381,23 @@ def test_dead_compact_dispatch_past_the_in_flight_window_fails_for_reconciliatio
         SESSION_ID, {PENDING_HANDOFF_VARIABLE: {**marker, "dispatch_started_at": stale}}
     )
     _restart_daemon(monkeypatch)
-    loop = MagicMock()
-    loop.is_closed.return_value = False
+    loop = asyncio.get_running_loop()
+    existing_tasks = set(_HANDOFF_COMPACT_CONTINUATION_TASKS)
+    try:
+        with patch(f"{_DELIVERY}.asyncio.run_coroutine_threadsafe") as submit:
+            assert _sweep(session_manager, loop) == 0
 
-    with patch(f"{_DELIVERY}.asyncio.run_coroutine_threadsafe") as submit:
-        assert _sweep(session_manager, loop) == 0
-
-    submit.assert_not_called()
-    current = variables.get_variables(SESSION_ID)
-    assert PENDING_HANDOFF_VARIABLE not in current
-    assert current[HANDOFF_DISPATCH_GATE_VARIABLE]["delivery_failed"] is True
-    assert current[HANDOFF_DISPATCH_GATE_VARIABLE]["error_code"] == "compact_unconfirmed"
+        submit.assert_not_called()
+        current = variables.get_variables(SESSION_ID)
+        assert PENDING_HANDOFF_VARIABLE not in current
+        assert current[HANDOFF_DISPATCH_GATE_VARIABLE]["delivery_failed"] is True
+        assert current[HANDOFF_DISPATCH_GATE_VARIABLE]["error_code"] == "compact_unconfirmed"
+    finally:
+        # The retry gate owns a fresh reconciliation window; stop its watcher as shutdown does.
+        watchers = _HANDOFF_COMPACT_CONTINUATION_TASKS - existing_tasks
+        for watcher in watchers:
+            watcher.cancel()
+        await asyncio.gather(*watchers, return_exceptions=True)
 
 
 def _kill_after_precompact(

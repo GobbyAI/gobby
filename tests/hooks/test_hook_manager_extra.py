@@ -210,8 +210,10 @@ class TestDispatchSessionSummaries:
             manager._dispatch_session_summaries("sess-1", done_event=event)
 
             mock_threadsafe.assert_called_once()
-            assert mock_threadsafe.call_count == 1
-            assert mock_threadsafe.call_args is not None
+            assert mock_threadsafe.call_args.args[1] is manager._loop
+            asyncio.run(mock_threadsafe.call_args.args[0])
+            mock_generate.assert_awaited_once()
+            assert event.is_set()
 
     @patch("gobby.hooks.session_summary_dispatcher.asyncio.get_running_loop")
     @patch("gobby.hooks.session_summary_dispatcher.threading.Thread")
@@ -243,6 +245,9 @@ class TestDispatchSessionSummaries:
             mock_thread_instance.start.assert_called_once()
             assert mock_thread_instance.start.call_count == 1
             assert mock_thread_instance.start.call_args is not None
+            mock_thread.call_args.kwargs["target"]()
+            mock_generate.assert_awaited_once()
+            assert event.is_set()
 
 
 class TestDedupSkillResults:

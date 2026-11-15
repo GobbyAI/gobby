@@ -2266,11 +2266,19 @@ fn srt_settings_match_python_corpus() -> Result<()> {
             );
         }
         let expected = tree.fill(&case["expected"]);
-        assert_eq!(
-            policy.env,
-            serde_json::from_value::<BTreeMap<String, String>>(expected["env"].clone())?,
-            "{name}: run environment"
-        );
+        let mut expected_env =
+            serde_json::from_value::<BTreeMap<String, String>>(expected["env"].clone())?;
+        if let Some(native_dir) =
+            std::env::var_os("GOBBY_NATIVE_BIN_DIR").filter(|dir| !dir.is_empty())
+        {
+            let managed_bin = tree.path("home").join(".gobby/bin");
+            let path = expected_env.get_mut("PATH").context("corpus PATH")?;
+            let suffix = path
+                .strip_prefix(managed_bin.to_string_lossy().as_ref())
+                .context("corpus PATH must start with the managed binary directory")?;
+            *path = format!("{}{suffix}", native_dir.to_string_lossy());
+        }
+        assert_eq!(policy.env, expected_env, "{name}: run environment");
     }
     Ok(())
 }

@@ -158,6 +158,9 @@ jobs:
           echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
           echo "GOBBY_NATIVE_BIN_DIR=$native_bin_dir" >> "$GITHUB_ENV"
 
+      - name: Initialize runtime database roles
+        run: GOBBY_DATABASE_URL="$DATABASE_URL" target/debug/gdaemon schema apply
+
       - name: Run pre-push suite
         run: ./pre-push-test.sh
 
