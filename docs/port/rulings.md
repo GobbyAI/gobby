@@ -329,3 +329,8 @@ Source: AskUserQuestion answers and chat messages in session gobby#19401.
     that works in the code behind a listed failure fixes it as found work, and a failure that is
     not listed and that the chunk caused is that chunk's to fix. Josh says when the final
     validation begins.
+    Note, 2026-11-15 (a fact, not a ruling). Task #26070 fixed the inherited failures and CI is
+    green on 0.9.0 at 050479408a; docs/port/ci-baseline-at-cut.md opens with the runs. Josh pasted
+    that task's report into this session and has not changed ruling 25, so it stands as written.
+    No listed failure remains, so a red run after 050479408a is judged under the ruling's last
+    case, a failure that is not listed.

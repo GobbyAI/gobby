@@ -1,5 +1,26 @@
 # CI failures at the port's cut
 
+## Status, 2026-11-15: fixed, CI is green at 050479408a
+
+Task #26070 fixed every failure listed below (commits 4bf7df92c6 to 050479408a on 0.9.0). The tables
+are kept as history. A red run on a commit after 050479408a is new, and no failure in this file
+explains it.
+
+Checked from the runs at 050479408a on 2026-11-15:
+
+| Workflow | Run | Result |
+| --- | --- | --- |
+| Release Branch CI | 43683367538 | passed. Its log shows 59,566 Python tests passed (137 skipped, 2 deselected, 2 expected failures), coverage 89.44%, 4,125 Rust tests passed (240 skipped) and the wheel smoke test passed. |
+| Rust CI | 43683367566 | passed: Check & Test, PostgreSQL-backed Rust tests and Coverage. |
+| CI | 43683367513 | passed with every test job skipped, because the push was classified as a lightweight change. |
+
+CI's full job set (Test on Python 3.13 and 3.14, Terminal Acceptance on macOS and Ubuntu, Build
+Package, Type Check, Security Scan, Lint and the frontend jobs) last ran and passed at 0b3e893132,
+run 43655415156. The two commits after it change one workflow file and four test files. So macOS
+terminal acceptance was last proven at 0b3e893132, and the rest of the tests at 050479408a.
+
+## At the cut
+
 What was already red on 0.9.0 before any port work, so a chunk session can tell an old failure from
 one it caused. Ruling 25 (docs/port/rulings.md) says CI does not gate the port until its final
 validation; this file is the reference for that validation and for found work.
