@@ -683,7 +683,7 @@ async fn lease_loss_drains_the_backend_before_releasing_pid() -> Result<()> {
         let application = lease.application_name().to_string();
         let claim =
             claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("claim")?;
-        let argv = serde_json::to_string(&["uv", "run", "--no-sync", "python", "-c", IGNORE_TERM])?;
+        let argv = backend_argv(IGNORE_TERM)?;
         let mut config = backend_config(home.path(), &argv)?;
         config
             .environment
