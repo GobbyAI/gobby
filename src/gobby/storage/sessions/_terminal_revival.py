@@ -53,8 +53,9 @@ class RevivalTrigger(Enum):
 
     # Hook activity: past the revival horizon the row stays expired.
     ACTIVITY = "activity"
-    # An explicit register_session call: the caller asserts the session is live, so the
-    # horizon does not apply. Clear successors, exited CLIs and pane contests still do.
+    # An explicit register_session call, or a hook from the CLI process the row stores
+    # as owner: the caller asserts the session is live, so the horizon does not apply.
+    # Clear successors, exited CLIs and pane contests still do.
     REGISTRATION = "registration"
 
 
@@ -76,6 +77,18 @@ class _TerminalRevivalMixin:
             session.id, session, trigger=RevivalTrigger.REGISTRATION
         )
         return revived or session
+
+    def revive_terminal_session_for_owner(self: _RevivalHost, session_id: str) -> bool:
+        """Reactivate an expired terminal row for the CLI process it stores as owner.
+
+        The caller has matched that process by pid and start time, so the row's age does
+        not count against it. Returns whether the row is live afterwards; it stays
+        expired when a clear successor or a pane contest refuses it.
+        """
+        revived = self.revive_expired_terminal_session(
+            session_id, trigger=RevivalTrigger.REGISTRATION
+        )
+        return revived is not None and revived.status in LIVE_SESSION_STATUSES
 
     def revive_expired_terminal_session(
         self: _RevivalHost,

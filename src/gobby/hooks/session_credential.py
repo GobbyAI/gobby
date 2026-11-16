@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from gobby.adapters.capabilities import get_provider_capabilities
+from gobby.adapters.capabilities import HookCapability, get_provider_capabilities
 from gobby.hooks.events import HookEventType
 from gobby.hooks.session_claimant import SessionStartClaim, process_is_dead
 from gobby.sessions.terminal_kill import create_time_matches
@@ -59,15 +59,25 @@ def is_session_start_hook(source: object, hook_type: object) -> bool:
     provider with no start hook marks the hook its adapter starts the session from
     (Antigravity's ``PreInvocation``). An unknown source or hook is not a start.
     """
-    if not isinstance(source, str) or not isinstance(hook_type, str):
-        return False
-    try:
-        capability = get_provider_capabilities(source).get_hook(hook_type)
-    except ValueError:
-        return False
+    capability = _hook_capability(source, hook_type)
     return capability is not None and (
         capability.starts_session or capability.event_type == HookEventType.SESSION_START
     )
+
+
+def is_session_end_hook(source: object, hook_type: object) -> bool:
+    """Return whether `hook_type` ends `source`'s session, by the same registry."""
+    capability = _hook_capability(source, hook_type)
+    return capability is not None and capability.event_type == HookEventType.SESSION_END
+
+
+def _hook_capability(source: object, hook_type: object) -> HookCapability | None:
+    if not isinstance(source, str) or not isinstance(hook_type, str):
+        return None
+    try:
+        return get_provider_capabilities(source).get_hook(hook_type)
+    except ValueError:
+        return None
 
 
 def settle_claim(
@@ -83,10 +93,12 @@ def settle_claim(
     """Record what a proven hook established, then mint if it may.
 
     A start pins its CLI to the mark its deferred row left, first writer winning, or
-    replaces a pin proven dead. It mints once a row exists. The hook that creates a
-    deferred startup's row mints for the CLI pinned to it. A shared-host Codex start,
-    whose claim registered its thread to its worker, mints. Every mint names only a row that stores
-    the proven owner, so a claimant that lost a race gets nothing.
+    replaces a pin proven dead. It mints once a row exists. Any other proven hook mints
+    too: the one that creates a deferred startup's row, and one from the owner of a live
+    row, whose CLI sends the machine key when it holds no token the daemon accepts. A
+    shared-host Codex start, whose claim registered its thread to its worker, mints.
+    Every mint names only a live row that stores the proven owner, so a claimant that
+    lost a race gets nothing.
 
     The claim was decided before the hook's handler ran, so a CLI may have pinned the
     thread since. A CLI's start therefore pins before it drops any worker registration,
@@ -120,8 +132,6 @@ def settle_claim(
         # The pin, or the live row a resume revived, now excludes worker children, so this
         # drops the hold the claim wrote (and any registration a worker child wrote first).
         unregister_thread_host(db, machine_id=machine_id, external_id=external_id)
-    elif not claim.creates_row:
-        return None
     return mint_session_credential(
         db,
         signing_key=signing_key,

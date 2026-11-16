@@ -2,10 +2,11 @@ use super::*;
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::net::TcpListener;
 use std::path::Path;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use gobby_core::process_identity::current_cli_pid;
 use gobby_core::session_credential::{self, SESSION_CREDENTIAL_FIELD, cli_pid_key, provider_key};
@@ -428,4 +429,189 @@ fn delivered_report_never_holds_the_session_credential() {
             "the credential is still recorded for this CLI"
         );
     });
+}
+
+const REFUSED: &str = r#"{"code":"capability_expired"}"#;
+
+/// Answer one connection per reply, in order, and return the raw requests received.
+/// A reply nobody asks for fails the test instead of hanging it.
+fn serve_replies(replies: Vec<(u16, String)>) -> (String, thread::JoinHandle<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let handle = thread::spawn(move || {
+        let mut requests = Vec::new();
+        for (index, (status, body)) in replies.into_iter().enumerate() {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "reply {index} was never asked for"
+                        );
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(err) => panic!("accept failed: {err}"),
+                }
+            };
+            stream.set_nonblocking(false).unwrap();
+            requests.push(read_http_request(&mut stream));
+            write!(
+                stream,
+                "HTTP/1.1 {status} Reply\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        }
+        requests
+    });
+    (format!("http://{addr}"), handle)
+}
+
+#[test]
+fn a_bound_post_refused_401_is_resent_once_with_the_machine_key() {
+    const FRESH_TOKEN: &str = "gobby-agent-v1.fresh.signature";
+    let home = machine_key_home();
+    store_for_this_cli(home.path(), &credential("sid-1"));
+    let reissued = json!({
+        "continue": true,
+        SESSION_CREDENTIAL_FIELD: {
+            "token": FRESH_TOKEN,
+            "session_id": SESSION_UUID,
+            "project_id": "22222222-2222-4222-8222-222222222222"
+        }
+    })
+    .to_string();
+
+    isolated(home.path(), || {
+        let envelope = envelope("sid-1", &[("X-Gobby-Session-Id", "sid-1")]);
+        let path = enqueue_to(&envelope, &home.path().join("inbox")).unwrap();
+        let (url, server) = serve_replies(vec![(401, REFUSED.to_owned()), (200, reissued)]);
+
+        let report = post_and_cleanup(&envelope, &path, &url);
+        let requests = server.join().unwrap();
+
+        assert_eq!(report.outcome, DeliveryOutcome::Delivered);
+        assert_eq!(report.status_code, Some(200));
+        let (refused, resent) = (&requests[0], &requests[1]);
+        assert_eq!(
+            header_values(refused, "Authorization"),
+            vec![format!("Bearer {TOKEN}")]
+        );
+        assert_eq!(
+            header_values(resent, "Authorization"),
+            vec![format!("Bearer {MACHINE_KEY}")]
+        );
+        assert!(
+            header_values(resent, "X-Gobby-Session-Id").is_empty(),
+            "the machine key never travels with a session selector"
+        );
+        let envelope_id = header_values(refused, "X-Gobby-Envelope-Id");
+        assert_eq!(envelope_id.len(), 1);
+        assert_eq!(header_values(resent, "X-Gobby-Envelope-Id"), envelope_id);
+        assert_eq!(
+            refused.split("\r\n\r\n").nth(1),
+            resent.split("\r\n\r\n").nth(1),
+            "the resend carries the same envelope"
+        );
+
+        let body = report.response_body.expect("delivered body");
+        assert!(!body.contains(FRESH_TOKEN));
+        let cli = current_cli_pid().expect("the parent CLI process is readable");
+        let stored = session_credential::load(home.path(), &cli_pid_key(cli))
+            .expect("the re-issued credential is recorded for this CLI");
+        assert_eq!(stored.token, FRESH_TOKEN);
+    });
+}
+
+#[test]
+fn a_resent_post_refused_again_is_not_sent_a_third_time() {
+    let home = machine_key_home();
+    store_for_this_cli(home.path(), &credential("sid-1"));
+
+    isolated(home.path(), || {
+        let envelope = envelope("sid-1", &[]);
+        let path = enqueue_to(&envelope, &home.path().join("inbox")).unwrap();
+        let (url, server) =
+            serve_replies(vec![(401, REFUSED.to_owned()), (401, REFUSED.to_owned())]);
+
+        let report = post_and_cleanup(&envelope, &path, &url);
+        let requests = server.join().unwrap();
+
+        // The listener is gone once both replies are sent, so a third post would
+        // report a transport error instead of this status.
+        assert_eq!(requests.len(), 2);
+        assert_eq!(report.outcome, DeliveryOutcome::Enqueued);
+        assert_eq!(report.status_code, Some(401));
+        assert_eq!(report.response_body.as_deref(), Some(REFUSED));
+    });
+}
+
+#[test]
+fn an_unbound_post_refused_401_is_not_resent() {
+    let home = machine_key_home();
+
+    isolated(home.path(), || {
+        let envelope = envelope("sid-1", &[]);
+        let path = enqueue_to(&envelope, &home.path().join("inbox")).unwrap();
+        let (url, server) = serve_replies(vec![(401, REFUSED.to_owned())]);
+
+        let report = post_and_cleanup(&envelope, &path, &url);
+        let requests = server.join().unwrap();
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            header_values(&requests[0], "Authorization"),
+            vec![format!("Bearer {MACHINE_KEY}")]
+        );
+        assert_eq!(report.outcome, DeliveryOutcome::Enqueued);
+        assert_eq!(report.status_code, Some(401));
+    });
+}
+
+#[test]
+fn a_bound_post_refused_for_another_reason_is_not_resent() {
+    let home = machine_key_home();
+    store_for_this_cli(home.path(), &credential("sid-1"));
+
+    isolated(home.path(), || {
+        let envelope = envelope("sid-1", &[("X-Gobby-Session-Id", "sid-1")]);
+        let path = enqueue_to(&envelope, &home.path().join("inbox")).unwrap();
+        let forbidden = r#"{"code":"session_claimant_mismatch"}"#.to_owned();
+        let (url, server) = serve_replies(vec![(403, forbidden)]);
+
+        let report = post_and_cleanup(&envelope, &path, &url);
+        let requests = server.join().unwrap();
+
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            header_values(&requests[0], "Authorization"),
+            vec![format!("Bearer {TOKEN}")]
+        );
+        assert_eq!(report.status_code, Some(403));
+    });
+}
+
+#[test]
+fn a_managed_runs_post_refused_401_is_not_resent() {
+    let home = machine_key_home();
+    store_for_this_cli(home.path(), &credential("sid-1"));
+
+    isolated_with(
+        home.path(),
+        &[("GOBBY_AGENT_RUN_ID", Some("run-1"))],
+        || {
+            let envelope = envelope("sid-1", &[]);
+            let path = enqueue_to(&envelope, &home.path().join("inbox")).unwrap();
+            let (url, server) = serve_replies(vec![(401, REFUSED.to_owned())]);
+
+            let report = post_and_cleanup(&envelope, &path, &url);
+            let requests = server.join().unwrap();
+
+            assert_eq!(requests.len(), 1);
+            assert_eq!(report.status_code, Some(401));
+        },
+    );
 }

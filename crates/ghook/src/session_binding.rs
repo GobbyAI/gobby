@@ -72,10 +72,10 @@ pub fn caller_for(envelope: &Envelope) -> Caller {
 
 /// Keep the credential a hook response carries; return the body without it.
 ///
-/// The daemon mints on a SessionStart or on the first hook that creates a deferred
-/// session's row. The record goes only under the CLI process that owns this hook, which
-/// the MCP client derives from its own parent, and names the provider session it is for.
-/// A failed write is reported without the token.
+/// The daemon mints on a SessionStart and on any later hook sent with the machine key by
+/// the CLI its session's row stores. The record goes only under the CLI process that owns
+/// this hook, which the MCP client derives from its own parent, and names the provider
+/// session it is for. A failed write is reported without the token.
 pub fn remember_response_credential<'a>(envelope: &Envelope, body: &'a str) -> Cow<'a, str> {
     let (stripped, credential) = session_credential::extract(body);
     let Some(mut credential) = credential else {

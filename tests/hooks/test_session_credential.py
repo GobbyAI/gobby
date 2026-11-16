@@ -1054,10 +1054,10 @@ def test_a_foreign_cli_cannot_create_a_deferred_startups_row(
     assert own.json()[SESSION_CREDENTIAL_FIELD]["session_id"] == row["id"]
 
 
-def test_an_attested_activity_hook_on_a_live_session_mints_nothing(
+def test_an_attested_activity_hook_on_a_live_session_carries_its_credential(
     hook_route: HookRoute, started_session: Any, cli_claimant: Claimant
 ) -> None:
-    """Only a start or the hook that materializes the row mints; ordinary activity does not."""
+    """The owner sends the machine key when its token was refused, so its hook re-issues one."""
     _machine_caller(hook_route)
 
     response = _hook_response(
@@ -1074,7 +1074,7 @@ def test_an_attested_activity_hook_on_a_live_session_mints_nothing(
     )
 
     assert response.status_code == 200, response.text
-    assert SESSION_CREDENTIAL_FIELD not in response.json()
+    assert response.json()[SESSION_CREDENTIAL_FIELD]["session_id"] == started_session.id
 
 
 def test_codex_start_from_an_uninspectable_hook_parent_is_not_called_a_shared_host(

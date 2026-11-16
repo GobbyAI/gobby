@@ -228,6 +228,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "revive_registered_terminal_session": (
         "(self, session: 'Session', *, caller_session_id: 'str | None') -> 'Session'"
     ),
+    "revive_terminal_session_for_owner": "(self, session_id: 'str') -> 'bool'",
     "set_status_line": ("(self, session_id: 'str', status_line: 'str | None') -> 'bool'"),
     "settle_terminal_context": (
         "(self, session_id: 'str', terminal_context: 'dict[str, Any]', *, marker_key: 'st"

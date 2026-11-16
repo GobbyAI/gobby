@@ -26,6 +26,7 @@ from gobby.hooks.runtime_compat import (
 )
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_lifecycle import expire_stale_sessions
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
@@ -314,3 +315,111 @@ print(json.dumps({{"activity_status": activity_status, "minted_by": minted_by,
     assert report["session_id"]
     assert not (client_home / "bootstrap.yaml").exists()
     assert not (client_home / "local_cli_token").exists()
+
+
+def test_idle_session_gets_its_credential_back_on_its_next_hook(
+    daemon_instance: DaemonInstance,
+    postgres_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """The sweeper expires an idle session; its own CLI's next hook restores it (#26072).
+
+    One client process plays the CLI throughout, so the daemon's kernel attestation
+    names the same process before and after the session sat idle. The token it holds
+    is refused once the row expires. The same hook sent with the machine key revives
+    the row and carries a new token, which then completes an MCP call.
+    """
+    client_home = tmp_path / "idle-home"
+    client_home.mkdir()
+    external_id = f"idle-{uuid.uuid4().hex}"
+    start = _hook_envelope(external_id, str(daemon_instance.project_dir), "session-start")
+    activity = _hook_envelope(external_id, str(daemon_instance.project_dir), "user-prompt-submit")
+    activity["input_data"].pop("source")
+    activity["input_data"]["user_prompt"] = "Exercise the re-issued session credential"
+    script = (
+        _HTTP_PROBE
+        + f"""
+inputs = json.loads(sys.stdin.readline())
+url = inputs["url"]
+machine_token = inputs["machine_token"]
+activity = inputs["activity"]
+hooks = url + "/api/hooks/execute"
+post(hooks, machine_token, {{}}, inputs["start"])
+_, active = post(hooks, machine_token, {{}}, activity)
+held = active[{_SESSION_CREDENTIAL_FIELD!r}]
+print(json.dumps({{"session_id": held["session_id"]}}), flush=True)
+sys.stdin.readline()  # The test expires the row here.
+refused_status, refused = post(
+    hooks, held["token"], {{"X-Gobby-Session-Id": held["session_id"]}}, activity
+)
+retry_status, retried = post(hooks, machine_token, {{}}, activity)
+fresh = retried.get({_SESSION_CREDENTIAL_FIELD!r}) or {{}}
+identity = {{
+    "X-Gobby-Session-Id": fresh.get("session_id", ""),
+    "X-Gobby-Project-Id": fresh.get("project_id", ""),
+    "X-Gobby-Caller-Project-Id": fresh.get("project_id", ""),
+}}
+status, result = post(url + "/api/mcp/tools/call", fresh.get("token", ""), identity, {_MCP_CALL!r})
+print(json.dumps({{"refused_status": refused_status, "refused_code": refused.get("code"),
+                  "retry_status": retry_status, "fresh_session_id": fresh.get("session_id"),
+                  "status": status, "result": result}}))
+"""
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=daemon_instance.project_dir,
+        env={
+            "PATH": os.defpath,
+            "HOME": str(client_home),
+            "GOBBY_HOME": str(client_home),
+            "GOBBY_TEST_PROTECT": "1",
+        },
+    )
+    try:
+        assert process.stdin is not None and process.stdout is not None
+        process.stdin.write(
+            json.dumps(
+                {
+                    "url": daemon_instance.http_url,
+                    "machine_token": daemon_token(daemon_instance.gobby_home),
+                    "start": start,
+                    "activity": activity,
+                }
+            )
+            + "\n"
+        )
+        process.stdin.flush()
+        held_line = process.stdout.readline()
+        assert held_line, "the client never received its first credential"
+        session_id = json.loads(held_line)["session_id"]
+
+        # Idle the row past the sweeper's limit, sweep, then age the expiry past the
+        # horizon at which plain hook activity stops reviving a row.
+        postgres_db.execute(
+            "UPDATE sessions SET last_activity = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            (session_id,),
+        )
+        assert expire_stale_sessions(postgres_db, timeout_hours=24) >= 1
+        postgres_db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '30 hours' WHERE id = %s",
+            (session_id,),
+        )
+        stdout, stderr = process.communicate("continue\n", timeout=150)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+    assert process.returncode == 0, stderr
+    report = json.loads(stdout)
+    assert report["refused_status"] == 401, report
+    assert report["refused_code"] == "run_inactive", report
+    assert report["retry_status"] == 200, report
+    assert report["fresh_session_id"] == session_id, report
+    assert report["status"] == 200, report
+    assert report["result"]["success"] is True, report
+    row = postgres_db.fetchone("SELECT status FROM sessions WHERE id = %s", (session_id,))
+    assert row is not None and row["status"] == "active"

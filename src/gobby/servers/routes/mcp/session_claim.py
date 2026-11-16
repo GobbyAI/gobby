@@ -18,6 +18,7 @@ from gobby.hooks.events import SessionSource
 from gobby.hooks.session_claimant import SessionStartClaim
 from gobby.hooks.session_credential import (
     SESSION_CREDENTIAL_FIELD,
+    is_session_end_hook,
     is_session_start_hook,
     settle_claim,
 )
@@ -74,6 +75,8 @@ def claim_hook(server: HTTPServer, request: Request, payload: dict[str, Any]) ->
     claimant = session_claimant.front_door_claimant(
         request.headers, daemon_port=server.bootstrap_config.daemon_port
     )
+    hook_type = payload.get("hook_type")
+    sessions = server.session_manager
     claim = session_claimant.claim_session_start(
         db,
         claimant=claimant,
@@ -81,7 +84,13 @@ def claim_hook(server: HTTPServer, request: Request, payload: dict[str, Any]) ->
         external_id=external_id,
         source=source,
         machine_id=identity.machine_id,
-        start=is_session_start_hook(source, payload.get("hook_type")),
+        start=is_session_start_hook(source, hook_type),
+        # A CLI that is leaving has no session to bring back.
+        revive=(
+            None
+            if sessions is None or is_session_end_hook(source, hook_type)
+            else sessions.revive_terminal_session_for_owner
+        ),
     )
     if claim.refusal is None:
         owner = claim.host.pid if claim.host is not None else claim.cli_pid

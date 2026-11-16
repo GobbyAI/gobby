@@ -6,9 +6,11 @@ reads the request's local TCP socket from the kernel socket table: its owner is 
 process, and the stabilized parent of that process is the CLI, named by pid and start
 time. The body's own parent pid is never proof.
 
-Ownership is durable. A live terminal row stores its CLI. A deferred startup's mark pins
-its CLI, and only that CLI's hook creates the row (session_startup_marks). A thread run by
-Codex's shared app-server is registered to that worker (codex_thread_hosts). The first
+Ownership is durable. A live terminal row stores its CLI, and so does a row that expired
+while its session sat idle: that CLI's next hook revives it unless the CLI has moved to
+another session. A deferred startup's mark pins its CLI, and only that CLI's hook creates
+the row (session_startup_marks). A thread run by Codex's shared app-server is registered
+to that worker (codex_thread_hosts). The first
 owner stands: another may replace it only after proving it dead, by pid and start time,
 and the replacement is a compare-and-swap, so of two racers one wins. A Codex CLI's
 proven start holds its thread in that registry from its claim to its settle, so no
@@ -20,7 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -70,17 +72,15 @@ class Claimant:
 class SessionStartClaim:
     """What a machine-bearer hook may do once its handler has run.
 
-    ``proven`` hooks run with their CLI stamped as the row's owner. A start mints, and so
-    does the hook that creates a deferred startup's row (``creates_row``). ``displaced``
-    is the dead pin a start replaces; ``host`` is the shared worker a Codex thread is
-    registered to.
+    ``proven`` hooks run with their CLI stamped as the row's owner, and mint once a live
+    row stores that CLI. ``displaced`` is the dead pin a start replaces; ``host`` is the
+    shared worker a Codex thread is registered to.
     """
 
     refusal: str | None = None
     proven: bool = False
     cli_pid: int | None = None
     create_time: float | None = None
-    creates_row: bool = False
     displaced: StartupPin | None = None
     host: ThreadHost | None = None
 
@@ -93,10 +93,24 @@ class SessionStartClaim:
 
 
 @dataclass(frozen=True)
-class _LiveTerminal:
+class _TerminalRow:
+    """A terminal session row and the CLI process it stores as owner."""
+
     session_id: str
     parent_pid: int | None
     raw_create_time: Any
+
+    @classmethod
+    def from_row(cls, row: Any) -> _TerminalRow:
+        context = parse_terminal_context_value(row["terminal_context"]) or {}
+        parent_pid = context.get("parent_pid")
+        if isinstance(parent_pid, bool) or not isinstance(parent_pid, int):
+            parent_pid = None
+        return cls(
+            session_id=str(row["id"]),
+            parent_pid=parent_pid,
+            raw_create_time=context.get("parent_create_time"),
+        )
 
 
 def _socket_owner(*, client_port: int, server_port: int) -> int | None:
@@ -199,7 +213,7 @@ def _same_process(pid: int, create_time: float | None, other: int, other_time: A
 
 def _live_terminal(
     db: Any, *, external_id: str, source: str, machine_id: str
-) -> _LiveTerminal | None:
+) -> _TerminalRow | None:
     row = db.fetchone(
         """
         SELECT id, terminal_context FROM sessions
@@ -210,20 +224,52 @@ def _live_terminal(
         """,
         (external_id, source, machine_id, list(LIVE_SESSION_STATUSES)),
     )
-    if row is None:
-        return None
-    context = parse_terminal_context_value(row["terminal_context"]) or {}
-    parent_pid = context.get("parent_pid")
-    if isinstance(parent_pid, bool) or not isinstance(parent_pid, int):
-        parent_pid = None
-    return _LiveTerminal(
-        session_id=str(row["id"]),
-        parent_pid=parent_pid,
-        raw_create_time=context.get("parent_create_time"),
+    return None if row is None else _TerminalRow.from_row(row)
+
+
+def _own_expired_terminal(
+    db: Any, cli_pid: int, started: float, *, external_id: str, source: str, machine_id: str
+) -> str | None:
+    """The id of the thread's expired row, when this CLI may bring it back.
+
+    The thread's newest row must be expired, whatever expired it, and store this CLI
+    process as owner. A CLI holds one conversation, so a live row that stores the same
+    process shows it left this one, by a clear or by resuming another thread.
+    """
+    row = db.fetchone(
+        """
+        SELECT id, status, terminal_context FROM sessions
+        WHERE external_id = %s AND source = %s AND machine_id = %s
+          AND session_type = 'terminal' AND status <> 'deleted'
+        ORDER BY created_at DESC, id
+        LIMIT 1
+        """,
+        (external_id, source, machine_id),
     )
+    if row is None or row["status"] != "expired":
+        return None
+
+    def stores_this_cli(terminal: _TerminalRow) -> bool:
+        return terminal.parent_pid is not None and _same_process(
+            cli_pid, started, terminal.parent_pid, terminal.raw_create_time
+        )
+
+    expired = _TerminalRow.from_row(row)
+    if not stores_this_cli(expired):
+        return None
+    live_rows = db.fetchall(
+        """
+        SELECT id, terminal_context FROM sessions
+        WHERE machine_id = %s AND session_type = 'terminal' AND status = ANY(%s)
+        """,
+        (machine_id, list(LIVE_SESSION_STATUSES)),
+    )
+    if any(stores_this_cli(_TerminalRow.from_row(held)) for held in live_rows):
+        return None
+    return expired.session_id
 
 
-def _take_over_row(db: Any, live: _LiveTerminal, *, cli_pid: int, create_time: float) -> bool:
+def _take_over_row(db: Any, live: _TerminalRow, *, cli_pid: int, create_time: float) -> bool:
     """Swap a dead owner's row to the proven CLI; return whether this caller won the swap."""
     cursor = db.execute(
         """
@@ -259,14 +305,21 @@ def claim_session_start(
     source: str,
     machine_id: str,
     start: bool,
+    revive: Callable[[str], bool] | None = None,
 ) -> SessionStartClaim:
     """Decide what a machine-bearer hook may do for its kernel-attested claimant.
 
     A daemon-internal replay proves nothing and mints nothing. An unresolved claimant is
     refused. A live row's owner proceeds; a start from a new CLI takes over a row whose
-    owner is proven dead; anyone else is refused. With no row, a start from any CLI may
-    pin the thread unless a live CLI already holds the pin, and only the pinned CLI's
+    owner is proven dead; anyone else is refused. With no live row, a start from any CLI
+    may pin the thread unless a live CLI already holds the pin, and only the pinned CLI's
     hook may create the row. A hook with no pin creates nothing.
+
+    ``revive`` brings an expired row back by its session id and reports whether it is
+    live again. With it, a hook from the CLI process an expired row stores as owner is
+    decided as a live row's hook once the row is back, unless that CLI holds another
+    live row; without it, or when revival declines, the hook is refused as any hook
+    with no pin is.
     """
     if claimant is None:
         return SessionStartClaim(refusal=CLAIMANT_UNVERIFIED)
@@ -275,7 +328,7 @@ def claim_session_start(
     key = {"external_id": external_id, "source": source, "machine_id": machine_id}
     if claimant.shared_host:
         return _claim_shared_host(db, claimant, start=start, **key)
-    claim = _claim_cli(db, claimant, start=start, **key)
+    claim = _claim_cli(db, claimant, start=start, revive=revive, **key)
     if start and claim.proven and source == "codex" and claim.cli_pid and claim.create_time:
         # Hold the thread before the handler runs: a resume or take-over revives the row
         # before settle drops any worker registration, and a worker child must not mint
@@ -298,6 +351,7 @@ def _claim_cli(
     source: str,
     machine_id: str,
     start: bool,
+    revive: Callable[[str], bool] | None,
 ) -> SessionStartClaim:
     """Decide a hook whose claimant is a CLI process rather than a shared worker."""
     live = _live_terminal(db, external_id=external_id, source=source, machine_id=machine_id)
@@ -330,11 +384,17 @@ def _claim_cli(
     mark = startup_mark(db, machine_id=machine_id, source=source, external_id=external_id)
     pin = None if mark is None else mark.pin
     if pin is not None and _same_process(cli_pid, started, pin.cli_pid, pin.cli_create_time):
-        return SessionStartClaim(
-            proven=True, cli_pid=cli_pid, create_time=started, creates_row=not start
-        )
+        return proven
     if not start:
         if pin is None:
+            key = {"external_id": external_id, "source": source, "machine_id": machine_id}
+            expired = None if revive is None else _own_expired_terminal(db, cli_pid, started, **key)
+            if revive is not None and expired is not None and revive(expired):
+                # An idle row expired while its CLI never left, and that CLI's hook
+                # brought it back. Another CLI's start may have registered the row
+                # meanwhile, so the hook is decided again from the row as it now stands.
+                logger.info("%s session %s revived on a hook from its CLI", source, external_id)
+                return _claim_cli(db, claimant, start=start, revive=None, **key)
             return _refuse(
                 SESSION_STARTUP_UNPINNED, "no startup pinned its CLI", source, external_id
             )

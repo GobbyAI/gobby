@@ -266,14 +266,52 @@ pub(crate) fn envelope_id_from_path(enqueued_path: &Path) -> Option<&str> {
 ///
 /// `daemon_url` is the base URL (e.g. `http://127.0.0.1:60887`). The
 /// endpoint path is appended here.
+///
+/// A session token the daemon answers with 401 has run out, or names a row that
+/// expired while the session sat idle. The envelope is then sent once more with the
+/// machine key, as it would be with no credential stored: the daemon checks which CLI
+/// process is asking and answers the session's own CLI with a fresh credential.
 pub fn post_and_cleanup(
     envelope: &Envelope,
     enqueued_path: &Path,
     daemon_url: &str,
 ) -> DeliveryReport {
     let endpoint = format!("{daemon_url}{HOOKS_ENDPOINT}");
+    let body = match serde_json::to_string(envelope) {
+        Ok(s) => s,
+        Err(e) => {
+            return DeliveryReport {
+                outcome: DeliveryOutcome::Enqueued,
+                failure_kind: Some(DeliveryFailureKind::Other),
+                status_code: None,
+                response_body: None,
+                transport_error: Some(e.to_string()),
+            };
+        }
+    };
     let caller = session_binding::caller_for(envelope);
-    let mut req = ureq::post(&endpoint)
+    let report = post_as(&caller, envelope, enqueued_path, &endpoint, &body);
+    if report.status_code == Some(401) && matches!(caller, session_binding::Caller::Bound(_)) {
+        return post_as(
+            &session_binding::Caller::Unbound,
+            envelope,
+            enqueued_path,
+            &endpoint,
+            &body,
+        );
+    }
+    report
+}
+
+/// POST the serialized envelope once, authenticated as `caller`.
+fn post_as(
+    caller: &session_binding::Caller,
+    envelope: &Envelope,
+    enqueued_path: &Path,
+    endpoint: &str,
+    body: &str,
+) -> DeliveryReport {
+    let mut req = ureq::post(endpoint)
         .timeout(post_timeout(&envelope.hook_type))
         .set("Content-Type", "application/json");
     for (k, v) in &envelope.headers {
@@ -285,7 +323,7 @@ pub fn post_and_cleanup(
             req = req.set(k, v);
         }
     }
-    match &caller {
+    match caller {
         session_binding::Caller::Bound(credential) => {
             req = req.set(
                 AUTHORIZATION_HEADER,
@@ -303,20 +341,7 @@ pub fn post_and_cleanup(
         req = req.set(ENVELOPE_ID_HEADER, envelope_id);
     }
 
-    let body = match serde_json::to_string(envelope) {
-        Ok(s) => s,
-        Err(e) => {
-            return DeliveryReport {
-                outcome: DeliveryOutcome::Enqueued,
-                failure_kind: Some(DeliveryFailureKind::Other),
-                status_code: None,
-                response_body: None,
-                transport_error: Some(e.to_string()),
-            };
-        }
-    };
-
-    match req.send_string(&body) {
+    match req.send_string(body) {
         Ok(resp) if (200..300).contains(&resp.status()) => {
             let status_code = Some(resp.status());
             // The session credential is recorded and removed from the body here, so
