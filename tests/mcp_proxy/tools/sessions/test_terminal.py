@@ -696,7 +696,7 @@ class TestRegisterTerminalTools:
         assert result["success"] is True
         assert result["via"] == "transcript"
         assert result["output"] == "-two\nthree"
-        assert "No live tmux pane" in result["note"]
+        assert "No live pane" in result["note"]
 
     def test_capture_output_reports_no_pane_or_transcript(self) -> None:
         """Missing tmux target plus missing transcript returns structured failure."""

@@ -700,8 +700,7 @@ class TerminalLeaseRegistry:
         # lease: a phone that is only watching must not pin a desktop client to
         # its grid. A native terminal that nothing but web viewers watch has no
         # such client to protect and no lease holder to size it, so its watchers
-        # size it and the latest resize wins; a tmux window keeps the lease rule
-        # because a web owner pins the human's own tmux client to its grid.
+        # size it and the latest resize wins.
         holder = self._lease(terminal_id).holder
         sized = [
             record for record in self._live_viewers(terminal_id) if record.geometry is not None

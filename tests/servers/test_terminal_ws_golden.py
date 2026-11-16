@@ -159,10 +159,6 @@ class _GoldenRuntime:
             frame_host_epoch="host-epoch-1",
             host_socket="/tmp/gobby-terminal.sock",
             host_terminal_id=TERMINAL_ID,
-            socket_path="/tmp/tmux.sock" if backend == "tmux" else None,
-            pane_id="%1" if backend == "tmux" else None,
-            server_pid=100 if backend == "tmux" else None,
-            server_start_time=200 if backend == "tmux" else None,
         )
 
     async def attach_locator(self, _row: object) -> AttachLocator:
@@ -445,7 +441,7 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     server, _, _ = _server()
     websocket = MockWebSocket()
     server.clients[websocket] = {}
-    await server.broadcast_tmux_session_event("created", terminal_id=TERMINAL_ID)
+    await server.broadcast_terminal_event("created", terminal_id=TERMINAL_ID)
     _assert_golden("event.json", _sent(websocket))
     await server.lease_registry.shutdown_lifecycle_publication()
 

@@ -34,12 +34,10 @@ class TerminalCreateMixin:
 
         async def _send_json(self, websocket: Any, payload: dict[str, Any]) -> None: ...
 
-        async def broadcast_tmux_session_event(
+        async def broadcast_terminal_event(
             self,
             event: str,
             terminal_id: str = "",
-            session_name: str | None = None,
-            socket: str | None = None,
             terminal: dict[str, Any] | None = None,
         ) -> None: ...
 
@@ -130,7 +128,7 @@ class TerminalCreateMixin:
             terminal_id = result.terminal_id
             row = await asyncio.to_thread(manager.get, terminal_id)
             if row is not None:
-                await self.broadcast_tmux_session_event(
+                await self.broadcast_terminal_event(
                     "created",
                     terminal_id=terminal_id,
                     terminal=inventory_item(row),
@@ -181,7 +179,7 @@ class TerminalCreateMixin:
                     for attachment_id, attachment in list(hub.attachments.items()):
                         if attachment.terminal_id == row.id:
                             await hub.finalize_attachment(attachment_id, "terminal_killed")
-                await self.broadcast_tmux_session_event("killed", terminal_id=row.id)
+                await self.broadcast_terminal_event("killed", terminal_id=row.id)
         payload: dict[str, Any] = {
             "type": "terminal_kill_result",
             "success": transitioned is not None,

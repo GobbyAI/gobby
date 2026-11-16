@@ -32,7 +32,7 @@ def _coordinator(
     runtime: FakeRuntime | None = None,
     *,
     unresolved: dict[str, Any] | None = None,
-    backend: Literal["tmux", "native"] = "tmux",
+    backend: Literal["native"] = "native",
 ) -> tuple[WriteCoordinator, FakeRuntime, MemoryTerminalStore]:
     terminal = make_memory_terminal(backend=backend, unresolved_writes=unresolved)
     store = MemoryTerminalStore(terminal)
@@ -205,7 +205,7 @@ async def test_write_ahead_hard_kill_suppresses_retry_across_restart() -> None:
     await restarted.write(_auto(terminal.id, "auto-2", "maybe"))
     restored = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
-        runtime_registry(FakeRuntime()),
+        runtime_registry(FakeRuntime(backend="native")),
         lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
     again = await restored.write(_auto(terminal.id, "auto-2", "retry-2"))
@@ -216,15 +216,15 @@ async def test_write_ahead_hard_kill_suppresses_retry_across_restart() -> None:
     assert isinstance(delivered, Delivered)
     after_success = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
-        runtime_registry(FakeRuntime()),
+        runtime_registry(FakeRuntime(backend="native")),
         lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
     follow = await after_success.write(_auto(terminal.id, "auto-4", "next"))
     assert isinstance(follow, Delivered)
 
-    seq_runtime = FakeRuntime()
+    seq_runtime = FakeRuntime(backend="native")
     seq_runtime.outcomes = [Delivered(), IndeterminateWrite(detail="lost")]
-    seq_store = MemoryTerminalStore(make_memory_terminal())
+    seq_store = MemoryTerminalStore(make_memory_terminal(backend="native"))
     seq_terminal = next(iter(seq_store.rows.values()))
     seq = WriteCoordinator(
         cast(UnresolvedWriteStore, seq_store),
@@ -256,7 +256,7 @@ async def test_write_ahead_hard_kill_suppresses_retry_across_restart() -> None:
     assert isinstance(outcome, IndeterminateWrite)
     restored_seq = WriteCoordinator(
         cast(UnresolvedWriteStore, seq_store),
-        runtime_registry(FakeRuntime()),
+        runtime_registry(FakeRuntime(backend="native")),
         lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
     blocked = await restored_seq.run_sequence(

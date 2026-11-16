@@ -154,7 +154,7 @@ async def test_snapshot_orders_lifecycle_events(
 
     before_socket = MockWebSocket()
     server.clients[before_socket] = {}
-    await server.broadcast_tmux_session_event("created", terminal_id="before")
+    await server.broadcast_terminal_event("created", terminal_id="before")
     before = before_socket.last_message()
 
     first_socket = MockWebSocket()
@@ -166,7 +166,7 @@ async def test_snapshot_orders_lifecycle_events(
 
     after_socket = MockWebSocket()
     server.clients = {after_socket: {}}
-    await server.broadcast_tmux_session_event("killed", terminal_id="after")
+    await server.broadcast_terminal_event("killed", terminal_id="after")
     after = after_socket.last_message()
     assert after["seq"] > first["snapshot"]["seq"]
 
@@ -207,7 +207,7 @@ async def test_every_lifecycle_emitter_is_stamped() -> None:
     websocket = MockWebSocket()
     server.clients[websocket] = {}
 
-    await server.broadcast_tmux_session_event("created", terminal_id="term-1")
+    await server.broadcast_terminal_event("created", terminal_id="term-1")
     await server._fanout_lease_lost("attachment-1", "attachment-2", 2)
     await server._proxy().emit_lifecycle(
         websocket,
@@ -230,7 +230,7 @@ async def test_every_lifecycle_emitter_is_stamped() -> None:
 
     previous_epoch = server.lease_registry.daemon_epoch
     server.lease_registry._lifecycle_seq = ws_protocol.TERMINAL_WS_SAFE_INTEGER_MAX
-    await server.broadcast_tmux_session_event("created", terminal_id="rotated")
+    await server.broadcast_terminal_event("created", terminal_id="rotated")
     rotated = _lifecycle_messages(websocket)[-1]
     assert rotated["seq"] == 1
     assert rotated["daemon_epoch"] != previous_epoch
@@ -245,7 +245,7 @@ async def test_publication_order_matches_sequence_under_forced_yields() -> None:
     server.clients[websocket] = {}
 
     terminal_event = asyncio.create_task(
-        server.broadcast_tmux_session_event("created", terminal_id="term-1")
+        server.broadcast_terminal_event("created", terminal_id="term-1")
     )
     await websocket.send_started.wait()
     lease_event = asyncio.create_task(server._fanout_lease_lost("a-1", "a-2", 2))
@@ -395,7 +395,7 @@ async def test_proxy_relay_ack_precedes_committed_high_water() -> None:
     await websocket.send_started.wait()
     server.clients[websocket] = {}
     direct_event = asyncio.create_task(
-        server.broadcast_tmux_session_event("created", terminal_id="term-2")
+        server.broadcast_terminal_event("created", terminal_id="term-2")
     )
     await asyncio.sleep(0)
     assert server.lease_registry.lifecycle_snapshot()["seq"] == 0

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
 import weakref
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack
@@ -84,10 +83,6 @@ class WriteRequest:
     attachment_id: str | None = None
     expected_lease_generation: int | None = None
     idempotency_key: str | None = None
-    # A tmux attachment served by an attach client: raw ``input`` goes into
-    # that client's PTY so tmux, not the pane's program, interprets mouse
-    # reports and key bindings. ``send-keys`` to the pane cannot carry those.
-    client_fd: int | None = None
     # The row the attachment was granted against. With it present the
     # coordinator dispatches without reading ``terminals``, which keeps an
     # operator keystroke off Postgres entirely.
@@ -761,11 +756,8 @@ class WriteCoordinator:
         )
 
     async def _dispatch_remote(self, request: WriteRequest, terminal: Terminal) -> WriteOutcome:
-        # A client PTY is local to this hub, and the node does not vet key names,
-        # so the hub refuses both here as it does locally, before anything is sent.
-        if request.client_fd is not None or (
-            request.kind == "key" and not is_named_key(request.payload)
-        ):
+        # The node does not vet key names; refuse invalid ones before dispatch.
+        if request.kind == "key" and not is_named_key(request.payload):
             raise TerminalWriteError(stage="none")
         self._record_dispatch(request)
         return await remote_terminal.write(terminal, request)
@@ -822,9 +814,6 @@ class WriteCoordinator:
                 return await runtime.write_key(terminal, request.payload)
             if request.kind == "input":
                 data = request.payload.encode("utf-8")
-                if request.client_fd is not None:
-                    await asyncio.to_thread(_write_client_input, request.client_fd, data)
-                    return Delivered()
                 return await runtime.write_input(terminal, data)
             return await runtime.write_paste(terminal, request.payload)
         except HostCommandError as exc:
@@ -865,19 +854,6 @@ def _latches(request: WriteRequest) -> bool:
     it would only add two Postgres round trips to every keystroke.
     """
     return request.origin != "operator" or request.idempotency_key is not None
-
-
-def _write_client_input(fd: int, data: bytes) -> None:
-    """Write every byte to the attach client's PTY, typing the failure by stage."""
-    delivered = 0
-    while delivered < len(data):
-        try:
-            delivered += os.write(fd, data[delivered:])
-        except OSError as exc:
-            raise TerminalWriteError(
-                stage="partial" if delivered else "none",
-                delivered_bytes=delivered,
-            ) from exc
 
 
 def _payload_fingerprint(request: WriteRequest) -> str:

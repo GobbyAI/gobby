@@ -186,7 +186,7 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
 
                 async def broadcast_terminal_created() -> None:
                     if _ws:
-                        await _ws.broadcast_tmux_session_event(
+                        await _ws.broadcast_terminal_event(
                             event="created",
                             terminal_id=_terminal_id,
                         )
@@ -213,7 +213,7 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
                 _terminal_id = str(_killed_id)
 
                 async def broadcast_terminal_killed() -> None:
-                    await _ws_kill.broadcast_tmux_session_event(
+                    await _ws_kill.broadcast_terminal_event(
                         event="killed",
                         terminal_id=_terminal_id,
                     )

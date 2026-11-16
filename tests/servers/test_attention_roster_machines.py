@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 from typing import Any, cast
+from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
@@ -18,6 +19,7 @@ from gobby.storage.attention import AttentionState, AttentionStateManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.storage.terminals import TerminalManager
 from gobby.utils.machine_id import require_machine_id
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory, insert_isolated_machine
@@ -53,6 +55,7 @@ def _client(
             attention_manager=manager,
             agent_lifecycle_monitor=SimpleNamespace(prompt_detector=detector_root),
             database=temp_db,
+            terminal_manager=TerminalManager(temp_db),
             run_db=_run_db,
         )
     )
@@ -74,15 +77,35 @@ def _roster(temp_db: HubDatabase) -> dict[str, dict[str, Any]]:
 
 
 def _session(
-    session_manager: SessionManager, project_id: str, name: str, *, pane: str | None = None
+    session_manager: SessionManager, project_id: str, name: str, *, terminal: bool = False
 ) -> Session:
-    return session_manager.register(
+    session = session_manager.register(
         external_id=f"roster-machines-{name}",
         machine_id=require_machine_id(),
         source="claude",
         project_id=project_id,
-        terminal_context={"tmux_pane": pane} if pane is not None else None,
     )
+    if terminal:
+        terminal_id = str(uuid4())
+        terminals = TerminalManager(session_manager.db)
+        terminals.create_pending(
+            terminal_id=terminal_id,
+            project_id=project_id,
+            backend="native",
+            ownership="gobby",
+            spawn_key=terminal_id,
+            session_id=session.id,
+        )
+        assert (
+            terminals.promote_to_live(
+                terminal_id,
+                locator={"host_terminal_id": terminal_id},
+                locator_key=f"native:epoch-1:{terminal_id}",
+                host_epoch="epoch-1",
+            )
+            is not None
+        )
+    return session
 
 
 def _run(temp_db: HubDatabase, parent: Session, *, child: Session | None = None) -> AgentRun:
@@ -99,6 +122,10 @@ def _move_session_to_remote(temp_db: HubDatabase, session: Session) -> None:
     temp_db.execute(
         "UPDATE sessions SET machine_id = %s WHERE id = %s", (REMOTE_MACHINE_ID, session.id)
     )
+    temp_db.execute(
+        "UPDATE terminals SET machine_id = %s WHERE session_id = %s",
+        (REMOTE_MACHINE_ID, session.id),
+    )
 
 
 def _move_run_to_remote(temp_db: HubDatabase, run: AgentRun) -> None:
@@ -113,8 +140,8 @@ def test_roster_is_hub_wide(
     sample_project: dict[str, Any],
     session_manager: SessionManager,
 ) -> None:
-    local_session = _session(session_manager, sample_project["id"], "local", pane="%1")
-    remote_session = _session(session_manager, sample_project["id"], "remote", pane="%2")
+    local_session = _session(session_manager, sample_project["id"], "local", terminal=True)
+    remote_session = _session(session_manager, sample_project["id"], "remote", terminal=True)
     _move_session_to_remote(temp_db, remote_session)
     local_run = _run(temp_db, local_session)
     remote_run = _run(temp_db, local_session)
@@ -130,6 +157,24 @@ def test_roster_is_hub_wide(
     } <= set(entries)
 
 
+def test_roster_entries_carry_no_pane_payload(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    parent = _session(session_manager, sample_project["id"], "native-parent", terminal=True)
+    run = _run(temp_db, parent)
+
+    entries = _roster(temp_db)
+    entry = entries[f"run:{run.id}"]
+
+    assert entry["run_id"] == run.id
+    assert "tmux" not in entry
+    session_entry = entries[f"session:{parent.id}"]
+    assert session_entry["terminal"]["backend"] == "native"
+    assert "tmux" not in session_entry
+
+
 def test_entries_carry_machine_and_project(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -138,9 +183,9 @@ def test_entries_carry_machine_and_project(
 ) -> None:
     local_machine_id = require_machine_id()
     other_project_id = isolated_checkout_factory(temp_db, "roster-machines-other").project.id
-    parent = _session(session_manager, sample_project["id"], "parent", pane="%1")
+    parent = _session(session_manager, sample_project["id"], "parent", terminal=True)
     child = _session(session_manager, other_project_id, "child")
-    remote_session = _session(session_manager, other_project_id, "remote", pane="%2")
+    remote_session = _session(session_manager, other_project_id, "remote", terminal=True)
     _move_session_to_remote(temp_db, remote_session)
     childless_run = _run(temp_db, parent)
     remote_child_run = _run(temp_db, parent, child=child)

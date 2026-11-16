@@ -579,12 +579,10 @@ class BroadcastMixin:
         }
         await self.broadcast(message)
 
-    async def broadcast_tmux_session_event(
+    async def broadcast_terminal_event(
         self,
         event: str,
         terminal_id: str = "",
-        session_name: str | None = None,
-        socket: str | None = None,
         terminal: dict[str, Any] | None = None,
     ) -> None:
         """Broadcast terminal lifecycle events to subscribed clients."""
@@ -594,10 +592,6 @@ class BroadcastMixin:
             "terminal_id": terminal_id,
             "timestamp": datetime.now(UTC).isoformat(),
         }
-        if session_name is not None:
-            message["session_name"] = session_name
-        if socket is not None:
-            message["socket"] = socket
         if terminal is not None:
             message["terminal"] = terminal
         await self.lease_registry.publish_lifecycle(message, self.broadcast)

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import threading
 from typing import Any, Literal, cast
 
@@ -723,7 +722,7 @@ def _operator_input(
 
 
 @pytest.mark.asyncio
-async def test_operator_input_with_attached_terminal_touches_no_store() -> None:
+async def test_web_input_routes_through_runtime_write() -> None:
     coordinator, runtime, store, terminal = _counting_coordinator()
     generation = await _grant(coordinator, terminal.id)
     store.calls.clear()
@@ -1212,35 +1211,26 @@ async def test_sequence_failure_after_a_dispatched_step_keeps_latch() -> None:
 
 @pytest.mark.asyncio
 async def test_dispatch_resolves_the_runtime_per_terminal_backend() -> None:
-    """One coordinator, two backends: each write reaches only its own runtime.
-
-    The coordinator used to bind a single runtime at construction, so every
-    write to a native-backend terminal was injected through the tmux runtime.
-    """
-    tmux_terminal = make_memory_terminal(backend="tmux")
+    """A native write reaches the runtime registered for its row."""
     native_terminal = make_memory_terminal(backend="native")
-    store = MemoryTerminalStore(tmux_terminal)
-    store.rows[native_terminal.id] = native_terminal
-    tmux_runtime = FakeRuntime(backend="tmux")
+    store = MemoryTerminalStore(native_terminal)
     native_runtime = FakeRuntime(backend="native")
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
-        runtime_registry(tmux_runtime, native_runtime),
+        runtime_registry(native_runtime),
         lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
 
-    for terminal, payload in ((tmux_terminal, "to-tmux"), (native_terminal, "to-native")):
-        await coordinator.write(
-            WriteRequest(
-                terminal_id=terminal.id,
-                action_key=f"w:{terminal.id}",
-                origin="automatic",
-                kind="text",
-                payload=payload,
-            )
+    outcome = await coordinator.write(
+        WriteRequest(
+            terminal_id=native_terminal.id,
+            action_key=f"w:{native_terminal.id}",
+            origin="automatic",
+            kind="text",
+            payload="to-native",
         )
-
-    assert tmux_runtime.write_log == [("text", "to-tmux")]
+    )
+    assert isinstance(outcome, Delivered)
     assert native_runtime.write_log == [("text", "to-native")]
 
 
@@ -1331,58 +1321,6 @@ async def test_unlatched_sequence_still_honours_quarantine() -> None:
     )
 
     assert isinstance(outcome, AutomaticWriteQuarantined)
-    assert runtime.write_log == []
-
-
-@pytest.mark.asyncio
-async def test_input_with_a_client_fd_writes_the_attach_client_pty() -> None:
-    """A request carrying the attach client's PTY bypasses the pane runtime."""
-    coordinator, runtime, store = _coordinator()
-    terminal_id = next(iter(store.rows))
-    read_fd, write_fd = os.pipe()
-    try:
-        outcome = await coordinator.write(
-            WriteRequest(
-                terminal_id=terminal_id,
-                action_key="ws:att:1",
-                origin="automatic",
-                kind="input",
-                payload="\x1b[<64;13;12M",
-                client_fd=write_fd,
-            )
-        )
-
-        assert isinstance(outcome, Delivered)
-        assert os.read(read_fd, 64) == b"\x1b[<64;13;12M"
-        assert runtime.write_log == []
-    finally:
-        os.close(read_fd)
-        os.close(write_fd)
-
-
-@pytest.mark.asyncio
-async def test_client_fd_write_failure_before_any_byte_is_stage_none() -> None:
-    """A dead attach client refuses the write instead of reporting bytes it never sent."""
-    coordinator, runtime, store = _coordinator()
-    terminal_id = next(iter(store.rows))
-    read_fd, write_fd = os.pipe()
-    os.close(read_fd)
-    os.close(write_fd)
-
-    with pytest.raises(TerminalWriteError) as excinfo:
-        await coordinator.write(
-            WriteRequest(
-                terminal_id=terminal_id,
-                action_key="ws:att:2",
-                origin="automatic",
-                kind="input",
-                payload="x",
-                client_fd=write_fd,
-            )
-        )
-
-    assert excinfo.value.stage == "none"
-    assert isinstance(excinfo.value.__cause__, OSError)
     assert runtime.write_log == []
 
 

@@ -12,10 +12,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from gobby.agents.tmux.session_manager import TmuxPaneInfo, TmuxSessionManager
 from gobby.servers.routes.terminals import create_terminals_router
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.terminals import TerminalManager, tmux_locator_key
+from gobby.storage.terminals import TerminalManager
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
     TERMINAL_LIST_MAX_ENCODED_BYTES,
@@ -25,20 +24,11 @@ from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _man
 
 pytestmark = pytest.mark.unit
 
-_SOCKET = "/private/tmp/tmux-501/default"
-
 
 @pytest.fixture(autouse=True)
 def _machine() -> Any:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
-
-
-@pytest.fixture(autouse=True)
-def tmux_panes() -> Any:
-    """Live tmux rows probe their server; no test may reach the user's real tmux."""
-    with patch.object(TmuxSessionManager, "list_panes", AsyncMock(return_value=[])) as probe:
-        yield probe
 
 
 def _server(temp_db: HubDatabase, websocket_server: Any = None) -> Any:
@@ -60,21 +50,7 @@ def _client(temp_db: HubDatabase, websocket_server: Any = None) -> TestClient:
 
 def test_terminal_rest_surface(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
     manager = _manager(temp_db)
-    live = _create_pending(manager, sample_project["id"])
-    promoted = manager.promote_to_live(
-        live.id,
-        locator={
-            "socket_path": _SOCKET,
-            "server_pid": 1,
-            "server_start_time": 2,
-            "pane_id": "%1",
-        },
-        locator_key=tmux_locator_key(
-            socket_path=_SOCKET, server_pid=1, server_start_time=2, pane_id="%1"
-        ),
-        session_name="sess",
-    )
-    assert promoted is not None
+    promoted = _native_live(manager, sample_project["id"], pgid=0)
     exited = _create_pending(manager, sample_project["id"])
     manager.fail_pending(exited.id)
 
@@ -90,13 +66,10 @@ def test_terminal_rest_surface(temp_db: HubDatabase, sample_project: dict[str, A
         assert detail.status_code == 200
         payload = detail.json()
         assert payload["id"] == promoted.id
-        # An external tmux row stays attachable by its physical pane locator.
         attach = payload["attach"]
-        assert attach["backend"] == "tmux"
-        assert attach["socket_path"] == _SOCKET
-        assert attach["pane_id"] == "%1"
-        assert attach["server_pid"] == 1
-        assert attach["server_start_time"] == 2
+        assert attach["backend"] == "native"
+        assert attach["host_terminal_id"] == promoted.id
+        assert attach["frame_host_epoch"] == "epoch-1"
         other = uuid.uuid4()
         isolated = client.get("/api/terminals", params={"project_id": str(other)})
         assert isolated.json()["items"] == []
@@ -107,25 +80,8 @@ def test_terminal_inventory_is_paginated(
 ) -> None:
     manager = _manager(temp_db)
     live_ids: list[str] = []
-    for index in range(TERMINAL_LIST_DEFAULT_PAGE_SIZE + 3):
-        row = _create_pending(manager, sample_project["id"], terminal_id=str(uuid.uuid4()))
-        locator = {
-            "socket_path": _SOCKET,
-            "server_pid": index + 10,
-            "server_start_time": 2,
-            "pane_id": f"%{index}",
-        }
-        promoted = manager.promote_to_live(
-            row.id,
-            locator=locator,
-            locator_key=tmux_locator_key(
-                socket_path=_SOCKET,
-                server_pid=index + 10,
-                server_start_time=2,
-                pane_id=f"%{index}",
-            ),
-        )
-        assert promoted is not None
+    for _ in range(TERMINAL_LIST_DEFAULT_PAGE_SIZE + 3):
+        promoted = _native_live(manager, sample_project["id"], pgid=0)
         live_ids.append(promoted.id)
     extra = _create_pending(manager, sample_project["id"])
     manager.fail_pending(extra.id)
@@ -202,7 +158,7 @@ def _native_live(
 ) -> Any:
     """A live native row carrying the shell pid the host recorded for it."""
     row = _create_pending(manager, project_id, backend="native")
-    process: dict[str, object] = {"host_terminal_id": "ht-1", "pgid": pgid, "start_time": 1.0}
+    process: dict[str, object] = {"host_terminal_id": row.id, "pgid": pgid, "start_time": 1.0}
     if shell is not None:
         process["shell"] = shell
     recorded = manager.record_process(
@@ -214,33 +170,19 @@ def _native_live(
     assert recorded is not None
     promoted = manager.promote_to_live(
         row.id,
-        locator={"host_terminal_id": "ht-1"},
-        locator_key="native:epoch-1:ht-1",
+        locator={"host_terminal_id": row.id},
+        locator_key=f"native:epoch-1:{row.id}",
         host_epoch="epoch-1",
     )
     assert promoted is not None
     return promoted
 
 
-def test_a_native_row_reports_the_command_in_its_terminal_foreground(
+def test_terminal_list_runs_no_pane_probe(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = _manager(temp_db)
     native = _native_live(manager, sample_project["id"], pgid=4242, shell="zsh")
-    tmux_row = _create_pending(manager, sample_project["id"])
-    promoted = manager.promote_to_live(
-        tmux_row.id,
-        locator={
-            "socket_path": _SOCKET,
-            "server_pid": 1,
-            "server_start_time": 2,
-            "pane_id": "%1",
-        },
-        locator_key=tmux_locator_key(
-            socket_path=_SOCKET, server_pid=1, server_start_time=2, pane_id="%1"
-        ),
-    )
-    assert promoted is not None
     table = "4242 5150 -zsh\n5150 5150 /usr/local/bin/nvim\n"
     run = MagicMock(
         return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=table, stderr="")
@@ -264,63 +206,6 @@ def test_a_native_row_reports_the_command_in_its_terminal_foreground(
     assert detail.json()["cwd"] == "/srv/app"
 
 
-def _live_tmux_row(manager: TerminalManager, project_id: str) -> Any:
-    row = _create_pending(manager, project_id)
-    promoted = manager.promote_to_live(
-        row.id,
-        locator={"socket_path": _SOCKET, "server_pid": 1, "server_start_time": 2, "pane_id": "%1"},
-        locator_key=tmux_locator_key(
-            socket_path=_SOCKET, server_pid=1, server_start_time=2, pane_id="%1"
-        ),
-    )
-    assert promoted is not None
-    return promoted
-
-
-def test_a_tmux_row_reports_its_pane_command_and_cwd(
-    temp_db: HubDatabase, sample_project: dict[str, Any], tmux_panes: AsyncMock
-) -> None:
-    promoted = _live_tmux_row(_manager(temp_db), sample_project["id"])
-    pane = TmuxPaneInfo(
-        socket_path=_SOCKET,
-        server_pid=1,
-        server_start_time=2,
-        session_name="sess",
-        window_id="@1",
-        window_name=None,
-        pane_id="%1",
-        pane_pid=None,
-        pane_title=None,
-        pane_dead=False,
-        pane_command="vim",
-        pane_path="/Users/dev/projects/gobby",
-    )
-    tmux_panes.return_value = [pane]
-
-    with _client(temp_db) as client:
-        listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
-
-    # The gclient sidebar relist reads a hand-started pane's command and directory.
-    row = {item["id"]: item for item in listing.json()["items"]}[promoted.id]
-    assert row["command"] == "vim"
-    assert row["cwd"] == "/Users/dev/projects/gobby"
-
-
-def test_a_stalled_tmux_server_leaves_the_list_intact(
-    temp_db: HubDatabase, sample_project: dict[str, Any], tmux_panes: AsyncMock
-) -> None:
-    promoted = _live_tmux_row(_manager(temp_db), sample_project["id"])
-    tmux_panes.side_effect = TimeoutError("tmux command timed out")
-
-    with _client(temp_db) as client:
-        listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
-
-    assert listing.status_code == 200
-    row = {item["id"]: item for item in listing.json()["items"]}[promoted.id]
-    assert row["command"] is None
-    assert row["cwd"] is None
-
-
 def test_a_native_row_falls_back_to_its_spawn_shell(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
@@ -342,17 +227,14 @@ def test_a_native_row_falls_back_to_its_spawn_shell(
 
 
 def test_terminal_inventory_exposes_backend(
-    temp_db: HubDatabase, sample_project: dict[str, Any], tmux_panes: AsyncMock
+    temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = _manager(temp_db)
     stored = {
         row.id: row.backend
-        for row in (
-            _native_live(manager, sample_project["id"], pgid=4242, shell="zsh"),
-            _live_tmux_row(manager, sample_project["id"]),
-        )
+        for row in (_native_live(manager, sample_project["id"], pgid=4242, shell="zsh"),)
     }
-    assert sorted(stored.values()) == ["native", "tmux"]
+    assert list(stored.values()) == ["native"]
     run = MagicMock(
         return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout="", stderr="")
     )

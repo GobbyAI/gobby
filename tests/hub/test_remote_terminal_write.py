@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -285,25 +284,12 @@ async def test_bound_write_snapshot_without_owned_attachment_does_not_bypass_own
 
 
 @pytest.mark.asyncio
-async def test_remote_refuses_client_fd_and_unnamed_keys(node: _FakeNode) -> None:
+async def test_remote_refuses_unnamed_keys(node: _FakeNode) -> None:
     coordinator, runtime, store, terminal_id = _coordinator(REMOTE_MACHINE)
-    read_fd, write_fd = os.pipe()
-    try:
-        with pytest.raises(TerminalWriteError) as excinfo:
-            await coordinator.write(replace(_write(terminal_id), client_fd=write_fd))
+    with pytest.raises(TerminalWriteError) as excinfo:
+        await coordinator.write(replace(_write(terminal_id), kind="key", payload="ls -la"))
 
-        assert excinfo.value.stage == "none"
-        os.set_blocking(read_fd, False)
-        with pytest.raises(BlockingIOError):
-            os.read(read_fd, 1)
-
-        with pytest.raises(TerminalWriteError) as excinfo:
-            await coordinator.write(replace(_write(terminal_id), kind="key", payload="ls -la"))
-
-        assert excinfo.value.stage == "none"
-    finally:
-        os.close(read_fd)
-        os.close(write_fd)
+    assert excinfo.value.stage == "none"
 
     assert node.sent == []
     assert runtime.write_log == []

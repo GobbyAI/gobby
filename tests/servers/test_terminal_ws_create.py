@@ -250,14 +250,12 @@ async def test_create_without_a_project_lands_in_global_and_names_the_failure(
     monkeypatch.setattr("gobby.terminals.web_spawn.spawn_web_terminal", spawn)
     ws = MockWebSocket()
     server.clients[ws] = {}
-    # A client that still asks for tmux gets the configured native runtime: the
-    # create path never reads a backend from the request.
+    # Terminal creation uses the configured native runtime.
     request = {
         "type": "terminal_create",
         "rows": 24,
         "cols": 80,
         "command": ["zsh"],
-        "backend": "tmux",
     }
 
     await server._handle_terminal_create(ws, {**request, "request_id": "c-1"})
@@ -442,7 +440,7 @@ async def test_create_and_kill_run_storage_on_the_executor(
         return read_row(terminal_id)
 
     monkeypatch.setattr(manager, "get", recording_get)
-    monkeypatch.setattr(server, "broadcast_tmux_session_event", AsyncMock())
+    monkeypatch.setattr(server, "broadcast_terminal_event", AsyncMock())
     websocket = MockWebSocket()
     server.clients[websocket] = {}
     loop_thread = threading.get_ident()
@@ -464,7 +462,7 @@ async def test_create_and_kill_run_storage_on_the_executor(
     live_server, live_manager, live_runtime = _golden_server(backend="native")
     live_manager.row.state = "live"
     cast(Any, live_runtime).terminate = AsyncMock()
-    cast(Any, live_server).broadcast_tmux_session_event = AsyncMock()
+    cast(Any, live_server).broadcast_terminal_event = AsyncMock()
     storage_calls: list[tuple[str, int]] = []
     live_get, live_mark_exited = live_manager.get, live_manager.mark_exited
 

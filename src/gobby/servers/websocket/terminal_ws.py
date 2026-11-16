@@ -122,12 +122,10 @@ class TerminalWsMixin(TerminalWriteMixin):
     open_proxy_frame: Any | None = None
     if TYPE_CHECKING:
 
-        async def broadcast_tmux_session_event(
+        async def broadcast_terminal_event(
             self,
             event: str,
             terminal_id: str = "",
-            session_name: str | None = None,
-            socket: str | None = None,
             terminal: dict[str, Any] | None = None,
         ) -> None: ...
 

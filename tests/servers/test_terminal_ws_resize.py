@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import threading
-from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.servers.websocket.proxy_relay import ProxyAttachment
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
@@ -17,7 +15,6 @@ from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.storage.terminals import Terminal
 from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 
@@ -31,8 +28,8 @@ class _SizingServer(TerminalSizingMixin, TerminalControlMixin, TerminalWsMixin):
     def _leases(self) -> TerminalLeaseRegistry:
         return self.lease_registry
 
-    def _runtime_for(self, backend: str) -> TmuxTerminalRuntime | None:
-        return self.runtime if backend == "tmux" else None
+    def _runtime_for(self, backend: str) -> Any | None:
+        return self.runtime if backend == "native" else None
 
     async def _send_json(self, _websocket: Any, payload: dict[str, Any]) -> None:
         self.sent.append(payload)
@@ -42,67 +39,9 @@ class _SizingServer(TerminalSizingMixin, TerminalControlMixin, TerminalWsMixin):
 
 
 @pytest.mark.asyncio
-async def test_external_tmux_row_resizes_and_releases(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    row = replace(
-        make_memory_terminal(terminal_id="term-1", session_name="external-demo"),
-        ownership="external",
-    )
-    commands: list[tuple[str, ...]] = []
-
-    async def run_tmux(
-        _manager: TmuxSessionManager, *args: str, **_kwargs: object
-    ) -> tuple[int, str, str]:
-        if "#{pid}" in args[-1]:
-            return (0, "1658\t1784592177\n", "")
-        commands.append(args)
-        return (0, "", "")
-
-    monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
-    runtime = TmuxTerminalRuntime()
-    server = _SizingServer(row, runtime)
-    websocket = object()
-    attachment = await server.lease_registry.attach("term-1", viewer="gclient", websocket=websocket)
-
-    await server._handle_terminal_resize(
-        websocket,
-        {"attachment_id": attachment.attachment_id, "rows": 40, "cols": 120},
-    )
-    assert commands[:2] == [
-        ("set-option", "-w", "-t", "%1", "window-size", "manual"),
-        ("resize-window", "-t", "%1", "-x", "120", "-y", "40"),
-    ]
-
-    await TerminalWsMixin._handle_terminal_detach(
-        server,
-        websocket,
-        {"attachment_id": attachment.attachment_id, "terminal_id": "term-1"},
-    )
-    assert commands[-1] == ("set-option", "-wu", "-t", "%1", "window-size")
-    await server.lease_registry.shutdown_lifecycle_publication()
-
-
-@pytest.mark.asyncio
-async def test_proxy_socket_failure_applies_re_elected_size(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    row = replace(
-        make_memory_terminal(terminal_id="term-1", session_name="external-demo"),
-        ownership="external",
-    )
-    commands: list[tuple[str, ...]] = []
-
-    async def run_tmux(
-        _manager: TmuxSessionManager, *args: str, **_kwargs: object
-    ) -> tuple[int, str, str]:
-        if "#{pid}" in args[-1]:
-            return (0, "1658\t1784592177\n", "")
-        commands.append(args)
-        return (0, "", "")
-
-    monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
-    runtime = TmuxTerminalRuntime()
+async def test_proxy_socket_failure_applies_re_elected_size() -> None:
+    row = make_memory_terminal(terminal_id="term-1", backend="native")
+    runtime = _AcceptingRuntime()
     server = _SizingServer(row, runtime)
     websocket = object()
     web = await server.lease_registry.attach("term-1", viewer="web", websocket=websocket)
@@ -132,62 +71,11 @@ async def test_proxy_socket_failure_applies_re_elected_size(
 
     await hub._on_socket_fail(websocket, "proxy_lag")
 
-    assert commands[-2:] == [
-        ("set-option", "-w", "-t", "%1", "window-size", "manual"),
-        ("resize-window", "-t", "%1", "-x", "120", "-y", "40"),
-    ]
+    assert runtime.sizes[-1] == (40, 120)
+    resized = server.terminal_manager.get("term-1")
+    assert resized is not None
+    assert (resized.rows, resized.cols) == (40, 120)
     frame.close.assert_awaited_once()
-    await server.lease_registry.shutdown_lifecycle_publication()
-
-
-@pytest.mark.asyncio
-async def test_web_viewer_pins_tmux_window_only_while_holding_the_lease(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    row = replace(
-        make_memory_terminal(terminal_id="term-1", session_name="external-demo"),
-        ownership="external",
-    )
-    commands: list[tuple[str, ...]] = []
-
-    async def run_tmux(
-        _manager: TmuxSessionManager, *args: str, **_kwargs: object
-    ) -> tuple[int, str, str]:
-        if "#{pid}" in args[-1]:
-            return (0, "1658\t1784592177\n", "")
-        commands.append(args)
-        return (0, "", "")
-
-    monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
-    runtime = TmuxTerminalRuntime()
-    server = _SizingServer(row, runtime)
-    websocket = object()
-    web = await server.lease_registry.attach(
-        "term-1", viewer="web", backend="tmux", websocket=websocket
-    )
-    control = {"terminal_id": "term-1", "attachment_id": web.attachment_id}
-    pin = [
-        ("set-option", "-w", "-t", "%1", "window-size", "manual"),
-        ("resize-window", "-t", "%1", "-x", "80", "-y", "24"),
-    ]
-
-    # Watching: the phone's grid never reaches the shared window.
-    await server._handle_terminal_resize(
-        websocket,
-        {"attachment_id": web.attachment_id, "rows": 24, "cols": 80},
-    )
-    assert commands == []
-
-    await server._handle_terminal_take_control(websocket, control)
-    assert commands == pin
-
-    unpin = [("set-option", "-wu", "-t", "%1", "window-size")]
-    await server._handle_terminal_release_control(websocket, control)
-    assert commands == pin + unpin
-
-    # The row still records 24x80 after the release; typing again must re-pin.
-    await server._handle_terminal_take_control(websocket, control)
-    assert commands == pin + unpin + pin
     await server.lease_registry.shutdown_lifecycle_publication()
 
 
@@ -255,9 +143,11 @@ class _AcceptingRuntime:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.sizes: list[tuple[int, int]] = []
 
     async def resize(self, _row: Any, _rows: int, _cols: int) -> None:
         self.calls += 1
+        self.sizes.append((_rows, _cols))
 
 
 @pytest.mark.asyncio

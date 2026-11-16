@@ -106,8 +106,7 @@ def _configure(
 
 
 def _live_row(temp_db: HubDatabase, sample_project: dict[str, Any]) -> str:
-    """A live native row: the lease protocol under test is backend-neutral,
-    and a tmux row takes its lease on attach through the tmux-client path."""
+    """A live native row for the attachment and lease protocol."""
     manager = _manager(temp_db)
     pending = _create_pending(manager, sample_project["id"], backend="native")
     promoted = manager.promote_to_live(

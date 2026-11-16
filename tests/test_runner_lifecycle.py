@@ -3008,12 +3008,12 @@ class TestShutdownDaemonServices:
                 self.terminated = True
 
         pane = FakeProcess(200, "zsh", ["zsh"])
-        tmux = FakeProcess(100, "tmux", ["tmux", "-L", "gobby"], [pane])
-        unrelated_tmux = FakeProcess(250, "tmux", ["tmux", "-L", "other"])
+        host = FakeProcess(100, "gterm", ["gterm", "serve"], [pane])
+        unrelated_host = FakeProcess(250, "gterm", ["gterm", "serve"])
         worker = FakeProcess(300, "gcode", ["gcode", "index"])
-        current = FakeProcess(os.getpid(), "python", ["python"], [tmux, unrelated_tmux, worker])
+        current = FakeProcess(os.getpid(), "python", ["python"], [host, unrelated_host, worker])
         processes = {
-            process.pid: process for process in [current, tmux, pane, unrelated_tmux, worker]
+            process.pid: process for process in [current, host, pane, unrelated_host, worker]
         }
         recycled_pane = FakeProcess(
             pane.pid,
@@ -3045,9 +3045,9 @@ class TestShutdownDaemonServices:
             preserved_agent_pids={pane.pid},
         )
 
-        assert tmux.terminated is recycled_preserved_pid
+        assert host.terminated is recycled_preserved_pid
         assert pane.terminated is recycled_preserved_pid
-        assert unrelated_tmux.terminated is True
+        assert unrelated_host.terminated is True
         assert worker.terminated is True
 
     async def test_reaper_names_children_it_force_kills(
@@ -4016,7 +4016,7 @@ class TestAgentEventBroadcastingCallback:
 
         mock_ws_server = MagicMock()
         mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=wait_for_release)
-        mock_ws_server.broadcast_tmux_session_event = AsyncMock(side_effect=wait_for_release)
+        mock_ws_server.broadcast_terminal_event = AsyncMock(side_effect=wait_for_release)
         mock_pty_manager = MagicMock()
         mock_pty_manager.stop_reader = AsyncMock(side_effect=wait_for_release)
 

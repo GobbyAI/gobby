@@ -523,11 +523,13 @@ class TestBroadcastEventMethods:
         ws = _make_ws(subscriptions={"terminal_event"})
         b.clients[ws] = {}
 
-        await b.broadcast_tmux_session_event("created", terminal_id="term-1")
+        row = {"id": "term-1", "backend": "native", "state": "live"}
+        await b.broadcast_terminal_event("created", terminal_id="term-1", terminal=row)
         msg = _sent_message(ws)
         assert msg["type"] == "terminal_event"
         assert msg["event"] == "created"
         assert msg["terminal_id"] == "term-1"
+        assert msg["terminal"] == row
         assert msg["seq"] == 1
         assert msg["daemon_epoch"] == b.lease_registry.daemon_epoch
         await b.lease_registry.shutdown_lifecycle_publication()

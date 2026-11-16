@@ -190,7 +190,7 @@ async def test_disconnect_during_welcome_cleans_up_without_unexpected_error(
     config.max_message_size = 1024
     websocket_server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="local-cli"))
     cast(Any, websocket_server).run_db = AsyncMock(side_effect=lambda func, *args: func(*args))
-    cleanup_tmux_client = AsyncMock()
+    cleanup_terminal_client = AsyncMock()
 
     app = FastAPI()
     server = SimpleNamespace(
@@ -214,11 +214,13 @@ async def test_disconnect_during_welcome_cleans_up_without_unexpected_error(
     websocket.close = AsyncMock()
     caplog.set_level(logging.DEBUG, logger="gobby.servers.websocket.server")
 
-    with patch.object(cast(Any, websocket_server), "_cleanup_terminal_client", cleanup_tmux_client):
+    with patch.object(
+        cast(Any, websocket_server), "_cleanup_terminal_client", cleanup_terminal_client
+    ):
         await route.endpoint(websocket)
 
     assert websocket_server.clients == {}
-    cleanup_tmux_client.assert_awaited_once()
+    cleanup_terminal_client.assert_awaited_once()
     websocket.close.assert_not_awaited()
     assert "connection closed abnormally" in caplog.text
     assert "Unexpected error for client" not in caplog.text

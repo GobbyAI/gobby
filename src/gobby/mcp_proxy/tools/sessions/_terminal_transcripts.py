@@ -32,10 +32,8 @@ async def _capture_transcript_tail(
     session_id: str,
     session_manager: SessionManager,
     lines: int,
-    *,
-    tmux_error: str,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Return transcript tail fallback when no live tmux target is available."""
+    """Return transcript tail fallback when no live pane is available."""
     session = session_manager.get(session_id)
     if session is None:
         return None, "session_not_found"
@@ -61,8 +59,7 @@ async def _capture_transcript_tail(
             "output": "\n".join(tail),
             "via": "transcript",
             "transcript_path": transcript_path,
-            "note": "No live tmux pane was capturable; returned transcript tail instead.",
-            "tmux_error": tmux_error,
+            "note": "No live pane was capturable; returned transcript tail instead.",
         },
         None,
     )

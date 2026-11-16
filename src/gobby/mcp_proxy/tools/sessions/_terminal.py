@@ -782,7 +782,6 @@ def register_terminal_tools(
             session_id,
             session_manager,
             lines,
-            tmux_error=error,
         )
         if fallback is not None:
             return fallback
@@ -790,6 +789,5 @@ def register_terminal_tools(
             "success": False,
             "error": error,
             "error_code": "no_live_pane_or_transcript",
-            "tmux_error": error,
             "transcript_error": transcript_error,
         }

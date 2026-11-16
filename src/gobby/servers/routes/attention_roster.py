@@ -58,8 +58,6 @@ def _load_roster_entries(
                 "model": run.model,
                 "model_display_name": display_names.get((run.provider, run.model)),
                 "terminal": _terminal_block(server, run.terminal),
-                # Agent runs are native-only; tmux blocks describe external panes.
-                "tmux": None,
                 "last_activity_at": _serialize_timestamp(run.updated_at),
                 **_metadata_payload(snapshot, entry_id),
             }
@@ -68,11 +66,9 @@ def _load_roster_entries(
     for session in sessions:
         if session.source_id in active_agent_sessions:
             continue
-        terminal_context = session.terminal_context
         terminal = _terminal_block(server, session.terminal)
-        pane = terminal_context.get("tmux_pane")
-        # A session with no terminal or pane is still assigned work when it holds a claim.
-        if terminal is None and session.task_id is None and (not isinstance(pane, str) or not pane):
+        # A session without a terminal still has assigned work when it holds a claim.
+        if terminal is None and session.task_id is None:
             continue
         entry_id = f"session:{session.source_id}"
         entries.append(
@@ -93,7 +89,6 @@ def _load_roster_entries(
                 "model": session.model,
                 "model_display_name": display_names.get((session.provider, session.model)),
                 "terminal": terminal,
-                "tmux": _session_tmux_payload(terminal_context),
                 "last_activity_at": _serialize_timestamp(session.updated_at),
                 **_metadata_payload(snapshot, entry_id),
             }
@@ -174,20 +169,6 @@ def _terminal_block(
         "backend": terminal.backend,
         "state": terminal.state,
         "attach": None if attach is None else asdict(attach),
-    }
-
-
-def _session_tmux_payload(terminal_context: Mapping[str, object]) -> dict[str, object]:
-    from gobby.terminals.lookup import (
-        attach_name_from_context,
-        parent_pid_from_context,
-        socket_path_from_context,
-    )
-
-    return {
-        "socket_path": socket_path_from_context(terminal_context),
-        "session_name": attach_name_from_context(terminal_context),
-        "parent_pid": parent_pid_from_context(terminal_context),
     }
 
 

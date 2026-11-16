@@ -45,7 +45,7 @@ async def test_kill_orphaned_row_marks_exited_and_broadcasts() -> None:
 
     cast(Any, runtime).terminate = terminate
     broadcast = AsyncMock()
-    cast(Any, server).broadcast_tmux_session_event = broadcast
+    cast(Any, server).broadcast_terminal_event = broadcast
 
     reply = await _kill(server, TERMINAL_ID)
 
@@ -70,7 +70,7 @@ async def test_kill_answers_a_runtime_failure_instead_of_dropping_the_reply() ->
 
     cast(Any, runtime).terminate = terminate
     broadcast = AsyncMock()
-    cast(Any, server).broadcast_tmux_session_event = broadcast
+    cast(Any, server).broadcast_terminal_event = broadcast
 
     reply = await _kill(server, TERMINAL_ID)
 
@@ -130,7 +130,7 @@ async def test_kill_refuses_live_external_tmux_row_without_probing_its_socket(
     runtime = TmuxTerminalRuntime()
     server.terminal_runtime_registry = MagicMock(resolve=lambda _backend: runtime)
     broadcast = AsyncMock()
-    cast(Any, server).broadcast_tmux_session_event = broadcast
+    cast(Any, server).broadcast_terminal_event = broadcast
 
     reply = await _kill(server, row.id)
 
