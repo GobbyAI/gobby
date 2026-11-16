@@ -367,3 +367,40 @@ Source: AskUserQuestion answers and chat messages in session gobby#19401.
     - revival refuses a row whose recorded CLI has exited, and the take-over swaps only the pid
       and start time, so ownership and the rest of the terminal context move before the row
       comes back.
+27. How the port runs (Josh, 2026-11-16 ~09:20 CT, in session gobby#19401's own pane). Earlier
+    he had said "we're not bound by runbooks, and we have the snapshot of the database and the
+    code is in github" and "so we can run with minimal friction if it gets the job done. I was
+    thinking about letting Fable orchestrate and spawn haiku-5.5-xhigh agents with ultracode".
+    Now: "I think I want an Assistant, a default agent running Fable 5.2, and that agent using
+    Haiku 5.5 xhigh subagents with ultracode. I need to make sure there isn't any friction from
+    runbooks affecting default agents or subagents." After the check below: "I don't need an
+    assistant exactly, I just need a default session that isn't Fable that I can get status
+    updates from and ask questions", then "over telegram". Then: "could we create a different
+    project operating policy for the port based on our discussion?" and, shown its text, "ok
+    proceed".
+    The map author's reading, which Josh corrects where it is wrong. One default session on
+    Fable 5.2 runs the port. It fans work out through the Workflow tool to Haiku 5.5 subagents
+    at xhigh effort. A second default session on another model is registered with Telegram. It
+    reads tasks, commits and the port session's status line, and passes Josh's questions and
+    instructions to the port session with send_message. No runbook, pipeline or spawned seat
+    takes part, and no Orchestrator, Triage, Consolidator or Assistant exists. This replaces
+    the dispatcher and static seats that docs/port/protocol.md and D116 prescribe; their text
+    is not rewritten. The general project operating policy
+    (.gobby/workflows/rules/project-operating-policy.yaml, 5.0.0) says so to every default
+    session, and its Friction line files nothing under #25603 or #25662 and launches no team.
+    What the check found at 7b25460b0d:
+    - read and observed: a session whose definition resolves evaluates the mandatory rules
+      plus that definition's selectors (src/gobby/workflows/engine/rule_selection.py:110-139);
+      the installed default row selects no runbook tag; session gobby#19401, itself default,
+      lists none of the 24 runbook-tagged rules as active; the installed tags of two of the 24
+      were read;
+    - read: a native subagent shares its parent's session, so it meets the parent's rules, and
+      the handoff tools are refused to it (rule block-subagent-session-handoff);
+    - read: the three scheduled pipelines only wake one live seat of a named type or deliver
+      an existing digest file; no seat was live and no session held the Telegram conversation;
+    - read, not run: registering a default session with Telegram (the gobby skill's
+      references/communications/routing.md), and the wildcard capability passing the
+      Assistant's spawner check, which the comment in its definition disagrees with;
+    - not observed: several subagents editing and committing in one checkout under one
+      session, and the Workflow tool's worktree isolation. The port session tries each on one
+      small leaf before fanning out.

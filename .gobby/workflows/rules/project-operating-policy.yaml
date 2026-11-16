@@ -1,4 +1,4 @@
-version: "4.1.0"
+version: "5.0.0"
 
 # This project's operating structure for seats: domain roots, worktrees, launch
 # defaults, tab layout, load and quiet hours. Bundled definitions carry roles
@@ -312,18 +312,20 @@ rules:
       - type: inject_context
         delivery: on_receipt
         template: |
-          ## General Project Operating Policy
+          ## Project Operating Policy: Gobby 1.0 port
+          - The port (#21542) is this project's work. docs/port/rulings.md governs; where docs/port/protocol.md or a plan disagrees, the rulings win. Chunk order follows docs/port/map-v2.md, tmux purge (#25486) first.
+          - Default sessions only (ruling 27). The port session orchestrates and fans out through Workflow subagents (Haiku 5.5, xhigh). No runbooks, pipelines or spawned seats; no Orchestrator, Triage or Consolidator exists.
+          - The operator reaches a status session over Telegram. Keep your status line and task state current; answer its messages at your next break.
           - Read project_policy for domain roots, integration branch, operator route, quiet hours and release guidance.
-          - Integration 0.9.0. Push: the operator and sessions running the default agent definition may push. Other definitions follow their runbook push policy.
+          - Integration 0.9.0. Push: the operator and sessions running the default agent definition may push. CI does not gate the port until final validation (ruling 25). The pre-push hook stays; never push with --no-verify.
           - Claim before editing; preserve foreign files and stage only owned task paths.
           - Follow TDD where applicable, focused validation and OCR self-review. Record truthful completion evidence and close with the commit SHA.
-          - Test runs on a shared host: run `uv sync --frozen` once per checkout (plain `uv sync` may rewrite uv.lock and is refused), then `uv run --no-sync pytest ...`, because a plain `uv run` waits silently on the shared sync lock. A seat that can't write the checkout's `target/` sets CARGO_TARGET_DIR to its own writable target and builds gdaemon there once before running tests that need it. A run that prints nothing is waiting on a lock or a build, so don't count it as a hang or a failure.
-          - Direct integration commits require the active definition's capability and declared path coverage. Otherwise follow the configured landing workflow.
+          - Test runs on a shared host: run `uv sync --frozen` once per checkout (plain `uv sync` may rewrite uv.lock and is refused), then `uv run --no-sync pytest ...`, because a plain `uv run` waits silently on the shared sync lock. A run that prints nothing is waiting on a lock or a build, so don't count it as a hang or a failure.
           - The operator alone moves protected/operator-placed tasks. Preserve the deferred-by-user label.
           - Honor project_policy.quiet_hours; read release_guidance before crate releases.
           - Present every time to the operator in project_policy.operator_timezone; convert UTC timestamps first.
           - Spend: OpenRouter spend under $10 needs no operator approval; report every known OpenRouter spend. Any other paid spend, or OpenRouter at $10 or more, needs operator approval (project_policy.spend_policy).
-          - Friction: work around it. A YAML-only fix the Orchestrator makes live. A blocking item that can't be worked around goes under the Friction epic #25603 with a team launched for it. A non-blocking item goes under the non-blocking sub-epic #25662, which the Consolidator consolidates hourly and up to three teams work.
+          - Friction: work around it. Fix it inline when it blocks the port; list the rest for the operator. File nothing under #25603 or #25662 and launch no team.
       - type: set_variable
         delivery: on_receipt
         variable: _project_policy_injected
