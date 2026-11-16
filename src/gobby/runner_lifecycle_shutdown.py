@@ -304,7 +304,6 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_vector_rebuild_task",
         "_sandbox_run_root_sweep_task",
         "_memory_reconcile_task",
-        "_tmux_window_repair_task",
     )
 
     from gobby.providers.capabilities.refresh import CAPABILITY_REFRESH_DRAIN_TIMEOUT_SECONDS

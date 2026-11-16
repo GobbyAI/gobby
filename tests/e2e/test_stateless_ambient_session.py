@@ -457,9 +457,7 @@ async def test_same_proxy_resolves_existing_session_after_daemon_restart(
     )
     assert project_result["status"] in {"success", "already_exists"}
 
-    # No tmux keys: startup tmux repair detaches sessions bound to a missing
-    # tmux server, and this test's fabricated socket never exists. A tty-only
-    # terminal identity survives the daemon restart.
+    # A tty-only terminal identity survives the daemon restart.
     suffix = f"daemon-restart-{uuid.uuid4()}"
     terminal_context = {
         "parent_pid": os.getpid(),

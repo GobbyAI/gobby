@@ -165,27 +165,6 @@ def _consume_pending_handoff_compact_continuation(
     )
 
 
-def _schedule_tmux_window_rename_for_session(handler: Any, session: Any) -> None:
-    terminal_context = getattr(session, "terminal_context", None)
-    pane = terminal_context.get("tmux_pane") if isinstance(terminal_context, dict) else None
-    if not pane:
-        handler.logger.debug(
-            "tmux window rename skipped for %s: no tmux_pane in terminal_context",
-            getattr(session, "ref", "?"),
-        )
-        return
-
-    handler.logger.debug(
-        "Scheduling tmux window rename for %s pane=%s",
-        getattr(session, "ref", "?"),
-        pane,
-    )
-    _compat_module().schedule_tmux_window_rename(
-        session,
-        loop=getattr(handler._session_coordinator, "_event_loop", None),
-    )
-
-
 def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None:
     """Force the next before_agent hook to rehydrate prompt-facing agent context."""
     if not session_id or not handler._session_manager:
@@ -489,8 +468,6 @@ def activate_materialized_session(
     # /clear left the composer, and no BEFORE_AGENT records it; the pane is bound by now.
     if session_source == "clear":
         handler._record_composer_submit(session_id)
-    if session_obj:
-        _schedule_tmux_window_rename_for_session(handler, session_obj)
 
     context_decision = classify_session_start_context(
         handler,

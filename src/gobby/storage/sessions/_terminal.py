@@ -12,8 +12,6 @@ from gobby.storage.workspace_machine_scope import MachineOwnershipMismatchError
 from gobby.utils.datetime import to_aware_utc, utc_now
 from gobby.utils.machine_id import require_machine_id
 
-from ._constants import LIVE_SESSION_STATUS_ORDER, LIVE_SESSION_STATUSES
-
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
@@ -27,120 +25,8 @@ class _ManagerState(Protocol):
 
     def _notify_status_transition(self, transition: SessionStatusTransition) -> None: ...
 
-    def _detach_tmux_sessions(
-        self,
-        machine_id: str,
-        socket_identity: str,
-        *,
-        pane: str | None = None,
-    ) -> list[str]: ...
-
-
-_TMUX_CONTEXT_KEYS = (
-    "tmux_pane",
-    "tmux_window_id",
-    "tmux_session",
-    "tmux_socket_path",
-    "tmux_socket_name",
-    "tmux_socket",
-)
-
-_TMUX_SOCKET_IDENTITY_SQL = """
-CASE
-    WHEN NULLIF(BTRIM(terminal_context ->> 'tmux_socket_path'), '') IS NOT NULL
-        THEN 'tmux_socket_path:' || BTRIM(terminal_context ->> 'tmux_socket_path')
-    WHEN NULLIF(BTRIM(terminal_context ->> 'tmux_socket_name'), '') IS NOT NULL
-        THEN 'tmux_socket_name:' || BTRIM(terminal_context ->> 'tmux_socket_name')
-    WHEN NULLIF(BTRIM(terminal_context ->> 'tmux_socket'), '') IS NOT NULL
-        THEN 'tmux_socket:' || BTRIM(terminal_context ->> 'tmux_socket')
-    ELSE NULL
-END
-"""
-
 
 class _TerminalMixin:
-    def expire_tmux_socket_sessions(
-        self: _ManagerState,
-        machine_id: str,
-        socket_identity: str,
-    ) -> list[str]:
-        """Expire and detach every session referencing one missing tmux server."""
-        return self._detach_tmux_sessions(machine_id, socket_identity)
-
-    def expire_tmux_pane_sessions(
-        self: _ManagerState,
-        machine_id: str,
-        socket_identity: str,
-        pane: str,
-    ) -> list[str]:
-        """Expire and detach every session referencing one missing tmux pane."""
-        return self._detach_tmux_sessions(machine_id, socket_identity, pane=pane)
-
-    def _detach_tmux_sessions(
-        self: _ManagerState,
-        machine_id: str,
-        socket_identity: str,
-        *,
-        pane: str | None = None,
-    ) -> list[str]:
-        now = utc_now()
-        pane_clause = "" if pane is None else "AND BTRIM(terminal_context ->> 'tmux_pane') = %s"
-        params: list[Any] = [machine_id, socket_identity]
-        if pane is not None:
-            params.append(pane)
-
-        with self.db.transaction() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT *
-                FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
-                WHERE machine_id IS NOT DISTINCT FROM %s
-                  AND {_TMUX_SOCKET_IDENTITY_SQL} = %s
-                  {pane_clause}
-                FOR UPDATE OF sessions
-                """,
-                tuple(params),
-            ).fetchall()
-            sessions = [Session.from_row(row) for row in rows]
-            if not sessions:
-                return []
-
-            session_ids = [session.id for session in sessions]
-            conn.execute(
-                """
-                UPDATE sessions
-                SET status = CASE
-                        WHEN status = ANY(%s) THEN 'expired'
-                        ELSE status
-                    END,
-                    terminal_context = COALESCE(terminal_context, '{}'::jsonb) - %s::text[],
-                    updated_at = %s
-                WHERE id = ANY(%s::uuid[])
-                """,
-                (
-                    list(LIVE_SESSION_STATUS_ORDER),
-                    list(_TMUX_CONTEXT_KEYS),
-                    now,
-                    session_ids,
-                ),
-            )
-
-        for session in sessions:
-            transitioned = session.status in LIVE_SESSION_STATUSES
-            self._notify_session_change(
-                "session_expired" if transitioned else "session_updated",
-                session.id,
-            )
-            if transitioned:
-                self._notify_status_transition(
-                    SessionStatusTransition.from_session(
-                        session,
-                        status="expired",
-                        transitioned_at=now,
-                    )
-                )
-        return session_ids
-
     def rebind_resumed_terminal_session(
         self: _ManagerState,
         session_id: str,

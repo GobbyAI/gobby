@@ -177,7 +177,6 @@ class GobbyRunner:
     _approval_timeout_task: asyncio.Task[None] | None
     _expired_isolation_task: asyncio.Task[None] | None
     _preserved_agent_listing_task: asyncio.Task[set[int] | None] | None
-    _tmux_window_repair_task: asyncio.Task[None] | None
     _composer_ledger_task: asyncio.Task[None] | None
     database: HubDatabase
     managed_credential_manager: ManagedCredentialManager
@@ -604,7 +603,7 @@ class _StandaloneEventLoop(asyncio.EventLoop):
 def main(config_path: Path | None = None, verbose: bool = False) -> None:
     # A daemon started from a pane inherits that pane's identity; every
     # os.environ copy below would hand it to agent terminals, web shells,
-    # tmux servers, and the gterm host.
+    # terminal servers, and the gterm host.
     from gobby.agents.constants import GOBBY_AGENT_API_TOKEN, IDENTITY_ENV_VARS
 
     for name in (*IDENTITY_ENV_VARS, GOBBY_AGENT_API_TOKEN):

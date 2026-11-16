@@ -14,6 +14,7 @@ from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.provider_capabilities import ProviderCapabilitiesConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_periodic import _default_loops, start_periodic_tasks
+from gobby.runner_lifecycle_shutdown import _cancel_periodic_tasks
 from tests.config_runtime_helpers import static_runtime_capture
 
 HUB_ONLY = frozenset(
@@ -45,7 +46,6 @@ MACHINE_LOCAL = frozenset(
         "hook-quarantine-retention",
         "bin-freshness",
         "expired-isolation-cleanup",
-        "tmux-window-repair",
         "generation-endpoint-health",
     }
 )
@@ -90,6 +90,30 @@ async def _started_task_names(runner: SimpleNamespace) -> set[str]:
     tasks = [task for task in vars(runner).values() if isinstance(task, asyncio.Task)]
     await asyncio.gather(*tasks)
     return {task.get_name() for task in tasks}
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_every_started_periodic_task() -> None:
+    runner = _runner(BootstrapConfig())
+
+    async def wait_for_shutdown(*_args: Any, **_kwargs: Any) -> None:
+        await asyncio.Event().wait()
+
+    services = runner.http_server.services
+    services.provider_capability_service = SimpleNamespace(run=wait_for_shutdown)
+    services.generation_endpoint_health = SimpleNamespace(run=wait_for_shutdown)
+    loops = dict.fromkeys(_default_loops(), wait_for_shutdown)
+    start_periodic_tasks(cast(GobbyRunner, runner), tracker=None, **loops)
+    tasks = [task for task in vars(runner).values() if isinstance(task, asyncio.Task)]
+    assert {task.get_name() for task in tasks} == HUB_ONLY | MACHINE_LOCAL
+
+    try:
+        await _cancel_periodic_tasks(cast(GobbyRunner, runner))
+        assert all(task.cancelled() for task in tasks)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def _skip_messages(caplog: pytest.LogCaptureFixture) -> list[str]:

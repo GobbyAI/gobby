@@ -139,7 +139,6 @@ async def run_daemon(
         rebuild_vector_store,
         setup_signal_handlers,
         span_cleanup_loop,
-        tmux_window_name_repair_loop,
         unmodeled_observation_cleanup_loop,
     )
 
@@ -309,7 +308,6 @@ async def run_daemon(
                     bin_freshness_loop=bin_freshness_loop,
                     drain_hook_inbox_loop=drain_hook_inbox_loop,
                     expire_approval_timeouts_loop=expire_approval_timeouts_loop,
-                    tmux_window_name_repair_loop=tmux_window_name_repair_loop,
                 )
 
             while not runner._shutdown_requested:

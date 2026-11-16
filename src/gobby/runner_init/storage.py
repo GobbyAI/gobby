@@ -187,7 +187,6 @@ def open_storage_and_config(
     runner._hook_receipt_retention_task = None
     runner._bin_freshness_task = None
     runner._expired_isolation_task = None
-    runner._tmux_window_repair_task = None
     runner._composer_ledger_task = None
     runner._pending_tasks = set()
 

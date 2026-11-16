@@ -19,8 +19,6 @@ from gobby.utils import spawn
 
 TerminalIdentity = tuple[str, str, str]
 TERMINAL_OWNER_STATUSES = LIVE_SESSION_STATUS_ORDER
-TERMINAL_INACTIVE_STATUSES = ("expired", "deleted")
-TERMINAL_TITLE_REPAIR_STATUSES = TERMINAL_OWNER_STATUSES + TERMINAL_INACTIVE_STATUSES
 OwnershipReason = Literal[
     "validated_foreground_process",
     "nested_outermost_process",

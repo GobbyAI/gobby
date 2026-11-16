@@ -28,9 +28,6 @@ from gobby.runner_maintenance.isolation import (
 from gobby.runner_maintenance.isolation import (
     cleanup_expired_isolation_loop as cleanup_expired_isolation_loop,
 )
-from gobby.runner_maintenance.isolation import (
-    tmux_window_name_repair_loop as tmux_window_name_repair_loop,
-)
 from gobby.runner_maintenance.lifecycle import cleanup_pid_file as cleanup_pid_file
 from gobby.runner_maintenance.lifecycle import rebuild_vector_store as rebuild_vector_store
 from gobby.runner_maintenance.lifecycle import setup_signal_handlers as setup_signal_handlers
@@ -99,13 +96,4 @@ from gobby.runner_maintenance_recurring import (
 )
 from gobby.runner_maintenance_recurring import (
     metrics_cleanup_loop as metrics_cleanup_loop,
-)
-from gobby.runner_tmux_repair import (
-    _select_tmux_repair_sessions as _select_tmux_repair_sessions,
-)
-from gobby.runner_tmux_repair import (
-    _tmux_repair_candidate_score as _tmux_repair_candidate_score,
-)
-from gobby.runner_tmux_repair import (
-    _tmux_repair_pane_key as _tmux_repair_pane_key,
 )

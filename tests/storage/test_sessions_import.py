@@ -71,12 +71,6 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     ),
     "expire_orphaned_handoff_sessions": ("(self, timeout_minutes: 'int' = 30) -> 'int'"),
     "expire_stale_sessions": ("(self, timeout_hours: 'int' = 24) -> 'int'"),
-    "expire_tmux_pane_sessions": (
-        "(self, machine_id: 'str', socket_identity: 'str', pane: 'str') -> 'list[str]'"
-    ),
-    "expire_tmux_socket_sessions": (
-        "(self, machine_id: 'str', socket_identity: 'str') -> 'list[str]'"
-    ),
     "fetch_task_refs_by_session": (
         "(self, session_ids: 'Sequence[str]') -> 'dict[str, _TaskRefsByRole]'"
     ),

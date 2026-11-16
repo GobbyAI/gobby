@@ -352,9 +352,6 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
         patch(
             "gobby.hooks.event_handlers._session_start.materialize.prepare_compact_continuation_variables"
         ),
-        patch(
-            "gobby.hooks.event_handlers._session_start.materialize._schedule_tmux_window_rename_for_session"
-        ),
     ):
         activate_materialized_session(
             handler,
@@ -456,7 +453,6 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
         patch(f"{materialize}._seed_parent_turn_seq"),
         patch(f"{materialize}.seed_user_profile_content"),
         patch(f"{materialize}.prepare_compact_continuation_variables"),
-        patch(f"{materialize}._schedule_tmux_window_rename_for_session"),
         patch(f"{materialize}.classify_session_start_context"),
         patch(f"{materialize}.expire_stale_terminal_sessions_for_context"),
         patch(f"{materialize}.schedule_handoff_continuation") as mock_schedule,
@@ -484,7 +480,6 @@ _ACTIVATION_STUBS = (
     "_seed_parent_turn_seq",
     "seed_user_profile_content",
     "prepare_compact_continuation_variables",
-    "_schedule_tmux_window_rename_for_session",
     "classify_session_start_context",
     "schedule_handoff_continuation",
     "expire_stale_terminal_sessions_for_context",

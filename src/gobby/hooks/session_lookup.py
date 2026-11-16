@@ -37,7 +37,6 @@ from gobby.hooks.terminal_context import (
 from gobby.sessions.compact_identity import resolve_compact_continuation
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.terminal_binding import repair_native_terminal_binding
-from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 from gobby.storage import session_startup_marks as startup_marks
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._constants import TERMINAL_SESSION_STATUSES
@@ -419,8 +418,6 @@ class SessionLookupService:
             )
             return None
 
-        if tmux_pane_added and updated_session is not None:
-            self._rename_tmux_window(updated_session)
         return updated_session
 
     def _settle_clear_origin(
@@ -449,19 +446,11 @@ class SessionLookupService:
             return None
         if settled is None:
             return self._session_manager.get(platform_session_id)
-        if tmux_pane_added:
-            self._rename_tmux_window(settled)
         if search.owner is not None and (settled.terminal_context or {}).get("parent_pid"):
             if search.thread_id:
                 sync_codex_seat(search.thread_id, settled.terminal_context)
             settled = self._take_over_cleared_seat(settled)
         return settled
-
-    def _rename_tmux_window(self, session: Session) -> None:
-        schedule_tmux_window_rename(
-            session,
-            loop=getattr(self._session_coordinator, "_event_loop", None),
-        )
 
     def _take_over_cleared_seat(self, successor: Session) -> Session:
         """Hand a late-adopted /clear successor its predecessor's seat and pane.

@@ -657,9 +657,6 @@ class TestSessionStartPreCreatedSession:
 
         with (
             patch(
-                "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
-            ) as mock_schedule,
-            patch(
                 "gobby.hooks.event_handlers._session_start.terminal_runtime.spawn.run",
                 return_value=SimpleNamespace(returncode=1, stdout=""),
             ),
@@ -671,13 +668,12 @@ class TestSessionStartPreCreatedSession:
             "sess-pre-123",
             {"tmux_pane": "%77"},
         )
-        mock_schedule.assert_called_once()
         assert response.metadata.get("terminal_tmux_pane") == "%77"
 
-    def test_pre_created_session_renames_empty_title_with_cwd(
+    def test_pre_created_session_preserves_context_with_cwd(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
-        """Pre-created SessionStart should rename panes using cwd fallback."""
+        """Pre-created SessionStart persists the incoming context and cwd."""
         mock_session = MagicMock()
         mock_session.machine_id = TEST_MACHINE_ID
         mock_session.id = "sess-pre-123"
@@ -721,9 +717,6 @@ class TestSessionStartPreCreatedSession:
 
         with (
             patch(
-                "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
-            ) as mock_schedule,
-            patch(
                 "gobby.hooks.event_handlers._session_start.terminal_runtime.spawn.run",
                 return_value=SimpleNamespace(returncode=1, stdout=""),
             ),
@@ -737,10 +730,6 @@ class TestSessionStartPreCreatedSession:
         mock_dependencies["session_manager"].backfill_terminal_context.assert_called_once_with(
             "sess-pre-123",
             {"tmux_pane": "%77", "cwd": "/work/repos/gobby"},
-        )
-        mock_schedule.assert_called_once_with(
-            updated_session,
-            loop=mock_dependencies["session_coordinator"]._event_loop,
         )
 
     def test_pre_created_session_with_parent(
@@ -1267,7 +1256,6 @@ class TestSessionStartNewSession:
                 return_value=compact_resolution,
             ),
             patch.object(handlers, "_activate_default_agent", return_value=None),
-            patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
             patch(_BOUND_HOOK_TRANSCRIPT, new=lambda *_args, **_kwargs: True),
         ):
             response = handlers.handle_session_start(event)
@@ -1488,7 +1476,6 @@ class TestSessionStartNewSession:
                 return_value=project_resolution,
             ),
             patch.object(handlers, "_activate_default_agent", return_value=None),
-            patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
         ):
             response = handlers.handle_session_start(event)
 
@@ -1719,10 +1706,10 @@ class TestSessionStartNewSession:
         assert "_platform_session_id" not in event.metadata
         mock_dependencies["session_manager"].register_session.assert_not_called()
 
-    def test_new_session_start_renames_captured_tmux_pane(
+    def test_new_session_start_preserves_captured_context(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:
-        """New SessionStart should persist cwd and rename captured panes immediately."""
+        """New SessionStart preserves the context of an already tracked session."""
         new_session = MagicMock()
         new_session.id = "new-sess-456"
         new_session.machine_id = TEST_MACHINE_ID
@@ -1739,7 +1726,7 @@ class TestSessionStartNewSession:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.SESSION_START,
-            session_id="ext-rename",
+            session_id="ext-captured-context",
             data={
                 "cwd": "/work/repos/gobby",
                 "terminal_context": {"tmux_pane": "%88"},
@@ -1747,14 +1734,10 @@ class TestSessionStartNewSession:
             metadata={},
         )
 
-        with patch(
-            "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
-        ) as mock_schedule:
-            response = handlers.handle_session_start(event)
+        response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
         mock_dependencies["session_manager"].register_session.assert_not_called()
-        mock_schedule.assert_not_called()
 
     def test_new_session_parent_lookup_error(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock

@@ -86,7 +86,6 @@ def _default_loops() -> dict[str, Any]:
         purge_deleted_skills_loop,
         span_cleanup_loop,
         sweep_test_schemas_loop,
-        tmux_window_name_repair_loop,
         unmodeled_observation_cleanup_loop,
     )
     from gobby.runner_maintenance_audit import workflow_audit_cleanup_loop
@@ -115,7 +114,6 @@ def _default_loops() -> dict[str, Any]:
         "hook_receipt_retention_loop": hook_receipt_retention_loop,
         "expire_approval_timeouts_loop": expire_approval_timeouts_loop,
         "loop_progress_cleanup_loop": loop_progress_cleanup_loop,
-        "tmux_window_name_repair_loop": tmux_window_name_repair_loop,
         "resource_monitor_loop": resource_monitor_loop,
         "model_metadata_refresh_loop": model_metadata_refresh_loop,
     }
@@ -369,15 +367,6 @@ def start_periodic_tasks(
         ),
     )
 
-    runner._tmux_window_repair_task = spawn(
-        "tmux-window-repair",
-        lambda: loops["tmux_window_name_repair_loop"](
-            getattr(runner, "session_manager", None),
-            lambda: runner._shutdown_requested,
-            startup_ready=lambda: runner.http_server.services.startup_ready,
-        ),
-    )
-
     periodic_tasks = tuple(
         task
         for task in (
@@ -405,7 +394,6 @@ def start_periodic_tasks(
             runner._hook_receipt_retention_task,
             runner._bin_freshness_task,
             runner._approval_timeout_task,
-            runner._tmux_window_repair_task,
         )
         if task is not None
     )

@@ -682,12 +682,6 @@ class TestHookManagerBeforeAgent:
         # depending on this machine having PID 30769 running codex.
         with (
             patch(
-                "gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"
-            ) as initial_rename,
-            patch(
-                "gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"
-            ) as promoted_rename,
-            patch(
                 "gobby.hooks.terminal_context.psutil.Process",
                 return_value=SimpleNamespace(
                     create_time=lambda: 1784592177.0,
@@ -708,8 +702,6 @@ class TestHookManagerBeforeAgent:
             assert session.terminal_context[key] == value
         assert session.terminal_context["parent_name"] == "codex"
         assert isinstance(session.terminal_context["parent_create_time"], float)
-        initial_rename.assert_called_once()
-        promoted_rename.assert_not_called()
 
     def test_shared_codex_app_server_seats_keep_distinct_identities(
         self,
@@ -784,8 +776,6 @@ class TestHookManagerBeforeAgent:
         clear_codex_seat_index()
         try:
             with (
-                patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
-                patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"),
                 patch("gobby.hooks.terminal_context.psutil.Process", side_effect=lookup),
                 patch(
                     "gobby.hooks.terminal_context.psutil.process_iter",
@@ -2046,8 +2036,7 @@ class TestHookManagerSessionLookup:
             machine_id="21000000-0000-4000-8000-000000000004",
         )
 
-        with patch("gobby.hooks.session_lookup.schedule_tmux_window_rename") as mock_schedule:
-            response = manager.handle(repair_event)
+        response = manager.handle(repair_event)
 
         assert response.decision == "allow"
         updated = manager._session_manager.get(session_id)
@@ -2055,7 +2044,6 @@ class TestHookManagerSessionLookup:
         assert updated.terminal_context is not None
         assert updated.terminal_context["tmux_pane"] == "%5"
         assert updated.terminal_context["cwd"] == str(temp_dir)
-        mock_schedule.assert_called_once()
 
     def test_handle_resolves_active_task(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
@@ -3438,8 +3426,6 @@ def test_codex_successor_after_a_slow_login_binds_its_existing_pane(
     clear_codex_seat_index()
     try:
         with (
-            patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
-            patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"),
             patch("gobby.hooks.terminal_context.psutil.Process", side_effect=lookup),
             patch(
                 "gobby.hooks.terminal_context.psutil.process_iter",
@@ -3654,8 +3640,6 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
     clear_codex_seat_index()
     try:
         with (
-            patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
-            patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"),
             patch("gobby.hooks.terminal_context.psutil.Process", side_effect=lookup),
             patch("gobby.terminal_ownership.psutil.Process", side_effect=lookup),
             patch(
@@ -3894,8 +3878,6 @@ def test_codex_clear_stored_outcome_governs_every_later_hook(
     clear_codex_seat_index()
     try:
         with (
-            patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
-            patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"),
             patch("gobby.hooks.terminal_context.psutil.Process", side_effect=lookup),
             patch("gobby.terminal_ownership.psutil.Process", side_effect=lookup),
             patch(
@@ -4059,8 +4041,6 @@ def test_codex_first_prompt_after_a_restart_binds_only_a_started_threads_pane(
     clear_codex_seat_index()
     try:
         with (
-            patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
-            patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"),
             patch("gobby.hooks.terminal_context.psutil.Process", side_effect=lookup),
             patch("gobby.terminal_ownership.psutil.Process", side_effect=lookup),
             patch(
@@ -4123,16 +4103,12 @@ def test_codex_startup_mark_is_left_only_by_a_threads_own_startup(
     if start_kind == "synthetic-startup":
         start.metadata["_synthetic_session_start"] = True
 
-    with (
-        patch("gobby.hooks.event_handlers._session_start.schedule_tmux_window_rename"),
-        patch("gobby.sessions.tmux_window_naming.schedule_tmux_window_rename"),
-    ):
-        if start_kind == "repeat-startup":
-            first = _codex_start(thread, "startup", temp_dir, {})
-            assert manager.handle(first).decision == "allow"
-            assert manager.handle(_codex_prompt(thread, temp_dir, {})).decision == "allow"
-            assert not startup_mark_exists(sessions.db, **mark)
-        manager.handle(start)
+    if start_kind == "repeat-startup":
+        first = _codex_start(thread, "startup", temp_dir, {})
+        assert manager.handle(first).decision == "allow"
+        assert manager.handle(_codex_prompt(thread, temp_dir, {})).decision == "allow"
+        assert not startup_mark_exists(sessions.db, **mark)
+    manager.handle(start)
 
     assert startup_mark_exists(sessions.db, **mark) is (start_kind == "startup")
 

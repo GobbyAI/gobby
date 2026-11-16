@@ -48,7 +48,6 @@ from .materialize import (
     _CONTEXT_MODE_METADATA_KEY,
     _consume_pending_handoff_compact_continuation,
     _reset_agent_context_injection,
-    _schedule_tmux_window_rename_for_session,
     record_deferred_startup,
     session_start_should_defer,
 )
@@ -611,12 +610,6 @@ def handle_pre_created_session(
         session_id=session_obj.id,
         pending_bind=pending_native_terminal_bind,
     )
-
-    if tmux_pane_added or (
-        isinstance(getattr(session_obj, "terminal_context", None), dict)
-        and session_obj.terminal_context.get("tmux_pane")
-    ):
-        _schedule_tmux_window_rename_for_session(handler, session_obj)
 
     if handler._session_manager:
         handler._session_manager.cache_session_mapping(

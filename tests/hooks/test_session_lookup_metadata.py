@@ -122,7 +122,7 @@ def test_valid_platform_session_metadata_is_preserved_and_enriched() -> None:
     session_task_manager.get_worked_on_task.assert_called_once_with("platform-session", None)
 
 
-def test_terminal_context_backfill_adds_cwd_and_schedules_tmux_rename() -> None:
+def test_terminal_context_backfill_adds_cwd() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(
         id="platform-session", project_id="project-1", machine_id=_REAL_MACHINE_ID
@@ -140,8 +140,7 @@ def test_terminal_context_backfill_adds_cwd_and_schedules_tmux_rename() -> None:
     event = _event({"_platform_session_id": "platform-session"})
     event.data["cwd"] = "/work/repos/gobby"
 
-    with patch("gobby.hooks.session_lookup.schedule_tmux_window_rename") as mock_schedule:
-        result = service.resolve(event)
+    result = service.resolve(event)
 
     assert result == "platform-session"
     session_manager.backfill_terminal_context.assert_called_once_with(
@@ -152,8 +151,6 @@ def test_terminal_context_backfill_adds_cwd_and_schedules_tmux_rename() -> None:
     session_manager.revive_expired_terminal_session.assert_called_once_with(
         "platform-session", updated_session
     )
-    mock_schedule.assert_called_once()
-    assert mock_schedule.call_args.args == (updated_session,)
 
 
 def test_revival_judges_the_seat_recorded_from_this_hook() -> None:

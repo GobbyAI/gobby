@@ -186,16 +186,10 @@ def test_gobby_session_id_binding_merges_terminal_context(
         patch.object(handlers, "_derive_transcript_path", return_value=None),
         patch.object(handlers, "_setup_code_index"),
         patch.object(
-            handlers,
-            "_compose_session_response",
-            return_value=HookResponse(decision="allow"),
+            handlers, "_compose_session_response", return_value=HookResponse(decision="allow")
         ),
         patch("gobby.hooks.event_handlers._session_start.flow._seed_parent_turn_seq"),
         patch("gobby.hooks.event_handlers._session_start.flow.seed_user_profile_content"),
-        patch(
-            "gobby.hooks.event_handlers._session_start.flow."
-            "_schedule_tmux_window_rename_for_session"
-        ),
         patch("gobby.hooks.terminal_context._record_parent_process_identity"),
     ):
         response = handlers.handle_session_start(event)

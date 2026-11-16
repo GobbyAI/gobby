@@ -1243,7 +1243,7 @@ async def test_successor_metadata_strips_inherited_protocol_keys(
             "daemon_stop_resume_consumed_by_run_id": "stale-successor",
             "daemon_stop_resume_failure_count": 2,
             "daemon_stop_resume_finalized_at": "2026-05-30T00:00:00+00:00",
-            "daemon_stop_resume_terminal_id": "stale-tmux",
+            "daemon_stop_resume_terminal_id": "stale-terminal",
             "daemon_stop_resume_spawn_key": "stale-key",
             "daemon_stop_orphan_reap_started_at": "2026-05-30T00:00:00+00:00",
             "daemon_stop_orphan_reap_requested_at": "2026-05-30T00:00:00+00:00",
@@ -1279,7 +1279,6 @@ async def test_successor_metadata_strips_inherited_protocol_keys(
         assert key not in successor_metadata, f"protocol key {key!r} leaked into successor"
     assert successor_metadata["resumed_from_run_id"] == _original_run().id
     assert successor_metadata["daemon_stop_resume_phase"] == "prepared"
-    assert "daemon_stop_resume_planned_tmux_title" not in successor_metadata
     assert "daemon_stop_resume_spawn_key" not in successor_metadata
 
 
