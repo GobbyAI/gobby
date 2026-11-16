@@ -334,3 +334,36 @@ Source: AskUserQuestion answers and chat messages in session gobby#19401.
     that task's report into this session and has not changed ruling 25, so it stands as written.
     No listed failure remains, so a red run after 050479408a is judged under the ruling's last
     case, a failure that is not listed.
+26. A conversation resumed during a daemon outage (Josh, 2026-11-16 ~08:15 CT, in session
+    gobby#19401's own pane). Task #26074 asked him to choose between leaving the behaviour and
+    admitting the queued start, and he first agreed to leave it: "your recommendation is sound".
+    Then: "Reconsidering. The issue is who or what is going to execute the 2nd resume? What's the
+    DX user story there?" The answer was that nobody does and nothing tells the user to. Offered a
+    plain line from ghook now and automatic re-registration in the port's hook front door, he
+    chose: "let's go with your front-door idea."
+    What happens at 7cf05eadb5, traced in the code and not reproduced against a stopped daemon. A
+    user resumes a conversation whose row has expired while the daemon is down. The drain archives
+    the queued start, because a queued hook never reopens an expired session
+    (src/gobby/hooks/replay_fence.py:89-90). The CLI process is new, so ghook holds no session
+    credential for it and sends its hooks under the machine key
+    (crates/ghook/src/session_binding.rs:52-71). No start pinned it, so each hook is refused with
+    403 session_startup_unpinned (src/gobby/hooks/session_claimant.py:397-399). ghook exits 1 with
+    a "Daemon error" message on an ordinary hook, 0 for Antigravity, and 2 on a critical hook,
+    which for Claude, Codex, Grok and Droid is session start, session end and pre-compact
+    (crates/ghook/src/action.rs:314-394; crates/ghook/src/cli_config.rs:32-69). The conversation
+    runs without rules, task gates, memory or tracking until that CLI sends another session start.
+    The map author's reading, which Josh corrects where it is wrong. HOOK-3, which ports the hook
+    claim, builds the recovery: a machine-key hook that is not a start, from a kernel-attested CLI
+    that names a conversation with no live row and no pin and whose newest row is expired,
+    re-registers that conversation to that CLI where Python refuses it. This is a deliberate
+    difference from Python, so HOOK-3 records it as one in its parity evidence. Python and ghook
+    are not changed for it before then, and no message is added to ghook. The replay fence keeps
+    its policy. HOOK-3's design settles these before it builds:
+    - why #25905 made a hook with no pin create nothing, and what the new case leaves of that;
+    - the stored owner of the expired row: today only the same process brings a row back, and
+      another process replaces an owner only after proving it dead;
+    - a resume made inside a CLI that still stores another live row, which today reads as a CLI
+      that left the conversation (#26072, #26073);
+    - revival refuses a row whose recorded CLI has exited, and the take-over swaps only the pid
+      and start time, so ownership and the rest of the terminal context move before the row
+      comes back.
