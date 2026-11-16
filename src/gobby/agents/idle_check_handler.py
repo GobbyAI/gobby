@@ -455,7 +455,7 @@ class IdleCheckHandler:
             logger.warning("Skipping idle check for run %s: missing terminal", run.id)
             idle_detector.reset_idle(run.id)
             return 0
-        tmux_name = terminal.session_name or terminal.id
+        terminal_name = terminal.session_name or terminal.id
         idle_timeout_seconds = self._idle_timeout_seconds_for_run(run)
 
         session_manager = self._get_session_manager()
@@ -644,7 +644,7 @@ class IdleCheckHandler:
             ):
                 return await self._recovery.recover_completed_turn(
                     run,
-                    tmux_name=tmux_name,
+                    terminal_name=terminal_name,
                     session_id=session_id,
                     transcript_path=transcript_path,
                     snapshot=transcript_snapshot,
@@ -666,7 +666,7 @@ class IdleCheckHandler:
         ):
             return await self._recovery._recover_capacity_error(
                 run,
-                tmux_name=tmux_name,
+                terminal_name=terminal_name,
                 session_id=session_id,
                 transcript_path=transcript_path,
                 snapshot=transcript_snapshot,
@@ -722,7 +722,7 @@ class IdleCheckHandler:
         if recovery_due is True and transcript_snapshot is not None and transcript_path is not None:
             return await self._recovery.recover_completed_turn(
                 run,
-                tmux_name=tmux_name,
+                terminal_name=terminal_name,
                 session_id=session_id,
                 transcript_path=transcript_path,
                 snapshot=transcript_snapshot,
@@ -737,7 +737,7 @@ class IdleCheckHandler:
         ):
             if session_stale and await self._recovery._recover_reasoning_idle(
                 run,
-                tmux_name=tmux_name,
+                terminal_name=terminal_name,
                 session=session,
                 session_id=session_id,
                 reader=reader,
@@ -754,7 +754,7 @@ class IdleCheckHandler:
             return int(
                 await self._recovery._send_idle_reprompt(
                     run,
-                    tmux_name=tmux_name,
+                    terminal_name=terminal_name,
                 )
             )
 

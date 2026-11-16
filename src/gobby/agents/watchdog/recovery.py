@@ -141,7 +141,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         self,
         run: AgentRun,
         *,
-        tmux_name: str,
+        terminal_name: str,
         session_id: str | None,
         transcript_path: str,
         snapshot: WatchdogTranscriptSnapshot,
@@ -198,7 +198,9 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
             snapshot=snapshot,
         )
         message = IdleDetector.INTERACTIVE_CAPACITY_REPROMPT_MESSAGE if run.is_interactive else None
-        if not await self._send_idle_reprompt(run, tmux_name=tmux_name, reprompt_message=message):
+        if not await self._send_idle_reprompt(
+            run, terminal_name=terminal_name, reprompt_message=message
+        ):
             return 0
 
         state.last_error_line_num = error_event.line_num
@@ -217,7 +219,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         self,
         run: AgentRun,
         *,
-        tmux_name: str,
+        terminal_name: str,
         session_id: str | None,
         transcript_path: str,
         snapshot: WatchdogTranscriptSnapshot,
@@ -227,7 +229,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         return await recover_completed_turn(
             self,
             run,
-            tmux_name=tmux_name,
+            terminal_name=terminal_name,
             session_id=session_id,
             transcript_path=transcript_path,
             snapshot=snapshot,
@@ -280,8 +282,8 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
             return False
         return isinstance(outcome, Delivered)
 
-    async def _recover_failed_reprompt_clear(self, run: AgentRun, tmux_name: str) -> bool:
-        del tmux_name
+    async def _recover_failed_reprompt_clear(self, run: AgentRun, terminal_name: str) -> bool:
+        del terminal_name
         services = self._terminal_services
         if services is None or not await services.is_live(run):
             logger.debug(
@@ -311,7 +313,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         self,
         run: AgentRun,
         *,
-        tmux_name: str,
+        terminal_name: str,
         reprompt_message: str | None = None,
     ) -> bool:
         """Reprompt an idle agent, bounding how often delivery may fail.
@@ -328,7 +330,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
             return False
         delivered = await self._attempt_idle_reprompt(
             run,
-            tmux_name=tmux_name,
+            terminal_name=terminal_name,
             reprompt_message=reprompt_message,
         )
         if delivered:
@@ -364,7 +366,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         self,
         run: AgentRun,
         *,
-        tmux_name: str,
+        terminal_name: str,
         reprompt_message: str | None = None,
     ) -> bool:
         if reprompt_message is None:
@@ -382,7 +384,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
             )
             if not cleared:
                 logger.debug("Failed to clear queued prompt before reprompting agent %s", run.id)
-                if not await self._recover_failed_reprompt_clear(run, tmux_name):
+                if not await self._recover_failed_reprompt_clear(run, terminal_name):
                     return False
             # The emptied composer settles an earlier reprompt whose Enter never
             # resolved; left latched, it would suppress every later reprompt.
@@ -459,7 +461,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         self,
         run: AgentRun,
         *,
-        tmux_name: str,
+        terminal_name: str,
         session: Session | None,
         session_id: str | None,
         reader: TranscriptWatchdogReader | None,

@@ -228,7 +228,9 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
         validation_criteria="Test task completion is observable.",
     )
 
-    config = TerminalConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
+    config = TerminalConfig(
+        idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+    )
     monitor = AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
@@ -337,7 +339,7 @@ async def test_reasoning_watchdog_does_not_interrupt_unsupported_readers(
 
     recovered = await monitor._idle_check_handler._recovery._recover_reasoning_idle(
         run,
-        tmux_name=f"gobby-{provider}",
+        terminal_name=f"gobby-{provider}",
         session=None,
         session_id=None,
         reader=reader,
@@ -356,7 +358,9 @@ async def test_idle_failure_logs_watchdog_snapshot(
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
-    config = TerminalConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
+    config = TerminalConfig(
+        idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+    )
     monitor = AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,

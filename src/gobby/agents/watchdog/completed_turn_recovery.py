@@ -44,7 +44,7 @@ class CompletedTurnRecoveryHost(Protocol):
         self,
         run: AgentRun,
         *,
-        tmux_name: str,
+        terminal_name: str,
         reprompt_message: str | None = None,
     ) -> bool: ...
 
@@ -172,7 +172,7 @@ async def recover_completed_turn(
     host: CompletedTurnRecoveryHost,
     run: AgentRun,
     *,
-    tmux_name: str,
+    terminal_name: str,
     session_id: str | None,
     transcript_path: str,
     snapshot: WatchdogTranscriptSnapshot,
@@ -293,7 +293,7 @@ async def recover_completed_turn(
     )
     if not await host._send_idle_reprompt(
         run,
-        tmux_name=tmux_name,
+        terminal_name=terminal_name,
         reprompt_message=reprompt_message,
     ):
         return 0

@@ -257,7 +257,7 @@ async def test_interactive_seat_survives_automatic_lifecycle_transitions(
             assert (
                 await monitor._idle_check_handler._recovery.recover_completed_turn(
                     interactive,
-                    tmux_name="seat",
+                    terminal_name="seat",
                     session_id=run.child_session_id,
                     transcript_path="seat.jsonl",
                     snapshot=_snapshot(),

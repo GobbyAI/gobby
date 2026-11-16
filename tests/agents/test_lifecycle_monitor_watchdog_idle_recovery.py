@@ -1498,7 +1498,9 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
     agent_run_manager: LocalAgentRunManager,
 ) -> None:
     """Unexpected step-context lookup errors fall back and log exception context."""
-    config = TerminalConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
+    config = TerminalConfig(
+        idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
+    )
     monitor = AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
@@ -2444,11 +2446,11 @@ async def test_concurrent_idle_reprompts_serialize_settle_and_send(
     monkeypatch.setattr(recovery, "_deliver", record_delivery)
 
     first = asyncio.create_task(
-        recovery._attempt_idle_reprompt(run, tmux_name="test", reprompt_message="continue")
+        recovery._attempt_idle_reprompt(run, terminal_name="test", reprompt_message="continue")
     )
     assert await asyncio.to_thread(settling.wait, 5)
     second = asyncio.create_task(
-        recovery._attempt_idle_reprompt(run, tmux_name="test", reprompt_message="continue")
+        recovery._attempt_idle_reprompt(run, terminal_name="test", reprompt_message="continue")
     )
     await asyncio.wait_for(second_requested.wait(), timeout=5)
     assert operations == ["clear"]

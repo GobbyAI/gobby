@@ -70,7 +70,7 @@ class _FakeHost:
         self,
         run: AgentRun,
         *,
-        tmux_name: str,
+        terminal_name: str,
         reprompt_message: str | None = None,
     ) -> bool:
         self.reprompts.append(reprompt_message or "")
@@ -124,7 +124,7 @@ async def _recover(host: _FakeHost) -> int:
     return await recover_completed_turn(
         cast(CompletedTurnRecoveryHost, host),
         _run(),
-        tmux_name="gobby-test",
+        terminal_name="gobby-test",
         session_id="sess-1",
         transcript_path="/tmp/transcript.jsonl",
         snapshot=_snapshot(),
