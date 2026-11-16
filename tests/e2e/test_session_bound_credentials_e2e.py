@@ -398,12 +398,16 @@ print(json.dumps({{"refused_status": refused_status, "refused_code": refused.get
         session_id = json.loads(held_line)["session_id"]
 
         # Idle the row past the sweeper's limit, sweep, then age the expiry past the
-        # horizon at which plain hook activity stops reviving a row.
+        # horizon at which plain hook activity stops reviving a row. The sweep runs
+        # here, on what the hub sees as another machine than the client's: a sweeper
+        # leaves a row alone only while it can see that row's CLI still running.
         postgres_db.execute(
             "UPDATE sessions SET last_activity = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (session_id,),
         )
         assert expire_stale_sessions(postgres_db, timeout_hours=24) >= 1
+        swept = postgres_db.fetchone("SELECT status FROM sessions WHERE id = %s", (session_id,))
+        assert swept is not None and swept["status"] == "expired"
         postgres_db.execute(
             "UPDATE sessions SET updated_at = NOW() - INTERVAL '30 hours' WHERE id = %s",
             (session_id,),

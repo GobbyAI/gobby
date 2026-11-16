@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import os
+import subprocess
+import sys
+from collections.abc import Callable, Iterator
 from unittest.mock import MagicMock, patch
 
+import psutil
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -328,3 +332,154 @@ def test_expire_stale_sessions_keeps_web_chat_session_with_recent_activity(
     refreshed = session_mgr.get(session.id)
     assert refreshed is not None
     assert refreshed.status == "active"
+
+
+FOREIGN_MACHINE_ID = "21000000-0000-4000-8000-000000000009"
+TTY = "/dev/ttys000"
+
+
+def _this_cli() -> dict[str, object]:
+    cli = psutil.Process()
+    return {"tty": TTY, "parent_pid": cli.pid, "parent_create_time": cli.create_time()}
+
+
+def _reused_pid() -> dict[str, object]:
+    cli = psutil.Process()
+    return {"tty": TTY, "parent_pid": cli.pid, "parent_create_time": cli.create_time() - 3600}
+
+
+def _no_start_time() -> dict[str, object]:
+    return {"tty": TTY, "parent_pid": os.getpid()}
+
+
+def _exited_cli() -> dict[str, object]:
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE
+    )
+    started = psutil.Process(child.pid).create_time()
+    child.communicate()
+    return {"tty": TTY, "parent_pid": child.pid, "parent_create_time": started}
+
+
+def _quiet_session(
+    session_mgr: SessionManager,
+    project_id: str,
+    name: str,
+    terminal_context: dict[str, object],
+    *,
+    hours: int = 25,
+    machine_id: str = LOCAL_MACHINE_ID,
+) -> str:
+    """Register a paused row of ``machine_id`` whose last activity is ``hours`` old."""
+    session = session_mgr.register(
+        external_id=name,
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=project_id,
+        terminal_context=terminal_context,
+    )
+    session_mgr.db.execute(
+        """
+        UPDATE sessions
+        SET created_at = NOW() - INTERVAL '40 hours',
+            updated_at = NOW() - make_interval(hours => %s),
+            last_activity = NOW() - make_interval(hours => %s),
+            status = 'paused',
+            machine_id = %s
+        WHERE id = %s
+        """,
+        (hours, hours, machine_id, session.id),
+    )
+    return session.id
+
+
+def _status(session_mgr: SessionManager, session_id: str) -> str:
+    # Read the column: the manager refuses to load another machine's row.
+    row = session_mgr.db.fetchone("SELECT status FROM sessions WHERE id = %s", (session_id,))
+    assert row is not None
+    return str(row["status"])
+
+
+@pytest.mark.integration
+def test_idle_expiry_keeps_a_session_whose_cli_is_still_running(
+    session_mgr: SessionManager,
+    project_id: str,
+) -> None:
+    session_id = _quiet_session(session_mgr, project_id, "running-cli", _this_cli())
+
+    assert session_mgr.expire_stale_sessions(timeout_hours=24) == 0
+    assert _status(session_mgr, session_id) == "paused"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("stored_process", "machine_id"),
+    [
+        (_exited_cli, LOCAL_MACHINE_ID),
+        (_reused_pid, LOCAL_MACHINE_ID),
+        (_no_start_time, LOCAL_MACHINE_ID),
+        (_this_cli, FOREIGN_MACHINE_ID),
+    ],
+    ids=["cli-exited", "pid-reused", "no-start-time", "another-machine"],
+)
+def test_idle_expiry_takes_a_session_no_running_cli_vouches_for(
+    session_mgr: SessionManager,
+    project_id: str,
+    stored_process: Callable[[], dict[str, object]],
+    machine_id: str,
+) -> None:
+    session_id = _quiet_session(
+        session_mgr, project_id, "unvouched", stored_process(), machine_id=machine_id
+    )
+
+    assert session_mgr.expire_stale_sessions(timeout_hours=24) == 1
+    assert _status(session_mgr, session_id) == "expired"
+
+
+@pytest.mark.integration
+def test_idle_expiry_vouches_for_nothing_when_this_machine_is_unknown(
+    session_mgr: SessionManager,
+    project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.storage.session_lifecycle.get_machine_id", lambda: None)
+    session_id = _quiet_session(session_mgr, project_id, "running-cli", _this_cli())
+
+    assert session_mgr.expire_stale_sessions(timeout_hours=24) == 1
+    assert _status(session_mgr, session_id) == "expired"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("other_hours", "expired", "other_status"),
+    [(26, 2, "expired"), (0, 1, "paused")],
+    ids=["both-quiet", "other-row-busy"],
+)
+def test_idle_expiry_vouches_for_no_row_while_two_store_one_running_cli(
+    session_mgr: SessionManager,
+    project_id: str,
+    other_hours: int,
+    expired: int,
+    other_status: str,
+) -> None:
+    """Nothing says which row the CLI holds, so each keeps the idle timer."""
+    quiet = _quiet_session(session_mgr, project_id, "one-thread", _this_cli(), hours=30)
+    other = _quiet_session(
+        session_mgr, project_id, "another-thread", _this_cli(), hours=other_hours
+    )
+
+    assert session_mgr.expire_stale_sessions(timeout_hours=24) == expired
+    assert _status(session_mgr, quiet) == "expired"
+    assert _status(session_mgr, other) == other_status
+
+
+@pytest.mark.integration
+def test_empty_session_expiry_still_takes_an_unprompted_session_of_a_running_cli(
+    session_mgr: SessionManager,
+    project_id: str,
+) -> None:
+    """The two-hour sweep clears rows a stray start left; a running CLI does not hold it off."""
+    session_id = _quiet_session(session_mgr, project_id, "unprompted", _this_cli(), hours=3)
+
+    assert session_mgr.expire_empty_sessions(timeout_hours=2) == 1
+    assert _status(session_mgr, session_id) == "expired"

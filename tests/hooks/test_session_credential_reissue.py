@@ -80,12 +80,19 @@ def _expire(
     *,
     hours_ago: int = 0,
 ) -> None:
-    """Idle the row until the sweeper expires it, then age that expiry by ``hours_ago``."""
-    temp_db.execute(
-        "UPDATE sessions SET last_activity = NOW() - INTERVAL '25 hours' WHERE id = %s",
-        (session_id,),
+    """Expire the row of a CLI that is still running, then age that expiry by ``hours_ago``.
+
+    The idle sweeper leaves such a row alone, so this is the liveness monitor's expiry:
+    the one a running CLI gets when it is no longer its terminal's foreground process.
+    """
+    row = temp_db.fetchone(
+        "SELECT machine_id, updated_at FROM sessions WHERE id = %s", (session_id,)
     )
-    assert session_manager.expire_stale_sessions(timeout_hours=24) == 1
+    assert row is not None
+    expired = session_manager.expire_if_active(
+        session_id, machine_id=row["machine_id"], observed_updated_at=row["updated_at"]
+    )
+    assert expired is not None
     if hours_ago:
         temp_db.execute(
             "UPDATE sessions SET updated_at = NOW() - make_interval(hours => %s) WHERE id = %s",

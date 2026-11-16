@@ -11,6 +11,7 @@ import logging
 from dataclasses import dataclass
 
 from gobby.agents.resume_metadata import dump_resume_metadata
+from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.status_events import (
     SessionStatusTransition,
     SessionStatusTransitionCallback,
@@ -28,7 +29,9 @@ from gobby.storage.sessions._operator_claim_hold import (
     live_operator_claim_hold_params,
 )
 from gobby.storage.sql_dialect import older_than_now_expr, table_column_names
+from gobby.terminal_ownership import recorded_process_is_alive
 from gobby.utils.datetime import utc_now
+from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +177,39 @@ def session_has_retained_references(db: HubDatabase, session_id: str) -> bool:
     return row is not None
 
 
+def _sessions_a_running_cli_holds(db: HubDatabase) -> list[str]:
+    """Return this machine's live rows that are the one session of a still-running CLI.
+
+    The idle timer exists for a session nobody saw end. A running CLI has not ended,
+    however long it has been quiet, so the timer leaves its row alone. A pid means
+    nothing on another machine, so only this machine's rows are vouched for. Where two
+    live rows store one process, nothing here says which one the CLI holds, so neither
+    is vouched for: sparing the wrong one would keep the right one from coming back.
+    """
+    machine_id = get_machine_id()
+    if machine_id is None:
+        return []
+    rows = db.fetchall(
+        """
+        SELECT * FROM sessions
+        WHERE machine_id = %s AND status = ANY(%s)
+          AND terminal_context ->> 'parent_pid' IS NOT NULL
+        """,
+        (machine_id, list(LIVE_SESSION_STATUS_ORDER)),
+    )
+    sessions = [Session.from_row(row) for row in rows]
+    return [
+        session.id
+        for session in sessions
+        if not any(
+            other.id != session.id
+            and terminal_process_contexts_match(session.terminal_context, other.terminal_context)
+            for other in sessions
+        )
+        and recorded_process_is_alive(session)
+    ]
+
+
 def expire_stale_sessions(
     db: HubDatabase,
     timeout_hours: int = 24,
@@ -182,6 +218,9 @@ def expire_stale_sessions(
 ) -> int:
     """
     Mark sessions as expired if they've been inactive for too long.
+
+    A row whose stored CLI process still runs on this machine is not stale and is left
+    alone; see :func:`_sessions_a_running_cli_holds`.
 
     Args:
         db: Database connection.
@@ -201,6 +240,7 @@ def expire_stale_sessions(
             OR NULLIF(BTRIM(terminal_context->>'tmux_window_id'), '') IS NOT NULL
         )
     """
+    held_by_a_running_cli = _sessions_a_running_cli_holds(db)
     with db.transaction() as conn:
         rows = conn.execute(
             f"""
@@ -209,6 +249,7 @@ def expire_stale_sessions(
             WHERE status = ANY(%s)
             AND source != %s
             AND NOT ({tmux_target_sql})
+            AND NOT (id = ANY(%s))
             AND (
                 {inactive_stale_sql}
                 OR (
@@ -223,6 +264,7 @@ def expire_stale_sessions(
             (
                 list(LIVE_SESSION_STATUS_ORDER),
                 SYSTEM_SESSION_SOURCE,
+                held_by_a_running_cli,
                 timeout_hours,
                 timeout_hours,
                 timeout_hours,

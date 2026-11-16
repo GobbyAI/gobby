@@ -818,7 +818,7 @@ message_tracking:
 
 session_lifecycle:
   active_session_pause_minutes: 30
-  stale_session_timeout_hours: 24
+  stale_session_timeout_hours: 24  # skips the one live session of a CLI still running on this machine
   expire_check_interval_minutes: 60
   transcript_processing_interval_minutes: 5
   transcript_processing_batch_size: 10
