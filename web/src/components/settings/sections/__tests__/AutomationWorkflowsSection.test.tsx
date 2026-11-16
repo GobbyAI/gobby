@@ -104,7 +104,7 @@ function makeConfigValues(): Record<string, unknown> {
       },
     },
     workflow: { enabled: true, timeout: 300, debug_echo_context: false },
-    tmux: {
+    terminals: {
       attach_history_lines: 500,
       idle_check_enabled: true,
       idle_timeout_seconds: 120,
@@ -219,7 +219,7 @@ describe("AutomationWorkflowsSection", () => {
     ).toHaveValue(32000);
   });
 
-  it("reads workflow-engine, tmux, cron int-list, system-loop, and pipeline rows", () => {
+  it("reads workflow-engine, terminals, cron int-list, system-loop, and pipeline rows", () => {
     renderSection(makeContext());
 
     expect(screen.getByLabelText("Workflow timeout (seconds)")).toHaveValue(
@@ -228,16 +228,6 @@ describe("AutomationWorkflowsSection", () => {
     expect(
       screen.getByLabelText("Attach history lines (0 disables)"),
     ).toHaveValue(500);
-    // Gobby runs no tmux server, so nothing configures one (#22856).
-    for (const label of [
-      "tmux command",
-      "Socket name",
-      "Socket path",
-      "tmux config file",
-      "WSL distribution",
-    ]) {
-      expect(screen.queryByLabelText(label)).toBeNull();
-    }
     // cron.backoff_delays is an int array rendered as a typed number list.
     expect(screen.getByLabelText("Retry backoff delay item 2")).toHaveValue(60);
     expect(
@@ -275,6 +265,21 @@ describe("AutomationWorkflowsSection", () => {
     await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1));
     expect(ctx.saveConfig).toHaveBeenCalledWith(
       expect.objectContaining({ "workflow.enabled": false }),
+    );
+  });
+
+  it("persists terminal automation under the terminals section", async () => {
+    const ctx = makeContext();
+    renderSection(ctx);
+    fireEvent.change(screen.getByLabelText("Idle timeout (seconds)"), {
+      target: { value: "180" },
+    });
+    const save = screen.getByRole("button", { name: "Save" });
+    await waitFor(() => expect(save).toBeEnabled());
+    fireEvent.click(save);
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1));
+    expect(ctx.saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ "terminals.idle_timeout_seconds": 180 }),
     );
   });
 

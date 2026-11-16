@@ -13,7 +13,7 @@ from typing import Any
 
 from websockets.exceptions import ConnectionClosed
 
-from gobby.config.tmux import ATTACH_HISTORY_LINES
+from gobby.config.terminals import ATTACH_HISTORY_LINES
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.frame_client import FrameLagError, FrameProtocolError
 from gobby.terminals.ws_protocol import (
@@ -293,8 +293,7 @@ class ProxyHub:
     async def _emit_native_history(self, record: ProxyAttachment) -> str | None:
         """Send the history frame a native ANSI attachment never gets from the host.
 
-        The host captures attach history only for tmux panes, but every viewer
-        that renders raw bytes treats ``terminal_attach_history`` as the start of
+        Every viewer that renders raw bytes treats ``terminal_attach_history`` as the start of
         an attachment: the web terminal resets its buffer and leaves the attaching
         state on it, so a native row without one never renders. Native scrollback
         lives behind the host's ``snapshot`` verb instead, so the daemon reads it
@@ -314,7 +313,12 @@ class ProxyHub:
         runtime = None if record.terminal is None else self._owner._runtime_for("native")
         if runtime is not None:
             host = getattr(self._owner, "terminal_host_manager", None)
-            lines = getattr(host, "tmux_attach_history_lines", ATTACH_HISTORY_LINES)
+            config = self._owner.daemon_config
+            lines = (
+                config.terminals.attach_history_lines
+                if config is not None
+                else getattr(host, "attach_history_lines", ATTACH_HISTORY_LINES)
+            )
             try:
                 snapshot = await runtime.snapshot(record.terminal, lines=lines, mode="ansi")
             except Exception:

@@ -158,7 +158,6 @@ def test_composition_roots_give_the_coordinator_the_registry() -> None:
 def test_wiring_registers_the_external_tmux_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     """External tmux rows resolve a runtime, so send_keys and wake reach them."""
     from gobby.config.terminals import TerminalConfig
-    from gobby.config.tmux import TmuxConfig
     from gobby.runner_init import terminal_wiring
     from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 
@@ -180,7 +179,7 @@ def test_wiring_registers_the_external_tmux_adapter(monkeypatch: pytest.MonkeyPa
     runner = MagicMock()
     runner.agent_runner = None
     config = MagicMock()
-    config.tmux = TmuxConfig()
+    config.terminals = TerminalConfig()
     config.terminals = TerminalConfig()
     config.terminal_host = None
 
@@ -194,7 +193,6 @@ def test_wiring_registers_the_external_tmux_adapter(monkeypatch: pytest.MonkeyPa
 def _wire_terminals(monkeypatch: pytest.MonkeyPatch, *, front_door: bool) -> MagicMock:
     """Run the terminal wiring against a mock runner and return that runner."""
     from gobby.config.terminals import TerminalConfig
-    from gobby.config.tmux import TmuxConfig
     from gobby.runner_init import terminal_wiring
 
     for target in (
@@ -217,7 +215,7 @@ def _wire_terminals(monkeypatch: pytest.MonkeyPatch, *, front_door: bool) -> Mag
     runner.bootstrap_config.front_door.enabled = front_door
     runner.bootstrap_config.front_door.routes = {"terminal_ws": "native"} if front_door else {}
     config = MagicMock()
-    config.tmux = TmuxConfig()
+    config.terminals = TerminalConfig()
     config.terminals = TerminalConfig()
     config.terminal_host = None
 

@@ -10,7 +10,7 @@ from gobby.agents.watchdog.models import (
     CompletedTurnRecoveryState,
     WatchdogTranscriptSnapshot,
 )
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.host_sleep import AWAKE_CLOCK
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 class CompletedTurnRecoveryHost(Protocol):
     _completed_turn_recovery: dict[str, CompletedTurnRecoveryState]
-    _tmux_config: TmuxConfig
+    _terminal_config: TerminalConfig
     db: HubDatabase
     _run_db: Callable[..., Awaitable[Any]]
 
@@ -237,7 +237,7 @@ async def recover_completed_turn(
         run.id,
         CompletedTurnRecoveryState(workflow_fingerprint=fingerprint),
     )
-    max_attempts = host._tmux_config.max_reprompt_attempts
+    max_attempts = host._terminal_config.max_reprompt_attempts
     decision = evaluate_completed_turn(
         state,
         fingerprint=fingerprint,

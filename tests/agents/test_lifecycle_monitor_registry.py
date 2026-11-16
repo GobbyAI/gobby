@@ -6,7 +6,7 @@ import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from tests.agents.detection_test_support import replace_detection_manifest
@@ -20,7 +20,7 @@ def test_warm_monitor_sees_content_edit(temp_db: HubDatabase) -> None:
     monitor = AgentLifecycleMonitor(
         agent_run_manager=LocalAgentRunManager(temp_db),
         db=temp_db,
-        tmux_config=TmuxConfig(),
+        terminal_config=TerminalConfig(),
         detection_registry=registry,
     )
 

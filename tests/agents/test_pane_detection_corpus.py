@@ -24,7 +24,7 @@ from gobby.agents.prompt_detector import DetectedPrompt, PromptDetector
 from gobby.agents.stall_classifier import StallClassifier, _RunState
 from gobby.agents.watchdog.quota import detect_provider_quota
 from gobby.agents.watchdog.registry import WatchdogReaderRegistry
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import AgentRun
 from gobby.storage.attention import AttentionStateManager
 
@@ -196,7 +196,7 @@ def _observe_attention(case: dict[str, Any]) -> dict[str, Any]:
         run_db=_run_db,
         prompt_detector=prompt_root,
         stall_classifier=stall_root,
-        tmux_config=cast(TmuxConfig, tmux),
+        terminal_config=cast(TerminalConfig, tmux),
         attention_manager=cast(AttentionStateManager, manager),
         attention_metadata_store=cast(AttentionMetadataStore, metadata),
         get_session_manager=None,

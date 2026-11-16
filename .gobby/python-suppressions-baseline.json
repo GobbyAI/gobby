@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 166,
+  "site_count": 165,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -81,16 +81,6 @@
         "attr-defined"
       ],
       "statement": "payload = row . definition_json"
-    },
-    {
-      "fingerprint": "5d79edaa535c5c8bd17352a0fca7666cb0261e184567ecd48347ed11b226e7aa",
-      "path": "tests/agents/test_attention_metadata.py",
-      "symbol": "test_live_emit_and_validation",
-      "directive": "type: ignore",
-      "codes": [
-        "method-assign"
-      ],
-      "statement": "broadcaster . broadcast = AsyncMock ( )"
     },
     {
       "fingerprint": "e4103eddcab2975c47db06eeb42190f90eb3d1dcfe37dce70f05b2dae41390fa",

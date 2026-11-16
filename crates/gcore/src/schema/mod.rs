@@ -16,6 +16,9 @@ mod verify;
 #[cfg(test)]
 mod runner_tests;
 
+#[cfg(test)]
+mod retired_config_tests;
+
 pub use assets::{
     BASELINE_CHECKSUM, BASELINE_SQL, BASELINE_VERSION, CATALOG_MANIFEST_JSON,
     RUNNER_PROTOCOL_VERSION, SEED_MANIFEST_JSON,

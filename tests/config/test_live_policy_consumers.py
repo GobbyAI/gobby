@@ -191,7 +191,7 @@ class RecordingConfigService:
 @pytest.mark.asyncio
 async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     active_config = DaemonConfig(
-        tmux={"attach_history_lines": 700},
+        terminals={"attach_history_lines": 700},
         voice={"whisper_vocabulary": ["Gobby"], "whisper_prompt": "Live prompt"},
     )
     runtime = CountingRuntime(_snapshot(config=active_config, revision=7))
@@ -206,7 +206,7 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
     assert service.patches == [(7, {"voice.whisper_vocabulary": ["Gobby", "PostgreSQL"]})]
     assert runtime.snapshot_reads == 1
 
-    stale_config = DaemonConfig(tmux={"attach_history_lines": 300})
+    stale_config = DaemonConfig(terminals={"attach_history_lines": 300})
     captured: dict[str, Any] = {}
 
     class SessionManager:
@@ -233,7 +233,7 @@ async def test_voice_and_route_consumers_use_runtime(monkeypatch: pytest.MonkeyP
     )
     monkeypatch.setattr(
         "gobby.servers.routes.sessions.core.web_chat_sandbox_policy_hash",
-        lambda config: str(config.tmux.attach_history_lines),
+        lambda config: str(config.terminals.attach_history_lines),
     )
     sessions_router = APIRouter(prefix="/api/sessions")
 

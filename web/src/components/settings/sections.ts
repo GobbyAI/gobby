@@ -59,7 +59,7 @@ export const SETTINGS_SECTIONS = [
     id: "automation-workflows",
     label: "Automation & Workflows",
     description:
-      "Tasks, workflows, cron, pipelines, tmux automation, and variables.",
+      "Tasks, workflows, cron, pipelines, terminal automation, and variables.",
   },
   {
     id: "mcp-tools",

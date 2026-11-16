@@ -460,7 +460,7 @@ async def test_attention_episode_native(temp_db: Any) -> None:
         run_db=run_db,
         prompt_detector=PromptDetector(BundledDetectionRegistry(), "claude"),
         stall_classifier=StallClassifier(BundledDetectionRegistry(), "claude"),
-        tmux_config=MagicMock(auto_enter_approval_prompts=False),
+        terminal_config=MagicMock(auto_enter_approval_prompts=False),
         attention_manager=attention_manager,
     )
     run = AgentRun(

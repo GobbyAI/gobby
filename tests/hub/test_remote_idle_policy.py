@@ -18,7 +18,7 @@ from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
 from gobby.agents.watchdog import WatchdogReaderRegistry
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.hub import remote_cancel, remote_pane, remote_runtime, remote_terminal
 from gobby.hub.node_commands import ReportAgent
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -224,7 +224,7 @@ class _Harness:
             stall_classifier=cast(StallClassifier, MagicMock(spec=StallClassifier)),
             watchdog_readers=WatchdogReaderRegistry(),
             cleanup_handler=cleanup,
-            tmux_config=TmuxConfig(
+            terminal_config=TerminalConfig(
                 idle_timeout_seconds=60,
                 idle_reprompt_delay_seconds=60,
                 max_reprompt_attempts=MAX_REPROMPTS,

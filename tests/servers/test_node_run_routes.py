@@ -23,7 +23,7 @@ from starlette.testclient import TestClient
 
 from gobby.agents.agent_health import bootstrap_accounting_stall_error, session_never_initialized
 from gobby.agents.spawn_executor_providers import _append_code_index_warning
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.hub import remote_cancel, remote_pane
 from gobby.hub.node_commands import CONTRACT_VERSION
 from gobby.servers.auth_service import AuthService
@@ -134,7 +134,7 @@ def _harness(
         terminal_services=terminals,
         agent_lifecycle_monitor=SimpleNamespace(get_cleanup_agent=lambda: cleanup),
     )
-    config = SimpleNamespace(tmux=TmuxConfig())
+    config = SimpleNamespace(terminals=TerminalConfig())
     server = cast(HTTPServer, SimpleNamespace(auth_service=auth, services=services, config=config))
     app = FastAPI()
     app.state.database = db

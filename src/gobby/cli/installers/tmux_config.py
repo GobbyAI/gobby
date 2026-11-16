@@ -11,6 +11,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from gobby.utils.spawn import run
+
 _BEGIN_MARKER = "# BEGIN GOBBY MANAGED TMUX CLIPBOARD"
 _END_MARKER = "# END GOBBY MANAGED TMUX CLIPBOARD"
 _MANAGED_BLOCK = f"""{_BEGIN_MARKER}
@@ -78,7 +80,7 @@ def _apply_to_running_server(tmux_path: str) -> bool:
     )
     try:
         results = [
-            subprocess.run(
+            run(
                 command,
                 check=False,
                 stdout=subprocess.DEVNULL,

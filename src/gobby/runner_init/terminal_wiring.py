@@ -95,7 +95,7 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
         terminal_config=config.terminals,
         terminal_manager=runner.terminal_manager,
         run_manager=LocalAgentRunManager(runner.database),
-        tmux_attach_history_lines=config.tmux.attach_history_lines,
+        attach_history_lines=config.terminals.attach_history_lines,
     )
     # One composer ledger: host input, daemon writes, and spawns all feed it.
     composer_ledger = load_ledger(composer_ledger_path())

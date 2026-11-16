@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from gobby.agents.watchdog import TranscriptWatchdogReader, WatchdogReaderRegistry
     from gobby.agents.watchdog.models import WatchdogTranscriptSnapshot
     from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
-    from gobby.config.tmux import TmuxConfig
+    from gobby.config.terminals import TerminalConfig
     from gobby.storage.agents import (
         AgentRun,
         LocalAgentRunManager,
@@ -86,7 +86,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         idle_detector: IdleDetector,
         watchdog_readers: WatchdogReaderRegistry,
         cleanup_handler: AgentCleanupHandler,
-        tmux_config: TmuxConfig,
+        terminal_config: TerminalConfig,
         transcript_resolver: WatchdogTranscriptResolver,
         run_db: Callable[..., Awaitable[Any]],
         task_manager: LocalTaskManager | None = None,
@@ -98,7 +98,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         self._idle_detector = idle_detector
         self._watchdog_readers = watchdog_readers
         self._cleanup_handler = cleanup_handler
-        self._tmux_config = tmux_config
+        self._terminal_config = terminal_config
         self._transcript_resolver = transcript_resolver
         self._run_db = run_db
         self._task_manager = task_manager
@@ -166,7 +166,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         ):
             state.successful_reprompts = 0
 
-        max_attempts = self._tmux_config.max_reprompt_attempts
+        max_attempts = self._terminal_config.max_reprompt_attempts
         if state.successful_reprompts >= max_attempts:
             state.last_error_line_num = error_event.line_num
             logger.info(
@@ -340,7 +340,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         # Reuses max_reprompt_attempts as the bound VALUE while keeping its own
         # counter: successful_reprompts is the "agent isn't progressing" budget,
         # and spending it here would misreport an unreachable agent as a lazy one.
-        max_attempts = self._tmux_config.max_reprompt_attempts
+        max_attempts = self._terminal_config.max_reprompt_attempts
         if failures < max_attempts:
             logger.warning(
                 "Idle reprompt for agent %s was not delivered (%s/%s)",
@@ -466,7 +466,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         snapshot: WatchdogTranscriptSnapshot | None = None,
     ) -> bool:
         """Interrupt a stale reasoning turn and send a focused continuation."""
-        if not self._tmux_config.reasoning_watchdog_interrupt_enabled:
+        if not self._terminal_config.reasoning_watchdog_interrupt_enabled:
             return False
         if reader is None or not reader.supports_reasoning_interrupt:
             return False
@@ -509,7 +509,7 @@ class WatchdogRecoveryCoordinator(WatchdogRecoveryDiagnostics):
         )
         if terminal is None or coordinator is None:
             return False
-        settle_seconds = self._tmux_config.reasoning_watchdog_settle_seconds
+        settle_seconds = self._terminal_config.reasoning_watchdog_settle_seconds
         steps: list[WriteRequest | SequenceDelay] = [
             WriteRequest(
                 terminal_id=terminal.id,

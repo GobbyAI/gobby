@@ -10,7 +10,7 @@ from gobby.storage.attention import run_attention_entry_id
 
 if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
-    from gobby.config.tmux import TmuxConfig
+    from gobby.config.terminals import TerminalConfig
     from gobby.storage.agents import AgentRun
     from gobby.storage.attention import AttentionKind, AttentionStateManager
     from gobby.storage.sessions import SessionManager
@@ -36,7 +36,7 @@ class AgentAttentionTracker:
         run_db: Callable[..., Awaitable[Any]],
         prompt_detector: PromptDetector,
         stall_classifier: StallClassifier,
-        tmux_config: TmuxConfig,
+        terminal_config: TerminalConfig,
         attention_manager: AttentionStateManager | None = None,
         attention_metadata_store: AttentionMetadataStore | None = None,
         get_session_manager: Callable[[], SessionManager | None] | None = None,
@@ -44,7 +44,7 @@ class AgentAttentionTracker:
         self._run_db = run_db
         self._prompt_detector = prompt_detector
         self._stall_classifier = stall_classifier
-        self._tmux_config = tmux_config
+        self._terminal_config = terminal_config
         self._attention_manager = attention_manager
         self._attention_metadata_store = attention_metadata_store
         self._get_session_manager = get_session_manager
@@ -80,7 +80,7 @@ class AgentAttentionTracker:
         if (
             detected is not None
             and detected.kind == "approval"
-            and (not self._tmux_config.auto_enter_approval_prompts or approval_dismissed)
+            and (not self._terminal_config.auto_enter_approval_prompts or approval_dismissed)
         ):
             reason = "approval"
             kind = "actionable"

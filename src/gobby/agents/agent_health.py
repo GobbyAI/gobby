@@ -27,7 +27,6 @@ from gobby.utils.machine_id import require_machine_id
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
     from gobby.agents.stall_classifier import StallClassifier
-    from gobby.config.tmux import TmuxConfig
     from gobby.hooks.session_coordinator import SessionCoordinator
     from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
     from gobby.storage.hub.protocol import HubDatabase
@@ -135,7 +134,6 @@ class AgentHealthMonitor:
         get_session_manager: Callable[[], SessionManager | None],
         stall_classifier: StallClassifier,
         cleanup_handler: AgentCleanupHandler,
-        tmux_config: TmuxConfig,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         checkpoint_agent_work: Callable[[AgentRun], Awaitable[None]] | None = None,
         terminal_services: Any | None = None,
@@ -149,7 +147,6 @@ class AgentHealthMonitor:
         self._get_session_coordinator = get_session_coordinator
         self._stall_classifier = stall_classifier
         self._cleanup_handler = cleanup_handler
-        self._tmux_config = tmux_config
         self._run_db_callback = run_db
         self._checkpoint_agent_work = checkpoint_agent_work
         self._terminal_services = terminal_services
@@ -488,7 +485,7 @@ class AgentHealthMonitor:
                 if started is None:
                     continue
                 age = (now - started).total_seconds()
-                if age < self._tmux_config.init_timeout_seconds:
+                if age < self._terminal_config.init_timeout_seconds:
                     continue
 
                 session_id = run.child_session_id

@@ -32,7 +32,6 @@ from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.agents.watchdog.composer_gate import composer_refuses_automation
 from gobby.config.terminals import TerminalConfig
-from gobby.config.tmux import TmuxConfig
 from gobby.storage import pipeline_subscribers as completion_subscribers
 from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.telemetry.instruments import inc_counter
@@ -88,7 +87,6 @@ class AgentLifecycleMonitor:
         check_interval_seconds: float = 30.0,
         completion_registry: CompletionEventRegistry | None = None,
         task_manager: LocalTaskManager | None = None,
-        tmux_config: TmuxConfig | None = None,
         checkpoint_storage: LocalCheckpointManager | None = None,
         worktree_storage: LocalWorktreeManager | None = None,
         project_manager: LocalProjectManager | None = None,
@@ -100,7 +98,6 @@ class AgentLifecycleMonitor:
         terminal_config: TerminalConfig | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
-        self._terminal_config = terminal_config or TerminalConfig()
         self._db = db
         self._detection_registry = detection_registry
         self._run_db_callback = run_db
@@ -110,7 +107,7 @@ class AgentLifecycleMonitor:
         self._check_interval = check_interval_seconds
         self._completion_registry = completion_registry
         self._task_manager = task_manager
-        self._tmux_config = tmux_config or TmuxConfig()
+        self._terminal_config = terminal_config or TerminalConfig()
         if terminal_services is None:
             from gobby.terminals.leases import TerminalLeaseRegistry
 
@@ -148,7 +145,7 @@ class AgentLifecycleMonitor:
             prompt_detector=self._prompt_detector,
             idle_detector=self._idle_detector,
             loop_tracker=self._loop_tracker,
-            get_tmux_config=lambda: self._tmux_config,
+            get_terminal_config=lambda: self._terminal_config,
             handle_looping_agent=lambda run: self._checkpoint_and_kill_looping_agent(run),
             on_prompt_injected=lambda run: self._idle_check_handler.clear_attention_after_injection(
                 run
@@ -189,12 +186,11 @@ class AgentLifecycleMonitor:
             get_session_manager=lambda: self._session_manager,
             stall_classifier=self._stall_classifier,
             cleanup_handler=self._cleanup_handler,
-            tmux_config=self._tmux_config,
+            terminal_config=self._terminal_config,
             run_db=run_db,
             checkpoint_agent_work=lambda run: self._checkpoint_agent_work(run),
             terminal_services=self._terminal_services,
             get_session_coordinator=lambda: self._session_coordinator,
-            terminal_config=self._terminal_config,
         )
         self._idle_check_handler = IdleCheckHandler(
             agent_run_manager=agent_run_manager,
@@ -202,7 +198,7 @@ class AgentLifecycleMonitor:
             get_session_manager=lambda: self._session_manager,
             idle_detector=self._idle_detector,
             cleanup_handler=self._cleanup_handler,
-            tmux_config=self._tmux_config,
+            terminal_config=self._terminal_config,
             task_manager=task_manager,
             run_db=run_db,
             attention_manager=attention_manager,

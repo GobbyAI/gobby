@@ -708,7 +708,7 @@ def _attention_tracker(
         run_db=_run_db,
         prompt_detector=PromptDetector(registry, "claude"),
         stall_classifier=StallClassifier(registry, "claude"),
-        tmux_config=config,
+        terminal_config=config,
         attention_manager=manager,
     )
     return tracker, manager

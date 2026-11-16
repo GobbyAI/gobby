@@ -61,13 +61,8 @@ pub fn node_host_options(home: &Path, machine_id: String) -> HostOptions {
         retry_ceiling: Duration::from_secs(30),
         shutdown_grace: Duration::from_secs(10),
         spawn_args: [
-            ("--tmux-poll-interval-ms", 150),
-            ("--tmux-poll-backoff-ceiling-ms", 5000),
-            ("--max-attached-terminals", 64),
             ("--max-attachments-total", 128),
             ("--max-attachments-per-terminal", 8),
-            ("--tmux-attach-history-lines", 500),
-            ("--tmux-attach-history-max-bytes", 256 * 1024),
         ]
         .into_iter()
         .flat_map(|(flag, value)| [flag.to_owned(), value.to_string()])

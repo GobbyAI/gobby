@@ -145,7 +145,6 @@ _MUST_FORK = {
     "cli/install_setup_gdaemon.py::_probe_identity": "`gobby install` only",
     "cli/install_setup_gdaemon.py::_probe_version": "`gobby install` only",
     "cli/install_setup_srt.py::_install_srt_runtime": "`gobby install` only",
-    "cli/installers/tmux_config.py::_apply_to_running_server": "`gobby install` only",
     "cli/installers/docker_guard.py::<module>": (
         "an identity reference that recognizes the real runner; never called"
     ),

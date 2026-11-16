@@ -466,7 +466,7 @@ async def test_attention_tracker_tracks_prompts_stalls_and_injection_clear(
         run_db=run_db,
         prompt_detector=prompt_detector,
         stall_classifier=stall_classifier,
-        tmux_config=config,
+        terminal_config=config,
         attention_manager=manager,
     )
     run = _agent_run()
@@ -539,7 +539,7 @@ async def test_agent_attention_wait_is_lifecycle_protected_until_provider_resume
         run_db=run_db,
         prompt_detector=PromptDetector(DETECTION_REGISTRY),
         stall_classifier=StallClassifier(DETECTION_REGISTRY),
-        tmux_config=config,
+        terminal_config=config,
         attention_manager=manager,
         get_session_manager=lambda: session_manager,
     )
@@ -586,7 +586,7 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
         watchdog_readers=WatchdogReaderRegistry(),
         cleanup_handler=MagicMock(),
-        tmux_config=config,
+        terminal_config=config,
         run_db=run_db,
         attention_manager=manager,
         terminal_services=services,
@@ -636,7 +636,7 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
         watchdog_readers=WatchdogReaderRegistry(),
         cleanup_handler=MagicMock(),
-        tmux_config=config,
+        terminal_config=config,
         run_db=run_db,
         attention_manager=manager,
         terminal_services=services,

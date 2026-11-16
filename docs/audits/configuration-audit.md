@@ -66,7 +66,7 @@ Section ids are stable kebab-case ids. The matrix below assigns every `keep` row
 | 5 | tool-approvals | Global auto-allow rules and per-tool approval policy. |
 | 6 | secrets-auth | Secrets store, auth credentials, secret references. |
 | 7 | prompts-templates | Prompt overrides, full YAML template, import/export. |
-| 8 | automation-workflows | Tasks, workflows, cron, pipelines, tmux automation, variables. |
+| 8 | automation-workflows | Tasks, workflows, cron, pipelines, terminal automation, variables. |
 | 9 | mcp-tools | MCP proxy, tool search/recommendation, skills hub configuration. |
 | 10 | memory-knowledge | Memory, embeddings, and Qdrant/FalkorDB. |
 | 11 | observability | Telemetry, logs, metrics, tracing, exporters. |
@@ -369,16 +369,16 @@ already-created registry continue to use the live per-epoch configuration contra
 | auth.username | Retired by account-identity-cutover; canonical login identity is stored in users.email | (none — login uses the canonical users table) | retired | drop | (none) | removed from the runtime config contract; cutover deletes the legacy row |
 | auth.password | Auth service; not a registered runtime config key | (none — dead draft editor removed in task-19645 R5) | cli-only | drop | (none) | credential management stays CLI-only until #19650 lands an auth surface |
 | auth.session_secret | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | drop | (none) | auto-generated session cookie signing secret; schema marks it ui_hidden |
-| tmux.idle_check_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
-| tmux.idle_timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
-| tmux.idle_reprompt_delay_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
-| tmux.max_reprompt_attempts | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
-| tmux.reasoning_watchdog_interrupt_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
-| tmux.reasoning_watchdog_settle_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
-| tmux.init_timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
-| tmux.auto_enter_approval_prompts | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
-| tmux.auto_enter_agent_terminals | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
-| tmux.auto_enter_agent_interval_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
+| terminals.idle_check_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
+| terminals.idle_timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
+| terminals.idle_reprompt_delay_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
+| terminals.max_reprompt_attempts | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
+| terminals.reasoning_watchdog_interrupt_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
+| terminals.reasoning_watchdog_settle_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
+| terminals.init_timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
+| terminals.auto_enter_approval_prompts | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
+| terminals.auto_enter_agent_terminals | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
+| terminals.auto_enter_agent_interval_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
 | cron.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | automation-workflows |  |
 | cron.check_interval_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |
 | cron.max_concurrent_jobs | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | automation-workflows |  |

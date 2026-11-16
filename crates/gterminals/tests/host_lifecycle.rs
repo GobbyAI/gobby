@@ -481,6 +481,50 @@ impl Drop for OwnedHubSchema {
 }
 
 #[tokio::test]
+async fn host_options_use_configured_attachment_limits() -> anyhow::Result<()> {
+    let fixture = OwnedHubSchema::new().await?;
+    let pool = fixture.pool()?;
+    let home = tempfile::tempdir()?;
+    let options = HostOptions::from_pool(&pool, home.path(), "test-node".into())
+        .await?
+        .expect("host enabled by default");
+    assert_eq!(
+        options.spawn_args,
+        [
+            "--max-attachments-total",
+            "128",
+            "--max-attachments-per-terminal",
+            "8"
+        ]
+    );
+    let url = fixture.admin_url.clone();
+    let schema = fixture.schema.clone();
+    tokio::task::spawn_blocking(move || {
+        let mut admin = gobby_core::postgres::connect_readwrite(&url)?;
+        admin.batch_execute(&format!(
+            "INSERT INTO {schema}.config_store VALUES
+             ('terminal_host.max_attachments_total', '12'),
+             ('terminal_host.max_attachments_per_terminal', '3');"
+        ))?;
+        anyhow::Ok(())
+    })
+    .await??;
+    let options = HostOptions::from_pool(&pool, home.path(), "test-node".into())
+        .await?
+        .expect("host enabled");
+    assert_eq!(
+        options.spawn_args,
+        [
+            "--max-attachments-total",
+            "12",
+            "--max-attachments-per-terminal",
+            "3"
+        ]
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn postgres_epoch_bindings_drive_adoption_and_refusal() -> anyhow::Result<()> {
     let fixture = OwnedHubSchema::new().await?;
     let authority = Arc::new(PostgresEpochAuthority::new(fixture.pool()?));

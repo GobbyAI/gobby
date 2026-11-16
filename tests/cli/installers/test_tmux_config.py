@@ -18,7 +18,7 @@ def _which(command: str) -> str | None:
 
 @patch("gobby.cli.installers.tmux_config.sys.platform", "darwin")
 @patch("gobby.cli.installers.tmux_config.shutil.which", side_effect=_which)
-@patch("gobby.cli.installers.tmux_config.subprocess.run")
+@patch("gobby.cli.installers.tmux_config.run")
 def test_configure_tmux_clipboard_preserves_existing_config(
     mock_run: MagicMock,
     _mock_which: MagicMock,
@@ -61,7 +61,7 @@ def test_configure_tmux_clipboard_preserves_existing_config(
 
 @patch("gobby.cli.installers.tmux_config.sys.platform", "darwin")
 @patch("gobby.cli.installers.tmux_config.shutil.which", side_effect=_which)
-@patch("gobby.cli.installers.tmux_config.subprocess.run")
+@patch("gobby.cli.installers.tmux_config.run")
 def test_configure_tmux_clipboard_is_idempotent(
     mock_run: MagicMock,
     _mock_which: MagicMock,
@@ -80,7 +80,7 @@ def test_configure_tmux_clipboard_is_idempotent(
 
 @patch("gobby.cli.installers.tmux_config.sys.platform", "darwin")
 @patch("gobby.cli.installers.tmux_config.shutil.which", side_effect=_which)
-@patch("gobby.cli.installers.tmux_config.subprocess.run")
+@patch("gobby.cli.installers.tmux_config.run")
 def test_configure_tmux_clipboard_uses_existing_xdg_config(
     mock_run: MagicMock,
     _mock_which: MagicMock,
@@ -103,7 +103,7 @@ def test_configure_tmux_clipboard_uses_existing_xdg_config(
 
 @patch("gobby.cli.installers.tmux_config.sys.platform", "darwin")
 @patch("gobby.cli.installers.tmux_config.shutil.which", side_effect=_which)
-@patch("gobby.cli.installers.tmux_config.subprocess.run")
+@patch("gobby.cli.installers.tmux_config.run")
 def test_configure_tmux_clipboard_preserves_config_symlink(
     mock_run: MagicMock,
     _mock_which: MagicMock,
@@ -158,5 +158,7 @@ def test_configure_tmux_clipboard_preserves_non_utf8_config(
     result = configure_tmux_clipboard(home=tmp_path)
 
     assert result["success"] is False
-    assert "UTF-8" in result["error"]
+    error = result["error"]
+    assert isinstance(error, str)
+    assert "UTF-8" in error
     assert config_path.read_bytes() == original

@@ -19,7 +19,7 @@ from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
 from gobby.autonomous.stuck_detector import StuckDetector
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -381,7 +381,7 @@ def _make_idle_monitor_run(
     made_gobby_mcp_call: bool = True,
     stuck_detector: StuckDetector | None = None,
 ) -> tuple[AgentLifecycleMonitor, AgentRun]:
-    config = TmuxConfig(
+    config = TerminalConfig(
         idle_check_enabled=True,
         idle_timeout_seconds=10,
         idle_reprompt_delay_seconds=300,
@@ -397,7 +397,7 @@ def _make_idle_monitor_run(
         completion_registry=completion_registry,
         stuck_detector=stuck_detector,
         check_interval_seconds=1.0,
-        tmux_config=config,
+        terminal_config=config,
         terminal_services=_fake_terminal_services(temp_db),
     )
     parent = session_manager.register(
@@ -1498,14 +1498,14 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
     agent_run_manager: LocalAgentRunManager,
 ) -> None:
     """Unexpected step-context lookup errors fall back and log exception context."""
-    config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
+    config = TerminalConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
     monitor = AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         session_manager=session_manager,
         check_interval_seconds=1.0,
-        tmux_config=config,
+        terminal_config=config,
         terminal_services=_fake_terminal_services(temp_db),
     )
     parent = session_manager.register(
@@ -2155,7 +2155,7 @@ async def test_undeliverable_reprompt_stops_retrying_and_fails_the_run(
         transcript_path=transcript_path,
     )
     recovery = monitor._idle_check_handler._recovery
-    max_attempts = recovery._tmux_config.max_reprompt_attempts
+    max_attempts = recovery._terminal_config.max_reprompt_attempts
 
     handled: list[int] = []
     warnings_per_iteration: list[int] = []
@@ -2232,7 +2232,7 @@ async def test_reprompt_held_on_an_operator_draft_never_fails_the_run(
         run.terminal_id, origin="operator", kind="text", payload="Reply ACK"
     )
     recovery = monitor._idle_check_handler._recovery
-    iterations = recovery._tmux_config.max_reprompt_attempts + 1
+    iterations = recovery._terminal_config.max_reprompt_attempts + 1
 
     with (
         _pane_text(monitor, None),
@@ -2281,7 +2281,7 @@ async def test_capacity_reprompt_delivery_failures_are_bounded(
         session_age_seconds=1,
     )
     recovery = monitor._idle_check_handler._recovery
-    max_attempts = recovery._tmux_config.max_reprompt_attempts
+    max_attempts = recovery._terminal_config.max_reprompt_attempts
 
     handled: list[int] = []
     with (

@@ -12,7 +12,6 @@ import pytest
 from gobby.agents.agent_health import AgentHealthMonitor
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.config.terminals import TerminalConfig
-from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -321,7 +320,7 @@ def _health_monitor(temp_db: HubDatabase, coordinator: SessionCoordinator) -> Ag
         get_session_manager=lambda: sessions,
         stall_classifier=MagicMock(),
         cleanup_handler=MagicMock(),
-        tmux_config=TmuxConfig(),
+        terminal_config=TerminalConfig(),
         get_session_coordinator=lambda: coordinator,
     )
 

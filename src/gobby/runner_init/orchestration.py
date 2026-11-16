@@ -501,7 +501,6 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
             clone_storage=runner.clone_storage,
             completion_registry=runner.completion_registry,
             task_manager=runner.task_manager,
-            tmux_config=config.tmux if hasattr(config, "tmux") else None,
             checkpoint_storage=LocalCheckpointManager(runner.database),
             worktree_storage=runner.worktree_storage,
             stuck_detector=StuckDetector(

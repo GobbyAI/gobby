@@ -406,7 +406,7 @@ async def spawn_remote_agent(
                         or "none",
                         task_category=request.task_category,
                     ),
-                    tmux_config=daemon_config.tmux,
+                    terminal_config=daemon_config.terminals,
                 )
                 client = node_command_client()
                 if request.task_id and metadata.get("claim", True):

@@ -18,7 +18,7 @@ from gobby.agents.watchdog.models import (
     TranscriptEventSummary,
     WatchdogTranscriptSnapshot,
 )
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import AgentRun
 from gobby.workflows.step_context import StepWorkflowContext
 
@@ -75,7 +75,7 @@ class _FakeHost:
     ) -> None:
         self._send_ok = send_ok
         self._completed_turn_recovery: dict[str, CompletedTurnRecoveryState] = {}
-        self._tmux_config = TmuxConfig(max_reprompt_attempts=3)
+        self._terminal_config = TerminalConfig(max_reprompt_attempts=3)
         self._step_context = step_context
         self._made_call = made_call
         self._finished = finished

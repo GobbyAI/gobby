@@ -84,7 +84,7 @@ class InteractiveAttentionMonitor:
         self._registry = registry
         self._startup_ready = startup_ready
         from gobby.agents.watchdog.interactive_capacity import InteractiveCapacityRecovery
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
         self._capacity_recovery = (
             InteractiveCapacityRecovery(
@@ -93,7 +93,7 @@ class InteractiveAttentionMonitor:
                 write_coordinator,
                 max_reprompt_attempts
                 if max_reprompt_attempts is not None
-                else TmuxConfig().max_reprompt_attempts,
+                else TerminalConfig().max_reprompt_attempts,
             )
             if session_manager is not None and attention_manager is not None
             else None

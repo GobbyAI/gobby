@@ -49,7 +49,7 @@ static DESTRUCTIVE_AFTER_COPY: EmbeddedMigration = EmbeddedMigration {
 };
 static COPY_THEN_DESTRUCTIVE: &[EmbeddedMigration] = &[COPY_THEN_FENCE, DESTRUCTIVE_AFTER_COPY];
 
-static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
+pub(super) static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn preflight_migrations(sql: &'static str) -> &'static [EmbeddedMigration] {
     let checksum = Box::leak(super::assets::sha256_hex(sql.as_bytes()).into_boxed_str());
@@ -259,7 +259,7 @@ const GCODE_RLS_TABLES: [&str; 14] = [
     "code_overlay_pin_gaps",
 ];
 
-struct ScratchDatabase {
+pub(super) struct ScratchDatabase {
     admin: Client,
     config: Config,
     name: String,
@@ -320,7 +320,7 @@ impl Drop for ScratchDatabase {
     }
 }
 
-fn scratch_database() -> anyhow::Result<Option<(ScratchDatabase, Client)>> {
+pub(super) fn scratch_database() -> anyhow::Result<Option<(ScratchDatabase, Client)>> {
     let Ok(database_url) = env::var("GOBBY_SCHEMA_TEST_DATABASE_URL") else {
         eprintln!("GOBBY_SCHEMA_TEST_DATABASE_URL is unset; skipping PostgreSQL schema test");
         return Ok(None);

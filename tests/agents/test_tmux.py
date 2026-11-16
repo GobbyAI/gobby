@@ -30,7 +30,6 @@ from gobby.agents.tmux.text_injection import (
     paste_literal_text_to_tmux_target,
     send_literal_text_to_tmux_target,
 )
-from gobby.config.tmux import TmuxConfig
 
 pytestmark = pytest.mark.unit
 
@@ -38,22 +37,8 @@ _SOCKET = "/tmp/tmux-501/gobby"
 
 
 # =============================================================================
-# TmuxConfig
+# TerminalConfig
 # =============================================================================
-
-
-class TestTmuxConfig:
-    """Tests for TmuxConfig pydantic model."""
-
-    def test_defaults(self) -> None:
-        config = TmuxConfig()
-        assert config.attach_history_lines == 500
-        assert config.idle_reprompt_delay_seconds == 300
-
-    def test_custom_values(self) -> None:
-        config = TmuxConfig(attach_history_lines=700, idle_reprompt_delay_seconds=420)
-        assert config.attach_history_lines == 700
-        assert config.idle_reprompt_delay_seconds == 420
 
 
 class TestTmuxTextInjection:
@@ -552,22 +537,6 @@ class TestTmuxSessionManager:
 # =============================================================================
 # DaemonConfig integration
 # =============================================================================
-
-
-class TestDaemonConfigTmux:
-    """TmuxConfig is properly wired into DaemonConfig."""
-
-    def test_default_tmux_config(self) -> None:
-        from gobby.config.app import DaemonConfig
-
-        config = DaemonConfig()
-        assert config.tmux.attach_history_lines == 500
-
-    def test_custom_tmux_config(self) -> None:
-        from gobby.config.app import DaemonConfig
-
-        config = DaemonConfig(tmux={"attach_history_lines": 700})
-        assert config.tmux.attach_history_lines == 700
 
 
 # =============================================================================

@@ -21,7 +21,7 @@ import pytest
 
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -125,7 +125,7 @@ def _idle_monitor(
         db=temp_db,
         completion_registry=registry,
         session_manager=session_manager,
-        tmux_config=TmuxConfig(
+        terminal_config=TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         ),
         terminal_services=_fake_terminal_services(temp_db),

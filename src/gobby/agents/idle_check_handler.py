@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from gobby.agents.prompt_detector import PromptDetector
     from gobby.agents.stall_classifier import StallClassifier
     from gobby.agents.watchdog import TranscriptWatchdogReader, WatchdogReaderRegistry
-    from gobby.config.tmux import TmuxConfig
+    from gobby.config.terminals import TerminalConfig
     from gobby.providers.capacity_service import ProviderCapacityService
     from gobby.storage.agents import AgentRun, LocalAgentRunManager
     from gobby.storage.attention import AttentionStateManager
@@ -67,7 +67,7 @@ class IdleCheckHandler:
         stall_classifier: StallClassifier,
         watchdog_readers: WatchdogReaderRegistry,
         cleanup_handler: AgentCleanupHandler,
-        tmux_config: TmuxConfig,
+        terminal_config: TerminalConfig,
         task_manager: LocalTaskManager | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         attention_manager: AttentionStateManager | None = None,
@@ -85,13 +85,13 @@ class IdleCheckHandler:
         self._idle_detector = idle_detector
         self._prompt_detector = prompt_detector
         self._watchdog_readers = watchdog_readers
-        self._tmux_config = tmux_config
+        self._terminal_config = terminal_config
         self._run_db_callback = run_db
         self._attention_tracker = AgentAttentionTracker(
             run_db=self._run_db,
             prompt_detector=prompt_detector,
             stall_classifier=stall_classifier,
-            tmux_config=tmux_config,
+            terminal_config=terminal_config,
             attention_manager=attention_manager,
             attention_metadata_store=attention_metadata_store,
             get_session_manager=get_session_manager,
@@ -104,7 +104,7 @@ class IdleCheckHandler:
             idle_detector=idle_detector,
             watchdog_readers=watchdog_readers,
             cleanup_handler=cleanup_handler,
-            tmux_config=tmux_config,
+            terminal_config=terminal_config,
             transcript_resolver=self._transcript_resolver,
             run_db=self._run_db,
             task_manager=task_manager,
@@ -134,7 +134,7 @@ class IdleCheckHandler:
 
     async def check_idle_agents(self) -> int:
         """Check for idle agents and reprompt or fail them."""
-        if not self._tmux_config.idle_check_enabled:
+        if not self._terminal_config.idle_check_enabled:
             self._recovery.clear()
             self._attention_panes_for_idle.clear()
             return 0
@@ -296,13 +296,13 @@ class IdleCheckHandler:
         """Return the idle timeout window for a run."""
         requested_effort = (run.requested_reasoning_effort or "").strip().lower()
         if requested_effort == "xhigh":
-            return self._tmux_config.idle_timeout_seconds * 5
-        return self._tmux_config.idle_timeout_seconds
+            return self._terminal_config.idle_timeout_seconds * 5
+        return self._terminal_config.idle_timeout_seconds
 
     def _idle_reprompt_delay_seconds_for_run(self, run: AgentRun) -> int:
         """Return the semantic idle reprompt delay for a run."""
         return max(
-            self._tmux_config.idle_reprompt_delay_seconds,
+            self._terminal_config.idle_reprompt_delay_seconds,
             self._idle_timeout_seconds_for_run(run),
         )
 
@@ -622,7 +622,7 @@ class IdleCheckHandler:
             if (
                 session_recent
                 or not session_stale
-                or idle_detector.should_fail(run.id, self._tmux_config.max_reprompt_attempts)
+                or idle_detector.should_fail(run.id, self._terminal_config.max_reprompt_attempts)
             ):
                 idle_detector.reset_idle(run.id)
                 return 0
@@ -682,7 +682,7 @@ class IdleCheckHandler:
             return 0
 
         queued_message_prompt_visible = facts.queued_message_prompt
-        if idle_detector.should_fail(run.id, self._tmux_config.max_reprompt_attempts):
+        if idle_detector.should_fail(run.id, self._terminal_config.max_reprompt_attempts):
             if queued_message_prompt_visible:
                 logger.info(
                     "Agent %s has a queued-message prompt visible; suppressing idle failure",
@@ -699,7 +699,7 @@ class IdleCheckHandler:
             logger.info(
                 "Agent %s still idle after %s reprompts — failing",
                 run.id,
-                self._tmux_config.max_reprompt_attempts,
+                self._terminal_config.max_reprompt_attempts,
             )
             await self._recovery._log_transcript_snapshot(
                 run,
@@ -733,7 +733,7 @@ class IdleCheckHandler:
         if idle_detector.should_reprompt(
             run.id,
             self._idle_reprompt_delay_seconds_for_run(run),
-            self._tmux_config.max_reprompt_attempts,
+            self._terminal_config.max_reprompt_attempts,
         ):
             if session_stale and await self._recovery._recover_reasoning_idle(
                 run,

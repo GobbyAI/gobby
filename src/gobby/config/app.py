@@ -75,7 +75,6 @@ from gobby.config.system_loops import SystemLoopsConfig
 from gobby.config.tasks import GobbyTasksConfig, WorkflowConfig
 from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
-from gobby.config.tmux import TmuxConfig
 from gobby.config.ui import (
     ToolApprovalConfig,
     UIConfig,
@@ -468,10 +467,6 @@ class DaemonConfig(BaseModel):
     ui: UIConfig = Field(
         default_factory=UIConfig,
         description="Web UI configuration",
-    )
-    tmux: TmuxConfig = Field(
-        default_factory=TmuxConfig,
-        description="Agent terminal monitoring and tmux attach history",
     )
     terminals: TerminalConfig = Field(
         default_factory=TerminalConfig,

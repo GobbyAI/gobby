@@ -181,52 +181,12 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/agents/test_attention_metadata.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 143,
-      "message": "Argument 1 to \"create_attention_router\" has incompatible type \"SimpleNamespace\"; expected \"HTTPServer\"",
-      "occurrences": 2,
-      "path": "tests/agents/test_attention_metadata.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/agents/test_attention_metadata.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 259,
-      "message": "Value of type \"dict[str, str] | None\" is not indexable",
-      "occurrences": 4,
-      "path": "tests/agents/test_attention_metadata.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/agents/test_attention_metadata.py::::mypy:union-attr",
-      "issue_code": "mypy:union-attr",
-      "line": 243,
-      "message": "Item \"None\" of \"_Call | None\" has no attribute \"args\"",
-      "occurrences": 1,
-      "path": "tests/agents/test_attention_metadata.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/agents/test_attention_state.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 57,
       "message": "Argument \"created_at\" to \"AgentRun\" has incompatible type \"str\"; expected \"datetime\"",
       "occurrences": 2,
       "path": "tests/agents/test_attention_state.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/agents/test_idle_check_transcript_paths.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 52,
-      "message": "Argument \"tmux_config\" to \"IdleCheckHandler\" has incompatible type \"SimpleNamespace\"; expected \"TmuxConfig\"",
-      "occurrences": 1,
-      "path": "tests/agents/test_idle_check_transcript_paths.py",
       "severity": "high",
       "test_name": ""
     },
@@ -487,16 +447,6 @@
       "message": "Function is missing a type annotation for one or more arguments",
       "occurrences": 18,
       "path": "tests/cli/installers/test_service_extra.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/cli/installers/test_tmux_config.py::::mypy:operator",
-      "issue_code": "mypy:operator",
-      "line": 161,
-      "message": "Unsupported right operand type for in (\"object\")",
-      "occurrences": 1,
-      "path": "tests/cli/installers/test_tmux_config.py",
       "severity": "high",
       "test_name": ""
     },

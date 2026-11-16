@@ -1167,7 +1167,7 @@ class TestListRunningAgents:
                 "task_ref": "#18213",
                 "branch_name": "fix/18213-agents-list-get",
                 "sandbox_args": ["workspace-write"],
-                "tmux_config": {"window": "agent"},
+                "terminal_config": {"window": "agent"},
                 "config_overrides": ["model=x"],
             },
         )

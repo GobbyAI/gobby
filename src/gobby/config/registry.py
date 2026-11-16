@@ -581,17 +581,6 @@ def _flatten_mapping(value: Mapping[str, object], prefix: str = "") -> Iterator[
 
 BOOTSTRAP_RUNTIME_PATHS = frozenset(_flatten_mapping(BootstrapConfig().to_config_dict()))
 _REMOVED_RUNTIME_PATHS = frozenset({"hub_backend", "postgres_pool"})
-_REMOVED_TMUX_SPAWN_KEYS = (
-    "enabled",
-    "command",
-    "socket_name",
-    "socket_path",
-    "config_file",
-    "session_prefix",
-    "history_limit",
-    "wsl_distribution",
-    "registration_timeout_seconds",
-)
 # Superseded by ai.decisions.
 _REMOVED_COMMUNITY_LABEL_DECISION_KEYS = (
     "decisions_api_base",
@@ -602,7 +591,6 @@ _REMOVED_COMMUNITY_LABEL_DECISION_KEYS = (
 )
 _REMOVED_STORED_KEYS = frozenset(
     {f"memory.{key}" for key in REMOVED_MEMORY_CONFIG_KEYS}
-    | {f"tmux.{key}" for key in _REMOVED_TMUX_SPAWN_KEYS}
     | {f"code_index.community_label.{key}" for key in _REMOVED_COMMUNITY_LABEL_DECISION_KEYS}
     | {"auth.api_token_hash"}
 )

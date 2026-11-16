@@ -26,7 +26,7 @@ from gobby.agents.recovery_state import is_recovery_protected
 from gobby.agents.run_completion import bound_task_is_closed
 from gobby.agents.spawn_executor_providers import _append_code_index_warning, code_index_warning
 from gobby.agents.spawn_executor_support import _codex_prompt_failure_reason
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.hub.node_commands import (
     CONTRACT_VERSION,
     CodeIndexWarningBody,
@@ -124,8 +124,8 @@ async def _terminate_verdict(
     if body.cause == "timeout":
         return _timeout_verdict(run, session, pane_tail)
     config = server.config
-    tmux = config.tmux if config is not None else TmuxConfig()
-    return _init_verdict(run, session, tmux.init_timeout_seconds)
+    terminals = config.terminals if config is not None else TerminalConfig()
+    return _init_verdict(run, session, terminals.init_timeout_seconds)
 
 
 def _terminalizer(

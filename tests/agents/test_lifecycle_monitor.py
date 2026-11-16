@@ -32,7 +32,7 @@ from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
 from gobby.autonomous.stuck_detector import StuckDetectionResult, StuckDetector
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import TaskSpawnLease
 from gobby.sessions import activity as session_activity
@@ -284,7 +284,7 @@ def test_monitor_ignores_other_machines_runs(
         detection_registry=DETECTION_REGISTRY,
         agent_run_manager=run_manager,
         db=temp_db,
-        tmux_config=TmuxConfig(),
+        terminal_config=TerminalConfig(),
         terminal_services=_fake_terminal_services(temp_db),
     )
 
@@ -292,7 +292,7 @@ def test_monitor_ignores_other_machines_runs(
     run_manager.list_active_for_machine_summary.assert_called_once_with(LOCAL_MACHINE_ID)
 
 
-def test_monitor_without_tmux_config_uses_defaults(temp_db: HubDatabase) -> None:
+def test_monitor_without_terminal_config_uses_defaults(temp_db: HubDatabase) -> None:
     """No daemon tmux singleton exists, so an omitted config falls back to defaults."""
     monitor = AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,
@@ -301,7 +301,7 @@ def test_monitor_without_tmux_config_uses_defaults(temp_db: HubDatabase) -> None
         terminal_services=_fake_terminal_services(temp_db),
     )
 
-    assert monitor._tmux_config == TmuxConfig()
+    assert monitor._terminal_config == TerminalConfig()
 
 
 @pytest.mark.asyncio
@@ -324,7 +324,7 @@ async def test_cleanup_and_termination_ignore_other_machine_runs(
         detection_registry=DETECTION_REGISTRY,
         agent_run_manager=run_manager,
         db=temp_db,
-        tmux_config=TmuxConfig(),
+        terminal_config=TerminalConfig(),
         terminal_services=_fake_terminal_services(temp_db),
     )
 
@@ -456,7 +456,7 @@ def monitor(
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
-        tmux_config=TmuxConfig(),
+        terminal_config=TerminalConfig(),
         terminal_services=_fake_terminal_services(temp_db),
     )
 
@@ -1138,7 +1138,7 @@ def _make_progress_stagnation_monitor(
     sample_session: dict[str, Any],
     suggested_action: str = "stop",
     layer: str = "progress_stagnation",
-    tmux_config: TmuxConfig | None = None,
+    terminal_config: TerminalConfig | None = None,
     requested_reasoning_effort: str | None = None,
 ) -> tuple[AgentLifecycleMonitor, AgentRun, MagicMock]:
     stuck_detector = MagicMock()
@@ -1153,8 +1153,8 @@ def _make_progress_stagnation_monitor(
         agent_run_manager=agent_run_manager,
         db=temp_db,
         stuck_detector=stuck_detector,
-        tmux_config=tmux_config
-        or TmuxConfig(idle_timeout_seconds=60, idle_reprompt_delay_seconds=300),
+        terminal_config=terminal_config
+        or TerminalConfig(idle_timeout_seconds=60, idle_reprompt_delay_seconds=300),
         terminal_services=_fake_terminal_services(temp_db),
     )
     run = _make_terminal_run(
@@ -1505,7 +1505,7 @@ async def test_xhigh_draft_grace_uses_scaled_idle_window(
         temp_db=temp_db,
         sample_session=sample_session,
         requested_reasoning_effort="xhigh",
-        tmux_config=TmuxConfig(idle_timeout_seconds=100, idle_reprompt_delay_seconds=300),
+        terminal_config=TerminalConfig(idle_timeout_seconds=100, idle_reprompt_delay_seconds=300),
     )
 
     with (
@@ -1906,7 +1906,7 @@ class TestCheckDeadAgents:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_coordinator=mock_coordinator,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -1982,9 +1982,9 @@ class TestCheckIdleAgents:
         agent_run_manager: LocalAgentRunManager,
         temp_db: HubDatabase,
     ) -> AgentLifecycleMonitor:
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
-        config = TmuxConfig(
+        config = TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         return AgentLifecycleMonitor(
@@ -1992,7 +1992,7 @@ class TestCheckIdleAgents:
             agent_run_manager=agent_run_manager,
             db=temp_db,
             check_interval_seconds=1.0,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -2345,14 +2345,14 @@ class TestCheckIdleAgents:
         sample_session: dict[str, Any],
     ) -> None:
         """Idle check should be skipped when disabled."""
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
-        config = TmuxConfig(idle_check_enabled=False)
+        config = TerminalConfig(idle_check_enabled=False)
         mon = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
         _make_terminal_run(
@@ -2404,9 +2404,9 @@ class TestCheckIdleAgents:
     ) -> None:
         """Agent with recent session updated_at should be considered active,
         skipping pane pattern matching entirely."""
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
-        config = TmuxConfig(
+        config = TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
@@ -2415,7 +2415,7 @@ class TestCheckIdleAgents:
             db=temp_db,
             session_manager=session_manager,
             check_interval_seconds=1.0,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -2453,10 +2453,10 @@ class TestCheckIdleAgents:
         temp_db: HubDatabase,
     ) -> None:
         """Recent hook activity should keep stale session rows from reaching idle handling."""
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
         session_activity.reset_for_tests()
-        config = TmuxConfig(
+        config = TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
@@ -2465,7 +2465,7 @@ class TestCheckIdleAgents:
             db=temp_db,
             session_manager=session_manager,
             check_interval_seconds=1.0,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
         child = session_manager.register(
@@ -2507,9 +2507,9 @@ class TestCheckIdleAgents:
         temp_db: HubDatabase,
     ) -> None:
         """Active pane output should override a stale session row for destructive decisions."""
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
-        config = TmuxConfig(
+        config = TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
@@ -2518,7 +2518,7 @@ class TestCheckIdleAgents:
             db=temp_db,
             session_manager=session_manager,
             check_interval_seconds=1.0,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
         child = session_manager.register(
@@ -2569,9 +2569,9 @@ class TestCheckIdleAgents:
         import time
         from datetime import UTC, datetime, timedelta
 
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
-        config = TmuxConfig(
+        config = TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
@@ -2580,7 +2580,7 @@ class TestCheckIdleAgents:
             db=temp_db,
             session_manager=session_manager,
             check_interval_seconds=1.0,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -2633,9 +2633,9 @@ class TestCheckIdleAgents:
         import time
         from datetime import UTC, datetime, timedelta
 
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
-        config = TmuxConfig(
+        config = TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
@@ -2644,7 +2644,7 @@ class TestCheckIdleAgents:
             db=temp_db,
             session_manager=session_manager,
             check_interval_seconds=1.0,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
         child = session_manager.register(
@@ -2719,9 +2719,9 @@ class TestCheckIdleAgents:
         import time
         from datetime import UTC, datetime, timedelta
 
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
-        config = TmuxConfig(
+        config = TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
@@ -2730,7 +2730,7 @@ class TestCheckIdleAgents:
             db=temp_db,
             session_manager=session_manager,
             check_interval_seconds=1.0,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
         child = session_manager.register(
@@ -2774,9 +2774,9 @@ class TestCheckIdleAgents:
         import time
         from datetime import UTC, datetime, timedelta
 
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
-        config = TmuxConfig(
+        config = TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
@@ -2785,7 +2785,7 @@ class TestCheckIdleAgents:
             db=temp_db,
             session_manager=session_manager,
             check_interval_seconds=1.0,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -2839,9 +2839,9 @@ class TestCheckIdleAgents:
         import time
         from datetime import UTC, datetime, timedelta
 
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
-        config = TmuxConfig(
+        config = TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
@@ -2850,7 +2850,7 @@ class TestCheckIdleAgents:
             db=temp_db,
             session_manager=session_manager,
             check_interval_seconds=1.0,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -2898,9 +2898,9 @@ class TestCheckIdleAgents:
         """xhigh runs still fail normally once the extended window expires."""
         from datetime import UTC, datetime, timedelta
 
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
-        config = TmuxConfig(
+        config = TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
@@ -2909,7 +2909,7 @@ class TestCheckIdleAgents:
             db=temp_db,
             session_manager=session_manager,
             check_interval_seconds=1.0,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -2960,9 +2960,9 @@ class TestCheckIdleAgents:
         import time
         from datetime import UTC, datetime, timedelta
 
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
-        config = TmuxConfig(
+        config = TerminalConfig(
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
@@ -2971,7 +2971,7 @@ class TestCheckIdleAgents:
             db=temp_db,
             session_manager=session_manager,
             check_interval_seconds=1.0,
-            tmux_config=config,
+            terminal_config=config,
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -3406,7 +3406,7 @@ class TestCheckExpiredAgents:
             session_manager=session_manager,
             task_manager=task_manager,
             check_interval_seconds=1.0,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db),
         )
         events: list[str] = []
@@ -3533,7 +3533,7 @@ class TestCheckExpiredAgents:
             session_manager=session_manager,
             task_manager=task_manager,
             check_interval_seconds=1.0,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -3773,7 +3773,7 @@ class TestCheckExpiredAgents:
             session_manager=session_manager,
             task_manager=task_manager,
             check_interval_seconds=1.0,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db),
         )
         caplog.set_level(logging.WARNING, logger="gobby.agents")
@@ -3841,7 +3841,7 @@ class TestCheckExpiredAgents:
             session_manager=session_manager,
             task_manager=task_manager,
             check_interval_seconds=1.0,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db),
         )
         events: list[str] = []
@@ -3927,7 +3927,7 @@ class TestCheckExpiredAgents:
             session_manager=session_manager,
             task_manager=task_manager,
             check_interval_seconds=1.0,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -4284,7 +4284,7 @@ class TestCheckProviderStallsKillsAgent:
             db=temp_db,
             task_manager=task_manager,
             check_interval_seconds=1.0,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -4432,7 +4432,7 @@ class TestCheckInitializationTimeout:
             db=temp_db,
             session_manager=session_manager,
             task_manager=task_manager,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db, runtime),
         )
         error = "codex_terminal_exited_before_composer: pane gone"
@@ -4609,7 +4609,7 @@ class TestCheckInitializationTimeout:
             session_manager=session_manager,
             task_manager=task_manager,
             completion_registry=completion_registry,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -4777,7 +4777,7 @@ class TestCheckInitializationTimeout:
             session_manager=session_manager,
             task_manager=task_manager,
             check_interval_seconds=1.0,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -5180,7 +5180,7 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
     temp_db: HubDatabase,
 ) -> None:
     """Repeated lifecycle DB reads and task recovery do not grow PostgreSQL handles."""
-    from gobby.config.tmux import TmuxConfig
+    from gobby.config.terminals import TerminalConfig
 
     executor = DatabaseExecutor(max_workers=2, thread_name_prefix="lifecycle-db")
     task_manager = LocalTaskManager(temp_db)
@@ -5211,7 +5211,7 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
         db=temp_db,
         session_manager=session_manager,
         task_manager=task_manager,
-        tmux_config=TmuxConfig(),
+        terminal_config=TerminalConfig(),
         run_db=executor.run,
         terminal_services=_fake_terminal_services(temp_db),
     )
@@ -5590,7 +5590,7 @@ class TestReapDaemonStopOrphans:
             check_interval_seconds=1.0,
             completion_registry=registry,
             session_manager=session_manager,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db),
         )
         recovery = MagicMock(recover_task_from_terminal_agent=AsyncMock())
@@ -5694,7 +5694,7 @@ class TestReapDaemonStopOrphans:
             agent_run_manager=run_manager,
             db=temp_db,
             check_interval_seconds=1.0,
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
             terminal_services=_fake_terminal_services(temp_db),
         )
 
@@ -6078,7 +6078,7 @@ async def test_resolve_agent_cwd_uses_session_machine_checkout(  # tdd-red windo
         agent_run_manager=MagicMock(),
         db=temp_db,
         session_manager=SessionManager(temp_db),
-        tmux_config=TmuxConfig(),
+        terminal_config=TerminalConfig(),
         terminal_services=_fake_terminal_services(temp_db),
     )
     run = SimpleNamespace(
@@ -6126,7 +6126,7 @@ async def test_resolve_agent_cwd_fails_closed_without_checkout(  # tdd-red windo
         agent_run_manager=MagicMock(),
         db=temp_db,
         session_manager=SessionManager(temp_db),
-        tmux_config=TmuxConfig(),
+        terminal_config=TerminalConfig(),
         terminal_services=_fake_terminal_services(temp_db),
     )
     run = SimpleNamespace(

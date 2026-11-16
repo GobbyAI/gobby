@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import AgentRun
 
 from .detection_test_support import BundledDetectionRegistry
@@ -29,7 +29,7 @@ class TestCompletedRunIdleGuard:
             agent_run_manager=agent_run_manager,
             db=MagicMock(),
             check_interval_seconds=1.0,
-            tmux_config=TmuxConfig(
+            terminal_config=TerminalConfig(
                 idle_check_enabled=True,
                 idle_timeout_seconds=10,
                 max_reprompt_attempts=2,

@@ -15,7 +15,7 @@ from gobby.terminals.error_classification import is_vanished_terminal_target
 from gobby.terminals.host_client import HostUnavailableError
 
 if TYPE_CHECKING:
-    from gobby.config.tmux import TmuxConfig
+    from gobby.config.terminals import TerminalConfig
     from gobby.storage.agents import AgentRun
     from gobby.terminals.runtime import SnapshotMode
 
@@ -63,7 +63,7 @@ class TerminalPromptMonitor:
         prompt_detector: PromptDetector,
         idle_detector: IdleDetector,
         loop_tracker: LoopTracker,
-        get_tmux_config: Callable[[], TmuxConfig],
+        get_terminal_config: Callable[[], TerminalConfig],
         handle_looping_agent: Callable[[AgentRun], Awaitable[None]],
         on_prompt_injected: Callable[[AgentRun], Awaitable[None]] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
@@ -74,7 +74,7 @@ class TerminalPromptMonitor:
         self._prompt_detector = prompt_detector
         self._idle_detector = idle_detector
         self._loop_tracker = loop_tracker
-        self._get_tmux_config = get_tmux_config
+        self._get_terminal_config = get_terminal_config
         self._handle_looping_agent = handle_looping_agent
         self._on_prompt_injected = on_prompt_injected
         self._monotonic = monotonic
@@ -240,7 +240,7 @@ class TerminalPromptMonitor:
 
     async def check_approval_prompts(self) -> int:
         """Check for approval prompts whose visible text says Enter approves."""
-        if not self._get_tmux_config().auto_enter_approval_prompts:
+        if not self._get_terminal_config().auto_enter_approval_prompts:
             return 0
 
         runs = await self._run_db(self._get_active_terminal_runs)
@@ -280,7 +280,7 @@ class TerminalPromptMonitor:
         intentional because continuation text and the queued-message prompt can
         be separated by status/chrome lines.
         """
-        if not self._get_tmux_config().auto_enter_agent_terminals:
+        if not self._get_terminal_config().auto_enter_agent_terminals:
             return 0
 
         runs = await self._run_db(self._get_active_terminal_runs)
@@ -310,7 +310,7 @@ class TerminalPromptMonitor:
 
     async def check_periodic_enters(self) -> int:
         """Periodically send Enter to active spawned-agent terminal panes."""
-        config = self._get_tmux_config()
+        config = self._get_terminal_config()
         if not config.auto_enter_agent_terminals:
             return 0
 
@@ -385,7 +385,7 @@ class TerminalPromptMonitor:
     def _should_skip_periodic_enter_for_dialog(
         self,
         pane_output: str,
-        config: TmuxConfig,
+        config: TerminalConfig,
         detector: PromptDetector,
     ) -> bool:
         """Return True when periodic Enter would confirm a known prompt dialog."""

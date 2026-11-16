@@ -12,7 +12,7 @@ from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.run_completion import closed_task_completion_result
 from gobby.autonomous.stuck_detector import StuckDetectionResult
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.session_coordinator import SessionCoordinator
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -104,7 +104,7 @@ def _monitor(
         stuck_detector=stuck_detector,
         completion_registry=completion_registry,
         check_interval_seconds=1.0,
-        tmux_config=TmuxConfig(),
+        terminal_config=TerminalConfig(),
     )
 
 

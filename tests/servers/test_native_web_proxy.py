@@ -393,6 +393,7 @@ class _ThemedHost:
     """A gterm host that advertised the `terminal_theme` capability."""
 
     capabilities = ("terminal_theme",)
+    attach_history_lines = 500
 
     async def wait_startup_settled(self, timeout: float) -> bool:
         return True
@@ -648,6 +649,25 @@ async def test_web_attach_native_terminal(
         },
     )
     await _until(lambda: frame.closed or frame.detached)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_host", [False, True])
+async def test_native_history_uses_configured_attach_history_lines(
+    temp_db: HubDatabase, sample_project: dict[str, Any], with_host: bool
+) -> None:
+    from gobby.config.app import DaemonConfig
+
+    harness = _harness(temp_db, sample_project)
+    harness.server._startup_daemon_config = DaemonConfig(terminals={"attach_history_lines": 700})
+    if with_host:
+        host = _ThemedHost()
+        host.attach_history_lines = 300
+        harness.server.terminal_host_manager = host
+    ws = MockWebSocket()
+    await _attach(harness, ws, harness.native_row)
+    await _until(lambda: ws.messages_of_type("terminal_attach_history"))
+    assert harness.native_rt.snapshot_calls == [(harness.native_row.id, 700, "ansi")]
 
 
 @pytest.mark.asyncio

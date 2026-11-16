@@ -17,7 +17,6 @@ def test_host_config_ranges_reject_and_admit_maximum() -> None:
         max_attached_terminals=64,
         native_scrollback_max_lines=50_000,
         native_scrollback_max_bytes=32 * 1024 * 1024,
-        tmux_attach_history_max_bytes=256 * 1024,
     )
     assert ok.max_attachments_total == 128
 
@@ -31,5 +30,3 @@ def test_host_config_ranges_reject_and_admit_maximum() -> None:
         TerminalHostConfig(max_attachments_total=129)
     with pytest.raises(ValidationError):
         TerminalHostConfig(native_scrollback_max_lines=499)
-    with pytest.raises(ValidationError):
-        TerminalHostConfig(tmux_attach_history_max_bytes=1023)

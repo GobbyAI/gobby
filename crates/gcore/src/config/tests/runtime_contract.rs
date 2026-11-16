@@ -7,15 +7,15 @@ fn rejects_unregistered_machine_key() {
 }
 
 #[test]
-fn retired_tmux_init_activity_grace_key_is_unregistered() {
+fn retired_init_activity_grace_key_is_unregistered() {
     use crate::config::is_registered_runtime_key;
 
     // A stale compiled contract kept accepting this retired key, which can break
     // hub capture when config_store holds an env reference or secret marker for it.
     assert!(!is_registered_runtime_key(
-        "tmux.init_activity_grace_seconds"
+        "terminals.init_activity_grace_seconds"
     ));
-    assert!(is_registered_runtime_key("tmux.init_timeout_seconds"));
+    assert!(is_registered_runtime_key("terminals.init_timeout_seconds"));
 }
 
 #[test]

@@ -10,7 +10,7 @@ from gobby.agents.reasoning import SpawnReasoningResolution
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.sandbox_credentials import credential_roots
 from gobby.agents.spawn_executor_providers import render_agent_prompt_prefix
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.hub.node_commands import Sandbox, SpawnMonitor, SpawnPayload, SpawnWorkspace
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
@@ -103,7 +103,7 @@ def build_spawn_payload(
     sandbox_config: SandboxConfig,
     resume_metadata: Mapping[str, Any],
     code_index_mode: str | None,
-    tmux_config: TmuxConfig,
+    terminal_config: TerminalConfig,
 ) -> SpawnPayload:
     """Build the validated ``agent.spawn`` payload for one agent run.
 
@@ -168,10 +168,10 @@ def build_spawn_payload(
         droid_mode=request.get("droid_mode", "exec"),
         prewarm_pre_commit_store=body.prewarm_pre_commit_store if body is not None else True,
         monitor=SpawnMonitor(
-            auto_enter_agent_terminals=tmux_config.auto_enter_agent_terminals,
-            auto_enter_agent_interval_seconds=tmux_config.auto_enter_agent_interval_seconds,
-            auto_enter_approval_prompts=tmux_config.auto_enter_approval_prompts,
-            init_timeout_seconds=tmux_config.init_timeout_seconds,
+            auto_enter_agent_terminals=terminal_config.auto_enter_agent_terminals,
+            auto_enter_agent_interval_seconds=terminal_config.auto_enter_agent_interval_seconds,
+            auto_enter_approval_prompts=terminal_config.auto_enter_approval_prompts,
+            init_timeout_seconds=terminal_config.init_timeout_seconds,
         ),
     )
     if prefix:

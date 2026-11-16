@@ -1832,21 +1832,22 @@ def test_host_spawn_forwards_attachment_pool_args(short_socket_dir: Path) -> Non
     assert argv[argv.index("--max-attachments-per-terminal") + 1] == "4"
 
 
-def test_host_spawn_drops_the_daemons_tmux_pane(
+def test_host_spawn_preserves_environment_and_attachment_limits(
     short_socket_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Native agents inherit the host env; a daemon started in tmux must not
-    hand them its own pane as their terminal context."""
+    """The host inherits ordinary environment without the supervisor descriptor."""
     from gobby.config.terminal_host import TerminalHostConfig
     from gobby.terminals.host_manager import TerminalHostManager
 
-    monkeypatch.setenv("TMUX", "/tmp/tmux-501/default,12345,0")
-    monkeypatch.setenv("TMUX_PANE", "%7")
+    monkeypatch.setenv("GOBBY_TEST_HOST_SENTINEL", "preserved")
+    monkeypatch.setenv("GOBBY_SUPERVISOR_FD", "17")
     envs: list[dict[str, str]] = []
+    commands: list[list[str]] = []
 
     class _BoomPopen:
         def __init__(self, args: list[str], *, env: dict[str, str], **kwargs: object) -> None:
-            del args, kwargs
+            del kwargs
+            commands.append(args)
             envs.append(env)
             raise OSError("boom")
 
@@ -1858,8 +1859,17 @@ def test_host_spawn_drops_the_daemons_tmux_pane(
         with pytest.raises(OSError, match="boom"):
             host._spawn_host_process()
 
-    assert "TMUX" not in envs[0]
-    assert "TMUX_PANE" not in envs[0]
+    assert envs[0]["GOBBY_TEST_HOST_SENTINEL"] == "preserved"
+    assert "GOBBY_SUPERVISOR_FD" not in envs[0]
+    assert commands[0][1:] == [
+        "host",
+        "--socket-dir",
+        str(short_socket_dir),
+        "--max-attachments-total",
+        "128",
+        "--max-attachments-per-terminal",
+        "8",
+    ]
     assert envs[0]["GTERM_LOG_FILE"].endswith(".log")
 
 

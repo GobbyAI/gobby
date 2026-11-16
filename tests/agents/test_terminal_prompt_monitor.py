@@ -12,7 +12,7 @@ import pytest
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import AgentRun
 from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.host_client import HostConnectionLost, HostUnavailableError
@@ -76,7 +76,7 @@ async def test_prompt_callback_failure_preserves_successful_injection(
         prompt_detector=prompt_detector,
         idle_detector=IdleDetector(BundledDetectionRegistry()),
         loop_tracker=MagicMock(),
-        get_tmux_config=TmuxConfig,
+        get_terminal_config=TerminalConfig,
         handle_looping_agent=AsyncMock(),
         on_prompt_injected=callback,
         terminal_services=services,
@@ -114,7 +114,7 @@ def _monitor_with_probe_error(error: Exception) -> TerminalPromptMonitor:
         prompt_detector=prompt_detector,
         idle_detector=IdleDetector(BundledDetectionRegistry()),
         loop_tracker=MagicMock(),
-        get_tmux_config=TmuxConfig,
+        get_terminal_config=TerminalConfig,
         handle_looping_agent=AsyncMock(),
         on_prompt_injected=AsyncMock(),
         terminal_services=services,

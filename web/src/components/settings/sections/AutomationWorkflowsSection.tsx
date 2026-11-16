@@ -71,18 +71,18 @@ const WORKFLOW_PATHS = [
   "workflow.debug_echo_context",
 ];
 
-const TMUX_PATHS = [
-  "tmux.attach_history_lines",
-  "tmux.idle_check_enabled",
-  "tmux.idle_timeout_seconds",
-  "tmux.idle_reprompt_delay_seconds",
-  "tmux.max_reprompt_attempts",
-  "tmux.reasoning_watchdog_interrupt_enabled",
-  "tmux.reasoning_watchdog_settle_seconds",
-  "tmux.init_timeout_seconds",
-  "tmux.auto_enter_approval_prompts",
-  "tmux.auto_enter_agent_terminals",
-  "tmux.auto_enter_agent_interval_seconds",
+const TERMINAL_PATHS = [
+  "terminals.attach_history_lines",
+  "terminals.idle_check_enabled",
+  "terminals.idle_timeout_seconds",
+  "terminals.idle_reprompt_delay_seconds",
+  "terminals.max_reprompt_attempts",
+  "terminals.reasoning_watchdog_interrupt_enabled",
+  "terminals.reasoning_watchdog_settle_seconds",
+  "terminals.init_timeout_seconds",
+  "terminals.auto_enter_approval_prompts",
+  "terminals.auto_enter_agent_terminals",
+  "terminals.auto_enter_agent_interval_seconds",
 ];
 
 const CRON_PATHS = [
@@ -111,7 +111,7 @@ const OWNED_PATHS: readonly string[] = [
   ...EXPANSION_PATHS,
   ...VALIDATION_PATHS,
   ...WORKFLOW_PATHS,
-  ...TMUX_PATHS,
+  ...TERMINAL_PATHS,
   ...CRON_PATHS,
   ...SYSTEM_LOOPS_PATHS,
   ...PIPELINES_PATHS,
@@ -360,76 +360,76 @@ function WorkflowEngineGroup({ fields }: { fields: SettingsSectionFields }) {
   );
 }
 
-function TmuxGroup({ fields }: { fields: SettingsSectionFields }) {
+function TerminalGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
     <Subsection
-      title="Tmux agents"
-      hint="Agent terminal monitoring, and attach history for hand-started panes."
+      title="Agent terminals"
+      hint="Agent terminal monitoring and attach history."
     >
       <NumberConfigField
         fields={fields}
-        path="tmux.attach_history_lines"
+        path="terminals.attach_history_lines"
         label="Attach history lines (0 disables)"
         ariaLabel="Attach history lines (0 disables)"
       />
       <SwitchConfigField
         fields={fields}
-        path="tmux.idle_check_enabled"
+        path="terminals.idle_check_enabled"
         label="Idle detection"
         ariaLabel="Idle detection"
       />
       <NumberConfigField
         fields={fields}
-        path="tmux.idle_timeout_seconds"
+        path="terminals.idle_timeout_seconds"
         label="Idle timeout (seconds)"
         ariaLabel="Idle timeout (seconds)"
       />
       <NumberConfigField
         fields={fields}
-        path="tmux.idle_reprompt_delay_seconds"
+        path="terminals.idle_reprompt_delay_seconds"
         label="Idle reprompt delay (seconds)"
         ariaLabel="Idle reprompt delay (seconds)"
       />
       <NumberConfigField
         fields={fields}
-        path="tmux.max_reprompt_attempts"
+        path="terminals.max_reprompt_attempts"
         label="Max reprompt attempts"
         ariaLabel="Max reprompt attempts"
       />
       <SwitchConfigField
         fields={fields}
-        path="tmux.reasoning_watchdog_interrupt_enabled"
+        path="terminals.reasoning_watchdog_interrupt_enabled"
         label="Reasoning watchdog interrupt"
         ariaLabel="Reasoning watchdog interrupt"
       />
       <NumberConfigField
         fields={fields}
-        path="tmux.reasoning_watchdog_settle_seconds"
+        path="terminals.reasoning_watchdog_settle_seconds"
         label="Reasoning watchdog settle (seconds)"
         ariaLabel="Reasoning watchdog settle (seconds)"
         step={0.5}
       />
       <NumberConfigField
         fields={fields}
-        path="tmux.init_timeout_seconds"
+        path="terminals.init_timeout_seconds"
         label="Init timeout (seconds)"
         ariaLabel="Init timeout (seconds)"
       />
       <SwitchConfigField
         fields={fields}
-        path="tmux.auto_enter_approval_prompts"
+        path="terminals.auto_enter_approval_prompts"
         label="Auto-enter approval prompts"
         ariaLabel="Auto-enter approval prompts"
       />
       <SwitchConfigField
         fields={fields}
-        path="tmux.auto_enter_agent_terminals"
+        path="terminals.auto_enter_agent_terminals"
         label="Auto-enter agent terminals"
         ariaLabel="Auto-enter agent terminals"
       />
       <NumberConfigField
         fields={fields}
-        path="tmux.auto_enter_agent_interval_seconds"
+        path="terminals.auto_enter_agent_interval_seconds"
         label="Auto-enter agent interval (seconds)"
         ariaLabel="Auto-enter agent interval (seconds)"
       />
@@ -592,7 +592,7 @@ export function AutomationWorkflowsSection() {
           <ExpansionGroup fields={fields} />
           <ValidationGroup fields={fields} />
           <WorkflowEngineGroup fields={fields} />
-          <TmuxGroup fields={fields} />
+          <TerminalGroup fields={fields} />
           <CronGroup fields={fields} />
           <SystemLoopsGroup fields={fields} />
           <PipelinesGroup fields={fields} />

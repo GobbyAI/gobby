@@ -247,7 +247,6 @@ _PER_OPERATION_ROUTES: Mapping[str, _ConsumerRoute] = {
     "telemetry": _route("telemetry operations", "operation ConfigRuntime.capture"),
     "terminal_host": _route("gterm host supervision", "operation ConfigRuntime.capture"),
     "terminals": _route("terminal runtime", "operation ConfigRuntime.capture"),
-    "tmux": _route("terminal operations", "operation ConfigRuntime.capture"),
     "tool_approval": _route("tool approval", "operation ConfigRuntime.capture"),
     "tool_approvals": _route("tool approval", "operation ConfigRuntime.capture"),
     "tool_result_offload": _route("tool result offload", "operation ConfigRuntime.capture"),

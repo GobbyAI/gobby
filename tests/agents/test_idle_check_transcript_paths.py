@@ -12,6 +12,7 @@ import pytest
 from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
+from gobby.config.terminals import TerminalConfig
 from gobby.storage.session_models import Session
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -34,7 +35,7 @@ def _handler(
     idle_check_enabled: bool = True,
     run_db: AsyncMock | None = None,
 ) -> IdleCheckHandler:
-    config = SimpleNamespace(
+    config = TerminalConfig(
         idle_check_enabled=idle_check_enabled,
         idle_timeout_seconds=60,
         idle_reprompt_delay_seconds=60,
@@ -49,7 +50,7 @@ def _handler(
         stall_classifier=MagicMock(),
         watchdog_readers=WatchdogReaderRegistry(),
         cleanup_handler=MagicMock(),
-        tmux_config=config,
+        terminal_config=config,
         run_db=run_db,
     )
 

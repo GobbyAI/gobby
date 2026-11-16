@@ -4982,16 +4982,6 @@
           "default": 5.0,
           "description": "Seconds between control ping health checks."
         },
-        "terminal_host.max_attached_terminals": {
-          "type": "integer",
-          "namespace": "terminal_host",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 64,
-          "description": "Maximum distinct terminals the host will observe."
-        },
         "terminal_host.max_attachments_per_terminal": {
           "type": "integer",
           "namespace": "terminal_host",
@@ -5072,35 +5062,45 @@
           "default": "~/.gobby",
           "description": "Directory for gterm sockets, pidfile, and control token."
         },
-        "terminal_host.tmux_attach_history_max_bytes": {
+        "terminals.attach_history_lines": {
           "type": "integer",
-          "namespace": "terminal_host",
+          "namespace": "terminals",
           "secrecy": "none",
           "visibility": "public",
           "activation": "live",
           "machineExport": false,
-          "default": 262144,
-          "description": "AttachHistory byte cap for tmux observers (3.4)."
+          "default": 500,
+          "description": "Scrollback lines restored to the web terminal on attach; 0 disables the restore. Render cost is linear in lines on the primary VT core (~0.26 ms/line on a desktop, ~0.9 ms/line at the pinned 4x mobile throttle), and the built-in fallback core retains at most 1000 rows, so the ceiling is where a larger window stops being deliverable."
         },
-        "terminal_host.tmux_poll_backoff_ceiling_ms": {
+        "terminals.auto_enter_agent_interval_seconds": {
           "type": "integer",
-          "namespace": "terminal_host",
+          "namespace": "terminals",
           "secrecy": "none",
           "visibility": "public",
           "activation": "live",
           "machineExport": false,
-          "default": 5000,
-          "description": "Backoff ceiling for transient tmux poll failures."
+          "default": 30,
+          "description": "Minimum seconds between periodic Enter keypresses per agent terminal."
         },
-        "terminal_host.tmux_poll_interval_ms": {
-          "type": "integer",
-          "namespace": "terminal_host",
+        "terminals.auto_enter_agent_terminals": {
+          "type": "boolean",
+          "namespace": "terminals",
           "secrecy": "none",
           "visibility": "public",
           "activation": "live",
           "machineExport": false,
-          "default": 150,
-          "description": "Host capture-poll interval for tmux observers."
+          "default": true,
+          "description": "Periodically send Enter to active spawned-agent terminal panes."
+        },
+        "terminals.auto_enter_approval_prompts": {
+          "type": "boolean",
+          "namespace": "terminals",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": true,
+          "description": "Automatically send Enter for spawned-agent approval prompts."
         },
         "terminals.hook_write_shutdown_timeout_seconds": {
           "type": "number",
@@ -5122,6 +5122,76 @@
           "default": 5.0,
           "description": "How long a hook thread waits for a coordinator write to dispatch."
         },
+        "terminals.idle_check_enabled": {
+          "type": "boolean",
+          "namespace": "terminals",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": true,
+          "description": "Enable idle agent detection and auto-reprompting."
+        },
+        "terminals.idle_reprompt_delay_seconds": {
+          "type": "integer",
+          "namespace": "terminals",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 300,
+          "description": "Seconds an agent must be inactive before sending a semantic idle reprompt."
+        },
+        "terminals.idle_timeout_seconds": {
+          "type": "integer",
+          "namespace": "terminals",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 60,
+          "description": "Seconds before an idle health check considers the session stale."
+        },
+        "terminals.init_timeout_seconds": {
+          "type": "integer",
+          "namespace": "terminals",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 120,
+          "description": "Seconds before an uninitialized agent is killed as a provider failure."
+        },
+        "terminals.max_reprompt_attempts": {
+          "type": "integer",
+          "namespace": "terminals",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 3,
+          "description": "Maximum reprompt attempts before failing an idle agent."
+        },
+        "terminals.reasoning_watchdog_interrupt_enabled": {
+          "type": "boolean",
+          "namespace": "terminals",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": true,
+          "description": "Interrupt Codex reasoning turns that exceed the idle timeout without workflow progress."
+        },
+        "terminals.reasoning_watchdog_settle_seconds": {
+          "type": "number",
+          "namespace": "terminals",
+          "secrecy": "none",
+          "visibility": "public",
+          "activation": "live",
+          "machineExport": false,
+          "default": 0.2,
+          "description": "Seconds to wait after Ctrl-C before sending the watchdog continuation prompt."
+        },
         "terminals.spawn_in_doubt_seconds": {
           "type": "number",
           "namespace": "terminals",
@@ -5141,116 +5211,6 @@
           "machineExport": false,
           "default": false,
           "description": "Run daemon in test mode (enables test endpoints)"
-        },
-        "tmux.attach_history_lines": {
-          "type": "integer",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 500,
-          "description": "Scrollback lines restored to the web terminal on attach; 0 disables the restore. Render cost is linear in lines on the primary VT core (~0.26 ms/line on a desktop, ~0.9 ms/line at the pinned 4x mobile throttle), and the built-in fallback core retains at most 1000 rows, so the ceiling is where a larger window stops being deliverable."
-        },
-        "tmux.auto_enter_agent_interval_seconds": {
-          "type": "integer",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 30,
-          "description": "Minimum seconds between periodic Enter keypresses per agent terminal."
-        },
-        "tmux.auto_enter_agent_terminals": {
-          "type": "boolean",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": true,
-          "description": "Periodically send Enter to active spawned-agent terminal panes."
-        },
-        "tmux.auto_enter_approval_prompts": {
-          "type": "boolean",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": true,
-          "description": "Automatically send Enter for spawned-agent approval prompts."
-        },
-        "tmux.idle_check_enabled": {
-          "type": "boolean",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": true,
-          "description": "Enable idle agent detection and auto-reprompting."
-        },
-        "tmux.idle_reprompt_delay_seconds": {
-          "type": "integer",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 300,
-          "description": "Seconds an agent must be inactive before sending a semantic idle reprompt."
-        },
-        "tmux.idle_timeout_seconds": {
-          "type": "integer",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 60,
-          "description": "Seconds before an idle health check considers the session stale."
-        },
-        "tmux.init_timeout_seconds": {
-          "type": "integer",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 120,
-          "description": "Seconds before an uninitialized agent is killed as a provider failure."
-        },
-        "tmux.max_reprompt_attempts": {
-          "type": "integer",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 3,
-          "description": "Maximum reprompt attempts before failing an idle agent."
-        },
-        "tmux.reasoning_watchdog_interrupt_enabled": {
-          "type": "boolean",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": true,
-          "description": "Interrupt Codex reasoning turns that exceed the idle timeout without workflow progress."
-        },
-        "tmux.reasoning_watchdog_settle_seconds": {
-          "type": "number",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 0.2,
-          "description": "Seconds to wait after Ctrl-C before sending the watchdog continuation prompt."
         },
         "tool_approval.default_policy": {
           "type": "string",

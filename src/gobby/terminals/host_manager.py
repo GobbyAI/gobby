@@ -14,8 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.config.terminal_host import TerminalHostConfig
-from gobby.config.terminals import TerminalConfig
-from gobby.config.tmux import ATTACH_HISTORY_LINES
+from gobby.config.terminals import ATTACH_HISTORY_LINES, TerminalConfig
 from gobby.storage.terminals import TerminalManager
 from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.terminals.host_client import (
@@ -99,13 +98,12 @@ class TerminalHostManager(HostShutdown):
         event_connector: EventConnector | None = None,
         spawner: Spawner | None = None,
         pid_identity: PidIdentity | None = None,
-        tmux_attach_history_lines: int = ATTACH_HISTORY_LINES,
+        attach_history_lines: int = ATTACH_HISTORY_LINES,
     ) -> None:
         self.config = config
         self.terminal_config = terminal_config
-        # The operator's `tmux.attach_history_lines`; the host applies it to
-        # every tmux observer's AttachHistory frame (#20815).
-        self.tmux_attach_history_lines = tmux_attach_history_lines
+        # Scrollback depth restored when a viewer attaches.
+        self.attach_history_lines = attach_history_lines
         self.terminal_manager = terminal_manager
         self.run_manager = run_manager
         self._connector = connector
@@ -756,11 +754,7 @@ class TerminalHostManager(HostShutdown):
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / HOST_LOG_NAME
         env = os.environ.copy()
-        # Agents inherit the host env; a daemon started inside tmux must not
-        # hand them its own pane as their terminal context, and the supervisor
-        # fd belongs to the daemon, not to seat shells.
-        env.pop("TMUX", None)
-        env.pop("TMUX_PANE", None)
+        # The supervisor descriptor belongs to the daemon.
         env.pop("GOBBY_SUPERVISOR_FD", None)
         env["GTERM_LOG_FILE"] = str(log_path)
         with log_path.open("a", encoding="utf-8") as log_file:
@@ -770,20 +764,10 @@ class TerminalHostManager(HostShutdown):
                     "host",
                     "--socket-dir",
                     str(self.socket_dir),
-                    "--tmux-poll-interval-ms",
-                    str(self.config.tmux_poll_interval_ms),
-                    "--tmux-poll-backoff-ceiling-ms",
-                    str(self.config.tmux_poll_backoff_ceiling_ms),
-                    "--max-attached-terminals",
-                    str(self.config.max_attached_terminals),
                     "--max-attachments-total",
                     str(self.config.max_attachments_total),
                     "--max-attachments-per-terminal",
                     str(self.config.max_attachments_per_terminal),
-                    "--tmux-attach-history-lines",
-                    str(self.tmux_attach_history_lines),
-                    "--tmux-attach-history-max-bytes",
-                    str(self.config.tmux_attach_history_max_bytes),
                 ],
                 stdin=__import__("subprocess").DEVNULL,
                 stdout=log_file,

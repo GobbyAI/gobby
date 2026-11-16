@@ -13,7 +13,7 @@ from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.watchdog import WatchdogReaderRegistry, WatchdogTranscriptSnapshot
 from gobby.agents.watchdog.recovery import REASONING_WATCHDOG_CONTINUATION
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -144,7 +144,7 @@ async def test_idle_reprompt_logs_watchdog_snapshot(
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
-    config = TmuxConfig(
+    config = TerminalConfig(
         idle_check_enabled=True,
         idle_timeout_seconds=10,
         max_reprompt_attempts=2,
@@ -156,7 +156,7 @@ async def test_idle_reprompt_logs_watchdog_snapshot(
         db=temp_db,
         session_manager=session_manager,
         check_interval_seconds=1.0,
-        tmux_config=config,
+        terminal_config=config,
         terminal_services=_fake_terminal_services(temp_db),
     )
 
@@ -228,7 +228,7 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
         validation_criteria="Test task completion is observable.",
     )
 
-    config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
+    config = TerminalConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
     monitor = AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
@@ -236,7 +236,7 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
         session_manager=session_manager,
         task_manager=task_manager,
         check_interval_seconds=1.0,
-        tmux_config=config,
+        terminal_config=config,
         terminal_services=_fake_terminal_services(temp_db),
     )
 
@@ -318,7 +318,7 @@ async def test_reasoning_watchdog_does_not_interrupt_unsupported_readers(
         db=temp_db,
         session_manager=session_manager,
         check_interval_seconds=1.0,
-        tmux_config=TmuxConfig(
+        terminal_config=TerminalConfig(
             reasoning_watchdog_interrupt_enabled=True,
             reasoning_watchdog_settle_seconds=0,
         ),
@@ -356,14 +356,14 @@ async def test_idle_failure_logs_watchdog_snapshot(
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
-    config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
+    config = TerminalConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
     monitor = AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         session_manager=session_manager,
         check_interval_seconds=1.0,
-        tmux_config=config,
+        terminal_config=config,
         terminal_services=_fake_terminal_services(temp_db),
     )
 

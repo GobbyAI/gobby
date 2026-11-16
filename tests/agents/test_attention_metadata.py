@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -28,6 +28,9 @@ from gobby.storage.attention import (
 from gobby.storage.hub.protocol import HubDatabase
 
 from .detection_test_support import BundledDetectionRegistry
+
+if TYPE_CHECKING:
+    from gobby.servers.http import HTTPServer
 
 
 @dataclass
@@ -139,7 +142,7 @@ def test_expires_at_contract(
         )
     )
     app = FastAPI()
-    app.include_router(create_attention_router(server))
+    app.include_router(create_attention_router(cast("HTTPServer", server)))
     response = TestClient(app).get("/api/attention/roster")
     entry = response.json()["entries"][0]
 
@@ -192,7 +195,7 @@ def test_clear_removes_entry_and_publishes_cursor_ordered_tombstone() -> None:
 
 
 @pytest.mark.asyncio
-async def test_live_emit_and_validation() -> None:
+async def test_live_emit_and_validation(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = _Clock()
     events: list[dict[str, object]] = []
     ordering = AttentionOrderingCoordinator(epoch="epoch-live")
@@ -211,7 +214,7 @@ async def test_live_emit_and_validation() -> None:
         )
     )
     app = FastAPI()
-    app.include_router(create_attention_router(server))
+    app.include_router(create_attention_router(cast("HTTPServer", server)))
     client = TestClient(app)
 
     response = client.post(
@@ -232,14 +235,16 @@ async def test_live_emit_and_validation() -> None:
     broadcaster = BroadcastMixin()
     broadcaster.clients = {}
     broadcaster.configure_attention_metadata(store)
-    broadcaster.broadcast = AsyncMock()  # type: ignore[method-assign]
+    broadcast = AsyncMock()
+    monkeypatch.setattr(broadcaster, "broadcast", broadcast)
     await broadcaster.broadcast_agent_event(
         "status_changed",
         "api",
         "parent-1",
         entry_id="run:api",
     )
-    live_message = broadcaster.broadcast.await_args.args[0]
+    assert broadcast.await_args is not None
+    live_message = broadcast.await_args.args[0]
     assert live_message["metadata"] == events[-1]["metadata"]
 
     for payload in (
@@ -255,7 +260,9 @@ async def test_live_emit_and_validation() -> None:
     hook_logger = MagicMock()
     handlers = EventHandlers(attention_metadata_store=store, logger=hook_logger)
     handlers.handle_pre_compact(_event(HookEventType.PRE_COMPACT))
-    assert store.get("session:session-1")["text"] == "compacting"
+    metadata = store.get("session:session-1")
+    assert metadata is not None
+    assert metadata["text"] == "compacting"
 
     handlers.handle_after_agent(
         _event(
@@ -263,7 +270,9 @@ async def test_live_emit_and_validation() -> None:
             data={"attention_metadata": {"text": "writing tests", "ttl_ms": 5_000}},
         )
     )
-    assert store.get("session:session-1")["text"] == "writing tests"
+    metadata = store.get("session:session-1")
+    assert metadata is not None
+    assert metadata["text"] == "writing tests"
 
     prior_seq = ordering.seq
     handlers.handle_after_agent(
@@ -292,7 +301,7 @@ async def test_attention_tracker_sets_stall_and_dismissal_metadata(
         run_db=_run_db,
         prompt_detector=prompt_detector,
         stall_classifier=stall_classifier,
-        tmux_config=config,
+        terminal_config=config,
         attention_manager=attention_manager,
         attention_metadata_store=store,
     )
@@ -301,13 +310,17 @@ async def test_attention_tracker_sets_stall_and_dismissal_metadata(
     monkeypatch.setattr("gobby.agents.stall_classifier._MIN_CHECK_INTERVAL_SECONDS", 0)
     await tracker.sync(run, "503 service unavailable")
     await tracker.sync(run, "503 service unavailable")
-    assert store.get("run:run-1")["text"] == "retrying provider"
+    metadata = store.get("run:run-1")
+    assert metadata is not None
+    assert metadata["text"] == "retrying provider"
     await tracker.clear(run)
     assert store.get("run:run-1") is None
 
     approval = "Permission required: press Enter to approve this command"
     prompt_detector.for_provider(run.provider).mark_approval_prompt_dismissed(run.id, approval)
     await tracker.sync(run, approval)
-    assert store.get("run:run-1")["text"] == "needs attention"
+    metadata = store.get("run:run-1")
+    assert metadata is not None
+    assert metadata["text"] == "needs attention"
     await tracker.clear_after_injection(run)
     assert store.get("run:run-1") is None

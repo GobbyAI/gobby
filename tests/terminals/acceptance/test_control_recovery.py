@@ -15,7 +15,7 @@ import pytest
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.interactive_attention_monitor import InteractiveAttentionMonitor
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import AgentRun
 from gobby.terminals.host_client import HostClient
 from gobby.terminals.runtime import SnapshotMode, SnapshotResult
@@ -120,7 +120,7 @@ async def test_control_interruption_recovers_multiple_panes_without_alert_burst(
         prompt_detector=prompt_detector,
         idle_detector=IdleDetector(BundledDetectionRegistry()),
         loop_tracker=MagicMock(),
-        get_tmux_config=TmuxConfig,
+        get_terminal_config=TerminalConfig,
         handle_looping_agent=AsyncMock(),
         terminal_services=SimpleNamespace(snapshot=prompt_snapshot),
     )

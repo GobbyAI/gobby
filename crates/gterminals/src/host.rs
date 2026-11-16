@@ -44,9 +44,12 @@ impl HostOptions {
         machine_id: String,
     ) -> anyhow::Result<Option<Self>> {
         let connection = pool.get().await?;
-        let rows = connection.query(
-            "SELECT key, value FROM config_store WHERE key LIKE 'terminal_host.%' OR key = 'tmux.attach_history_lines'", &[],
-        ).await?;
+        let rows = connection
+            .query(
+                "SELECT key, value FROM config_store WHERE key LIKE 'terminal_host.%'",
+                &[],
+            )
+            .await?;
         let mut values = std::collections::BTreeMap::<String, serde_json::Value>::new();
         for row in rows {
             let key: String = row.try_get("key")?;
@@ -94,21 +97,6 @@ impl HostOptions {
         let mut spawn_args = Vec::new();
         for (key, flag, default) in [
             (
-                "terminal_host.tmux_poll_interval_ms",
-                "--tmux-poll-interval-ms",
-                150,
-            ),
-            (
-                "terminal_host.tmux_poll_backoff_ceiling_ms",
-                "--tmux-poll-backoff-ceiling-ms",
-                5000,
-            ),
-            (
-                "terminal_host.max_attached_terminals",
-                "--max-attached-terminals",
-                64,
-            ),
-            (
                 "terminal_host.max_attachments_total",
                 "--max-attachments-total",
                 128,
@@ -117,16 +105,6 @@ impl HostOptions {
                 "terminal_host.max_attachments_per_terminal",
                 "--max-attachments-per-terminal",
                 8,
-            ),
-            (
-                "tmux.attach_history_lines",
-                "--tmux-attach-history-lines",
-                500,
-            ),
-            (
-                "terminal_host.tmux_attach_history_max_bytes",
-                "--tmux-attach-history-max-bytes",
-                256 * 1024,
             ),
         ] {
             let value = values

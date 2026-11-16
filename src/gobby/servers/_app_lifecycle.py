@@ -297,10 +297,10 @@ def create_lifespan(
                 ),
                 write_coordinator=(
                     server.services.write_coordinator
-                    if config is not None and config.tmux.idle_check_enabled
+                    if config is not None and config.terminals.idle_check_enabled
                     else None
                 ),
-                max_reprompt_attempts=config.tmux.max_reprompt_attempts if config else None,
+                max_reprompt_attempts=config.terminals.max_reprompt_attempts if config else None,
                 provider_capacity_service=server.services.provider_capacity_service,
             )
             app.state.interactive_attention_monitor = monitor

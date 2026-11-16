@@ -13,7 +13,7 @@ from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.watchdog import WatchdogReaderRegistry
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -411,7 +411,7 @@ class TestRecoverTaskFromFailedAgent:
             stall_classifier=MagicMock(),
             watchdog_readers=WatchdogReaderRegistry(),
             cleanup_handler=cleanup_handler,
-            tmux_config=TmuxConfig(
+            terminal_config=TerminalConfig(
                 idle_timeout_seconds=60,
                 idle_reprompt_delay_seconds=60,
                 max_reprompt_attempts=2,
@@ -700,14 +700,14 @@ class TestApprovalPromptAutoEnter:
 
     @pytest.mark.asyncio
     async def test_disabled_config_skips_approval_prompt_handling(self) -> None:
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
         mock_run_mgr = MagicMock()
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
-            tmux_config=TmuxConfig(auto_enter_approval_prompts=False),
+            terminal_config=TerminalConfig(auto_enter_approval_prompts=False),
             terminal_services=_memory_terminal_services("gobby-approval"),
         )
         runtime = _runtime_of(monitor)
@@ -767,13 +767,13 @@ class TestPeriodicAgentTerminalEnter:
         auto_enter_approval_prompts: bool = True,
         db: HubDatabase | None = None,
     ) -> AgentLifecycleMonitor:
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=db or MagicMock(),
-            tmux_config=TmuxConfig(
+            terminal_config=TerminalConfig(
                 auto_enter_approval_prompts=auto_enter_approval_prompts,
                 auto_enter_agent_terminals=enabled,
                 auto_enter_agent_interval_seconds=interval,

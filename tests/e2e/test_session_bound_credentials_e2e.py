@@ -168,9 +168,9 @@ def e2e_pre_daemon_setup(
         patch=ConfigPatch(
             values={
                 "terminal_host.socket_dir": str(socket_dir),
-                "tmux.auto_enter_approval_prompts": False,
-                "tmux.auto_enter_agent_terminals": False,
-                "tmux.init_timeout_seconds": 180,
+                "terminals.auto_enter_approval_prompts": False,
+                "terminals.auto_enter_agent_terminals": False,
+                "terminals.init_timeout_seconds": 180,
             }
         ),
         source="e2e-session-capability",

@@ -128,8 +128,8 @@ async def handoff_fixture(
                 "terminal_host.socket_dir": str(host),
                 "terminal_host.max_attachments_total": 8,
                 "terminal_host.max_attachments_per_terminal": 4,
-                "tmux.auto_enter_approval_prompts": False,
-                "tmux.auto_enter_agent_terminals": False,
+                "terminals.auto_enter_approval_prompts": False,
+                "terminals.auto_enter_agent_terminals": False,
                 "hook_extensions.websocket.enabled": True,
                 "hook_extensions.websocket.include_payload": True,
                 "hook_extensions.websocket.broadcast_events": [

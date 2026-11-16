@@ -17,7 +17,7 @@ from gobby.agents.reasoning import SpawnReasoningResolution
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor_providers import _agent_prompt_prefix
 from gobby.agents.spawn_models import SpawnRequest
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.hub.node_commands import SpawnMonitor, SpawnPayload
 from gobby.hub.spawn_payload import build_spawn_payload
 from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import SpawnGenerationEndpointResolution
@@ -109,8 +109,8 @@ def _sandbox(**overrides: Any) -> SandboxConfig:
     return SandboxConfig(**fields)
 
 
-def _tmux() -> TmuxConfig:
-    return TmuxConfig(
+def _terminals() -> TerminalConfig:
+    return TerminalConfig(
         auto_enter_agent_terminals=True,
         auto_enter_agent_interval_seconds=30,
         auto_enter_approval_prompts=True,
@@ -127,7 +127,7 @@ def _build(
     sandbox: SandboxConfig | None = None,
     resume_metadata: Mapping[str, Any] | None = None,
     code_index_mode: str | None = "managed",
-    tmux: TmuxConfig | None = None,
+    terminals: TerminalConfig | None = None,
 ) -> SpawnPayload:
     return build_spawn_payload(
         db,
@@ -138,7 +138,7 @@ def _build(
         sandbox_config=sandbox or _sandbox(),
         resume_metadata=resume_metadata or {},
         code_index_mode=code_index_mode,
-        tmux_config=tmux or _tmux(),
+        terminal_config=terminals or _terminals(),
     )
 
 
@@ -381,15 +381,15 @@ def test_codex_persona_prefix(
     assert "_agent_context_injected" not in claude_variables
 
 
-def test_monitor_from_tmux_config(temp_db: HubDatabase) -> None:
-    tmux = TmuxConfig(
+def test_monitor_from_terminal_config(temp_db: HubDatabase) -> None:
+    terminals = TerminalConfig(
         auto_enter_agent_terminals=False,
         auto_enter_agent_interval_seconds=45,
         auto_enter_approval_prompts=False,
         init_timeout_seconds=90,
     )
 
-    payload = _build(temp_db, _run(), _request(), tmux=tmux)
+    payload = _build(temp_db, _run(), _request(), terminals=terminals)
 
     assert payload.monitor == SpawnMonitor(
         auto_enter_agent_terminals=False,

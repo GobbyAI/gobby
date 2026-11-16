@@ -10,7 +10,6 @@ from pydantic import ValidationError
 from gobby.config.app import DaemonConfig
 from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
-from gobby.config.tmux import TmuxConfig
 
 pytestmark = pytest.mark.unit
 
@@ -38,7 +37,7 @@ def test_terminal_host_config_defaults_and_shared_keys() -> None:
 
     daemon = DaemonConfig()
     assert type(daemon.terminal_host) is TerminalHostConfig
-    assert type(daemon.tmux) is TmuxConfig
+    assert type(daemon.terminals) is TerminalConfig
     assert type(daemon.terminals) is TerminalConfig
     assert daemon.terminal_host.socket_dir == host.socket_dir
     assert daemon.terminals.spawn_in_doubt_seconds > 0

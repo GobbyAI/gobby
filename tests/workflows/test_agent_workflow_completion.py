@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-from gobby.config.tmux import TmuxConfig
+from gobby.config.terminals import TerminalConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
@@ -1001,7 +1001,7 @@ class TestAgentWorkflowCompletion:
             session_manager=sessions,
             completion_registry=completion_registry,
             task_manager=LocalTaskManager(db),
-            tmux_config=TmuxConfig(),
+            terminal_config=TerminalConfig(),
         )
         engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
 
@@ -1088,7 +1088,7 @@ class TestAgentWorkflowCompletion:
                 session_manager=sessions,
                 completion_registry=completion_registry,
                 task_manager=LocalTaskManager(db),
-                tmux_config=TmuxConfig(),
+                terminal_config=TerminalConfig(),
             )
             if with_lifecycle_monitor
             else None

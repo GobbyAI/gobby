@@ -2566,7 +2566,7 @@ class TestCodexPromptDelivery:
     """The spawn prompt is typed into the Codex composer, never passed in argv."""
 
     def test_composer_budget_leaves_default_initialization_watchdog_margin(self) -> None:
-        from gobby.config.tmux import TmuxConfig
+        from gobby.config.terminals import TerminalConfig
 
         delivery_budget = (
             spawn_executor_support._CODEX_COMPOSER_READY_TIMEOUT_SECONDS
@@ -2574,7 +2574,7 @@ class TestCodexPromptDelivery:
             + spawn_executor_support._CODEX_COMPOSER_PROBE_TIMEOUT_SECONDS
         )
 
-        assert delivery_budget < TmuxConfig().init_timeout_seconds
+        assert delivery_budget < TerminalConfig().init_timeout_seconds
 
     @pytest.mark.asyncio
     async def test_live_slow_start_retries_before_delivering(
