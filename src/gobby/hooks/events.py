@@ -13,7 +13,7 @@ internal representation. Adapters translate between them.
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from gobby.sessions.turn_lifecycle import TurnDisposition, WaitKind, WaitResolution
 
@@ -117,6 +117,24 @@ def parse_session_source(
         return SessionSource(value.strip().lower())
     except ValueError:
         return default
+
+
+# Each CLI names its conversation under its own key in a raw hook body.
+PROVIDER_SESSION_KEYS: Final = ("session_id", "sessionId", "conversationId", "conversation_id")
+
+
+def provider_session_id(input_data: Any) -> str | None:
+    """The provider's own id for the thread a hook body names, if it names one."""
+    if not isinstance(input_data, dict):
+        return None
+    return next(
+        (
+            value
+            for key in PROVIDER_SESSION_KEYS
+            if isinstance(value := input_data.get(key), str) and value
+        ),
+        None,
+    )
 
 
 @dataclass

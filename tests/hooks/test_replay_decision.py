@@ -236,3 +236,35 @@ def test_foreign_rows_are_unknown(monkeypatch: pytest.MonkeyPatch, identity: str
     )
     assert decision.disposition == "execute"
     assert "grok_pending_delivery" in values
+
+
+@pytest.mark.parametrize("key", ["session_id", "sessionId"])
+def test_pending_delivery_is_found_by_the_key_the_body_names(
+    monkeypatch: pytest.MonkeyPatch, key: str
+) -> None:
+    """A hand-started CLI's envelope has no session header, only the body's own key."""
+    from gobby.hooks.replay_decision import decide_replay
+
+    app, values = _hub(monkeypatch)
+    component = {"id": "briefing", "text": "pending", "message_ids": []}
+    values["grok_pending_delivery"] = {"envelope_id": "envelope", "components": [component]}
+
+    decision = decide_replay(
+        app,
+        "envelope",
+        {
+            "source": "grok",
+            "input_data": {key: "external"},
+            "response_capability": "hook-response.v1",
+        },
+        age_seconds=3601.0,
+        processed=True,
+        live=True,
+        machine_id="node",
+    )
+
+    assert decision.disposition == "requeued"
+    assert values["grok_pending_briefing"] == [component]
+    app.state.hook_manager.session_manager.find_by_external_id.assert_called_once_with(
+        "external", None, "grok"
+    )

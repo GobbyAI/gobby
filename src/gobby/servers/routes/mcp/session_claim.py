@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any
 
 from fastapi import Request
 
 from gobby.hooks import session_claimant
-from gobby.hooks.events import SessionSource
+from gobby.hooks.events import SessionSource, provider_session_id
 from gobby.hooks.session_claimant import SessionStartClaim
 from gobby.hooks.session_credential import (
     SESSION_CREDENTIAL_FIELD,
@@ -28,22 +28,6 @@ if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
-
-PROVIDER_SESSION_KEYS: Final = ("session_id", "sessionId", "conversationId", "conversation_id")
-
-
-def provider_session_id(input_data: Any) -> str | None:
-    """The provider's own id for the thread a hook body names, if it names one."""
-    if not isinstance(input_data, dict):
-        return None
-    return next(
-        (
-            value
-            for key in PROVIDER_SESSION_KEYS
-            if isinstance(value := input_data.get(key), str) and value
-        ),
-        None,
-    )
 
 
 def claim_hook(server: HTTPServer, request: Request, payload: dict[str, Any]) -> SessionStartClaim:

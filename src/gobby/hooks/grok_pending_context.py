@@ -19,6 +19,7 @@ from gobby.hooks.events import (
     HookEventType,
     HookResponse,
     SessionSource,
+    provider_session_id,
 )
 from gobby.hooks.pending_messages import render_pending_messages
 from gobby.hooks.receipt_effects import (
@@ -663,9 +664,8 @@ def _envelope_session_id(
             if session is not None:
                 return candidate if machine_id is None or session.machine_id == machine_id else None
 
-    input_data = envelope.get("input_data")
-    external_id = input_data.get("session_id") if isinstance(input_data, dict) else None
-    if not isinstance(external_id, str) or not external_id:
+    external_id = provider_session_id(envelope.get("input_data"))
+    if not external_id:
         return None
     project_id = headers.get("X-Gobby-Project-Id") if isinstance(headers, dict) else None
     source = envelope.get("source")

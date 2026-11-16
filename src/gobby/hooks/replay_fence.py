@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from gobby.hooks.envelope_dedupe import is_envelope_processing_active, is_inbox_envelope_fresh
+from gobby.hooks.events import provider_session_id
 from gobby.sessions.turn_lifecycle import TurnLifecycleReducer
 from gobby.storage.sessions import TERMINAL_SESSION_STATUSES, SessionManager
 from gobby.utils.datetime import parse_stored_datetime
@@ -67,8 +68,8 @@ def archive_superseded_hook(
     try:
         session = sessions.get(session_id) if isinstance(session_id, str) and session_id else None
         if session is None:
-            external_id, source = data.get("session_id"), envelope.get("source")
-            if isinstance(external_id, str) and external_id and isinstance(source, str):
+            external_id, source = provider_session_id(data), envelope.get("source")
+            if external_id and isinstance(source, str):
                 session = sessions.find_by_external_id_any_project(external_id, source)
     except Exception:
         # A failed lookup cannot prove admission. Retain for the next pass,

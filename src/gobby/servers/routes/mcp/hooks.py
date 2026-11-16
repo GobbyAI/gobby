@@ -39,6 +39,7 @@ from gobby.hooks.envelope_dedupe import (
     read_envelope_marker,
     release_envelope_processing_claim,
 )
+from gobby.hooks.events import PROVIDER_SESSION_KEYS
 from gobby.hooks.health_gate import DaemonNotReadyError
 from gobby.hooks.inbox import consume_pending_delivery_receipts
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
@@ -71,11 +72,7 @@ from gobby.servers.routes.mcp.hook_responses import (
     _normalize_hold_open_hook_type,
     _result_encodes_denial,
 )
-from gobby.servers.routes.mcp.session_claim import (
-    PROVIDER_SESSION_KEYS,
-    attach_session_credential,
-    claim_hook,
-)
+from gobby.servers.routes.mcp.session_claim import attach_session_credential, claim_hook
 from gobby.sessions.clear_run_lineage import current_run_session_id, earlier_clear_session_id
 from gobby.telemetry.instruments import inc_counter
 from gobby.utils.git import run_thread_to_completion

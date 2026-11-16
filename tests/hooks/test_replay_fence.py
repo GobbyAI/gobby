@@ -193,6 +193,47 @@ def test_unknown_first_session_is_admitted(tmp_path: Path) -> None:
     archive.assert_not_called()
 
 
+@pytest.mark.parametrize("field", ["session_id", "sessionId", "conversationId", "conversation_id"])
+def test_a_queued_hook_is_fenced_whichever_key_names_its_conversation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    """Each CLI names its conversation under its own key; the fence reads all of them."""
+    manager = Mock()
+    manager.find_by_external_id_any_project.return_value = SimpleNamespace(
+        id="known", status="expired", machine_id=None
+    )
+    app = SimpleNamespace(
+        state=SimpleNamespace(hook_manager=SimpleNamespace(session_manager=manager))
+    )
+    archive = Mock(return_value=True)
+    monkeypatch.setattr(
+        replay_fence,
+        "TurnLifecycleReducer",
+        lambda _: SimpleNamespace(get=lambda _: SimpleNamespace(started_at=None)),
+    )
+    path = tmp_path / "event.json"
+
+    result = archive_superseded_hook(
+        app,
+        {
+            "hook_type": "SessionStart",
+            "source": "provider",
+            "enqueued_at": "2026-01-01T00:00:00Z",
+            "input_data": {field: "conversation-1", "source": "resume"},
+        },
+        path,
+        archive,
+    )
+
+    assert result is True
+    manager.find_by_external_id_any_project.assert_called_once_with("conversation-1", "provider")
+    archive.assert_called_once_with(
+        path,
+        reason="superseded_hook",
+        detail="session is terminal; delayed replay cannot revive it",
+    )
+
+
 @pytest.mark.asyncio
 async def test_failed_archive_retains_stale_hook_for_retry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
