@@ -35,7 +35,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     ),
     "backfill_terminal_context": (
         "(self, session_id: 'str', terminal_context: 'dict[str, Any] | None', current: 'S"
-        "ession | None' = None) -> 'tuple[Session | None, bool]'"
+        "ession | None' = None) -> 'Session | None'"
     ),
     "bind_native_clear_successor": ("(self, successor_id: 'str') -> 'Session | None'"),
     "cache_session_mapping": (
@@ -44,6 +44,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     ),
     "cleanup_expired_session_state": ("(self) -> 'SessionStateCleanupResult'"),
     "clear_had_edits": ("(self, session_id: 'str') -> 'None'"),
+    "clear_gobby_terminal_id": "(self, session_id: 'str') -> 'Session | None'",
     "continue_terminal_session_as_web_chat": (
         "(self, session_id: 'str', *, source: 'str', model: 'str | None', project_id: 'st"
         "r', sandbox_policy_hash: 'str | None') -> 'Session | None'"
@@ -94,12 +95,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
         "(self, external_id: 'str', source: 'str', session_type: 'str | None' = 'terminal"
         "') -> 'Session | None'"
     ),
-    "find_by_terminal_identity": ("(self, identity: 'TerminalIdentity') -> 'list[Session]'"),
     "find_children": ("(self, parent_session_id: 'str') -> 'list[Session]'"),
-    "find_live_interactive_pane_owner": (
-        "(self, terminal_context: 'dict[str, Any] | None', machine_id: 'str | None') -> '"
-        "Session | None'"
-    ),
     "find_parent": (
         "(self, machine_id: 'str', project_id: 'str', source: 'str | None' = None, status"
         ": 'str' = 'awaiting_handoff', max_age_minutes: 'int' = 10, terminal_context: 'di"
@@ -226,7 +222,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "set_status_line": ("(self, session_id: 'str', status_line: 'str | None') -> 'bool'"),
     "settle_terminal_context": (
         "(self, session_id: 'str', terminal_context: 'dict[str, Any]', *, marker_key: 'st"
-        "r', pending: 'str') -> 'tuple[Session | None, bool]'"
+        "r', pending: 'str') -> 'Session | None'"
     ),
     "touch": ("(self, session_id: 'str') -> 'None'"),
     "unregister_session_change_listener": ("(self, listener: 'SessionChangeCallback') -> 'None'"),

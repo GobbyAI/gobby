@@ -7,14 +7,15 @@ from datetime import datetime
 from typing import Protocol
 
 from gobby.storage.session_models import Session
-from gobby.terminal_context import terminal_context_has_tmux_target
+from gobby.terminal_context import parse_terminal_context_value
 
 
 def _recovery_score(session: Session) -> tuple[bool, bool, bool]:
     """Score recovery candidates by metadata completeness only."""
+    context = parse_terminal_context_value(session.terminal_context) or {}
     return (
         not bool(session.transcript_path),
-        not terminal_context_has_tmux_target(session.terminal_context),
+        not bool(context.get("gobby_terminal_id")),
         not bool(session.terminal_context),
     )
 

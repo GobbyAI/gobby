@@ -277,24 +277,11 @@ def test_inherited_session_hint(stored: str) -> None:
 def test_terminal_context_backfill(stored: str, event_type: HookEventType) -> None:
     """``session_lookup.py``: the generic backfill on a known row's later hooks."""
     session_manager = MagicMock()
-    session_manager.backfill_terminal_context.return_value = (None, False)
+    session_manager.backfill_terminal_context.return_value = None
 
     with _enrichments(_LOOKUP) as recorded:
         _service(session_manager)._backfill_terminal_context(
             "platform-1", _event(event_type), _row(stored)
-        )
-
-    _assert_seat(recorded, stored)
-
-
-def test_inherited_tty_native_subagent_bind(stored: str) -> None:
-    """``session_lookup.py``: binding a child conversation to its pane's parent."""
-    session_manager = MagicMock()
-    session_manager.find_live_interactive_pane_owner.return_value = None
-
-    with _enrichments(_LOOKUP) as recorded:
-        _service(session_manager)._bind_inherited_tty_native_subagent(
-            _event(HookEventType.BEFORE_TOOL), machine_id=MACHINE_ID
         )
 
     _assert_seat(recorded, stored)
@@ -311,7 +298,6 @@ def test_uncached_registration(stored: str, marked: bool) -> None:
     session_manager.get_session_id.return_value = None
     session_manager.lookup_session_id.return_value = None
     session_manager.recover_session.return_value = None
-    session_manager.find_live_interactive_pane_owner.return_value = None
     session_manager.register_session.return_value = "platform-1"
     event = _event(HookEventType.BEFORE_TOOL)
     # No platform-session hint: only the thread id identifies the hook.

@@ -40,7 +40,6 @@ from gobby.sessions.terminal_binding import repair_native_terminal_binding
 from gobby.storage import session_startup_marks as startup_marks
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._constants import TERMINAL_SESSION_STATUSES
-from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
 from gobby.storage.sessions._registration_cache import session_matches_registration
 from gobby.storage.terminals import TerminalManager
 from gobby.tasks.state_semantics import serialize_task_state
@@ -405,7 +404,7 @@ class SessionLookupService:
             return current
 
         try:
-            updated_session, tmux_pane_added = self._session_manager.backfill_terminal_context(
+            updated_session = self._session_manager.backfill_terminal_context(
                 platform_session_id,
                 terminal_context,
                 current,
@@ -433,7 +432,7 @@ class SessionLookupService:
         row, which holds the winner's result.
         """
         try:
-            settled, tmux_pane_added = self._session_manager.settle_terminal_context(
+            settled = self._session_manager.settle_terminal_context(
                 platform_session_id,
                 {**(terminal_context or {}), CODEX_CLEAR_ORIGIN_KEY: search.origin},
                 marker_key=CODEX_CLEAR_ORIGIN_KEY,
@@ -465,6 +464,7 @@ class SessionLookupService:
                 session_id=successor.id,
                 project_id=successor.project_id,
                 terminal_context=successor.terminal_context,
+                session_manager=self._session_manager,
             )
         except Exception as exc:
             self._logger.warning("Failed to hand cleared seat to session %s: %s", successor.id, exc)
@@ -535,62 +535,6 @@ class SessionLookupService:
         if not startup_thread or not machine_id:
             return None
         return codex_seat_available(self._session_manager.db, machine_id)
-
-    def _bind_inherited_tty_native_subagent(
-        self,
-        event: HookEvent,
-        *,
-        machine_id: str | None,
-        startup_thread: bool = False,
-    ) -> str | None:
-        """Bind child-conversation hooks to the live parent that owns this TTY."""
-        cwd = hook_cwd(event.data, event.cwd)
-        raw_terminal_context = event.data.get("terminal_context")
-        terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
-        terminal_context = enrich_terminal_context_with_cwd(
-            terminal_context,
-            cwd,
-            external_id=event.session_id,
-            seat_available=self._startup_seat_available(startup_thread, machine_id),
-            machine_id=event.machine_id,
-            startup_thread=startup_thread,
-        )
-        owner = self._session_manager.find_live_interactive_pane_owner(
-            terminal_context,
-            machine_id,
-        )
-        if owner is None:
-            return None
-        is_subagent_event = event.event_type in {
-            HookEventType.SUBAGENT_START,
-            HookEventType.SUBAGENT_STOP,
-        }
-        # Grok runs child conversations inside the parent's process, and one
-        # subagent_start can cover a whole batch of children, so the counter
-        # can read zero while children still run. The shared live process is
-        # the evidence; a different process in the same pane is a new session.
-        same_live_process = event.source.value == "grok" and terminal_process_contexts_match(
-            getattr(owner, "terminal_context", None),
-            terminal_context,
-        )
-        if not is_subagent_event:
-            if event.source.value == "grok":
-                if not same_live_process:
-                    return None
-            elif not session_has_active_native_subagent(
-                self._session_manager.db,
-                owner.id,
-            ):
-                return None
-        self._logger.info(
-            "Bound native subagent hook %s to live pane owner %s (external_id=%s source=%s)",
-            event.event_type.name,
-            owner.id,
-            event.session_id,
-            event.source.value,
-        )
-        event.metadata["_native_subagent_binding"] = True
-        return owner.id
 
     def _resolve_uncached_session_id(
         self,
@@ -671,14 +615,6 @@ class SessionLookupService:
         if compact_handled:
             return compact_session_id
 
-        if event.event_type == HookEventType.SESSION_END and event.source.value == "grok":
-            bound_parent_id = self._bind_inherited_tty_native_subagent(
-                event,
-                machine_id=machine_id,
-            )
-            if bound_parent_id is not None:
-                return bound_parent_id
-
         if event.event_type in NON_MATERIALIZING_EVENTS:
             self._logger.info(
                 "Skipping auto-registration for orphaned %s: "
@@ -693,16 +629,9 @@ class SessionLookupService:
             return None
 
         # Only a thread whose own startup deferred its row may search for a seat, and
-        # the pane check below sees the same seat the registration records.
+        # registration records that same seat.
         startup_mark = self._startup_mark(external_id, event, machine_id)
         startup_thread = startup_mark is not None and event.source.value == "codex"
-        bound_parent_id = self._bind_inherited_tty_native_subagent(
-            event,
-            machine_id=machine_id,
-            startup_thread=startup_thread,
-        )
-        if bound_parent_id is not None:
-            return bound_parent_id
         if event.event_type in {HookEventType.SUBAGENT_START, HookEventType.SUBAGENT_STOP}:
             self._logger.info(
                 "Skipping auto-registration for orphaned %s: "

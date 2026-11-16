@@ -50,7 +50,6 @@ from .terminal_runtime import (
     discover_and_bind_external_terminal,
     expire_stale_terminal_sessions_for_context,
     retry_native_terminal_bind,
-    session_start_is_nested_cli_child,
 )
 from .transcripts import replace_session_message_processor
 
@@ -105,7 +104,7 @@ def session_start_should_defer(
     )
     if is_gobby_acp_child(terminal_context):
         return False
-    return not session_start_is_nested_cli_child(event.source.value, terminal_context)
+    return True
 
 
 def is_cli_startup(event: HookEvent, reported_source: str | None) -> bool:
@@ -310,8 +309,8 @@ def _schedule_clear_continuation(
     """Type the get_handoff pull prompt into the successor pane.
 
     The pane resolves through the handler's terminal manager and runtime
-    registry, so a native (gclient-hosted) successor with no tmux identity is
-    reached. When no pane resolves or typing fails, the prompt is queued as a
+    registry to reach a native (gclient-hosted) successor.
+    When no pane resolves or typing fails, the prompt is queued as a
     self-addressed message so the operator's next submit still pulls the handoff.
     """
     try:

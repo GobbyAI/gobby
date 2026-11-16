@@ -163,17 +163,18 @@ def test_harness_install_replaces_binary_with_new_inode(tmp_path: Path) -> None:
     assert (new_stat.st_dev, new_stat.st_ino) != (old_stat.st_dev, old_stat.st_ino)
 
 
-def test_external_e2e_header_requires_binary_and_includes_provenance(
+def test_native_e2e_header_requires_binaries_and_includes_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tests.e2e.conftest import terminal_native_binary_headers
 
     binary = _write_executable(tmp_path / ".gobby" / "bin" / "gterm", b"gterm e2e\n")
+    _write_executable(tmp_path / ".gobby" / "bin" / "gclient", b"gclient e2e\n")
     with patch.object(Path, "home", return_value=tmp_path):
-        headers = terminal_native_binary_headers(("tests/e2e/test_external_terminal_attach.py",))
+        headers = terminal_native_binary_headers(("tests/e2e/test_terminal_client_stack.py",))
 
-    assert len(headers) == 1
+    assert len(headers) == 2
     assert str(binary.resolve()) in headers[0]
     assert hashlib.sha256(binary.read_bytes()).hexdigest() in headers[0]
 
@@ -182,7 +183,7 @@ def test_external_e2e_header_requires_binary_and_includes_provenance(
         patch.object(Path, "home", return_value=tmp_path / "missing-home"),
         pytest.raises(NativeBinarySelectionError),
     ):
-        terminal_native_binary_headers(("tests/e2e/test_external_terminal_attach.py",))
+        terminal_native_binary_headers(("tests/e2e/test_terminal_client_stack.py",))
 
 
 def test_terminal_stack_headers_identify_gterm_and_gclient(tmp_path: Path) -> None:

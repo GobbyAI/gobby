@@ -12,7 +12,6 @@ from uuid import UUID
 
 import psutil
 
-from gobby.sessions.tmux_context import parse_tmux_socket_path, query_tmux_identity
 from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY, CODEX_CLEAR_ORIGIN_PENDING
 from gobby.utils.machine_id import get_machine_id
 
@@ -81,10 +80,6 @@ _PROCESS_IDENTITY_KEYS = (
     "parent_create_time",
     "parent_name",
     "tty",
-    "tmux_pane",
-    "tmux_socket_path",
-    "tmux_window_id",
-    "tmux_session",
     "term_program",
     "gobby_session_id",
     "gobby_parent_session_id",
@@ -335,14 +330,6 @@ def _seat_identity(seat: psutil.Process) -> dict[str, Any]:
     identity["tty"] = _non_empty_str(seat.terminal())
     for context_key, environment_key in _ENVIRONMENT_IDENTITY_KEYS:
         identity[context_key] = _non_empty_str(environ.get(environment_key))
-    tmux_pane = _non_empty_str(environ.get("TMUX_PANE"))
-    tmux_socket_path = parse_tmux_socket_path(environ.get("TMUX"))
-    if tmux_pane and tmux_socket_path:
-        identity["tmux_pane"] = tmux_pane
-        identity["tmux_socket_path"] = tmux_socket_path
-        tmux_identity = query_tmux_identity(tmux_socket_path, tmux_pane)
-        if tmux_identity is not None:
-            identity["tmux_window_id"], identity["tmux_session"] = tmux_identity
     return identity
 
 

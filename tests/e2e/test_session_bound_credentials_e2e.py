@@ -37,7 +37,7 @@ from tests.e2e.conftest import (
     link_spawning_operator_srt,
     stop_terminal_host,
 )
-from tests.e2e.test_external_terminal_attach import E2E_PROJECT_ID, _gterm_bin_dir
+from tests.e2e.terminal_viewer_support import E2E_PROJECT_ID, _gterm_bin_dir
 from tests.e2e.test_terminal_client_stack import _cancel_stack_run, _spawn_agent
 
 pytestmark = [pytest.mark.e2e, pytest.mark.seat_refusal]

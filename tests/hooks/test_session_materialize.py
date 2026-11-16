@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import NAMESPACE_OID, uuid4, uuid5
 
 import psutil
 import pytest
@@ -250,7 +250,7 @@ def test_deferred_activation_passes_matching_clear_resolution() -> None:
             "prompt": "hello",
             "cwd": "/repo",
             "transcript_path": "/repo/t.jsonl",
-            "terminal_context": {"tmux_pane": "%100"},
+            "terminal_context": {"gobby_terminal_id": "960e3e05-1677-50aa-a5a8-bfef022d3b85"},
         }
     )
 
@@ -290,8 +290,7 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
     root = checkout.root_path
     sessions = SessionManager(temp_db)
     term = {
-        "tmux_pane": "%100",
-        "tmux_socket_path": "/tmp/tmux",
+        "gobby_terminal_id": "960e3e05-1677-50aa-a5a8-bfef022d3b85",
         "parent_pid": 10322,
         "parent_create_time": 1.0,
     }
@@ -394,8 +393,7 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
     root = checkout.root_path
     sessions = SessionManager(temp_db)
     term = {
-        "tmux_pane": "%101",
-        "tmux_socket_path": "/tmp/tmux",
+        "gobby_terminal_id": "454eebf5-bba3-5596-862c-5742736f8466",
         "parent_pid": 10323,
         "parent_create_time": 1.0,
     }
@@ -534,14 +532,33 @@ def _staged_clear(
     if native:
         host_epoch = f"epoch-{name}"
         host_terminal_id = f"host-{name}"
-        terminal = TerminalManager(temp_db).upsert_external(
+        terminals = TerminalManager(temp_db)
+        terminal_id = str(uuid4())
+        pending = terminals.create_pending(
+            terminal_id=terminal_id,
             machine_id=checkout.machine_id,
             project_id=checkout.project.id,
             backend="native",
+            ownership="gobby",
+            spawn_key=terminal_id,
+        )
+        assert pending.attempt_started_at is not None
+        assert (
+            terminals.record_process(
+                terminal_id,
+                {"pgid": os.getpid(), "host_terminal_id": host_terminal_id},
+                attempt_generation=pending.attempt_generation,
+                attempt_started_at=pending.attempt_started_at,
+            )
+            is not None
+        )
+        terminal = terminals.promote_to_live(
+            terminal_id,
             locator={"host_terminal_id": host_terminal_id},
             locator_key=native_locator_key(host_epoch, host_terminal_id),
             host_epoch=host_epoch,
         )
+        assert terminal is not None
         term: dict[str, object] = {
             "gobby_terminal_id": terminal.id,
             "host_terminal_id": host_terminal_id,
@@ -550,8 +567,7 @@ def _staged_clear(
         }
     else:
         term = {
-            "tmux_pane": pane,
-            "tmux_socket_path": "/tmp/tmux",
+            "gobby_terminal_id": str(uuid5(NAMESPACE_OID, pane)),
             "parent_pid": 10324,
             "parent_create_time": 1.0,
         }
@@ -664,13 +680,14 @@ def test_native_bind_retries_after_clear_predecessor_expiry(
     handler = _handler(staged.sessions)
     handler.terminal_manager = terminals
 
-    _activate_clear_successor(
-        staged,
-        handler,
-        successor_id,
-        staged.resolution(),
-        overrides={"expire_stale_terminal_sessions_for_context": None},
-    )
+    with patch.object(psutil.Process, "terminal", return_value="/dev/ttys001"):
+        _activate_clear_successor(
+            staged,
+            handler,
+            successor_id,
+            staged.resolution(),
+            overrides={"expire_stale_terminal_sessions_for_context": None},
+        )
 
     assert staged.status(holder_id) == "expired"
     rebound = terminals.get_live_for_session(successor_id)
@@ -821,14 +838,13 @@ def test_schedule_clear_continuation_forwards_terminal_runtime(
     handler._terminal_runtime_registry = MagicMock(name="terminal_runtime_registry")
     schedule = MagicMock(return_value=False)
 
-    with patch("gobby.terminals.discovery.seed_external_terminal"):
-        _activate_clear_successor(
-            staged,
-            handler,
-            successor_id,
-            staged.resolution(),
-            overrides={"schedule_handoff_continuation": schedule},
-        )
+    _activate_clear_successor(
+        staged,
+        handler,
+        successor_id,
+        staged.resolution(),
+        overrides={"schedule_handoff_continuation": schedule},
+    )
 
     schedule.assert_called_once()
     session_arg, prompt = schedule.call_args.args

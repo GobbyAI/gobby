@@ -8,9 +8,6 @@ from typing import Any
 from gobby.storage.session_models import Session
 
 _TERMINAL_CONTEXT_FILTER_FIELDS = (
-    "tmux_pane",
-    "tmux_socket_path",
-    "tmux_session",
     "tty",
     "term_session_id",
     "gobby_terminal_id",

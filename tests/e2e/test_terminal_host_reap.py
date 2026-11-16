@@ -31,7 +31,7 @@ from tests.e2e.conftest import (
     reap_orphaned_terminal_hosts,
     stop_terminal_host,
 )
-from tests.e2e.test_external_terminal_attach import _gterm_bin_dir
+from tests.e2e.terminal_viewer_support import _gterm_bin_dir
 from tests.workflows import placed_runbook_live_support as placed
 
 pytestmark = pytest.mark.e2e

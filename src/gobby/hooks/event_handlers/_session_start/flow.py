@@ -40,7 +40,6 @@ from .context import (
 )
 from .diagnostics import _log_session_start_lifecycle, _log_session_start_timing
 from .handoff import (
-    STARTUP_SOURCES,
     rebind_resumed_session_start,
     resolve_session_start_identity,
 )
@@ -56,8 +55,6 @@ from .terminal_runtime import (
     discover_and_bind_external_terminal,
     expire_stale_terminal_sessions_for_context,
     retry_native_terminal_bind,
-    session_start_is_native_subagent_child,
-    session_start_is_nested_cli_child,
 )
 from .transcripts import replace_session_message_processor
 
@@ -120,34 +117,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             },
         )
         return HookResponse()
-    if session_start_is_nested_cli_child(cli_source, terminal_context):
-        handler.logger.info(
-            "Skipping session registration for nested CLI child process",
-            extra={
-                "cli": cli_source,
-                "external_id": external_id,
-                "tmux_pane": terminal_context.get("tmux_pane") if terminal_context else None,
-            },
-        )
-        return HookResponse(decision="allow")
-    if (
-        (session_source or "startup") in STARTUP_SOURCES
-        and handler._session_manager
-        and session_start_is_native_subagent_child(
-            handler._session_manager,
-            terminal_context,
-            machine_id,
-        )
-    ):
-        handler.logger.info(
-            "Skipping session registration for native subagent inheriting TTY",
-            extra={
-                "cli": cli_source,
-                "external_id": external_id,
-                "tmux_pane": terminal_context.get("tmux_pane") if terminal_context else None,
-            },
-        )
-        return HookResponse(decision="allow")
     gobby_session_id_from_env = (
         terminal_context.get("gobby_session_id") if terminal_context else None
     )
@@ -580,9 +549,8 @@ def handle_pre_created_session(
         if updated is not None:
             session_obj = updated
 
-    tmux_pane_added = False
     if handler._session_manager and terminal_context:
-        refreshed, tmux_pane_added = handler._session_manager.backfill_terminal_context(
+        refreshed = handler._session_manager.backfill_terminal_context(
             existing_session.id,
             terminal_context,
         )

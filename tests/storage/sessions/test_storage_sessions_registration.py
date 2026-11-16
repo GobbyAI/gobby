@@ -342,7 +342,7 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
 
 def test_update_existing_session_ignores_invalid_terminal_context_json() -> None:
     session = _session_stub()
-    session.terminal_context = {"tmux_pane": "%1"}
+    session.terminal_context = {"gobby_terminal_id": "1e557198-09a7-56ec-ba24-bb707c6faf68"}
     conn = _CaptureConnection()
 
     session_upsert.update_existing_session(
@@ -368,7 +368,7 @@ def test_update_existing_session_ignores_invalid_terminal_context_json() -> None
 
 def test_update_existing_session_merges_terminal_context_in_sql() -> None:
     session = _session_stub()
-    session.terminal_context = {"tmux_pane": "%1"}
+    session.terminal_context = {"gobby_terminal_id": "1e557198-09a7-56ec-ba24-bb707c6faf68"}
     conn = _CaptureConnection()
 
     session_upsert.update_existing_session(

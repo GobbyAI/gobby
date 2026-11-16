@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.sessions.contested_expiry import ContestedExpiryCause
 from gobby.storage.session_models import Session
-from gobby.terminal_context import terminal_context_has_tmux_target
 from gobby.utils.datetime import utc_now
 
 from ._contested_expiry import record_contested_terminal_expiry
@@ -265,28 +264,26 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
         session_id: str,
         terminal_context: dict[str, Any] | None,
         current: Session | None = None,
-    ) -> tuple[Session | None, bool]:
+    ) -> Session | None:
         """Merge newly discovered terminal context into an existing session.
 
         ``current`` is this session's row when the caller already loaded it;
         the merge compares against it instead of reading the row again.
 
-        Returns the updated session plus a flag indicating whether a tmux pane
-        became available as part of the merge.
+        Returns the updated session.
         """
         if current is None or current.id != session_id:
             current = self.get(session_id)
         if not terminal_context:
-            return current, False
+            return current
         if current is None:
-            return None, False
+            return None
 
         current_ctx = current.terminal_context or {}
         incoming = {key: value for key, value in terminal_context.items() if value is not None}
         if not incoming or all(current_ctx.get(key) == value for key, value in incoming.items()):
-            return current, False
+            return current
 
-        had_tmux_target = terminal_context_has_tmux_target(current_ctx)
         with self.db.transaction() as conn:
             conn.execute(
                 """
@@ -297,10 +294,10 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
                 """,
                 (json.dumps(incoming), utc_now(), session_id),
             )
-        updated, tmux_target_added = _publish_terminal_context(self, session_id, had_tmux_target)
+        updated = _publish_terminal_context(self, session_id)
         if updated is None:
-            return current, False
-        return updated, tmux_target_added
+            return current
+        return updated
 
     def settle_terminal_context(
         self: _ManagerState,
@@ -309,19 +306,18 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
         *,
         marker_key: str,
         pending: str,
-    ) -> tuple[Session | None, bool]:
+    ) -> Session | None:
         """Merge a context that settles a pending marker, in one conditional statement.
 
         The merge applies only while the stored ``marker_key`` still reads ``pending`` and
-        no process is recorded. Returns ``(None, False)`` when another writer settled it
+        no process is recorded. Returns ``None`` when another writer settled it
         first, so that writer's stored result stands. Otherwise returns the updated
-        session plus whether a tmux pane became available.
+        session.
         """
         current = self.get(session_id)
         if current is None:
-            return None, False
+            return None
         incoming = {key: value for key, value in terminal_context.items() if value is not None}
-        had_tmux_target = terminal_context_has_tmux_target(current.terminal_context or {})
         with self.db.transaction() as conn:
             won = conn.execute(
                 """
@@ -336,17 +332,28 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
                 (json.dumps(incoming), utc_now(), session_id, marker_key, pending),
             ).fetchone()
         if won is None:
-            return None, False
-        return _publish_terminal_context(self, session_id, had_tmux_target)
+            return None
+        return _publish_terminal_context(self, session_id)
+
+    def clear_gobby_terminal_id(self: _ManagerState, session_id: str) -> Session | None:
+        """Remove a rejected native route from durable context and the metadata cache."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE sessions
+                SET terminal_context = terminal_context - 'gobby_terminal_id', updated_at = %s
+                WHERE id = %s AND terminal_context ? 'gobby_terminal_id'
+                """,
+                (utc_now(), session_id),
+            )
+        return _publish_terminal_context(self, session_id)
 
 
-def _publish_terminal_context(
-    state: _ManagerState, session_id: str, had_tmux_target: bool
-) -> tuple[Session | None, bool]:
+def _publish_terminal_context(state: _ManagerState, session_id: str) -> Session | None:
     """Announce a merged terminal context and refresh its cached copy."""
     updated = state.get(session_id)
     if updated is None:
-        return None, False
+        return None
 
     state._notify_session_change("session_updated", session_id)
 
@@ -354,5 +361,4 @@ def _publish_terminal_context(
         metadata = state._session_metadata.setdefault(session_id, {})
         metadata["terminal_context"] = updated.terminal_context
 
-    has_tmux_target = terminal_context_has_tmux_target(updated.terminal_context)
-    return updated, has_tmux_target and not had_tmux_target
+    return updated

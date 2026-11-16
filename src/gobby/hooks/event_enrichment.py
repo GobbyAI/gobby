@@ -42,7 +42,6 @@ TERMINAL_CONTEXT_KEYS = [
     "terminal_term_program",
     "terminal_tty",
     "terminal_parent_pid",
-    "terminal_tmux_pane",
 ]
 
 # Hook events that fire frequently during execution — good piggyback candidates.

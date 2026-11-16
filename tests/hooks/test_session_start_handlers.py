@@ -23,7 +23,6 @@ from gobby.hooks.event_handlers._session_start.handoff import resolve_session_st
 from gobby.hooks.event_handlers._session_start.materialize import session_start_should_defer
 from gobby.hooks.event_handlers._session_start.terminal_runtime import (
     expire_stale_terminal_sessions_for_context,
-    session_start_is_native_subagent_child,
 )
 from gobby.hooks.events import HookEventType, MissingHookMachineIdError
 from gobby.hooks.session_types import HookSessionManager
@@ -74,102 +73,6 @@ def test_session_start_should_defer(
     )
 
     assert session_start_should_defer(event, existing_session, session_source) is expected
-
-
-def test_session_start_should_not_defer_nested_cli(monkeypatch: pytest.MonkeyPatch) -> None:
-    event = make_event(
-        HookEventType.SESSION_START,
-        source="grok",
-        data={"terminal_context": {"tmux_pane": "%42"}},
-    )
-    completed = SimpleNamespace(returncode=0, stdout="droid\n")
-    monkeypatch.setattr(
-        "gobby.hooks.event_handlers._session_start.terminal_runtime.spawn.run",
-        lambda *args, **kwargs: completed,
-    )
-
-    assert session_start_should_defer(event, None, "startup") is False
-
-
-def test_session_start_is_native_subagent_child_requires_live_parent_with_subagent() -> None:
-    parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
-    session_manager = MagicMock()
-    session_manager.find_live_interactive_pane_owner.return_value = parent
-    session_manager.db.fetchone.return_value = {
-        "stored": True,
-        "variables": {"subagent_count": 1, "is_subagent": True},
-    }
-    terminal_context = {
-        "tmux_pane": "%90",
-        "tmux_socket_path": "/tmp/tmux-501/default",
-    }
-
-    assert (
-        session_start_is_native_subagent_child(
-            session_manager,
-            terminal_context,
-            "21000000-0000-4000-8000-000000000009",
-        )
-        is True
-    )
-
-    session_manager.db.fetchone.return_value = None
-    assert (
-        session_start_is_native_subagent_child(
-            session_manager,
-            terminal_context,
-            "21000000-0000-4000-8000-000000000009",
-        )
-        is False
-    )
-    session_manager.find_live_interactive_pane_owner.return_value = None
-    session_manager.db.fetchone.return_value = {
-        "stored": True,
-        "variables": {"subagent_count": 1, "is_subagent": True},
-    }
-    assert (
-        session_start_is_native_subagent_child(
-            session_manager,
-            terminal_context,
-            "21000000-0000-4000-8000-000000000009",
-        )
-        is False
-    )
-
-
-def test_session_start_skips_native_subagent_inheriting_tty(
-    mock_dependencies: dict[str, Any],
-    mock_empty_session_variable_manager: MagicMock,
-) -> None:
-    parent = SimpleNamespace(id="parent-live", status="active", agent_run_id=None, agent_depth=0)
-    storage = mock_dependencies["session_storage"]
-    storage.get.return_value = None
-    storage.find_live_interactive_pane_owner.return_value = parent
-    storage.db.fetchone.return_value = {
-        "stored": True,
-        "variables": {"subagent_count": 1, "is_subagent": True},
-    }
-    handlers = EventHandlers(**mock_dependencies)
-    event = make_event(
-        HookEventType.SESSION_START,
-        session_id="01a04561-child",
-        source="grok",
-        data={
-            "source": "startup",
-            "cwd": "/work",
-            "terminal_context": {
-                "tmux_pane": "%90",
-                "tmux_socket_path": "/tmp/tmux-501/default",
-            },
-        },
-    )
-    event.machine_id = "21000000-0000-4000-8000-000000000009"
-
-    response = handlers.handle_session_start(event)
-
-    assert response.decision == "allow"
-    storage.register_session.assert_not_called()
-    storage.register.assert_not_called()
 
 
 def _agent_activation_context() -> AgentActivationResult:
@@ -224,14 +127,13 @@ def test_log_session_start_timing_tolerates_missing_total() -> None:
     assert info_messages == []
 
 
-def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
+def test_expire_stale_terminal_sessions_for_reused_native_context() -> None:
     session_manager = MagicMock()
     session_manager.db.fetchall.return_value = [
         {
             "id": "stale-same-pane",
             "terminal_context": {
-                "tmux_pane": "%73",
-                "tmux_socket_path": "/tmp/tmux-501/default",
+                "gobby_terminal_id": "9ffc0c9c-7978-593e-bb63-5f45bffb05b6",
                 "parent_pid": 4242,
                 "parent_create_time": 1234.5,
             },
@@ -239,9 +141,7 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
         {
             "id": "stale-restarted-cli",
             "terminal_context": {
-                "tmux_pane": "%73",
-                "tmux_session": "fleet",
-                "tmux_socket_path": "/tmp/tmux-501/default",
+                "gobby_terminal_id": "9ffc0c9c-7978-593e-bb63-5f45bffb05b6",
                 "parent_pid": 18877,
                 "parent_create_time": 1000.0,
             },
@@ -249,20 +149,9 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
         {
             "id": "different-pane",
             "terminal_context": {
-                "tmux_pane": "%74",
-                "tmux_session": "fleet",
-                "tmux_socket_path": "/tmp/tmux-501/default",
+                "gobby_terminal_id": "2cab5a7f-83b7-5746-90e5-7e29712cd690",
                 "parent_pid": 4343,
                 "parent_create_time": 2345.6,
-            },
-        },
-        {
-            "id": "different-socket",
-            "terminal_context": {
-                "tmux_pane": "%73",
-                "tmux_socket_path": "/tmp/tmux-501/other",
-                "parent_pid": 4242,
-                "parent_create_time": 1234.5,
             },
         },
         {
@@ -290,9 +179,7 @@ def test_expire_stale_terminal_sessions_for_reused_tmux_context() -> None:
         session_id="current-session",
         project_id="project-1",
         terminal_context={
-            "tmux_pane": "%73",
-            "tmux_session": "fleet",
-            "tmux_socket_path": "/tmp/tmux-501/default",
+            "gobby_terminal_id": "9ffc0c9c-7978-593e-bb63-5f45bffb05b6",
             "parent_pid": 4242,
             "parent_create_time": 1234.5,
         },
@@ -323,8 +210,7 @@ def test_expire_stale_terminal_sessions_fail_open_when_expiry_fails() -> None:
         {
             "id": "stale-same-pane",
             "terminal_context": {
-                "tmux_pane": "%73",
-                "tmux_socket_path": "/tmp/tmux-501/default",
+                "gobby_terminal_id": "9ffc0c9c-7978-593e-bb63-5f45bffb05b6",
                 "parent_pid": 4242,
                 "parent_create_time": 1234.5,
             },
@@ -332,8 +218,7 @@ def test_expire_stale_terminal_sessions_fail_open_when_expiry_fails() -> None:
         {
             "id": "stale-second",
             "terminal_context": {
-                "tmux_pane": "%73",
-                "tmux_socket_path": "/tmp/tmux-501/default",
+                "gobby_terminal_id": "9ffc0c9c-7978-593e-bb63-5f45bffb05b6",
                 "parent_pid": 4242,
                 "parent_create_time": 1234.5,
             },
@@ -347,8 +232,7 @@ def test_expire_stale_terminal_sessions_fail_open_when_expiry_fails() -> None:
         session_id="current-session",
         project_id="project-1",
         terminal_context={
-            "tmux_pane": "%73",
-            "tmux_socket_path": "/tmp/tmux-501/default",
+            "gobby_terminal_id": "9ffc0c9c-7978-593e-bb63-5f45bffb05b6",
             "parent_pid": 4242,
             "parent_create_time": 1234.5,
         },
@@ -364,7 +248,7 @@ def test_expire_stale_terminal_sessions_fail_open_when_expiry_fails() -> None:
 class TestSessionHandlers:
     """Test SESSION_START and SESSION_END handlers."""
 
-    def test_session_start_allows(
+    def test_session_start_registers_without_pane_owner_lookup(
         self,
         event_handlers: EventHandlers,
         mock_dependencies: dict[str, Any],
@@ -372,8 +256,20 @@ class TestSessionHandlers:
     ) -> None:
         """Test SESSION_START handler allows by default."""
         event = make_event(HookEventType.SESSION_START, session_id="ext-123")
-        response = event_handlers.handle_session_start(event)
+        manager = mock_dependencies["session_manager"]
+        manager.get.return_value = None
+        manager.register_session.return_value = "registered-session"
+        manager.find_live_interactive_pane_owner.side_effect = AssertionError("retired lookup")
+        with (
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.session_start_should_defer",
+                return_value=False,
+            ),
+            patch.object(event_handlers, "_activate_materialized_session", return_value=[]),
+        ):
+            response = event_handlers.handle_session_start(event)
         assert response.decision == "allow"
+        manager.register_session.assert_called_once()
 
     def test_session_start_requires_envelope_machine_id(
         self,
@@ -636,14 +532,15 @@ class TestSessionStartPreCreatedSession:
         updated_session.agent_run_id = None
         updated_session.title = "Useful synthesized title"
         updated_session.handoff_markdown = None
-        updated_session.terminal_context = {"tmux_pane": "%77"}
+        updated_session.terminal_context = {
+            "gobby_terminal_id": "d618e358-3c94-59f9-832a-249ec0ca8b63"
+        }
 
         mock_dependencies["session_storage"].get.return_value = mock_session
         mock_dependencies["session_storage"].update.return_value = mock_session
-        mock_dependencies["session_manager"].backfill_terminal_context.return_value = (
-            updated_session,
-            True,
-        )
+        mock_dependencies[
+            "session_manager"
+        ].backfill_terminal_context.return_value = updated_session
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -651,24 +548,17 @@ class TestSessionStartPreCreatedSession:
             session_id="sess-pre-123",
             data={
                 "transcript_path": "/path/to/transcript.jsonl",
-                "terminal_context": {"tmux_pane": "%77"},
+                "terminal_context": {"gobby_terminal_id": "d618e358-3c94-59f9-832a-249ec0ca8b63"},
             },
         )
 
-        with (
-            patch(
-                "gobby.hooks.event_handlers._session_start.terminal_runtime.spawn.run",
-                return_value=SimpleNamespace(returncode=1, stdout=""),
-            ),
-        ):
-            response = handlers.handle_session_start(event)
+        response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
         mock_dependencies["session_manager"].backfill_terminal_context.assert_called_once_with(
             "sess-pre-123",
-            {"tmux_pane": "%77"},
+            {"gobby_terminal_id": "d618e358-3c94-59f9-832a-249ec0ca8b63"},
         )
-        assert response.metadata.get("terminal_tmux_pane") == "%77"
 
     def test_pre_created_session_preserves_context_with_cwd(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
@@ -694,16 +584,15 @@ class TestSessionStartPreCreatedSession:
         updated_session.title = None
         updated_session.handoff_markdown = None
         updated_session.terminal_context = {
-            "tmux_pane": "%77",
+            "gobby_terminal_id": "d618e358-3c94-59f9-832a-249ec0ca8b63",
             "cwd": "/work/repos/gobby",
         }
 
         mock_dependencies["session_storage"].get.return_value = mock_session
         mock_dependencies["session_storage"].update.return_value = mock_session
-        mock_dependencies["session_manager"].backfill_terminal_context.return_value = (
-            updated_session,
-            True,
-        )
+        mock_dependencies[
+            "session_manager"
+        ].backfill_terminal_context.return_value = updated_session
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -711,25 +600,21 @@ class TestSessionStartPreCreatedSession:
             session_id="sess-pre-123",
             data={
                 "cwd": "/work/repos/gobby",
-                "terminal_context": {"tmux_pane": "%77"},
+                "terminal_context": {"gobby_terminal_id": "d618e358-3c94-59f9-832a-249ec0ca8b63"},
             },
         )
 
-        with (
-            patch(
-                "gobby.hooks.event_handlers._session_start.terminal_runtime.spawn.run",
-                return_value=SimpleNamespace(returncode=1, stdout=""),
-            ),
-        ):
-            response = handlers.handle_session_start(event)
+        response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
         assert response.metadata.get("is_pre_created") is True
         assert response.metadata.get("session_id") == "sess-pre-123"
-        assert response.metadata.get("terminal_tmux_pane") == "%77"
         mock_dependencies["session_manager"].backfill_terminal_context.assert_called_once_with(
             "sess-pre-123",
-            {"tmux_pane": "%77", "cwd": "/work/repos/gobby"},
+            {
+                "gobby_terminal_id": "d618e358-3c94-59f9-832a-249ec0ca8b63",
+                "cwd": "/work/repos/gobby",
+            },
         )
 
     def test_pre_created_session_with_parent(
@@ -915,10 +800,7 @@ class TestSessionStartPreCreatedSession:
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_manager"].find_by_external_id.return_value = mock_session
         mock_dependencies["session_manager"].update.return_value = mock_session
-        mock_dependencies["session_manager"].backfill_terminal_context.return_value = (
-            mock_session,
-            False,
-        )
+        mock_dependencies["session_manager"].backfill_terminal_context.return_value = mock_session
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -1183,10 +1065,7 @@ class TestSessionStartNewSession:
         tmp_path: Path,
     ) -> None:
         fresh_context = {
-            "tmux_pane": "%88",
-            "tmux_window_id": "@12",
-            "tmux_session": "work",
-            "tmux_socket_path": "/private/tmp/tmux-501/new",
+            "gobby_terminal_id": "82a41eeb-81b7-57e0-841e-880b57d18307",
             "pid": 4242,
             "tty": "/dev/ttys012",
         }
@@ -1198,7 +1077,7 @@ class TestSessionStartNewSession:
             session_type="terminal",
             status="expired",
             source="codex",
-            terminal_context={"tmux_pane": "%10"},
+            terminal_context={"gobby_terminal_id": "87f344d2-edda-54e6-9a00-1e984a413269"},
             parent_session_id=None,
             agent_depth=0,
             agent_run_id=None,
@@ -1350,7 +1229,7 @@ class TestSessionStartNewSession:
 
         mock_parent = MagicMock()
         mock_parent.id = "parent-sess-123"
-        mock_parent.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        mock_parent.terminal_context = {"gobby_terminal_id": "b75a499c-7077-5f00-ab62-a00c42da8766"}
 
         # No pre-created session found
         mock_dependencies["session_storage"].get.return_value = None
@@ -1364,7 +1243,7 @@ class TestSessionStartNewSession:
             data={
                 "source": "clear",
                 "cwd": "/some/dir",
-                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+                "terminal_context": {"gobby_terminal_id": "b75a499c-7077-5f00-ab62-a00c42da8766"},
             },
             metadata={},
         )
@@ -1421,8 +1300,7 @@ class TestSessionStartNewSession:
         if take_fails:
             mock_take.side_effect = RuntimeError("marker storage unavailable")
         term = {
-            "tmux_pane": "%100",
-            "tmux_socket_path": "/tmp/tmux",
+            "gobby_terminal_id": "960e3e05-1677-50aa-a5a8-bfef022d3b85",
             "parent_pid": 10322,
             "parent_create_time": 1.0,
         }
@@ -1525,7 +1403,7 @@ class TestSessionStartNewSession:
                 machine_id=event_machine_id,
                 project_id="proj-123",
                 cli_source="droid",
-                terminal_context={"tmux_pane": "%100", "tmux_socket_path": "/tmp/tmux"},
+                terminal_context={"gobby_terminal_id": "960e3e05-1677-50aa-a5a8-bfef022d3b85"},
             )
 
         assert resolution.session is known
@@ -1597,37 +1475,6 @@ class TestSessionStartNewSession:
         mock_dependencies["session_storage"].find_parent.assert_not_called()
         mock_dependencies["session_manager"].register_session.assert_not_called()
         assert "_platform_session_id" not in event.metadata
-
-    def test_nested_grok_session_in_droid_pane_is_not_registered(
-        self, mock_dependencies: dict[str, Any]
-    ) -> None:
-        mock_dependencies["session_storage"].get.return_value = None
-        handlers = EventHandlers(**mock_dependencies)
-        event = make_event(
-            HookEventType.SESSION_START,
-            session_id="grok-child-session",
-            source="grok",
-            data={
-                "source": "startup",
-                "cwd": "/some/dir",
-                "terminal_context": {
-                    "tmux_pane": "%75",
-                    "tmux_socket_path": "/private/tmp/tmux-501/default",
-                },
-            },
-            metadata={},
-        )
-
-        with patch(
-            "gobby.hooks.event_handlers._session_start.terminal_runtime.spawn.run",
-            return_value=SimpleNamespace(returncode=0, stdout="droid\n"),
-        ) as mock_run:
-            response = handlers.handle_session_start(event)
-
-        assert response.decision == "allow"
-        mock_run.assert_called_once()
-        mock_dependencies["session_manager"].register_session.assert_not_called()
-        mock_dependencies["session_storage"].find_parent.assert_not_called()
 
     def test_blank_external_id_returns_allow_without_registration(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
@@ -1718,7 +1565,10 @@ class TestSessionStartNewSession:
         new_session.agent_depth = 0
         new_session.agent_run_id = None
         new_session.title = None
-        new_session.terminal_context = {"tmux_pane": "%88", "cwd": "/work/repos/gobby"}
+        new_session.terminal_context = {
+            "gobby_terminal_id": "82a41eeb-81b7-57e0-841e-880b57d18307",
+            "cwd": "/work/repos/gobby",
+        }
 
         mock_dependencies["session_storage"].get.side_effect = [None, new_session]
         mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
@@ -1729,7 +1579,7 @@ class TestSessionStartNewSession:
             session_id="ext-captured-context",
             data={
                 "cwd": "/work/repos/gobby",
-                "terminal_context": {"tmux_pane": "%88"},
+                "terminal_context": {"gobby_terminal_id": "82a41eeb-81b7-57e0-841e-880b57d18307"},
             },
             metadata={},
         )
@@ -1775,7 +1625,7 @@ class TestSessionStartNewSession:
             session_id="ext-123",
             data={
                 "source": "compact",
-                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+                "terminal_context": {"gobby_terminal_id": "b75a499c-7077-5f00-ab62-a00c42da8766"},
             },
         )
 
@@ -1798,7 +1648,7 @@ class TestSessionStartNewSession:
         row.id = "sess-123"
         row.status = "awaiting_handoff"
         row.machine_id = TEST_MACHINE_ID
-        row.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        row.terminal_context = {"gobby_terminal_id": "b75a499c-7077-5f00-ab62-a00c42da8766"}
 
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_storage"].find_by_external_id.return_value = row
@@ -1809,7 +1659,7 @@ class TestSessionStartNewSession:
             session_id="ext-123",
             data={
                 "source": "compact",
-                "terminal_context": {"tmux_pane": "%99", "tmux_socket_path": "/tmp/tmux"},
+                "terminal_context": {"gobby_terminal_id": "affa2cf4-3818-502e-be97-b27adef918c8"},
             },
         )
 
@@ -2139,76 +1989,6 @@ def _activate_with_context(
     return session.id
 
 
-def test_native_terminal_id_binds_unless_tmux_or_nested(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    session_manager: SessionManager,
-) -> None:
-    project_id = sample_project["id"]
-    terminals = TerminalManager(temp_db)
-    handlers = EventHandlers(
-        session_manager=cast(HookSessionManager, session_manager),
-        terminal_manager=terminals,
-        get_machine_id=require_machine_id,
-        resolve_project_id=lambda _project_id, _cwd: project_id,
-    )
-
-    def pane_row() -> str:
-        terminal_id = str(uuid.uuid4())
-        terminals.create_pending(
-            terminal_id=terminal_id,
-            project_id=project_id,
-            backend="native",
-            ownership="gobby",
-            spawn_key=terminal_id,
-        )
-        return terminal_id
-
-    pane = pane_row()
-    outer_cli = _activate_with_context(
-        handlers,
-        session_manager,
-        project_id,
-        {"gobby_terminal_id": pane, **_cli_process(os.getppid())},
-    )
-    bound = terminals.get(pane)
-    assert bound is not None
-    assert bound.session_id == outer_cli
-
-    nested_cli = _activate_with_context(
-        handlers,
-        session_manager,
-        project_id,
-        {"gobby_terminal_id": pane, **_cli_process(os.getpid())},
-    )
-    still_bound = terminals.get(pane)
-    assert still_bound is not None
-    assert still_bound.session_id == outer_cli
-    assert terminals.get_live_for_session(nested_cli) is None
-
-    tmux_host_pane = pane_row()
-    tmux_cli = _activate_with_context(
-        handlers,
-        session_manager,
-        project_id,
-        {
-            "gobby_terminal_id": tmux_host_pane,
-            "tmux_pane": "%12",
-            "tmux_socket_path": "/private/tmp/tmux-501/default",
-            "tmux_session": "by-hand",
-            "tmux_server_pid": 1658,
-            "tmux_server_start_time": 1784592177,
-            **_cli_process(os.getpid()),
-        },
-    )
-    unbound = terminals.get(tmux_host_pane)
-    assert unbound is not None
-    assert unbound.session_id is None
-    tmux_row = terminals.get_live_for_session(tmux_cli)
-    assert tmux_row is not None
-    assert tmux_row.backend == "tmux"
-
-
 def test_pre_created_native_resume_rebinds_new_terminal(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -2224,12 +2004,22 @@ def test_pre_created_native_resume_rebinds_new_terminal(
         terminal_context={"term_program": "gterm"},
     )
     terminal_id = str(uuid.uuid4())
-    terminals.create_pending(
+    pending = terminals.create_pending(
         terminal_id=terminal_id,
         project_id=project_id,
         backend="native",
         ownership="gobby",
         spawn_key=terminal_id,
+    )
+    assert pending.attempt_started_at is not None
+    assert (
+        terminals.record_process(
+            terminal_id,
+            {"pgid": os.getpid(), "host_terminal_id": terminal_id},
+            attempt_generation=pending.attempt_generation,
+            attempt_started_at=pending.attempt_started_at,
+        )
+        is not None
     )
     terminal_context = {
         "gobby_terminal_id": terminal_id,
@@ -2250,6 +2040,9 @@ def test_pre_created_native_resume_rebinds_new_terminal(
     )
 
     with (
+        patch(
+            "gobby.sessions.terminal_binding.psutil.Process.terminal", return_value="/dev/ttys001"
+        ),
         patch.object(handlers, "_setup_code_index"),
         patch.object(handlers, "_build_claimed_task_context", return_value=None),
         patch.object(handlers, "_resolve_message_processor", return_value=None),
@@ -2316,8 +2109,14 @@ def test_expire_stale_terminal_sessions_keeps_codex_seats_in_other_panes() -> No
     assert expired == [("previous-seat-same-pane", "context_reuse")]
 
 
-@pytest.mark.parametrize("pane,blocked", [("%73", False), ("%74", True)])
-def test_compact_pickup_rejects_sibling_tmux_pane(
+@pytest.mark.parametrize(
+    "pane,blocked",
+    [
+        ("9ffc0c9c-7978-593e-bb63-5f45bffb05b6", False),
+        ("2cab5a7f-83b7-5746-90e5-7e29712cd690", True),
+    ],
+)
+def test_compact_pickup_rejects_sibling_native_pane(
     temp_db: HubDatabase,
     isolated_checkout_factory: IsolatedCheckoutFactory,
     pane: str,
@@ -2332,9 +2131,7 @@ def test_compact_pickup_rejects_sibling_tmux_pane(
         sid,
         status="awaiting_handoff",
         terminal_context={
-            "tmux_session": "fleet",
-            "tmux_pane": "%73",
-            "tmux_socket_path": "/tmp/tmux-test",
+            "gobby_terminal_id": "9ffc0c9c-7978-593e-bb63-5f45bffb05b6",
             "parent_pid": 111,
             "parent_create_time": 1.0,
         },
@@ -2348,13 +2145,7 @@ def test_compact_pickup_rejects_sibling_tmux_pane(
         machine_id=session.machine_id,
         project_id=session.project_id,
         cli_source=session.source,
-        terminal_context={
-            "tmux_session": "fleet",
-            "tmux_pane": pane,
-            "tmux_socket_path": "/tmp/tmux-test",
-            "parent_pid": 222,
-            "parent_create_time": 2.0,
-        },
+        terminal_context={"gobby_terminal_id": pane, "parent_pid": 222, "parent_create_time": 2.0},
     )
     assert (resolution.blocked_reason is not None) is blocked
     assert resolution.is_compact is (not blocked)

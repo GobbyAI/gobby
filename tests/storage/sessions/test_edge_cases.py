@@ -247,7 +247,7 @@ class TestSessionEdgeCases:
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
-            terminal_context={"tmux_pane": "%1", "tmux_socket_path": "/tmp/tmux"},
+            terminal_context={"gobby_terminal_id": "1e557198-09a7-56ec-ba24-bb707c6faf68"},
         )
         session_manager.update_status(matching_parent.id, "awaiting_handoff")
         session_manager.db.execute(
@@ -259,7 +259,7 @@ class TestSessionEdgeCases:
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
-            terminal_context={"tmux_pane": "%2", "tmux_socket_path": "/tmp/tmux"},
+            terminal_context={"gobby_terminal_id": "1c11aee4-7819-5bf9-b7c2-c626a4531578"},
         )
         session_manager.update_status(newer_wrong_parent.id, "awaiting_handoff")
 
@@ -267,7 +267,7 @@ class TestSessionEdgeCases:
             machine_id="20000000-0000-4000-8000-000000000001",
             project_id=sample_project["id"],
             source="claude",
-            terminal_context={"tmux_pane": "%1", "tmux_socket_path": "/tmp/tmux"},
+            terminal_context={"gobby_terminal_id": "1e557198-09a7-56ec-ba24-bb707c6faf68"},
             candidate_limit=8,
         )
 

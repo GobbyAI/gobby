@@ -2,29 +2,17 @@
 
 from __future__ import annotations
 
-import subprocess
 from collections.abc import Mapping
 from typing import Any
 
 import psycopg
 
-from gobby.sessions.handoff_identity import (
-    terminal_contexts_match,
-    terminal_process_contexts_match,
-)
+from gobby.sessions.handoff_identity import terminal_process_contexts_match
+from gobby.sessions.terminal_binding import cli_shares_shell_tty
 from gobby.sessions.tmux_context import parse_terminal_context_value
-from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
-from gobby.utils import spawn
 
 STALE_TERMINAL_SESSION_SCAN_LIMIT = 200
-TMUX_COMMAND_TIMEOUT_SECONDS = 1.0
-EXACT_PANE_OWNER_COMMAND_SOURCES = {
-    "droid": "droid",
-    "grok": "grok",
-    "agy": "agy",
-    "claude": "claude",
-}
-NativeTerminalBind = tuple[str, str]
+NativeTerminalBind = tuple[str, dict[str, Any]]
 
 
 def _row_value(row: Any, key: str) -> Any:
@@ -36,69 +24,6 @@ def _row_value(row: Any, key: str) -> Any:
         return None
 
 
-def _source_for_pane_command(command: str) -> str | None:
-    normalized = command.strip().lower()
-    if not normalized:
-        return None
-    if normalized.startswith("codex"):
-        return "codex"
-    return EXACT_PANE_OWNER_COMMAND_SOURCES.get(normalized)
-
-
-def _tmux_pane_current_command(terminal_context: dict[str, Any] | None) -> str | None:
-    if not terminal_context:
-        return None
-    pane_id = terminal_context.get("tmux_pane")
-    if not isinstance(pane_id, str) or not pane_id:
-        return None
-
-    command = ["tmux"]
-    socket_path = terminal_context.get("tmux_socket_path")
-    if isinstance(socket_path, str) and socket_path:
-        command.extend(["-S", socket_path])
-    command.extend(["display-message", "-p", "-t", pane_id, "#{pane_current_command}"])
-
-    try:
-        result = spawn.run(
-            command,
-            capture_output=True,
-            check=False,
-            text=True,
-            timeout=TMUX_COMMAND_TIMEOUT_SECONDS,
-        )
-    except (FileNotFoundError, OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    pane_command = result.stdout.strip()
-    return pane_command or None
-
-
-def session_start_is_nested_cli_child(
-    cli_source: str,
-    terminal_context: dict[str, Any] | None,
-) -> bool:
-    pane_command = _tmux_pane_current_command(terminal_context)
-    if pane_command is None:
-        return False
-    owner_source = _source_for_pane_command(pane_command)
-    return owner_source is not None and owner_source != cli_source
-
-
-def session_start_is_native_subagent_child(
-    session_manager: Any,
-    terminal_context: dict[str, Any] | None,
-    machine_id: str | None,
-) -> bool:
-    """Return whether this SessionStart is a native subagent inheriting the parent TTY."""
-    if session_manager is None:
-        return False
-    owner = session_manager.find_live_interactive_pane_owner(terminal_context, machine_id)
-    if owner is None:
-        return False
-    return session_has_active_native_subagent(session_manager.db, owner.id)
-
-
 def discover_and_bind_external_terminal(
     handler: Any,
     *,
@@ -106,7 +31,7 @@ def discover_and_bind_external_terminal(
     project_id: str | None,
     terminal_context: dict[str, Any] | None,
 ) -> NativeTerminalBind | None:
-    """Discover the external terminal and bind an eligible native host row."""
+    """Bind the native host row using the hook process identity."""
     terminal_manager = getattr(handler, "terminal_manager", None)
     if terminal_manager is None:
         return None
@@ -116,6 +41,7 @@ def discover_and_bind_external_terminal(
         session_id=session_id,
         project_id=project_id,
         terminal_context=terminal_context,
+        session_manager=handler._session_manager,
     )
 
 
@@ -126,38 +52,39 @@ def bind_discovered_terminal(
     session_id: str | None,
     project_id: str | None,
     terminal_context: dict[str, Any] | None,
+    session_manager: Any,
 ) -> NativeTerminalBind | None:
-    """Seed the session's external terminal and bind its native host row.
+    """Bind a native terminal only after verifying the CLI's actual tty.
 
     Returns the native row still held by another owner, for a retry once it is freed.
     """
     if not session_id or not project_id or not terminal_context:
         return None
 
-    from gobby.storage.terminals import ProjectOwnershipConflictError
-    from gobby.terminals.discovery import seed_external_terminal
-
-    try:
-        seed_external_terminal(
-            terminal_manager,
-            project_id=project_id,
-            session_id=session_id,
-            terminal_context=terminal_context,
-        )
-    except ProjectOwnershipConflictError:
-        logger.info("external terminal discovery conflict for session %s", session_id)
-
-    # A tmux pane started inside gterm is the innermost terminal. Its managed
-    # tmux row owns delivery while the outer native row remains unbound.
     native_terminal_id = terminal_context.get("gobby_terminal_id")
+    if not isinstance(native_terminal_id, str) or not native_terminal_id:
+        return None
+    cli_pid = terminal_context.get("parent_pid")
+    terminal = terminal_manager.get(native_terminal_id)
     if (
-        not isinstance(native_terminal_id, str)
-        or not native_terminal_id
-        or terminal_context.get("tmux_pane")
+        isinstance(cli_pid, bool)
+        or not isinstance(cli_pid, int)
+        or cli_pid <= 0
+        or terminal is None
+        or not cli_shares_shell_tty(cli_pid, terminal)
     ):
+        logger.info(
+            "native terminal %s refused for session %s: CLI and shell tty could not be verified",
+            native_terminal_id,
+            session_id,
+        )
+        session_manager.clear_gobby_terminal_id(session_id)
+        if terminal is not None and terminal.session_id == session_id:
+            terminal_manager.release_session(native_terminal_id, session_id)
+        terminal_context.pop("gobby_terminal_id", None)
         return None
     if terminal_manager.bind_session(native_terminal_id, session_id, project_id) is None:
-        return native_terminal_id, project_id
+        return project_id, terminal_context
     return None
 
 
@@ -171,9 +98,17 @@ def retry_native_terminal_bind(
     terminal_manager = getattr(handler, "terminal_manager", None)
     if pending_bind is None or terminal_manager is None:
         return
-    terminal_id, project_id = pending_bind
-    if terminal_manager.bind_session(terminal_id, session_id, project_id) is None:
-        handler.logger.info("native terminal %s not bound to session %s", terminal_id, session_id)
+    project_id, terminal_context = pending_bind
+    pending = bind_discovered_terminal(
+        terminal_manager,
+        handler.logger,
+        session_id=session_id,
+        project_id=project_id,
+        terminal_context=terminal_context,
+        session_manager=handler._session_manager,
+    )
+    if pending is not None:
+        handler.logger.info("native terminal not bound to session %s", session_id)
 
 
 def _terminal_context_reused(
@@ -183,10 +118,9 @@ def _terminal_context_reused(
     previous = parse_terminal_context_value(stored)
     if not previous:
         return False
-    pane = current.get("tmux_pane")
-    if pane and pane == previous.get("tmux_pane"):
-        # Retain socket/server scope checks without matching a shared session name.
-        return terminal_contexts_match(current, previous)
+    terminal_id = current.get("gobby_terminal_id")
+    if terminal_id and terminal_id == previous.get("gobby_terminal_id"):
+        return True
     tty = current.get("tty")
     if tty and tty == previous.get("tty"):
         return True

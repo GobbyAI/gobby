@@ -26,7 +26,7 @@ class SessionBindingStore(Protocol):
         session_id: str,
         terminal_context: dict[str, Any] | None,
         current: Session | None = None,
-    ) -> tuple[Session | None, bool]: ...
+    ) -> Session | None: ...
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,18 @@ class TerminalBindingResult:
     terminal_id: str | None = None
 
 
+def cli_shares_shell_tty(cli_pid: int, terminal: Terminal) -> bool:
+    """Require OS proof that the CLI and native shell use the same terminal."""
+    native_pid = shell_pid(terminal)
+    if native_pid is None:
+        return False
+    try:
+        tty = psutil.Process(cli_pid).terminal()
+        return bool(tty) and tty == psutil.Process(native_pid).terminal()
+    except (psutil.Error, OSError):
+        return False
+
+
 def _native_seat_context(
     session: Session, terminal: Terminal, process: psutil.Process
 ) -> dict[str, Any] | None:
@@ -43,7 +55,7 @@ def _native_seat_context(
     context = session.terminal_context or {}
     pid = process.pid
     environment = process.environ()
-    if environment.get("TMUX_PANE") or environment.get("GOBBY_TERMINAL_ID") != terminal.id:
+    if environment.get("GOBBY_TERMINAL_ID") != terminal.id:
         return None
     if context.get("gobby_host_epoch") not in (None, terminal.host_epoch):
         return None
@@ -58,9 +70,9 @@ def _native_seat_context(
         return None
     if abs(shell.create_time() - start) >= 1.0:
         return None
-    tty = process.terminal()
-    if not tty or tty != shell.terminal():
+    if not cli_shares_shell_tty(pid, terminal):
         return None
+    tty = process.terminal()
     return {
         "parent_pid": pid,
         "parent_create_time": process.create_time(),
@@ -90,8 +102,6 @@ def repair_native_terminal_binding(
     ):
         return refused
     context = session.terminal_context or {}
-    if context.get("tmux_pane"):
-        return TerminalBindingResult("unbound", "Native repair does not attach tmux panes.")
     terminals = TerminalManager(manager.db)
     try:
         verified_session = session
@@ -251,7 +261,7 @@ def repair_native_terminal_binding(
                 return refused
             if terminals.bind_session(terminal.id, session.id, session.project_id) is None:
                 return TerminalBindingResult("unbound", "Native pane has another live owner.")
-            updated, _ = manager.backfill_terminal_context(session.id, verified, locked_session)
+            updated = manager.backfill_terminal_context(session.id, verified, locked_session)
             if updated is None:
                 raise ValueError("Session disappeared during terminal registration")
         return TerminalBindingResult(

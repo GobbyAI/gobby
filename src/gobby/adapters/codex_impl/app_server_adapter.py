@@ -841,12 +841,6 @@ class CodexAdapter(BaseAdapter):
                         context_lines.append(
                             f"parent_pid: {response.metadata['terminal_parent_pid']}"
                         )
-                    for key in [
-                        "terminal_tmux_pane",
-                    ]:
-                        if response.metadata.get(key):
-                            friendly_name = key.replace("terminal_", "").replace("_", " ")
-                            context_lines.append(f"{friendly_name}: {response.metadata[key]}")
                     context_parts.append("\n".join(context_lines))
 
         # Add context to result if we have any

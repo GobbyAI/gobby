@@ -224,8 +224,7 @@ def test_register_existing_session_backfills_terminal_context(
 
     terminal_context = {
         "parent_pid": 12345,
-        "tmux_pane": "%7",
-        "tmux_socket_path": "/tmp/tmux-501/gobby",
+        "gobby_terminal_id": "ba1779a2-8033-5de2-b679-4eb364c792ed",
     }
 
     updated = session_mgr.register(
@@ -242,14 +241,13 @@ def test_register_existing_session_backfills_terminal_context(
     assert updated.workflow_name == "fixture-worker"
 
 
-def test_register_existing_session_merges_cwd_without_losing_tmux_context(
+def test_register_existing_session_merges_cwd_without_losing_native_context(
     session_mgr: SessionManager,
     project_id: str,
 ) -> None:
     original_context = {
         "parent_pid": 12345,
-        "tmux_pane": "%7",
-        "tmux_socket_path": "/tmp/tmux-501/gobby",
+        "gobby_terminal_id": "ba1779a2-8033-5de2-b679-4eb364c792ed",
     }
     created = session_mgr.register(
         external_id="existing-terminal-session-with-cwd",
@@ -274,7 +272,7 @@ def test_register_existing_session_merges_cwd_without_losing_tmux_context(
     }
 
 
-def test_backfill_terminal_context_merges_without_losing_tmux_context(
+def test_backfill_terminal_context_merges_without_losing_native_context(
     session_mgr: SessionManager,
     project_id: str,
 ) -> None:
@@ -283,20 +281,19 @@ def test_backfill_terminal_context_merges_without_losing_tmux_context(
         machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
-        terminal_context={"tmux_pane": "%7"},
+        terminal_context={"gobby_terminal_id": "ba1779a2-8033-5de2-b679-4eb364c792ed"},
     )
 
-    updated, tmux_target_added = session_mgr.backfill_terminal_context(
+    updated = session_mgr.backfill_terminal_context(
         created.id,
         {"cwd": "/work/repos/gobby"},
     )
 
     assert updated is not None
     assert updated.terminal_context == {
-        "tmux_pane": "%7",
+        "gobby_terminal_id": "ba1779a2-8033-5de2-b679-4eb364c792ed",
         "cwd": "/work/repos/gobby",
     }
-    assert tmux_target_added is False
 
 
 @pytest.mark.parametrize(
@@ -323,9 +320,9 @@ def test_settle_terminal_context_replaces_only_a_pending_marker(
         terminal_context={"cwd": "/work/repos/gobby", **stored},
     )
 
-    settled, tmux_target_added = session_mgr.settle_terminal_context(
+    settled = session_mgr.settle_terminal_context(
         created.id,
-        {"marker": "won", "tmux_pane": "%3"},
+        {"marker": "won", "gobby_terminal_id": "a07635eb-e9c1-523f-81af-071a764ef106"},
         marker_key="marker",
         pending="pending",
     )
@@ -335,15 +332,13 @@ def test_settle_terminal_context_replaces_only_a_pending_marker(
     if not settles:
         # Another writer settled it first: its stored result stands.
         assert settled is None
-        assert tmux_target_added is False
         assert row.terminal_context == {"cwd": "/work/repos/gobby", **stored}
         return
     assert settled is not None
-    assert tmux_target_added is True
     assert settled.terminal_context == {
         "cwd": "/work/repos/gobby",
         "marker": "won",
-        "tmux_pane": "%3",
+        "gobby_terminal_id": "a07635eb-e9c1-523f-81af-071a764ef106",
     }
     assert row.terminal_context == settled.terminal_context
 
@@ -409,7 +404,7 @@ def test_register_never_unsettles_a_clear_origin(
         assert updated.terminal_context == {"cwd": "/work/repos/gobby", **stored}
 
 
-def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(
+def test_recover_session_prefers_native_context_over_cwd_only_candidate(
     session_mgr: SessionManager,
     project_id: str,
 ) -> None:
@@ -420,12 +415,12 @@ def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(
         project_id=project_id,
         terminal_context={"cwd": "/work/repos/gobby"},
     )
-    tmux_capable = session_mgr.register(
+    native_capable = session_mgr.register(
         external_id="recover-terminal-session",
         machine_id="20000000-0000-4000-8000-000000000002",
         source="claude",
         project_id=project_id,
-        terminal_context={"tmux_pane": "%8", "tmux_socket_path": "/tmp/tmux-501/gobby"},
+        terminal_context={"gobby_terminal_id": "2737c88f-533c-5264-ab13-1717859d135e"},
     )
 
     recovered = session_mgr.recover_session(
@@ -435,7 +430,7 @@ def test_recover_session_prefers_tmux_context_over_cwd_only_candidate(
     )
 
     assert recovered is not None
-    assert recovered.id == tmux_capable.id
+    assert recovered.id == native_capable.id
     assert recovered.id != weak.id
 
 
@@ -547,7 +542,7 @@ def test_expired_row_is_invisible_to_lookup_but_visible_to_recovery(
         machine_id=LOCAL_MACHINE_ID,
         source="claude",
         project_id=project_id,
-        terminal_context={"tmux_pane": "%9", "tmux_socket_path": "/tmp/tmux-501/gobby"},
+        terminal_context={"gobby_terminal_id": "050d5d83-ae8b-5508-a36f-fd55e281cd45"},
     )
     assert (
         session_mgr.lookup_session_id(

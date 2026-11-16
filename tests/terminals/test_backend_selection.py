@@ -16,7 +16,6 @@ from pydantic import ValidationError
 from gobby.config.app import DaemonConfig
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.terminals.discovery import seed_external_terminal
 from gobby.terminals.host_client import HostCommandError, HostUnavailableError
 from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
 from gobby.terminals.runtime import PreparedSpawn, TerminalRuntime, TerminalSpawnRequest
@@ -65,29 +64,6 @@ async def test_explicit_and_external_selection_under_native_default(
 
     monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID)
     manager = _manager(temp_db)
-    external = seed_external_terminal(
-        manager,
-        project_id=sample_project["id"],
-        session_id=None,
-        terminal_context={
-            "tmux_socket_path": "/private/tmp/tmux-501/default",
-            "tmux_pane": "%12",
-            "tmux_session": "ext",
-            "tmux_window": "@1",
-            "tmux_server_pid": 1658,
-            "tmux_server_start_time": 1784592177,
-        },
-        generation={
-            "socket_path": "/private/tmp/tmux-501/default",
-            "server_pid": 1658,
-            "server_start_time": 1784592177,
-            "pane_id": "%12",
-        },
-    )
-    assert external is not None
-    assert external.ownership == "external"
-    assert external.backend == "tmux"
-
     # An explicit native request with no gterm host is refused before fork with the
     # typed host_unreachable code; the pending row fails and no tmux row appears.
     assert issubclass(HostUnavailableError, HostCommandError)
@@ -112,7 +88,7 @@ async def test_explicit_and_external_selection_under_native_default(
     open_rows, _more = manager.list_page(
         [sample_project["id"]], states=("pending", "live"), limit=10
     )
-    assert [row.id for row in open_rows] == [external.id]
+    assert open_rows == []
 
     prepares: list[str] = []
     entitlements = 0

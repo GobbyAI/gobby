@@ -61,21 +61,16 @@ from tests.e2e.conftest import (
     stop_terminal_host,
 )
 from tests.e2e.gclient_driver import GclientDriver, Screen, in_prefix_mode
-from tests.e2e.test_external_terminal_attach import (
+from tests.e2e.terminal_viewer_support import (
     APPROVAL_PROMPT,
     E2E_PROJECT_ID,
-    OWNER_VIEW,
-    PANE_PROPS,
     VIEWER_COLS,
     VIEWER_ROWS,
-    IsolatedTmux,
     _attach_from_item,
     _frame_text,
     _gterm_bin_dir,
-    _list_external,
     _open_viewer,
     _read_until,
-    _seed_session,
     _wait_for_host,
 )
 from tests.terminals.test_runtime_contract import _restart_daemon_preserving_host
@@ -518,11 +513,11 @@ def _attach_locator(item: dict[str, Any]) -> AttachLocator:
     if not isinstance(attach, dict):
         return _attach_from_item(item)
     backend = attach.get("backend") or item.get("backend")
-    assert backend in {"tmux", "native"}
+    assert backend in {"native"}
     pid = attach.get("server_pid")
     start = attach.get("server_start_time")
     return AttachLocator(
-        backend=cast(Literal["tmux", "native"], backend),
+        backend=cast(Literal["native"], backend),
         frame_host_epoch=str(attach.get("frame_host_epoch") or ""),
         host_socket=None if attach.get("host_socket") is None else str(attach["host_socket"]),
         host_terminal_id=(
@@ -708,8 +703,7 @@ async def test_terminal_client_stack_end_to_end(
     socket_dir = Path(os.environ["GOBBY_E2E_HOST_SOCKET_DIR"])
     _wait_for_host(daemon_client, daemon_instance)
     client = _http(daemon_instance)
-    # Two distinct native panes: the managed tmux runtime was retired
-    # (#22932), so both seats exercise the one registered runtime.
+    # Two distinct native panes exercise the registered runtime.
     direct_spawn = _spawn_agent(client)
     native_spawn = _spawn_agent(client)
 
@@ -970,32 +964,6 @@ async def test_terminal_client_stack_end_to_end(
     finally:
         fault_path.unlink(missing_ok=True)
 
-    # External tmux discovery: a CLI session registered against a user-owned
-    # tmux server still materializes an external row, and gobby must not touch
-    # that server. The managed tmux runtime that used to serve the row's frames
-    # was retired (#22932), so the daemon no longer attaches to it; only
-    # discovery and the owner's untouched server are asserted here.
-    isolated = IsolatedTmux(tmp_path)
-    isolated.start()
-    try:
-        before_view = isolated.display(OWNER_VIEW)
-        clients_before = isolated.clients()
-        control_props = isolated.display(PANE_PROPS, target=isolated.control_pane)
-        _seed_session(cli_events, isolated, cwd=str(daemon_instance.project_dir))
-        external = wait_for_condition(
-            lambda: _list_external(client),
-            timeout=8.0,
-            interval=0.1,
-            description="external terminal",
-        )
-        assert external.get("backend") == "tmux"
-        assert isolated.display(OWNER_VIEW) == before_view
-        assert isolated.clients() == clients_before
-        assert isolated.display(PANE_PROPS, target=isolated.control_pane) == control_props
-        assert isolated.display("#{pane_pipe}") == "0"
-    finally:
-        isolated.close()
-
     replay_payload = back_marker + "-dup\r"
     replay = await direct_ws.write(native_id, replay_payload)
     assert replay.get("outcome") == "delivered", replay
@@ -1235,9 +1203,7 @@ async def test_terminal_client_stack_end_to_end(
         before_host_crash[run_id] = _stack_run_state(detail.json()["run"])
     host_pid = int(pidfile_path(socket_dir).read_text())
     os.kill(host_pid, signal.SIGKILL)
-    # Both panes live on the one registered runtime, so a host crash
-    # reconciles both rows; the retired tmux runtime no longer gives a second
-    # pane a server to survive on.
+    # Both panes live on the registered runtime, so a host crash reconciles both rows.
     wait_for_condition(
         lambda: all(
             client.get(f"/api/terminals/{terminal}").json().get("state")

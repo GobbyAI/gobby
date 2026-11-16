@@ -47,6 +47,26 @@ from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
 
+
+def test_app_server_context_has_no_pane_line() -> None:
+    response = HookResponse(
+        decision="allow",
+        metadata={
+            "session_id": "session-1",
+            "_first_hook_for_session": True,
+            "terminal_tty": "/dev/ttys001",
+            "terminal_parent_pid": 202,
+            "terminal_tmux_pane": "%4",
+        },
+    )
+    result = CodexAdapter().translate_from_hook_response(response)
+    assert result["context"].splitlines() == [
+        "Gobby Session ID: session-1",
+        "tty: /dev/ttys001",
+        "parent_pid: 202",
+    ]
+
+
 CODEX_COMMAND_EXECUTION_FIXTURE = (
     Path(__file__).parents[1]
     / "fixtures"
@@ -1573,7 +1593,7 @@ class TestCodexAdapterTranslateToHookEvent:
             "method": "thread/started",
             "params": {
                 "cwd": "/tmp/project",
-                "terminal_context": {"tmux_pane": "%2"},
+                "terminal_context": {"gobby_terminal_id": "native-pane"},
                 "thread": {
                     "id": "thr-123",
                     "preview": "Help me with code",
@@ -1594,7 +1614,7 @@ class TestCodexAdapterTranslateToHookEvent:
         assert hook_event.data["preview"] == "Help me with code"
         assert hook_event.data["model_provider"] == "openai"
         assert hook_event.data["transcript_path"] == "/tmp/codex-session.jsonl"
-        assert hook_event.data["terminal_context"]["tmux_pane"] == "%2"
+        assert hook_event.data["terminal_context"]["gobby_terminal_id"] == "native-pane"
 
     def test_thread_archive(self) -> None:
         """Translate thread/archive to SESSION_END."""

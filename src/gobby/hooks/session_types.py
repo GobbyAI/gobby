@@ -20,7 +20,6 @@ from gobby.storage.sessions._update_sentinel import UNSET, UnsetType
 if TYPE_CHECKING:
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.hub.protocol import HubDatabase
-    from gobby.terminal_ownership import TerminalIdentity
 
 
 def _has_positive_count(value: Any) -> bool:
@@ -159,7 +158,7 @@ class HookSessionManager(Protocol):
         session_id: str,
         terminal_context: dict[str, Any] | None,
         current: Session | None = None,
-    ) -> tuple[Session | None, bool]: ...
+    ) -> Session | None: ...
 
     def settle_terminal_context(
         self,
@@ -168,7 +167,9 @@ class HookSessionManager(Protocol):
         *,
         marker_key: str,
         pending: str,
-    ) -> tuple[Session | None, bool]: ...
+    ) -> Session | None: ...
+
+    def clear_gobby_terminal_id(self, session_id: str) -> Session | None: ...
 
     def reset_transcript_processed(self, session_id: str) -> Session | None: ...
 
@@ -190,14 +191,6 @@ class HookSessionManager(Protocol):
     ) -> bool: ...
 
     def mark_had_edits(self, session_id: str) -> Session | None: ...
-
-    def find_by_terminal_identity(self, identity: TerminalIdentity) -> Sequence[Session]: ...
-
-    def find_live_interactive_pane_owner(
-        self,
-        terminal_context: dict[str, Any] | None,
-        machine_id: str | None,
-    ) -> Session | None: ...
 
     def find_parent(
         self,

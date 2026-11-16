@@ -217,7 +217,7 @@ class TestPostCompactHandler:
                 machine_id="21000000-0000-4000-8000-000000000001",
                 source="claude",
                 project_id=project.id,
-                terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+                terminal_context={"gobby_terminal_id": "b75a499c-7077-5f00-ab62-a00c42da8766"},
             )
         sv_mgr = SessionVariableManager(hub_db)
         sv_mgr.merge_variables(
@@ -261,7 +261,7 @@ class TestPostCompactHandler:
                 machine_id="21000000-0000-4000-8000-000000000001",
                 source="grok",
                 project_id=project.id,
-                terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+                terminal_context={"gobby_terminal_id": "b75a499c-7077-5f00-ab62-a00c42da8766"},
             )
         sv_mgr = SessionVariableManager(hub_db)
         sv_mgr.merge_variables(
@@ -1402,7 +1402,9 @@ class TestAcpHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        handlers.handle_before_model(event)
+        response = handlers.handle_before_model(event)
+
+        assert response.decision == "allow"
 
         mock_dependencies["session_manager"].update.assert_called_once_with(
             "sess-123", model="gpt-5.5-codex"
@@ -1419,7 +1421,9 @@ class TestAcpHandlerEdgeCases:
             metadata={"_platform_session_id": "sess-123", "_native_subagent_binding": True},
         )
 
-        handlers.handle_after_model(event)
+        response = handlers.handle_after_model(event)
+
+        assert response.decision == "allow"
 
         mock_dependencies["session_manager"].update.assert_not_called()
 

@@ -61,7 +61,7 @@ from tests.native_binary_selection import (
 pytestmark = pytest.mark.e2e
 
 _TERMINAL_E2E_BINARIES = {
-    "test_external_terminal_attach.py": ("gterm",),
+    "test_codex_reply_wait_e2e.py": ("gterm",),
     "test_terminal_client_stack.py": ("gterm", "gclient"),
 }
 

@@ -109,10 +109,6 @@ HOST_TERMINAL_ID = "358981a1-df59-43bd-a04e-6cd698238442"
 HOST_CONTEXT: dict[str, Any] = {
     "parent_pid": HOST_PID,
     "tty": None,
-    "tmux_pane": None,
-    "tmux_socket_path": None,
-    "tmux_window_id": None,
-    "tmux_session": None,
     "term_program": None,
     "gobby_session_id": None,
     "gobby_parent_session_id": None,
@@ -200,10 +196,6 @@ def _seat_context(pid: int, *, tty: str, terminal_id: str, create_time: float) -
         "parent_create_time": create_time,
         "parent_name": "codex",
         "tty": tty,
-        "tmux_pane": None,
-        "tmux_socket_path": None,
-        "tmux_window_id": None,
-        "tmux_session": None,
         "term_program": None,
         "gobby_session_id": None,
         "gobby_parent_session_id": None,
@@ -214,6 +206,15 @@ def _seat_context(pid: int, *, tty: str, terminal_id: str, create_time: float) -
         "gobby_terminal_id": terminal_id,
         "gobby_pane_ref": None,
     }
+
+
+def test_terminal_context_carries_only_native_keys() -> None:
+    seat = _seat(22512, THREAD_A, tty="/dev/ttys001", terminal_id="pane-a", create_time=10.0)
+    with _process_table([_managed_host(), seat]):
+        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=THREAD_A)
+    assert result == _seat_context(
+        22512, tty="/dev/ttys001", terminal_id="pane-a", create_time=10.0
+    )
 
 
 @contextmanager
@@ -326,34 +327,6 @@ def test_unresolved_thread_does_not_rescan_on_every_hook() -> None:
 
     assert first == second == {"cwd": "/repo"}
     assert process_iter.call_count == 1
-
-
-def test_seat_inside_tmux_carries_its_pane_identity() -> None:
-    seat = _seat(22512, THREAD_A, tty="/dev/ttys001", terminal_id="pane-a", create_time=10.0)
-    seat.environ.return_value = {
-        **seat.environ.return_value,
-        "TMUX": "/tmp/tmux-501/default,123,0",
-        "TMUX_PANE": "%73",
-        "TERM_PROGRAM": "tmux",
-    }
-
-    with (
-        _process_table([_managed_host(), seat]),
-        patch(
-            "gobby.hooks.terminal_context.query_tmux_identity", return_value=("@3", "main")
-        ) as query_tmux_identity,
-    ):
-        result = enrich_terminal_context_with_cwd(dict(HOST_CONTEXT), "/repo", external_id=THREAD_A)
-
-    query_tmux_identity.assert_called_once_with("/tmp/tmux-501/default", "%73")
-    assert result == {
-        **_seat_context(22512, tty="/dev/ttys001", terminal_id="pane-a", create_time=10.0),
-        "tmux_pane": "%73",
-        "tmux_socket_path": "/tmp/tmux-501/default",
-        "tmux_window_id": "@3",
-        "tmux_session": "main",
-        "term_program": "tmux",
-    }
 
 
 # A fresh seat's thread id is a UUIDv7 minted a second or two after the TUI starts.

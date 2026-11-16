@@ -88,8 +88,6 @@ def build_first_hook_session_metadata_lines(
         lines.append(f"tty: {metadata['terminal_tty']}")
     if metadata.get("terminal_parent_pid"):
         lines.append(f"parent_pid: {metadata['terminal_parent_pid']}")
-    if metadata.get("terminal_tmux_pane"):
-        lines.append(f"tmux pane: {metadata['terminal_tmux_pane']}")
 
     return lines
 

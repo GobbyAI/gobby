@@ -37,7 +37,7 @@ def mock_dependencies() -> dict[str, Any]:
     session_storage.find_by_external_id.return_value = None
     session_storage.find_by_external_id_any_project.return_value = None
     session_storage.update.return_value = None
-    session_storage.backfill_terminal_context.return_value = (None, False)
+    session_storage.backfill_terminal_context.return_value = None
     message_processor = MagicMock()
 
     def resolve_message_processor() -> MagicMock:

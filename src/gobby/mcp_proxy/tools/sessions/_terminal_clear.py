@@ -44,7 +44,7 @@ from gobby.sessions.handoff import (
 )
 from gobby.sessions.handoff_records import HandoffPayload
 from gobby.terminal_context import parse_terminal_context_value
-from gobby.terminal_ownership import recorded_seat_left, terminal_session_identity
+from gobby.terminal_ownership import recorded_seat_left
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -165,76 +165,17 @@ async def _resume_pending_clear_attempt(
         attempt_id=attempt_id,
         handoff=handoff,
     )
-    identity, baseline_ids = _clear_pane_baseline(session_manager, session)
     acknowledgment = await _wait_for_clear_acknowledgment(
         db,
         session_manager,
         session,
         attempt_id=attempt_id,
-        identity=identity,
-        baseline_ids=baseline_ids,
     )
     if acknowledgment is None:
         return _pending_timeout(session.id, attempt_id, reused_attempt=True)
     result = _acknowledged(session.id, attempt_id, acknowledgment, reused_attempt=True)
     result["content_refreshed"] = refreshed
     return result
-
-
-def _clear_pane_baseline(
-    session_manager: SessionManager,
-    predecessor: Any,
-) -> tuple[Any | None, frozenset[str]]:
-    """Capture the terminal identity and rows that predate clear dispatch."""
-    identity = terminal_session_identity(predecessor)
-    session_ids = {predecessor.id}
-    if identity is None:
-        return None, frozenset(session_ids)
-    try:
-        session_ids.update(
-            session.id for session in session_manager.find_by_terminal_identity(identity)
-        )
-    except Exception:
-        logger.warning(
-            "Failed capturing terminal-clear pane baseline for session %s",
-            predecessor.id,
-            exc_info=True,
-        )
-    return identity, frozenset(session_ids)
-
-
-def _find_new_provider_session(
-    session_manager: SessionManager,
-    predecessor: Any,
-    identity: Any | None,
-    baseline_ids: frozenset[str],
-) -> str | None:
-    """Return a fresh provider-native row observed on the clear target pane."""
-    if identity is None:
-        return None
-    try:
-        candidates = session_manager.find_by_terminal_identity(identity)
-    except Exception:
-        logger.warning(
-            "Failed observing terminal-clear pane for session %s",
-            predecessor.id,
-            exc_info=True,
-        )
-        return None
-    for candidate in reversed(candidates):
-        if candidate.id in baseline_ids or candidate.source != predecessor.source:
-            continue
-        external_changed = bool(
-            candidate.external_id and candidate.external_id != predecessor.external_id
-        )
-        rollout_changed = bool(
-            predecessor.source == "codex"
-            and candidate.transcript_path
-            and candidate.transcript_path != predecessor.transcript_path
-        )
-        if external_changed or rollout_changed:
-            return candidate.id
-    return None
 
 
 async def _codex_thread_end_banner_count(pane: PaneIO, *, thread_id: str) -> int:
@@ -267,10 +208,8 @@ async def _wait_for_clear_acknowledgment(
     predecessor: Any,
     *,
     attempt_id: str,
-    identity: Any | None,
-    baseline_ids: frozenset[str],
 ) -> tuple[str, str] | None:
-    """Wait for marker consumption or a fresh provider session on the pane."""
+    """Wait for the successor to consume the clear marker."""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + _CLEAR_ACK_TIMEOUT_SECONDS
     variables_manager = SessionVariableManager(db)
@@ -289,14 +228,6 @@ async def _wait_for_clear_acknowledgment(
         marker_attempt_id = marker.get("attempt_id") if isinstance(marker, dict) else None
         if isinstance(successor_id, str) and successor_id and marker_attempt_id == attempt_id:
             return successor_id, "successor_binding"
-        observed_id = _find_new_provider_session(
-            session_manager,
-            predecessor,
-            identity,
-            baseline_ids,
-        )
-        if observed_id is not None:
-            return observed_id, "provider_session"
         remaining = deadline - loop.time()
         if remaining <= 0:
             return None
@@ -512,7 +443,6 @@ async def deliver_staged_clear_session(
     if observer_error is not None:
         return failed(observer_error, _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE)
 
-    pane_identity, pane_baseline_ids = _clear_pane_baseline(session_manager, session)
     codex_thread_id: str | None = None
     banner_baseline = 0
     if source == "codex":
@@ -587,8 +517,6 @@ async def deliver_staged_clear_session(
         session_manager,
         session,
         attempt_id=attempt_id,
-        identity=pane_identity,
-        baseline_ids=pane_baseline_ids,
     )
     if acknowledgment is None:
         return _pending_timeout(

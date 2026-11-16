@@ -277,7 +277,7 @@ def test_non_start_compact_lookup_skips_foreign_row() -> None:
     event = make_event(
         HookEventType.BEFORE_TOOL,
         session_id="node-external",
-        data={"terminal_context": {"tmux_pane": "%1"}},
+        data={"terminal_context": {"gobby_terminal_id": "1e557198-09a7-56ec-ba24-bb707c6faf68"}},
         machine_id=NODE,
     )
     event.project_id = "node-project"
@@ -337,7 +337,7 @@ async def test_project_context_skips_foreign_rows(
 
 def test_remote_terminal_context_skips_local_process_inspection() -> None:
     reported = {
-        "tmux_pane": "%3",
+        "gobby_terminal_id": "a07635eb-e9c1-523f-81af-071a764ef106",
         "parent_pid": os.getpid(),
         "parent_create_time": 1.0,
         "parent_name": "codex",
@@ -349,4 +349,8 @@ def test_remote_terminal_context_skips_local_process_inspection() -> None:
         )
 
     process.assert_not_called()
-    assert enriched == {"tmux_pane": "%3", "parent_pid": os.getpid(), "cwd": NODE_CWD}
+    assert enriched == {
+        "gobby_terminal_id": "a07635eb-e9c1-523f-81af-071a764ef106",
+        "parent_pid": os.getpid(),
+        "cwd": NODE_CWD,
+    }

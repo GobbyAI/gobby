@@ -15,7 +15,7 @@ from gobby.mcp_proxy.terminal_context import (
 pytestmark = pytest.mark.unit
 
 
-def test_current_terminal_context_collects_supported_identity(
+def test_proxy_context_reads_only_native_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("TMUX_PANE", "%4")
@@ -28,28 +28,11 @@ def test_current_terminal_context_collects_supported_identity(
     monkeypatch.setenv("GOBBY_PANE_REF", "0:0:1:2")
     monkeypatch.setenv("UNRELATED_SECRET", "excluded")
 
-    with (
-        patch("os.getppid", return_value=4321),
-        patch(
-            "gobby.mcp_proxy.terminal_context.query_tmux_generation",
-            return_value={
-                "window_id": "@7",
-                "session_name": "work",
-                "server_pid": 1658,
-                "server_start_time": 1784592177,
-            },
-        ),
-    ):
+    with patch("os.getppid", return_value=4321):
         context = current_terminal_context()
 
     assert context == {
         "parent_pid": 4321,
-        "tmux_pane": "%4",
-        "tmux_socket_path": "/tmp/tmux-501/default",
-        "tmux_window_id": "@7",
-        "tmux_session": "work",
-        "tmux_server_pid": 1658,
-        "tmux_server_start_time": 1784592177,
         "tty": "/dev/ttys004",
         "term_program": "iTerm.app",
         "term_session_id": "w0t0p0",
@@ -62,9 +45,6 @@ def test_serialize_terminal_context_is_compact_allowlisted_json() -> None:
     serialized = serialize_terminal_context(
         {
             "parent_pid": 4321,
-            "tmux_pane": "%4",
-            "tmux_socket_path": None,
-            "tmux_window_id": "@7",
             "term_program": "iTerm.app",
             "gobby_terminal_id": "7f0c6a52-1d7e-4c3b-9a55-0b5ad1f7e2c4",
             "gobby_pane_ref": "0:0:1:2",
@@ -73,13 +53,11 @@ def test_serialize_terminal_context_is_compact_allowlisted_json() -> None:
     )
 
     assert serialized == (
-        '{"parent_pid":4321,"tmux_pane":"%4","tmux_window_id":"@7","term_program":"iTerm.app",'
+        '{"parent_pid":4321,"term_program":"iTerm.app",'
         '"gobby_terminal_id":"7f0c6a52-1d7e-4c3b-9a55-0b5ad1f7e2c4","gobby_pane_ref":"0:0:1:2"}'
     )
     assert json.loads(serialized) == {
         "parent_pid": 4321,
-        "tmux_pane": "%4",
-        "tmux_window_id": "@7",
         "term_program": "iTerm.app",
         "gobby_terminal_id": "7f0c6a52-1d7e-4c3b-9a55-0b5ad1f7e2c4",
         "gobby_pane_ref": "0:0:1:2",

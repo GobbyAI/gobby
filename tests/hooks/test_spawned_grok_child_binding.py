@@ -2,7 +2,7 @@
 
 Spawn exports ``GOBBY_SESSION_ID``; Grok runs child conversations inside its own
 process, so their hooks carry the spawned session as an inherited platform hint.
-The hint is accepted only for the same live process, with no tmux identity.
+The hint is accepted only for the same live process.
 """
 
 import os

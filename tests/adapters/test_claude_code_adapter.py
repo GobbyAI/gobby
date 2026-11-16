@@ -1408,25 +1408,6 @@ class TestResponseMetadata:
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
         assert "hookSpecificOutput" not in result
 
-    def test_terminal_session_ids(self) -> None:
-        """Terminal-specific session IDs are included in first hook."""
-        adapter = ClaudeCodeAdapter()
-        terminal_keys = [
-            ("terminal_tmux_pane", "%42"),
-        ]
-        for key, value in terminal_keys:
-            response = HookResponse(
-                decision="allow",
-                metadata={
-                    "session_id": "uuid-123",
-                    "_first_hook_for_session": True,
-                    key: value,
-                },
-            )
-            result = adapter.translate_from_hook_response(response, hook_type="session-start")
-            ctx = result["hookSpecificOutput"]["additionalContext"]
-            assert value in ctx, f"Expected {value} in context for {key}"
-
     def test_context_and_metadata_combined(self) -> None:
         """Both workflow context and session metadata appear in output."""
         adapter = ClaudeCodeAdapter()

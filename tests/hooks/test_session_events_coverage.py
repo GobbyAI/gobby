@@ -782,7 +782,7 @@ class TestSessionMoreCoverage:
             data={
                 "source": "compact",
                 "agent_depth": "2",
-                "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+                "terminal_context": {"gobby_terminal_id": "b75a499c-7077-5f00-ab62-a00c42da8766"},
             },
         )
 
@@ -792,7 +792,7 @@ class TestSessionMoreCoverage:
         row.summary_markdown = "Pre-compaction summary"
         row.seq_num = 1
         row.parent_session_id = None
-        row.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        row.terminal_context = {"gobby_terminal_id": "b75a499c-7077-5f00-ab62-a00c42da8766"}
         row.external_id = "ext-3"
         row.machine_id = "21000000-0000-4000-8000-000000000001"
         row.project_id = "proj-1"
@@ -839,7 +839,7 @@ class TestSessionMoreCoverage:
     ) -> None:
         """Only a successor naming the canonical id as predecessor rebinds the row."""
         handler = _TestHandler()
-        terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        terminal_context = {"gobby_terminal_id": "b75a499c-7077-5f00-ab62-a00c42da8766"}
         data: dict[str, Any] = {"source": "compact", "terminal_context": terminal_context}
         if previous_session_id is not None:
             data["previous_session_id"] = previous_session_id

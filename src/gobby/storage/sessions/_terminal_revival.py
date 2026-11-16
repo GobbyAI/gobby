@@ -10,18 +10,13 @@ from gobby.storage.session_models import Session
 from gobby.storage.terminals import TerminalManager
 from gobby.terminal_ownership import (
     TERMINAL_OWNER_STATUSES,
-    is_interactive_terminal_claim,
     recorded_process_exited,
-    resolve_pane_ownership,
-    terminal_session_creation_order,
-    terminal_session_identity,
 )
 from gobby.utils.datetime import utc_now
 
 from ._constants import LIVE_SESSION_STATUSES, get_logger, past_terminal_revival_horizon
 from ._contested_expiry import (
     clear_contested_terminal_expiry,
-    session_has_active_native_subagent,
 )
 from ._operator_claim_hold import clear_operator_claim_hold
 from ._terminal_lineage import clear_successor_of, live_row_of_same_cli
@@ -165,242 +160,39 @@ class _TerminalRevivalMixin:
                 return current
 
         past_horizon = trigger is RevivalTrigger.ACTIVITY and past_terminal_revival_horizon(current)
-        identity = terminal_session_identity(current)
-        if identity is None:
-            if current.status != "expired" or past_horizon:
-                return current
+        if current.status != "expired" or past_horizon:
+            return current
 
-            now = utc_now()
-            with self.db.transaction():
-                self.db.execute(
-                    """
-                    UPDATE sessions
-                    SET status = 'active',
-                        transcript_processed = FALSE,
-                        updated_at = %s,
-                        last_activity = %s
-                    WHERE id = %s
-                      AND status = 'expired'
-                      AND session_type = 'terminal'
-                    """,
-                    (now, now, session_id),
-                )
-            updated = self.get(session_id)
-            if updated is not None and updated.status == "active":
-                clear_contested_terminal_expiry(self.db, session_id)
-                # The parked seat is back, so the operator hold has done its job.
-                clear_operator_claim_hold(self.db, session_id)
-                # Expiry released the gterm pane, and a surviving CLI sends no
-                # SessionStart to bind it again, so revival rebinds it here.
-                context = updated.terminal_context or {}
-                native_terminal_id = context.get("gobby_terminal_id")
-                if (
-                    isinstance(native_terminal_id, str)
-                    and native_terminal_id
-                    and not context.get("tmux_pane")
-                ):
-                    TerminalManager(self.db).bind_session(
-                        native_terminal_id, session_id, updated.project_id
-                    )
-                self._notify_session_change("session_updated", session_id)
-                self._notify_status_transition(
-                    SessionStatusTransition.from_session(updated, transitioned_at=now)
-                )
-            return updated
-
-        machine_id, socket_identity, pane = identity
         now = utc_now()
-        status_changes: list[tuple[Session, str]] = []
-        owner: Session | None = None
-        inconclusive_reason: str | None = None
-        claimant_ids: list[str] = []
-        validated_ids: list[str] = []
-        with self.db.transaction() as conn:
-            rows = conn.execute(
+        with self.db.transaction():
+            self.db.execute(
                 """
-                SELECT *
-                FROM sessions LEFT JOIN (SELECT id AS project_id, name AS project_name FROM projects) AS session_projects USING (project_id)
-                WHERE machine_id IS NOT DISTINCT FROM %s
+                UPDATE sessions
+                SET status = 'active',
+                    transcript_processed = FALSE,
+                    updated_at = %s,
+                    last_activity = %s
+                WHERE id = %s
+                  AND status = 'expired'
                   AND session_type = 'terminal'
-                  AND BTRIM(terminal_context ->> 'tmux_pane') = %s
-                  AND CASE
-                      WHEN NULLIF(BTRIM(terminal_context ->> 'tmux_socket_path'), '')
-                          IS NOT NULL
-                      THEN 'tmux_socket_path:'
-                          || BTRIM(terminal_context ->> 'tmux_socket_path')
-                      WHEN NULLIF(BTRIM(terminal_context ->> 'tmux_socket_name'), '')
-                          IS NOT NULL
-                      THEN 'tmux_socket_name:'
-                          || BTRIM(terminal_context ->> 'tmux_socket_name')
-                      WHEN NULLIF(BTRIM(terminal_context ->> 'tmux_socket'), '') IS NOT NULL
-                      THEN 'tmux_socket:' || BTRIM(terminal_context ->> 'tmux_socket')
-                      ELSE NULL
-                  END = %s
-                  AND status != 'deleted'
-                ORDER BY created_at, id
-                FOR UPDATE OF sessions
                 """,
-                (machine_id, pane, socket_identity),
-            ).fetchall()
-            matching = [
-                candidate
-                for row in rows
-                if terminal_session_identity(candidate := Session.from_row(row)) == identity
-            ]
-            candidates = [
-                candidate
-                for candidate in matching
-                if candidate.status in TERMINAL_OWNER_STATUSES
-                or (candidate.id == session_id and candidate.status == "expired")
-            ]
-            claimant_ids = [candidate.id for candidate in candidates]
-
-            if len(candidates) == 1:
-                candidate = candidates[0]
-                if candidate.status != "expired":
-                    owner = candidate
-                elif not past_horizon:
-                    owner = candidate
-                elif candidate.id == session_id and is_interactive_terminal_claim(candidate):
-                    decision = resolve_pane_ownership(
-                        [candidate],
-                        requested_session_id=session_id,
-                    )
-                    validated_ids = sorted(decision.validated_session_ids)
-                    if decision.owner_session_id == session_id:
-                        owner = candidate
-                    else:
-                        inconclusive_reason = decision.reason
-            elif len(candidates) > 1:
-                interactive_candidates = [
-                    candidate
-                    for candidate in candidates
-                    if is_interactive_terminal_claim(candidate)
-                ]
-                live_native_parents = [
-                    candidate
-                    for candidate in interactive_candidates
-                    if candidate.status in LIVE_SESSION_STATUSES
-                    and session_has_active_native_subagent(self.db, candidate.id)
-                ]
-                if live_native_parents:
-                    owner = min(live_native_parents, key=terminal_session_creation_order)
-                elif interactive_candidates:
-                    decision = resolve_pane_ownership(
-                        interactive_candidates,
-                        requested_session_id=session_id,
-                    )
-                    validated_ids = sorted(decision.validated_session_ids)
-                    owner = next(
-                        (
-                            candidate
-                            for candidate in candidates
-                            if candidate.id == decision.owner_session_id
-                        ),
-                        None,
-                    )
-                    if owner is None:
-                        inconclusive_reason = decision.reason
-                elif not past_horizon:
-                    owner = max(candidates, key=terminal_session_creation_order)
-
-            if owner is not None:
-                reset_target_transcript = owner.id == session_id and owner.status == "expired"
-                for candidate in candidates:
-                    desired_status = candidate.status
-                    if candidate.id == owner.id and candidate.status == "expired":
-                        desired_status = "active"
-                    elif candidate.id != owner.id and candidate.status in TERMINAL_OWNER_STATUSES:
-                        desired_status = "expired"
-
-                    reset_transcript = reset_target_transcript and candidate.id == session_id
-                    if desired_status == candidate.status and not reset_transcript:
-                        continue
-
-                    revived = candidate.id == owner.id and desired_status == "active"
-                    conn.execute(
-                        """
-                        UPDATE sessions
-                        SET status = %s,
-                            transcript_processed = CASE
-                                WHEN %s THEN FALSE
-                                ELSE transcript_processed
-                            END,
-                            updated_at = %s,
-                            last_activity = CASE
-                                WHEN %s THEN %s
-                                ELSE last_activity
-                            END
-                        WHERE id = %s
-                        """,
-                        (desired_status, reset_transcript, now, revived, now, candidate.id),
-                    )
-                    if desired_status != candidate.status:
-                        status_changes.append((candidate, desired_status))
-
-        for candidate, desired_status in status_changes:
-            if desired_status == "active":
-                # This candidate just won the contest its marker recorded, so
-                # the marker has nothing left to shield (#20837).
-                clear_contested_terminal_expiry(self.db, candidate.id)
-                clear_operator_claim_hold(self.db, candidate.id)
-
-        if owner is None:
-            if inconclusive_reason is not None:
-                get_logger().debug(
-                    "Terminal ownership reconciliation was inconclusive for %s: %s",
-                    session_id,
-                    inconclusive_reason,
-                    extra={
-                        "event": "terminal_session_ownership_inconclusive",
-                        "reason": inconclusive_reason,
-                        "terminal_identity": identity,
-                        "requested_session_id": session_id,
-                        "terminal_claimant_session_ids": claimant_ids,
-                        "validated_session_ids": validated_ids,
-                    },
-                )
-            return self.get(session_id)
-
-        logger = get_logger()
-        if current.status == "expired" and current.id != owner.id:
-            logger.debug(
-                "Suppressed revival of superseded terminal session %s; owner is %s",
-                current.id,
-                owner.id,
-                extra={
-                    "event": "terminal_session_revival_suppressed",
-                    "session_id": current.id,
-                    "terminal_owner_session_id": owner.id,
-                    "machine_id": machine_id,
-                    "tmux_socket": socket_identity,
-                    "tmux_pane": pane,
-                },
+                (now, now, session_id),
             )
-
-        for candidate, desired_status in status_changes:
-            event = "session_expired" if desired_status == "expired" else "session_updated"
-            self._notify_session_change(event, candidate.id)
+        updated = self.get(session_id)
+        if updated is not None and updated.status == "active":
+            clear_contested_terminal_expiry(self.db, session_id)
+            # The parked seat is back, so the operator hold has done its job.
+            clear_operator_claim_hold(self.db, session_id)
+            # Expiry released the gterm pane, and a surviving CLI sends no
+            # SessionStart to bind it again, so revival rebinds it here.
+            context = updated.terminal_context or {}
+            native_terminal_id = context.get("gobby_terminal_id")
+            if isinstance(native_terminal_id, str) and native_terminal_id:
+                TerminalManager(self.db).bind_session(
+                    native_terminal_id, session_id, updated.project_id
+                )
+            self._notify_session_change("session_updated", session_id)
             self._notify_status_transition(
-                SessionStatusTransition.from_session(
-                    candidate,
-                    status=desired_status,
-                    transitioned_at=now,
-                )
+                SessionStatusTransition.from_session(updated, transitioned_at=now)
             )
-            if desired_status == "expired":
-                logger.info(
-                    "Expired superseded terminal session %s; owner is %s",
-                    candidate.id,
-                    owner.id,
-                    extra={
-                        "event": "terminal_session_owner_superseded",
-                        "session_id": candidate.id,
-                        "terminal_owner_session_id": owner.id,
-                        "machine_id": machine_id,
-                        "tmux_socket": socket_identity,
-                        "tmux_pane": pane,
-                    },
-                )
-
-        return self.get(session_id)
+        return updated

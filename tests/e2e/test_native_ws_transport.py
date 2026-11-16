@@ -48,7 +48,7 @@ from tests.e2e.conftest import (
     spawn_daemon_instance,
     stop_terminal_host,
 )
-from tests.e2e.test_external_terminal_attach import _gterm_bin_dir
+from tests.e2e.terminal_viewer_support import _gterm_bin_dir
 from tests.fixtures.native_ws_probe_records import RECORDS_FILE
 from tests.fixtures.postgres import TEST_USER_ID
 

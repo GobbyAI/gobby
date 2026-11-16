@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -24,7 +25,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
 from gobby.terminals.composer_ledger import ComposerLedger
-from gobby.terminals.discovery import seed_external_terminal
 from tests.agents.test_lifecycle_monitor import LifecycleRuntime
 from tests.agents.test_lifecycle_monitor_extra import _memory_terminal_services
 from tests.fixtures.isolated_checkout import patch_local_machine_id
@@ -81,7 +81,7 @@ def _interactive_session(
     session_manager: SessionManager,
     sample_project: dict[str, Any],
 ) -> SimpleNamespace:
-    """A registered session whose external pane is a live terminals row."""
+    """A registered session whose native pane is a live terminals row."""
     with pytest.MonkeyPatch.context() as identity_patch:
         patch_local_machine_id(identity_patch, LOCAL_MACHINE_ID)
         row = session_manager.register(
@@ -90,11 +90,21 @@ def _interactive_session(
             source="claude",
             project_id=sample_project["id"],
         )
-        seeded = seed_external_terminal(
-            TerminalManager(session_manager.db),
+        terminals = TerminalManager(session_manager.db)
+        terminal_id = str(uuid4())
+        terminals.create_pending(
+            terminal_id=terminal_id,
             project_id=sample_project["id"],
             session_id=row.id,
-            terminal_context=PANE_CONTEXT,
+            backend="native",
+            ownership="gobby",
+            spawn_key=terminal_id,
+        )
+        seeded = terminals.promote_to_live(
+            terminal_id,
+            locator={"host_terminal_id": terminal_id},
+            locator_key=f"native:test-epoch:{terminal_id}",
+            host_epoch="test-epoch",
         )
     assert seeded is not None
     return SimpleNamespace(
@@ -684,7 +694,7 @@ async def test_tmux_monitor_reads_interactive_terminal_off_loop_and_reports_prom
     sessions.get.side_effect = session_manager.get
     sessions.update_session_status.side_effect = session_manager.update_session_status
     sessions.list.return_value = [session]
-    runtime = LifecycleRuntime(snapshot_text=APPROVAL_PANE)
+    runtime = LifecycleRuntime(backend="native", snapshot_text=APPROVAL_PANE)
     monitor = InteractiveAttentionMonitor(
         detection_registry=DETECTION_REGISTRY,
         session_manager=sessions,
@@ -729,7 +739,7 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     sessions.get.side_effect = session_manager.get
     sessions.update_session_status.side_effect = session_manager.update_session_status
     sessions.list.return_value = [session]
-    runtime = LifecycleRuntime(snapshot_text=APPROVAL_PANE)
+    runtime = LifecycleRuntime(backend="native", snapshot_text=APPROVAL_PANE)
     monitor = InteractiveAttentionMonitor(
         detection_registry=DETECTION_REGISTRY,
         session_manager=sessions,
@@ -808,7 +818,9 @@ async def test_monitor_keeps_a_composer_block_item_until_the_ledger_clears(
         attention_manager=manager,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
-        registry=runtime_registry(LifecycleRuntime(snapshot_text="Working normally")),
+        registry=runtime_registry(
+            LifecycleRuntime(backend="native", snapshot_text="Working normally")
+        ),
     )
 
     await monitor._check_attention_panes(active_agent_sessions=set())

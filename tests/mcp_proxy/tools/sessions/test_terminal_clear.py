@@ -29,10 +29,7 @@ def _terminal_session(**overrides: Any) -> SimpleNamespace:
         "status": "active",
         "source": "codex",
         "session_type": "terminal",
-        "terminal_context": {
-            "tmux_pane": "%1",
-            "tmux_socket_path": "/tmp/tmux-test",
-        },
+        "terminal_context": {"gobby_terminal_id": "1e557198-09a7-56ec-ba24-bb707c6faf68"},
     }
     fields.update(overrides)
     return SimpleNamespace(**fields)
@@ -545,7 +542,6 @@ async def test_codex_clear_acknowledges_marker_consumed_by_typed_prompt() -> Non
     patches = [p for p in patches if p.attribute != "stage_clear_attempt"]
     patches.append(patch.object(_terminal_clear, "stage_clear_attempt", stage_attempt))
     patches.append(patch.object(_terminal_clear, "SessionVariableManager", _VariablesAfterPrompt))
-    patches.append(patch.object(_terminal_clear, "_find_new_provider_session", return_value=None))
 
     result = await _run_clear(patches)
 
