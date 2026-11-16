@@ -22,9 +22,9 @@ from gobby.storage.agents import AgentRun, AgentRunStatus, AgentRunTerminalReaso
 pytestmark = pytest.mark.unit
 
 _CAPTURE_ID = "capture-123"
-_START_MARKER = f"--- GOBBY TMUX CAPTURE {_CAPTURE_ID} ---"
-_END_MARKER = f"--- END GOBBY TMUX CAPTURE {_CAPTURE_ID} ---"
-_LEGACY_BARE_END_MARKER = "--- END GOBBY TMUX CAPTURE ---"
+_START_MARKER = f"--- GOBBY TERMINAL CAPTURE {_CAPTURE_ID} ---"
+_END_MARKER = f"--- END GOBBY TERMINAL CAPTURE {_CAPTURE_ID} ---"
+_LEGACY_BARE_END_MARKER = "--- END GOBBY TERMINAL CAPTURE ---"
 
 
 def _slot(capture: str, *, prefix: str = "", include_end: bool = True) -> str:

@@ -96,7 +96,7 @@ async def _default_run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
-class TmuxSender(Protocol):
+class TerminalWakeSender(Protocol):
     def __call__(
         self,
         identity: str,
@@ -144,7 +144,7 @@ class WakeDispatcher:
     Constructor args:
         session_manager: For looking up session metadata (agent_depth, terminal_context)
         ism_manager: For creating InterSessionMessages (durable fallback)
-        tmux_sender: Optional async callable to send keys to a managed terminal ID
+        terminal_sender: Optional async callable to send keys to a managed terminal ID
         sdk_resumer: Optional async callable to resume an SDK session with a new prompt
         agent_run_manager: Optional manager for looking up sdk_session_id from agent runs
         terminal_manager: Optional lookup for the live terminal row hosting a session
@@ -155,7 +155,7 @@ class WakeDispatcher:
         self,
         session_manager: SessionManager,
         ism_manager: InterSessionMessageManager,
-        tmux_sender: TmuxSender | None = None,
+        terminal_sender: TerminalWakeSender | None = None,
         native_batch_sender: NativeBatchSender | None = None,
         sdk_resumer: SdkResumer | None = None,
         agent_run_manager: LocalAgentRunManager | None = None,
@@ -168,7 +168,7 @@ class WakeDispatcher:
     ) -> None:
         self._session_manager = session_manager
         self._ism_manager = ism_manager
-        self._tmux_sender = tmux_sender
+        self._terminal_sender = terminal_sender
         self._native_batch_sender = native_batch_sender
         self._sdk_resumer = sdk_resumer
         self._agent_run_manager = agent_run_manager
@@ -631,14 +631,14 @@ class WakeDispatcher:
         # sessions. An unbound terminal has no safe input target.
         terminal_route = await self._terminal_route_for_session(session)
         terminal = terminal_route.managed_terminal
-        if terminal is not None and self._tmux_sender is not None:
+        if terminal is not None and self._terminal_sender is not None:
             if not bypass_debounce and not await self._should_send_live_wake(session_id):
                 return wake_debounced_result(session_id, method="terminal")
             return await self._send_managed_terminal_wake(
                 session_id,
                 session,
                 terminal,
-                self._tmux_sender,
+                self._terminal_sender,
                 prompt=prompt,
                 handoff_attempt_id=handoff_attempt_id,
             )
@@ -839,7 +839,7 @@ class WakeDispatcher:
         session_id: str,
         session: Any,
         terminal: Any,
-        send: TmuxSender,
+        send: TerminalWakeSender,
         *,
         prompt: str = CONTINUE_WAKE_MESSAGE,
         handoff_attempt_id: str | None = None,

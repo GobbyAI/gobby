@@ -83,7 +83,7 @@ async def handoff_wake(
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=messages,
-        tmux_sender=sender,
+        terminal_sender=sender,
         native_batch_sender=batch_sender,
         terminal_manager=terminals,
         run_db=_run_db,

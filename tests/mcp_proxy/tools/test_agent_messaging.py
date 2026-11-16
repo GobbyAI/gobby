@@ -1041,7 +1041,7 @@ class TestSendMessage:
         wake_dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=message_manager,
-            tmux_sender=native_sender,
+            terminal_sender=native_sender,
             terminal_manager=MemoryTerminalStore(terminal),
         )
         registry = InternalToolRegistry(

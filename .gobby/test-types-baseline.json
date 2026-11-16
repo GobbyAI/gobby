@@ -5311,16 +5311,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/storage/test_agent_capture.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 26,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 4,
-      "path": "tests/storage/test_agent_capture.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/storage/test_audit_coverage.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 28,
@@ -5527,26 +5517,6 @@
       "message": "Function is missing a type annotation",
       "occurrences": 6,
       "path": "tests/storage/test_spans.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/test_storage_agents.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 80,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 4,
-      "path": "tests/storage/test_storage_agents.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/storage/test_storage_agents.py::::mypy:union-attr",
-      "issue_code": "mypy:union-attr",
-      "line": 259,
-      "message": "Item \"None\" of \"AgentRun | None\" has no attribute \"to_dict\"",
-      "occurrences": 43,
-      "path": "tests/storage/test_storage_agents.py",
       "severity": "high",
       "test_name": ""
     },

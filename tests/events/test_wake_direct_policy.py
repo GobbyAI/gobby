@@ -101,7 +101,7 @@ def _seat(
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=messages,
-        tmux_sender=sender,
+        terminal_sender=sender,
         terminal_manager=MemoryTerminalStore(terminal),
         run_db=_run_db,
         lifecycle_refresh=_flush,

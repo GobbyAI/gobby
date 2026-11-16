@@ -1260,7 +1260,7 @@ async def test_terminal_client_stack_end_to_end(
                 "cleanup_http_status": run["cleanup_http_status"],
             }
             result = str(run.get("result") or "")
-            assert "GOBBY TMUX CAPTURE" in result or run.get("status") in {
+            assert "GOBBY TERMINAL CAPTURE" in result or run.get("status") in {
                 "cancelled",
                 "completed",
                 "failed",

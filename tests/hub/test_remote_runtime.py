@@ -20,7 +20,7 @@ from gobby.hub import remote_cancel, remote_pane, remote_runtime, remote_termina
 from gobby.hub.node_client import NodeCommandError
 from gobby.hub.node_commands import ReportAgent
 from gobby.hub.remote_runtime import RemoteTerminalRuntime
-from gobby.runner_init.orchestration import _send_tmux_session_wake
+from gobby.runner_init.orchestration import _send_terminal_session_wake
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import Terminal, TerminalManager
@@ -389,7 +389,7 @@ def _wake_dispatcher(store: MemoryTerminalStore, batch: AsyncMock) -> WakeDispat
     return WakeDispatcher(
         session_manager=session_manager,
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         native_batch_sender=batch,
         terminal_manager=store,
     )

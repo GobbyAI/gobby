@@ -101,7 +101,7 @@ class Harness:
         return WakeDispatcher(
             session_manager=self.session_manager,
             ism_manager=self.messages,
-            tmux_sender=sender,
+            terminal_sender=sender,
             terminal_manager=self.terminals,
         )
 
@@ -192,7 +192,7 @@ async def test_withheld_retry_does_not_repeat_a_later_successful_send(
     dispatcher = WakeDispatcher(
         session_manager=harness.session_manager,
         ism_manager=harness.messages,
-        tmux_sender=sender,
+        terminal_sender=sender,
         terminal_manager=harness.terminals,
         activity_probe=probe,
     )
@@ -233,7 +233,7 @@ async def test_deferred_wake_does_not_replay_messages_read_while_active(
     dispatcher = WakeDispatcher(
         session_manager=harness.session_manager,
         ism_manager=harness.messages,
-        tmux_sender=sender,
+        terminal_sender=sender,
         terminal_manager=harness.terminals,
         lifecycle_refresh=refresh,
     )
@@ -286,7 +286,7 @@ async def test_concurrent_active_sends_defer_one_wake_until_idle(
     dispatcher = WakeDispatcher(
         session_manager=harness.session_manager,
         ism_manager=harness.messages,
-        tmux_sender=sender,
+        terminal_sender=sender,
         terminal_manager=harness.terminals,
         lifecycle_refresh=refresh,
     )
@@ -637,7 +637,7 @@ async def test_real_wake_adapter_orders_mailbox_read_at_enter_dispatch(
     dispatcher = WakeDispatcher(
         session_manager=harness.session_manager,
         ism_manager=harness.messages,
-        tmux_sender=orchestration_module._send_tmux_session_wake,
+        terminal_sender=orchestration_module._send_terminal_session_wake,
         terminal_manager=harness.terminals,
         native_batch_sender=orchestration_module._send_native_wake_batch if batch else None,
     )

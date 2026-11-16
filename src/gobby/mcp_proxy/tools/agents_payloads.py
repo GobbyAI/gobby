@@ -53,7 +53,7 @@ def _agent_capture_parts(run: AgentRunProtocol) -> _AgentCaptureParts | None:
         return None
 
     result = run.result or ""
-    marker = f"--- GOBBY TMUX CAPTURE {capture_id} ---"
+    marker = f"--- GOBBY TERMINAL CAPTURE {capture_id} ---"
     marker_offset = result.find(marker)
     if marker_offset < 0:
         return _AgentCaptureParts(
@@ -66,7 +66,7 @@ def _agent_capture_parts(run: AgentRunProtocol) -> _AgentCaptureParts | None:
     content_offset = marker_offset + len(marker)
     if result.startswith("\n", content_offset):
         content_offset += 1
-    end_marker = f"--- END GOBBY TMUX CAPTURE {capture_id} ---"
+    end_marker = f"--- END GOBBY TERMINAL CAPTURE {capture_id} ---"
     end_offset = result.find(f"\n{end_marker}", content_offset)
     content = result[content_offset:] if end_offset < 0 else result[content_offset:end_offset]
     content = _without_capture_meta(content)

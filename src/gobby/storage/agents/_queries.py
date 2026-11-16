@@ -404,7 +404,7 @@ class _AgentRunQueryMixin:
             limit=limit,
         )
 
-    def list_terminal_with_tmux(
+    def list_terminal_runs(
         self: _AgentRunQueryHost,
         machine_id: str,
         limit: int = 100,

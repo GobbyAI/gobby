@@ -328,7 +328,7 @@ class TestMailboxDirectSend:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=InterSessionMessageManager(temp_db),
-            tmux_sender=send_keys,
+            terminal_sender=send_keys,
             terminal_manager=terminals,
         )
         send_task = asyncio.create_task(
@@ -401,7 +401,7 @@ class TestMailboxDirectSend:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=InterSessionMessageManager(temp_db),
-            tmux_sender=native_sender,
+            terminal_sender=native_sender,
             terminal_manager=MemoryTerminalStore(terminal),
         )
 

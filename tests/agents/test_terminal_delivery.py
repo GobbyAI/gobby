@@ -645,7 +645,7 @@ async def test_terminal_delivery_wakes_durable_subscriber_after_registry_restart
     before_restart = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=ism_manager,
-        tmux_sender=native_sender,
+        terminal_sender=native_sender,
         terminal_manager=terminals,
         run_db=run_inline,
     )
@@ -655,7 +655,7 @@ async def test_terminal_delivery_wakes_durable_subscriber_after_registry_restart
     after_restart = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=ism_manager,
-        tmux_sender=native_sender,
+        terminal_sender=native_sender,
         terminal_manager=terminals,
         run_db=run_inline,
     )

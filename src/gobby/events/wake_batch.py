@@ -83,7 +83,7 @@ async def dispatch_live_wakes(
             if (
                 getattr(session, "agent_depth", 0) != 0
                 or dispatcher._terminal_manager is None
-                or dispatcher._tmux_sender is None
+                or dispatcher._terminal_sender is None
                 or dispatcher._native_batch_sender is None
             ):
                 fallback.append((session_id, session))

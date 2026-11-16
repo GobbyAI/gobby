@@ -20,7 +20,7 @@ from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.llm.model_registry import ModelInfo
 from gobby.runner import GobbyRunner
 from gobby.runner_init.cron import RETIRED_SYSTEM_CRON_JOBS
-from gobby.runner_init.orchestration import _send_tmux_session_wake
+from gobby.runner_init.orchestration import _send_terminal_session_wake
 from gobby.runner_lifecycle_subsystems import _start_system_automation_loop
 from gobby.runner_maintenance import storage_hygiene
 from gobby.telemetry.span_store import GobbySpanExporter
@@ -152,6 +152,8 @@ class TestGobbyRunnerInit:
         mock_config_with_websocket: MagicMock,
     ) -> None:
         """Test that init creates all required components."""
+        from gobby.runner_init.orchestration import _send_terminal_session_wake
+
         patches = create_base_patches(mock_config=mock_config_with_websocket)
 
         config_file = tmp_path / "config.yaml"
@@ -174,6 +176,8 @@ class TestGobbyRunnerInit:
             assert runner._shutdown_requested is False
             assert runner.db_executor.max_workers >= 8
             assert runner.coverage_executor.max_concurrency >= 1
+            assert runner.wake_dispatcher is not None
+            assert runner.wake_dispatcher._terminal_sender is _send_terminal_session_wake
             cast(MagicMock, runner.database).resize_pool.assert_called_once_with(64)
             mock_http_cls.assert_called_once()
             mock_ws_cls.assert_called_once()
@@ -469,7 +473,7 @@ class TestGobbyRunnerInit:
         )
 
 
-class TestWakeTmuxSenders:
+class TestWakeTerminalSenders:
     """Tests for runner-level tmux wake sender wiring."""
 
     @pytest.mark.asyncio
@@ -503,7 +507,7 @@ class TestWakeTmuxSenders:
         )
         monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", fake_sleep)
 
-        await _send_tmux_session_wake(
+        await _send_terminal_session_wake(
             "gobby-agent-abc",
             "[Gobby] Check messages",
             submit=True,
@@ -573,7 +577,7 @@ class TestWakeTmuxSenders:
             lambda: (store, coordinator),
         )
         first = asyncio.create_task(
-            _send_tmux_session_wake(
+            _send_terminal_session_wake(
                 terminal.session_name or "",
                 "first",
                 submit=True,
@@ -583,7 +587,7 @@ class TestWakeTmuxSenders:
         )
         assert await asyncio.to_thread(started.wait, 5)
         second = asyncio.create_task(
-            _send_tmux_session_wake(
+            _send_terminal_session_wake(
                 terminal.session_name or "",
                 "second",
                 submit=True,
@@ -618,7 +622,7 @@ class TestWakeTmuxSenders:
         self,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        from gobby.runner_init.orchestration import _send_tmux_session_wake
+        from gobby.runner_init.orchestration import _send_terminal_session_wake
         from gobby.terminals.runtime import Delivered, IndeterminateWrite
         from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
         from tests.terminals.fakes import (
@@ -647,7 +651,7 @@ class TestWakeTmuxSenders:
         )
         monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", fake_sleep)
         with pytest.raises(IndeterminateWrite):
-            await _send_tmux_session_wake(
+            await _send_terminal_session_wake(
                 terminal.id,
                 "[Gobby] Check messages",
                 submit=True,

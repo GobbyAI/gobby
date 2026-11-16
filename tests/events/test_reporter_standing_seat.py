@@ -100,7 +100,7 @@ async def test_reporter_cadence_wait_wakes_next_tick_and_rearms(
         session_manager=SessionManager(harness.db),
         ism_manager=harness.messages,
         terminal_manager=terminals,
-        tmux_sender=sender,
+        terminal_sender=sender,
     )
     service = CoordinationWaitService(
         harness.manager,

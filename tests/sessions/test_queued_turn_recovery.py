@@ -391,7 +391,7 @@ async def test_queued_stop_recovers_native_composer_and_pending_wake(
     dispatcher = WakeDispatcher(
         session_manager=seat.sessions,
         ism_manager=messages,
-        tmux_sender=sender,
+        terminal_sender=sender,
         terminal_manager=terminals,
         run_db=_run_db,
         activity_probe=probe_terminal_activity,

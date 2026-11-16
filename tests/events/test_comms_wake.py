@@ -15,7 +15,7 @@ from gobby.events.live_wake import (
     TerminalActivity,
 )
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
-from gobby.runner_init.orchestration import _send_tmux_session_wake
+from gobby.runner_init.orchestration import _send_terminal_session_wake
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessage
 from gobby.storage.sessions import SessionManager, system_session_id
@@ -131,7 +131,7 @@ async def test_native_comms_wake_withholds_a_real_draft(native_chain: ManagedCha
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=_operator_dm_mailbox(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=native_chain.store,
         activity_probe=_draft,
     )
@@ -150,7 +150,7 @@ async def test_native_comms_wake_types_into_an_empty_composer(native_chain: Mana
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=_operator_dm_mailbox(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=native_chain.store,
         activity_probe=_empty,
     )

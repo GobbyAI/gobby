@@ -120,9 +120,9 @@ class AgentCleanupHandler:
             force_full_cleanup=force_full_cleanup,
         )
 
-    async def cleanup_terminal_tmux_sessions(self) -> int:
-        """Close tmux sessions left behind for already-terminal agent runs."""
-        return await self._resource_cleaner.cleanup_terminal_tmux_sessions()
+    async def cleanup_terminal_sessions(self) -> int:
+        """Close terminal sessions left behind for already-terminal agent runs."""
+        return await self._resource_cleaner.cleanup_terminal_sessions()
 
     async def _completion_stats_for_run(self, run: AgentRun) -> tuple[int, int]:
         session_manager = self._get_session_manager()
@@ -442,9 +442,9 @@ class AgentCleanupHandler:
         expired = await self._run_db(self._agent_run_manager.expire_sessions_for_terminal_runs)
         if expired:
             logger.info("Expired %s session(s) for terminal agent runs", expired)
-        closed = await self.cleanup_terminal_tmux_sessions()
+        closed = await self.cleanup_terminal_sessions()
         if closed:
-            logger.info("Closed %s lingering tmux session(s) for terminal agent runs", closed)
+            logger.info("Closed %s lingering terminal session(s) for terminal agent runs", closed)
         return cast(int, expired)
 
     async def cleanup_stale_pending_runs(self, *, machine_id: str) -> int:
@@ -601,7 +601,7 @@ class AgentCleanupHandler:
                 if preterminalized_run is not None:
                     # Prompt delivery may have killed the pane while its durable row
                     # is still live. Settle it before task recovery checks liveness.
-                    await self._resource_cleaner._close_tmux_session(terminal_run)
+                    await self._resource_cleaner._close_terminal_session(terminal_run)
                 await self._task_recovery.recover_task_from_terminal_agent(
                     terminal_run, outcome="failed"
                 )

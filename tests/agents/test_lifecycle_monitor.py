@@ -1804,7 +1804,7 @@ class TestCheckDeadAgents:
             ) as mock_identity,
             patch.object(
                 monitor._health_monitor,
-                "_terminate_tmux_run",
+                "_terminate_terminal_run",
                 new=_successful_termination_stub(monitor),
             ),
             patch("gobby.agents.agent_health.os.kill") as mock_kill,
@@ -3355,7 +3355,7 @@ class TestCheckExpiredAgents:
             _terminal_liveness(monitor, True),
             patch.object(
                 monitor._health_monitor,
-                "_terminate_tmux_run",
+                "_terminate_terminal_run",
                 new=_successful_termination_stub(monitor),
             ),
         ):
@@ -3428,7 +3428,7 @@ class TestCheckExpiredAgents:
             _pane_text(monitor, ""),
             patch.object(
                 monitor._health_monitor,
-                "_terminate_tmux_run",
+                "_terminate_terminal_run",
                 new=_successful_termination_stub(monitor, on_terminate=kill_live_agent),
             ),
             patch.object(task_manager, "release_task_claim", side_effect=release_task_claim),
@@ -3541,7 +3541,7 @@ class TestCheckExpiredAgents:
             _pane_text(monitor, "CANARY-OK\nQA verdict: APPROVED\n"),
             patch.object(
                 monitor._health_monitor,
-                "_terminate_tmux_run",
+                "_terminate_terminal_run",
                 new=_successful_termination_stub(monitor),
             ),
         ):
@@ -3604,7 +3604,7 @@ class TestCheckExpiredAgents:
             _terminal_liveness(monitor, True),
             patch.object(
                 monitor._health_monitor,
-                "_terminate_tmux_run",
+                "_terminate_terminal_run",
                 new=_successful_termination_stub(monitor),
             ),
         ):
@@ -4002,7 +4002,7 @@ class TestCheckExpiredAgents:
             _terminal_liveness(mon, True),
             patch.object(
                 mon._health_monitor,
-                "_terminate_tmux_run",
+                "_terminate_terminal_run",
                 new=_successful_termination_stub(mon),
             ),
         ):
@@ -4057,7 +4057,7 @@ class TestCheckExpiredAgents:
             _terminal_liveness(mon, True),
             patch.object(
                 mon._health_monitor,
-                "_terminate_tmux_run",
+                "_terminate_terminal_run",
                 new=_successful_termination_stub(mon),
             ),
         ):
@@ -4174,7 +4174,7 @@ class TestCheckProviderStallsKillsAgent:
             _terminal_liveness(monitor, True),
             patch.object(
                 monitor._health_monitor,
-                "_terminate_tmux_run",
+                "_terminate_terminal_run",
                 new=_successful_termination_stub(monitor),
             ) as mock_kill,
         ):
@@ -4233,7 +4233,7 @@ class TestCheckProviderStallsKillsAgent:
             ),
             patch.object(
                 monitor._health_monitor,
-                "_terminate_tmux_run",
+                "_terminate_terminal_run",
                 new_callable=AsyncMock,
                 side_effect=terminate_run,
             ),
@@ -4489,7 +4489,7 @@ class TestCheckInitializationTimeout:
 
         with patch.object(
             monitor._health_monitor,
-            "_terminate_tmux_run",
+            "_terminate_terminal_run",
             new=_successful_termination_stub(monitor),
         ) as mock_kill:
             killed = await monitor.check_initialization_timeout()
@@ -4854,7 +4854,7 @@ class TestCheckInitializationTimeout:
 
         with patch.object(
             monitor._health_monitor,
-            "_terminate_tmux_run",
+            "_terminate_terminal_run",
             new_callable=AsyncMock,
             return_value=True,
         ) as mock_kill:
@@ -4897,7 +4897,7 @@ class TestCheckInitializationTimeout:
 
         with patch.object(
             monitor._health_monitor,
-            "_terminate_tmux_run",
+            "_terminate_terminal_run",
             new=_successful_termination_stub(monitor),
         ) as mock_kill:
             killed = await monitor.check_initialization_timeout()
@@ -4944,7 +4944,7 @@ class TestCheckInitializationTimeout:
 
         with patch.object(
             monitor._health_monitor,
-            "_terminate_tmux_run",
+            "_terminate_terminal_run",
             new=_successful_termination_stub(monitor),
         ) as mock_kill:
             killed = await monitor.check_initialization_timeout()

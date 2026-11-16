@@ -225,7 +225,7 @@ def test_kill_failure_retries_with_capture_slot_replacement() -> None:
     assert final.capture_revision == 2
     assert final.result is not None
     assert "printed after failed kill" in final.result
-    assert final.result.count("--- GOBBY TMUX CAPTURE ") == 1
+    assert final.result.count("--- GOBBY TERMINAL CAPTURE ") == 1
     assert storage.events.index("persist:retry") < storage.events.index("kill:false")
     assert storage.events[-1] == "terminal:retry:error"
 

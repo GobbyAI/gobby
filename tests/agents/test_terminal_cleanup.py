@@ -58,7 +58,7 @@ async def test_nested_terminal_close_does_not_log_exception_text(
         patch("gobby.storage.terminals.TerminalManager", return_value=manager),
         patch("gobby.agents.capture.backend_session_present", new=probe),
     ):
-        closed = await handler._resource_cleaner._close_tmux_session(run)
+        closed = await handler._resource_cleaner._close_terminal_session(run)
 
     assert closed is False
     assert "RuntimeError" in caplog.text

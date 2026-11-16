@@ -319,7 +319,7 @@ def _wrapper_handler(
     return handler, cleanup_runs
 
 
-async def test_terminalize_successful_run_captures_live_tmux_before_kill() -> None:
+async def test_terminalize_successful_run_captures_live_terminal_before_kill() -> None:
     storage = _CaptureWrapperStorage(_tmux_run())
     services, runtime = _capture_services()
     handler, cleanup_runs = _wrapper_handler(storage, services)
@@ -358,7 +358,7 @@ async def test_terminalize_successful_run_kill_failure_keeps_run_nonterminal() -
     assert cleanup_runs == []
 
 
-async def test_terminalize_cancelled_run_captures_live_tmux_before_kill() -> None:
+async def test_terminalize_cancelled_run_captures_live_terminal_before_kill() -> None:
     storage = _CaptureWrapperStorage(_tmux_run())
     services, runtime = _capture_services()
     handler, cleanup_runs = _wrapper_handler(storage, services)

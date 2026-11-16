@@ -86,7 +86,7 @@ def _seat(
     dispatcher = WakeDispatcher(
         session_manager=sessions,
         ism_manager=MagicMock(),
-        tmux_sender=pane_sender,
+        terminal_sender=pane_sender,
         terminal_manager=terminals,
         activity_probe=cast(ActivityProbe, probe_terminal_activity),
         attention_manager=attention,

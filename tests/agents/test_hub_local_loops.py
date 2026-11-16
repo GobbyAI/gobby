@@ -103,7 +103,7 @@ def _terminal_run(
 
 
 @pytest.mark.asyncio
-async def test_tmux_cleanup_is_machine_scoped(
+async def test_terminal_cleanup_is_machine_scoped(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     session_manager: SessionManager,
@@ -130,8 +130,8 @@ async def test_tmux_cleanup_is_machine_scoped(
         return True
 
     handler = _handler(temp_db, agent_run_manager=manager)
-    with patch.object(TerminalResourceCleaner, "_close_tmux_session", fake_close):
-        await handler.cleanup_terminal_tmux_sessions()
+    with patch.object(TerminalResourceCleaner, "_close_terminal_session", fake_close):
+        await handler.cleanup_terminal_sessions()
 
     assert local_id in closed
     assert remote_id not in closed
@@ -175,7 +175,7 @@ async def test_post_cleanup_skips_local_phases_for_remote_run(
             "gobby.agents.terminal_cleanup.terminal_delivery.deliver_and_cleanup_terminal_run",
             fake_delivery,
         ),
-        patch.object(TerminalResourceCleaner, "_close_tmux_session", fake_tmux),
+        patch.object(TerminalResourceCleaner, "_close_terminal_session", fake_tmux),
         patch("gobby.agents.terminal_cleanup.reap_srt_runner_process_tree", fake_srt),
         patch("gobby.agents.terminal_cleanup.reap_sandbox_run_roots", fake_sandbox),
         patch(

@@ -512,7 +512,7 @@ async def test_protected_wakes_preserve_mailbox(
     dispatcher = WakeDispatcher(
         session_manager=SessionManager(harness.db),
         ism_manager=harness.messages,
-        tmux_sender=sender,
+        terminal_sender=sender,
         sdk_resumer=sender,
     )
     row = harness.wait()
@@ -613,7 +613,7 @@ async def test_interactive_grok_seat_waits_then_wakes_on_owner_message(
         session_manager=SessionManager(harness.db),
         ism_manager=harness.messages,
         terminal_manager=terminals,
-        tmux_sender=sender,
+        terminal_sender=sender,
     )
     message_id = harness.reply()
     service = CoordinationWaitService(
@@ -667,7 +667,7 @@ async def test_timed_out_reply_wait_wakes_a_codex_seat(harness: CoordinationHarn
         session_manager=SessionManager(harness.db),
         ism_manager=harness.messages,
         terminal_manager=terminals,
-        tmux_sender=sender,
+        terminal_sender=sender,
     )
     service = CoordinationWaitService(
         harness.manager,

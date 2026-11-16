@@ -138,7 +138,7 @@ async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[
     return wake_results
 
 
-async def _send_tmux_session_wake(
+async def _send_terminal_session_wake(
     identity: str,
     message: str,
     *,
@@ -436,7 +436,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,
         ism_manager=ism_manager,
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         native_batch_sender=_send_native_wake_batch,
         agent_run_manager=agent_run_manager,
         run_db=runner.db_executor.run,

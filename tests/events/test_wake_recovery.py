@@ -440,7 +440,7 @@ async def test_restart_reconciliation_reaches_delivered_without_manual_input(
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=messages,
-        tmux_sender=native_sender,
+        terminal_sender=native_sender,
         terminal_manager=terminals,
         run_db=_run_db,
         activity_probe=_empty_activity,
@@ -545,7 +545,7 @@ async def test_replayed_stop_settles_active_session_before_queued_terminal_wake(
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=messages,
-        tmux_sender=native_sender,
+        terminal_sender=native_sender,
         terminal_manager=MemoryTerminalStore(terminal),
         run_db=_run_db,
     )
@@ -582,7 +582,7 @@ async def test_post_restart_codex_idle_prompt_replays_one_queued_wake(
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=messages,
-        tmux_sender=native_sender,
+        terminal_sender=native_sender,
         terminal_manager=terminals,
         run_db=_run_db,
         lifecycle_refresh=flush,

@@ -183,7 +183,7 @@ class _AgentRunCleanupMixin:
                             WHERE started.id = agent_runs.terminal_id
                               AND started.state = 'live'
                         ) THEN 'Pending run never started'
-                        ELSE 'Pending tmux-initialized run never started'
+                        ELSE 'Pending terminal-initialized run never started'
                     END,
                     pid = NULL,
                     completed_at = %s,
@@ -230,7 +230,7 @@ class _AgentRunCleanupMixin:
             run_ids = [str(row["id"]) for row in cursor.fetchall()]
         if run_ids:
             logger.info(
-                "Failed %s stale pending agent runs (>%sm; tmux >%sm)",
+                "Failed %s stale pending agent runs (>%sm; terminal >%sm)",
                 len(run_ids),
                 timeout_minutes,
                 long_timeout_minutes,

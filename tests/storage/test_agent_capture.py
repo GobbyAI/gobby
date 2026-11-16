@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -23,7 +24,7 @@ def _local_machine_identity() -> Iterator[None]:
 def _create_run(
     db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     *,
     suffix: str,
     child_status: str = "active",
@@ -63,7 +64,7 @@ def _create_run(
 def test_capture_slot_initializes_replaces_and_rejects_stale_writes(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
 ) -> None:
     manager, run_id, _child_id = _create_run(
         temp_db,
@@ -80,7 +81,7 @@ def test_capture_slot_initializes_replaces_and_rejects_stale_writes(
     assert intent is not None
     assert intent.capture_revision == 0
 
-    marker = "--- GOBBY TMUX CAPTURE capture-a ---"
+    marker = "--- GOBBY TERMINAL CAPTURE capture-a ---"
     assert (
         manager.replace_capture_slot(
             run_id,
@@ -96,13 +97,13 @@ def test_capture_slot_initializes_replaces_and_rejects_stale_writes(
         capture_id="capture-a",
         expected_revision=0,
         marker=marker,
-        slot_content=f"{marker}\nfirst output\n--- END GOBBY TMUX CAPTURE capture-a ---",
+        slot_content=f"{marker}\nfirst output\n--- END GOBBY TERMINAL CAPTURE capture-a ---",
     )
     assert first is not None
     assert first.capture_revision == 1
     assert first.result == (
-        "existing prefix\n\n--- GOBBY TMUX CAPTURE capture-a ---\n"
-        "first output\n--- END GOBBY TMUX CAPTURE capture-a ---"
+        "existing prefix\n\n--- GOBBY TERMINAL CAPTURE capture-a ---\n"
+        "first output\n--- END GOBBY TERMINAL CAPTURE capture-a ---"
     )
 
     replaced = manager.replace_capture_slot(
@@ -110,7 +111,7 @@ def test_capture_slot_initializes_replaces_and_rejects_stale_writes(
         capture_id="capture-a",
         expected_revision=1,
         marker=marker,
-        slot_content=f"{marker}\nsecond output\n--- END GOBBY TMUX CAPTURE capture-a ---",
+        slot_content=f"{marker}\nsecond output\n--- END GOBBY TERMINAL CAPTURE capture-a ---",
     )
     assert replaced is not None
     assert replaced.capture_revision == 2
@@ -124,7 +125,7 @@ def test_capture_slot_initializes_replaces_and_rejects_stale_writes(
             run_id,
             capture_id="foreign",
             expected_revision=2,
-            marker="--- GOBBY TMUX CAPTURE foreign ---",
+            marker="--- GOBBY TERMINAL CAPTURE foreign ---",
             slot_content="foreign",
         )
         is None
@@ -146,7 +147,7 @@ def test_capture_slot_initializes_replaces_and_rejects_stale_writes(
 def test_termination_candidates_include_intent_and_terminal_child_only(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
 ) -> None:
     manager, intended_id, _ = _create_run(
         temp_db,
@@ -198,7 +199,7 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
 def test_terminal_transition_clears_intent_and_preserves_capture_result(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
 ) -> None:
     manager, run_id, _ = _create_run(
         temp_db,
@@ -208,13 +209,13 @@ def test_terminal_transition_clears_intent_and_preserves_capture_result(
     )
     intent = manager.record_termination_intent(run_id, action="fail", reason="failure")
     assert intent is not None
-    marker = "--- GOBBY TMUX CAPTURE stable ---"
+    marker = "--- GOBBY TERMINAL CAPTURE stable ---"
     captured = manager.replace_capture_slot(
         run_id,
         capture_id="stable",
         expected_revision=0,
         marker=marker,
-        slot_content=f"{marker}\nfull output\n--- END GOBBY TMUX CAPTURE stable ---",
+        slot_content=f"{marker}\nfull output\n--- END GOBBY TERMINAL CAPTURE stable ---",
     )
     assert captured is not None
 

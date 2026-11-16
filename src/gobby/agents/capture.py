@@ -116,11 +116,11 @@ def _capture_lock(session_name: str) -> threading.Lock:
 
 
 def _capture_marker(capture_id: str) -> str:
-    return f"--- GOBBY TMUX CAPTURE {capture_id} ---"
+    return f"--- GOBBY TERMINAL CAPTURE {capture_id} ---"
 
 
 def _capture_end_marker(capture_id: str) -> str:
-    return f"--- END GOBBY TMUX CAPTURE {capture_id} ---"
+    return f"--- END GOBBY TERMINAL CAPTURE {capture_id} ---"
 
 
 def _capture_slot(
@@ -154,14 +154,14 @@ class ParsedCaptureSlot:
 
 def parse_capture_slot(result: str) -> ParsedCaptureSlot:
     """Read truncation metadata from a stored capture-before-kill artifact."""
-    start = result.find("--- GOBBY TMUX CAPTURE ")
+    start = result.find("--- GOBBY TERMINAL CAPTURE ")
     if start < 0:
         return ParsedCaptureSlot(text=result, truncated=False, dropped_bytes=0, total_bytes=None)
     body_start = result.find("\n", start)
     if body_start < 0:
         return ParsedCaptureSlot(text=result, truncated=False, dropped_bytes=0, total_bytes=None)
     rest = result[body_start + 1 :]
-    end = rest.find("--- END GOBBY TMUX CAPTURE ")
+    end = rest.find("--- END GOBBY TERMINAL CAPTURE ")
     payload = rest if end < 0 else rest[:end]
     first, _, remainder = payload.partition("\n")
     try:

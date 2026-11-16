@@ -166,7 +166,7 @@ class AgentHealthMonitor:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db_callback(func, *args, **kwargs)
 
-    async def _terminate_tmux_run(
+    async def _terminate_terminal_run(
         self,
         run: AgentRun,
         *,
@@ -359,8 +359,8 @@ class AgentHealthMonitor:
                     else None
                 )
                 if reason is None and services is not None and terminal is not None:
-                    tmux_alive = await services.is_live(run)
-                    if tmux_alive:
+                    terminal_alive = await services.is_live(run)
+                    if terminal_alive:
                         if run.pid:
                             session_id = run.child_session_id or run.parent_session_id
                             identity = await inspect_agent_process_identity(
@@ -415,7 +415,7 @@ class AgentHealthMonitor:
                     error_msg += f"\n\n--- Last terminal output ---\n{pane_snapshot[-2000:]}"
 
                 if terminal is not None:
-                    if not await self._terminate_tmux_run(
+                    if not await self._terminate_terminal_run(
                         run,
                         action="timeout" if is_timeout else "fail",
                         reason=error_msg,
@@ -513,7 +513,7 @@ class AgentHealthMonitor:
                     None if self._terminal_services is None else self._terminal_services.manager,
                     run,
                 ):
-                    if await self._terminate_tmux_run(run, action="fail", reason=error_msg):
+                    if await self._terminate_terminal_run(run, action="fail", reason=error_msg):
                         killed += 1
                     continue
                 elif run.pid:
@@ -619,7 +619,7 @@ class AgentHealthMonitor:
                         f"consecutive_hits={classification.consecutive_hits})\n\n"
                         f"{(pane_output or '').strip()}"
                     )
-                    if await self._terminate_tmux_run(run, action="fail", reason=error_msg):
+                    if await self._terminate_terminal_run(run, action="fail", reason=error_msg):
                         stalled += 1
             except Exception as e:
                 logger.warning("Error checking provider stall for agent %s: %s", run.id, e)

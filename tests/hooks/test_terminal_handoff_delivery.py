@@ -1651,7 +1651,7 @@ async def test_held_compact_failed_interrupt_preserves_undelivered_payload(
     assert claim_staged_handoff_delivery(hub_db, SESSION_ID, ATTEMPT_ID) is None
 
 
-async def test_tmux_pane_only_session_gets_no_continuation(
+async def test_unmanaged_session_gets_no_continuation(
     hub_db: HubDatabase,
 ) -> None:
     """Continuations are native-only; a session bound just to a tmux pane has no delivery path."""

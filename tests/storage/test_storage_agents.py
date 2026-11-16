@@ -77,7 +77,7 @@ def test_terminal_transitions_revoke_managed_credentials_once(
 )
 def test_terminal_transition_rolls_back_when_post_update_step_fails(
     agent_manager: LocalAgentRunManager,
-    sample_session: dict,
+    sample_session: dict[str, Any],
     method_name: str,
     kwargs: dict[str, str],
     terminal_status: str,
@@ -116,7 +116,7 @@ def test_terminal_transition_rolls_back_when_post_update_step_fails(
 )
 def test_terminal_transition_rejects_ambient_transaction(
     agent_manager: LocalAgentRunManager,
-    sample_session: dict,
+    sample_session: dict[str, Any],
     method_name: str,
     kwargs: dict[str, str],
 ) -> None:
@@ -144,8 +144,8 @@ def agent_manager(temp_db: HubDatabase) -> LocalAgentRunManager:
 @pytest.fixture
 def sample_session(
     session_manager: SessionManager,
-    sample_project: dict,
-) -> dict:
+    sample_project: dict[str, Any],
+) -> dict[str, Any]:
     """Create a sample session for agent run testing."""
     session = session_manager.register(
         external_id="agent-test-session",
@@ -256,6 +256,7 @@ class TestAgentRun:
         agent_manager.complete(agent_run.id, "Result text", tool_calls_count=5, turns_used=3)
 
         full_run = agent_manager.get(agent_run.id)
+        assert full_run is not None
         d = full_run.to_dict()
 
         # Check all expected fields are present
@@ -554,6 +555,7 @@ class TestLocalAgentRunManager:
 
         completed = agent_manager.complete(agent_run.id, result="Done")
 
+        assert completed is not None
         assert completed.tool_calls_count == 0
         assert completed.turns_used == 0
 
@@ -708,6 +710,7 @@ class TestLocalAgentRunManager:
 
         failed = agent_manager.fail(agent_run.id, error="Error occurred")
 
+        assert failed is not None
         assert failed.tool_calls_count == 0
         assert failed.turns_used == 0
 
@@ -753,6 +756,7 @@ class TestLocalAgentRunManager:
 
         timed_out = agent_manager.timeout(agent_run.id)
 
+        assert timed_out is not None
         assert timed_out.tool_calls_count == 0
         assert timed_out.turns_used == 0
 
@@ -827,7 +831,9 @@ class TestLocalAgentRunManager:
         expired = agent_manager.expire_sessions_for_terminal_runs()
 
         assert expired == 0
-        assert agent_manager.get(pending_run.id).status == "pending"
+        pending_after_expiry = agent_manager.get(pending_run.id)
+        assert pending_after_expiry is not None
+        assert pending_after_expiry.status == "pending"
         pending_updated = session_manager.get(pending_session.id)
         running_updated = session_manager.get(running_session.id)
         assert pending_updated is not None
@@ -1804,6 +1810,7 @@ class TestLocalAgentRunManager:
         assert run_ids == [run1.id]
 
         cleaned = agent_manager.get(run1.id)
+        assert cleaned is not None
         assert cleaned.status == "timeout"
         assert cleaned.error == "Exceeded default timeout (30m)"
         assert cleaned.tool_calls_count == 9
@@ -1841,7 +1848,9 @@ class TestLocalAgentRunManager:
         )
 
         assert run_ids == [run.id]
-        assert agent_manager.get(run.id).status == "timeout"
+        run_after_cleanup = agent_manager.get(run.id)
+        assert run_after_cleanup is not None
+        assert run_after_cleanup.status == "timeout"
 
     def test_cleanup_stale_runs_skips_runs_with_process_identity(
         self,
@@ -1934,6 +1943,7 @@ class TestLocalAgentRunManager:
 
         # Verify run is still running
         fresh = agent_manager.get(run.id)
+        assert fresh is not None
         assert fresh.status == "running"
 
     def test_cleanup_stale_runs_logs_when_cleaned(
@@ -2065,6 +2075,7 @@ class TestLocalAgentRunManager:
         assert run_ids == [pending.id]
 
         cleaned = agent_manager.get(pending.id)
+        assert cleaned is not None
         assert cleaned.status == "error"
         assert cleaned.error == "Pending run never started"
         assert cleaned.completed_at is not None
@@ -2096,7 +2107,9 @@ class TestLocalAgentRunManager:
         )
 
         assert run_ids == [pending.id]
-        assert agent_manager.get(pending.id).status == "error"
+        pending_after_cleanup = agent_manager.get(pending.id)
+        assert pending_after_cleanup is not None
+        assert pending_after_cleanup.status == "error"
 
     def test_cleanup_stale_pending_runs_no_stale(
         self,
@@ -2117,9 +2130,10 @@ class TestLocalAgentRunManager:
 
         # Verify run is still pending
         fresh = agent_manager.get(pending.id)
+        assert fresh is not None
         assert fresh.status == "pending"
 
-    def test_cleanup_stale_pending_runs_uses_long_timeout_for_tmux_initialized(
+    def test_cleanup_stale_pending_runs_uses_long_timeout_for_terminal_initialized(
         self,
         agent_manager: LocalAgentRunManager,
         sample_session: dict[str, Any],
@@ -2154,8 +2168,9 @@ class TestLocalAgentRunManager:
             machine_id=require_machine_id(), timeout_minutes=60
         ) == [pending.id]
         cleaned = agent_manager.get(pending.id)
+        assert cleaned is not None
         assert cleaned.status == "error"
-        assert cleaned.error == "Pending tmux-initialized run never started"
+        assert cleaned.error == "Pending terminal-initialized run never started"
 
     def test_cleanup_stale_pending_runs_logs_when_cleaned(
         self,
@@ -2182,7 +2197,7 @@ class TestLocalAgentRunManager:
             assert run_ids == [pending.id]
             mock_logger.info.assert_called_once()
             assert mock_logger.info.call_args.args == (
-                "Failed %s stale pending agent runs (>%sm; tmux >%sm)",
+                "Failed %s stale pending agent runs (>%sm; terminal >%sm)",
                 1,
                 60,
                 1440,
@@ -2244,6 +2259,7 @@ class TestAgentRunStatuses:
 
         # Start
         started = agent_manager.start(agent_run.id)
+        assert started is not None
         assert started.status == "running"
         assert started.started_at is not None
         assert started.completed_at is None
@@ -2255,6 +2271,7 @@ class TestAgentRunStatuses:
             tool_calls_count=5,
             turns_used=3,
         )
+        assert completed is not None
         assert completed.status == "success"
         assert completed.result == "Success"
         assert completed.completed_at is not None
@@ -2279,6 +2296,7 @@ class TestAgentRunStatuses:
             tool_calls_count=2,
             turns_used=1,
         )
+        assert failed is not None
         assert failed.status == "error"
         assert failed.error == "Test error"
         assert failed.completed_at is not None
@@ -2298,6 +2316,7 @@ class TestAgentRunStatuses:
         agent_manager.start(agent_run.id)
 
         timed_out = agent_manager.timeout(agent_run.id, turns_used=10)
+        assert timed_out is not None
         assert timed_out.status == "timeout"
         assert timed_out.error == "Execution timed out"
         assert timed_out.turns_used == 10
@@ -2316,6 +2335,7 @@ class TestAgentRunStatuses:
         )
 
         cancelled = agent_manager.cancel(agent_run.id)
+        assert cancelled is not None
         assert cancelled.status == "cancelled"
         assert cancelled.completed_at is not None
 
@@ -2333,6 +2353,7 @@ class TestAgentRunStatuses:
         agent_manager.start(agent_run.id)
 
         cancelled = agent_manager.cancel(agent_run.id)
+        assert cancelled is not None
         assert cancelled.status == "cancelled"
 
 
@@ -2393,6 +2414,7 @@ class TestAgentRunEdgeCases:
         )
 
         retrieved = agent_manager.get(agent_run.id)
+        assert retrieved is not None
         assert retrieved.prompt == long_prompt
 
     def test_long_result(
@@ -2412,6 +2434,7 @@ class TestAgentRunEdgeCases:
         agent_manager.complete(agent_run.id, result=long_result)
 
         retrieved = agent_manager.get(agent_run.id)
+        assert retrieved is not None
         assert retrieved.result == long_result
 
     def test_long_error(
@@ -2431,6 +2454,7 @@ class TestAgentRunEdgeCases:
         agent_manager.fail(agent_run.id, error=long_error)
 
         retrieved = agent_manager.get(agent_run.id)
+        assert retrieved is not None
         assert retrieved.error == long_error
 
     def test_unicode_in_prompt(
@@ -2449,6 +2473,7 @@ class TestAgentRunEdgeCases:
         )
 
         retrieved = agent_manager.get(agent_run.id)
+        assert retrieved is not None
         assert retrieved.prompt == unicode_prompt
 
     def test_high_tool_calls_count(

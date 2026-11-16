@@ -143,9 +143,9 @@ class TerminalResourceCleaner:
                 pass
         if on_this_machine:
             try:
-                await self._close_tmux_session(run)
+                await self._close_terminal_session(run)
             except Exception as exc:
-                # Finalisation must survive a tmux or storage error here; the
+                # Finalisation must survive a terminal or storage error here; the
                 # sweep retries any row left unsettled.
                 logger.warning(
                     "Failed to close tmux session for terminal agent %s: %s",
@@ -219,7 +219,7 @@ class TerminalResourceCleaner:
                 cleanup.workflow_instance_rows,
             )
 
-    async def _close_tmux_session(self, run: AgentRun) -> bool:
+    async def _close_terminal_session(self, run: AgentRun) -> bool:
         from gobby.agents.capture import backend_session_present
         from gobby.storage.terminals import TerminalManager
 
@@ -287,14 +287,14 @@ class TerminalResourceCleaner:
             )
         return True
 
-    async def cleanup_terminal_tmux_sessions(self) -> int:
-        """Close tmux sessions left behind for already-terminal agent runs."""
+    async def cleanup_terminal_sessions(self) -> int:
+        """Close terminal sessions left behind for already-terminal agent runs."""
         runs = await self._run_db(
-            self._agent_run_manager.list_terminal_with_tmux,
+            self._agent_run_manager.list_terminal_runs,
             require_machine_id(),
         )
         closed = 0
         for run in runs:
-            if await self._close_tmux_session(run):
+            if await self._close_terminal_session(run):
                 closed += 1
         return closed

@@ -20,7 +20,7 @@ from gobby.events.live_wake import (
 )
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.mcp_proxy.tools.sessions import _terminal_send_keys_gate as gate
-from gobby.runner_init.orchestration import _send_tmux_session_wake
+from gobby.runner_init.orchestration import _send_terminal_session_wake
 from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.storage.terminals import Terminal
 from gobby.terminals.composer import composer_clear_sequence
@@ -102,7 +102,7 @@ def _session_manager(
 
 @pytest.fixture
 def managed_chain(monkeypatch: pytest.MonkeyPatch) -> ManagedChain:
-    """Bind `_send_tmux_session_wake` to a native row and a two-runtime registry."""
+    """Bind `_send_terminal_session_wake` to a native row and a two-runtime registry."""
     row = replace(
         make_memory_terminal(backend="native"),
         session_id=WAKE_SESSION_ID,
@@ -135,7 +135,7 @@ async def test_native_backed_interactive_session_wakes_through_its_terminal_row(
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
     )
 
@@ -170,7 +170,7 @@ async def test_wake_requires_backend_registered_by_native_only_runner(
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
     )
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -200,7 +200,7 @@ async def test_native_context_id_wakes_through_unbound_terminal_row(
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
     )
     dispatcher.set_terminal_runtime_registry(
@@ -250,7 +250,7 @@ async def test_three_native_recipients_use_one_ordered_batch() -> None:
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=MagicMock(),
-        tmux_sender=AsyncMock(),
+        terminal_sender=AsyncMock(),
         native_batch_sender=batch_sender,
         terminal_manager=store,
     )
@@ -292,11 +292,11 @@ async def test_batch_keeps_active_recipient_out_of_terminal_injection() -> None:
     batch_sender = AsyncMock(
         return_value=[{"session_id": paused_id, "delivered": True, "method": "terminal"}]
     )
-    tmux_sender = AsyncMock()
+    terminal_sender = AsyncMock()
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=MagicMock(),
-        tmux_sender=tmux_sender,
+        terminal_sender=terminal_sender,
         native_batch_sender=batch_sender,
         terminal_manager=store,
     )
@@ -312,7 +312,7 @@ async def test_batch_keeps_active_recipient_out_of_terminal_injection() -> None:
     assert results[1]["method"] == "next_call_context"
     assert results[1]["skipped"] == "session_active"
     # An active turn takes no typed input: the batch excludes it and the tmux path is never reached.
-    tmux_sender.assert_not_awaited()
+    terminal_sender.assert_not_awaited()
     assert all(target.session_id != active_id for target in targets)
 
 
@@ -336,7 +336,7 @@ async def test_final_preflight_suppresses_session_that_becomes_protected(
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
     )
 
@@ -384,7 +384,7 @@ async def test_tmux_agent_wake_resolves_name_without_uuid_lookup_traceback(
             agent_depth=1,
         ),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=store,
     )
 
@@ -398,12 +398,12 @@ async def test_tmux_agent_wake_resolves_name_without_uuid_lookup_traceback(
 
 
 @pytest.mark.asyncio
-async def test_interactive_session_without_a_managed_row_does_not_use_raw_tmux_pane() -> None:
+async def test_interactive_session_without_a_managed_row_reports_no_route() -> None:
     managed_sender = AsyncMock()
     dispatcher = WakeDispatcher(
         session_manager=_session_manager({"tmux_pane": "%12", "tmux_socket_path": "/tmp/s"}),
         ism_manager=MagicMock(),
-        tmux_sender=managed_sender,
+        terminal_sender=managed_sender,
         terminal_manager=MemoryTerminalStore(),
     )
 
@@ -423,7 +423,7 @@ async def test_indeterminate_terminal_wake_records_no_delivery_and_skips_the_pan
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
     )
 
@@ -469,7 +469,7 @@ async def test_a_latched_wake_stranded_before_its_enter_is_submitted(
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
         activity_probe=probe_terminal_activity,
     )
@@ -497,7 +497,7 @@ async def test_latched_wake_is_settled_by_the_delivered_composer_clear(
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
     )
 
@@ -544,7 +544,7 @@ async def test_real_probe_settles_old_wake_only_after_confirmed_empty(
     dispatcher = WakeDispatcher(
         session_manager=manager,
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
         activity_probe=probe,
     )
@@ -587,7 +587,7 @@ async def test_undelivered_composer_clear_leaves_the_earlier_wake_latched(
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
     )
 
@@ -623,7 +623,7 @@ async def test_quarantined_terminal_wake_is_a_structured_decline_without_traceba
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
     )
 
@@ -667,7 +667,7 @@ async def test_quarantined_agent_terminal_wake_falls_back_without_traceback(
             agent_depth=1,
         ),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=store,
     )
 
@@ -689,7 +689,7 @@ async def test_failed_terminal_wake_is_structured_and_does_not_fall_back_to_the_
     dispatcher = WakeDispatcher(
         session_manager=_session_manager({**NATIVE_TERMINAL_CONTEXT, "tmux_pane": "%12"}),
         ism_manager=MagicMock(),
-        tmux_sender=AsyncMock(side_effect=RuntimeError("terminal gone")),
+        terminal_sender=AsyncMock(side_effect=RuntimeError("terminal gone")),
         terminal_manager=managed_chain.store,
     )
 
@@ -708,7 +708,7 @@ async def test_terminal_row_lookup_failure_does_not_use_raw_tmux_pane() -> None:
     dispatcher = WakeDispatcher(
         session_manager=_session_manager({"tmux_pane": "%12"}),
         ism_manager=MagicMock(),
-        tmux_sender=AsyncMock(),
+        terminal_sender=AsyncMock(),
         terminal_manager=failing_manager,
     )
 
@@ -749,7 +749,7 @@ def _managed_dispatcher(probe: ActivityProbe | None, terminal_sender: AsyncMock)
     return WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
-        tmux_sender=terminal_sender,
+        terminal_sender=terminal_sender,
         terminal_manager=MemoryTerminalStore(terminal),
         activity_probe=probe,
     )
@@ -849,7 +849,7 @@ async def test_managed_terminal_wake_is_withheld_for_a_draft(
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
         activity_probe=_draft,
     )
@@ -873,7 +873,7 @@ def _batch_dispatcher(probe: ActivityProbe) -> tuple[WakeDispatcher, AsyncMock]:
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
-        tmux_sender=AsyncMock(),
+        terminal_sender=AsyncMock(),
         native_batch_sender=batch_sender,
         terminal_manager=store,
         activity_probe=probe,
@@ -915,7 +915,7 @@ async def test_native_spawned_agent_wakes_through_its_terminal_row(
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT, agent_depth=1),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         sdk_resumer=sdk_resumer,
         terminal_manager=managed_chain.store,
         activity_probe=_empty,
@@ -940,7 +940,7 @@ async def test_native_spawned_agent_wake_is_withheld_for_a_draft(
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT, agent_depth=1),
         ism_manager=MagicMock(),
-        tmux_sender=_send_tmux_session_wake,
+        terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
         activity_probe=_draft,
     )
@@ -961,7 +961,7 @@ async def test_spawned_agent_without_a_managed_row_does_not_use_raw_tmux_session
             {"tmux_session": "gobby-agent-abc", "tmux_pane": "%7"}, agent_depth=1
         ),
         ism_manager=MagicMock(),
-        tmux_sender=managed_sender,
+        terminal_sender=managed_sender,
         terminal_manager=MemoryTerminalStore(),
         activity_probe=_empty,
     )
@@ -1004,7 +1004,7 @@ async def test_batch_wake_holds_a_focused_recipient_and_sends_the_rest() -> None
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=messages,
-        tmux_sender=AsyncMock(),
+        terminal_sender=AsyncMock(),
         native_batch_sender=batch_sender,
         terminal_manager=store,
         activity_probe=_empty,

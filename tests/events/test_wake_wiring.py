@@ -124,7 +124,7 @@ class TestWakeDispatcherSdkResume:
         assert ism_mgr.create_message.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_tmux_tried_before_sdk(self) -> None:
+    async def test_terminal_sender_tried_before_sdk(self) -> None:
         """Terminal agents try tmux first, skip SDK if tmux succeeds."""
         session_mgr = MagicMock()
         session = MagicMock()
@@ -134,13 +134,13 @@ class TestWakeDispatcherSdkResume:
         session.terminal_context = '{"tmux_session": "agent-1"}'
         session_mgr.get.return_value = session
 
-        tmux_sender = AsyncMock()
+        terminal_sender = AsyncMock()
         sdk_resumer = AsyncMock()
 
         dispatcher = WakeDispatcher(
             session_manager=session_mgr,
             ism_manager=MagicMock(),
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             sdk_resumer=sdk_resumer,
             agent_run_manager=MagicMock(),
             terminal_manager=_managed_terminal(),
@@ -150,15 +150,15 @@ class TestWakeDispatcherSdkResume:
             "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed"}
         )
 
-        tmux_sender.assert_awaited_once_with(
+        terminal_sender.assert_awaited_once_with(
             "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
             clear_before_submit=True,
             cli_source=ANY,
         )
-        assert tmux_sender.await_count == 1
-        assert tmux_sender.await_args is not None
+        assert terminal_sender.await_count == 1
+        assert terminal_sender.await_args is not None
         sdk_resumer.assert_not_awaited()
         assert sdk_resumer.await_count == 0
         assert sdk_resumer.await_args is None
@@ -176,13 +176,13 @@ class TestWakeDispatcherSdkResume:
         session_mgr.get.return_value = session
 
         ism_mgr = MagicMock()
-        tmux_sender = AsyncMock(side_effect=RuntimeError("tmux gone"))
+        terminal_sender = AsyncMock(side_effect=RuntimeError("tmux gone"))
         sdk_resumer = AsyncMock(side_effect=RuntimeError("SDK fail"))
 
         dispatcher = WakeDispatcher(
             session_manager=session_mgr,
             ism_manager=ism_mgr,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             sdk_resumer=sdk_resumer,
             agent_run_manager=MagicMock(),
             terminal_manager=_managed_terminal(),
@@ -192,15 +192,15 @@ class TestWakeDispatcherSdkResume:
             "9264a39c-68db-5eed-917c-6f7babb8e6b1", "Done", {"status": "completed"}
         )
 
-        tmux_sender.assert_awaited_once_with(
+        terminal_sender.assert_awaited_once_with(
             "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
             clear_before_submit=True,
             cli_source=ANY,
         )
-        assert tmux_sender.await_count == 1
-        assert tmux_sender.await_args is not None
+        assert terminal_sender.await_count == 1
+        assert terminal_sender.await_args is not None
         sdk_resumer.assert_not_awaited()
         assert sdk_resumer.await_count == 0
         ism_mgr.create_message.assert_called_once()

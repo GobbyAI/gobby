@@ -17,7 +17,7 @@ import pytest
 
 from gobby.agents.idle_detector import ComposerRead
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
-from gobby.runner_init.orchestration import _send_tmux_session_wake
+from gobby.runner_init.orchestration import _send_terminal_session_wake
 from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -163,7 +163,7 @@ def _editor_seat(
         WakeDispatcher(
             session_manager=session_manager,
             ism_manager=messages,
-            tmux_sender=_send_tmux_session_wake,
+            terminal_sender=_send_terminal_session_wake,
             terminal_manager=store,
             activity_probe=probe_terminal_activity,
         ),
@@ -237,7 +237,7 @@ async def test_real_wake_and_compaction_writers_do_not_interleave(
 
     async def wake_writer() -> None:
         _PHASE.set("wake")
-        await _send_tmux_session_wake(
+        await _send_terminal_session_wake(
             "gobby-agent-arbitration",
             "Message from Gobby daemon: New activity available.",
             submit=True,

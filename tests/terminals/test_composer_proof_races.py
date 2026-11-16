@@ -98,7 +98,7 @@ async def test_installed_wake_observer_preserves_unconfirmed_result_and_retry(
         return_value=activity,
     )
     sender = AsyncMock()
-    dispatcher = WakeDispatcher(manager, MagicMock(), tmux_sender=sender, activity_probe=probe)
+    dispatcher = WakeDispatcher(manager, MagicMock(), terminal_sender=sender, activity_probe=probe)
     dispatcher.bind_owner_loop(asyncio.get_running_loop())
     observer = RaceObservation(trace.accept)
     original = WakeDispatcher._dispatch_live_wake_unlocked

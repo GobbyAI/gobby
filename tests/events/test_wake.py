@@ -140,7 +140,7 @@ def ism_manager() -> MagicMock:
 
 
 @pytest.fixture
-def tmux_sender() -> AsyncMock:
+def terminal_sender() -> AsyncMock:
     return AsyncMock()
 
 
@@ -164,7 +164,7 @@ class TestWakeDispatch:
             terminal_context={"tmux_session": "gobby-agent-abc", "tmux_pane": "%7"},
             status=status,
         )
-        tmux_sender = AsyncMock()
+        terminal_sender = AsyncMock()
         sdk_resumer = AsyncMock()
         activity_probe = AsyncMock()
         web_registry = MagicMock()
@@ -173,7 +173,7 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             sdk_resumer=sdk_resumer,
             web_chat_session_registry=web_registry,
             terminal_manager=terminal_manager,
@@ -194,7 +194,7 @@ class TestWakeDispatch:
         }
         assert ledger.recorded == []
         terminal_manager.resolve_live_for_session.assert_not_called()
-        tmux_sender.assert_not_awaited()
+        terminal_sender.assert_not_awaited()
         sdk_resumer.assert_not_awaited()
         activity_probe.assert_not_awaited()
         web_registry.wake_session.assert_not_awaited()
@@ -204,7 +204,7 @@ class TestWakeDispatch:
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
-        tmux_sender: AsyncMock,
+        terminal_sender: AsyncMock,
     ) -> None:
         """A routine completion must not interrupt an active tool batch."""
         session_manager.get.return_value = FakeSession(
@@ -216,7 +216,7 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
         )
 
         result = await dispatcher.wake(
@@ -233,7 +233,7 @@ class TestWakeDispatch:
             "decline_reason": "session_active",
             "ism_persisted": True,
         }
-        tmux_sender.assert_not_awaited()
+        terminal_sender.assert_not_awaited()
         assert ism_manager.create_message.call_args.kwargs["priority"] == "normal"
 
     @pytest.mark.asyncio
@@ -241,7 +241,7 @@ class TestWakeDispatch:
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
-        tmux_sender: AsyncMock,
+        terminal_sender: AsyncMock,
     ) -> None:
         """An urgent completion never types into an active turn (#25830).
 
@@ -257,7 +257,7 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
 
@@ -270,7 +270,7 @@ class TestWakeDispatch:
         assert result["delivered"] is False
         assert result["skipped"] == "session_active"
         assert result["ism_persisted"] is True
-        tmux_sender.assert_not_awaited()
+        terminal_sender.assert_not_awaited()
         assert ism_manager.create_message.call_args.kwargs["priority"] == "urgent"
 
     @pytest.mark.asyncio
@@ -278,7 +278,7 @@ class TestWakeDispatch:
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
-        tmux_sender: AsyncMock,
+        terminal_sender: AsyncMock,
     ) -> None:
         from gobby.agents.idle_detector import ComposerRead
         from gobby.events.live_wake import TerminalActivity, composer_occupied_result
@@ -293,7 +293,7 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
             activity_probe=probe,
         )
@@ -307,7 +307,7 @@ class TestWakeDispatch:
         assert result == composer_occupied_result(WAKE_SESSION_ID, method="terminal")
         assert ism_manager.create_message.call_args.kwargs["priority"] == "urgent"
         probe.assert_awaited_once()
-        tmux_sender.assert_not_awaited()
+        terminal_sender.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_wake_routes_database_work_through_owned_executor(
@@ -352,7 +352,7 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=timing_out_sender,
+            terminal_sender=timing_out_sender,
             terminal_manager=_managed_terminal(),
         )
 
@@ -386,7 +386,7 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=slow_sender,
+            terminal_sender=slow_sender,
             terminal_manager=_managed_terminal(),
         )
 
@@ -461,7 +461,7 @@ class TestWakeDispatch:
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
-        tmux_sender: AsyncMock,
+        terminal_sender: AsyncMock,
     ) -> None:
         """A managed agent terminal receives a wake after durable ISM storage."""
         session_manager.get.return_value = FakeSession(
@@ -472,17 +472,17 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
         await dispatcher.wake(WAKE_SESSION_ID, "Agent completed", {"status": "success"})
 
         ism_manager.create_message.assert_called_once()
-        tmux_sender.assert_called_once()
-        args = tmux_sender.call_args[0]
+        terminal_sender.assert_called_once()
+        args = terminal_sender.call_args[0]
         assert args[0] == "terminal-1"
         assert args[1] == CONTINUE_WAKE_MESSAGE
-        assert tmux_sender.call_args.kwargs == {
+        assert terminal_sender.call_args.kwargs == {
             "submit": True,
             "clear_before_submit": True,
             "cli_source": ANY,
@@ -496,7 +496,7 @@ class TestWakeDispatch:
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
-        tmux_sender: AsyncMock,
+        terminal_sender: AsyncMock,
     ) -> None:
         """terminal_context may already be a parsed mapping."""
         session_manager.get.return_value = FakeSession(
@@ -507,21 +507,21 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
 
         await dispatcher.wake(WAKE_SESSION_ID, "Agent completed", {"status": "success"})
 
-        tmux_sender.assert_awaited_once_with(
+        terminal_sender.assert_awaited_once_with(
             "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
             clear_before_submit=True,
             cli_source=ANY,
         )
-        assert tmux_sender.await_count == 1
-        assert tmux_sender.await_args is not None
+        assert terminal_sender.await_count == 1
+        assert terminal_sender.await_args is not None
 
     @pytest.mark.asyncio
     async def test_terminal_agent_uses_managed_terminal_when_session_name_missing(
@@ -538,11 +538,11 @@ class TestWakeDispatch:
                 "tmux_socket_path": "/tmp/tmux-501/gobby",
             },
         )
-        tmux_sender = AsyncMock()
+        terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
 
@@ -550,15 +550,15 @@ class TestWakeDispatch:
 
         assert result["delivered"] is True
         assert result["method"] == "terminal"
-        tmux_sender.assert_awaited_once_with(
+        terminal_sender.assert_awaited_once_with(
             "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
             clear_before_submit=True,
             cli_source=ANY,
         )
-        assert tmux_sender.await_args is not None
-        assert "Task completed" not in tmux_sender.await_args.args[1]
+        assert terminal_sender.await_args is not None
+        assert "Task completed" not in terminal_sender.await_args.args[1]
 
     @pytest.mark.asyncio
     async def test_terminal_agent_fallback_to_ism_when_tmux_fails(
@@ -577,7 +577,7 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=failing_tmux,
+            terminal_sender=failing_tmux,
             terminal_manager=_managed_terminal(),
         )
         await dispatcher.wake(WAKE_SESSION_ID, "Pipeline completed", {"status": "completed"})
@@ -596,12 +596,12 @@ class TestWakeDispatch:
         assert failing_tmux.await_args is not None
 
     @pytest.mark.asyncio
-    async def test_terminal_agent_no_tmux_sender_uses_ism(
+    async def test_terminal_agent_no_terminal_sender_uses_ism(
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
     ) -> None:
-        """Terminal agent without tmux_sender still gets durable ISM."""
+        """Terminal agent without terminal_sender still gets durable ISM."""
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
@@ -610,7 +610,7 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=None,
+            terminal_sender=None,
         )
         await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed"})
 
@@ -633,11 +633,11 @@ class TestWakeDispatch:
         )
         ism_manager.list_messages.return_value = []
         ism_manager.create_message.side_effect = lambda **_kwargs: events.append("ism")
-        tmux_sender = AsyncMock(side_effect=lambda *_args, **_kwargs: events.append("wake"))
+        terminal_sender = AsyncMock(side_effect=lambda *_args, **_kwargs: events.append("wake"))
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
 
@@ -661,7 +661,7 @@ class TestWakeDispatch:
         assert call_kwargs["message_type"] == "completion_notification"
         assert f'"completion_id": "{WAKE_RUN_ID}"' in call_kwargs["metadata_json"]
         assert '"task_id": "#12754"' in call_kwargs["metadata_json"]
-        tmux_sender.assert_awaited_once_with(
+        terminal_sender.assert_awaited_once_with(
             "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
@@ -743,11 +743,11 @@ class TestWakeDispatch:
             agent_depth=0,
             terminal_context='{"tmux_window_id": "@7", "tmux_pane": "%19"}',
         )
-        tmux_sender = AsyncMock()
+        terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
         )
 
         result = await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed"})
@@ -757,7 +757,7 @@ class TestWakeDispatch:
         ism_manager.create_message.assert_called_once()
         call_kwargs = ism_manager.create_message.call_args.kwargs
         assert call_kwargs["content"] == "Done"
-        tmux_sender.assert_not_awaited()
+        terminal_sender.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_unbound_socket_path_does_not_authorize_raw_wake(
@@ -774,18 +774,18 @@ class TestWakeDispatch:
                 "tmux_socket_path": "/tmp/tmux-501/gobby",
             },
         )
-        tmux_sender = AsyncMock()
+        terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
         )
 
         result = await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed"})
 
         assert result["ism_persisted"] is True
         assert result["error_code"] == "no_live_wake_channel"
-        tmux_sender.assert_not_awaited()
+        terminal_sender.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_managed_terminal_decline_returns_structured_result_without_warning(
@@ -800,7 +800,7 @@ class TestWakeDispatch:
             agent_depth=0,
             terminal_context='{"tmux_pane": "%12"}',
         )
-        tmux_sender = AsyncMock(
+        terminal_sender = AsyncMock(
             side_effect=AutomaticWriteDeclined(
                 AutomaticWriteQuarantined(action_key="wake:terminal-1")
             )
@@ -808,7 +808,7 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
         ledger = PendingWakeLedger(dispatcher)
@@ -820,7 +820,7 @@ class TestWakeDispatch:
         assert result["method"] == "terminal"
         assert result["error_code"] == "automatic_write_quarantined"
         assert result["decline_reason"] == "automatic_write_quarantined"
-        tmux_sender.assert_awaited_once()
+        terminal_sender.assert_awaited_once()
         assert ledger.recorded == []
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
         assert not [record for record in caplog.records if record.exc_info]
@@ -908,12 +908,12 @@ class TestWakeDispatch:
             status="active",
         )
         lifecycle_refresh = AsyncMock(side_effect=RuntimeError("refresh failed"))
-        tmux_sender = AsyncMock()
+        terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
             lifecycle_refresh=lifecycle_refresh,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
 
@@ -923,7 +923,7 @@ class TestWakeDispatch:
 
         assert result["skipped"] == "session_active"
         lifecycle_refresh.assert_awaited_once_with(WAKE_SESSION_ID)
-        tmux_sender.assert_not_awaited()
+        terminal_sender.assert_not_awaited()
         assert "Lifecycle refresh failed before retrying wake" in caplog.text
 
     @pytest.mark.asyncio
@@ -944,18 +944,18 @@ class TestWakeDispatch:
             refresh_started.set()
             await release_refresh.wait()
 
-        tmux_sender = AsyncMock()
+        terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
             lifecycle_refresh=blocked_refresh,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
 
         result = await asyncio.wait_for(dispatcher.dispatch_live_wake(WAKE_SESSION_ID), 0.5)
         assert result["delivered"] is True
-        tmux_sender.assert_awaited_once()
+        terminal_sender.assert_awaited_once()
         assert not refresh_started.is_set()
         release_refresh.set()
 
@@ -977,18 +977,18 @@ class TestWakeDispatch:
                 status="active",
             ),
         ]
-        tmux_sender = AsyncMock()
+        terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
         assert result["skipped"] == "session_active"
-        tmux_sender.assert_not_awaited()
+        terminal_sender.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_stale_active_wake_retries_after_deferred_refresh(
@@ -1018,7 +1018,7 @@ class TestWakeDispatch:
             session_manager=session_manager,
             ism_manager=ism_manager,
             lifecycle_refresh=blocked_refresh,
-            tmux_sender=send_terminal,
+            terminal_sender=send_terminal,
             terminal_manager=_managed_terminal(),
         )
 
@@ -1070,7 +1070,7 @@ class TestWakeDispatch:
             ism_manager=ism_manager,
             lifecycle_refresh=flush,
             activity_probe=probe,
-            tmux_sender=send_terminal,
+            terminal_sender=send_terminal,
             terminal_manager=_managed_terminal(),
         )
 
@@ -1130,7 +1130,7 @@ class TestWakeDispatch:
             lifecycle_refresh=flush,
             activity_probe=probe,
             terminal_manager=terminal_manager,
-            tmux_sender=AsyncMock(),
+            terminal_sender=AsyncMock(),
         )
         dispatcher._restart_horizon_ms = int(
             datetime(2026, 9, 27, 1, 28, tzinfo=UTC).timestamp() * 1000
@@ -1204,11 +1204,11 @@ class TestWakeDispatch:
             agent_depth=0,
             terminal_context={"parent_pid": 12345},
         )
-        tmux_sender = AsyncMock()
+        terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
         )
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -1216,7 +1216,7 @@ class TestWakeDispatch:
         assert result["delivered"] is False
         assert result["method"] is None
         assert result["error_code"] == "no_live_wake_channel"
-        tmux_sender.assert_not_awaited()
+        terminal_sender.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_interactive_session_without_sender_reports_no_live_channel(
@@ -1294,11 +1294,11 @@ class TestWakeDispatch:
             terminal_context='{"tmux_pane": "%12"}',
             turn_count=5,
         )
-        tmux_sender = AsyncMock()
+        terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
         ledger = PendingWakeLedger(dispatcher)
@@ -1307,7 +1307,7 @@ class TestWakeDispatch:
         await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r2"})
         await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r3"})
 
-        tmux_sender.assert_awaited_once_with(
+        terminal_sender.assert_awaited_once_with(
             "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
@@ -1346,11 +1346,11 @@ class TestWakeDispatch:
 
         send_started = asyncio.Event()
         release_send = asyncio.Event()
-        tmux_sender = AsyncMock(side_effect=slow_terminal_send)
+        terminal_sender = AsyncMock(side_effect=slow_terminal_send)
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
         ledger = PendingWakeLedger(dispatcher)
@@ -1380,7 +1380,7 @@ class TestWakeDispatch:
         release_send.set()
         await wakes
 
-        tmux_sender.assert_awaited_once_with(
+        terminal_sender.assert_awaited_once_with(
             "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
@@ -1419,11 +1419,11 @@ class TestWakeDispatch:
 
         send_started = asyncio.Event()
         release_send = asyncio.Event()
-        tmux_sender = AsyncMock(side_effect=slow_tmux_send)
+        terminal_sender = AsyncMock(side_effect=slow_tmux_send)
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
         ledger = PendingWakeLedger(dispatcher)
@@ -1453,7 +1453,7 @@ class TestWakeDispatch:
         release_send.set()
         await wakes
 
-        tmux_sender.assert_awaited_once_with(
+        terminal_sender.assert_awaited_once_with(
             "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
@@ -1491,18 +1491,18 @@ class TestWakeDispatch:
             second_session,
         ]
 
-        tmux_sender = AsyncMock()
+        terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
 
         await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r1"})
         await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r2"})
 
-        assert tmux_sender.await_count == 2
+        assert terminal_sender.await_count == 2
 
     @pytest.mark.asyncio
     async def test_terminal_wake_decline_does_not_record_timestamp(
@@ -1518,7 +1518,7 @@ class TestWakeDispatch:
             terminal_context='{"tmux_pane": "%12"}',
             turn_count=5,
         )
-        tmux_sender = AsyncMock(
+        terminal_sender = AsyncMock(
             side_effect=[
                 AutomaticWriteDeclined(AutomaticWriteQuarantined(action_key="wake:terminal-1")),
                 None,
@@ -1527,7 +1527,7 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
         )
         ledger = PendingWakeLedger(dispatcher)
@@ -1545,7 +1545,7 @@ class TestWakeDispatch:
 
         await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r2"})
 
-        assert tmux_sender.await_count == 2
+        assert terminal_sender.await_count == 2
 
     @pytest.mark.asyncio
     async def test_web_chat_session_routes_live_wake_through_registry(
@@ -1663,7 +1663,7 @@ class TestWakeDispatch:
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
-        tmux_sender: AsyncMock,
+        terminal_sender: AsyncMock,
     ) -> None:
         from gobby.agents.idle_detector import ComposerRead
         from gobby.events.live_wake import TerminalActivity
@@ -1678,7 +1678,7 @@ class TestWakeDispatch:
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
+            terminal_sender=terminal_sender,
             terminal_manager=_managed_terminal(),
             activity_probe=probe,
         )
@@ -1699,9 +1699,9 @@ class TestWakeDispatch:
         assert debounced["delivered"] is False
         assert debounced["skipped"] == "debounced"
         assert retried["delivered"] is True
-        assert tmux_sender.await_count == 2
-        assert tmux_sender.await_args is not None
-        assert tmux_sender.await_args.args[1] == retry_prompt
+        assert terminal_sender.await_count == 2
+        assert terminal_sender.await_args is not None
+        assert terminal_sender.await_args.args[1] == retry_prompt
         assert ledger.recorded == [WAKE_SESSION_ID, WAKE_SESSION_ID]
         assert ism_manager.create_message.call_args.kwargs["content"] == retry_prompt
 
@@ -1710,7 +1710,7 @@ class TestWakeDispatch:
 
         assert guarded["delivered"] is False
         assert guarded["skipped"] == "composer_occupied"
-        assert tmux_sender.await_count == 2
+        assert terminal_sender.await_count == 2
 
 
 class TestComposerGate:
@@ -1731,7 +1731,7 @@ class TestComposerGate:
         return WakeDispatcher(
             session_manager=session_manager,
             ism_manager=MagicMock(),
-            tmux_sender=pane_sender,
+            terminal_sender=pane_sender,
             terminal_manager=terminal_manager,
             activity_probe=cast("ActivityProbe | None", probe),
         )
