@@ -10,15 +10,7 @@
 /// gclient's prefix whenever no outer tmux eats it.
 pub const DEFAULT_PREFIX: &str = "ctrl+b";
 
-/// The prefix under an outer tmux, whose own prefix is `ctrl+b`.
-pub const NESTED_PREFIX: &str = "ctrl+]";
-
-/// The default prefix for this launch: `nested` is whether an outer tmux
-/// client owns the terminal (`tmux_identity::current()` at startup).
-pub fn default_prefix(nested: bool) -> &'static str {
-    if nested {
-        NESTED_PREFIX
-    } else {
-        DEFAULT_PREFIX
-    }
+/// The default prefix, before user overrides.
+pub fn default_prefix() -> &'static str {
+    DEFAULT_PREFIX
 }

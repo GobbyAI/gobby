@@ -579,7 +579,7 @@ pub(super) fn focused_overflow<'a, W: WorkspaceView>(
 mod tests {
     use super::*;
     use crate::app::Workspace;
-    use crate::ui::keymap::{default_prefix, Keymap};
+    use crate::ui::keymap::Keymap;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
     use serde_json::json;
@@ -701,9 +701,8 @@ mod tests {
             );
         }
 
-        // Under an outer tmux the shifted prefix is named instead.
-        chrome.nested = true;
-        chrome.keymap = Keymap::defaults(default_prefix(true));
+        // A custom prefix is reflected in the status line.
+        chrome.keymap = Keymap::defaults("ctrl+]");
         let text = draw_status(&ws, &chrome);
         assert!(
             text.contains("prefix ctrl+]"),

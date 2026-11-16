@@ -20,15 +20,6 @@ impl<D: Daemon> Workspace<D> {
         self.launch_dir = Some(dir);
     }
 
-    /// The window runs inside a gclient pane (`GOBBY_PANE_ID` was set).
-    pub fn set_in_pane(&mut self, in_pane: bool) {
-        self.in_pane = in_pane;
-    }
-
-    pub fn in_pane(&self) -> bool {
-        self.in_pane
-    }
-
     /// Where a new shell starts: the focused project's checkout root, else
     /// the directory gclient was launched from (the personal project has
     /// no checkout, and a project checked out elsewhere has none here).

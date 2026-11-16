@@ -323,9 +323,6 @@ pub struct Chrome {
     pub alert_log: Vec<Toast>,
     pub view: ViewState,
     pub keymap: Keymap,
-    /// An outer tmux or a gclient pane owns the terminal: `keymap` was built
-    /// for its shifted prefix and the status line says so.
-    pub nested: bool,
     /// Mouse selection in progress or retained, keyed by layout slot.
     pub selection: Option<Selection>,
     /// The press-and-drag in progress, if any; `route_mouse` owns it.
@@ -397,7 +394,6 @@ impl Chrome {
             alert_log: Vec::new(),
             view: ViewState::default(),
             keymap: Keymap::defaults(DEFAULT_PREFIX),
-            nested: false,
             selection: None,
             gesture: None,
             hover: None,

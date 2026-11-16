@@ -24,7 +24,6 @@ impl Workspace<LiveDaemon> {
             roster_ids: Vec::new(),
             pane_order: Vec::new(),
             attach: AttachTarget::default(),
-            in_pane: false,
             attention: AttentionState::empty(),
             local_machine: String::new(),
             sidebar_rows: SidebarRows::default(),

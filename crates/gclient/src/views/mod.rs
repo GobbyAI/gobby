@@ -58,13 +58,11 @@ pub fn run_ready(
                 attach.project_id = ready.project.clone();
             }
             workspace.set_attach_target(attach);
-            workspace.set_in_pane(ready.in_pane);
             workspace.set_launch_dir(ready.launch_dir);
             workspace.set_frame_delivery(ready.frame_delivery);
             let mut chrome = Chrome::new(Theme::new(ready.prefs.theme_kind()));
             chrome.apply_prefs(ready.prefs);
             chrome.keymap = ready.keymap;
-            chrome.nested = ready.nested;
             if let Some(notice) = ready.host_notice {
                 chrome.notify(Toast::info(notice));
             }

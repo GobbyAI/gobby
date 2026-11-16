@@ -27,6 +27,7 @@ fn binary_initializes_logging_only_for_the_runtime_path() {
     let home = tempfile::tempdir().expect("temporary home");
     let missing_token = home.path().join("missing-token");
     let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+        .env_remove("GOBBY_PANE_ID")
         .args([
             "--daemon-url",
             "http://127.0.0.1:1",
@@ -55,6 +56,7 @@ fn runtime_log_follows_gobby_home() {
     let home = tempfile::tempdir().expect("temporary home");
     let missing_token = gobby_home.path().join("missing-token");
     let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+        .env_remove("GOBBY_PANE_ID")
         .args([
             "--daemon-url",
             "http://127.0.0.1:1",

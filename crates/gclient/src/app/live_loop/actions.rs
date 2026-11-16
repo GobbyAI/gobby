@@ -596,7 +596,7 @@ fn reload_live_prefs(workspace: &Workspace<LiveDaemon>, chrome: &mut Chrome) {
     let path = prefs_path(&home);
     match load_prefs(&home) {
         Ok(prefs) => {
-            match load_keymap(&prefs, &home, chrome.nested) {
+            match load_keymap(&prefs, &home) {
                 Ok(keymap) => chrome.keymap = keymap,
                 Err(error) => chrome.notify(
                     Toast::warning("Keymap overrides kept as loaded").with_body(error.to_string()),

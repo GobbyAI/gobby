@@ -113,11 +113,66 @@ async fn move_pane_cli_surfaces_project_and_machine_refusals() {
 fn gclient(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_gclient"))
         .args(args)
+        .env("GOBBY_PANE_ID", "test-parent-pane")
         .env_remove("GOBBY_PANE_REF")
         .env_remove("GOBBY_WORKSPACE_ID")
         .env_remove("GOBBY_TAB_ID")
         .output()
         .expect("run gclient")
+}
+
+#[test]
+fn nested_interactive_launch_refuses_before_credentials_or_terminal_setup() {
+    let home = tempfile::tempdir().expect("temporary home");
+    let missing_token = home.path().join("missing-token");
+    for flags in [vec![], vec!["--project", PROJECT], vec!["--workspace", "0"]] {
+        let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+            .args(flags)
+            .arg("--token-file")
+            .arg(&missing_token)
+            .env("GOBBY_PANE_ID", "test-parent-pane")
+            .output()
+            .expect("run nested gclient");
+        assert!(!output.status.success());
+        assert_eq!(
+            stderr(&output).trim(),
+            "gclient cannot run as a child of another gclient process"
+        );
+        assert!(output.stdout.is_empty());
+    }
+}
+
+#[test]
+fn nested_launch_allows_help_and_version() {
+    for flag in ["--help", "--version"] {
+        let output = gclient(&[flag]);
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert!(!output.stdout.is_empty());
+        assert!(output.stderr.is_empty());
+    }
+}
+
+#[test]
+fn standalone_launch_does_not_refuse_for_absent_or_empty_pane_marker() {
+    let home = tempfile::tempdir().expect("temporary home");
+    for marker in [None, Some("")] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_gclient"));
+        command
+            .arg("--token-file")
+            .arg(home.path().join("missing-token"));
+        match marker {
+            Some(value) => {
+                command.env("GOBBY_PANE_ID", value);
+            }
+            None => {
+                command.env_remove("GOBBY_PANE_ID");
+            }
+        }
+        let output = command.output().expect("run standalone gclient");
+        assert!(!output.status.success());
+        assert!(stderr(&output).contains("failed to read daemon token"));
+        assert!(!stderr(&output).contains("child of another gclient"));
+    }
 }
 
 #[test]

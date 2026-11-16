@@ -363,7 +363,7 @@ fn override_chord_replaces_default_chord() {
 
     // The override chord replaces the default chord for the same action.
     fs::write(&absolute, "[bindings]\nsettings = \"prefix+f4\"\n").unwrap();
-    let keymap = load_keymap(&prefs, home.path(), false).unwrap();
+    let keymap = load_keymap(&prefs, home.path()).unwrap();
     assert_eq!(
         keymap.lookup_prefix(&key(KeyCode::F(4), KeyModifiers::NONE)),
         Some(Action::Settings)
@@ -376,7 +376,7 @@ fn override_chord_replaces_default_chord() {
 
     // A missing file is the default keymap.
     prefs.keybinds = "absent.toml".to_string();
-    let keymap = load_keymap(&prefs, home.path(), false).unwrap();
+    let keymap = load_keymap(&prefs, home.path()).unwrap();
     assert_eq!(
         chords_by_name(&keymap),
         chords_by_name(&Keymap::defaults(DEFAULT_PREFIX))
@@ -385,7 +385,7 @@ fn override_chord_replaces_default_chord() {
     // A rejected file names its resolved path and the keymap error.
     let rejected = home.path().join("absent.toml");
     fs::write(&rejected, "[bindings]\nsettings = \"prefix+x\"\n").unwrap();
-    let error = load_keymap(&prefs, home.path(), false).unwrap_err();
+    let error = load_keymap(&prefs, home.path()).unwrap_err();
     assert!(matches!(error, StartupError::Keymap { .. }), "{error:?}");
     let message = error.to_string();
     assert!(
@@ -395,54 +395,21 @@ fn override_chord_replaces_default_chord() {
     assert!(message.contains("close_pane"), "{message}");
 }
 
-/// 4.3.1: an outer tmux eats `ctrl+b`, so the default prefix shifts to
-/// `ctrl+]` while nested and the whole prefix table stays reachable behind
-/// it; a `prefix` key in the override file wins, and without nesting
-/// `ctrl+b` stands.
+/// An explicit prefix overrides the normal ctrl+b default.
 #[test]
-fn nested_tmux_shifts_the_prefix_unless_overridden() {
+fn default_prefix_and_explicit_override() {
     let ctrl = |c: char| key(KeyCode::Char(c), KeyModifiers::CONTROL);
-    assert_eq!(default_prefix(false), DEFAULT_PREFIX);
-    assert_eq!(default_prefix(true), "ctrl+]");
-
-    let nested = Keymap::defaults(default_prefix(true));
-    assert!(nested.is_prefix(&ctrl(']')));
-    assert!(!nested.is_prefix(&ctrl('b')));
-    assert_eq!(nested.prefix_label, "ctrl+]");
-    for (event, action) in [
-        (ch('?'), Action::Help),
-        (ch('s'), Action::Settings),
-        (ch('1'), Action::SwitchTab(1)),
-        (ch('n'), Action::NextTab),
-        (ch('p'), Action::PreviousTab),
-    ] {
-        assert_eq!(
-            nested.lookup_prefix(&event),
-            Some(action),
-            "{action:?} must sit behind ctrl+]"
-        );
-    }
-    assert_eq!(
-        chords_by_name(&nested),
-        chords_by_name(&Keymap::defaults(DEFAULT_PREFIX)),
-        "only the prefix moves"
-    );
-
-    // The override file's own `prefix` wins over the nested default.
+    assert_eq!(default_prefix(), DEFAULT_PREFIX);
     let home = tempfile::tempdir().unwrap();
     let mut prefs = ClientPrefs::default();
     let client_dir = home.path().join("client");
     fs::create_dir_all(&client_dir).unwrap();
     fs::write(client_dir.join("keymap.toml"), "prefix = \"ctrl+a\"\n").unwrap();
-    let overridden = load_keymap(&prefs, home.path(), true).unwrap();
+    let overridden = load_keymap(&prefs, home.path()).unwrap();
     assert!(overridden.is_prefix(&ctrl('a')));
-    assert!(!overridden.is_prefix(&ctrl(']')));
-
-    // Without a file the nesting decides; without nesting it stays ctrl+b.
+    assert!(!overridden.is_prefix(&ctrl('b')));
     prefs.keybinds = "absent.toml".to_string();
-    let nested = load_keymap(&prefs, home.path(), true).unwrap();
-    assert!(nested.is_prefix(&ctrl(']')));
-    let plain = load_keymap(&prefs, home.path(), false).unwrap();
+    let plain = load_keymap(&prefs, home.path()).unwrap();
     assert!(plain.is_prefix(&ctrl('b')));
     assert!(!plain.is_prefix(&ctrl(']')));
 }

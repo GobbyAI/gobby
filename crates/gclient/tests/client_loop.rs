@@ -417,8 +417,6 @@ fn live_entry_connects_before_running() {
             host_notice: None,
             prefs: gobby_client::ui::settings::ClientPrefs::default(),
             keymap: Keymap::defaults(DEFAULT_PREFIX),
-            nested: false,
-            in_pane: false,
             gobby_home: std::path::PathBuf::new(),
             launch_dir: std::path::PathBuf::new(),
             attach: gobby_client::startup::AttachTarget::default(),

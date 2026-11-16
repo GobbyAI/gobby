@@ -110,9 +110,6 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     pane_order: Vec<String>,
     /// The workspace this window attaches to (`--node`/`--workspace`).
     attach: AttachTarget,
-    /// The window runs inside a gclient pane and opens no terminal of its
-    /// own.
-    in_pane: bool,
     attention: AttentionState,
     /// This machine's id, the default home for an agent without one.
     local_machine: String,
@@ -222,7 +219,6 @@ impl Workspace {
             roster_ids: Vec::new(),
             pane_order: Vec::new(),
             attach: AttachTarget::default(),
-            in_pane: false,
             attention: AttentionState::empty(),
             local_machine: String::new(),
             sidebar_rows: SidebarRows::default(),

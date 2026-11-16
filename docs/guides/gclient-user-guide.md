@@ -431,8 +431,9 @@ launch, opens on. Both windows can type into one pane; nothing arbitrates betwee
 
 **Pane environment.** A shell the workspace starts inherits `GOBBY_TERMINAL_ID`,
 `GOBBY_NODE_ID`, `GOBBY_NODE_REF`, `GOBBY_WORKSPACE_ID`, `GOBBY_TAB_ID`,
-`GOBBY_PANE_ID`, and `GOBBY_PANE_REF`. A `gclient` launched inside such a pane
-opens no shell of its own and shifts its prefix to `ctrl+]`. Hooks see the same
+`GOBBY_PANE_ID`, and `GOBBY_PANE_REF`. Interactive `gclient` launch inside such a
+pane is refused with `gclient cannot run as a child of another gclient process`.
+Workspace commands and help/version remain available. Hooks see the same
 binding as `gobby_terminal_id` and `gobby_pane_ref`; see the ghook guide's
 [Terminal Context](ghook-development-guide.md#terminal-context).
 
@@ -467,12 +468,9 @@ then press the second key.
 | Situation | Prefix |
 | --- | --- |
 | Running in a plain terminal | `ctrl+b` |
-| Running inside a tmux client | `ctrl+]` |
 
-The client detects tmux by asking the tmux server for its identity, not by the
-`TMUX` variable alone, so a stale variable does not switch prefixes. Inside tmux
-the outer tmux keeps `ctrl+b`. The status line always names the active prefix
-(`prefix ctrl+b`, or `prefix ctrl+]` inside tmux). Override either default with a `prefix = "..."` line in the keymap file
+The status line always names the active prefix (`prefix ctrl+b` by default).
+Override the default with a `prefix = "..."` line in the keymap file
 (see [Customising the keymap](#customising-the-keymap)).
 
 Pressing the prefix twice sends a literal prefix chord to the focused terminal.

@@ -69,19 +69,6 @@ impl AttachTarget {
 pub struct ProbeEnv {
     pub daemon_url: String,
     pub token: Option<String>,
-    /// An outer tmux client owns this terminal, so its prefix eats `ctrl+b`.
-    pub nested_tmux: bool,
-    /// gclient was started inside a gclient pane (`GOBBY_PANE_ID` is set):
-    /// the outer window owns the terminal and its prefix.
-    pub in_pane: bool,
-}
-
-impl ProbeEnv {
-    /// An outer client owns the terminal, so the prefix shifts to
-    /// [`default_prefix`]`(true)`.
-    pub fn nested(&self) -> bool {
-        self.nested_tmux || self.in_pane
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -99,11 +86,6 @@ pub struct Ready {
     pub host_notice: Option<String>,
     pub prefs: ClientPrefs,
     pub keymap: Keymap,
-    /// The prefix is shifted because an outer client owns the terminal
-    /// (see [`ProbeEnv::nested`]); the keymap was built for it.
-    pub nested: bool,
-    /// See [`ProbeEnv::in_pane`]: the window opens no terminal of its own.
-    pub in_pane: bool,
     pub gobby_home: PathBuf,
     /// The workspace the window attaches to, from `--node`/`--workspace`.
     pub attach: AttachTarget,
@@ -422,8 +404,6 @@ pub fn resolve_probe_env_at(
     args: &CliArgs,
     default_daemon_url: &str,
     default_gobby_home: &Path,
-    nested_tmux: bool,
-    in_pane: bool,
 ) -> Result<ProbeEnv, StartupError> {
     let daemon_url = args
         .daemon_url
@@ -460,8 +440,6 @@ pub fn resolve_probe_env_at(
     Ok(ProbeEnv {
         daemon_url,
         token: Some(token.to_string()),
-        nested_tmux,
-        in_pane,
     })
 }
 
@@ -481,13 +459,7 @@ fn resolve_probe_env(args: &CliArgs) -> Result<ProbeEnv, StartupError> {
             detail: err.to_string(),
         })?
     };
-    resolve_probe_env_at(
-        args,
-        &default_daemon_url,
-        &default_gobby_home,
-        crate::tmux_identity::current().is_some(),
-        std::env::var_os("GOBBY_PANE_ID").is_some_and(|id| !id.is_empty()),
-    )
+    resolve_probe_env_at(args, &default_daemon_url, &default_gobby_home)
 }
 
 pub fn prepare(
@@ -521,7 +493,7 @@ pub fn prepare_at(
     if args.no_mouse {
         prefs.mouse_capture = false;
     }
-    let keymap = load_keymap(&prefs, gobby_home, env.nested())?;
+    let keymap = load_keymap(&prefs, gobby_home)?;
     // A stopped daemon is a wait, not an exit: the loop's supervisor connects
     // once it is back, so the probe's report becomes the launch notice. Every
     // other probe failure still ends the launch before raw mode.
@@ -539,7 +511,6 @@ pub fn prepare_at(
         Err(error @ StartupError::Unreachable { .. }) => (None, Some(error.to_string())),
         Err(error) => return Err(error),
     };
-    let nested = env.nested();
     Ok(Ready {
         daemon_url: env.daemon_url,
         token: env.token,
@@ -549,8 +520,6 @@ pub fn prepare_at(
         host_notice,
         prefs,
         keymap,
-        nested,
-        in_pane: env.in_pane,
         gobby_home: gobby_home.to_path_buf(),
         launch_dir: current_dir.to_path_buf(),
         attach: AttachTarget::from_flags(args.node.as_deref(), args.workspace.as_deref()),
@@ -576,16 +545,11 @@ pub fn keymap_override_path(prefs: &ClientPrefs, gobby_home: &Path) -> PathBuf {
     }
 }
 
-/// Load the keymap for these prefs: the defaults behind this launch's prefix
-/// (see [`ProbeEnv::nested`]) merged with the override file when it
-/// exists. A rejected file names its path and the error.
-pub fn load_keymap(
-    prefs: &ClientPrefs,
-    gobby_home: &Path,
-    nested: bool,
-) -> Result<Keymap, StartupError> {
+/// Load the default keymap merged with the configured overrides.
+/// A rejected file names its path and the error.
+pub fn load_keymap(prefs: &ClientPrefs, gobby_home: &Path) -> Result<Keymap, StartupError> {
     let path = keymap_override_path(prefs, gobby_home);
-    Keymap::load_overrides(&path, default_prefix(nested)).map_err(|error| StartupError::Keymap {
+    Keymap::load_overrides(&path, default_prefix()).map_err(|error| StartupError::Keymap {
         path: path.display().to_string(),
         detail: error.to_string(),
     })
@@ -712,6 +676,9 @@ pub fn run() -> anyhow::Result<()> {
     if args.help {
         println!("{USAGE}");
         return Ok(());
+    }
+    if std::env::var_os("GOBBY_PANE_ID").is_some_and(|id| !id.is_empty()) {
+        anyhow::bail!("gclient cannot run as a child of another gclient process");
     }
     if let Err(error) = crate::logging::init() {
         eprintln!("failed to initialize gclient logging: {error}");

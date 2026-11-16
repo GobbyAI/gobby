@@ -13,7 +13,7 @@ use gobby_client::startup::{
 };
 use gobby_client::teardown::{ModeBackend, RecordingBackend, TerminalGuard};
 use gobby_client::theme::ThemeName;
-use gobby_client::ui::keymap::{default_prefix, Action, Keymap, DEFAULT_PREFIX};
+use gobby_client::ui::keymap::{Action, Keymap, DEFAULT_PREFIX};
 use gobby_client::ui::settings::{
     render_settings, AgentSort, ClientPrefs, PassthroughModifier, TitleScrolling,
 };
@@ -173,14 +173,8 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
     ])
     .expect("parse explicit discovery overrides");
     let missing_default = root.path().join("missing-default-token");
-    let env = resolve_probe_env_at(
-        &args,
-        "http://bootstrap.invalid",
-        &missing_default,
-        false,
-        false,
-    )
-    .expect("explicit token file");
+    let env = resolve_probe_env_at(&args, "http://bootstrap.invalid", &missing_default)
+        .expect("explicit token file");
     assert_eq!(env.daemon_url, url);
     assert_eq!(env.token.as_deref(), Some("task-token"));
 
@@ -190,19 +184,13 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
     )
     .expect("write default API key");
     let args = parse_args(["gclient"]).expect("parse defaults");
-    let env = resolve_probe_env_at(
-        &args,
-        "http://bootstrap.test:60887",
-        root.path(),
-        false,
-        false,
-    )
-    .expect("default token file");
+    let env = resolve_probe_env_at(&args, "http://bootstrap.test:60887", root.path())
+        .expect("default token file");
     assert_eq!(env.daemon_url, "http://bootstrap.test:60887");
     assert_eq!(env.token.as_deref(), Some("default-token"));
 
     let missing = root.path().join("missing-token");
-    let error = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &missing, false, false)
+    let error = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &missing)
         .expect_err("missing default token succeeded");
     let message = error.to_string();
     assert!(message.contains(&missing.display().to_string()));
@@ -210,14 +198,8 @@ fn daemon_url_overrides_bootstrap_before_raw_mode() {
 
     let unreadable = root.path().join("token-directory");
     std::fs::create_dir(&unreadable).expect("create unreadable token path");
-    let error = resolve_probe_env_at(
-        &args,
-        "http://bootstrap.test:60887",
-        &unreadable,
-        false,
-        false,
-    )
-    .expect_err("directory token path succeeded");
+    let error = resolve_probe_env_at(&args, "http://bootstrap.test:60887", &unreadable)
+        .expect_err("directory token path succeeded");
     assert!(error.to_string().contains("--token-file"));
 }
 
@@ -467,80 +449,47 @@ fn prefs_carry_sidebar_and_project_preferences() {
     );
 }
 
-/// 4.3.4: a gclient started inside a gclient pane shifts its prefix the way
-/// a nested tmux client does and opens no terminal of its own; outside a
-/// pane the first run still seeds one shell.
+/// Attaching an empty workspace does not create a terminal implicitly.
 #[tokio::test]
-async fn nested_pane_launch_shifts_prefix_and_opens_nothing() {
+async fn standalone_launch_opens_no_terminal_of_its_own() {
     let home = tempfile::tempdir().expect("temp gobby home");
-    let cwd = tempfile::tempdir().expect("temp current dir");
-    fs::write(home.path().join("bootstrap.yaml"), "api_key: token\n").expect("write API key");
-    let args = parse_args(["gclient"]).expect("parse args");
-    let probe = |in_pane: bool| {
-        resolve_probe_env_at(&args, "http://unused", home.path(), false, in_pane)
-            .expect("probe env resolves")
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue("GET", "/api/projects", 200, project_rows());
+    mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[]));
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.set_gobby_home(home.path().to_path_buf());
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(8);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "workspace_attach", 1).await;
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 1).await;
+        settle_live_event().await;
+        drop(input_tx);
     };
-    let outside = probe(false);
-    assert!(!outside.in_pane);
-    assert!(
-        !outside.nested(),
-        "outside tmux and any pane the prefix stays"
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
     );
-    let inside = probe(true);
-    assert!(inside.in_pane);
-    assert!(!inside.nested_tmux);
-    assert!(inside.nested(), "a pane launch shifts the prefix");
-    let ready = prepare_at(&args, inside, &HealthyHost, cwd.path(), home.path())
-        .expect("prepare inside a pane");
-    assert!(ready.nested);
-    assert!(ready.in_pane);
+    result.expect("live loop");
     assert_eq!(
-        ready.keymap.active_chords(),
-        Keymap::defaults(default_prefix(true)).active_chords()
+        websocket_requests(&mock, "terminal_create").len(),
+        0,
+        "standalone launch"
     );
-
-    // Both launches attach without opening a shell; nested status only
-    // changes the keymap prefix.
-    for in_pane in [true, false] {
-        let mock = MockDaemon::start("local-token").await;
-        mock.enqueue("GET", "/api/projects", 200, project_rows());
-        mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[]));
-        let daemon = LiveDaemon::connect(mock.url(), "local-token")
-            .await
-            .expect("connect live daemon");
-        let mut workspace = Workspace::live(daemon);
-        workspace.set_gobby_home(home.path().to_path_buf());
-        workspace.set_in_pane(in_pane);
-        workspace.select_project("project-1");
-        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-        let mut chrome = Chrome::dark();
-        let (input_tx, input_rx) = mpsc::channel(8);
-        let driver = async {
-            wait_for_websocket_requests(&mock, "workspace_attach", 1).await;
-            wait_for_http_requests(&mock, "GET", "/api/terminals?", 1).await;
-            settle_live_event().await;
-            drop(input_tx);
-        };
-        let mut switch = TerminalGuard::recording().0;
-        let (result, ()) = tokio::join!(
-            run_live_loop(
-                &mut workspace,
-                &mut terminal,
-                &mut chrome,
-                input_rx,
-                &mut switch
-            ),
-            driver
-        );
-        result.expect("live loop");
-        assert_eq!(
-            websocket_requests(&mock, "terminal_create").len(),
-            0,
-            "in_pane={in_pane}"
-        );
-        assert!(chrome.tabs().tabs.is_empty(), "in_pane={in_pane}");
-        mock.shutdown().await;
-    }
+    assert!(chrome.tabs().tabs.is_empty());
+    mock.shutdown().await;
 }
 
 fn project_rows() -> Value {
@@ -829,6 +778,8 @@ fn detached_gclient() -> Command {
     // Each subprocess uses its fixture's credentials, not the agent seat's.
     command.env_remove(gobby_core::local_token::AGENT_API_TOKEN_ENV);
     command.env_remove("GOBBY_MANAGED_EXECUTION_BOOTSTRAP");
+    // This fixture represents a standalone terminal, independent of the test runner's pane.
+    command.env_remove("GOBBY_PANE_ID");
     // SAFETY: setsid is async-signal-safe and touches nothing the parent
     // shares with the child.
     unsafe {
@@ -926,8 +877,6 @@ fn env_at(url: &str) -> ProbeEnv {
     ProbeEnv {
         daemon_url: url.to_string(),
         token: None,
-        nested_tmux: false,
-        in_pane: false,
     }
 }
 
@@ -1002,8 +951,7 @@ fn test_reports_degraded_host_state() {
         } else {
             &url
         };
-        let env = resolve_probe_env_at(&args, fallback, root.path(), false, false)
-            .expect("resolve host env");
+        let env = resolve_probe_env_at(&args, fallback, root.path()).expect("resolve host env");
         assert_eq!(env.daemon_url, url);
         let (backend, enters) = CountingBackend::new();
         let (ready, guard) = start_session(args, env, &HttpHealthClient::new(), backend)
@@ -1045,8 +993,7 @@ fn test_reports_degraded_host_state() {
             } else {
                 &url
             };
-            let env = resolve_probe_env_at(&args, fallback, root.path(), false, false)
-                .expect("resolve host env");
+            let env = resolve_probe_env_at(&args, fallback, root.path()).expect("resolve host env");
             let (backend, enters) = CountingBackend::new();
             let error = match start_session(args, env, &HttpHealthClient::new(), backend) {
                 Err(error) => error,
