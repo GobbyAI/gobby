@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from gobby.sessions.tmux_context import parse_terminal_context_value
+from gobby.terminal_context import parse_terminal_context_value
 
 
 def terminal_context_matches_session(
@@ -52,9 +52,13 @@ def terminal_contexts_match(
     if not first_context or not second_context:
         return False
 
-    for field_name in ("tmux_pane", "tmux_session"):
-        if _non_empty_equal(first_context, second_context, field_name):
-            return _tmux_scope_compatible(first_context, second_context)
+    terminal_id = first_context.get("gobby_terminal_id")
+    if (
+        isinstance(terminal_id, str)
+        and terminal_id
+        and terminal_id == second_context.get("gobby_terminal_id")
+    ):
+        return True
 
     for field_name in ("tty", "parent_pid"):
         if _non_empty_equal(first_context, second_context, field_name):
@@ -107,22 +111,3 @@ def _positive_equal(
         return float(first_value) > 0 and float(first_value) == float(second_value)
     except (TypeError, ValueError):
         return False
-
-
-def _tmux_scope_compatible(
-    first_context: Mapping[str, Any],
-    second_context: Mapping[str, Any],
-) -> bool:
-    first_scope = _tmux_scope(first_context)
-    second_scope = _tmux_scope(second_context)
-    return first_scope is None or second_scope is None or first_scope == second_scope
-
-
-def _tmux_scope(context: Mapping[str, Any]) -> tuple[str, Any] | None:
-    socket_path = context.get("tmux_socket_path")
-    if socket_path:
-        return ("path", socket_path)
-    socket_name = context.get("tmux_socket_name")
-    if socket_name:
-        return ("name", socket_name)
-    return None

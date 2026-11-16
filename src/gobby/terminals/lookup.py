@@ -32,21 +32,8 @@ def active_terminal_for_run(manager: _HasGet | None, run: Any) -> Terminal | Non
     return row
 
 
-def attach_name_from_context(terminal_context: Mapping[str, object] | None) -> str | None:
-    """Session name from terminal_context without owned-module tmux field reads."""
-    from gobby.sessions.tmux_context import get_tmux_session_name as session_name_of
-
-    return session_name_of(terminal_context)
-
-
-def socket_path_from_context(terminal_context: Mapping[str, object] | None) -> str | None:
-    from gobby.sessions.tmux_context import get_tmux_socket_path as socket_path_of
-
-    return socket_path_of(terminal_context)
-
-
 def parent_pid_from_context(terminal_context: Mapping[str, object] | None) -> int | None:
-    from gobby.sessions.tmux_context import get_terminal_parent_pid as parent_pid_of
+    from gobby.terminal_context import get_terminal_parent_pid as parent_pid_of
 
     return parent_pid_of(terminal_context)
 

@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import psutil
 import pytest
 
-from gobby.agents.tmux.session_manager import TmuxPaneInfo
 from gobby.sessions import liveness_monitor as liveness_mod
 from gobby.sessions.liveness_monitor import (
     SessionLivenessMonitor,
@@ -38,23 +37,15 @@ def _record(
     *,
     status: str = "active",
     pid: int = 10,
-    pane: str | None = "%1",
-    window: str | None = "@1",
 ) -> _TerminalLivenessRecord:
     context: dict[str, Any] = {
         "parent_pid": pid,
         "parent_create_time": float(pid),
         "tty": "/dev/ttys001",
     }
-    if pane is not None:
-        context["tmux_pane"] = pane
-    if window is not None:
-        context["tmux_window_id"] = window
     return _TerminalLivenessRecord(
         session_id=session_id,
         parent_pid=pid,
-        tmux_pane=pane,
-        tmux_window_id=window,
         status=status,
         machine_id=_LOCAL,
         terminal_context=context,
@@ -111,151 +102,7 @@ def monitor(storage: _Storage) -> SessionLivenessMonitor:
     return SessionLivenessMonitor(session_storage=cast(Any, storage), poll_interval=0.01)
 
 
-_SOCKET = "/tmp/hand-started-tmux.sock"
-
-
-def _pane(
-    pane_id: str,
-    window_id: str,
-    *,
-    dead: bool = False,
-    server_pid: int = 100,
-) -> TmuxPaneInfo:
-    return TmuxPaneInfo(
-        socket_path=_SOCKET,
-        server_pid=server_pid,
-        server_start_time=200,
-        session_name="work",
-        window_id=window_id,
-        window_name=None,
-        pane_id=pane_id,
-        pane_pid=None,
-        pane_title=None,
-        pane_dead=dead,
-        pane_command=None,
-        pane_path=None,
-    )
-
-
-def _fake_tmux(monkeypatch: pytest.MonkeyPatch, panes: list[TmuxPaneInfo] | None) -> list[str]:
-    """Answer every list-panes with ``panes``; return the sockets probed."""
-    probed: list[str] = []
-
-    class FakeTmux:
-        def __init__(self, socket_path: str) -> None:
-            probed.append(socket_path)
-
-        async def list_panes(self, **_kwargs: Any) -> list[TmuxPaneInfo] | None:
-            return panes
-
-    monkeypatch.setattr(liveness_mod, "TmuxSessionManager", FakeTmux)
-    return probed
-
-
-def _tmux_record(session_id: str, **socket: object) -> _TerminalLivenessRecord:
-    record = _record(session_id)
-    context = dict(record.terminal_context or {})
-    context.update(socket)
-    return replace(record, terminal_context=context)
-
-
-def _external_record(session_id: str) -> _TerminalLivenessRecord:
-    return _tmux_record(
-        session_id,
-        tmux_socket_path=_SOCKET,
-        tmux_server_pid=100,
-        tmux_server_start_time=200,
-    )
-
-
-class TestTmuxTargetLiveness:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("panes", "expired"),
-        [
-            # The window was killed: its pane is gone from the server.
-            ([_pane("%7", "@7")], True),
-            # The pane is still listed but its process exited.
-            ([_pane("%1", "@1", dead=True)], True),
-            # No tmux server answers on the socket any more.
-            ([], True),
-            # A restarted server reused the pane id; it is a different pane.
-            ([_pane("%1", "@1", server_pid=101)], True),
-            ([_pane("%1", "@1")], False),
-            # The pane was replaced inside the window the session lives in.
-            ([_pane("%2", "@1")], False),
-            # tmux failed without answering: keep the session as it is.
-            (None, False),
-        ],
-    )
-    async def test_dead_tmux_target_expires_its_session(
-        self,
-        panes: list[TmuxPaneInfo] | None,
-        expired: bool,
-        monitor: SessionLivenessMonitor,
-        storage: _Storage,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        probed = _fake_tmux(monkeypatch, panes)
-        records = [_external_record("a"), _external_record("b")]
-        monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: records)
-
-        await monitor._check_sessions()
-
-        assert storage.expire_calls == (["a", "b"] if expired else [])
-        # One probe per socket per sweep, against the socket the session recorded.
-        assert probed == [_SOCKET]
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("error", [TimeoutError("tmux hung"), FileNotFoundError("tmux")])
-    async def test_failed_tmux_probe_keeps_the_sweep_going(
-        self,
-        error: Exception,
-        monitor: SessionLivenessMonitor,
-        storage: _Storage,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        class RaisingTmux:
-            def __init__(self, _socket_path: str) -> None:
-                pass
-
-            async def list_panes(self, **_kwargs: Any) -> list[TmuxPaneInfo] | None:
-                raise error
-
-        monkeypatch.setattr(liveness_mod, "TmuxSessionManager", RaisingTmux)
-        process = _record("process", pane=None, window=None)
-        records = [_external_record("tmux"), process]
-        monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: records)
-        monkeypatch.setattr(
-            liveness_mod,
-            "inspect_foreground_ownership",
-            lambda _record: SimpleNamespace(state=OwnershipState.OWNERLESS),
-        )
-
-        await monitor._check_sessions()
-
-        # The tmux session is kept; the session after it is still judged.
-        assert storage.expire_calls == ["process"]
-
-    @pytest.mark.asyncio
-    # A bare -L socket name addresses no server Gobby can reach (#22856).
-    @pytest.mark.parametrize("socket", [{}, {"tmux_socket_name": "gobby"}], ids=["none", "named"])
-    async def test_tmux_target_without_a_socket_is_left_alone(
-        self,
-        socket: dict[str, object],
-        monitor: SessionLivenessMonitor,
-        storage: _Storage,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        probed = _fake_tmux(monkeypatch, [])
-        record = _tmux_record("socketless", **socket)
-        monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: [record])
-
-        await monitor._check_sessions()
-
-        assert storage.expire_calls == []
-        assert probed == []
-
+class TestTerminalLiveness:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("record_machine", "local_machine"),
@@ -270,8 +117,7 @@ class TestTmuxTargetLiveness:
         storage: _Storage,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        # Neither another machine's socket nor its pids exist here.
-        probed = _fake_tmux(monkeypatch, [])
+        # Process identities are local to the recorded machine.
         inspected: list[str] = []
 
         def inspect(record: _TerminalLivenessRecord) -> SimpleNamespace:
@@ -281,14 +127,13 @@ class TestTmuxTargetLiveness:
         monkeypatch.setattr(liveness_mod, "inspect_foreground_ownership", inspect)
         monkeypatch.setattr(liveness_mod, "get_machine_id", lambda: local_machine)
         records = [
-            replace(_external_record("tmux"), machine_id=record_machine),
-            replace(_record("process", pane=None, window=None), machine_id=record_machine),
+            replace(_record("process"), machine_id=record_machine),
         ]
         monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: records)
 
         await monitor._check_sessions()
 
-        assert (probed, inspected, storage.expire_calls) == ([], [], [])
+        assert (inspected, storage.expire_calls) == ([], [])
 
     @pytest.mark.asyncio
     async def test_expiry_only_applies_to_the_probed_snapshot(
@@ -297,10 +142,12 @@ class TestTmuxTargetLiveness:
         storage: _Storage,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        _fake_tmux(monkeypatch, [])
         monkeypatch.setattr(
-            monitor, "_get_active_terminal_sessions", lambda: [_external_record("a")]
+            liveness_mod,
+            "inspect_foreground_ownership",
+            lambda record: SimpleNamespace(state=OwnershipState.OWNERLESS),
         )
+        monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: [_record("a")])
 
         await monitor._check_sessions()
 
@@ -313,7 +160,7 @@ async def test_codex_seat_expires_after_its_recorded_pid_disappears(
     monitor: SessionLivenessMonitor, storage: _Storage, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A shared-host end can be ignored; liveness still retires the exited TUI."""
-    record = _record("codex-seat", pane=None, window=None)
+    record = _record("codex-seat")
     monkeypatch.setattr(monitor, "_get_active_terminal_sessions", lambda: [record])
     seat_alive = True
     process = MagicMock(spec=psutil.Process)
@@ -477,7 +324,7 @@ class TestGetActiveTerminalSessions:
                     {
                         "parent_pid": "42",
                         "parent_create_time": 10.0,
-                        "tmux_pane": "%1",
+                        "gobby_terminal_id": "native-a",
                         "tty": "/dev/ttys001",
                     }
                 ),
@@ -505,7 +352,7 @@ class TestGetActiveTerminalSessions:
             ],
         )
 
-    def test_skips_context_without_process_or_tmux_identity(self, storage: _Storage) -> None:
+    def test_skips_context_without_process_or_native_identity(self, storage: _Storage) -> None:
         storage.db.fetchall.return_value = [
             {
                 "id": "session",
@@ -571,7 +418,7 @@ def test_paused_native_id_only_context_is_liveness_candidate(storage: _Storage) 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("case", ["confirmed", "remote", "active", "startup", "hub_outage"])
-async def test_only_local_paused_exited_native_candidate_enters_guarded_expiry(
+async def test_liveness_reads_native_rows_only(
     storage: _Storage,
     case: str,
 ) -> None:
@@ -602,6 +449,7 @@ async def test_only_local_paused_exited_native_candidate_enters_guarded_expiry(
     with (
         patch.object(liveness_mod, "get_machine_id", return_value=local_id),
         patch.object(liveness_mod, "retire_session_hook_effects"),
+        patch.object(liveness_mod, "inspect_foreground_ownership") as inspect_process,
     ):
         await monitor._check_sessions()
 
@@ -610,3 +458,8 @@ async def test_only_local_paused_exited_native_candidate_enters_guarded_expiry(
     # The live host epoch reaches storage, which decides whether the exit was a drain.
     assert storage.live_host_epochs == (["epoch-live"] if case == "confirmed" else [])
     assert storage.expire_calls == []
+    inspect_process.assert_not_called()
+    if case == "confirmed":
+        terminal_manager.get_live_for_session.assert_called_with("paused-seat")
+    else:
+        terminal_manager.get_live_for_session.assert_not_called()

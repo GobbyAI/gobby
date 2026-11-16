@@ -7,7 +7,6 @@ from gobby.hooks.agent_run_ingress import session_end_targets_live_cli
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.hook_types import SessionEndReason
-from gobby.terminal_context import terminal_context_has_tmux_target
 
 
 class SessionEndMixin(EventHandlersBase):
@@ -89,14 +88,6 @@ class SessionEndMixin(EventHandlersBase):
             end_reason = SessionEndReason.OTHER
         if end_reason == SessionEndReason.COMPACT:
             end_status = "awaiting_handoff"
-        elif (
-            session is not None
-            and session.session_type == "terminal"
-            and terminal_context_has_tmux_target(session.terminal_context)
-        ):
-            # Gobby no longer spawns tmux, so every tmux pane is hand-started and
-            # outlives the CLI that ended in it.
-            end_status = session.status if session.status in {"paused", "interrupted"} else "idle"
         elif (
             end_reason == SessionEndReason.IDLE
             and session is not None
@@ -222,7 +213,7 @@ class SessionEndMixin(EventHandlersBase):
         # Release any session-owned planning lock labels owned by this
         # session. The skill's terminal cleanup handles this on every clean
         # exit; this sweep is the safety net for sessions that die before
-        # reaching terminal cleanup (browser tab closed, tmux pane killed,
+        # reaching terminal cleanup (browser tab closed, terminal pane killed,
         # daemon crash mid-run). Must be best-effort — session-end must not
         # fail because of a cleanup hiccup.
         if session_id and self._task_manager:

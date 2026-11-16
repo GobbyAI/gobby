@@ -56,7 +56,7 @@ def _session(
     repo_path: Path,
     *,
     status: str = "expired",
-    tmux_pane: str | None = None,
+    gobby_terminal_id: str | None = None,
     tty: str | None = None,
     contested: bool = False,
     machine_id: str = LOCAL_MACHINE_ID,
@@ -64,9 +64,9 @@ def _session(
     insert_isolated_machine(temp_db, machine_id)
     manager = SessionManager(temp_db)
     terminal_context: dict[str, str] = {"cwd": str(repo_path)}
-    if tmux_pane is not None:
-        terminal_context["tmux_pane"] = tmux_pane
-        terminal_context["tmux_socket_path"] = "/tmp/tmux-501/default"
+    if gobby_terminal_id is not None:
+        terminal_context["gobby_terminal_id"] = gobby_terminal_id
+        terminal_context["socket_path"] = "/tmp/terminal-501/default"
     if tty is not None:
         terminal_context["tty"] = tty
     session = manager.register(
@@ -316,7 +316,7 @@ async def test_escalates_when_owner_session_lookup_fails(
 
 @pytest.mark.parametrize(
     "terminal",
-    [{"tmux_pane": "%20"}, {"tty": "/dev/ttys004"}],
+    [{"gobby_terminal_id": "%20"}, {"tty": "/dev/ttys004"}],
     ids=["tmux-pane", "plain-tty"],
 )
 async def test_preserves_a_dirty_claim_and_its_attribution_through_a_contestable_expiry(
@@ -365,7 +365,7 @@ async def test_recovers_a_contested_claim_once_the_revival_horizon_passes(
 ) -> None:
     """Past the horizon the expiry can no longer be reversed, so recovery runs."""
     project_id = _project_id(temp_db, tmp_path)
-    session = _session(temp_db, project_id, tmp_path, tmux_pane="%20", contested=True)
+    session = _session(temp_db, project_id, tmp_path, gobby_terminal_id="%20", contested=True)
     stale = datetime.now(UTC) - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1)
     temp_db.execute(
         """
@@ -395,7 +395,7 @@ async def test_recovers_a_claim_whose_owner_expired_for_a_final_reason(
     parking the claim for the revival horizon (#20837).
     """
     project_id = _project_id(temp_db, tmp_path)
-    session = _session(temp_db, project_id, tmp_path, tmux_pane="%20")
+    session = _session(temp_db, project_id, tmp_path, gobby_terminal_id="%20")
     task = _live_task(temp_db, project_id, session.id, title="Finished owner's live task")
     _set_claim_variables(temp_db, session.id, [task])
 

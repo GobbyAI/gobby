@@ -32,8 +32,8 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 TERMINAL_CONTEXT = {
-    "tmux_pane": "%214",
-    "tmux_socket_path": "/tmp/tmux-compact-test",
+    "gobby_terminal_id": "%214",
+    "socket_path": "/tmp/terminal-compact-test",
     "parent_pid": 25098,
     "parent_create_time": 1785221537.612984,
 }

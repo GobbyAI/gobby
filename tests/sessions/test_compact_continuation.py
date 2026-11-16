@@ -463,7 +463,7 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
             await release_send.wait()
             return True
 
-    session = SimpleNamespace(id=SESSION_ID, terminal_context={"tmux_pane": "%12"})
+    session = SimpleNamespace(id=SESSION_ID, terminal_context={"gobby_terminal_id": "%12"})
     tmux = BlockingTmux()
     prompt = "Continue the task.\nPreserve the existing context."
 
@@ -1007,7 +1007,7 @@ async def test_codex_readiness_does_not_take_marker_replaced_during_capture(
 
 
 @pytest.mark.asyncio
-async def test_codex_readiness_stops_when_tmux_pane_disappears(
+async def test_codex_readiness_stops_when_gobby_terminal_id_disappears(
     session_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -1437,8 +1437,8 @@ def test_in_place_compact_consumes_pending_on_same_terminal_row(
 ) -> None:
     marked_id = "00000000-0000-4000-8000-000000000014"
     terminal_context = {
-        "tmux_pane": "%11",
-        "tmux_socket_path": "/tmp/tmux-compact-test",
+        "gobby_terminal_id": "%11",
+        "socket_path": "/tmp/terminal-compact-test",
         "parent_pid": 30234,
         "parent_create_time": 1786658058.615728,
     }
@@ -1508,8 +1508,8 @@ def test_in_place_compact_does_not_steal_pending_from_other_terminal(
             PROJECT_ID,
             json.dumps(
                 {
-                    "tmux_pane": "%99",
-                    "tmux_socket_path": "/tmp/tmux-compact-test",
+                    "gobby_terminal_id": "%99",
+                    "socket_path": "/tmp/terminal-compact-test",
                     "parent_pid": 99999,
                     "parent_create_time": 1.0,
                 }
@@ -1524,8 +1524,8 @@ def test_in_place_compact_does_not_steal_pending_from_other_terminal(
         target_session=SimpleNamespace(
             id=SESSION_ID,
             terminal_context={
-                "tmux_pane": "%11",
-                "tmux_socket_path": "/tmp/tmux-compact-test",
+                "gobby_terminal_id": "%11",
+                "socket_path": "/tmp/terminal-compact-test",
                 "parent_pid": 30234,
                 "parent_create_time": 1786658058.615728,
             },
@@ -2262,7 +2262,7 @@ class TestPullPromptFallback:
             session_db, SESSION_ID, prompt=prompt, attempt_id="attempt-11"
         )
         session = SimpleNamespace(
-            id=SESSION_ID, source="claude", terminal_context={"tmux_pane": "%12"}
+            id=SESSION_ID, source="claude", terminal_context={"gobby_terminal_id": "%12"}
         )
         tmux = _StickyComposerTmux(prompt=prompt)
 
@@ -2295,7 +2295,7 @@ class TestPullPromptFallback:
         )
 
         session = SimpleNamespace(
-            id=SESSION_ID, source="claude", terminal_context={"tmux_pane": "%12"}
+            id=SESSION_ID, source="claude", terminal_context={"gobby_terminal_id": "%12"}
         )
         with (
             patch(
@@ -2329,7 +2329,9 @@ async def test_schedule_continuation_resolves_native_terminal_without_tmux(
     session = SimpleNamespace(
         id=SESSION_ID,
         source="claude",
-        terminal_context={"gobby_terminal_id": "term-1", "tmux_pane": None, "tmux_session": None},
+        terminal_context={
+            "gobby_terminal_id": "term-1",
+        },
     )
     prompt = "Continue the task."
     terminal = SimpleNamespace(id="term-1", backend="native", machine_id=require_machine_id())
@@ -2394,8 +2396,6 @@ def test_continuation_pane_uses_unbound_gterm_named_by_context() -> None:
         project_id="proj-1",
         terminal_context={
             "gobby_terminal_id": terminal_id,
-            "tmux_pane": None,
-            "tmux_session": None,
         },
     )
     terminal_manager = MagicMock()
@@ -2410,7 +2410,7 @@ def test_continuation_pane_uses_unbound_gterm_named_by_context() -> None:
 
 
 def test_continuation_pane_rejects_legacy_tmux_context() -> None:
-    session = SimpleNamespace(id="session-1", terminal_context={"tmux_pane": "%12"})
+    session = SimpleNamespace(id="session-1", terminal_context={"gobby_terminal_id": "%12"})
     manager = MagicMock()
     manager.get_live_for_session.return_value = None
     registry = MagicMock()

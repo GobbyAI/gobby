@@ -50,7 +50,6 @@ async def test_session_liveness_waits_for_startup_reconciliation() -> None:
     record = _TerminalLivenessRecord(
         session_id="parked",
         parent_pid=123,
-        tmux_pane=None,
         machine_id=machine_id,
         updated_at=updated_at,
     )

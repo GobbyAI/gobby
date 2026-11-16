@@ -233,13 +233,6 @@ def expire_stale_sessions(
     inactive_stale_sql = older_than_now_expr(db, "last_activity", "%s", "hour")
     empty_terminal_created_stale_sql = older_than_now_expr(db, "created_at", "%s", "hour")
     empty_terminal_context_sql = "terminal_context IS NULL"
-    tmux_target_sql = """
-        session_type = 'terminal'
-        AND (
-            NULLIF(BTRIM(terminal_context->>'tmux_pane'), '') IS NOT NULL
-            OR NULLIF(BTRIM(terminal_context->>'tmux_window_id'), '') IS NOT NULL
-        )
-    """
     held_by_a_running_cli = _sessions_a_running_cli_holds(db)
     with db.transaction() as conn:
         rows = conn.execute(
@@ -248,7 +241,6 @@ def expire_stale_sessions(
             SET status = 'expired', updated_at = CURRENT_TIMESTAMP
             WHERE status = ANY(%s)
             AND source != %s
-            AND NOT ({tmux_target_sql})
             AND NOT (id = ANY(%s))
             AND (
                 {inactive_stale_sql}

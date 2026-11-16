@@ -107,7 +107,7 @@ def _persistent_session(
             source="codex",
             project_id=project.id,
             project_path=str(checkout),
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "%12"},
         )
     assert session_id
     if session_type != "terminal":
@@ -224,7 +224,7 @@ class TestRegisterTerminalTools:
             session_type="terminal",
             source=source,
             status="active",
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "%12"},
         )
         session_manager = MagicMock()
         session_manager.get.return_value = session
@@ -305,7 +305,7 @@ class TestRegisterTerminalTools:
             session_type="terminal",
             source="codex",
             status="active",
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "%12"},
         )
         session_manager = MagicMock()
         session_manager.get.return_value = session
@@ -378,7 +378,7 @@ class TestRegisterTerminalTools:
             session_type="terminal",
             source="claude",
             status="active",
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "%12"},
         )
         session_manager = MagicMock()
         session_manager.get.return_value = session
@@ -434,8 +434,8 @@ class TestRegisterTerminalTools:
         assert result["command"] == "/clear"
         send_command.assert_not_awaited()
 
-    def assert_send_keys_rejects_raw_tmux_context_after_native_lookup(self) -> None:
-        """A pane hint alone cannot authorize a raw tmux write."""
+    def assert_send_keys_rejects_unhosted_context_after_native_lookup(self) -> None:
+        """A pane hint alone cannot authorize a unhosted terminal write."""
         registry = _TestRegistry(name="test", description="test")
 
         session = MagicMock()
@@ -443,8 +443,8 @@ class TestRegisterTerminalTools:
         session.project_id = "project-1"
         session.agent_run_id = None
         session.terminal_context = {
-            "tmux_pane": "%12",
-            "tmux_socket_path": "/tmp/tmux-1000/gobby",
+            "gobby_terminal_id": "%12",
+            "socket_path": "/tmp/terminal-1000/gobby",
         }
 
         session_manager = MagicMock()
@@ -527,7 +527,7 @@ class TestRegisterTerminalTools:
         target = MagicMock(
             id="target-session",
             project_id=target_project,
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "%12"},
         )
 
         session_manager = MagicMock()
@@ -633,11 +633,11 @@ class TestRegisterTerminalTools:
         assert request.payload == "/faster"
         assert request.submit is True
 
-    def test_capture_output_does_not_probe_raw_tmux_context(self) -> None:
+    def test_capture_output_does_not_probe_unhosted_context(self) -> None:
         """A pane hint without a managed row cannot trigger raw tmux capture."""
         registry = _TestRegistry(name="test", description="test")
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%12"}
+        session.terminal_context = {"gobby_terminal_id": "%12"}
 
         session_manager = MagicMock()
         session_manager.get.return_value = session
@@ -742,7 +742,7 @@ class TestRegisterTerminalTools:
         session = MagicMock(
             id="session-1",
             project_id="proj-1",
-            terminal_context={"gobby_terminal_id": terminal_id, "tmux_pane": None},
+            terminal_context={"gobby_terminal_id": terminal_id},
             transcript_path=None,
         )
         session_manager = MagicMock()
@@ -777,8 +777,8 @@ class TestRegisterTerminalTools:
         assert result["output"] == "live pane"
 
 
-def test_send_keys_rejects_raw_tmux_context_after_native_lookup() -> None:
-    TestRegisterTerminalTools().assert_send_keys_rejects_raw_tmux_context_after_native_lookup()
+def test_send_keys_rejects_unhosted_context_after_native_lookup() -> None:
+    TestRegisterTerminalTools().assert_send_keys_rejects_unhosted_context_after_native_lookup()
 
 
 @pytest.mark.parametrize("stage", ["none", "partial"])

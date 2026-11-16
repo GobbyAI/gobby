@@ -9,7 +9,7 @@ import psycopg
 
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.terminal_binding import cli_shares_shell_tty
-from gobby.sessions.tmux_context import parse_terminal_context_value
+from gobby.terminal_context import parse_terminal_context_value
 
 STALE_TERMINAL_SESSION_SCAN_LIMIT = 200
 NativeTerminalBind = tuple[str, dict[str, Any]]

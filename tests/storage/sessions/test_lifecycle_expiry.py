@@ -113,7 +113,7 @@ def test_expire_stale_sessions_keeps_recently_active_untracked_terminal_session(
 
 
 @pytest.mark.unit
-def test_expire_stale_sessions_keeps_stale_tmux_terminal_session(
+def test_expire_stale_sessions_expires_unmanaged_terminal_session(
     session_mgr: SessionManager,
     project_id: str,
 ) -> None:
@@ -122,7 +122,7 @@ def test_expire_stale_sessions_keeps_stale_tmux_terminal_session(
         machine_id="21000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=project_id,
-        terminal_context={"tmux_pane": "%1"},
+        terminal_context={"tty": "/dev/ttys001"},
     )
     session_mgr.db.execute(
         """
@@ -138,10 +138,10 @@ def test_expire_stale_sessions_keeps_stale_tmux_terminal_session(
 
     expired = session_mgr.expire_stale_sessions(timeout_hours=24)
 
-    assert expired == 0
+    assert expired == 1
     refreshed = session_mgr.get(session.id)
     assert refreshed is not None
-    assert refreshed.status == "paused"
+    assert refreshed.status == "expired"
 
 
 @pytest.mark.integration

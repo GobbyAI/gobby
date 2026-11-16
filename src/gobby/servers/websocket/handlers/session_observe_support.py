@@ -140,24 +140,12 @@ async def _load_live_session_variables(
 
 
 def _has_terminal_liveness(terminal_context: Any) -> bool:
-    """Return True when terminal metadata indicates a live tmux-backed session."""
+    """Return True when terminal metadata identifies a native terminal."""
     if not isinstance(terminal_context, dict):
         return False
 
-    tmux_pane = terminal_context.get("tmux_pane")
-    if isinstance(tmux_pane, str) and tmux_pane:
-        return True
-
-    parent_pid = terminal_context.get("parent_pid")
-    if isinstance(parent_pid, int) and not isinstance(parent_pid, bool):
-        return parent_pid > 0
-    if isinstance(parent_pid, str):
-        try:
-            return int(parent_pid) > 0
-        except ValueError:
-            return False
-
-    return False
+    terminal_id = terminal_context.get("gobby_terminal_id")
+    return isinstance(terminal_id, str) and bool(terminal_id)
 
 
 def _can_proxy_attach_session(session: Any) -> bool:

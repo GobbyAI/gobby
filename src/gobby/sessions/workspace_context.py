@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.sessions.tmux_context import parse_terminal_context_value
+from gobby.terminal_context import parse_terminal_context_value
 from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git, parse_porcelain_v1_z
 
 if TYPE_CHECKING:

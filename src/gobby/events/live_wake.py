@@ -8,7 +8,6 @@ from typing import Any
 
 from gobby.agents.idle_detector import ComposerRead
 from gobby.sessions.handoff import PENDING_HANDOFF_VARIABLE
-from gobby.sessions.tmux_context import get_tmux_socket_path, parse_terminal_context_value
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, PROTECTED_SESSION_STATUSES
 from gobby.workflows.reserved_variables import HANDOFF_TURN_END_PENDING_VARIABLE
 
@@ -47,27 +46,6 @@ RETRYABLE_WAKE_SKIPS = frozenset(
 # Skips from wake_state_failure for a recipient outside the live statuses. The durable
 # message stays queued until that session resumes; no live wake is pending.
 NOT_LIVE_WAKE_SKIPS = frozenset({"session_expired", "session_not_live"})
-
-
-def parse_tmux_session(terminal_context: Any) -> str | None:
-    ctx = parse_terminal_context_value(terminal_context)
-    if not ctx:
-        return None
-    value = ctx.get("tmux_session")
-    return value if isinstance(value, str) and value else None
-
-
-def parse_tmux_pane(terminal_context: Any) -> str | None:
-    ctx = parse_terminal_context_value(terminal_context)
-    if not ctx:
-        return None
-    value = ctx.get("tmux_pane")
-    return value if isinstance(value, str) and value else None
-
-
-def parse_tmux_socket_path(terminal_context: Any) -> str | None:
-    ctx = parse_terminal_context_value(terminal_context)
-    return get_tmux_socket_path(ctx) if ctx else None
 
 
 def normalize_live_wake_result(result: dict[str, Any]) -> dict[str, Any]:

@@ -14,7 +14,6 @@ def test_host_config_ranges_reject_and_admit_maximum() -> None:
     ok = TerminalHostConfig(
         max_attachments_per_terminal=8,
         max_attachments_total=128,
-        max_attached_terminals=64,
         native_scrollback_max_lines=50_000,
         native_scrollback_max_bytes=32 * 1024 * 1024,
     )

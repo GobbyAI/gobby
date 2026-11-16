@@ -5,10 +5,8 @@ Focuses on the terminal kill path in continue_in_chat.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import signal
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -52,152 +50,8 @@ class TestKillTerminalSession:
     """Tests for the kill_terminal_session helper."""
 
     @pytest.mark.asyncio
-    async def test_kills_via_tmux_pane_on_recorded_socket(self) -> None:
-        """Should target the recorded tmux socket path when killing a pane."""
-        ctx = {
-            "tmux_pane": "%49",
-            "tmux_socket_path": "/tmp/tmux-1000/gobby",
-            "parent_pid": "12345",
-        }
-
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-
-        with patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc) as mock_exec:
-            result = await kill_terminal_session(ctx, "test-session-id")
-
-        assert result is True
-        mock_exec.assert_called_once_with(
-            "tmux",
-            "-S",
-            "/tmp/tmux-1000/gobby",
-            "kill-pane",
-            "-t",
-            "%49",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "server",
-        [
-            pytest.param({}, id="default-server"),
-            pytest.param({"tmux_socket_name": "gobby"}, id="named-server"),
-        ],
-    )
-    async def test_never_kills_a_pane_without_its_recorded_socket(
-        self, server: dict[str, str]
-    ) -> None:
-        """%N on some other server is an unrelated pane; Gobby only reaches $TMUX's socket."""
-        ctx = {"tmux_pane": "%49", "parent_pid": "12345", **server}
-
-        with (
-            patch("gobby.utils.spawn.create_subprocess_exec") as mock_exec,
-            patch("os.kill") as mock_kill,
-        ):
-            result = await kill_terminal_session(ctx, "test-session-id")
-
-        assert result is False
-        mock_exec.assert_not_called()
-        mock_kill.assert_not_called()
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "probe",
-        [
-            pytest.param((0, "1658\t1790000000\t@1\twork\n"), id="restarted-server"),
-            pytest.param((1, ""), id="unverifiable"),
-        ],
-    )
-    async def test_never_kills_a_pane_from_another_server_generation(
-        self, probe: tuple[int, str]
-    ) -> None:
-        """A restarted server reuses %N, so a recorded generation must still answer."""
-        ctx = {
-            "tmux_pane": "%49",
-            "tmux_socket_path": "/tmp/tmux-1000/default",
-            "tmux_server_pid": 1658,
-            "tmux_server_start_time": 1784592177,
-            "parent_pid": "12345",
-        }
-        returncode, stdout = probe
-        answer = subprocess.CompletedProcess([], returncode, stdout=stdout, stderr="")
-
-        with (
-            patch("gobby.utils.spawn.run", return_value=answer),
-            patch("gobby.utils.spawn.create_subprocess_exec") as mock_exec,
-            patch("os.kill") as mock_kill,
-        ):
-            result = await kill_terminal_session(ctx, "test-session-id")
-
-        assert result is False
-        mock_exec.assert_not_called()
-        mock_kill.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_kills_a_pane_whose_recorded_generation_still_answers(self) -> None:
-        ctx = {
-            "tmux_pane": "%49",
-            "tmux_socket_path": "/tmp/tmux-1000/default",
-            "tmux_server_pid": 1658,
-            "tmux_server_start_time": 1784592177,
-        }
-        answer = subprocess.CompletedProcess(
-            [], 0, stdout="1658\t1784592177\t@1\twork\n", stderr=""
-        )
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-
-        with (
-            patch("gobby.utils.spawn.run", return_value=answer) as mock_run,
-            patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc) as mock_exec,
-        ):
-            result = await kill_terminal_session(ctx, "test-session-id")
-
-        assert result is True
-        assert mock_run.call_args.args[0][:3] == ["tmux", "-S", "/tmp/tmux-1000/default"]
-        assert mock_exec.call_args.args == (
-            "tmux",
-            "-S",
-            "/tmp/tmux-1000/default",
-            "kill-pane",
-            "-t",
-            "%49",
-        )
-
-    @pytest.mark.asyncio
-    async def test_refuses_pid_fallback_when_tmux_fails(self) -> None:
-        """A recorded pane with an unresolved tmux failure must block PID fallback."""
-        ctx = {
-            "tmux_pane": "%49",
-            "tmux_socket_path": "/tmp/tmux-1000/default",
-            "parent_pid": "12345",
-            "parent_create_time": 100.0,
-            "parent_name": "codex",
-        }
-
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 1
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"pane not found"))
-
-        with (
-            patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc) as mock_exec,
-            patch("os.kill") as mock_kill,
-        ):
-            result = await kill_terminal_session(ctx, "test-session-id")
-
-        assert result is False
-        mock_exec.assert_called_once()
-        assert mock_exec.call_args.args[-3:] == ("kill-pane", "-t", "%49")
-        mock_proc.communicate.assert_awaited_once()
-        mock_kill.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_pid_kill_only_when_no_tmux(self) -> None:
-        """Should use PID kill directly when no tmux_pane available."""
+    async def test_kill_without_managed_terminal_signals_pid_only(self) -> None:
+        """Signals the process after verifying its recorded birth identity."""
         ctx = {
             "parent_pid": "9999",
             "parent_create_time": 100.0,
@@ -218,7 +72,7 @@ class TestKillTerminalSession:
 
     @pytest.mark.asyncio
     async def test_returns_false_when_no_context(self) -> None:
-        """Should return False when neither tmux_pane nor parent_pid available."""
+        """Returns False when no parent PID is available."""
         ctx: dict[str, str] = {}
 
         result = await kill_terminal_session(ctx, "test-session-id")
@@ -241,96 +95,6 @@ class TestKillTerminalSession:
             result = await kill_terminal_session(ctx, "test-session-id")
 
         assert result is False
-
-    @pytest.mark.asyncio
-    async def test_handles_tmux_not_installed(self) -> None:
-        """A recorded pane must block PID fallback when tmux is unavailable."""
-        ctx = {
-            "tmux_pane": "%10",
-            "tmux_socket_path": "/tmp/tmux-1000/default",
-            "parent_pid": "5678",
-        }
-
-        with (
-            patch("gobby.utils.spawn.create_subprocess_exec", side_effect=FileNotFoundError),
-            patch("os.kill") as mock_kill,
-        ):
-            result = await kill_terminal_session(ctx, "test-session-id")
-
-        assert result is False
-        mock_kill.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_handles_tmux_timeout(self) -> None:
-        """A recorded pane must block PID fallback when tmux times out."""
-        ctx = {
-            "tmux_pane": "%10",
-            "tmux_socket_path": "/tmp/tmux-1000/default",
-            "parent_pid": "5678",
-        }
-
-        with (
-            patch(
-                "gobby.utils.spawn.create_subprocess_exec",
-                side_effect=TimeoutError,
-            ),
-            patch("os.kill") as mock_kill,
-        ):
-            result = await kill_terminal_session(ctx, "test-session-id")
-
-        assert result is False
-        mock_kill.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_treats_missing_tmux_pane_as_already_cleaned_up(self) -> None:
-        """Missing panes should count as success during resume cleanup."""
-        ctx = {
-            "tmux_pane": "%10",
-            "tmux_socket_path": "/tmp/tmux-1000/default",
-            "parent_pid": "5678",
-            "parent_create_time": 100.0,
-            "parent_name": "codex",
-        }
-
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 1
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"can't find pane: %10"))
-
-        with (
-            patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc),
-            patch("os.kill") as mock_kill,
-        ):
-            result = await kill_terminal_session(ctx, "test-session-id")
-
-        assert result is True
-        mock_kill.assert_not_called()
-        assert mock_kill.call_count == 0
-        assert not mock_kill.called
-
-    @pytest.mark.asyncio
-    async def test_tmux_failure_does_not_fall_back(self) -> None:
-        """An unresolved tmux failure must return False without signaling the PID."""
-        ctx = {
-            "tmux_pane": "%10",
-            "tmux_socket_path": "/tmp/tmux-1000/default",
-            "parent_pid": "5678",
-        }
-
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 1
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"error"))
-
-        with (
-            patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc) as mock_exec,
-            patch("os.kill") as mock_kill,
-        ):
-            result = await kill_terminal_session(ctx, "test-session-id")
-
-        assert result is False
-        mock_exec.assert_called_once()
-        assert mock_exec.call_args.args[-3:] == ("kill-pane", "-t", "%10")
-        mock_proc.communicate.assert_awaited_once()
-        mock_kill.assert_not_called()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -439,7 +203,7 @@ class TestContinueInChatTerminalKill:
         source_session.model = "sonnet"
         source_session.chat_mode = "accept_edits"
         source_session.title = "CLI Session"
-        source_session.terminal_context = {"tmux_pane": "%5", "parent_pid": "999"}
+        source_session.terminal_context = {"gobby_terminal_id": "%5", "parent_pid": "999"}
 
         session_manager = MagicMock()
         session_manager.get = MagicMock(return_value=source_session)
@@ -492,7 +256,7 @@ class TestContinueInChatTerminalKill:
 
         # Verify terminal kill was attempted
         mock_kill.assert_called_once_with(
-            {"tmux_pane": "%5", "parent_pid": "999"},
+            {"gobby_terminal_id": "%5", "parent_pid": "999"},
             "source-uuid",
         )
         assert mock_kill.call_count == 1
@@ -536,7 +300,7 @@ class TestContinueInChatTerminalKill:
         source_session.model = "sonnet"
         source_session.chat_mode = "accept_edits"
         source_session.title = "CLI Session"
-        source_session.terminal_context = {"tmux_pane": "%5"}
+        source_session.terminal_context = {"gobby_terminal_id": "%5"}
 
         session_manager = MagicMock()
         session_manager.get = MagicMock(return_value=source_session)
@@ -854,7 +618,7 @@ class TestContinueInChatTerminalKill:
         source_session.title = "Terminal Session"
         source_session.chat_mode = "accept_edits"
         source_session.model = "gpt-5.4"
-        source_session.terminal_context = {"parent_pid": 29084, "tmux_pane": "%155"}
+        source_session.terminal_context = {"parent_pid": 29084, "gobby_terminal_id": "%155"}
 
         converted_session = MagicMock()
         converted_session.id = "source-uuid"
@@ -1480,7 +1244,7 @@ class TestContinueInChatTerminalKill:
         source_session.machine_id = require_machine_id()
         # Proxy attach requires real tmux liveness, so a bare MagicMock attribute
         # reports False. Model the live pane the way sibling attach tests do.
-        source_session.terminal_context = {"tmux_pane": "%5"}
+        source_session.terminal_context = {"gobby_terminal_id": "%5"}
         source_session.workflow_name = "release-checks"
         source_session.agent_run_id = "run-auto-1"
 
@@ -1545,7 +1309,7 @@ class TestContinueInChatTerminalKill:
         source_session.context_window = 128000
         source_session.session_type = "terminal"
         source_session.machine_id = require_machine_id()
-        source_session.terminal_context = {"tmux_pane": "%8"}
+        source_session.terminal_context = {"gobby_terminal_id": "%8"}
         source_session.workflow_name = None
         source_session.agent_run_id = None
 
@@ -1603,7 +1367,7 @@ class TestContinueInChatTerminalKill:
         source_session.context_window = 200000
         source_session.session_type = "terminal"
         source_session.machine_id = require_machine_id()
-        source_session.terminal_context = {"tmux_pane": "%8"}
+        source_session.terminal_context = {"gobby_terminal_id": "%8"}
         source_session.workflow_name = None
         source_session.agent_run_id = None
 
@@ -1657,7 +1421,7 @@ class TestContinueInChatTerminalKill:
         source_session.context_window = 1_000_000
         source_session.session_type = "terminal"
         source_session.machine_id = require_machine_id()
-        source_session.terminal_context = {"tmux_pane": "%9"}
+        source_session.terminal_context = {"gobby_terminal_id": "%9"}
         source_session.workflow_name = None
         source_session.agent_run_id = None
 
@@ -1768,7 +1532,7 @@ class TestContinueInChatTerminalKill:
         source_session.context_window = 200000
         source_session.session_type = "terminal"
         source_session.machine_id = require_machine_id()
-        source_session.terminal_context = {"tmux_pane": "%8"}
+        source_session.terminal_context = {"gobby_terminal_id": "%8"}
         source_session.workflow_name = None
         source_session.agent_run_id = None
 
@@ -1926,8 +1690,8 @@ class TestContinueInChatTerminalKill:
         source_session.machine_id = require_machine_id()
         source_session.project_id = "proj-1"
         source_session.terminal_context = {
-            "tmux_pane": "%7",
-            "tmux_socket_path": "/tmp/tmux-1000/gobby",
+            "gobby_terminal_id": "%7",
+            "socket_path": "/tmp/terminal-1000/gobby",
         }
         source_session.metadata = None
 
@@ -2034,7 +1798,7 @@ class TestContinueInChatTerminalKill:
         source_session.session_type = "terminal"
         source_session.machine_id = require_machine_id()
         source_session.project_id = "proj-1"
-        source_session.terminal_context = {"tmux_pane": "%7"}
+        source_session.terminal_context = {"gobby_terminal_id": "%7"}
         source_session.metadata = None
 
         attached_session = MagicMock()

@@ -699,18 +699,14 @@ class TestSessionEndHandling:
             "sess-123", "expired"
         )
 
-    def test_session_end_idles_interactive_tmux_session(
+    def test_session_end_without_managed_terminal_takes_ordinary_path(
         self, mock_dependencies: dict[str, Any]
     ) -> None:
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = "run-456"
         mock_session.session_type = "terminal"
-        mock_session.terminal_context = {
-            "tmux_socket_path": "/tmp/tmux-501/default",
-            "tmux_window_id": "@7",
-            "tmux_pane": "%6",
-        }
+        mock_session.terminal_context = {"tty": "/dev/ttys001"}
         mock_dependencies["session_storage"].get.return_value = mock_session
 
         handlers = EventHandlers(**mock_dependencies)
@@ -721,14 +717,17 @@ class TestSessionEndHandling:
         )
 
         with patch("gobby.workflows.step_instances.AgentStepInstanceManager") as manager_cls:
+            manager_cls.return_value.delete_for_session.return_value = 0
             response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
         mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
-            "sess-123", "idle"
+            "sess-123", "expired"
         )
-        mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
-        manager_cls.return_value.delete_for_session.assert_not_called()
+        mock_dependencies["session_coordinator"].complete_agent_run.assert_called_once_with(
+            mock_session, attested_turns=0
+        )
+        manager_cls.return_value.delete_for_session.assert_called_once_with("sess-123")
 
     def test_session_end_awaiting_handoff_error_handled(
         self,

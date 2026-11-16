@@ -44,11 +44,13 @@ def merge_terminal_context(
     return merged
 
 
-def terminal_context_has_tmux_target(
-    terminal_context: Mapping[str, Any] | str | None,
-) -> bool:
-    """Return whether terminal context identifies a tmux pane or session."""
-    ctx = parse_terminal_context_value(terminal_context)
-    if not ctx:
-        return False
-    return bool(ctx.get("tmux_pane") or ctx.get("tmux_session"))
+def get_terminal_parent_pid(terminal_context: Mapping[str, Any] | None) -> int | None:
+    """Return the positive parent-process PID stored in a terminal-context mapping."""
+    if not terminal_context:
+        return None
+    value = terminal_context.get("parent_pid")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    if isinstance(value, str) and value.isdigit() and int(value) > 0:
+        return int(value)
+    return None

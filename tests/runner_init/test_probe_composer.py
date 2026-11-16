@@ -80,12 +80,12 @@ async def test_unbound_ledger_reads_unknown() -> None:
 
 
 @pytest.mark.asyncio
-async def test_raw_tmux_context_without_a_managed_terminal_reads_unknown(
+async def test_unhosted_context_reads_unknown(
     composer_ledger: ComposerLedger,
 ) -> None:
     composer_ledger.record_spawn("term-1", "")
     session = SimpleNamespace(
-        id="session-1", source="claude", terminal_context={"tmux_pane": "%12"}
+        id="session-1", source="claude", terminal_context={"gobby_terminal_id": "%12"}
     )
 
     read = await probe_terminal_activity(session, None)

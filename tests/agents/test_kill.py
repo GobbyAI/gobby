@@ -27,6 +27,26 @@ from gobby.storage.agents import AgentRun
 pytestmark = pytest.mark.unit
 
 
+@pytest.mark.asyncio
+async def test_kill_without_managed_terminal_signals_pid_only() -> None:
+    from gobby.sessions.terminal_kill import kill_terminal_session
+
+    process = psutil.Process()
+    context = {
+        "parent_pid": process.pid,
+        "parent_create_time": process.create_time(),
+        "parent_name": process.name(),
+    }
+    with (
+        patch("gobby.sessions.terminal_kill.os.kill") as signal_process,
+        patch("asyncio.create_subprocess_exec") as terminal_command,
+    ):
+        assert await kill_terminal_session(context, "unmanaged-session")
+
+    signal_process.assert_called_once_with(process.pid, signal.SIGTERM)
+    terminal_command.assert_not_called()
+
+
 class TestRunSubprocess:
     @pytest.mark.asyncio
     async def test_run_subprocess_success(self):
@@ -312,8 +332,8 @@ class TestValidateTerminalValue:
         assert _validate_terminal_value("session_id", "my-test-sess") is True
 
     def test_invalid_patterns(self):
-        assert _validate_terminal_value("tmux_pane", "123") is False
-        assert _validate_terminal_value("tmux_pane", "%abc") is False
+        assert _validate_terminal_value("gobby_terminal_id", "123") is False
+        assert _validate_terminal_value("gobby_terminal_id", "%abc") is False
         assert _validate_terminal_value("parent_pid", "-1") is False
         assert _validate_terminal_value("session_id", "my sess") is False
         assert _validate_terminal_value("unknown_key", "val") is False
@@ -323,8 +343,8 @@ class TestCloseTerminalWindow:
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.SessionManager")
     @patch("gobby.agents.kill._run_subprocess")
-    async def test_legacy_tmux_context_does_not_run_tmux(self, mock_run, mock_sm_cls):
-        session = SimpleNamespace(terminal_context={"tmux_pane": "%99"})
+    async def test_unhosted_context_does_not_run_terminal_command(self, mock_run, mock_sm_cls):
+        session = SimpleNamespace(terminal_context={"gobby_terminal_id": "%99"})
         mock_sm_cls.return_value = SimpleNamespace(get=lambda _session_id: session)
 
         res = await _close_terminal_window("sess1", MagicMock())

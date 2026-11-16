@@ -1045,8 +1045,8 @@ class TestSessionManagerLifecycle:
     @pytest.mark.parametrize(
         ("newer_machine_id", "newer_socket_path"),
         [
-            ("20000000-0000-4000-8000-000000000012", "/tmp/tmux-501/default"),
-            ("20000000-0000-4000-8000-000000000001", "/tmp/tmux-501/other"),
+            ("20000000-0000-4000-8000-000000000012", "/tmp/terminal-501/default"),
+            ("20000000-0000-4000-8000-000000000001", "/tmp/terminal-501/other"),
         ],
     )
     def test_terminal_ownership_does_not_cross_machine_or_socket(

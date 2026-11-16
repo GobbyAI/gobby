@@ -1,8 +1,7 @@
 """CLI session liveness monitor.
 
 Polls active sessions to detect when the owning terminal disappears.
-A session in a tmux pane lives as long as its pane, or the window it was
-replaced in, on the recorded tmux server. Parent PID checks cover the rest.
+Native terminal rows and process birth identity determine liveness.
 
 This is the fast-path counterpart to the 24-hour stale-session expiry in
 SessionLifecycleManager, reducing the detection window from hours to
@@ -20,8 +19,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.tmux.session_manager import TmuxPaneInfo, TmuxSessionManager
-from gobby.sessions.tmux_context import get_tmux_window_id
 from gobby.storage.hook_receipts import retire_session_hook_effects
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
 from gobby.storage.sessions._constants import TURN_ENDED_SESSION_STATUSES
@@ -51,8 +48,6 @@ _DEFAULT_POLL_INTERVAL = 30.0
 class _TerminalLivenessRecord:
     session_id: str
     parent_pid: int | None
-    tmux_pane: str | None
-    tmux_window_id: str | None = None
     status: str = "active"
     machine_id: str | None = None
     terminal_context: dict[str, Any] | None = None
@@ -163,13 +158,11 @@ class SessionLivenessMonitor:
         if not active_sessions:
             return
 
-        # One list-panes per tmux socket per sweep.
-        tmux_panes: dict[str, list[TmuxPaneInfo] | None] = {}
         local_machine_id = get_machine_id()
         for record in active_sessions:
             if record.session_id in self._recently_handled:
                 continue
-            # Pids and tmux sockets are only meaningful on the machine that recorded them.
+            # Process identities are local to the machine that recorded them.
             if (
                 local_machine_id is None
                 or record.machine_id != local_machine_id
@@ -203,13 +196,6 @@ class SessionLivenessMonitor:
                     self._recently_handled[record.session_id] = now
                 continue
 
-            has_tmux_target = bool(record.tmux_pane or getattr(record, "tmux_window_id", None))
-            if has_tmux_target:
-                # Only a definite "gone" expires; an unanswered probe keeps the session.
-                if await self._tmux_target_live(record, tmux_panes) is False:
-                    await self._expire_record(record, local_machine_id, now)
-                continue
-
             inspection = await asyncio.to_thread(
                 inspect_foreground_ownership,
                 record,
@@ -225,41 +211,6 @@ class SessionLivenessMonitor:
                 record.session_id,
             )
             await self._expire_record(record, local_machine_id, now)
-
-    @staticmethod
-    async def _tmux_target_live(
-        record: _TerminalLivenessRecord,
-        probes: dict[str, list[TmuxPaneInfo] | None],
-    ) -> bool | None:
-        """Whether the session's tmux pane, or its window, survives on its server.
-
-        ``None`` when the session recorded no socket or tmux did not answer.
-        """
-        context = record.terminal_context or {}
-        socket_path = context.get("tmux_socket_path")
-        if not isinstance(socket_path, str) or not socket_path:
-            return None
-        if socket_path not in probes:
-            try:
-                probes[socket_path] = await TmuxSessionManager(socket_path).list_panes()
-            except (TimeoutError, OSError):
-                probes[socket_path] = None
-        panes = probes[socket_path]
-        if panes is None:
-            return None
-        server_pid = context.get("tmux_server_pid")
-        server_start_time = context.get("tmux_server_start_time")
-        # A restarted server reuses pane ids, so a recorded generation must match.
-        check_server = isinstance(server_pid, int) and isinstance(server_start_time, int)
-        return any(
-            not pane.pane_dead
-            and (pane.pane_id == record.tmux_pane or pane.window_id == record.tmux_window_id)
-            and (
-                not check_server
-                or (pane.server_pid, pane.server_start_time) == (server_pid, server_start_time)
-            )
-            for pane in panes
-        )
 
     async def _expire_record(
         self,
@@ -284,7 +235,7 @@ class SessionLivenessMonitor:
         """Query eligible sessions with terminal liveness metadata.
 
         Returns:
-            Records containing a session ID plus optional parent PID and tmux pane.
+            Records containing a session ID and native terminal or process identity.
         """
         try:
             rows = self._session_manager.db.fetchall(
@@ -330,10 +281,6 @@ class SessionLivenessMonitor:
                 continue
 
             parent_pid = self._normalize_parent_pid(ctx.get("parent_pid"))
-            tmux_pane = ctx.get("tmux_pane")
-            if tmux_pane is not None and not isinstance(tmux_pane, str):
-                tmux_pane = None
-            tmux_window_id = get_tmux_window_id(ctx)
 
             native_id = ctx.get("gobby_terminal_id")
             native_candidate = (
@@ -341,15 +288,13 @@ class SessionLivenessMonitor:
                 and isinstance(native_id, str)
                 and bool(native_id)
             )
-            if parent_pid is None and not tmux_pane and not tmux_window_id and not native_candidate:
+            if parent_pid is None and not native_candidate:
                 continue
 
             result.append(
                 _TerminalLivenessRecord(
                     session_id=row["id"],
                     parent_pid=parent_pid,
-                    tmux_pane=tmux_pane,
-                    tmux_window_id=tmux_window_id,
                     status=self._row_value(row, "status") or "active",
                     machine_id=self._row_value(row, "machine_id"),
                     terminal_context=ctx,

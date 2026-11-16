@@ -1,13 +1,12 @@
 """Terminal session kill utility.
 
 Provides kill_terminal_session() for terminating CLI sessions via their
-terminal context (tmux pane or PID). Extracted from session_control.py
+terminal process identity. Extracted from session_control.py
 for reuse by HTTP routes.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import signal
@@ -16,92 +15,21 @@ from typing import Any
 
 import psutil
 
-from gobby.sessions.tmux_context import get_tmux_socket_path, query_tmux_generation
-from gobby.utils import spawn
-
 logger = logging.getLogger(__name__)
-
-
-async def _same_tmux_generation(
-    terminal_ctx: dict[str, Any], socket_path: str, tmux_pane: str
-) -> bool:
-    """False when a recorded server generation no longer answers for the pane.
-
-    A restarted server reuses pane ids. Contexts that recorded no generation
-    are addressed by socket and pane alone.
-    """
-    recorded = (terminal_ctx.get("tmux_server_pid"), terminal_ctx.get("tmux_server_start_time"))
-    if not all(isinstance(part, int) and not isinstance(part, bool) for part in recorded):
-        return True
-    generation = await asyncio.to_thread(query_tmux_generation, socket_path, tmux_pane)
-    return (
-        generation is not None
-        and (generation["server_pid"], generation["server_start_time"]) == recorded
-    )
 
 
 async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -> bool:
     """Kill a plain terminal CLI session using its terminal context.
 
-    Tries tmux pane kill first (cleanest — kills just that pane), then
-    falls back to PID-based SIGTERM.
+    Signals the recorded process only when its birth identity still matches.
 
     Args:
-        terminal_ctx: Session's terminal_context dict (tmux_pane, parent_pid, etc.)
+        terminal_ctx: Session's terminal process identity.
         session_id: Session ID for logging.
 
     Returns:
         True if any kill method succeeded.
     """
-    # 1. Try tmux pane kill (sends SIGHUP to process in pane)
-    tmux_pane = terminal_ctx.get("tmux_pane")
-    if tmux_pane:
-        # Gobby runs no tmux server: a pane is reachable only on the socket its
-        # $TMUX recorded, and %N on any other server is an unrelated pane.
-        socket_path = get_tmux_socket_path(terminal_ctx)
-        if not socket_path or not await _same_tmux_generation(
-            terminal_ctx, socket_path, str(tmux_pane)
-        ):
-            return False
-        try:
-            proc = await spawn.create_subprocess_exec(
-                "tmux",
-                "-S",
-                socket_path,
-                "kill-pane",
-                "-t",
-                str(tmux_pane),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-            if proc.returncode == 0:
-                logger.info(
-                    "Killed terminal session %s via tmux pane %s", session_id[:8], tmux_pane
-                )
-                return True
-            else:
-                stderr_text = stderr.decode().strip() if stderr else "unknown"
-                if (
-                    "can't find pane" in stderr_text.lower()
-                    or "can't find window" in stderr_text.lower()
-                ):
-                    logger.debug(
-                        "tmux pane %s already gone for session %s",
-                        tmux_pane,
-                        session_id[:8],
-                    )
-                    return True
-                logger.debug("tmux kill-pane failed for %s: %s", tmux_pane, stderr_text)
-        except TimeoutError:
-            logger.warning("tmux kill-pane timed out for pane %s", tmux_pane)
-        except FileNotFoundError:
-            logger.debug("tmux not available, skipping pane kill")
-        except Exception as e:
-            logger.warning("tmux kill-pane error for %s: %s", tmux_pane, e)
-        return False
-
-    # 2. Fallback: PID-based kill
     parent_pid = terminal_ctx.get("parent_pid")
     if parent_pid:
         try:
@@ -120,9 +48,7 @@ async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -
         except (ValueError, OSError) as e:
             logger.warning("PID kill failed for session %s: %s", session_id[:8], e)
 
-    logger.debug(
-        "No kill method available for session %s (no tmux_pane or parent_pid)", session_id[:8]
-    )
+    logger.debug("No kill method available for session %s (no parent_pid)", session_id[:8])
     return False
 
 

@@ -85,7 +85,7 @@ class Session:
     last_completion_output_tokens: int | None = None
     model: str | None = None  # LLM model used (e.g., "claude-3-5-sonnet-20241022")
     is_local: bool = False
-    # Terminal context (JSON blob with tty, parent_pid, tmux_pane, term_program)
+    # Terminal context (JSON blob with tty, parent_pid, gobby_terminal_id, term_program)
     terminal_context: dict[str, Any] | None = None
     # Global sequence number
     seq_num: int | None = None
@@ -271,17 +271,14 @@ class Session:
 
     @property
     def has_terminal_liveness(self) -> bool:
-        """Best-effort durable liveness signal for tmux-backed terminal sessions."""
+        """Best-effort durable liveness signal for native terminal sessions."""
         if self.status not in TERMINAL_OWNER_STATUSES:
             return False
         if not self.terminal_context:
             return False
 
-        tmux_pane = self.terminal_context.get("tmux_pane")
-        if isinstance(tmux_pane, str) and tmux_pane:
-            return True
-
-        return False
+        terminal_id = self.terminal_context.get("gobby_terminal_id")
+        return isinstance(terminal_id, str) and bool(terminal_id)
 
     @property
     def can_proxy_attach(self) -> bool:

@@ -656,6 +656,7 @@ async def test_web_attach_native_terminal(
 async def test_native_history_uses_configured_attach_history_lines(
     temp_db: HubDatabase, sample_project: dict[str, Any], with_host: bool
 ) -> None:
+    """The current config snapshot supersedes the host's startup copy."""
     from gobby.config.app import DaemonConfig
 
     harness = _harness(temp_db, sample_project)

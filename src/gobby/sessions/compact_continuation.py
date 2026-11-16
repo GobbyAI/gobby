@@ -37,9 +37,9 @@ from gobby.sessions.continuation_retry import (
 from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.handoff_records import record_handoff_delivery
-from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
+from gobby.terminal_context import parse_terminal_context_value
 from gobby.terminals.composer_ledger import record_composer_command_consumed
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.pane_io import (

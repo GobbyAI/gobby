@@ -16,24 +16,29 @@ from gobby.sessions.handoff_identity import (
 pytestmark = pytest.mark.unit
 
 
-def test_terminal_contexts_match_same_tmux_pane_and_socket() -> None:
-    assert terminal_contexts_match(
-        {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
-        {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
-    )
-
-
-def test_terminal_contexts_reject_same_pane_on_different_tmux_socket() -> None:
-    assert not terminal_contexts_match(
-        {"tmux_pane": "%12", "tmux_socket_path": "/tmp/old"},
-        {"tmux_pane": "%12", "tmux_socket_path": "/tmp/new"},
-    )
+@pytest.mark.parametrize(
+    ("first", "second", "matches"),
+    [
+        ({"gobby_terminal_id": "native-a"}, {"gobby_terminal_id": "native-a"}, True),
+        ({"gobby_terminal_id": "native-a"}, {"gobby_terminal_id": "native-b"}, False),
+        ({"gobby_terminal_id": ""}, {"gobby_terminal_id": ""}, False),
+        ({"gobby_terminal_id": 42}, {"gobby_terminal_id": 42}, False),
+        (
+            {"gobby_terminal_id": "native-a", "tty": "/dev/ttys1"},
+            {"gobby_terminal_id": "native-b", "tty": "/dev/ttys1"},
+            True,
+        ),
+    ],
+)
+def test_terminal_contexts_match_same_native_terminal(
+    first: dict[str, str | int], second: dict[str, str | int], matches: bool
+) -> None:
+    assert terminal_contexts_match(first, second) is matches
 
 
 def test_terminal_process_contexts_require_exact_process_birth_identity() -> None:
     canonical = {
-        "tmux_pane": "%12",
-        "tmux_socket_path": "/tmp/tmux",
+        "gobby_terminal_id": "native-a",
         "parent_pid": 1234,
         "parent_create_time": 5678.25,
     }
@@ -52,20 +57,20 @@ def test_terminal_process_contexts_require_exact_process_birth_identity() -> Non
 def test_terminal_context_matches_session_by_gobby_session_id() -> None:
     session = MagicMock()
     session.id = "session-5815"
-    session.terminal_context = {"tmux_pane": "%1"}
+    session.terminal_context = {"gobby_terminal_id": "%1"}
 
     assert terminal_context_matches_session(
         session,
-        {"gobby_session_id": "session-5815", "tmux_pane": "%99"},
+        {"gobby_session_id": "session-5815", "gobby_terminal_id": "%99"},
     )
 
 
-def test_sessions_have_continuous_terminal_context_rejects_different_tmux_panes() -> None:
+def test_sessions_have_continuous_terminal_context_rejects_different_native_ids() -> None:
     parent = MagicMock()
     parent.id = "session-5815"
-    parent.terminal_context = {"tmux_pane": "%5815", "tmux_socket_path": "/tmp/tmux"}
+    parent.terminal_context = {"gobby_terminal_id": "%5815"}
     child = MagicMock()
     child.id = "session-5867"
-    child.terminal_context = {"tmux_pane": "%5867", "tmux_socket_path": "/tmp/tmux"}
+    child.terminal_context = {"gobby_terminal_id": "%5867"}
 
     assert not sessions_have_continuous_terminal_context(parent, child)

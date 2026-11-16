@@ -31,7 +31,7 @@ def test_brief_list_allocation_ignores_conversation_bodies(
             machine_id=MACHINE_ID,
             source="codex",
             project_id=None,
-            terminal_context={"tmux_pane": f"%{index}"},
+            terminal_context={"gobby_terminal_id": f"%{index}"},
             workspace_path=f"/isolated/workspace-{index}",
             sandbox_enabled=True,
         )
@@ -94,12 +94,12 @@ def test_brief_list_allocation_ignores_conversation_bodies(
 @pytest.mark.parametrize(
     "status,session_type,terminal_context,expected_attach",
     [
-        ("active", "terminal", {"tmux_pane": "%1"}, True),
-        ("paused", "terminal", {"tmux_pane": "%1"}, True),
-        ("expired", "terminal", {"tmux_pane": "%1"}, False),
+        ("active", "terminal", {"gobby_terminal_id": "%1"}, True),
+        ("paused", "terminal", {"gobby_terminal_id": "%1"}, True),
+        ("expired", "terminal", {"gobby_terminal_id": "%1"}, False),
         ("active", "terminal", None, False),
-        ("active", "terminal", {"tmux_pane": ""}, False),
-        ("active", "web_chat", {"tmux_pane": "%1"}, False),
+        ("active", "terminal", {"gobby_terminal_id": ""}, False),
+        ("active", "web_chat", {"gobby_terminal_id": "%1"}, False),
     ],
 )
 def test_brief_list_preserves_attach_liveness(

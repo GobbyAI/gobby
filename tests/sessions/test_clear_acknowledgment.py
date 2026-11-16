@@ -30,8 +30,7 @@ _PENDING_ATTEMPT_ID = "f" * 32
 
 def _terminal_context(pane: str = "%91") -> dict[str, Any]:
     return {
-        "tmux_pane": pane,
-        "tmux_socket_path": "/tmp/gobby-clear-test",
+        "gobby_terminal_id": pane,
         "parent_pid": 4242,
         "parent_create_time": 1.0,
     }
@@ -250,7 +249,7 @@ async def test_pre_send_failure_restores_the_row_and_attempt(
 
 
 @pytest.mark.asyncio
-async def test_clear_acknowledges_fresh_provider_session_before_binding(
+async def test_fresh_provider_session_without_marker_consumption_keeps_clear_pending(
     hub_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sessions, predecessor = _register_predecessor(hub_db, tmp_path, monkeypatch)
@@ -272,18 +271,24 @@ async def test_clear_acknowledges_fresh_provider_session_before_binding(
         )
         return True, None, True, None
 
+    patches = _patches(predecessor, _Pane(), send_command)
+    patches.append(patch.object(_terminal_clear, "_CLEAR_ACK_TIMEOUT_SECONDS", 0.0))
     result = await _run_clear(
         "## Current State\n\nProvider session observed.",
         sessions=sessions,
         db=hub_db,
-        patches=_patches(predecessor, _Pane(), send_command),
+        patches=patches,
     )
 
     assert observed_id is not None
-    assert result["success"] is True
-    assert result["acknowledged_by"] == "provider_session"
-    assert result["observed_session_id"] == observed_id
-    assert "successor_id" not in result
+    assert result["success"] is False
+    assert result["error_code"] == "clear_acknowledgment_timeout"
+    assert result["attempt_pending"] is True
+    assert "acknowledged_by" not in result
+    pending = pending_clear_attempt(hub_db, predecessor.id)
+    assert pending is not None
+    assert pending["attempt_id"] == result["attempt_id"]
+    assert _status(sessions, predecessor.id) == "awaiting_handoff"
 
 
 @pytest.mark.asyncio

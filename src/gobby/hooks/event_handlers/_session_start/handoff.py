@@ -16,9 +16,9 @@ from gobby.sessions.compact_continuation import (
 )
 from gobby.sessions.compact_identity import resolve_compact_continuation
 from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
-from gobby.sessions.tmux_context import parse_terminal_context_value
+from gobby.terminal_context import parse_terminal_context_value
 
-_TERMINAL_IDENTITY_FIELDS = ("tmux_pane", "tmux_session", "tty", "parent_pid")
+_TERMINAL_IDENTITY_FIELDS = ("gobby_terminal_id", "tty", "parent_pid")
 STARTUP_SOURCES = frozenset({"startup", "new", ""})
 
 

@@ -106,13 +106,13 @@ def _make_ws() -> AsyncMock:
 def _make_terminal_session(
     *,
     source: str = "example",
-    tmux_pane: str | None = "%11",
+    gobby_terminal_id: str | None = "%11",
     session_type: str = "terminal",
 ) -> MagicMock:
     session = MagicMock()
     session.session_type = session_type
     session.source = source
-    session.terminal_context = {"tmux_pane": tmux_pane} if tmux_pane else {}
+    session.terminal_context = {"gobby_terminal_id": gobby_terminal_id} if gobby_terminal_id else {}
     session.metadata = None
     return session
 
@@ -131,7 +131,7 @@ class TestAttachedPlanApprovalDispatch:
         server = ConcreteSessionControl()
         ws = _make_ws()
         cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
-            tmux_pane=None
+            gobby_terminal_id=None
         )
 
         registry = _registry_with(
@@ -252,7 +252,7 @@ class TestAttachedPlanApprovalDispatch:
         server = ConcreteSessionControl()
         ws = _make_ws()
         cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
-            tmux_pane=None
+            gobby_terminal_id=None
         )
 
         await handle_attached_plan_approval(
@@ -301,7 +301,7 @@ class TestAttachedPlanApprovalDispatch:
         server = ConcreteSessionControl()
         ws = _make_ws()
         cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
-            tmux_pane=None
+            gobby_terminal_id=None
         )
 
         with _wire_native(server, MagicMock()):
@@ -330,7 +330,7 @@ class TestAttachedPlanApprovalDispatch:
         server = ConcreteSessionControl()
         ws = _make_ws()
         cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
-            tmux_pane=None
+            gobby_terminal_id=None
         )
         started = asyncio.Event()
 

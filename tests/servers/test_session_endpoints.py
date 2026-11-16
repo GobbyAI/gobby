@@ -405,14 +405,14 @@ class TestSessionEndpoints:
             machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
-            terminal_context={"parent_pid": 4242, "tmux_pane": "%1"},
+            terminal_context={"parent_pid": 4242, "gobby_terminal_id": "%1"},
         )
         matched_session = session_storage.register(
             external_id="terminal-context-match",
             machine_id="21000000-0000-4000-8000-000000000003",
             source="codex",
             project_id=test_project["id"],
-            terminal_context={"parent_pid": 4242, "tmux_pane": "%2"},
+            terminal_context={"parent_pid": 4242, "gobby_terminal_id": "%2"},
         )
 
         response = client.post(
@@ -420,7 +420,7 @@ class TestSessionEndpoints:
             json={
                 "project_id": test_project["id"],
                 "parent_pid": 4242,
-                "terminal_context": {"tmux_pane": "%2"},
+                "terminal_context": {"gobby_terminal_id": "%2"},
             },
         )
 
@@ -479,26 +479,26 @@ class TestSessionEndpoints:
         assert response.status_code == 400
         assert response.json()["detail"] == "parent_pid must be a positive integer"
 
-    def test_find_by_terminal_context_matches_by_tmux_pane_when_pid_differs(
+    def test_find_by_terminal_context_matches_native_id_when_pid_differs(
         self,
         client: TestClient,
         session_storage: SessionManager,
         test_project: dict[str, Any],
     ) -> None:
-        """Sessions can match by tmux_pane alone when stored parent_pid differs.
+        """Sessions can match by gobby_terminal_id alone when stored parent_pid differs.
 
         This covers the case where ghook (hook command) and the MCP stdio proxy
         see different parent PIDs because the CLI spawns them through different
         process trees. The caller still sends a positive parent_pid, but the
         stored session's parent_pid may not match — terminal-context fields
-        like tmux_pane provide the fallback identity.
+        like gobby_terminal_id provide the fallback identity.
         """
         session = session_storage.register(
             external_id="grok-pid-mismatch",
             machine_id="21000000-0000-4000-8000-000000000003",
             source="grok",
             project_id=test_project["id"],
-            terminal_context={"parent_pid": 44483, "tmux_pane": "%51"},
+            terminal_context={"parent_pid": 44483, "gobby_terminal_id": "%51"},
         )
 
         response = client.post(
@@ -506,7 +506,7 @@ class TestSessionEndpoints:
             json={
                 "project_id": test_project["id"],
                 "parent_pid": 99999,
-                "terminal_context": {"tmux_pane": "%51"},
+                "terminal_context": {"gobby_terminal_id": "%51"},
             },
         )
 
@@ -525,7 +525,7 @@ class TestSessionEndpoints:
             machine_id="21000000-0000-4000-8000-000000000003",
             source="grok",
             project_id=test_project["id"],
-            terminal_context={"parent_pid": 44483, "tmux_pane": "%51"},
+            terminal_context={"parent_pid": 44483, "gobby_terminal_id": "%51"},
         )
 
         response = client.post(
@@ -533,7 +533,7 @@ class TestSessionEndpoints:
             json={
                 "project_id": test_project["id"],
                 "parent_pid": 99999,
-                "terminal_context": {"tmux_pane": "%99"},
+                "terminal_context": {"gobby_terminal_id": "%99"},
             },
         )
 
@@ -552,14 +552,14 @@ class TestSessionEndpoints:
             machine_id="21000000-0000-4000-8000-000000000003",
             source="grok",
             project_id=test_project["id"],
-            terminal_context={"parent_pid": 4242, "tmux_pane": "%10"},
+            terminal_context={"parent_pid": 4242, "gobby_terminal_id": "%10"},
         )
         session_storage.register(
             external_id="grok-pane-only",
             machine_id="21000000-0000-4000-8000-000000000003",
             source="grok",
             project_id=test_project["id"],
-            terminal_context={"parent_pid": 55555, "tmux_pane": "%10"},
+            terminal_context={"parent_pid": 55555, "gobby_terminal_id": "%10"},
         )
 
         response = client.post(
@@ -567,7 +567,7 @@ class TestSessionEndpoints:
             json={
                 "project_id": test_project["id"],
                 "parent_pid": 4242,
-                "terminal_context": {"tmux_pane": "%10"},
+                "terminal_context": {"gobby_terminal_id": "%10"},
             },
         )
 

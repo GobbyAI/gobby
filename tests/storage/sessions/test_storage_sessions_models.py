@@ -114,12 +114,24 @@ class TestSession:
         for record in (session.to_dict(), session.to_brief()):
             assert record["reasoning_effort"] == reasoning_effort
 
-    @pytest.mark.parametrize("status", ["paused", "awaiting_handoff"])
-    def test_to_dict_marks_live_tmux_sessions_proxy_attachable(self, status: str) -> None:
-        """Eligible tmux sessions remain attachable while liveness metadata exists."""
+    @pytest.mark.parametrize("status", ["active", "paused", "awaiting_handoff"])
+    @pytest.mark.parametrize(
+        ("session_type", "terminal_id", "attachable"),
+        [
+            ("terminal", "native-a", True),
+            ("web_chat", "native-a", False),
+            ("terminal", "", False),
+            ("terminal", None, False),
+            ("terminal", 42, False),
+        ],
+    )
+    def test_to_dict_marks_native_sessions_proxy_attachable(
+        self, status: str, session_type: str, terminal_id: str | int | None, attachable: bool
+    ) -> None:
+        """Eligible native sessions remain attachable while liveness metadata exists."""
         session = Session(
-            id="sess-live-tmux",
-            external_id="ext-live-tmux",
+            id="sess-live-native",
+            external_id="ext-live-native",
             machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
             project_id="proj-1",
@@ -131,17 +143,17 @@ class TestSession:
             parent_session_id=None,
             created_at=datetime(2026, 4, 16, tzinfo=UTC),
             updated_at=datetime(2026, 4, 16, 0, 5, tzinfo=UTC),
-            terminal_context={"tmux_pane": "%12"},
-            session_type="terminal",
+            terminal_context={"gobby_terminal_id": terminal_id},
+            session_type=session_type,
         )
 
-        assert session.can_proxy_attach is True
-        assert session.to_dict()["can_proxy_attach"] is True
+        assert session.can_proxy_attach is attachable
+        assert session.to_dict()["can_proxy_attach"] is attachable
 
     @pytest.mark.parametrize("status", ["expired", "deleted"])
     def test_ineligible_status_disables_stored_terminal_liveness(self, status: str) -> None:
         session = Session(
-            id="sess-stale-tmux",
+            id="sess-stale-native",
             external_id="ext-stale-tmux",
             machine_id="20000000-0000-4000-8000-000000000002",
             source="codex",
@@ -154,7 +166,7 @@ class TestSession:
             parent_session_id=None,
             created_at=datetime(2026, 4, 16, tzinfo=UTC),
             updated_at=datetime(2026, 4, 16, 0, 5, tzinfo=UTC),
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "native-a"},
             session_type="terminal",
         )
 

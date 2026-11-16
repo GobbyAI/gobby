@@ -18,11 +18,11 @@ from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX
 
 
 @pytest.mark.parametrize("status", ["active", "paused", "awaiting_handoff"])
-def test_eligible_tmux_session_can_proxy_attach(status: str) -> None:
+def test_eligible_native_session_can_proxy_attach(status: str) -> None:
     session = SimpleNamespace(
         session_type="terminal",
         status=status,
-        terminal_context={"tmux_pane": "%1"},
+        terminal_context={"gobby_terminal_id": "%1"},
     )
 
     assert _can_proxy_attach_session(session) is True
@@ -33,7 +33,7 @@ def test_inactive_session_cannot_proxy_attach_even_with_explicit_flag(status: st
     session = SimpleNamespace(
         session_type="terminal",
         status=status,
-        terminal_context={"tmux_pane": "%1"},
+        terminal_context={"gobby_terminal_id": "%1"},
         can_proxy_attach=True,
     )
 
@@ -54,7 +54,7 @@ def test_observe_reader_does_not_decode_unrelated_variables(
         source="claude",
         project_id=sample_project["id"],
         session_type="terminal",
-        terminal_context={"tmux_pane": "%1"},
+        terminal_context={"gobby_terminal_id": "%1"},
     )
     expected = {
         "chat_mode": "bypass",
