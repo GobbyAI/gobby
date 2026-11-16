@@ -24,7 +24,7 @@ from ._contested_expiry import (
     session_has_active_native_subagent,
 )
 from ._operator_claim_hold import clear_operator_claim_hold
-from ._terminal_lineage import clear_successor_of
+from ._terminal_lineage import clear_successor_of, live_row_of_same_cli
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -144,6 +144,25 @@ class _TerminalRevivalMixin:
                 extra={"event": "terminal_session_revival_suppressed_process_exited"},
             )
             return current
+
+        if current.status == "expired" and trigger is RevivalTrigger.ACTIVITY:
+            holder_id = live_row_of_same_cli(self.db, current)
+            if holder_id is not None:
+                # A late or replayed hook is no word from the CLI about where it is
+                # now, and its live row says it left this conversation. Only its own
+                # start brings the row back; two live rows on one CLI would tie
+                # caller resolution as two on one pane do (#26073).
+                get_logger().info(
+                    "Suppressed revival of terminal session %s; its CLI holds %s",
+                    session_id,
+                    holder_id,
+                    extra={
+                        "event": "terminal_session_revival_suppressed_cli_moved_on",
+                        "session_id": session_id,
+                        "live_session_id": holder_id,
+                    },
+                )
+                return current
 
         past_horizon = trigger is RevivalTrigger.ACTIVITY and past_terminal_revival_horizon(current)
         identity = terminal_session_identity(current)

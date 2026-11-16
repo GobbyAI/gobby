@@ -49,6 +49,7 @@ from tests.hooks.test_session_startup_pins import (
     _live_row,
     _owner,
     _prompt,
+    _start,
     _started,
     victim_cli,
 )
@@ -390,3 +391,82 @@ def test_a_daemon_replay_for_an_expired_row_carries_no_credential(
     assert replayed.status_code == 200, replayed.text
     assert SESSION_CREDENTIAL_FIELD not in replayed.text
     assert _owner(temp_db) == os.getpid()
+
+
+def test_a_daemon_replay_does_not_revive_a_conversation_its_cli_left(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """#26073: a replay is old news, and the CLI's live row shows what it holds now."""
+    _machine_caller(hook_route)
+    left = _live_row(temp_db, session_manager, sample_project, _me())
+    _expire(temp_db, session_manager, left.id)
+    current = _conversation(session_manager, sample_project, "provider-session-26073-current")
+    identity = _identity(_fresh_workspace(tmp_path, sample_project))
+    replay = Claimant(pid=os.getpid(), parent_pid=None, cli_pid=None)
+
+    with _as(replay):
+        replayed = _prompt(hook_route, identity)
+
+    assert replayed.status_code == 200, replayed.text
+    assert SESSION_CREDENTIAL_FIELD not in replayed.text
+    assert _status(temp_db, left.id) == "expired"
+    assert _status(temp_db, current.id) == "active"
+
+
+def test_a_daemon_replay_does_not_revive_a_twice_cleared_conversation(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """#26073: the first session's own successor is gone, so no live child names it cleared."""
+    _machine_caller(hook_route)
+    first = _live_row(temp_db, session_manager, sample_project, _me())
+    _expire(temp_db, session_manager, first.id)
+    second = _conversation(
+        session_manager, sample_project, "provider-session-26073-second", parent=first.id
+    )
+    _expire(temp_db, session_manager, second.id)
+    third = _conversation(
+        session_manager, sample_project, "provider-session-26073-third", parent=second.id
+    )
+    identity = _identity(_fresh_workspace(tmp_path, sample_project))
+    replay = Claimant(pid=os.getpid(), parent_pid=None, cli_pid=None)
+
+    with _as(replay):
+        replayed = _prompt(hook_route, identity)
+
+    assert replayed.status_code == 200, replayed.text
+    assert SESSION_CREDENTIAL_FIELD not in replayed.text
+    assert _status(temp_db, first.id) == "expired"
+    assert _status(temp_db, second.id) == "expired"
+    assert _status(temp_db, third.id) == "active"
+
+
+def test_a_cli_that_resumes_a_cleared_conversation_gets_it_back(
+    hook_route: HookRoute,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """A start is the CLI saying where it is now, so its live successor row gives way."""
+    _machine_caller(hook_route)
+    cleared = _live_row(temp_db, session_manager, sample_project, _me())
+    _expire(temp_db, session_manager, cleared.id)
+    successor = _conversation(
+        session_manager, sample_project, "provider-session-26073-successor", parent=cleared.id
+    )
+    identity = _identity(_fresh_workspace(tmp_path, sample_project))
+
+    with _as(_claimant(os.getpid())):
+        resumed = _start(hook_route, identity, "resume")
+
+    assert resumed.status_code == 200, resumed.text
+    assert _status(temp_db, cleared.id) == "active"
+    assert _status(temp_db, successor.id) == "expired"

@@ -128,3 +128,31 @@ def clear_successor_of(db: HubDatabase, current: Session) -> str | None:
         if terminal_process_contexts_match(row["terminal_context"], current.terminal_context):
             return str(row["id"])
     return None
+
+
+def live_row_of_same_cli(db: HubDatabase, current: Session) -> str | None:
+    """Return a live terminal row that stores this row's CLI process, if any.
+
+    A CLI holds one conversation at a time, so such a row shows the process left this
+    one: by a clear, by resuming another thread, or by starting a new one. No parent link
+    is needed to say so. A row that records no process identity never matches.
+    """
+    # A module-level import would be circular: both modules import this package.
+    from gobby.sessions.handoff_identity import terminal_process_contexts_match
+
+    context = current.terminal_context
+    if not context or not context.get("parent_pid"):
+        return None
+    rows = db.fetchall(
+        """
+        SELECT id, terminal_context FROM sessions
+        WHERE machine_id IS NOT DISTINCT FROM %s AND id <> %s
+          AND session_type = 'terminal' AND status = ANY(%s)
+          AND terminal_context ->> 'parent_pid' = %s
+        """,
+        (current.machine_id, current.id, list(LIVE_SESSION_STATUSES), str(context["parent_pid"])),
+    )
+    for row in rows:
+        if terminal_process_contexts_match(row["terminal_context"], context):
+            return str(row["id"])
+    return None

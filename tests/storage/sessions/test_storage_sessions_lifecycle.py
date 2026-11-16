@@ -977,6 +977,81 @@ class TestSessionManagerLifecycle:
         assert revived is not None
         assert revived.status == ("active" if revives else "expired")
 
+    @staticmethod
+    def _left_and_current(
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        current_cli: psutil.Process,
+    ) -> Session:
+        """An expired row for this process beside a live row that ``current_cli`` holds."""
+        machine_id = "20000000-0000-4000-8000-000000000001"
+        cli = psutil.Process()
+        left = session_manager.register(
+            external_id="left-thread",
+            machine_id=machine_id,
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={
+                "tty": "/dev/ttys000",
+                "parent_pid": cli.pid,
+                "parent_create_time": cli.create_time(),
+            },
+        )
+        session_manager.register(
+            external_id="current-thread",
+            machine_id=machine_id,
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={
+                "tty": "/dev/ttys000",
+                "parent_pid": current_cli.pid,
+                "parent_create_time": current_cli.create_time(),
+            },
+        )
+        session_manager.update_status(left.id, "expired")
+        expired = session_manager.get(left.id)
+        assert expired is not None
+        return expired
+
+    @pytest.mark.parametrize(
+        ("current_pid", "status"),
+        [(os.getpid(), "expired"), (os.getppid(), "active")],
+        ids=["same-cli-moved-on", "another-cli-on-the-tty"],
+    )
+    def test_plain_activity_leaves_a_row_expired_while_its_cli_holds_another_live_row(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        current_pid: int,
+        status: str,
+    ) -> None:
+        """#26073: a CLI holds one conversation, and no parent link need say which it left.
+
+        A late or replayed hook for the conversation it left must not bring that row back
+        beside its live one. Another CLI on the same tty is a different process, so its
+        live row decides nothing here.
+        """
+        left = self._left_and_current(session_manager, sample_project, psutil.Process(current_pid))
+
+        revived = session_manager.revive_expired_terminal_session(left.id)
+
+        assert revived is not None
+        assert revived.status == status
+
+    def test_a_registration_revives_a_row_while_its_cli_holds_another_live_row(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        """A CLI that registers a conversation again has gone back to it."""
+        left = self._left_and_current(session_manager, sample_project, psutil.Process())
+
+        revived = session_manager.revive_registered_terminal_session(
+            left, caller_session_id=left.id
+        )
+
+        assert revived.status == "active"
+
     def test_revive_expired_foreground_owner_expires_newer_false_claim(
         self,
         session_manager: SessionManager,
