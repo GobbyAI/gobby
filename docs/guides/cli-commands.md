@@ -431,6 +431,19 @@ a Gobby source checkout:
 gobby cutover [--path PATH] [--allow-dirty] [--wait]
 ```
 
+Set `GOBBY_SCHEMA_TEST_DATABASE_URL` before running cutover. Candidate catalog
+preflight requires an isolated schema-test database; `DATABASE_URL` alone does
+not supply this setting. With the local test hub running:
+
+```bash
+GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test \
+  uv run --no-sync gobby cutover --wait
+```
+
+Use the isolated test database URL, not the running daemon's database URL. If the
+setting is missing, preflight refuses before stopping the daemon or promoting
+binaries.
+
 The command runs one locked release build for `gcode`, `gdaemon`, `ghook`, and
 `gclient`, so `gobby-core` compiles once for every dependent. If that shared build
 fails, cutover rebuilds the three-binary set alone and only `gclient` is lost. It

@@ -88,10 +88,13 @@ Published crates use the repository `CARGO_REGISTRY_TOKEN` secret via
 ## Local Install Check
 
 From the main checkout, use the shared cutover command to build and promote
-`gcode`, `gdaemon`, and `ghook` as one coherent set:
+`gcode`, `gdaemon`, and `ghook` as one coherent set. Start the isolated test hub
+and set `GOBBY_SCHEMA_TEST_DATABASE_URL`; candidate catalog preflight requires
+this setting, and `DATABASE_URL` alone does not supply it:
 
 ```bash
-uv run gobby cutover --path .
+GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test \
+  uv run --no-sync gobby cutover --path . --wait
 ~/.gobby/bin/gcode --version
 ~/.gobby/bin/gdaemon --version
 ~/.gobby/bin/ghook --version

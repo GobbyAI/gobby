@@ -219,6 +219,12 @@ alone. `cutover` also refuses to build from uncommitted schema inputs unless
 
 ## Testing
 
+Before every `gobby cutover`, start the isolated test hub and set
+`GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test`.
+Candidate catalog preflight requires this isolated schema-test URL;
+`DATABASE_URL` alone does not supply it. A missing setting refuses before daemon
+stop or binary promotion. See `crates/AGENTS.md` for the complete command.
+
 **Never run the full pytest suite unless explicitly asked** — it takes well over 30
 minutes. Target the relevant file or package.
 

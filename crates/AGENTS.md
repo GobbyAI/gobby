@@ -11,7 +11,9 @@ the rebuild/reinstall new-inode requirement) live in `AGENTS.md`.
 # Build / check a specific crate (use -p; avoid whole-workspace builds unless needed)
 cargo build -p gobby-code                 # gcode CLI
 cargo build --release -p <crate>          # one release artifact; install it via a new inode (AGENTS.md)
-uv run gobby cutover                      # build/install the release binary set, pin, restart, smoke
+# Required: start the isolated test hub and set its schema-test URL.
+GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test \
+  uv run --no-sync gobby cutover --wait   # build/install the binary set, pin, restart, smoke
                                           # refuses uncommitted schema inputs (--allow-dirty overrides)
                                           # proves `schema plan` plus rollback-only `schema preflight`
                                           # before promoting; nothing is promoted or stopped on refusal
@@ -43,6 +45,11 @@ GCODE_POSTGRES_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60
 # One nextest process at a time protects their shared fixture database;
 # serial_test guards alone do not serialize separate nextest processes.
 ```
+
+Set `GOBBY_SCHEMA_TEST_DATABASE_URL` for every cutover. The candidate catalog
+preflight needs an isolated schema-test database; `DATABASE_URL` alone does not
+supply it. The example uses the local test hub, which must be running. A missing
+setting refuses activation before the daemon stops or any binary is promoted.
 
 `gobby-terminal` builds a vendored Zig library (libghostty-vt) whenever the
 `vt-engine` feature is on, which the `gterm` binary requires. That build needs
