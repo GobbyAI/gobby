@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
 
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.llm.model_registry import ModelInfo
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcripts.base import ParsedMessage
@@ -16,6 +17,10 @@ from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.model_metadata import ModelMetadataStore
 from gobby.storage.sessions import SessionManager
+from gobby.workflows.observer_context_usage import (
+    detect_context_compact_guidance,
+    detect_mid_turn_context_compact_guidance,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -113,3 +118,34 @@ async def test_grok_session_gets_context_usage_ratio(postgres_db: HubDatabase) -
     assert snapshot.context_window == 500_000
     assert snapshot.context_usage_ratio == 10_000 / 500_000
     assert snapshot.model == "grok-4.7"
+
+
+@pytest.mark.parametrize("mid_turn", [False, True])
+@pytest.mark.parametrize("hosted", [False, True])
+def test_unhosted_session_gets_no_pressure_guidance(mid_turn: bool, hosted: bool) -> None:
+    sessions = _RecordingSessions(
+        SimpleNamespace(context_used_tokens=400_000, context_window=500_000)
+    )
+    variables: dict[str, Any] = {
+        "native_terminal_hosted": hosted,
+        "context_compact_guidance_kind": "block",
+        "context_compact_guidance_message": "stale guidance",
+        "context_compact_mid_turn_pressure_band": "block",
+        "context_compact_block_message": "stale block",
+    }
+    if mid_turn:
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id="session-1",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "Read", "tool_input": {}},
+        )
+        detect_mid_turn_context_compact_guidance(event, variables, "session-1", sessions)
+    else:
+        detect_context_compact_guidance(variables, "session-1", sessions)
+
+    assert bool(variables["context_compact_guidance_message"]) is hosted
+    assert bool(variables["context_compact_block_message"]) is hosted
+    assert variables["context_compact_guidance_kind"] == ("block" if hosted else "")
+    assert variables["context_compact_mid_turn_pressure_band"] == ("block" if hosted else "none")

@@ -54,6 +54,7 @@ def run_observers(
         detect_mid_turn_context_compact_guidance,
     )
     from .observer_plan_mode import reconcile_native_mode, resolve_plan_mode
+    from .observer_terminal_hosting import detect_native_terminal_hosting
     from .observers import (
         detect_bash_commit,
         detect_commit_link,
@@ -88,6 +89,14 @@ def run_observers(
             )
 
     run_observer("detect_turn_interrupt", detect_turn_interrupt, event, variables)
+    if event.event_type == HookEventType.SESSION_START or _is_turn_start_event(event.event_type):
+        run_observer(
+            "detect_native_terminal_hosting",
+            detect_native_terminal_hosting,
+            handler,
+            session_id,
+            variables,
+        )
     run_observer(
         "cleanup_task_tool_bindings",
         cleanup_task_tool_bindings,

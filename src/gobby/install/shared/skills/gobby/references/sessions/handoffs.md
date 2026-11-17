@@ -5,6 +5,11 @@ Load before authoring `gobby-sessions:set_handoff` or cooperative
 Fetch the applicable schemas. Load this exact reference completely before
 authoring the handoff; loading the router alone does not satisfy its gate.
 
+Terminal handoffs apply only to Gobby-hosted terminals with a live native route.
+Unhosted terminal sessions cannot stage compact or clear delivery and receive no
+terminal context-pressure guidance. Always consume an already-pending handoff,
+even if its terminal route has since disappeared.
+
 ## Handoff, standing directives, and memory
 
 Keep three stores separate. Write each seat's content only to the store it belongs in.
@@ -146,6 +151,6 @@ failed recovery marker.
 
 Guide: [Creating and reading handoffs](../../../../../../../../docs/guides/sessions.md#creating-and-reading-handoffs).
 
-_Version: 1.3.0_
+_Version: 1.4.0_
 
 _Last verified: 2026-11-02_

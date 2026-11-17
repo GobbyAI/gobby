@@ -14,12 +14,14 @@ import json
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import ClassVar
-from unittest.mock import MagicMock
+from typing import Any, ClassVar
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.agents.idle_detector import ComposerRead
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.mcp_proxy.tools.sessions._terminal_clear import CLEAR_COMMAND
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMPACTION_REJECTION_ERROR_CODE,
@@ -35,9 +37,14 @@ from gobby.sessions.transcript_cursor import (
     build_interrupt_observer,
     build_turn_settled_observer,
 )
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.storage.terminals import TerminalManager
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.composer_ledger import ComposerLedger, bind_composer_ledger
 from gobby.terminals.runtime import SnapshotMode
+from gobby.utils.machine_id import require_machine_id
+from gobby.utils.session_context import SessionContext, reset_session_context, set_session_context
 
 pytestmark = pytest.mark.unit
 
@@ -803,3 +810,49 @@ async def test_readerless_compaction_interrupts_and_wipes_any_composer(
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
     assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once_with()
+
+
+@pytest.mark.parametrize("clear_session", [False, True])
+async def test_set_handoff_refuses_unhosted_terminal_session(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    clear_session: bool,
+) -> None:
+    session = session_manager.register(
+        external_id="unhosted-handoff",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    registry = InternalToolRegistry(name="test", description="test")
+    register_terminal_tools(
+        registry,
+        session_manager,
+        temp_db,
+        terminal_manager=TerminalManager(temp_db),
+        terminal_runtime_registry=MagicMock(),
+    )
+    metadata = registry.get_tool_metadata("set_handoff")
+    assert metadata is not None and metadata.func is not None
+    token = set_session_context(
+        SessionContext(session_id=session.id, project_id=session.project_id)
+    )
+    try:
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.stage_handoff_attempt"
+            ) as compact_stage,
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal_clear.stage_clear_attempt"
+            ) as clear_stage,
+        ):
+            result = await metadata.func(
+                current_state="Unhosted test", next_steps=["Continue"], clear_session=clear_session
+            )
+    finally:
+        reset_session_context(token)
+    assert result["error_code"] == "terminal_target_unavailable"
+    assert not result.get("handoff_staged")
+    compact_stage.assert_not_called()
+    clear_stage.assert_not_called()

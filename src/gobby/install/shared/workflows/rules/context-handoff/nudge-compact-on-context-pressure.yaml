@@ -1,4 +1,4 @@
-version: "1.1.0"
+version: "1.2.0"
 tags: [context-handoff, context, compact, lifecycle, gobby, default]
 
 rules:
@@ -7,7 +7,7 @@ rules:
     event: turn_start
     enabled: true
     priority: 30
-    when: "variables.get('context_compact_guidance_message')"
+    when: "variables.get('context_compact_guidance_message') and variables.get('native_terminal_hosted') is not False"
     effects:
       - type: load_skill
         skill: gobby:references/sessions/handoffs.md
@@ -28,7 +28,7 @@ rules:
     priority: 30
     # The pressure is the parent's context. A Claude subagent shares the session
     # and carries agent_id in its hook payload; it must not hand off the parent.
-    when: "variables.get('context_compact_guidance_message') and not event.data.get('agent_id')"
+    when: "variables.get('context_compact_guidance_message') and not event.data.get('agent_id') and variables.get('native_terminal_hosted') is not False"
     effects:
       - type: load_skill
         skill: gobby:references/sessions/handoffs.md

@@ -40,6 +40,7 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         "contested_terminal_expiry",
         "handoff_compact_continue_pending",
         "handoff_pull_pending",
+        "native_terminal_hosted",
         "operator_claim_hold",
         # Operator approval of exact unowned dirty paths; only the operator route writes it.
         "operator_dirty_path_approvals",

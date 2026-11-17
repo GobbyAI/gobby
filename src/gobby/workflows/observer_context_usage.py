@@ -89,6 +89,11 @@ def detect_context_compact_guidance(
     hold_open: bool = False,
 ) -> None:
     """Populate compact guidance variables for turn_start evaluation."""
+    if variables.get("native_terminal_hosted") is False:
+        variables["context_compact_guidance_kind"] = ""
+        variables["context_compact_guidance_message"] = ""
+        _write_band(variables, "none", None, None)
+        return
     gate = _handoff_gate(variables)
     turns_since_compact = _turns_since_compact(variables)
     # A held lifecycle inside its grace window may still clear a reset, and its usage predates the
@@ -168,6 +173,10 @@ def detect_mid_turn_context_compact_guidance(
     variables["context_compact_guidance_message"] = ""
 
     _record_handoff_result(event, variables)
+
+    if variables.get("native_terminal_hosted") is False:
+        _write_band(variables, "none", None, None)
+        return
 
     gate = _handoff_gate(variables)
     stored_turns = _int_or_none(variables.get("turns_since_compact"), default=0) or 0
