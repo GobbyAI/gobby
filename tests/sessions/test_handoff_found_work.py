@@ -13,7 +13,6 @@ from uuid import uuid4
 import pytest
 
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
-from gobby.sessions.clear_continuation import refresh_clear_attempt_content, stage_clear_attempt
 from gobby.sessions.handoff import (
     FOUND_WORK_VARIABLE,
     HANDOFF_PULL_PENDING_VARIABLE,
@@ -43,6 +42,7 @@ from gobby.workflows.found_work_gate import (
 )
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import write_project_marker
+from tests.fixtures.legacy_handoff import seed_legacy_clear_handoff
 
 pytestmark = pytest.mark.unit
 
@@ -290,7 +290,6 @@ async def test_get_handoff_rearms_the_gate_for_open_findings(
         session.id,
         attempt_id="a" * 32,
         handoff=_payload(ESCALATED),
-        clear_session=False,
         delivery_mode="in_process",
     )
     sv_mgr = SessionVariableManager(temp_db)
@@ -312,37 +311,26 @@ async def test_get_handoff_rearms_the_gate_for_open_findings(
     assert FOUND_WORK_VARIABLE not in variables
 
 
-def test_clear_successor_is_armed_by_open_findings(
+def test_fresh_session_never_inherits_predecessor_found_work_gate(
     temp_db: HubDatabase,
     session_manager: SessionManager,
 ) -> None:
     predecessor = _registered_session(session_manager)
-    state = stage_handoff_attempt(
+    seed_legacy_clear_handoff(
         temp_db,
         predecessor.id,
         attempt_id="b" * 32,
         handoff=_payload(FIXED, ESCALATED),
-        clear_session=True,
     )
     successor_id = _register_clear_successor(session_manager, predecessor)
-    record_handoff_delivery(
-        temp_db,
-        handoff_id=state.handoff_record_id,
-        attempt_id="b" * 32,
-        boundary_kind="clear",
-        continuation_session_id=successor_id,
-    )
     sv_mgr = SessionVariableManager(temp_db)
-    sv_mgr.merge_variables(successor_id, {HANDOFF_PULL_PENDING_VARIABLE: True})
 
     consumed = consume_pending_handoff(temp_db, successor_id)
 
-    assert consumed is not None
-    assert consumed.open_found_work == (FoundWorkEntry(**ESCALATED),)
+    assert consumed is None
     successor_variables = sv_mgr.get_variables(successor_id)
     assert HANDOFF_PULL_PENDING_VARIABLE not in successor_variables
-    armed_at = successor_variables.get(FOUND_WORK_GATE_ARMED_AT_VARIABLE)
-    assert found_work_gate_armed_at(armed_at) is not None
+    assert FOUND_WORK_GATE_ARMED_AT_VARIABLE not in successor_variables
     assert FOUND_WORK_GATE_ARMED_AT_VARIABLE not in sv_mgr.get_variables(predecessor.id)
 
 
@@ -356,7 +344,6 @@ def test_fixed_findings_do_not_arm_the_gate(
         session.id,
         attempt_id="c" * 32,
         handoff=_payload(FIXED),
-        clear_session=False,
     )
 
     consumed = consume_pending_handoff(temp_db, session.id)
@@ -379,7 +366,6 @@ def test_failed_attempt_restore_drops_the_found_work_marker(
         session.id,
         attempt_id="d" * 32,
         handoff=_payload(ESCALATED),
-        clear_session=False,
     )
     sv_mgr = SessionVariableManager(temp_db)
     assert sv_mgr.get_variables(session.id)[FOUND_WORK_VARIABLE] == [ESCALATED]
@@ -388,30 +374,6 @@ def test_failed_attempt_restore_drops_the_found_work_marker(
 
     assert FOUND_WORK_VARIABLE not in sv_mgr.get_variables(session.id)
     assert consume_pending_handoff(temp_db, session.id) is None
-
-
-def test_refreshed_clear_attempt_replaces_the_found_work_marker(
-    temp_db: HubDatabase,
-    session_manager: SessionManager,
-) -> None:
-    session = _registered_session(session_manager)
-    stage_clear_attempt(
-        temp_db,
-        session.id,
-        attempt_id="e" * 32,
-        handoff=_payload(ESCALATED),
-        terminal_context=None,
-        chat_context=None,
-    )
-    sv_mgr = SessionVariableManager(temp_db)
-    assert sv_mgr.get_variables(session.id)[FOUND_WORK_VARIABLE] == [ESCALATED]
-
-    refreshed = refresh_clear_attempt_content(
-        temp_db, session.id, attempt_id="e" * 32, handoff=_payload(FIXED)
-    )
-
-    assert refreshed is True
-    assert sv_mgr.get_variables(session.id)[FOUND_WORK_VARIABLE] == [FIXED]
 
 
 @pytest.mark.parametrize(
@@ -525,12 +487,11 @@ def test_found_work_renders_as_notes_and_round_trips(
         "Found work: terminal_list blocks the event loop (escalated gobby#13822)",
         "Daemon restarted at 03:45 UTC.",
     )
-    state = stage_handoff_attempt(
+    state = seed_legacy_clear_handoff(
         temp_db,
         predecessor.id,
         attempt_id="f" * 32,
         handoff=handoff,
-        clear_session=True,
     )
     record_handoff_delivery(
         temp_db,

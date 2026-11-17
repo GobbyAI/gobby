@@ -6,7 +6,7 @@ Fetch the applicable schemas. Load this exact reference completely before
 authoring the handoff; loading the router alone does not satisfy its gate.
 
 Terminal handoffs apply only to Gobby-hosted terminals with a live native route.
-Unhosted terminal sessions cannot stage compact or clear delivery and receive no
+Unhosted terminal sessions cannot stage compact delivery and receive no
 terminal context-pressure guidance. Always consume an already-pending handoff,
 even if its terminal route has since disappeared.
 
@@ -120,9 +120,11 @@ defects follow the found-work ladder; feedback is not a substitute for fixing or
 handing work to its active owner. Interactive sessions call `set_handoff` last.
 Spawned agents submit feedback first and call `end_agent_run` as their last call.
 
-Use `clear_session=false` during planning, review, or ongoing task work. Use
-`true` only for a root/coordinator moving to another task after closing the
-current task. A spawned worker finishes with structured `end_agent_run`, including
+`set_handoff` always compacts in place and accepts no `clear_session` selector.
+After closing a task, continue in place or start a fresh default session with
+`/clear` or `/new`. Fresh sessions receive no handoff, claims, persona, workflow,
+or run lineage. Never send `/clear` to a spawned CLI: it fully tears down if received.
+A spawned worker finishes with structured `end_agent_run`, including
 the coordinator's next actions and closed task refs in `references`; raw turn-end
 does not end an agent run. An exit outside the exit step while the bound task is
 open requires `blockers` and reports `incomplete` to the parent.
@@ -134,14 +136,14 @@ and provides retry guidance. Retry `set_handoff` after correcting that failure;
 a staging retry does not require duplicate feedback.
 
 On continuation, call `get_handoff()` without lookup arguments. It atomically
-consumes the pending compact or direct-predecessor clear marker. This call is
+consumes the current session's pending compact marker. This call is
 allowed and required during a restart or cutover hold: do not wait for DAEMON BACK,
 because shutdown waits for the acknowledgment. `wait_for_coordination` and
 `send_message` stay allowed during the hold, and `set_handoff` stays allowed until
 shutdown admission closes; keep other held task work paused. A second read,
 manual compact/clear, or absent marker returns empty. Do not pass `session_id`,
 search for another session's summary, or create an archival summary to recover
-it. Separately, a parent or its bound clear successor may idempotently read a
+it. Separately, the original parent may idempotently read a
 child's final handoff with `get_handoff(agent_run_id=...)`.
 If terminal delivery fails, use the returned attempt ID with
 `get_handoff(failed_attempt_id=...)` to explicitly recover the authored payload.
@@ -151,6 +153,6 @@ failed recovery marker.
 
 Guide: [Creating and reading handoffs](../../../../../../../../docs/guides/sessions.md#creating-and-reading-handoffs).
 
-_Version: 1.4.0_
+_Version: 2.0.0_
 
-_Last verified: 2026-11-02_
+_Last verified: 2026-11-17_

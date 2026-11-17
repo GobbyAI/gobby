@@ -26,7 +26,7 @@ from gobby.hooks.runtime_compat import (
 )
 from gobby.hooks.session_claimant import Claimant, claim_session_start
 from gobby.hooks.session_credential import SESSION_CREDENTIAL_FIELD
-from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
+from gobby.sessions.handoff_retirement import CLEAR_ATTEMPT_VARIABLE
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_startup_marks import StartupPin
 from gobby.storage.sessions import SessionManager

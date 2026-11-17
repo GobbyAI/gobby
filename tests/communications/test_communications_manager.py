@@ -4237,7 +4237,7 @@ async def test_telegram_target_survives_manager_restart(
 
 @pytest.mark.parametrize("child_depth", [0, 1])
 @pytest.mark.parametrize("end_first", [False, True])
-async def test_native_clear_transfers_dm_only_to_same_depth_successor(
+async def test_native_clear_keeps_dm_attachment_on_previous_session(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     child_depth: int,
@@ -4263,7 +4263,7 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
         project_id=sample_project["id"],
         terminal_context=context,
     )
-    # An unrelated Assistant must not take precedence over the linked successor.
+    # An unrelated fallback must not inherit the explicit attachment.
     unrelated = sessions.register(
         external_id="native-clear-other-assistant",
         machine_id=None,
@@ -4336,20 +4336,14 @@ async def test_native_clear_transfers_dm_only_to_same_depth_successor(
         "native-clear-successor", sample_project["id"], "claude"
     )
     assert successor is not None
-    assert successor.parent_session_id == (predecessor.id if child_depth == 0 else None)
+    assert successor.parent_session_id is None
     for transition in transitions:
         await manager.handle_session_status_transition(transition)
 
-    expected_holder = successor.id if child_depth == 0 else predecessor.id
+    expected_holder = predecessor.id
     assert manager._conversation_attachments[(channel.id, "dm:42")] == expected_holder
-    assert manager.attached_session(channel.id, "dm:42") == (
-        successor.id if child_depth == 0 else None
-    )
-    assert manager.list_conversation_attachments() == (
-        [{"channel": channel.name, "conversation_id": "dm:42", "session_id": successor.id}]
-        if child_depth == 0
-        else []
-    )
+    assert manager.attached_session(channel.id, "dm:42") is None
+    assert manager.list_conversation_attachments() == []
     stored = store.get_channel(channel.id)
     assert stored is not None
     assert stored.config_json["telegram_agent_targets"] == {"dm:42": expected_holder}
@@ -4439,7 +4433,7 @@ async def test_ended_target_falls_back_to_real_assistant_clear_successor(
     assistant_available: bool,
     linked_successor: bool,
 ) -> None:
-    from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
+    from gobby.sessions.handoff_retirement import CLEAR_ATTEMPT_VARIABLE
     from gobby.sessions.status_events import SessionStatusTransition
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -5173,7 +5167,7 @@ async def test_context_reuse_session_start_preserves_sibling_dm(
             adapter.send_message.assert_not_awaited()
 
 
-async def test_resumed_older_session_native_clear_transfers_its_dm(
+async def test_resumed_older_session_native_clear_keeps_its_dm_attachment(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -5237,16 +5231,16 @@ async def test_resumed_older_session_native_clear_transfers_its_dm(
     )
     successor = sessions.get(successor_id)
     assert successor is not None
-    assert successor.parent_session_id == older.id
+    assert successor.parent_session_id is None
     for transition in transitions:
         await manager.handle_session_status_transition(transition)
-    assert manager.attached_session(channel.id, "dm:42") == successor.id
+    assert manager.attached_session(channel.id, "dm:42") is None
     stored = store.get_channel(channel.id)
     assert stored is not None
-    assert stored.config_json["telegram_agent_targets"] == {"dm:42": successor.id}
+    assert stored.config_json["telegram_agent_targets"] == {"dm:42": older.id}
 
 
-def test_native_clear_failed_expiry_resets_parent_for_retry(
+def test_native_fresh_failed_expiry_keeps_sessions_independent_for_retry(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -5266,7 +5260,7 @@ def test_native_clear_failed_expiry_resets_parent_for_retry(
         project_id=sample_project["id"],
         terminal_context=context,
     )
-    with patch.object(sessions, "mark_session_expired", return_value=False):
+    with patch.object(sessions, "update_status", return_value=None):
         assert sessions.bind_native_clear_successor(successor.id) is None
     unbound = sessions.get(successor.id)
     assert unbound is not None
@@ -5277,4 +5271,4 @@ def test_native_clear_failed_expiry_resets_parent_for_retry(
     ended = sessions.bind_native_clear_successor(successor.id)
     assert ended is not None and ended.id == predecessor.id and ended.status == "expired"
     bound = sessions.get(successor.id)
-    assert bound is not None and bound.parent_session_id == predecessor.id
+    assert bound is not None and bound.parent_session_id is None

@@ -4,7 +4,7 @@ message_sender_capabilities: [message_restricted_seats]
 description: |
   Archivist seat. Keeps the daily digest from the Orchestrator's updates. The daemon's
   digest delivery cron sends each day's file to the operator.
-version: "2.2.0"
+version: "2.2.1"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: claude
@@ -42,7 +42,7 @@ prompts:
     - Reach Triage, which digests for the Orchestrator, through `gobby-agents:send_message`, and wait on the Orchestrator's updates with `gobby-agents:wait_for_coordination`.
 
     ## Continuity
-    Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
+    Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff`.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.

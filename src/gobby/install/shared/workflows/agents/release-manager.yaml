@@ -6,7 +6,7 @@ description: |
   Release Manager seat. Rebuilds and promotes the Rust binaries whose crates
   changed, and runs daemon restarts, each only on the Orchestrator's direction. Cutovers stay
   Orchestrator-run until #25741.
-version: "3.0.1"
+version: "3.0.2"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: codex
@@ -36,7 +36,7 @@ prompts:
     Reach seats through `gobby-agents:send_message`. Register `gobby-agents:wait_for_coordination` when waiting on another seat.
 
     ## Continuity
-    Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
+    Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff`.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.

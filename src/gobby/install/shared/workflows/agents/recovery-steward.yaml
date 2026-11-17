@@ -6,7 +6,7 @@ description: |
   Triage for resume, and alerts Triage when a DevTeam has gone quiet. Its backstop
   sweep ends the leftover seats of closed tasks and deletes the worktrees that
   have landed. Never restarts the daemon or edits code.
-version: "4.2.0"
+version: "4.2.1"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: claude
@@ -49,7 +49,7 @@ prompts:
     Reach seats through `gobby-agents:send_message`. Register `gobby-agents:wait_for_coordination` when waiting on another seat.
 
     ## Continuity
-    Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
+    Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff`.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.

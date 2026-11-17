@@ -167,6 +167,7 @@ def test_gobby_session_id_binding_merges_terminal_context(
             "gobby_agent_run_id": "run-existing",
         },
     )
+    session_manager.update(session.id, external_id=session.id)
     handlers = _make_real_event_handlers(temp_db, project_id)
     event = _make_hook_event(
         {
@@ -634,11 +635,11 @@ def test_parent_turn_seq_seeded_on_first_activation(
     assert "memory_recall_helper_enabled" not in variables
 
 
-def test_variables_seeded_when_activation_skipped_at_flow_level(
+def test_fresh_activation_seeds_variables_despite_stale_skip_hint(
     temp_db: HubDatabase,
     tmp_path: Path,
 ) -> None:
-    """Skipped default-agent activation must still seed parent turn tracking."""
+    """Fresh default activation ignores launch overrides and seeds turn tracking."""
     project_id = _make_project(temp_db, tmp_path)
     handlers = _make_real_event_handlers(temp_db, project_id)
 
@@ -655,7 +656,7 @@ def test_variables_seeded_when_activation_skipped_at_flow_level(
             },
         )
 
-    activate.assert_not_called()
+    activate.assert_called_once()
     variables = SessionVariableManager(temp_db).get_variables(session_id)
     assert variables["parent_turn_seq"] == 0
     assert "memory_recall_helper_enabled" not in variables
@@ -699,7 +700,7 @@ def test_full_session_start_marks_startup_context_injected(
             is None
         )
 
-    activate.assert_not_called()
+    activate.assert_called_once()
     variables = SessionVariableManager(temp_db).get_variables(session_id)
     session = SessionManager(temp_db).get(session_id)
     assert "_startup_context_claim" not in variables

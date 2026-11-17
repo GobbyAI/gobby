@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "2.0.0"
 tags: [context-handoff, skill-discovery, gobby, default]
 
 rules:
@@ -40,23 +40,8 @@ rules:
           file by project-relative path; never move cumulative history into it.
           Interactive sessions call set_handoff last; spawned agents call end_agent_run last,
           after feedback.
-          Use clear_session=false inside tasks; clear_session=true only between
-          tasks after task closure. Do not repeat feedback already submitted this epoch.
-
-  block-clear-session-with-claimed-tasks:
-    description: "Keep handoffs inside active tasks in the same session"
-    event: before_tool
-    enabled: true
-    priority: 23
-    when: >
-      bool(variables.get('claimed_tasks'))
-      and ((tool_input.get('arguments') or tool_input) or {}).get('clear_session') is True
-    effects:
-      - type: block
-        mcp_tools: ["gobby-sessions:set_handoff"]
-        reason: >-
-          Use clear_session=false while working inside a task.
-          clear_session=true is allowed only between tasks after task closure.
+          set_handoff always compacts in place and accepts no clear_session selector.
+          Do not repeat feedback already submitted this epoch.
 
   require-handoff-discipline-on-schema-discovery:
     description: "Load handoff authoring guidance when discovering set_handoff"
@@ -79,8 +64,7 @@ rules:
           Never copy earlier reflections; record only actual recurrence. Use readable sentences.
           For necessary live detail after pruning, reference a permitted Markdown working-notes
           file by project-relative path; never move cumulative history into it.
-          Use clear_session=false inside tasks and clear_session=true
-          only between tasks after closure.
+          set_handoff always compacts in place and accepts no clear_session selector.
 
   require-handoff-discipline:
     description: "Teach handoff discipline before authoring a session or agent handoff"

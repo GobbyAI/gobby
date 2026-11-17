@@ -1,7 +1,7 @@
 name: triage
 capabilities: [message_restricted_seats, follow_relaunch, accept_resume_retype]
 description: Triage seat. Receives the reports meant for the Orchestrator, bundles them, and wakes the Orchestrator with one digest so it is not the message bottleneck.
-version: "5.3.1"
+version: "5.3.2"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: claude
@@ -49,7 +49,7 @@ prompts:
     Reach seats through `gobby-agents:send_message`. The Orchestrator's session ref comes from your launch prompt, each sender identifies itself in its report, and the Archivist and Assistant refs resolve as `references/agents/procedures/triage.md` says.
 
     ## Continuity
-    Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
+    Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff`.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.

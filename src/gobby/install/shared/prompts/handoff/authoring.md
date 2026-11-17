@@ -1,12 +1,10 @@
 ---
 description: Guidance for authoring a bounded current-epoch continuation handoff
 ---
-Persist a structured handoff, then compact the current session or clear into a
-successor when clear_session=true. Submit any required survey separately through
+Persist a structured handoff, then compact the current session in place.
+Submit any required survey separately through
 gobby-sessions:feedback first, then call set_handoff last.
-Feedback is checked before content limits. Use clear_session=false while working
-inside tasks. Use clear_session=true only between tasks after task closure;
-an open claimed task blocks clearing.
+Feedback is checked before content limits. set_handoff accepts no clear_session selector.
 
 All sections share a hard limit of 10,000 JSON-escaped characters, measured as
 len(json.dumps(rendered_markdown)), including headings, list formatting, escaping,
@@ -55,7 +53,5 @@ permissions or truncate necessary context.
 In a terminal session the daemon interrupts the active turn, confirms the
 interrupt from the transcript, clears the composer, and submits the provider
 command. Provider cancellation or rejection immediately after this call is the
-expected dispatch signal. A clear_acknowledgment_timeout with attempt_pending=true
-means /clear was delivered and the successor binds on SessionStart: do not call
-set_handoff again. A retry reuses the pending attempt and never types a second
-/clear. The continuation must call get_handoff().
+expected dispatch signal. After handoff_staged and delivery_pending, yield and
+consume the pending compact with get_handoff() on continuation.

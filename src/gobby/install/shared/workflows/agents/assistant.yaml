@@ -9,7 +9,7 @@ description: |
   sandbox. It carries the operator's words to the Orchestrator, brings fleet news
   and decisions back on the operator's current channel, and recovers stalled
   seats in an emergency.
-version: "7.2.1"
+version: "7.2.2"
 tags: [gobby, seat]
 surfaces: [spawn]
 provider: claude
@@ -54,7 +54,7 @@ prompts:
     - Send whole files and plans to the operator with `gobby-communications:send_operator_attachment`, using the configured operator channel and the workspace file path. Your own message says what happened and when, never log lines or a path.
 
     ## Continuity
-    Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff(clear_session=false)`.
+    Continuity: compact, never /clear. Under context pressure, hand off with `gobby-sessions:set_handoff`.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.

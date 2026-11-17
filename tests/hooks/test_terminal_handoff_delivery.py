@@ -34,7 +34,6 @@ from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     _wait_for_compact_boundary,
 )
 from gobby.sessions import compact_continuation
-from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE, stage_clear_attempt
 from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
@@ -62,6 +61,7 @@ from gobby.sessions.handoff_records import (
     build_handoff_payload,
     record_handoff_delivery,
 )
+from gobby.sessions.handoff_retirement import CLEAR_ATTEMPT_VARIABLE
 from gobby.sessions.transcript_cursor import TranscriptTailCursor
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
@@ -71,6 +71,7 @@ from gobby.terminals.composer_ledger import ComposerLedger, bind_composer_ledger
 from gobby.terminals.runtime import SnapshotMode
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.fixtures.legacy_handoff import seed_legacy_clear_handoff
 from tests.terminals.fakes import (
     FakeRuntime,
     MemoryTerminalStore,
@@ -1135,7 +1136,6 @@ def _claimed_compact_attempt(
         handoff=build_handoff_payload(
             current_state="working", next_steps=["continue"], found_work=found_work
         ),
-        clear_session=False,
     )
     SessionVariableManager(hub_db).merge_variables(
         SESSION_ID,
@@ -1162,7 +1162,7 @@ def _claimed_compact_attempt(
         ({FOUND_WORK_VARIABLE: ["previous"], HANDOFF_TURN_END_PENDING_VARIABLE: False}, False),
     ],
 )
-def test_failed_clear_delivery_restores_all_staged_markers_without_attempt_state(
+def test_legacy_clear_is_retired_before_delivery(
     hub_db: HubDatabase, prior_markers: dict[str, Any], legacy_snapshot: bool
 ) -> None:
     session_manager = _compact_session_manager(hub_db, _NATIVE_WORKER_CONTEXT)
@@ -1170,7 +1170,7 @@ def test_failed_clear_delivery_restores_all_staged_markers_without_attempt_state
         SessionVariableManager(hub_db).merge_variables(SESSION_ID, prior_markers)
         before = SessionVariableManager(hub_db).get_variables(SESSION_ID)
         assert all(before[name] == value for name, value in prior_markers.items())
-    staged = stage_clear_attempt(
+    staged = seed_legacy_clear_handoff(
         hub_db,
         SESSION_ID,
         attempt_id=ATTEMPT_ID,
@@ -1178,13 +1178,6 @@ def test_failed_clear_delivery_restores_all_staged_markers_without_attempt_state
         terminal_context=_NATIVE_WORKER_CONTEXT,
         chat_context=None,
     )
-    claimed = claim_staged_handoff_delivery(
-        hub_db, SESSION_ID, ATTEMPT_ID, recover_unarmed_gate=True
-    )
-    assert claimed is not None
-    assert claimed.clear_session is True
-    assert claimed.handoff_record_id == staged.handoff_record_id
-    assert staged.prior_markers == prior_markers
     pending = SessionVariableManager(hub_db).get_variables(SESSION_ID)[PENDING_HANDOFF_VARIABLE]
     if legacy_snapshot:
         pending.pop("restore_state")
@@ -1194,11 +1187,9 @@ def test_failed_clear_delivery_restores_all_staged_markers_without_attempt_state
     else:
         assert pending["restore_state"]["prior_markers"] == prior_markers
     assert (
-        SessionVariableManager(hub_db).get_variables(SESSION_ID)[HANDOFF_TURN_END_PENDING_VARIABLE]
-        is True
+        claim_staged_handoff_delivery(hub_db, SESSION_ID, ATTEMPT_ID, recover_unarmed_gate=True)
+        is None
     )
-
-    terminal_handoff_delivery._compensate_delivery_failure(hub_db, claimed, "provider rejected")
 
     session = session_manager.get(SESSION_ID)
     assert session is not None
@@ -1206,13 +1197,10 @@ def test_failed_clear_delivery_restores_all_staged_markers_without_attempt_state
     variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
     assert CLEAR_ATTEMPT_VARIABLE not in variables
     assert PENDING_HANDOFF_VARIABLE not in variables
-    for name in (HANDOFF_TURN_END_PENDING_VARIABLE, FOUND_WORK_VARIABLE):
-        if name in prior_markers:
-            assert variables[name] == prior_markers[name]
-        else:
-            assert name not in variables
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in variables
+    assert variables[FAILED_HANDOFF_VARIABLE]["found_work"] == []
     assert variables[FAILED_HANDOFF_VARIABLE]["handoff_record_id"] == staged.handoff_record_id
-    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE]["delivery_failed"] is True
+    assert HANDOFF_DISPATCH_GATE_VARIABLE not in variables
 
 
 def test_compact_failure_reads_only_fresh_claude_local_command_stderr(tmp_path: Path) -> None:

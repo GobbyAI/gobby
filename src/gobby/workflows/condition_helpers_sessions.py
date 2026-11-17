@@ -204,15 +204,7 @@ def _spawn_caller(session_manager: SessionManager, caller_ref: Any) -> tuple[Ses
     if run is None or not run.agent_name:
         raise ValueError(f"Agent run {caller.agent_run_id} names no agent definition")
     if run.child_session_id != caller.id:
-        from gobby.sessions.clear_continuation import resolve_clear_successor
-
-        if (
-            run.child_session_id is None
-            or resolve_clear_successor(session_manager.db, run.child_session_id) != caller.id
-        ):
-            raise ValueError(
-                f"Agent run {caller.agent_run_id} does not belong to caller {caller.id}"
-            )
+        raise ValueError(f"Agent run {caller.agent_run_id} does not belong to caller {caller.id}")
     return caller, run.agent_name
 
 

@@ -7,15 +7,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
-from uuid import uuid4
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.mcp_proxy.tools.spawn_agent import _spawn_guards
-from gobby.sessions.clear_continuation import stage_clear_attempt, take_clear_handoff_marker
-from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
@@ -210,27 +207,14 @@ class TestLimitSpawnableAgents:
             project_id=predecessor.project_id,
             agent_depth=0,
         )
-        attempt = uuid4().hex
-        stage_clear_attempt(
-            temp_db,
-            predecessor.id,
-            attempt_id=attempt,
-            handoff=build_handoff_payload(current_state="Continue.", next_steps=["Continue."]),
-            terminal_context=None,
-            chat_context=None,
-        )
-        transferred = take_clear_handoff_marker(
-            temp_db, predecessor.id, attempt_id=attempt, successor_id=successor.id
-        )
         if cleared == "caller":
-            assert not transferred
             unbound = session_manager.get(successor.id)
             assert unbound is not None
             assert unbound.agent_run_id is None and unbound.parent_session_id is None
             assert unbound.agent_depth == 0
             caller_id = predecessor.id
         else:
-            assert transferred
+            session_manager.update_status(predecessor.id, "expired")
             caller_id = callers["lister"].id if cleared == "coordinator" else successor.id
         target = "spawn-scope-worker" if allowed else "spawn-scope-other"
         response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
@@ -603,7 +587,7 @@ class TestLimitSpawnNetworkOverride:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("owner", ["default", "fixture-coordinator"])
-    async def test_refused_clear_does_not_authorize_borrowed_run(
+    async def test_fresh_session_does_not_authorize_borrowed_run(
         self,
         temp_db: HubDatabase,
         session_manager: SessionManager,
@@ -613,19 +597,6 @@ class TestLimitSpawnNetworkOverride:
         _only_rules_enabled(temp_db, LIMIT_SPAWN_NETWORK_OVERRIDE)
         predecessor = callers[owner]
         successor = _run_holder(session_manager, predecessor)
-        attempt = uuid4().hex
-        stage_clear_attempt(
-            temp_db,
-            predecessor.id,
-            attempt_id=attempt,
-            handoff=build_handoff_payload(current_state="Continue.", next_steps=["Continue."]),
-            terminal_context=None,
-            chat_context=None,
-        )
-        assert not take_clear_handoff_marker(
-            temp_db, predecessor.id, attempt_id=attempt, successor_id=successor.id
-        )
-
         response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
             _spawn_event(successor.id, "spawn_agent", "spawn-scope-worker", network="trusted"),
             session_id=successor.id,

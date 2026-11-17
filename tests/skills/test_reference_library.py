@@ -20,7 +20,7 @@ from gobby.sessions.handoff import (
     consume_pending_handoff,
     stage_handoff_attempt,
 )
-from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
+from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.sync import sync_bundled_skills
 from gobby.storage.config_mutations import ConfigConflictError, ConfigMutationResult
@@ -33,6 +33,7 @@ from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import drain_asyncio_tasks
+from tests.fixtures.legacy_handoff import seed_legacy_clear_handoff
 from tests.mcp_proxy import test_results_tools as result_scenarios
 from tests.mcp_proxy.tools import test_config_values as config_scenarios
 from tests.mcp_proxy.tools import test_mcp_proxy_tools_pipeline_resume as pipeline_scenarios
@@ -125,7 +126,6 @@ async def test_reference_contract_3_2_2(
             handoff_predecessor.id,
             attempt_id="a" * 32,
             handoff=handoff_payload,
-            clear_session=False,
         )
         handoff_sv_mgr = SessionVariableManager(temp_db)
         assert (
@@ -147,12 +147,11 @@ async def test_reference_contract_3_2_2(
             handoff_predecessor.id
         )
         assert consume_pending_handoff(temp_db, handoff_predecessor.id) is None
-        handoff_clear_state = stage_handoff_attempt(
+        handoff_clear_state = seed_legacy_clear_handoff(
             temp_db,
             handoff_predecessor.id,
             attempt_id="b" * 32,
             handoff=handoff_payload,
-            clear_session=True,
         )
         assert HANDOFF_PULL_PENDING_VARIABLE not in handoff_sv_mgr.get_variables(
             handoff_predecessor.id
@@ -164,16 +163,15 @@ async def test_reference_contract_3_2_2(
             project_id=handoff_predecessor.project_id,
             parent_session_id=handoff_predecessor.id,
         )
-        record_handoff_delivery(
-            temp_db,
-            handoff_id=handoff_clear_state.handoff_record_id,
-            attempt_id="b" * 32,
-            boundary_kind="clear",
-            continuation_session_id=handoff_successor_id,
-        )
-        handoff_sv_mgr.merge_variables(handoff_successor_id, {HANDOFF_PULL_PENDING_VARIABLE: True})
         handoff_cleared = consume_pending_handoff(temp_db, handoff_successor_id)
-        assert handoff_cleared is not None and handoff_cleared.session_id == handoff_predecessor.id
+        assert handoff_cleared is None
+        assert (
+            temp_db.fetchone(
+                "SELECT 1 FROM session_handoff_deliveries WHERE handoff_id = %s",
+                (handoff_clear_state.handoff_record_id,),
+            )
+            is None
+        )
         assert HANDOFF_PULL_PENDING_VARIABLE not in handoff_sv_mgr.get_variables(
             handoff_successor_id
         )

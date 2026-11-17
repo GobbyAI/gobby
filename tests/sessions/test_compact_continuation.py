@@ -102,7 +102,6 @@ async def test_codex_unverified_continuation_recovers_without_duplicate(
         SESSION_ID,
         attempt_id=attempt_id,
         handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
-        clear_session=False,
     )
     record_handoff_delivery(
         session_db,
@@ -604,7 +603,6 @@ async def test_codex_waits_for_delivery_receipt_before_continuing(
         SESSION_ID,
         attempt_id=attempt_id,
         handoff=build_handoff_payload(current_state="Compacting", next_steps=["Continue"]),
-        clear_session=False,
     )
     mark_handoff_compact_continuation_pending(
         session_db,
@@ -682,7 +680,6 @@ async def test_readiness_timeout_preserves_undelivered_or_replaced_attempt(
         SESSION_ID,
         attempt_id=attempt_id,
         handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
-        clear_session=False,
     )
     if conflict != "no_receipt":
         record_handoff_delivery(
@@ -732,7 +729,6 @@ async def test_delivered_codex_readiness_timeout_releases_tools_for_recovery(
         SESSION_ID,
         attempt_id=attempt_id,
         handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
-        clear_session=False,
     )
     record_handoff_delivery(
         session_db,
@@ -794,7 +790,6 @@ async def test_readiness_timeout_recovers_only_matching_awaiting_session(
         SESSION_ID,
         attempt_id=attempt_id,
         handoff=build_handoff_payload(current_state="Recover me", next_steps=["Continue"]),
-        clear_session=False,
     )
     if conflict != "no_receipt":
         record_handoff_delivery(
@@ -860,7 +855,6 @@ async def test_codex_delivered_boundary_continues_without_visible_status_marker(
         SESSION_ID,
         attempt_id=attempt_id,
         handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
-        clear_session=False,
     )
     record_handoff_delivery(
         session_db,
@@ -941,7 +935,6 @@ async def test_codex_readiness_keeps_prompt_until_compact_receipt(session_db: Hu
         SESSION_ID,
         attempt_id=attempt_id,
         handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
-        clear_session=False,
     )
     record_handoff_delivery(
         session_db,

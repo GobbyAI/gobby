@@ -63,7 +63,6 @@ def _claim(hub_db: HubDatabase) -> ClaimedHandoffDelivery:
         SESSION_ID,
         attempt_id=ATTEMPT_ID,
         handoff=build_handoff_payload(current_state="working", next_steps=["continue"]),
-        clear_session=False,
     )
     SessionVariableManager(hub_db).merge_variables(
         SESSION_ID,

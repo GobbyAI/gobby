@@ -47,6 +47,7 @@ from .materialize import (
     _CONTEXT_MODE_METADATA_KEY,
     _consume_pending_handoff_compact_continuation,
     _reset_agent_context_injection,
+    prepare_fresh_session_event,
     record_deferred_startup,
     session_start_should_defer,
 )
@@ -149,7 +150,12 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                 existing_session = bound_session(
                     handler._session_manager.get(gobby_session_id_from_env), machine_id
                 )
-                if existing_session:
+                # The launch environment survives provider resets. It may adopt
+                # only the current conversation or an initial unbound session.
+                if existing_session and existing_session.external_id in {
+                    existing_session.id,
+                    external_id,
+                }:
                     inactive = getattr(existing_session, "status", None) in {"expired", "deleted"}
                     if inactive and session_source not in {"resume", "compact"}:
                         return HookResponse(decision="allow")
@@ -243,8 +249,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             handler.logger.debug("No web-chat session found by external_id: %s", e)
 
     _t_parent = time.monotonic()
-    workflow_name = input_data.get("workflow_name")
-    agent_depth = input_data.get("agent_depth")
     resolution = resolve_session_start_identity(
         handler,
         input_data,
@@ -257,13 +261,22 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     )
     if resolution.blocked_reason:
         return HookResponse(decision="block", reason=resolution.blocked_reason)
-    clear_owner = resolution.clear_predecessor
-    if clear_owner is None and resolution.session_source == "clear":
+    clear_owner = None
+    if resolution.session_source == "clear" or (
+        resolution.session is None and resolution.session_source in {"new", "startup", "", "resume"}
+    ):
         clear_owner = resolution.session
         if clear_owner is None and terminal_context and handler._session_manager:
             owner_id = terminal_context.get("gobby_session_id")
             if isinstance(owner_id, str):
-                clear_owner = handler._session_manager.get(owner_id)
+                clear_owner = bound_session(handler._session_manager.get(owner_id), machine_id)
+                if (
+                    clear_owner is not None
+                    and resolution.session_source != "clear"
+                    and clear_owner.external_id in {clear_owner.id, external_id}
+                ):
+                    # Initial launch and duplicate hooks are not provider resets.
+                    clear_owner = None
     if clear_owner is not None:
         from gobby.hooks.event_handlers.clear_identity import stop_spawned_clear
 
@@ -271,6 +284,10 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             return HookResponse(decision="block", reason="Clear ends this spawned agent run.")
     reported_source = session_source
     session_source = resolution.session_source
+    if resolution.session is None and session_source in {"clear", "new", "startup", "", "resume"}:
+        prepare_fresh_session_event(event)
+    workflow_name = input_data.get("workflow_name")
+    agent_depth = input_data.get("agent_depth")
     if session_start_should_defer(
         event, resolution.session, session_source, reported_source=reported_source
     ):
@@ -421,12 +438,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             terminal_context=terminal_context,
         )
         context_mode = str(event.metadata.pop(_CONTEXT_MODE_METADATA_KEY, "live"))
-        if handler._session_manager and (
-            session_source == "clear" or resolution.clear_predecessor is not None
-        ):
-            rebound = handler._session_manager.get(session_id)
-            if rebound is not None:
-                session_obj = rebound
     else:
         handler._setup_code_index(None, project_id)
         session_obj = None

@@ -69,15 +69,8 @@ def guard_handoff_shutdown(
               LEFT JOIN projects p ON p.id = s.project_id
              WHERE s.machine_id = %s
                AND jsonb_typeof(v.variables -> 'set_handoff_pending') = 'object'
-               AND (
-                   s.status NOT IN ('expired', 'deleted')
-                   OR EXISTS (
-                       SELECT 1 FROM sessions successor
-                        WHERE successor.id::text =
-                              v.variables -> 'clear_attempt' ->> 'consumed_by'
-                          AND successor.status NOT IN ('expired', 'deleted')
-                   )
-               )
+               AND v.variables -> 'set_handoff_pending' -> 'clear_session' = 'false'::jsonb
+               AND s.status NOT IN ('expired', 'deleted')
              ORDER BY s.seq_num
             """,
             (machine_id,),

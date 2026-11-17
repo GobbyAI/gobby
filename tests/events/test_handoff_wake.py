@@ -64,7 +64,6 @@ async def handoff_wake(
         session.id,
         attempt_id=uuid4().hex,
         handoff=build_handoff_payload(current_state="Working", next_steps=["Continue the task"]),
-        clear_session=False,
     )
     record_handoff_delivery(
         temp_db,

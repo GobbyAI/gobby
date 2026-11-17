@@ -91,7 +91,6 @@ def unconfirmed_attempt(db: HubDatabase, session_id: str, *, age: timedelta) -> 
             current_state="The compact boundary was never confirmed.",
             next_steps=["Resume the assigned task."],
         ),
-        clear_session=False,
     )
     assert restore_staged_handoff(
         db,

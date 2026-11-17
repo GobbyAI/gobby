@@ -24,7 +24,7 @@ from gobby.hooks.terminal_handoff_delivery import (
     schedule_terminal_handoff_delivery,
 )
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.sessions import _terminal_clear, _terminal_send_keys
+from gobby.mcp_proxy.tools.sessions import _terminal_send_keys
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
     _FORBIDDEN_SPEED_COMMANDS,
@@ -50,7 +50,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.tasks import LocalTaskManager
 from gobby.terminals.runtime import Delivered, TerminalWriteError
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.engine.core import RuleEngine
@@ -278,7 +277,6 @@ class TestRegisterTerminalTools:
         assert result["clear_session"] is False
         send_command.assert_not_awaited()
 
-    @pytest.mark.parametrize("clear_session", [False, True])
     @pytest.mark.parametrize(
         ("error_code", "reason"),
         [
@@ -293,7 +291,6 @@ class TestRegisterTerminalTools:
     @pytest.mark.parametrize("readiness_unconfirmed", [False, True])
     def test_set_handoff_rejects_second_attempt_while_compact_unconfirmed(
         self,
-        clear_session: bool,
         error_code: str | None,
         reason: str | None,
         readiness_unconfirmed: bool,
@@ -361,7 +358,6 @@ class TestRegisterTerminalTools:
                 set_handoff(
                     current_state="New handoff",
                     next_steps=["Continue."],
-                    clear_session=clear_session,
                 )
             )
 
@@ -369,70 +365,6 @@ class TestRegisterTerminalTools:
         assert result["attempt_id"] == attempt_id
         assert result["handoff_staged"] is False
         stage.assert_not_called()
-
-    def test_set_handoff_clear_stages_before_terminal_delivery(self) -> None:
-        registry = _TestRegistry(name="test", description="test")
-        session = MagicMock(
-            id="session-1",
-            project_id="project-1",
-            session_type="terminal",
-            source="claude",
-            status="active",
-            terminal_context={"gobby_terminal_id": "%12"},
-        )
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
-        agent_run_manager = MagicMock()
-        agent_run_manager.get_by_session.return_value = None
-        pane = MagicMock(backend="native", target="%12")
-        pane.snapshot = AsyncMock(return_value="ready")
-
-        with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
-            return_value=agent_run_manager,
-        ):
-            register_terminal_tools(
-                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
-            )
-        set_handoff = registry.get_tool("set_handoff")
-        assert set_handoff is not None
-
-        with (
-            session_context_for_test("session-1"),
-            patch.object(
-                _terminal_clear,
-                "_authorize_send_keys_target",
-                return_value=("session-1", None),
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal_clear._resolve_pane_io",
-                return_value=(pane, None),
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal_clear._interrupt_observer",
-                return_value=(None, None),
-            ),
-            patch("gobby.mcp_proxy.tools.sessions._terminal_clear.stage_clear_attempt"),
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal_clear._send_terminal_compaction_command",
-                new_callable=AsyncMock,
-            ) as send_command,
-        ):
-            result = asyncio.run(
-                set_handoff(
-                    current_state="Ready.",
-                    next_steps=["Continue."],
-                    clear_session=True,
-                )
-            )
-
-        assert result["success"] is True
-        assert result["handoff_staged"] is True
-        assert result["delivery_pending"] is True
-        assert result["clear_session"] is True
-        assert result["command"] == "/clear"
-        send_command.assert_not_awaited()
 
     def assert_send_keys_rejects_unhosted_context_after_native_lookup(self) -> None:
         """A pane hint alone cannot authorize a unhosted terminal write."""
@@ -853,46 +785,6 @@ def test_send_keys_named_key_never_pastes_literally(unsupported_key: str) -> Non
 
 
 class TestSetHandoffFeedback:
-    def test_clear_waits_for_persisted_task_closure(
-        self, temp_db: HubDatabase, tmp_path: Path
-    ) -> None:
-        manager, session_id = _persistent_session(temp_db, tmp_path)
-        session = manager.get(session_id)
-        assert session is not None
-        tasks = LocalTaskManager(temp_db)
-        task = tasks.create_task(
-            project_id=session.project_id,
-            title="Handoff boundary task",
-            validation_criteria="Clearing is blocked until this task closes.",
-            claimed_by_session_id=session_id,
-        )
-        registry = _feedback_registry(temp_db, manager)
-        set_handoff = registry.get_tool("set_handoff")
-        feedback = registry.get_tool("feedback")
-        assert set_handoff is not None and feedback is not None
-        with (
-            session_context_for_test(session_id),
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal_clear.prepare_clear_session",
-                new_callable=AsyncMock,
-                return_value={"handoff_staged": True},
-            ) as stage_clear,
-        ):
-            assert feedback(observations=[])["success"] is True
-            blocked = asyncio.run(
-                set_handoff(current_state="Ready", next_steps=["Continue"], clear_session=True)
-            )
-            assert blocked["error_code"] == "active_task_requires_compact"
-            assert "clear_session=false" in blocked["error"]
-            assert _handoff_row_count(temp_db, session_id) == 0
-            stage_clear.assert_not_awaited()
-            tasks.close_task(task.id)
-            allowed = asyncio.run(
-                set_handoff(current_state="Closed", next_steps=["Next task"], clear_session=True)
-            )
-            assert allowed["handoff_staged"] is True
-            stage_clear.assert_awaited_once()
-
     """Separate feedback submission is a prerequisite, never human review."""
 
     def test_authoring_guidance_comes_from_installed_prompt(
@@ -992,9 +884,8 @@ class TestSetHandoffFeedback:
         assert _feedback_row_count(temp_db, session_id) == 0
         assert _handoff_row_count(temp_db, session_id) == 0
 
-    @pytest.mark.parametrize("clear_session", [False, True])
     def test_oversize_rejection_has_no_side_effects(
-        self, temp_db: HubDatabase, tmp_path: Path, clear_session: bool
+        self, temp_db: HubDatabase, tmp_path: Path
     ) -> None:
         manager, session_id = _persistent_session(temp_db, tmp_path)
         registry = _feedback_registry(temp_db, manager)
@@ -1005,11 +896,7 @@ class TestSetHandoffFeedback:
             assert feedback(observations=[])["success"] is True
         before = SessionVariableManager(temp_db).get_variables(session_id)
         with session_context_for_test(session_id):
-            result = asyncio.run(
-                set_handoff(
-                    current_state="x" * 10_001, next_steps=["Continue"], clear_session=clear_session
-                )
-            )
+            result = asyncio.run(set_handoff(current_state="x" * 10_001, next_steps=["Continue"]))
         assert result["error_code"] == "invalid_handoff"
         assert "Shorten the inline handoff and retry" in result["error"]
         assert _handoff_row_count(temp_db, session_id) == 0
@@ -1049,7 +936,7 @@ def _set_handoff_completion(session_id: str, result: dict[str, Any]) -> HookEven
         "tool_input": {
             "server_name": "gobby-sessions",
             "tool_name": "set_handoff",
-            "arguments": {"clear_session": False},
+            "arguments": {},
         },
         "tool_output": {
             "success": True,
@@ -1109,7 +996,7 @@ async def test_web_chat_failed_compact_restores_precompact_status(
     manager, session_id = _persistent_session(temp_db, tmp_path, session_type="web_chat")
     manager.update_session_status(session_id, prior_status)
     chat_registry = WebChatSessionRegistry()
-    chat_registry.bind_clear_lifecycle(MagicMock(), db=temp_db)
+    chat_registry.bind_handoff_storage(db=temp_db)
     chat_registry.register("conversation", MagicMock(db_session_id=session_id))
     registry = _feedback_registry(temp_db, manager, web_chat_session_registry=chat_registry)
     variables = SessionVariableManager(temp_db)

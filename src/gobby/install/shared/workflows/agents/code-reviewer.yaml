@@ -1,5 +1,5 @@
 name: code-reviewer
-version: "4.1.0"
+version: "4.1.1"
 description: Independently reviews the exact candidate and validates its task criteria; reviews an epic holistically.
 tags:
 - gobby
@@ -83,7 +83,7 @@ prompts:
     merge, close or delete worktrees. Send the lead the attestation IDs and finish
     cooperatively when requested. Reviewers of an epic stay available for later leaves
     and the final independent epic review, including the authenticated subtree_revision.
-    Use durable coordination waits and set_handoff(clear_session=false) under pressure.
+    Use durable coordination waits and set_handoff under pressure.
   persona: |
     ## Role
     Independently review the assigned exact candidate in its registered worktree.
@@ -126,7 +126,7 @@ prompts:
     merge, close or delete worktrees. Send the lead the attestation IDs and finish
     cooperatively when requested. Reviewers of an epic stay available for later leaves
     and the final independent epic review, including the authenticated subtree_revision.
-    Use durable coordination waits and set_handoff(clear_session=false) under pressure.
+    Use durable coordination waits and set_handoff under pressure.
 workflows:
   rule_selectors:
     include:

@@ -1461,13 +1461,12 @@ class TestSendMessage:
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_parent_clear_successor_receives_message_and_persists_run_result(
+    async def test_original_parent_receives_message_and_persists_run_result(
         self,
         messaging_registry: InternalToolRegistry,
         mock_session_manager: MagicMock,
         mock_message_manager: MagicMock,
         mock_db: MagicMock,
-        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         parent = _spawned_child_session_lookup("s-parent")
         assert parent is not None
@@ -1477,16 +1476,13 @@ class TestSendMessage:
             {"s-parent": parent, "s-successor": successor}.get(sid)
             or _spawned_child_session_lookup(sid)
         )
-        monkeypatch.setattr(
-            "gobby.sessions.mailbox.resolve_clear_successor", lambda db, sid: "s-successor"
-        )
         mock_db.fetchone.return_value = {"id": "run-child"}
         with session_context_for_test("s-child"):
             result = await messaging_registry.call(
                 "send_message", {"target": "parent", "content": "completed work"}
             )
         assert result["success"] is True
-        assert mock_message_manager.create_message.call_args.kwargs["to_session"] == "s-successor"
+        assert mock_message_manager.create_message.call_args.kwargs["to_session"] == "s-parent"
         args = mock_db.execute.call_args.args
         assert args[0] == "UPDATE agent_runs SET result = %s, updated_at = %s WHERE id = %s"
         assert args[1][0] == "completed work"

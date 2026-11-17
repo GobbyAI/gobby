@@ -173,10 +173,12 @@ how the system behaves so you can work with it instead of being surprised by it.
 `gobby-sessions:set_handoff` compacts the session into a structured handoff —
 current state, next steps, key decisions, blockers, notes, references — and the
 next session reads it with no-argument `gobby-sessions:get_handoff`. Under context
-pressure during planning, review, or ongoing task work, use
-`set_handoff(clear_session=false)`. Use `set_handoff(clear_session=true)` only after
-closing the current task, when a root or coordinator moves to another task or epic
-child. A spawned worker ending cooperatively or handing off a blocker supplies the
+pressure during planning, review, or ongoing task work, use `set_handoff` to compact
+in place. It accepts no `clear_session` selector. `/clear` and `/new` start fresh
+default sessions without handoffs, claims, persona, workflow, or run lineage.
+Never send `/clear` to a spawned CLI; if received, it fully tears down.
+After task closure, continue in place or start fresh when moving to another task.
+A spawned worker ending cooperatively or handing off a blocker supplies the
 same structured fields to `gobby-agents:end_agent_run`.
 Load `gobby:references/sessions/handoffs.md` before authoring a handoff. Fetch
 `gobby-skills:get_skill_file` with `get_tool_schema`, then call

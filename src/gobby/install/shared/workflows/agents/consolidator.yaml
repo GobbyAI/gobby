@@ -3,7 +3,7 @@ capabilities: [accept_resume_retype, message_assistant]
 task_attestation_writes: [disposition]
 respect_task_protections: true
 description: Consolidator seat. Proposes backlog bundles, stale-item retirement and epic moves, and applies Orchestrator-directed folds and retirements.
-version: "3.0.0"
+version: "3.0.1"
 tags: [gobby, seat]
 surfaces: [spawn, persona]
 provider: claude
@@ -47,7 +47,7 @@ prompts:
     Reach Triage through `gobby-agents:send_message` using the live report target from the launch prompt. Report readiness and every SRT denial there. Wait for coordination when no sweep is assigned; the pipeline parent may have ended.
 
     ## Continuity
-    Compact in place with `gobby-sessions:set_handoff(clear_session=false)` under context pressure. Consume pending handoffs with `get_handoff`, including during restart holds. Never clear or end this standing seat without an explicit direction.
+    Compact in place with `gobby-sessions:set_handoff` under context pressure. Consume pending handoffs with `get_handoff`, including during restart holds. Never clear or end this standing seat without an explicit direction.
 
     ## Platform Context
     Gobby unifies coding assistants through persistent sessions, tasks, memory, rules, workflows, agents, pipelines, skills, and an MCP proxy. Git is authoritative for code; PostgreSQL is authoritative for tasks and memories.

@@ -18,7 +18,6 @@ from gobby.hooks import terminal_handoff_delivery
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.terminal_handoff_delivery import resume_dead_handoff_dispatches
 from gobby.sessions import codex_compact_watch
-from gobby.sessions.clear_continuation import stage_clear_attempt
 from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
@@ -79,25 +78,14 @@ def _session_manager(
     return SessionManager(hub_db)
 
 
-def _claim(hub_db: HubDatabase, *, clear_session: bool = False) -> ClaimedHandoffDelivery:
+def _claim(hub_db: HubDatabase) -> ClaimedHandoffDelivery:
     handoff = build_handoff_payload(current_state="working", next_steps=["continue"])
-    if clear_session:
-        stage_clear_attempt(
-            hub_db,
-            SESSION_ID,
-            attempt_id=ATTEMPT_ID,
-            handoff=handoff,
-            terminal_context=_TERMINAL_CONTEXT,
-            chat_context=None,
-        )
-    else:
-        stage_handoff_attempt(
-            hub_db,
-            SESSION_ID,
-            attempt_id=ATTEMPT_ID,
-            handoff=handoff,
-            clear_session=False,
-        )
+    stage_handoff_attempt(
+        hub_db,
+        SESSION_ID,
+        attempt_id=ATTEMPT_ID,
+        handoff=handoff,
+    )
     SessionVariableManager(hub_db).merge_variables(
         SESSION_ID,
         {
@@ -105,7 +93,7 @@ def _claim(hub_db: HubDatabase, *, clear_session: bool = False) -> ClaimedHandof
                 "handoff_staged": True,
                 "delivery_pending": True,
                 "attempt_id": ATTEMPT_ID,
-                "clear_session": clear_session,
+                "clear_session": False,
             }
         },
     )
@@ -131,7 +119,6 @@ def test_restart_recovers_handoff_before_dispatch_was_claimed(
         SESSION_ID,
         attempt_id=ATTEMPT_ID,
         handoff=build_handoff_payload(current_state="working", next_steps=["continue"]),
-        clear_session=False,
     )
     if armed:
         SessionVariableManager(hub_db).set_variable(
@@ -165,7 +152,6 @@ def _stage_web_chat_handoff(hub_db: HubDatabase, *, delivered: bool) -> SessionM
         SESSION_ID,
         attempt_id=ATTEMPT_ID,
         handoff=build_handoff_payload(current_state="working", next_steps=["continue"]),
-        clear_session=False,
         delivery_mode="in_process" if delivered else "queued_in_process",
     )
     if delivered:
@@ -503,11 +489,26 @@ async def test_dispatch_killed_after_precompact_fails_when_no_boundary_lands_by_
 
 
 @pytest.mark.parametrize("cleared", [False, True])
-def test_dead_clear_dispatch_redelivers_only_without_a_clear_receipt(
+def test_dead_clear_dispatch_is_retired_without_redelivery(
     hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, cleared: bool
 ) -> None:
     session_manager = _session_manager(hub_db, "claude")
-    claimed = _claim(hub_db, clear_session=True)
+    claimed = _claim(hub_db)
+    manager = SessionVariableManager(hub_db)
+    variables = manager.get_variables(SESSION_ID)
+    manager.merge_variables(
+        SESSION_ID,
+        {
+            PENDING_HANDOFF_VARIABLE: {
+                **variables[PENDING_HANDOFF_VARIABLE],
+                "clear_session": True,
+            },
+            HANDOFF_DISPATCH_GATE_VARIABLE: {
+                **variables[HANDOFF_DISPATCH_GATE_VARIABLE],
+                "clear_session": True,
+            },
+        },
+    )
     if cleared:
         record_handoff_delivery(
             hub_db,
@@ -521,11 +522,10 @@ def test_dead_clear_dispatch_redelivers_only_without_a_clear_receipt(
     loop.is_closed.return_value = False
 
     with patch(f"{_DELIVERY}.asyncio.run_coroutine_threadsafe") as submit:
-        assert _sweep(session_manager, loop) == 1
+        assert _sweep(session_manager, loop) == 0
 
-    assert submit.call_count == (0 if cleared else 1)
-    if submit.called:
-        submit.call_args.args[0].close()
+    submit.assert_not_called()
+    assert PENDING_HANDOFF_VARIABLE not in manager.get_variables(SESSION_ID)
     assert _receipts(hub_db, "clear") == (1 if cleared else 0)
 
 
@@ -627,14 +627,13 @@ async def test_dispatched_codex_compact_is_left_to_its_dispatch(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", ["claude", "codex"])
 @pytest.mark.parametrize("failure", ["result", "exception"])
-@pytest.mark.parametrize("clear", [False, True])
 @pytest.mark.parametrize("cancellations", [1, 2])
 async def test_caller_cancellation_preserves_failed_handoff_recovery(
-    hub_db: HubDatabase, source: str, failure: str, clear: bool, cancellations: int
+    hub_db: HubDatabase, source: str, failure: str, cancellations: int
 ) -> None:
     """The original shield must settle real failure compensation before cancellation."""
     session_manager = _session_manager(hub_db, source)
-    claimed = _claim(hub_db, clear_session=clear)
+    claimed = _claim(hub_db)
     staged = asyncio.Event()
     release = asyncio.Event()
     physical_done = asyncio.Event()
@@ -647,8 +646,7 @@ async def test_caller_cancellation_preserves_failed_handoff_recovery(
             raise RuntimeError("owned transport failed")
         return {"compacted": False, "reason": "owned transport failed"}
 
-    target = "deliver_staged_clear_session" if clear else "deliver_staged_compact_handoff"
-    with patch.object(terminal_handoff_delivery, target, delivery):
+    with patch.object(terminal_handoff_delivery, "deliver_staged_compact_handoff", delivery):
         caller = asyncio.create_task(
             terminal_handoff_delivery._settle_delivery(
                 claimed,
@@ -691,12 +689,11 @@ async def test_caller_cancellation_preserves_failed_handoff_recovery(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source", ["claude", "codex"])
-@pytest.mark.parametrize("clear", [False, True])
 async def test_owner_loop_failure_preserves_failed_handoff_recovery(
-    hub_db: HubDatabase, source: str, clear: bool
+    hub_db: HubDatabase, source: str
 ) -> None:
     session_manager = _session_manager(hub_db, source)
-    claimed = _claim(hub_db, clear_session=clear)
+    claimed = _claim(hub_db)
     with patch.object(
         terminal_handoff_delivery,
         "shielded_terminal_delivery",

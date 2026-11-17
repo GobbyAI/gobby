@@ -139,7 +139,7 @@ async def _send(
     observe: Callable[[], bool | None],
     *,
     cli_source: str = "claude",
-    command: str = "/clear",
+    command: str = "/compact",
     composer_read: ComposerReader | None = None,
 ) -> tuple[tuple[bool, str | None, bool, dict[str, object] | None], MagicMock, MagicMock]:
     mark = MagicMock(return_value=True)
@@ -166,7 +166,7 @@ async def test_confirmed_interrupt_drains_then_submits_once() -> None:
 
     assert result == (True, None, True, {"submit_unverified": True})
     assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter"]
-    assert pane.typed == ["/clear\n"]
+    assert pane.typed == ["/compact\n"]
     mark.assert_called_once()
     clear.assert_not_called()
 
@@ -179,7 +179,7 @@ async def test_codex_uses_escape_and_the_line_drain() -> None:
 
     assert result == (True, None, True, {"submit_unverified": True})
     assert pane.keys == ["escape", *composer_clear_sequence("codex"), "enter"]
-    assert pane.typed == ["/clear\n"]
+    assert pane.typed == ["/compact\n"]
 
 
 @pytest.mark.asyncio
@@ -404,7 +404,7 @@ async def test_codex_rollout_boundary_observed_at_deadline_completes_wait(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("command", "enters"), [("/compress", 1), ("/clear", 0)])
+@pytest.mark.parametrize(("command", "enters"), [("/compress", 1)])
 async def test_droid_presses_enter_on_the_compress_confirm_modal_only(
     command: str, enters: int
 ) -> None:
@@ -616,7 +616,7 @@ async def test_seat_leaving_during_the_settle_wait_gets_no_first_interrupt() -> 
     clear.assert_called_once()
 
 
-@pytest.mark.parametrize("command", ["/compact", "/clear"])
+@pytest.mark.parametrize("command", ["/compact", "/compress"])
 async def test_seat_leaving_after_the_command_write_gets_no_enter(command: str) -> None:
     # A settled turn skips the interrupt; the CLI exits during the submit gap.
     pane = _ComposerPane()
@@ -893,7 +893,7 @@ class _DraftAfterInterruptPane(_ComposerPane):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("command", ["/compact", "/clear"])
+@pytest.mark.parametrize("command", ["/compact", "/compress"])
 async def test_draft_typed_during_the_interrupt_is_wiped_before_the_command(command: str) -> None:
     """The empty read before the interrupt does not skip the wipe after it (#25595)."""
     pane = _DraftAfterInterruptPane()

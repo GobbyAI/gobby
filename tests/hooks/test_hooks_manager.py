@@ -3755,7 +3755,7 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
     assert successor.terminal_context["gobby_terminal_id"] == pane_id
     assert [str(row["id"]) for row in bound] == [pane_id]
     assert predecessor.status == "expired"
-    assert successor.parent_session_id == predecessor_id
+    assert successor.parent_session_id is None
 
     sessions.update_status(successor.id, "paused")
     paused = sessions.get(successor.id)

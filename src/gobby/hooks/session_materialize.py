@@ -6,9 +6,6 @@ from typing import Any, cast
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.event_handlers._session_start.context import commit_stashed_startup_claim
-from gobby.hooks.event_handlers._session_start.handoff import (
-    resolve_matching_clear_continuation,
-)
 from gobby.hooks.event_handlers._session_start.materialize import (
     _CONTEXT_MODE_METADATA_KEY,
 )
@@ -121,32 +118,9 @@ def activate_deferred_session(
         machine_id=event.machine_id,
     )
 
-    resolution = None
-    if (
-        session is not None
-        and isinstance(project_id, str)
-        and project_id
-        and isinstance(machine_id, str)
-        and machine_id
-    ):
-        try:
-            resolution = resolve_matching_clear_continuation(
-                handlers,
-                machine_id=machine_id,
-                project_id=project_id,
-                cli_source=event.source.value,
-                terminal_context=terminal_context,
-            )
-        except Exception as exc:
-            handlers.logger.exception(
-                "Clear continuation lookup failed during deferred activation: %s",
-                exc,
-            )
-
     additional_context = handlers._activate_materialized_session(
         event,
         session_id,
-        resolution=resolution,
         session_obj=session,
         project_id=project_id,
         transcript_path=transcript_path,

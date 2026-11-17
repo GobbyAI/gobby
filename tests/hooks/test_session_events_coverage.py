@@ -730,7 +730,14 @@ class TestSessionMoreCoverage:
         )
 
         # Existing session check fails, but gobby_session_id check succeeds
-        handler._session_manager.get.side_effect = [None, MagicMock(machine_id=TEST_MACHINE_ID)]
+        handler._session_manager.get.side_effect = [
+            None,
+            MagicMock(
+                machine_id=TEST_MACHINE_ID,
+                id="pre-created-123",
+                external_id="pre-created-123",
+            ),
+        ]
 
         with patch.object(
             handler, "_handle_pre_created_session", return_value=HookResponse(decision="allow")
@@ -762,7 +769,14 @@ class TestSessionMoreCoverage:
         )
 
         # External-id lookup misses, gobby_session_id lookup hits the pre-created child.
-        handler._session_manager.get.side_effect = [None, MagicMock(machine_id=TEST_MACHINE_ID)]
+        handler._session_manager.get.side_effect = [
+            None,
+            MagicMock(
+                machine_id=TEST_MACHINE_ID,
+                id="gobby-codex-1",
+                external_id="gobby-codex-1",
+            ),
+        ]
 
         with patch.object(
             handler, "_handle_pre_created_session", return_value=HookResponse(decision="allow")

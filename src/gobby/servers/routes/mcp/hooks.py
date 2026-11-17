@@ -73,7 +73,7 @@ from gobby.servers.routes.mcp.hook_responses import (
     _result_encodes_denial,
 )
 from gobby.servers.routes.mcp.session_claim import attach_session_credential, claim_hook
-from gobby.sessions.clear_run_lineage import current_run_session_id, earlier_clear_session_id
+from gobby.sessions.clear_run_lineage import current_run_session_id
 from gobby.telemetry.instruments import inc_counter
 from gobby.utils.git import run_thread_to_completion
 from gobby.utils.machine_id import get_machine_id
@@ -94,10 +94,9 @@ def _run_bound_platform_session(
 ) -> str:
     """Attribute a run-bound hook to the session its run is bound to now.
 
-    After /clear the pane still sends the first session its token was issued
-    for, and the run names the latest successor. A hook from an earlier
-    conversation of that clear chain stays on its own session even when it lands
-    after a later take, so a late SessionEnd cannot end the live seat.
+    A provider conversation must match the bound session before attribution moves.
+    Delayed hooks from the credential's original conversation keep their original
+    attribution, so a late SessionEnd cannot end another conversation.
     """
     claims = server.auth_service.verified_agent_claims(request)
     session_manager = server.session_manager
@@ -117,14 +116,10 @@ def _run_bound_platform_session(
     ]
     if not conversation_ids:
         return current_session_id
-    earlier_session_id = earlier_clear_session_id(
-        session_manager.db,
-        current_session_id=current_session_id,
-        origin_session_id=claims.session_id,
-        project_id=claims.project_id,
-        external_ids=conversation_ids,
-    )
-    return current_session_id if earlier_session_id is None else earlier_session_id
+    current_session = session_manager.get(current_session_id)
+    if current_session is not None and current_session.external_id in conversation_ids:
+        return current_session_id
+    return header_session_id
 
 
 def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any]]:

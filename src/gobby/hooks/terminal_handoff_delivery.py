@@ -22,12 +22,10 @@ from gobby.hooks.handoff_dispatch_recovery import (
     settle_landed_boundary,
 )
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
-from gobby.mcp_proxy.tools.sessions._terminal_clear import deliver_staged_clear_session
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import NO_TERMINAL_TARGET_ERROR_CODE
 from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     deliver_staged_compact_handoff,
 )
-from gobby.sessions.clear_continuation import clear_failed_attempt
 from gobby.sessions.compact_continuation import _schedule_coroutine, persist_pull_prompt_message
 from gobby.sessions.compact_failure_attention import (
     COMPACT_FAILURE_ATTENTION_REASON,
@@ -46,6 +44,10 @@ from gobby.sessions.handoff import (
     staged_handoff_rejection,
 )
 from gobby.sessions.handoff_reconciliation import settle_expired_unconfirmed_compact
+from gobby.sessions.handoff_retirement import (
+    retire_legacy_clear_handoff,
+    retire_legacy_clear_handoffs,
+)
 from gobby.sessions.handoff_shutdown import HANDOFF_IN_FLIGHT_MINUTES
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.attention import session_attention_entry_id
@@ -466,6 +468,7 @@ def resume_dead_handoff_dispatches(
     terminal_runtime_registry: Any | None,
 ) -> int:
     """Recover staged handoffs the previous daemon never finished dispatching."""
+    retire_legacy_clear_handoffs(session_manager.db, machine_id)
     rows = session_manager.db.fetchall(
         """
         SELECT s.id, v.variables -> 'set_handoff_pending' ->> 'attempt_id' AS attempt_id
@@ -510,6 +513,9 @@ async def _settle_delivery(
     confirm_since: datetime | None = None,
 ) -> None:
     db = session_manager.db
+    if claimed.clear_session:
+        retire_legacy_clear_handoff(db, claimed.session_id)
+        return
 
     async def deliver() -> dict[str, Any]:
         if confirm_since is not None:
@@ -522,16 +528,6 @@ async def _settle_delivery(
                 session,
                 confirm_since,
                 event_loop=asyncio.get_running_loop(),
-                terminal_manager=terminal_manager,
-                terminal_runtime_registry=terminal_runtime_registry,
-            )
-        if claimed.clear_session:
-            return await deliver_staged_clear_session(
-                claimed.session_id,
-                claimed.attempt_id,
-                session_manager=session_manager,
-                db=db,
-                agent_run_manager=agent_run_manager,
                 terminal_manager=terminal_manager,
                 terminal_runtime_registry=terminal_runtime_registry,
             )
@@ -561,19 +557,8 @@ async def _settle_delivery(
             await _wake_failed_attempt(db, claimed.session_id, failure)
             return
 
-        if _delivery_succeeded(result, clear_session=claimed.clear_session):
+        if _delivery_succeeded(result):
             clear_compact_failure_attention(db, claimed.session_id)
-            if result.get("attempt_pending") is True:
-                SessionVariableManager(db).merge_variables(
-                    claimed.session_id,
-                    {
-                        HANDOFF_DISPATCH_GATE_VARIABLE: {
-                            "attempt_pending": True,
-                            "attempt_id": claimed.attempt_id,
-                            "clear_session": True,
-                        }
-                    },
-                )
             logger.info(
                 "Terminal handoff delivered for session %s attempt %s (clear_session=%s cli=%s via=%s)",
                 claimed.session_id,
@@ -614,9 +599,7 @@ async def _settle_delivery(
         await _wake_failed_attempt(db, claimed.session_id, failure)
 
 
-def _delivery_succeeded(result: Mapping[str, Any], *, clear_session: bool) -> bool:
-    if clear_session:
-        return result.get("success") is True or result.get("attempt_pending") is True
+def _delivery_succeeded(result: Mapping[str, Any]) -> bool:
     return result.get("compacted") is True
 
 
@@ -637,6 +620,9 @@ def _compensate_delivery_failure(
     error_code: str | None = None,
 ) -> dict[str, Any] | None:
     """Settle a failed attempt; return its failure when a live seat should hear of it."""
+    if claimed.clear_session:
+        retire_legacy_clear_handoff(db, claimed.session_id)
+        return None
     seatless = error_code == NO_TERMINAL_TARGET_ERROR_CODE
     failures = _consecutive_delivery_failures(db, claimed.session_id) + 1
     abandoned = not seatless and failures >= _MAX_CONSECUTIVE_DELIVERY_FAILURES
@@ -674,20 +660,12 @@ def _compensate_delivery_failure(
         failure["error_code"] = _ABANDONED_ERROR_CODE
     elif error_code is not None:
         failure["error_code"] = error_code
-    if claimed.clear_session:
-        restored = clear_failed_attempt(
-            db,
-            claimed.session_id,
-            attempt_id=claimed.attempt_id,
-            marker_updates={HANDOFF_DISPATCH_GATE_VARIABLE: failure},
-        )
-    else:
-        restored = restore_staged_handoff(
-            db,
-            claimed.session_id,
-            claimed.attempt_id,
-            failure_result=failure,
-        )
+    restored = restore_staged_handoff(
+        db,
+        claimed.session_id,
+        claimed.attempt_id,
+        failure_result=failure,
+    )
     if not restored:
         # A boundary receipt or a newer attempt won the race. Never replace its gate.
         logger.info(

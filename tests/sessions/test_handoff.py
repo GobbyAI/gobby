@@ -18,12 +18,6 @@ from psycopg.errors import CheckViolation
 
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.mcp_proxy.tools.sessions._handoff import FEEDBACK_OBSERVATION_INPUT_SCHEMA
-from gobby.sessions.clear_continuation import (
-    CLEAR_ATTEMPT_VARIABLE,
-    clear_failed_attempt,
-    stage_clear_attempt,
-    take_clear_handoff_marker,
-)
 from gobby.sessions.compact_markers import HANDOFF_COMPACT_CONTINUE_VARIABLE
 from gobby.sessions.handoff import (
     FOUND_WORK_VARIABLE,
@@ -47,6 +41,7 @@ from gobby.sessions.handoff_records import (
     record_handoff_delivery,
     stage_agent_end_handoff,
 )
+from gobby.sessions.handoff_retirement import retire_legacy_clear_handoff
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -58,10 +53,12 @@ from gobby.terminals.pane_io import PaneIO, send_pane_key
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.fixtures.isolated_checkout import write_project_marker
+from tests.fixtures.legacy_handoff import seed_legacy_clear_handoff
 
 pytestmark = pytest.mark.unit
 
 MACHINE_ID = "20000000-0000-4000-8000-000000000002"
+CLEAR_ATTEMPT_VARIABLE = "clear_attempt"
 
 
 @pytest.fixture(autouse=True)
@@ -555,7 +552,73 @@ def test_feedback_batch_writes_one_row_per_observation_and_empty_is_noop(
     assert labels == {"friction": None, "useful": None, "other": "doc-drift"}
 
 
-def test_handoff_consumes_once_for_compact_and_clear_successor(
+def test_orphan_clear_pull_gate_is_retired(
+    temp_db: HubDatabase, session_manager: SessionManager
+) -> None:
+    session = _registered_session(session_manager)
+    manager = SessionVariableManager(temp_db)
+    manager.merge_variables(
+        session.id,
+        {
+            HANDOFF_PULL_PENDING_VARIABLE: True,
+            HANDOFF_TURN_END_PENDING_VARIABLE: True,
+        },
+    )
+
+    assert retire_legacy_clear_handoff(temp_db, session.id) is True
+
+    variables = manager.get_variables(session.id)
+    assert HANDOFF_PULL_PENDING_VARIABLE not in variables
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in variables
+
+
+def test_legacy_clear_attempt_is_disarmed_without_delivery(
+    temp_db: HubDatabase, session_manager: SessionManager
+) -> None:
+    session = _registered_session(session_manager)
+    state = seed_legacy_clear_handoff(
+        temp_db,
+        session.id,
+        attempt_id="c" * 32,
+        handoff=build_handoff_payload(current_state="Archived.", next_steps=["Read history."]),
+    )
+    manager = SessionVariableManager(temp_db)
+    manager.merge_variables(
+        session.id,
+        {
+            CLEAR_ATTEMPT_VARIABLE: {"attempt_id": state.attempt_id},
+            HANDOFF_DISPATCH_GATE_VARIABLE: {
+                "attempt_id": state.attempt_id,
+                "clear_session": True,
+                "handoff_staged": True,
+                "delivery_pending": True,
+            },
+        },
+    )
+
+    assert claim_staged_handoff_delivery(temp_db, session.id, state.attempt_id) is None
+
+    variables = manager.get_variables(session.id)
+    assert PENDING_HANDOFF_VARIABLE not in variables
+    assert CLEAR_ATTEMPT_VARIABLE not in variables
+    assert HANDOFF_DISPATCH_GATE_VARIABLE not in variables
+    assert HANDOFF_TURN_END_PENDING_VARIABLE not in variables
+    assert (
+        temp_db.fetchone(
+            "SELECT id FROM session_handoffs WHERE id = %s", (state.handoff_record_id,)
+        )
+        is not None
+    )
+    assert (
+        temp_db.fetchone(
+            "SELECT 1 FROM session_handoff_deliveries WHERE handoff_id = %s",
+            (state.handoff_record_id,),
+        )
+        is None
+    )
+
+
+def test_handoff_consumes_once_for_compact_and_never_for_clear_successor(
     temp_db: HubDatabase,
     session_manager: SessionManager,
 ) -> None:
@@ -566,7 +629,6 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
         predecessor.id,
         attempt_id="a" * 32,
         handoff=handoff,
-        clear_session=False,
     )
     sv_mgr = SessionVariableManager(temp_db)
     assert sv_mgr.get_variables(predecessor.id).get(HANDOFF_PULL_PENDING_VARIABLE) is True
@@ -583,12 +645,11 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
     assert HANDOFF_TURN_END_PENDING_VARIABLE not in sv_mgr.get_variables(predecessor.id)
     assert consume_pending_handoff(temp_db, predecessor.id) is None
 
-    clear_state = stage_handoff_attempt(
+    clear_state = seed_legacy_clear_handoff(
         temp_db,
         predecessor.id,
         attempt_id="b" * 32,
         handoff=handoff,
-        clear_session=True,
     )
     assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(predecessor.id)
     assert sv_mgr.get_variables(predecessor.id)[HANDOFF_TURN_END_PENDING_VARIABLE] is True
@@ -608,9 +669,15 @@ def test_handoff_consumes_once_for_compact_and_clear_successor(
     )
     sv_mgr.merge_variables(successor_id, {HANDOFF_PULL_PENDING_VARIABLE: True})
     cleared = consume_pending_handoff(temp_db, successor_id)
-    assert cleared is not None and cleared.session_id == predecessor.id
-    assert HANDOFF_TURN_END_PENDING_VARIABLE not in sv_mgr.get_variables(predecessor.id)
-    assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(successor_id)
+    assert cleared is None
+    # Authored historical records and their receipts remain readable, but a fresh
+    # session can never consume its predecessor's handoff.
+    assert (
+        temp_db.fetchone(
+            "SELECT id FROM session_handoffs WHERE id = %s", (clear_state.handoff_record_id,)
+        )
+        is not None
+    )
     assert consume_pending_handoff(temp_db, successor_id) is None
 
 
@@ -620,12 +687,11 @@ def _bound_clear_handoff(
     attempt_id: str,
 ) -> tuple[Session, str]:
     predecessor = _registered_session(session_manager)
-    clear_state = stage_handoff_attempt(
+    clear_state = seed_legacy_clear_handoff(
         temp_db,
         predecessor.id,
         attempt_id=attempt_id,
         handoff=build_handoff_payload(current_state="Ready.", next_steps=["Continue."]),
-        clear_session=True,
     )
     successor_id = session_manager.register_session(
         external_id="clear-successor",
@@ -657,7 +723,7 @@ def _subagent_of(session_manager: SessionManager, predecessor: Session) -> str:
     )
 
 
-def test_non_owner_subagent_cannot_consume_parent_clear_handoff(
+def test_neither_subagent_nor_successor_can_consume_historical_clear_handoff(
     temp_db: HubDatabase,
     session_manager: SessionManager,
 ) -> None:
@@ -668,10 +734,10 @@ def test_non_owner_subagent_cannot_consume_parent_clear_handoff(
     sv_mgr = SessionVariableManager(temp_db)
     assert PENDING_HANDOFF_VARIABLE in sv_mgr.get_variables(predecessor.id)
     cleared = consume_pending_handoff(temp_db, successor_id)
-    assert cleared is not None and cleared.session_id == predecessor.id
+    assert cleared is None
 
 
-def test_only_the_session_holding_the_clear_handoff_is_gated(
+def test_historical_clear_successor_orphan_gate_is_disarmed(
     temp_db: HubDatabase,
     session_manager: SessionManager,
 ) -> None:
@@ -680,55 +746,31 @@ def test_only_the_session_holding_the_clear_handoff_is_gated(
     sv_mgr = SessionVariableManager(temp_db)
 
     consume_pending_handoff(temp_db, subagent_id)
+    assert retire_legacy_clear_handoff(temp_db, successor_id) is True
 
     subagent_vars = sv_mgr.get_variables(subagent_id)
     assert HANDOFF_PULL_PENDING_VARIABLE not in subagent_vars
     assert PENDING_HANDOFF_VARIABLE not in subagent_vars
-    assert sv_mgr.get_variables(successor_id)[HANDOFF_PULL_PENDING_VARIABLE] is True
+    assert HANDOFF_PULL_PENDING_VARIABLE not in sv_mgr.get_variables(successor_id)
 
 
-def test_superseding_successor_consumes_the_clear_handoff_its_predecessor_staged(
+def test_historical_clear_chain_cannot_be_consumed(
     temp_db: HubDatabase,
     session_manager: SessionManager,
 ) -> None:
-    predecessor = _registered_session(session_manager)
-    attempt_id = "f" * 32
-    stage_clear_attempt(
-        temp_db,
-        predecessor.id,
-        attempt_id=attempt_id,
-        handoff=build_handoff_payload(current_state="Ready.", next_steps=["Continue."]),
-        terminal_context=None,
-        chat_context=None,
-    )
-    stale_id = session_manager.register_session(
-        external_id="clear-stale",
-        machine_id=MACHINE_ID,
-        source="codex",
-        project_id=predecessor.project_id,
-        parent_session_id=predecessor.id,
-    )
-    assert take_clear_handoff_marker(
-        temp_db, predecessor.id, attempt_id=attempt_id, successor_id=stale_id
-    )
+    predecessor, stale_id = _bound_clear_handoff(temp_db, session_manager, "f" * 32)
     newcomer_id = session_manager.register_session(
         external_id="clear-newcomer",
         machine_id=MACHINE_ID,
         source="codex",
         project_id=predecessor.project_id,
-        parent_session_id=predecessor.id,
-    )
-    assert take_clear_handoff_marker(
-        temp_db,
-        predecessor.id,
-        attempt_id=attempt_id,
-        successor_id=newcomer_id,
-        supersede_successor_id=stale_id,
+        parent_session_id=stale_id,
     )
 
     consumed = consume_pending_handoff(temp_db, newcomer_id)
 
-    assert consumed is not None and consumed.session_id == predecessor.id
+    assert consumed is None
+    assert consume_pending_handoff(temp_db, stale_id) is None
 
 
 @pytest.mark.asyncio
@@ -854,7 +896,6 @@ async def test_plan_draft_round_trips_through_compaction_and_argumentless_get_ha
         session.id,
         attempt_id=attempt_id,
         handoff=payload,
-        clear_session=False,
     )
 
     authored = temp_db.fetchone(
@@ -938,9 +979,7 @@ async def test_concurrent_get_handoff_consumers_finish_within_request_timeout(
             project_id=parent.project_id,
         )
         attempt_id = uuid4().hex
-        staged = stage_handoff_attempt(
-            temp_db, session_id, attempt_id=attempt_id, handoff=payload, clear_session=False
-        )
+        staged = stage_handoff_attempt(temp_db, session_id, attempt_id=attempt_id, handoff=payload)
         record_handoff_delivery(
             temp_db,
             handoff_id=staged.handoff_record_id,
@@ -985,7 +1024,6 @@ async def test_get_handoff_does_not_consume_while_delivery_pending(
         session.id,
         attempt_id=attempt_id,
         handoff=payload,
-        clear_session=False,
     )
     registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
 
@@ -1059,7 +1097,6 @@ def test_failed_attempt_restores_session_and_retains_undelivered_content(
         session.id,
         attempt_id="c" * 32,
         handoff=handoff,
-        clear_session=False,
     )
     sv_mgr = SessionVariableManager(temp_db)
     assert sv_mgr.get_variables(session.id).get(HANDOFF_PULL_PENDING_VARIABLE) is True
@@ -1110,7 +1147,6 @@ async def test_failed_compact_payload_requires_explicit_recovery(
         session.id,
         attempt_id=attempt_id,
         handoff=payload,
-        clear_session=False,
     )
 
     assert restore_staged_handoff(
@@ -1178,7 +1214,6 @@ async def test_failed_compact_payload_requires_explicit_recovery(
         session.id,
         attempt_id="e" * 32,
         handoff=build_handoff_payload(current_state="Fresh.", next_steps=["Continue."]),
-        clear_session=False,
     )
     with session_context_for_test(session.id):
         stale = await registry.call("get_handoff", {"failed_attempt_id": attempt_id})
@@ -1205,7 +1240,6 @@ async def test_failed_attempt_reconciles_only_a_confirmed_late_compact(
         session.id,
         attempt_id=attempt_id,
         handoff=payload,
-        clear_session=False,
     )
     assert restore_staged_handoff(
         temp_db,
@@ -1275,9 +1309,7 @@ async def test_unconfirmed_compact_is_delivered_by_next_get_handoff_after_late_b
     payload = build_handoff_payload(
         current_state="Codex is still compacting.", next_steps=["Resume the assigned task."]
     )
-    stage_handoff_attempt(
-        temp_db, session.id, attempt_id=attempt_id, handoff=payload, clear_session=False
-    )
+    stage_handoff_attempt(temp_db, session.id, attempt_id=attempt_id, handoff=payload)
     assert restore_staged_handoff(
         temp_db,
         session.id,
@@ -1340,9 +1372,7 @@ async def test_codex_rollout_recovers_compact_without_hook_after_restart(
         current_state="The provider compacted after an uncertain Enter.",
         next_steps=["Resume the assigned task."],
     )
-    staged = stage_handoff_attempt(
-        temp_db, session.id, attempt_id=attempt_id, handoff=payload, clear_session=False
-    )
+    staged = stage_handoff_attempt(temp_db, session.id, attempt_id=attempt_id, handoff=payload)
     assert restore_staged_handoff(
         temp_db,
         session.id,
@@ -1453,7 +1483,7 @@ async def test_late_compact_cannot_deliver_superseded_attempt(
     newer_attempt_id = "b" * 32
     payload = build_handoff_payload(current_state="First attempt", next_steps=["Resume."])
     staged = stage_handoff_attempt(
-        temp_db, session.id, attempt_id=stale_attempt_id, handoff=payload, clear_session=False
+        temp_db, session.id, attempt_id=stale_attempt_id, handoff=payload
     )
     failure_result = {
         "attempt_id": stale_attempt_id,
@@ -1479,7 +1509,6 @@ async def test_late_compact_cannot_deliver_superseded_attempt(
         session.id,
         attempt_id=newer_attempt_id,
         handoff=build_handoff_payload(current_state="Current attempt", next_steps=["Resume."]),
-        clear_session=False,
     )
     SessionVariableManager(temp_db).set_variable(
         session.id, "compact_notification_started_at", datetime.now(UTC).isoformat()
@@ -1535,7 +1564,6 @@ def test_delivery_receipt_is_idempotent_and_prevents_compensation(
         session.id,
         attempt_id="4" * 32,
         handoff=build_handoff_payload(current_state="Delivered.", next_steps=["Continue."]),
-        clear_session=False,
     )
 
     assert (
@@ -1661,6 +1689,22 @@ async def test_targeted_agent_end_handoff_is_parent_only_and_idempotent(
     assert denied["success"] is False
     assert denied["error_code"] == "access_denied"
 
+    historical_successor_id = session_manager.register_session(
+        external_id="historical-clear-successor",
+        machine_id=MACHINE_ID,
+        source="codex",
+        project_id=parent.project_id,
+        parent_session_id=parent.id,
+    )
+    SessionVariableManager(temp_db).merge_variables(
+        parent.id, {CLEAR_ATTEMPT_VARIABLE: {"consumed_by": historical_successor_id}}
+    )
+    session_manager.update_status(parent.id, "expired")
+    with session_context_for_test(historical_successor_id):
+        successor_denied = await registry.call("get_handoff", {"agent_run_id": run_id})
+    assert successor_denied["success"] is False
+    assert successor_denied["error_code"] == "access_denied"
+
 
 @pytest.mark.asyncio
 async def test_targeted_agent_end_handoff_reports_unknown_and_not_authored(
@@ -1688,7 +1732,7 @@ async def test_targeted_agent_end_handoff_reports_unknown_and_not_authored(
 
 
 @pytest.mark.asyncio
-async def test_targeted_agent_end_handoffs_survive_parent_clear_and_stay_independent(
+async def test_targeted_agent_end_handoffs_remain_with_the_original_parent(
     temp_db: HubDatabase,
     session_manager: SessionManager,
 ) -> None:
@@ -1720,7 +1764,7 @@ async def test_targeted_agent_end_handoffs_survive_parent_clear_and_stay_indepen
         parent_session_id=parent.id,
     )
     clear_attempt_id = uuid4().hex
-    stage_clear_attempt(
+    seed_legacy_clear_handoff(
         temp_db,
         parent.id,
         attempt_id=clear_attempt_id,
@@ -1728,15 +1772,18 @@ async def test_targeted_agent_end_handoffs_survive_parent_clear_and_stay_indepen
         terminal_context=None,
         chat_context=None,
     )
-    assert take_clear_handoff_marker(
-        temp_db,
-        parent.id,
-        attempt_id=clear_attempt_id,
-        successor_id=successor_id,
+    SessionVariableManager(temp_db).merge_variables(
+        parent.id, {CLEAR_ATTEMPT_VARIABLE: {"consumed_by": successor_id}}
     )
     registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
 
     with session_context_for_test(successor_id):
+        denied_first = await registry.call("get_handoff", {"agent_run_id": first_run_id})
+        denied_second = await registry.call("get_handoff", {"agent_run_id": second_run_id})
+    assert denied_first["error_code"] == "access_denied"
+    assert denied_second["error_code"] == "access_denied"
+
+    with session_context_for_test(parent.id):
         first_result = await registry.call("get_handoff", {"agent_run_id": first_run_id})
         second_result = await registry.call("get_handoff", {"agent_run_id": second_run_id})
 
@@ -1758,7 +1805,6 @@ def test_staged_terminal_delivery_claim_requires_gate_and_is_deduplicated(
         session.id,
         attempt_id=attempt_id,
         handoff=handoff,
-        clear_session=False,
     )
 
     assert claim_staged_handoff_delivery(temp_db, session.id, attempt_id) is None
@@ -1795,13 +1841,13 @@ def test_staged_terminal_delivery_claim_requires_gate_and_is_deduplicated(
     assert variables[HANDOFF_DISPATCH_GATE_VARIABLE] == failure
 
 
-def test_clear_delivery_compensation_restores_status_and_clears_markers(
+def test_legacy_clear_retirement_restores_status_and_clears_markers(
     temp_db: HubDatabase,
     session_manager: SessionManager,
 ) -> None:
     session = _registered_session(session_manager)
     attempt_id = "e" * 32
-    state = stage_clear_attempt(
+    state = seed_legacy_clear_handoff(
         temp_db,
         session.id,
         attempt_id=attempt_id,
@@ -1809,15 +1855,7 @@ def test_clear_delivery_compensation_restores_status_and_clears_markers(
         terminal_context={"gobby_terminal_id": "%1"},
         chat_context=None,
     )
-    failure = {"delivery_failed": True, "retry_guidance": "Retry set_handoff."}
-
-    assert clear_failed_attempt(
-        temp_db,
-        session.id,
-        attempt_id=attempt_id,
-        attempt_state=state,
-        marker_updates={HANDOFF_DISPATCH_GATE_VARIABLE: failure},
-    )
+    assert retire_legacy_clear_handoff(temp_db, session.id)
 
     restored = session_manager.get(session.id)
     assert restored is not None
@@ -1826,7 +1864,8 @@ def test_clear_delivery_compensation_restores_status_and_clears_markers(
     assert PENDING_HANDOFF_VARIABLE not in variables
     assert CLEAR_ATTEMPT_VARIABLE not in variables
     assert HANDOFF_TURN_END_PENDING_VARIABLE not in variables
-    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE] == failure
+    assert HANDOFF_DISPATCH_GATE_VARIABLE not in variables
+    assert variables["failed_handoff_attempt"]["handoff_record_id"] == state.handoff_record_id
 
 
 @pytest.mark.parametrize(
@@ -1861,7 +1900,6 @@ def test_handoff_schema_constraints_reject_malformed_rows(
         session.id,
         attempt_id="5" * 32,
         handoff=build_handoff_payload(current_state="Valid.", next_steps=["Continue."]),
-        clear_session=False,
     )
 
     with pytest.raises(CheckViolation) as exc_info:
@@ -1883,7 +1921,6 @@ def test_delivery_schema_constraints_boundary_and_attempt_id(
         session.id,
         attempt_id="6" * 32,
         handoff=build_handoff_payload(current_state="Valid.", next_steps=["Continue."]),
-        clear_session=False,
     )
     assert record_handoff_delivery(
         temp_db,
@@ -1942,7 +1979,6 @@ async def test_tool_schemas_expose_new_surface_and_legacy_names_are_absent(
         "notes",
         "references",
         "found_work",
-        "clear_session",
     )
     assert properties["current_state"]["minLength"] == 1
     assert properties["next_steps"]["minItems"] == 1
@@ -2017,7 +2053,6 @@ async def test_get_handoff_result_stays_below_offload_threshold(
         session.id,
         attempt_id="d" * 32,
         handoff=handoff,
-        clear_session=False,
     )
     record_handoff_delivery(
         temp_db,
@@ -2059,7 +2094,6 @@ def test_staged_handoff_rejection_names_the_blocking_condition(
         session.id,
         attempt_id=attempt_id,
         handoff=handoff,
-        clear_session=False,
     )
     manager = SessionVariableManager(temp_db)
 

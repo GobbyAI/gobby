@@ -61,9 +61,9 @@ After report_to has the delivery and every seat has ended its own run, end your 
 ## Coordination
 
 Wait on your seats with `wait_for_coordination` and re-arm after each interim reply. Do not poll
-or sleep. Compact with `gobby-sessions:set_handoff(clear_session=false)` under context pressure;
+or sleep. Compact with `gobby-sessions:set_handoff` under context pressure;
 never `/clear`.
 
-_Version: 2.1.0_
+_Version: 2.1.1_
 
 _Last verified: 2026-11-04_

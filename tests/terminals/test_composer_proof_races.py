@@ -30,7 +30,6 @@ from gobby.hooks import terminal_handoff_delivery
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.terminal_handoff_delivery import staged_handoff_from_event
-from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
 from gobby.sessions.handoff import (
     FAILED_HANDOFF_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
@@ -38,6 +37,7 @@ from gobby.sessions.handoff import (
     ClaimedHandoffDelivery,
     build_handoff_continue_prompt,
 )
+from gobby.sessions.handoff_retirement import CLEAR_ATTEMPT_VARIABLE
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator

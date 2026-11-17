@@ -9,7 +9,7 @@ capabilities:
 - write_own_step_phase
 description: Leads single-task and epic DevTeams, including every leaf team of its epic; lands,
   validates, closes and cleans up.
-version: "7.2.0"
+version: "7.2.1"
 tags:
 - gobby
 - seat
@@ -101,7 +101,7 @@ prompts:
     the clean merged worktree with its stored base_branch as merged_into, without force.
     Retain a shared epic tree until every descendant and final proof is complete.
     Never kill a live seat to free a worktree. Coordinate daemon restart via report_to.
-    Compact with set_handoff(clear_session=false); never reset active task evidence.
+    Compact with set_handoff; never reset active task evidence.
     Set your own step phase yourself with set_variable(session_id=<your session>,
     scope="step", name="phase", value=<step>); no other variable is yours to set.
     Send every other required variable write to Triage with target session, scope,
@@ -150,7 +150,7 @@ prompts:
     the clean merged worktree with its stored base_branch as merged_into, without force.
     Retain a shared epic tree until every descendant and final proof is complete.
     Never kill a live seat to free a worktree. Coordinate daemon restart via report_to.
-    Compact with set_handoff(clear_session=false); never reset active task evidence.
+    Compact with set_handoff; never reset active task evidence.
     Set your own step phase yourself with set_variable(session_id=<your session>,
     scope="step", name="phase", value=<step>); no other variable is yours to set.
     Send every other required variable write to Triage with target session, scope,

@@ -228,7 +228,6 @@ def _prepare_handler(db: HubDatabase) -> tuple[WorkflowHookHandler, str]:
         SESSION_ID,
         attempt_id=ATTEMPT_ID,
         handoff=payload,
-        clear_session=False,
     )
     SessionVariableManager(db).merge_variables(
         SESSION_ID,
@@ -428,7 +427,7 @@ async def test_active_web_chat_handoff_yields_until_queued_compaction_then_rearm
     chat_session = MagicMock(db_session_id=SESSION_ID)
     chat_session.send_message.side_effect = lambda _message: done_stream()
     web_registry = WebChatSessionRegistry()
-    web_registry.bind_clear_lifecycle(MagicMock(), db=temp_db)
+    web_registry.bind_handoff_storage(db=temp_db)
     web_registry.register("conversation-1", chat_session)
 
     release_turn = asyncio.Event()
@@ -538,14 +537,13 @@ async def test_active_web_chat_handoff_failure_compensates_without_receipt(
             current_state="Queued compact will fail.",
             next_steps=["Retry the handoff."],
         ),
-        clear_session=False,
         delivery_mode="queued_in_process",
     )
 
     chat_session = MagicMock(db_session_id=SESSION_ID)
     chat_session.send_message.side_effect = RuntimeError("compact failed")
     web_registry = WebChatSessionRegistry()
-    web_registry.bind_clear_lifecycle(MagicMock(), db=temp_db)
+    web_registry.bind_handoff_storage(db=temp_db)
     web_registry.register("conversation-1", chat_session)
 
     release_turn = asyncio.Event()
@@ -595,7 +593,6 @@ async def test_active_web_chat_handoff_cancellation_compensates_without_receipt(
             current_state="Queued compact will be cancelled.",
             next_steps=["Retry the handoff."],
         ),
-        clear_session=False,
         delivery_mode="queued_in_process",
     )
 
@@ -610,7 +607,7 @@ async def test_active_web_chat_handoff_cancellation_compensates_without_receipt(
     chat_session = MagicMock(db_session_id=SESSION_ID)
     chat_session.send_message.side_effect = lambda _message: blocked_stream()
     web_registry = WebChatSessionRegistry()
-    web_registry.bind_clear_lifecycle(MagicMock(), db=temp_db)
+    web_registry.bind_handoff_storage(db=temp_db)
     web_registry.register("conversation-1", chat_session)
 
     release_turn = asyncio.Event()
@@ -673,9 +670,7 @@ def removed_files_home(tmp_path: Path) -> Iterator[None]:
 
 def _stage(db: HubDatabase, attempt_id: str, current_state: str) -> str:
     payload = build_handoff_payload(current_state=current_state, next_steps=["Consume it."])
-    staged = stage_handoff_attempt(
-        db, SESSION_ID, attempt_id=attempt_id, handoff=payload, clear_session=False
-    )
+    staged = stage_handoff_attempt(db, SESSION_ID, attempt_id=attempt_id, handoff=payload)
     return staged.handoff_record_id
 
 

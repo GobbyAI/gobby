@@ -16,7 +16,6 @@ from gobby.agents.team_communications import (
     recipient_policy,
     relaunched_seat,
 )
-from gobby.sessions.clear_continuation import resolve_clear_successor
 from gobby.sessions.mailbox_delivery import WakeDispatcherProtocol, dispatch_mailbox_wakes
 from gobby.sessions.mailbox_targets import resolve_broadcast_selection
 from gobby.storage.sessions import (
@@ -474,16 +473,6 @@ class MailboxService:
         recipient: Session | None = self._session_manager.get(to_session_id)
         if recipient is None:
             raise ValueError(f"Recipient session not found: {to_session_id}")
-        if recipient.status in TERMINAL_SESSION_STATUSES:
-            successor_id = resolve_clear_successor(self._db, to_session_id)
-            if successor_id is not None:
-                successor = self._session_manager.get(successor_id)
-                if successor is None:
-                    raise ValueError(f"Recipient session not found: {successor_id}")
-                if successor.status in TERMINAL_SESSION_STATUSES:
-                    raise ValueError(f"Recipient clear successor is not live: {successor_id}")
-                recipient = successor
-                to_session_id = successor.id
         if recipient.status in TERMINAL_SESSION_STATUSES:
             holder = relaunched_seat(self._db, to_session_id, recipient.project_id)
             relaunched = self._session_manager.get(holder) if holder else None

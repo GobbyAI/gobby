@@ -201,8 +201,7 @@ class WebSocketServer(
         self.web_chat_session_registry = (
             web_chat_session_registry if web_chat_session_registry else WebChatSessionRegistry()
         )
-        self.web_chat_session_registry.bind_clear_lifecycle(
-            self,
+        self.web_chat_session_registry.bind_handoff_storage(
             db=getattr(session_manager, "db", None) if session_manager is not None else None,
         )
 

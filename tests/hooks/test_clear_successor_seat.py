@@ -1,4 +1,4 @@
-"""A /clear successor keeps its predecessor's seat, its run, and its spawn depth."""
+"""Fresh sessions discard predecessor agent configuration and activation pins."""
 
 from __future__ import annotations
 
@@ -19,11 +19,13 @@ from gobby.hooks.event_handlers._session_start.agents import (
 )
 from gobby.hooks.event_handlers._session_start.claims import MCP_PROXY_READY_VARIABLE
 from gobby.hooks.event_handlers._session_start.handoff import SessionStartResolution
-from gobby.hooks.event_handlers._session_start.materialize import activate_materialized_session
+from gobby.hooks.event_handlers._session_start.materialize import (
+    activate_materialized_session,
+    prepare_fresh_session_event,
+)
 from gobby.mcp_proxy.tools.apply_agent_definition import (
     apply_agent_definition_impl,
 )
-from gobby.sessions.clear_continuation import stage_clear_attempt
 from gobby.sessions.handoff import HANDOFF_PULL_PENDING_VARIABLE
 from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -35,6 +37,7 @@ from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.fixtures.legacy_handoff import seed_legacy_clear_handoff
 from tests.hooks.test_session_materialize import (
     _ACTIVATION_STUBS,
     _ATTEMPT_ID,
@@ -85,7 +88,7 @@ def _pane(
 
 
 def _stage(db: HubDatabase, pane: _StagedClear) -> None:
-    stage_clear_attempt(
+    seed_legacy_clear_handoff(
         db,
         pane.predecessor_id,
         attempt_id=_ATTEMPT_ID,
@@ -140,7 +143,7 @@ def _start(
     supersedes: str | None = None,
     activate: bool = True,
 ) -> str:
-    """Run the successor's SessionStart activation on the pane, as the clear source."""
+    """Run fresh SessionStart preparation and activation on the same pane."""
     successor_id = pane.register(external_id)
     session = pane.sessions.get(successor_id)
     assert session is not None
@@ -149,12 +152,10 @@ def _start(
         data["skip_default_agent_activation"] = True
     event = _event(data)
     event.task_id = None
+    prepare_fresh_session_event(event)
     resolution = SessionStartResolution(
         session=None,
         session_source="clear",
-        clear_predecessor=pane.sessions.get(pane.predecessor_id),
-        clear_attempt_id=_ATTEMPT_ID,
-        clear_supersedes=supersedes,
     )
     with ExitStack() as stack:
         for name in _ACTIVATION_STUBS:
@@ -192,7 +193,7 @@ async def test_clear_successor_discards_agent_type_and_pin(
     after = variables.get_variables(successor)
     assert after["_agent_type"] == "default"
     assert after.get("_agent_definition_hash") != old_pin
-    assert after[HANDOFF_PULL_PENDING_VARIABLE] is True
+    assert HANDOFF_PULL_PENDING_VARIABLE not in after
     assert AgentStepInstanceManager(temp_db).get_for_session(successor) is None
 
 
@@ -214,7 +215,7 @@ def test_clear_ignores_configured_previous_identity(
     assert resolve_agent_name(handler, successor, "configured-base") == "default"
 
 
-def test_config_failure_preserves_clear_handoff_state(
+def test_config_failure_cannot_restore_predecessor_handoff_state(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     pane = _pane(temp_db, tmp_path, monkeypatch, "config-failure")
@@ -226,6 +227,6 @@ def test_config_failure_preserves_clear_handoff_state(
     ):
         successor = _start(pane, "cleared-thread", activate=False)
     after = variables.get_variables(successor)
-    assert after[HANDOFF_PULL_PENDING_VARIABLE] is True
-    assert after[MCP_PROXY_READY_VARIABLE] is True
+    assert HANDOFF_PULL_PENDING_VARIABLE not in after
+    assert MCP_PROXY_READY_VARIABLE not in after
     assert after["_agent_type"] == "default"

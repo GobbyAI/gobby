@@ -24,20 +24,12 @@ from gobby.hooks.event_handlers._session_start.terminal_runtime import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.session_materialize import activate_deferred_session, has_deferred_help_activation
-from gobby.sessions.clear_continuation import (
-    CLEAR_ATTEMPT_VARIABLE,
-    resolve_clear_continuation,
-    stage_clear_attempt,
-    take_clear_handoff_marker,
-)
 from gobby.sessions.handoff import (
     HANDOFF_PULL_PENDING_VARIABLE,
-    build_handoff_continue_prompt,
     consume_pending_handoff,
 )
 from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager, native_locator_key
@@ -47,6 +39,7 @@ from tests.fixtures.isolated_checkout import (
     IsolatedCheckoutFactory,
     install_isolated_checkout_project,
 )
+from tests.fixtures.legacy_handoff import seed_legacy_clear_handoff
 from tests.hooks.test_session_start_handlers import _register_context_claim_session
 
 pytestmark = pytest.mark.unit
@@ -227,10 +220,10 @@ def test_native_transcript_path_is_classified_before_use() -> None:
     )
     activate = manager._event_handlers._activate_materialized_session.call_args.kwargs
     assert activate["transcript_path"] == native
-    assert activate["resolution"] is None
+    assert "resolution" not in activate
 
 
-def test_deferred_activation_passes_matching_clear_resolution() -> None:
+def test_deferred_activation_does_not_resume_a_clear_handoff() -> None:
     session = SimpleNamespace(
         id="platform-session",
         project_id="project-1",
@@ -238,12 +231,9 @@ def test_deferred_activation_passes_matching_clear_resolution() -> None:
         transcript_path="/repo/t.jsonl",
     )
     manager = _manager(session, None)
-    predecessor = SimpleNamespace(id="predecessor-sess")
     resolution = SessionStartResolution(
         session=None,
         session_source="clear",
-        clear_predecessor=predecessor,
-        clear_attempt_id=_ATTEMPT_ID,
     )
     event = _event(
         {
@@ -256,13 +246,14 @@ def test_deferred_activation_passes_matching_clear_resolution() -> None:
 
     with patch(
         "gobby.hooks.session_materialize.resolve_matching_clear_continuation",
+        create=True,
         return_value=resolution,
     ) as mock_resolve:
         assert activate_deferred_session(manager, event, BlockingEffectDeadline(123.0)) is None
 
-    mock_resolve.assert_called_once()
+    mock_resolve.assert_not_called()
     activate = manager._event_handlers._activate_materialized_session.call_args.kwargs
-    assert activate["resolution"] is resolution
+    assert "resolution" not in activate
 
 
 @patch(
@@ -272,16 +263,14 @@ def test_deferred_activation_passes_matching_clear_resolution() -> None:
 @patch(
     "gobby.hooks.event_handlers._session_start.materialize.expire_stale_terminal_sessions_for_context"
 )
-@patch("gobby.hooks.event_handlers._session_start.materialize.schedule_handoff_continuation")
-def test_startup_source_with_clear_resolution_binds_without_prompt(
-    mock_schedule: MagicMock,
+def test_startup_retires_stale_clear_without_inheriting_handoff(
     _mock_expire: MagicMock,
     _mock_classify: MagicMock,
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """First-activity materialization binds parentage without typing a second prompt."""
+    """First activity creates an independent row despite a stale legacy clear."""
     checkout = install_isolated_checkout_project(
         temp_db, tmp_path / "clear-bind", name="clear-bind", monkeypatch=monkeypatch
     )
@@ -301,7 +290,7 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
         project_id=project.id,
         terminal_context=term,
     )
-    stage_clear_attempt(
+    seed_legacy_clear_handoff(
         temp_db,
         predecessor_id,
         attempt_id=_ATTEMPT_ID,
@@ -334,15 +323,16 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
         {
             "source": "startup",
             "skip_default_agent_activation": True,
+            "agent_name_override": "synthetic-old-persona",
+            "parent_session_id": predecessor_id,
+            "workflow_name": "synthetic-old-workflow",
             "cwd": root,
         }
     )
-    event.task_id = None
+    event.task_id = "current-task"
     resolution = SessionStartResolution(
         session=None,
-        session_source="clear",
-        clear_predecessor=predecessor,
-        clear_attempt_id=_ATTEMPT_ID,
+        session_source="startup",
     )
 
     with (
@@ -364,27 +354,29 @@ def test_startup_source_with_clear_resolution_binds_without_prompt(
 
     rebound = sessions.get(successor_id)
     assert rebound is not None
-    assert rebound.parent_session_id == predecessor_id
+    assert rebound.parent_session_id is None
+    retired = sessions.get(predecessor_id)
+    assert retired is not None and retired.status == "expired"
     consumed = consume_pending_handoff(temp_db, successor_id)
-    assert consumed is not None
-    assert consumed.session_id == predecessor_id
-    mock_schedule.assert_not_called()
+    assert consumed is None
+    handler._activate_default_agent.assert_called_once_with(
+        successor_id, "grok", project.id, agent_name_override=None
+    )
+    assert event.task_id == "current-task"
+    assert "workflow_name" not in event.data
+    assert "parent_session_id" not in event.data
     # Only a /clear start was submitted from the composer.
     handler._record_composer_submit.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    ("cli", "session_start_types_prompt"),
-    [(SessionSource.GROK, True), (SessionSource.CODEX, False)],
-)
-def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
+@pytest.mark.parametrize("cli", [SessionSource.GROK, SessionSource.CODEX])
+def test_fresh_clear_never_schedules_a_handoff_prompt(
     cli: SessionSource,
-    session_start_types_prompt: bool,
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Codex SessionStart fires on the successor's first submitted prompt, so one is already in flight."""
+    """A fresh provider conversation never receives the old continuation prompt."""
     checkout = install_isolated_checkout_project(
         temp_db, tmp_path / f"clear-{cli.value}", name=f"clear-{cli.value}", monkeypatch=monkeypatch
     )
@@ -404,7 +396,7 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
         project_id=project.id,
         terminal_context=term,
     )
-    stage_clear_attempt(
+    seed_legacy_clear_handoff(
         temp_db,
         predecessor_id,
         attempt_id=_ATTEMPT_ID,
@@ -442,8 +434,6 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
     resolution = SessionStartResolution(
         session=None,
         session_source="clear",
-        clear_predecessor=predecessor,
-        clear_attempt_id=_ATTEMPT_ID,
     )
     materialize = "gobby.hooks.event_handlers._session_start.materialize"
 
@@ -453,7 +443,7 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
         patch(f"{materialize}.prepare_compact_continuation_variables"),
         patch(f"{materialize}.classify_session_start_context"),
         patch(f"{materialize}.expire_stale_terminal_sessions_for_context"),
-        patch(f"{materialize}.schedule_handoff_continuation") as mock_schedule,
+        patch(f"{materialize}.schedule_handoff_continuation", create=True) as mock_schedule,
     ):
         activate_materialized_session(
             handler,
@@ -467,8 +457,9 @@ def test_clear_session_start_types_pull_prompt_only_when_none_is_in_flight(
 
     rebound = sessions.get(successor_id)
     assert rebound is not None
-    assert rebound.parent_session_id == predecessor_id
-    assert mock_schedule.called is session_start_types_prompt
+    assert rebound.parent_session_id is None
+    assert consume_pending_handoff(temp_db, successor_id) is None
+    mock_schedule.assert_not_called()
 
 
 _MATERIALIZE = "gobby.hooks.event_handlers._session_start.materialize"
@@ -479,7 +470,6 @@ _ACTIVATION_STUBS = (
     "seed_user_profile_content",
     "prepare_compact_continuation_variables",
     "classify_session_start_context",
-    "schedule_handoff_continuation",
     "expire_stale_terminal_sessions_for_context",
 )
 
@@ -512,8 +502,6 @@ class _StagedClear:
         return SessionStartResolution(
             session=None,
             session_source="clear",
-            clear_predecessor=self.sessions.get(self.predecessor_id),
-            clear_attempt_id=_ATTEMPT_ID,
         )
 
 
@@ -579,7 +567,7 @@ def _staged_clear(
         term=term,
     )
     staged.predecessor_id = staged.register("pred-ext")
-    stage_clear_attempt(
+    seed_legacy_clear_handoff(
         temp_db,
         staged.predecessor_id,
         attempt_id=_ATTEMPT_ID,
@@ -631,12 +619,12 @@ def _activate_clear_successor(
         )
 
 
-def test_context_reuse_expiry_runs_after_the_successor_binds(
+def test_context_reuse_expiry_runs_after_the_previous_session_retires(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """When expiry scans the pane the newcomer is parented and the predecessor already expired."""
+    """Expiry sees an independent newcomer after the old conversation retires."""
     staged = _staged_clear(temp_db, tmp_path, monkeypatch, name="expiry-order", pane="%102")
     successor_id = staged.register("succ-ext")
     assert staged.status(staged.predecessor_id) == "awaiting_handoff"
@@ -655,7 +643,7 @@ def test_context_reuse_expiry_runs_after_the_successor_binds(
         overrides={"expire_stale_terminal_sessions_for_context": MagicMock(side_effect=record)},
     )
 
-    assert seen == [(staged.predecessor_id, "expired")]
+    assert seen == [(None, "expired")]
 
 
 def test_native_bind_retries_after_clear_predecessor_expiry(
@@ -719,76 +707,6 @@ def test_awaiting_handoff_row_survives_context_reuse_expiry(
     assert staged.status(newcomer_id) == "active"
 
 
-def test_next_clear_takes_over_a_bound_but_unpulled_successor(
-    temp_db: HubDatabase,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A manual /clear before get_handoff moves the marker, parent, and claims to the third row."""
-    staged = _staged_clear(temp_db, tmp_path, monkeypatch, name="takeover", pane="%104")
-    stale_id = staged.register("stale-ext")
-    assert take_clear_handoff_marker(
-        temp_db, staged.predecessor_id, attempt_id=_ATTEMPT_ID, successor_id=stale_id
-    )
-    staged.sessions.update_status_if_non_terminal(staged.predecessor_id, "expired")
-    variables = SessionVariableManager(temp_db)
-    variables.merge_variables(
-        stale_id,
-        {
-            HANDOFF_PULL_PENDING_VARIABLE: True,
-            "task_claimed": True,
-            "claimed_tasks": {"task-1": "#1"},
-        },
-    )
-    newcomer_id = staged.register("newcomer-ext")
-
-    resolved = resolve_clear_continuation(
-        temp_db,
-        source="grok",
-        project_id=staged.project_id,
-        machine_id=staged.machine_id,
-        terminal_context=staged.term,
-        predecessor_hint=None,
-    )
-    assert resolved.predecessor is not None
-    assert resolved.predecessor.id == staged.predecessor_id
-    assert (resolved.attempt_id, resolved.supersedes) == (_ATTEMPT_ID, stale_id)
-
-    handler = _handler(staged.sessions)
-    preserve = MagicMock()
-    _activate_clear_successor(
-        staged,
-        handler,
-        newcomer_id,
-        SessionStartResolution(
-            session=None,
-            session_source="clear",
-            clear_predecessor=resolved.predecessor,
-            clear_attempt_id=resolved.attempt_id,
-            clear_supersedes=resolved.supersedes,
-        ),
-        overrides={
-            "expire_stale_terminal_sessions_for_context": None,
-            "preserve_task_claim_state": preserve,
-        },
-    )
-
-    newcomer = staged.sessions.get(newcomer_id)
-    assert newcomer is not None
-    assert newcomer.parent_session_id == staged.predecessor_id
-    marker = variables.get_variables(staged.predecessor_id)[CLEAR_ATTEMPT_VARIABLE]
-    assert marker["consumed_by"] == newcomer_id
-    assert variables.get_variables(newcomer_id)[HANDOFF_PULL_PENDING_VARIABLE] is True
-    assert staged.status(stale_id) == "expired"
-    assert staged.status(newcomer_id) == "active"
-    moved = [(c.args[2], c.args[3]) for c in preserve.call_args_list]
-    assert moved == [(newcomer_id, staged.predecessor_id), (newcomer_id, stale_id)]
-    assert preserve.call_args_list[1].args[4]["claimed_tasks"] == {"task-1": "#1"}
-    consumed = consume_pending_handoff(temp_db, newcomer_id)
-    assert consumed is not None
-    assert consumed.session_id == staged.predecessor_id
-
-
 def test_context_reuse_expiry_keeps_same_tty_on_another_machine(
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -827,51 +745,14 @@ def test_context_reuse_expiry_keeps_same_tty_on_another_machine(
     assert staged.status(current_id) == "active"
 
 
-def test_schedule_clear_continuation_forwards_terminal_runtime(
-    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A native (gclient-hosted) successor resolves its pane through the handler's runtime."""
-    staged = _staged_clear(temp_db, tmp_path, monkeypatch, name="clear-native", pane="%103")
-    successor_id = staged.register("succ-ext")
-    handler = _handler(staged.sessions)
-    handler.terminal_manager = MagicMock(name="terminal_manager")
-    handler._terminal_runtime_registry = MagicMock(name="terminal_runtime_registry")
-    schedule = MagicMock(return_value=False)
-
-    _activate_clear_successor(
-        staged,
-        handler,
-        successor_id,
-        staged.resolution(),
-        overrides={"schedule_handoff_continuation": schedule},
-    )
-
-    schedule.assert_called_once()
-    session_arg, prompt = schedule.call_args.args
-    assert session_arg.id == successor_id
-    assert prompt == build_handoff_continue_prompt()
-    kwargs = schedule.call_args.kwargs
-    assert kwargs["db"] is staged.sessions.db
-    assert kwargs["terminal_manager"] is handler.terminal_manager
-    assert kwargs["terminal_runtime_registry"] is handler._terminal_runtime_registry
-    # No pane resolved, so the pull prompt rides the successor's next turn; a send
-    # failure after scheduling queues it through the same callback.
-    kwargs["on_send_failure"]()
-    queued = InterSessionMessageManager(temp_db).get_undelivered_messages(successor_id)
-    assert [(m.content, m.message_type) for m in queued] == [
-        (prompt, "handoff_continuation"),
-        (prompt, "handoff_continuation"),
-    ]
-
-
 @pytest.mark.parametrize("predecessor_ready", [True, False])
-def test_clear_successor_inherits_the_predecessor_proxy_readiness(
+def test_fresh_session_requires_its_own_proxy_readiness(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     predecessor_ready: bool,
 ) -> None:
-    """The stdio bridge reported once, to the predecessor; the successor shares its CLI process."""
+    """A new session establishes its own proxy credential and readiness."""
     staged = _staged_clear(
         temp_db, tmp_path, monkeypatch, name=f"ready-{predecessor_ready}", pane="%105"
     )
@@ -883,5 +764,5 @@ def test_clear_successor_inherits_the_predecessor_proxy_readiness(
     _activate_clear_successor(staged, _handler(staged.sessions), successor_id, staged.resolution())
 
     successor_vars = variables.get_variables(successor_id)
-    assert successor_vars[HANDOFF_PULL_PENDING_VARIABLE] is True
-    assert successor_vars.get(MCP_PROXY_READY_VARIABLE) is (True if predecessor_ready else None)
+    assert successor_vars.get(HANDOFF_PULL_PENDING_VARIABLE) is not True
+    assert successor_vars.get(MCP_PROXY_READY_VARIABLE) is None

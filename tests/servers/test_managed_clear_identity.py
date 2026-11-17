@@ -23,14 +23,14 @@ from gobby.servers.auth_service import AuthService
 from gobby.servers.middleware.auth import AuthMiddleware
 from gobby.servers.routes.llm import create_llm_router
 from gobby.servers.routes.mcp.endpoints.request_context import _set_context_for_request
-from gobby.sessions.clear_continuation import take_clear_handoff_marker
+from gobby.sessions.handoff_retirement import retire_legacy_clear_handoff
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.local_token import issue_agent_api_token
 from gobby.utils.session_context import get_session_context, reset_seeded_contexts
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.hooks.test_clear_successor_seat import _pane, _spawned_seat, _stage
-from tests.hooks.test_session_materialize import _ATTEMPT_ID, _StagedClear
+from tests.hooks.test_session_materialize import _StagedClear
 from tests.servers.routes.test_llm_routes import (
     _chat_result,
     _FakeToolChatService,
@@ -113,12 +113,11 @@ class _Seat:
     def reject_transfer(self) -> None:
         """An unrelated session cannot take the spawned run through a clear marker."""
         self.successor_id = self.pane.register("successor-ext")
-        assert not take_clear_handoff_marker(
-            self.db,
-            self.pane.predecessor_id,
-            attempt_id=_ATTEMPT_ID,
-            successor_id=self.successor_id,
-        )
+        retire_legacy_clear_handoff(self.db, self.pane.predecessor_id)
+        successor = self.pane.sessions.get(self.successor_id)
+        assert successor is not None
+        assert successor.agent_run_id is None
+        assert successor.parent_session_id is None
 
     def end_run(self) -> None:
         assert LocalAgentRunManager(self.db).complete(self.run.id) is not None

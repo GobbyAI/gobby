@@ -1,5 +1,5 @@
 name: security-auditor
-version: "3.3.0"
+version: "3.3.1"
 description: Audits security boundaries and independently reviews exact security candidates.
 tags:
 - gobby
@@ -68,7 +68,7 @@ prompts:
     when corrections are needed. General review and security approval are separate
     policy requirements. Finish your run before the author cleans the shared tree.
     Consume pending handoffs after compaction; compact in place under context
-    pressure with gobby-sessions:set_handoff(clear_session=false).
+    pressure with gobby-sessions:set_handoff.
 
     ## Boundary audit
     Audit brownfield code to map trust boundaries, or establish them for greenfield.
@@ -106,7 +106,7 @@ prompts:
     when corrections are needed. General review and security approval are separate
     policy requirements. Finish your run before the author cleans the shared tree.
     Consume pending handoffs after compaction; compact in place under context
-    pressure with gobby-sessions:set_handoff(clear_session=false).
+    pressure with gobby-sessions:set_handoff.
 
     ## Boundary audit
     Audit brownfield code to map trust boundaries, or establish them for greenfield.

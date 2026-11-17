@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 from typing import Any
-from uuid import uuid4
 
 import pytest
 
 from gobby.agents.team_communications import recipient_policy
 from gobby.mcp_proxy.tools.tasks._authorization import require_claim_authority
-from gobby.sessions.clear_continuation import stage_clear_attempt, take_clear_handoff_marker
-from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -110,7 +107,7 @@ def test_coordinator_grants_preserve_local_root_and_enabled_boundaries(
 
 
 @pytest.mark.parametrize("role", ["operator", "coordinator"])
-def test_root_authority_survives_clear_lineage(
+def test_fresh_root_authority_is_independent(
     temp_db: HubDatabase, sample_project: dict[str, Any], role: str
 ) -> None:
     sessions = SessionManager(temp_db)
@@ -155,20 +152,9 @@ def test_root_authority_survives_clear_lineage(
     variables.set_variable(inbox.id, "_agent_type", "inbox")
     if role == "coordinator":
         variables.set_variable(successor.id, "_agent_type", "dispatcher")
-    attempt = uuid4().hex
-    stage_clear_attempt(
-        temp_db,
-        predecessor.id,
-        attempt_id=attempt,
-        handoff=build_handoff_payload(current_state="Continue.", next_steps=["Continue."]),
-        terminal_context=None,
-        chat_context=None,
-    )
-    assert take_clear_handoff_marker(
-        temp_db, predecessor.id, attempt_id=attempt, successor_id=successor.id
-    )
+    sessions.update_status(predecessor.id, "expired")
     caller = sessions.get(successor.id)
-    assert caller is not None and caller.parent_session_id == predecessor.id
+    assert caller is not None and caller.parent_session_id is None
 
     assert session_has_capability_or_operator(temp_db, caller.id, "close_without_work")
     assert network_override_allowed(sessions, caller.id)

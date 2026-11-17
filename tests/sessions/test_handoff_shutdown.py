@@ -13,7 +13,6 @@ from gobby.cli._daemon_handoffs import protect_pending_handoffs
 from gobby.cli.runtime import CliRuntime
 from gobby.sessions.handoff import (
     consume_pending_handoff,
-    restore_handoff_attempt,
     stage_handoff_attempt,
 )
 from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
@@ -30,6 +29,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.datetime import utc_now
 from gobby.workflows.state_manager import SessionVariableManager
+from tests.fixtures.legacy_handoff import seed_legacy_clear_handoff
 
 
 @pytest.fixture
@@ -74,9 +74,7 @@ def test_cli_wait_logs_each_stale_marker_once_per_wait(
     stale_attempts: list[str] = []
     old_time = utc_now() - timedelta(minutes=HANDOFF_IN_FLIGHT_MINUTES + 5)
     for session in (handoff_session, second_stale):
-        state = stage_handoff_attempt(
-            temp_db, session, attempt_id=uuid4().hex, handoff=handoff, clear_session=False
-        )
+        state = stage_handoff_attempt(temp_db, session, attempt_id=uuid4().hex, handoff=handoff)
         stale_attempts.append(state.attempt_id)
         marker = dict(variables.get_variables(session)["set_handoff_pending"])
         marker["created_at"] = old_time.isoformat()
@@ -88,9 +86,7 @@ def test_cli_wait_logs_each_stale_marker_once_per_wait(
     caplog.set_level(logging.WARNING, logger="gobby.sessions.handoff_shutdown")
     for wait_index in range(2):
         logged_stale_markers: set[tuple[str, str | None, str]] = set()
-        stage_handoff_attempt(
-            temp_db, active, attempt_id=uuid4().hex, handoff=handoff, clear_session=False
-        )
+        stage_handoff_attempt(temp_db, active, attempt_id=uuid4().hex, handoff=handoff)
         sleeps = 0
 
         def acknowledge_after_retries(_seconds: float, *, current_wait: int = wait_index) -> None:
@@ -123,9 +119,8 @@ def test_cli_wait_logs_each_stale_marker_once_per_wait(
         assert consumed is not None and consumed.markdown == handoff.rendered_markdown
 
 
-@pytest.mark.parametrize("clear_session", [False, True])
 def test_pending_handoff_blocks_until_ack_or_failed_delivery(
-    temp_db: HubDatabase, machine_id: str, handoff_session: str, clear_session: bool
+    temp_db: HubDatabase, machine_id: str, handoff_session: str
 ) -> None:
     handoff = build_handoff_payload(current_state="Ready", next_steps=["Continue"])
     state = stage_handoff_attempt(
@@ -133,32 +128,28 @@ def test_pending_handoff_blocks_until_ack_or_failed_delivery(
         handoff_session,
         attempt_id=uuid4().hex,
         handoff=handoff,
-        clear_session=clear_session,
     )
     with pytest.raises(HandoffShutdownBlocked, match=state.attempt_id):
         with guard_handoff_shutdown(temp_db, machine_id):
             pytest.fail("Shutdown must not begin")
-    if clear_session:
-        assert restore_handoff_attempt(temp_db, state)
-    else:
-        consumed = consume_pending_handoff(temp_db, handoff_session)
-        assert consumed is not None and consumed.markdown == handoff.rendered_markdown
+    consumed = consume_pending_handoff(temp_db, handoff_session)
+    assert consumed is not None and consumed.markdown == handoff.rendered_markdown
     with guard_handoff_shutdown(temp_db, machine_id):
         assert SessionManager(temp_db).get(handoff_session) is not None
 
 
-def test_expired_clear_predecessor_still_protects_live_successor(
-    temp_db: HubDatabase, machine_id: str, handoff_session: str
+@pytest.mark.parametrize("status", ["active", "expired"])
+def test_legacy_clear_marker_does_not_block_shutdown(
+    temp_db: HubDatabase, machine_id: str, handoff_session: str, status: str
 ) -> None:
     manager = SessionManager(temp_db)
     predecessor = manager.get(handoff_session)
     assert predecessor is not None
-    state = stage_handoff_attempt(
+    state = seed_legacy_clear_handoff(
         temp_db,
         handoff_session,
         attempt_id=uuid4().hex,
         handoff=build_handoff_payload(current_state="Ready", next_steps=["Continue"]),
-        clear_session=True,
     )
     successor = manager.register_session(
         external_id=str(uuid4()),
@@ -167,7 +158,7 @@ def test_expired_clear_predecessor_still_protects_live_successor(
         project_id=predecessor.project_id,
         parent_session_id=predecessor.id,
     )
-    manager.update(handoff_session, status="expired")
+    manager.update(handoff_session, status=status)
     SessionVariableManager(temp_db).merge_variables(
         handoff_session, {"clear_attempt": {"consumed_by": successor}}
     )
@@ -178,12 +169,9 @@ def test_expired_clear_predecessor_still_protects_live_successor(
         boundary_kind="clear",
         continuation_session_id=successor,
     )
-    with pytest.raises(HandoffShutdownBlocked, match=state.attempt_id):
-        with guard_handoff_shutdown(temp_db, machine_id):
-            pytest.fail("The successor has not read its handoff")
-    assert consume_pending_handoff(temp_db, successor) is not None
     with guard_handoff_shutdown(temp_db, machine_id):
         assert manager.get(successor) is not None
+    assert consume_pending_handoff(temp_db, successor) is None
 
 
 def test_abandoned_or_other_machine_handoff_does_not_block(
@@ -194,7 +182,6 @@ def test_abandoned_or_other_machine_handoff_does_not_block(
         handoff_session,
         attempt_id=uuid4().hex,
         handoff=build_handoff_payload(current_state="Ready", next_steps=["Continue"]),
-        clear_session=False,
     )
     with guard_handoff_shutdown(temp_db, str(uuid4())):
         assert state.attempt_id
@@ -231,7 +218,6 @@ def test_marker_blocks_only_while_its_delivery_can_still_be_in_flight(
         handoff_session,
         attempt_id=uuid4().hex,
         handoff=handoff,
-        clear_session=False,
     )
     variables = SessionVariableManager(temp_db)
     marker = dict(variables.get_variables(handoff_session)["set_handoff_pending"])
@@ -267,7 +253,6 @@ def test_cli_shutdown_fence_rejects_new_stage_without_writes(
             handoff_session,
             attempt_id=uuid4().hex,
             handoff=build_handoff_payload(current_state="Ready", next_steps=["Continue"]),
-            clear_session=False,
         )
 
     with guard_handoff_shutdown(temp_db, machine_id), ThreadPoolExecutor() as executor:
@@ -312,7 +297,6 @@ def test_http_admission_stays_closed_until_shutdown_cancelled(
             handoff_session,
             attempt_id=uuid4().hex,
             handoff=build_handoff_payload(current_state="Ready", next_steps=["Continue"]),
-            clear_session=False,
         )
     cancel_handoff_shutdown(machine_id)
     with temp_db.transaction() as conn:

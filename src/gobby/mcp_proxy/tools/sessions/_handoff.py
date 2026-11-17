@@ -6,7 +6,6 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from gobby.sessions.clear_continuation import resolve_clear_successor
 from gobby.sessions.compact_failure_attention import clear_compact_failure_attention
 from gobby.sessions.handoff import (
     FAILED_HANDOFF_VARIABLE,
@@ -27,6 +26,7 @@ from gobby.sessions.handoff_reconciliation import (
     reconcile_late_compact_handoff,
 )
 from gobby.sessions.handoff_records import agent_run_attempt_id, get_agent_end_handoff
+from gobby.sessions.handoff_retirement import retire_legacy_clear_handoff
 from gobby.storage.session_tasks import claimant_sessions
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.state_manager import SessionVariableManager
@@ -248,13 +248,11 @@ def register_handoff_tools(
                 }
             parent_session_id = str(run["parent_session_id"])
             if session_id != parent_session_id:
-                successor = resolve_clear_successor(session_manager.db, parent_session_id)
-                if successor != session_id:
-                    return {
-                        "success": False,
-                        "error": "Agent handoff is available only to the parent session",
-                        "error_code": "access_denied",
-                    }
+                return {
+                    "success": False,
+                    "error": "Agent handoff is available only to the parent session",
+                    "error_code": "access_denied",
+                }
             delivered = get_agent_end_handoff(session_manager.db, agent_run_id)
             if delivered is None:
                 return {
@@ -275,6 +273,7 @@ def register_handoff_tools(
                 "boundary_kind": "agent_end",
                 "handoff": delivered.payload.rendered_markdown,
             }
+        retire_legacy_clear_handoff(session_manager.db, session_id)
         variables = SessionVariableManager(session_manager.db).get_variables(session_id)
         gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
         failed_marker = variables.get(FAILED_HANDOFF_VARIABLE)
@@ -400,9 +399,9 @@ def register_handoff_tools(
     registry.register(
         name="get_handoff",
         description=(
-            "With no arguments, consume the one pending compact/clear handoff. With "
+            "With no arguments, consume the current session's pending compact handoff. With "
             "agent_run_id, idempotently read that child run's final agent_end handoff as "
-            "its parent session or a bound clear successor. With failed_attempt_id, "
+            "its parent session. With failed_attempt_id, "
             "explicitly read the caller's failed undelivered handoff without delivery or receipt. "
             "Set reconcile_late_compact=true with failed_attempt_id to deliver only after a "
             "matching, timely provider compact notification."

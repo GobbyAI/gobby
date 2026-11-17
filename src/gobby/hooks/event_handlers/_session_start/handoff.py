@@ -9,7 +9,6 @@ from typing import Any
 from gobby.hooks.event_handlers._session_start.terminal_runtime import _terminal_context_reused
 from gobby.hooks.session_binding import bound_session
 from gobby.hooks.terminal_context import hook_sandbox_enabled
-from gobby.sessions.clear_continuation import resolve_clear_continuation
 from gobby.sessions.compact_continuation import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
     consume_compact_handoff_marker,
@@ -29,10 +28,6 @@ class SessionStartResolution:
     session: Any | None
     session_source: str
     blocked_reason: str | None = None
-    clear_predecessor: Any | None = None
-    clear_attempt_id: str | None = None
-    clear_degrade_reason: str | None = None
-    clear_supersedes: str | None = None
 
     @property
     def is_compact(self) -> bool:
@@ -61,33 +56,13 @@ def resolve_session_start_identity(
     identity is canonical even when ingress carries a differing provider ID.
     Compact classification is one-shot: an explicit compact source, a
     awaiting_handoff row, or an expired row with an unconsumed compact marker.
-    Grok ``/clear`` emits ``source: "new"``; a unique matching unconsumed
-    clear-attempt marker promotes that startup into a clear successor. Droid loads
-    its ``/clear`` successor as ``source: "resume"`` for a provider session no row
-    knows, so the same marker promotes that resume.
+    Explicit fresh boundaries never consult continuation markers. A provider resume
+    can recover compact identity only when it names an existing session.
     """
     if not handler._session_manager:
         return SessionStartResolution(session=None, session_source=session_source)
     if session_source == "clear":
-        return _resolve_clear_session_start(
-            handler,
-            machine_id=machine_id,
-            project_id=project_id,
-            cli_source=cli_source,
-            terminal_context=terminal_context,
-        )
-    if (session_source or "startup") in STARTUP_SOURCES:
-        matched = _promote_clear_continuation(
-            handler,
-            input_data,
-            session_source,
-            machine_id=machine_id,
-            project_id=project_id,
-            cli_source=cli_source,
-            terminal_context=terminal_context,
-        )
-        if matched is not None:
-            return matched
+        return SessionStartResolution(session=None, session_source=session_source)
 
     session = None
     drifted_project = False
@@ -115,18 +90,8 @@ def resolve_session_start_identity(
         handler.logger.warning("Session identity lookup failed for %s: %s", external_id, e)
         return SessionStartResolution(session=None, session_source=session_source)
 
-    if session is None and session_source == "resume":
-        matched = _promote_clear_continuation(
-            handler,
-            input_data,
-            session_source,
-            machine_id=machine_id,
-            project_id=project_id,
-            cli_source=cli_source,
-            terminal_context=terminal_context,
-        )
-        if matched is not None:
-            return matched
+    if session_source in STARTUP_SOURCES or (session_source == "resume" and session is None):
+        return SessionStartResolution(session=session, session_source=session_source)
 
     if drifted_project and session is not None:
         handler.logger.warning(
@@ -240,136 +205,6 @@ def resolve_session_start_identity(
     return SessionStartResolution(session=session, session_source="compact")
 
 
-def _promote_clear_continuation(
-    handler: Any,
-    input_data: dict[str, Any],
-    session_source: str,
-    *,
-    machine_id: str,
-    project_id: str,
-    cli_source: str,
-    terminal_context: dict[str, Any] | None,
-) -> SessionStartResolution | None:
-    matched = resolve_matching_clear_continuation(
-        handler,
-        machine_id=machine_id,
-        project_id=project_id,
-        cli_source=cli_source,
-        terminal_context=terminal_context,
-    )
-    if matched is None:
-        return None
-    input_data["source"] = "clear"
-    handler.logger.info(
-        "Promoted %s SessionStart to clear continuation",
-        session_source or "startup",
-        extra={
-            "event": "clear_continuation_promoted",
-            "predecessor_id": getattr(matched.clear_predecessor, "id", None),
-            "attempt_id": matched.clear_attempt_id,
-            "observed_source": session_source,
-            "project_id": project_id,
-            "machine_id": machine_id,
-        },
-    )
-    return matched
-
-
-def resolve_matching_clear_continuation(
-    handler: Any,
-    *,
-    machine_id: str,
-    project_id: str,
-    cli_source: str,
-    terminal_context: dict[str, Any] | None,
-) -> SessionStartResolution | None:
-    """Return a clear successor resolution only for a unique unconsumed marker."""
-    resolved = _lookup_clear_continuation(
-        handler,
-        machine_id=machine_id,
-        project_id=project_id,
-        cli_source=cli_source,
-        terminal_context=terminal_context,
-    )
-    if resolved.clear_predecessor is None or not resolved.clear_attempt_id:
-        return None
-    return resolved
-
-
-def _resolve_clear_session_start(
-    handler: Any,
-    *,
-    machine_id: str,
-    project_id: str,
-    cli_source: str,
-    terminal_context: dict[str, Any] | None,
-) -> SessionStartResolution:
-    """Resolve a clear successor without reusing any existing session row."""
-    resolved = _lookup_clear_continuation(
-        handler,
-        machine_id=machine_id,
-        project_id=project_id,
-        cli_source=cli_source,
-        terminal_context=terminal_context,
-    )
-    if resolved.clear_degrade_reason:
-        handler.logger.warning(
-            "Clear continuation degraded: %s",
-            resolved.clear_degrade_reason,
-            extra={
-                "event": "clear_continuation_degraded",
-                "degrade_reason": resolved.clear_degrade_reason,
-                "project_id": project_id,
-                "machine_id": machine_id,
-            },
-        )
-    return resolved
-
-
-def _lookup_clear_continuation(
-    handler: Any,
-    *,
-    machine_id: str,
-    project_id: str,
-    cli_source: str,
-    terminal_context: dict[str, Any] | None,
-) -> SessionStartResolution:
-    """Look up a pending clear attempt. Always returns ``session_source='clear'``."""
-    predecessor_hint: str | None = None
-    if terminal_context is not None:
-        hint = terminal_context.get("gobby_session_id")
-        if isinstance(hint, str) and hint.strip():
-            predecessor_hint = hint.strip()
-    try:
-        resolved = resolve_clear_continuation(
-            handler._session_manager.db,
-            source=cli_source,
-            project_id=project_id,
-            machine_id=machine_id,
-            terminal_context=terminal_context,
-            predecessor_hint=predecessor_hint,
-        )
-    except Exception as e:
-        handler.logger.warning(
-            "Clear continuation lookup failed for project %s: %s",
-            project_id,
-            e,
-        )
-        return SessionStartResolution(
-            session=None,
-            session_source="clear",
-            clear_degrade_reason="exception",
-        )
-    return SessionStartResolution(
-        session=None,
-        session_source="clear",
-        clear_predecessor=resolved.predecessor,
-        clear_attempt_id=resolved.attempt_id,
-        clear_degrade_reason=resolved.degrade_reason,
-        clear_supersedes=resolved.supersedes,
-    )
-
-
 def rebind_resumed_session_start(
     handler: Any,
     input_data: dict[str, Any],
@@ -382,27 +217,6 @@ def rebind_resumed_session_start(
     transcript_path: str | None,
 ) -> tuple[Any | None, str | None]:
     """Bind an explicit resume to its persisted row and fresh runtime context."""
-    pending_clear = resolve_matching_clear_continuation(
-        handler,
-        machine_id=machine_id,
-        project_id=project_id,
-        cli_source=cli_source,
-        terminal_context=terminal_context,
-    )
-    if (
-        pending_clear is not None
-        and getattr(pending_clear.clear_predecessor, "id", None) == session.id
-    ):
-        handler.logger.info(
-            "clear_resume_parked",
-            extra={
-                "session_id": session.id,
-                "attempt_id": pending_clear.clear_attempt_id,
-                "external_id": session.external_id,
-            },
-        )
-        return None, transcript_path
-
     transcript_path = handler._derive_transcript_path(
         cli_source,
         input_data,

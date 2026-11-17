@@ -22,11 +22,8 @@ import pytest
 from gobby.agents.idle_detector import ComposerRead
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
-from gobby.mcp_proxy.tools.sessions._terminal_clear import CLEAR_COMMAND
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMPACTION_REJECTION_ERROR_CODE,
-    _INTERRUPT_ATTEMPTS,
-    _INTERRUPT_UNCONFIRMED_ERROR_CODE,
     _OBSERVED_INTERRUPT_SETTLE_SECONDS,
     _TURN_SETTLE_POLL_SECONDS,
     _confirm_interrupt,
@@ -52,9 +49,6 @@ _SETTLE = 0.02
 _COMMAND = "/compact"
 _REJECTION = f"'{_COMMAND}' is disabled while a task is in progress"
 _REJECTED_SCREEN = f"\n{_REJECTION}\n> "
-_CLEAR = CLEAR_COMMAND
-_CLEAR_REJECTION = f"'{_CLEAR}' is disabled while a task is in progress"
-_CLEAR_REJECTED_SCREEN = f"\n{_CLEAR_REJECTION}\n> "
 _DRAIN = composer_clear_sequence("grok")
 
 
@@ -125,6 +119,20 @@ async def _send(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["/clear", "/new"])
+async def test_compaction_never_sends_fresh_session_commands(command: str) -> None:
+    pane = _GrokPane()
+
+    result, mark, clear = await _send(pane, lambda: True, command=command)
+
+    assert result[0] is False
+    assert result[3] == {"error_code": "unsupported_compaction_command"}
+    assert pane.typed == []
+    mark.assert_not_called()
+    clear.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_compaction_waits_for_the_shared_composer_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -175,22 +183,6 @@ async def test_grok_compaction_interrupt_uses_ctrl_c(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("observe", [None, lambda: True], ids=["blind", "observed"])
-async def test_grok_compaction_retries_after_interrupt(
-    observe: Callable[[], bool | None] | None,
-) -> None:
-    pane = _GrokPane([_CLEAR_REJECTED_SCREEN])
-
-    result, mark, clear = await _send(pane, observe, command=_CLEAR)
-
-    assert result == (True, None, True, {"submit_unverified": True})
-    assert pane.keys == ["ctrl_c", *_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
-    assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
-    mark.assert_called_once()
-    clear.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_grok_rejected_compact_fails_without_being_typed_again() -> None:
     pane = _GrokPane([_REJECTED_SCREEN])
 
@@ -208,66 +200,6 @@ async def test_grok_rejected_compact_fails_without_being_typed_again() -> None:
     )
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
     assert pane.typed == [f"{_COMMAND}\n"]
-    mark.assert_called_once()
-    clear.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_grok_retry_resubmits_only_after_the_interrupt_is_confirmed() -> None:
-    pane = _GrokPane([_CLEAR_REJECTED_SCREEN])
-    typed_at_confirmation: list[int] = []
-
-    def observe() -> bool:
-        typed_at_confirmation.append(len(pane.typed))
-        return True
-
-    result, _mark, _clear = await _send(pane, observe, command=_CLEAR)
-
-    assert result == (True, None, True, {"submit_unverified": True})
-    assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
-    # The first confirmation precedes both submissions; the second precedes the retry.
-    assert typed_at_confirmation == [0, 1]
-
-
-@pytest.mark.asyncio
-async def test_grok_retry_types_nothing_when_the_second_interrupt_is_unconfirmed() -> None:
-    pane = _GrokPane([_CLEAR_REJECTED_SCREEN])
-    confirmations = iter([True])
-
-    result, mark, clear = await _send(pane, lambda: next(confirmations, False), command=_CLEAR)
-
-    ok, reason, pending, detail = result
-    assert ok is False
-    assert reason == f"CLI did not confirm interruption after {_INTERRUPT_ATTEMPTS} attempts"
-    assert pending is False
-    assert detail == {
-        "error_code": _INTERRUPT_UNCONFIRMED_ERROR_CODE,
-        "continuation_pending": False,
-    }
-    assert pane.keys == ["ctrl_c", *_DRAIN, "enter", *(["ctrl_c"] * _INTERRUPT_ATTEMPTS)]
-    assert pane.typed == [f"{_CLEAR}\n"]
-    mark.assert_called_once()
-    clear.assert_called_once()
-
-
-@pytest.mark.asyncio
-async def test_grok_compaction_rejected_twice_fails_the_delivery() -> None:
-    pane = _GrokPane([_CLEAR_REJECTED_SCREEN, _CLEAR_REJECTED_SCREEN])
-
-    result, mark, clear = await _send(pane, lambda: True, command=_CLEAR)
-
-    assert result == (
-        False,
-        _CLEAR_REJECTION,
-        False,
-        {
-            "error_code": _COMPACTION_REJECTION_ERROR_CODE,
-            "rejected_command": _CLEAR,
-            "rejection_message": _CLEAR_REJECTION,
-        },
-    )
-    assert pane.keys == ["ctrl_c", *_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
-    assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
     mark.assert_called_once()
     clear.assert_called_once()
 
@@ -715,40 +647,6 @@ async def test_grok_live_or_unknown_turn_is_interrupted_before_compaction(
 
 
 @pytest.mark.asyncio
-async def test_grok_rejection_after_a_settled_submission_interrupts_before_resubmitting() -> None:
-    # The rejection proves a turn is running after all: interrupt it, then resubmit once.
-    pane = _GrokPane([_CLEAR_REJECTED_SCREEN])
-    reads = iter([True, True, False, False])
-
-    result, mark, clear = await _send(
-        pane, lambda: True, turn_settled=lambda: next(reads, False), command=_CLEAR
-    )
-
-    assert result == (True, None, True, {"submit_unverified": True})
-    # Without a reader every submission is preceded by one blind wipe pass.
-    assert pane.keys == [*_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
-    assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
-    mark.assert_called_once()
-    clear.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_grok_rejection_resubmission_checks_idle_before_first_ctrl_c() -> None:
-    pane = _GrokPane([_CLEAR_REJECTED_SCREEN])
-
-    result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True, command=_CLEAR)
-
-    assert "ctrl_c" not in pane.keys
-    assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
-    # The rejection consumed the first command, so the resubmission types it again
-    # instead of pressing a bare Enter into an empty composer.
-    assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
-    assert pane.keys == [*_DRAIN, "enter", *_DRAIN, "enter"]
-    mark.assert_called_once()
-    clear.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_empty_composer_after_enter_compacts() -> None:
     """An empty composer authorizes the compact command and it submits once."""
     pane = _GrokPane()
@@ -812,12 +710,10 @@ async def test_readerless_compaction_interrupts_and_wipes_any_composer(
     mark.assert_called_once_with()
 
 
-@pytest.mark.parametrize("clear_session", [False, True])
 async def test_set_handoff_refuses_unhosted_terminal_session(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
-    clear_session: bool,
 ) -> None:
     session = session_manager.register(
         external_id="unhosted-handoff",
@@ -839,20 +735,12 @@ async def test_set_handoff_refuses_unhosted_terminal_session(
         SessionContext(session_id=session.id, project_id=session.project_id)
     )
     try:
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal.stage_handoff_attempt"
-            ) as compact_stage,
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal_clear.stage_clear_attempt"
-            ) as clear_stage,
-        ):
-            result = await metadata.func(
-                current_state="Unhosted test", next_steps=["Continue"], clear_session=clear_session
-            )
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.stage_handoff_attempt"
+        ) as compact_stage:
+            result = await metadata.func(current_state="Unhosted test", next_steps=["Continue"])
     finally:
         reset_session_context(token)
     assert result["error_code"] == "terminal_target_unavailable"
     assert not result.get("handoff_staged")
     compact_stage.assert_not_called()
-    clear_stage.assert_not_called()

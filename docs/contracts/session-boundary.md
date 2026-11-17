@@ -4,7 +4,10 @@
 
 Provider compact is an in-place context boundary. The same session row, external
 identity, task claims, workflow state, and terminal ownership survive. Provider
-`/clear` without a staged Gobby handoff creates an independent session with no parent.
+`/clear` and `/new` create independent default sessions with no parent or handoff.
+They release the old session's claims without completing its tasks and inherit no
+persona, workflow, agent run, child-run lineage, or workspace binding. A spawned
+CLI receiving `/clear` fully tears down instead, as described below.
 
 `gobby-sessions:set_handoff` is the only operation that creates a recoverable handoff
 marker. It accepts:
@@ -17,18 +20,20 @@ marker. It accepts:
 - optional `found_work` entries of `{finding, disposition, ref}`, each held to the
   found-work ladder (`fixed` with a `#N` task this session or a descendant claimed
   or closed, `escalated` with the owner session ref, `filed-task` with a rung-3 `#N`
-  task) and rendered under Notes;
-- `clear_session=false` for in-place compact or `true` for a bound clear successor.
+  task) and rendered under Notes.
+
+`set_handoff` always compacts in place. It accepts no `clear_session` selector;
+both obsolete selector values are rejected.
 
 References are deduplicated in caller order. Rendered content is limited to 10,000
 JSON-escaped characters, including formatting; oversized handoffs are rejected with
 shorten-and-retry guidance before state mutation. Required feedback must be submitted
 separately before calling `set_handoff` last.
 
-Planning, review, and ongoing task work use `clear_session=false`. The
-`clear_session=true` boundary is reserved for a root or coordinator that has closed the
-current task and is moving to another task or epic child. Before-tool rules enforce the
-compact boundary for autonomous sessions and whenever resolved `plan_mode` is true.
+Planning, review, and ongoing task work use `set_handoff` under context pressure.
+After closing a task, a user-owned session can continue to another task in place,
+compact when needed, or use `/clear` or `/new` for a fresh default session. No
+continuation crosses a fresh-session boundary.
 
 ## Handoff Content And Incidental History
 
@@ -97,7 +102,7 @@ current rendered copy used by delivery and UI reads. Sections render in this ord
 
 Each content row stores the normalized field arrays, exact rendered Markdown, payload
 version, authored timestamp, and SHA-256 of the exact UTF-8 Markdown. Successful
-compact and clear boundaries create one immutable `session_handoff_deliveries` receipt;
+compact boundaries create one immutable `session_handoff_deliveries` receipt;
 authorship alone is not delivery.
 
 Feedback enters through `gobby-sessions:feedback`.
@@ -170,9 +175,7 @@ Before provider dispatch, Gobby atomically stages:
 
 - an immutable authored `session_handoffs` row;
 - the replacement `handoff_markdown`;
-- a pending handoff marker containing attempt identity, handoff record identity, and
-  compact/clear mode;
-- the clear-attempt identity marker when `clear_session=true`.
+- a pending compact handoff marker containing attempt and handoff record identity.
 
 Synchronous and queued dispatch failures restore the previous handoff, delete the
 matching staged content row only when it has no delivery receipt, and compare-and-clear
@@ -182,7 +185,7 @@ input is sent. The normalized successful `after_tool` event persists the old-epo
 gate, atomically claims the attempt, and schedules one background delivery. Duplicate,
 failed, and malformed completion events cannot claim an attempt. A delivery failure
 restores the staged state and exposes guidance to retry `set_handoff`. Web-chat
-compaction and clear remain synchronous because they do not replace a terminal composer.
+compaction remains synchronous because it does not replace a terminal composer.
 
 ## Compact Path
 
@@ -198,8 +201,8 @@ delivery with `error_code: "composer_not_clean"` and nothing is typed. A CLI wit
 composer reader (Grok) gets one blind drain pass. Other composer writers
 (`send_keys`, wakes, the continuation pull) keep refusing operator drafts.
 A session whose recorded CLI process no longer owns its terminal gets no keys.
-Ownership is re-read immediately before every key and text write of compact and
-`/clear` dispatch, so a CLI that exits during a settle wait, an interrupt
+Ownership is re-read immediately before every compact key and text write,
+so a CLI that exits during a settle wait, an interrupt
 observation, or the submit ladder leaves its shell untouched. The
 delivery settles with `error_code: "no_terminal_target"`, does not count toward
 abandonment, and keeps the payload recoverable through `get_handoff(failed_attempt_id)`.
@@ -210,7 +213,7 @@ Claude, Codex, and Grok or `/compress` for Droid, and continues on the same
 session row. Droid answers `/compress` with a confirm modal, and dispatch presses Enter
 once the modal is on screen. Droid replaces its `droid exec` backend on `/compress` and
 `/clear` under a stable TUI process, so hook enrichment records the TUI as the terminal
-process identity that compact and clear successors match. Droid emits PreCompact only
+process identity used to match compact boundaries. Droid emits PreCompact only
 for `/compress`, which starts a new provider session, and its native `trigger` reads
 `auto` unless custom instructions were given, so the adapter normalizes it to `manual`
 and the row waits for its successor as `awaiting_handoff`. If typing the continuation prompt fails, the prompt is queued as a
@@ -246,46 +249,34 @@ transcript.
 Manual or automatic provider compaction without `set_handoff` has no pending marker, so
 `get_handoff()` returns an empty result.
 
-## Clear Path
+## Fresh Sessions And Legacy Retirement
 
-Clear dispatch stages a one-shot predecessor marker before the post-result worker
-interrupts the provider, wipes its composer (operator drafts included, as on the
-compact path), and submits `/clear`. A matching
-successor atomically consumes that marker, records the clear delivery receipt, records
-direct predecessor parentage, and expires the predecessor. Live task claims then move
-through expected-owner compare-and-swap. Web chat performs successor insertion in the
-same transaction; terminal hooks perform the equivalent binding after SessionStart.
-A successor SessionStart whose source is not `clear` still binds through that marker
-when its source is `startup` or `new` (Grok), or `resume` for a provider session no row
-knows (Droid loads its `/clear` successor as a resume).
+Gobby never dispatches `/clear` as a handoff command. A user-owned CLI's `/clear`
+or `/new` starts a fresh default session. Explicit fresh starts take precedence over
+stale compact and clear markers. Delayed provider registration still waits for the
+first prompt when required; a genuine compact keeps the existing row and claims.
+Recovery and configured startup overrides cannot restore the old persona or workflow.
+Repository safeguards remain. Default uses provider-native scratch space and has no
+agent workspace or workspace policy.
 
-Manual `/clear` has no marker. Its new session is independent and receives no handoff.
+Spawned CLIs must never be sent `/clear`. If one receives it, Gobby cancels its run,
+releases claims, notifies its parent, and fully tears down the CLI, terminal, sandbox,
+and owned resources. It never completes the task or creates a successor.
 
-An operator-opened clear resets semantic identity to `default`, including persona,
-definition variables, step workflow, and workspace bindings. Recovery and configured
-startup overrides cannot restore the previous definition; deliberate activation can
-select a new one. Provider identity, authentication, task claims, and repository
-safeguards remain. A handoff with `clear_session=false` retains the same session and
-definition. Default uses provider-native scratch space and has no agent workspace or
-workspace policy, even when a definition override explicitly selects a workspace rule.
-
-A spawned seat's clear ends its run through cancellation, with the existing claim
-recovery, terminal and sandbox teardown, and coordinator notification. It does not
-complete the task or create a default successor. The clear transaction refuses to
-transfer a spawned run; parent-session lineage alone never identifies a spawned seat.
+Startup and handoff reads retire legacy pending clear attempts and disarm their
+delivery, pull, and turn gates. They never replay commands or issue new clear receipts.
+Historical authored handoffs and existing receipts remain readable; storage changes
+remain expand-only during the port.
 
 ## Pull-Only Recovery
 
-No-argument `get_handoff()` checks only:
-
-1. the caller row for an in-place compact marker;
-2. the caller's direct predecessor for a clear marker.
+No-argument `get_handoff()` checks only the caller row for an in-place compact marker.
 
 A successful read atomically removes the pending marker and returns persisted Markdown.
 Subsequent reads are empty. Missing, expired, malformed, or manually created boundaries
 fail open to the same empty result. A consumed handoff whose `found_work` carries an
 entry not marked `fixed` arms the reading session's found-work gate, on the compact
-row and on a clear successor alike. No skill tier rides the handoff: the session-start
+row. No skill tier rides the handoff: the session-start
 reset empties the loaded-skills and completed-reference ledgers and the rule gates demand each skill again at its
 first use.
 The persisted Markdown remains available to UI/API session reads.
@@ -293,7 +284,7 @@ The persisted Markdown remains available to UI/API session reads.
 recent failed attempt. It returns authored content marked `failed_not_deliverable`,
 without a delivery receipt or pending marker. It cannot make a failed attempt
 eligible for automatic delivery. `get_handoff(agent_run_id=...)` separately reads
-a child's final handoff for its parent or bound clear successor. That `agent_end`
+a child's final handoff for its original parent. That `agent_end`
 handoff is parent-facing by design: its delivery continuation is the parent session,
 no automatic path delivers it, and the ending child cannot read it back through this call.
 
@@ -308,13 +299,13 @@ run those reloads ahead of the pull.
 
 Sessions store no title (#25485). Labels are derived from the session ref, the agent
 definition, the claimed task, and the status line. The `set_title` tool and the
-`POST /api/sessions/{session_id}/rename` route are removed. Clear successors and
+`POST /api/sessions/{session_id}/rename` route are removed. Fresh sessions and
 closed claims recompute their labels from the same inputs. Spawn pane titles use
 the definition display label; see [seat titles](seat-titles.md).
 
 ## Archival Summaries And Memory
 
-For an expired session, the newest validated handoff with a clear delivery receipt is
+For a historical expired session, the newest validated handoff with an existing clear delivery receipt is
 the archival narrative without an LLM call. Deterministic sections append Active Task,
 task-linked or transcript-explicit Commits, session-attributed Files Changed, and exact
 bounded Unresolved Errors with retrieval IDs. Evidence lookup failures leave that section

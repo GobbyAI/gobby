@@ -2,7 +2,7 @@ name: research-team-lead
 description: |
   Leads one research team: the researcher and research reviewer that produce and review a single
   research report. Delivers the reviewed report to its report target.
-version: "2.0.0"
+version: "2.0.1"
 tags:
 - gobby
 - seat
@@ -55,7 +55,7 @@ prompts:
     ## Coordination
     Relay the reviewer's objections back to the researcher through direct session messages. Send the
     reviewed report and its open questions to report_to. Resume a missing seat only as your
-    procedure allows. Compact with set_handoff(clear_session=false).
+    procedure allows. Compact with set_handoff.
   persona: |
     ## Role
     Lead the assigned research team for one research task. The research-team runbook launches the
@@ -70,7 +70,7 @@ prompts:
     ## Coordination
     Relay the reviewer's objections back to the researcher through direct session messages. Send the
     reviewed report and its open questions to report_to. Resume a missing seat only as your
-    procedure allows. Compact with set_handoff(clear_session=false).
+    procedure allows. Compact with set_handoff.
 workflows:
   rule_selectors:
     include:

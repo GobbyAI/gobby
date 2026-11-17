@@ -907,7 +907,9 @@ class TestCreateChatSessionInner:
         assert mixin.web_chat_runtime_manager.create_session.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_cleared_web_chat_reattaches_live_successor(self, mixin: DummyMixin) -> None:
+    async def test_historical_clear_marker_does_not_redirect_web_chat(
+        self, mixin: DummyMixin
+    ) -> None:
         predecessor = MagicMock()
         predecessor.id = "pred-db"
         predecessor.seq_num = 88
@@ -966,17 +968,17 @@ class TestCreateChatSessionInner:
         session = await mixin._create_chat_session_inner("pred-db", provider="claude")
 
         assert session is mock_session
-        assert session.db_session_id == "succ-db"
-        assert session.seq_num == 89
-        assert session.project_id == "project-new"
-        assert session.chat_mode == "code"
+        assert session.db_session_id == "pred-db"
+        assert session.seq_num == 88
+        assert session.project_id == "project-old"
+        assert session.chat_mode == "plan"
         mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
-            provider="codex",
+            provider="claude",
             conversation_id="pred-db",
             model=None,
             reasoning_effort=None,
         )
-        mixin.session_manager.activate_web_chat_session.assert_not_called()
+        mixin.session_manager.activate_web_chat_session.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_project_switch_starts_fresh_and_persists_project(

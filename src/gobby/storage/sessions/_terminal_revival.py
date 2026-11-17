@@ -17,9 +17,14 @@ from gobby.utils.datetime import utc_now
 from ._constants import LIVE_SESSION_STATUSES, get_logger, past_terminal_revival_horizon
 from ._contested_expiry import (
     clear_contested_terminal_expiry,
+    read_session_variables,
 )
 from ._operator_claim_hold import clear_operator_claim_hold
-from ._terminal_lineage import clear_successor_of, live_row_of_same_cli
+from ._terminal_lineage import (
+    FRESH_SESSION_RETIRED_VARIABLE,
+    clear_successor_of,
+    live_row_of_same_cli,
+)
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -105,6 +110,12 @@ class _TerminalRevivalMixin:
         if current.session_type != "terminal":
             return current
         if current.status not in {*TERMINAL_OWNER_STATUSES, "expired"}:
+            return current
+
+        variables = read_session_variables(
+            self.db, current.id, keys=(FRESH_SESSION_RETIRED_VARIABLE,)
+        )
+        if variables and variables.get(FRESH_SESSION_RETIRED_VARIABLE) is True:
             return current
 
         successor_id = clear_successor_of(self.db, current)

@@ -1,4 +1,4 @@
-version: "1.2.0"
+version: "1.3.0"
 tags: [task-closure-general]
 
 # Candidates that change the handoff continuation surface land and close only with
@@ -19,13 +19,12 @@ rules:
         'src/gobby/mcp_proxy/tools/sessions/_terminal_handoff_delivery.py',
         'src/gobby/mcp_proxy/tools/sessions/_terminal_compaction.py',
         'src/gobby/mcp_proxy/tools/sessions/_terminal.py',
-        'src/gobby/mcp_proxy/tools/sessions/_terminal_clear.py',
         'src/gobby/servers/routes/admin/_lifecycle.py',
         'src/gobby/sessions/handoff.py',
         'src/gobby/sessions/handoff_shutdown.py',
         'src/gobby/sessions/compact_continuation*.py',
         'src/gobby/sessions/compact_failure_attention.py',
-        'src/gobby/sessions/clear_continuation.py',
+        'src/gobby/sessions/handoff_retirement.py',
         'src/gobby/sessions/continuation_retry.py',
         'src/gobby/sessions/codex_compact_watch.py'
       ]) and
@@ -52,13 +51,12 @@ rules:
         'src/gobby/mcp_proxy/tools/sessions/_terminal_handoff_delivery.py',
         'src/gobby/mcp_proxy/tools/sessions/_terminal_compaction.py',
         'src/gobby/mcp_proxy/tools/sessions/_terminal.py',
-        'src/gobby/mcp_proxy/tools/sessions/_terminal_clear.py',
         'src/gobby/servers/routes/admin/_lifecycle.py',
         'src/gobby/sessions/handoff.py',
         'src/gobby/sessions/handoff_shutdown.py',
         'src/gobby/sessions/compact_continuation*.py',
         'src/gobby/sessions/compact_failure_attention.py',
-        'src/gobby/sessions/clear_continuation.py',
+        'src/gobby/sessions/handoff_retirement.py',
         'src/gobby/sessions/continuation_retry.py',
         'src/gobby/sessions/codex_compact_watch.py'
       ]) and

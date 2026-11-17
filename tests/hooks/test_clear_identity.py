@@ -20,7 +20,6 @@ from gobby.hooks.event_handlers.clear_identity import reset_operator_identity, s
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools.apply_agent_definition import apply_agent_definition_impl
 from gobby.mcp_proxy.tools.apply_persona import apply_persona_impl
-from gobby.sessions.clear_continuation import take_clear_handoff_marker
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -34,7 +33,6 @@ from tests.hooks.test_clear_successor_seat import (
     _stage,
     _start,
 )
-from tests.hooks.test_session_materialize import _ATTEMPT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -177,6 +175,46 @@ async def test_spawned_clear_uses_shared_cancellation_service(
     assert stop.await_args.kwargs["session_manager"] is pane.sessions
 
 
+@pytest.mark.parametrize("start_source", ["clear", "new", "startup", "resume"])
+def test_spawned_provider_reset_tears_down_without_registering_successor(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_dependencies: dict[str, Any],
+    start_source: str,
+) -> None:
+    pane = _pane(temp_db, tmp_path, monkeypatch, "spawned-reset")
+    _spawned_seat(temp_db, pane)
+    handlers = EventHandlers(
+        **{**mock_dependencies, "session_storage": pane.sessions, "session_manager": pane.sessions}
+    )
+    event = HookEvent(
+        event_type=HookEventType.SESSION_START,
+        session_id="fresh-provider-conversation",
+        source=SessionSource.GROK,
+        timestamp=datetime.now(UTC),
+        data={
+            "source": start_source,
+            "cwd": pane.root,
+            "terminal_context": {**pane.term, "gobby_session_id": pane.predecessor_id},
+        },
+        project_id=pane.project_id,
+        machine_id=pane.machine_id,
+    )
+    with patch(
+        "gobby.hooks.event_handlers.clear_identity.stop_spawned_clear", return_value=True
+    ) as stop:
+        response = handlers.handle_session_start(event)
+    assert response.decision == "block"
+    stop.assert_called_once()
+    assert (
+        pane.sessions.find_by_external_id(
+            external_id="fresh-provider-conversation", project_id=pane.project_id, source="grok"
+        )
+        is None
+    )
+
+
 def test_precreated_spawned_clear_never_activates_a_successor(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -269,22 +307,6 @@ async def test_spawned_clear_dispatches_cancellation_without_completing_task(
     assert ended is not None and ended.status == "expired"
     mock_dependencies["session_coordinator"].complete_agent_run.assert_not_called()
     mock_dependencies["task_manager"].close_task.assert_not_called()
-
-
-def test_spawned_clear_cannot_transfer_run(
-    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    pane = _pane(temp_db, tmp_path, monkeypatch, "spawned-clear")
-    run, _ = _spawned_seat(temp_db, pane)
-    _stage(temp_db, pane)
-    successor = pane.register("forbidden-successor")
-    assert not take_clear_handoff_marker(
-        temp_db, pane.predecessor_id, attempt_id=_ATTEMPT_ID, successor_id=successor
-    )
-    predecessor_row = pane.sessions.get(pane.predecessor_id)
-    successor_row = pane.sessions.get(successor)
-    assert predecessor_row is not None and predecessor_row.agent_run_id == run.id
-    assert successor_row is not None and successor_row.agent_run_id is None
 
 
 def test_default_launch_grants_no_agent_workspace(

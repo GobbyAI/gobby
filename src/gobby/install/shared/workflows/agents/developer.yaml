@@ -1,5 +1,5 @@
 name: developer
-version: "4.2.0"
+version: "4.2.1"
 description: Implements and tests a task; the daemon hands its claim to independent review.
 tags:
 - gobby
@@ -88,7 +88,7 @@ prompts:
     retain a persistent epic seat for its next assigned leaf. For epic integration
     repairs, claim the lead's integration leaf before editing. Report readiness and blockers to the lead/report target.
     Coordinate required restarts through the report target. Use durable coordination waits.
-    Compact in place with set_handoff(clear_session=false).
+    Compact in place with set_handoff.
   persona: |
     ## Role
     Implement and test the assigned task in its registered worktree. Claim before edits.
@@ -135,7 +135,7 @@ prompts:
     retain a persistent epic seat for its next assigned leaf. For epic integration
     repairs, claim the lead's integration leaf before editing. Report readiness and blockers to the lead/report target.
     Coordinate required restarts through the report target. Use durable coordination waits.
-    Compact in place with set_handoff(clear_session=false).
+    Compact in place with set_handoff.
 workflows:
   rule_selectors:
     include:

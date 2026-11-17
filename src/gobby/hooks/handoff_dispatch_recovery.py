@@ -47,17 +47,18 @@ def settle_landed_boundary(
 ) -> bool:
     """Return True when the dead dispatch already crossed its boundary.
 
-    Resubmitting then would compact or clear twice, so a landed compact is
-    receipted and continued instead; a landed clear leaves its successor pull.
+    A landed compact is receipted and continued without submitting it twice.
     """
-    kind = "clear" if claimed.clear_session else "compact"
+    if claimed.clear_session:
+        from gobby.sessions.handoff_retirement import retire_legacy_clear_handoff
+
+        retire_legacy_clear_handoff(db, claimed.session_id)
+        return True
     receipt = db.fetchone(
         "SELECT 1 FROM session_handoff_deliveries "
-        "WHERE handoff_id = %s AND attempt_id = %s AND boundary_kind = %s",
-        (claimed.handoff_record_id, claimed.attempt_id, kind),
+        "WHERE handoff_id = %s AND attempt_id = %s AND boundary_kind = 'compact'",
+        (claimed.handoff_record_id, claimed.attempt_id),
     )
-    if claimed.clear_session:
-        return isinstance(receipt, Mapping)
     if not isinstance(receipt, Mapping) and not _compact_landed(db, session, started_at):
         return False
     record_handoff_delivery(

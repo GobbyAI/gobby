@@ -7,7 +7,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from gobby.communications.operator_routing import can_auto_attach
-from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
+from gobby.sessions.handoff_retirement import CLEAR_ATTEMPT_VARIABLE
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.storage.sessions._contested_expiry import read_session_variables
 

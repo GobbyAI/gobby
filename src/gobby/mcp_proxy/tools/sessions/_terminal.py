@@ -321,7 +321,6 @@ def register_terminal_tools(
         notes: list[str] | None = None,
         references: list[str] | None = None,
         found_work: list[dict[str, Any]] | None = None,
-        clear_session: bool = False,
     ) -> dict[str, Any]:
         from gobby.utils.session_context import get_current_session_id
 
@@ -361,7 +360,7 @@ def register_terminal_tools(
                     "error_code": "compact_unconfirmed",
                     "reason": "Call gobby-sessions:get_handoff to settle the unconfirmed compact first",
                 }
-        feedback_status = _require_handoff_prerequisites(clear_session=clear_session)
+        feedback_status = _require_handoff_prerequisites()
         if feedback_status.get("success") is False:
             return feedback_status
 
@@ -384,25 +383,11 @@ def register_terminal_tools(
         except ValueError as exc:
             return {"success": False, "error": str(exc), "error_code": "invalid_handoff"}
 
-        if clear_session:
-            from gobby.mcp_proxy.tools.sessions._terminal_clear import prepare_clear_session
-
-            result = await prepare_clear_session(
-                handoff,
-                session_manager=session_manager,
-                db=db,
-                agent_run_manager=agent_run_manager,
-                web_chat_session_registry=web_chat_session_registry,
-                terminal_manager=terminal_manager,
-                terminal_runtime_registry=terminal_runtime_registry,
-            )
-        else:
-            result = await _compact_with_handoff(handoff)
+        result = await _compact_with_handoff(handoff)
         result.update(feedback_status)
         return result
 
-    def _require_handoff_prerequisites(*, clear_session: bool) -> dict[str, Any]:
-        from gobby.storage.tasks import LocalTaskManager
+    def _require_handoff_prerequisites() -> dict[str, Any]:
         from gobby.utils.session_context import get_current_session_id
 
         session_id = get_current_session_id()
@@ -421,17 +406,6 @@ def register_terminal_tools(
         assert resolved_session_id is not None
         assert session is not None
 
-        if clear_session and LocalTaskManager(db).list_tasks(
-            claimed_by_session_id=resolved_session_id, closed=False, limit=1
-        ):
-            return {
-                "success": False,
-                "error_code": "active_task_requires_compact",
-                "error": (
-                    "Use clear_session=false while working inside a task. "
-                    "clear_session=true is allowed only between tasks after task closure."
-                ),
-            }
         return {}
 
     async def _compact_with_handoff(
@@ -485,7 +459,6 @@ def register_terminal_tools(
                     resolved_session_id,
                     attempt_id=attempt_id,
                     handoff=handoff,
-                    clear_session=False,
                     delivery_mode=delivery_mode,
                 )
                 result = await web_chat_session_registry.compact_session(
@@ -632,7 +605,6 @@ def register_terminal_tools(
                 resolved_session_id,
                 attempt_id=compact_attempt_id,
                 handoff=handoff,
-                clear_session=False,
             )
         except Exception as exc:
             return {
@@ -654,12 +626,12 @@ def register_terminal_tools(
     except FileNotFoundError:
         # A registry can be constructed before bundled prompts have been synced.
         # Keep discovery available; authoring guidance belongs to the prompt row.
-        handoff_description = "Store a structured handoff and compact or clear the current session."
+        handoff_description = "Store a structured handoff and compact the current session in place."
 
     registry.register(
         name="set_handoff",
         description=handoff_description,
-        brief="Store a structured handoff and compact or clear the current session.",
+        brief="Store a structured handoff and compact the current session in place.",
         input_schema={
             "type": "object",
             "properties": {
@@ -733,7 +705,6 @@ def register_terminal_tools(
                         "additionalProperties": False,
                     },
                 },
-                "clear_session": {"type": "boolean", "default": False},
             },
             "required": ["current_state", "next_steps"],
             "additionalProperties": False,

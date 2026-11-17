@@ -436,8 +436,7 @@ call_tool("gobby-sessions", "set_handoff", {
     "found_work": [
         {"finding": "The clear dialog's Cancel button did nothing",
          "disposition": "fixed", "ref": "#21140"}
-    ],
-    "clear_session": False
+    ]
 })
 ```
 
@@ -463,11 +462,8 @@ background delivery failures stay gated for a `set_handoff` retry.
 call_tool("gobby-sessions", "get_handoff", {})
 ```
 
-Use `clear_session=false` for planning, review, and ongoing task work; it compacts in
-place so the same session continues. Use `clear_session=true` only after closing the
-current task, when moving to another task or epic child. The clear path creates a
-successor, preserves task claims, and binds that successor to the predecessor. The
-continuation prompt calls `get_handoff`, which consumes only the pending marker created
+`set_handoff` always compacts in place and accepts no `clear_session` selector.
+The continuation prompt calls `get_handoff`, which consumes only the pending marker created
 by `set_handoff`. A second call is empty. Manual provider compact and `/clear`
 operations create no marker, so they also return an empty handoff. Persisted
 `handoff_markdown` remains visible in the UI after consumption. While that marker is
@@ -494,7 +490,7 @@ crashed delivery does, so the retry rule offers `set_handoff` again instead of l
 the session wedged behind the armed gate; an attempt that is already dispatched,
 superseded, or consumed only logs
 `Terminal handoff delivery skipped for session <id> attempt <id>: <reason>` at WARNING.
-Delivery failure restores the previous handoff and clear status, removes the attempt
+Delivery failure restores the previous handoff, removes the attempt
 markers, and asks the agent to retry `set_handoff`. Web-chat boundaries remain
 synchronous.
 
@@ -566,7 +562,7 @@ sequenceDiagram
     Session->>Gobby: feedback(observations)
     Gobby->>Gobby: validate/store survey and mark epoch submitted
     Gobby-->>Session: submission success
-    Session->>Gobby: set_handoff(bounded structured fields, clear_session)
+    Session->>Gobby: set_handoff(bounded structured fields)
     Gobby->>Gobby: atomically stage structured content, Markdown, and marker
     Gobby-->>Session: staged success (delivery_pending)
     Session->>Hook: normalized tool completion
@@ -578,9 +574,24 @@ sequenceDiagram
 ```
 
 Provider dispatch failure restores the previous handoff, deletes only undelivered
-content from that attempt, and clears its marker. A delivered clear handoff can become
+content from that attempt, and clears its marker. A historical delivered clear handoff can become
 the archival `summary_markdown` without an LLM call; every other case retains the
 full-transcript fallback.
+
+### Fresh Sessions
+
+In a user-owned CLI, `/clear` and `/new` start independent default Gobby sessions.
+No handoff, task claims, persona, workflow, parent, or agent-run lineage carries over.
+Claims on the old session are released without completing tasks. After closing a
+task, continue in place or start fresh for the next task; use `set_handoff` only
+when context compaction is needed. A genuine compact preserves the current session.
+
+Never send `/clear` to a spawned CLI. If it receives one, Gobby cancels the run,
+releases claims, notifies the parent, and tears down the CLI and its owned resources.
+It creates no successor and does not complete the task.
+
+Legacy pending clear handoffs are disarmed without replay or new receipts.
+Existing authored content and historical receipts remain readable.
 
 ### Compaction Is In-Place
 

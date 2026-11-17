@@ -1,7 +1,7 @@
 ---
 name: bridge
 description: Process Drawbridge UI annotation tasks from .moat/ files. Use when the user runs /bridge, mentions Drawbridge or moat tasks, wants browser UI annotations turned into code changes, or wants a live annotate-implement-verify session (`bridge live`).
-version: "1.2.0"
+version: "1.2.1"
 category: integration
 triggers: bridge, drawbridge, moat, ui annotation, annotation tasks, visual feedback
 metadata:
@@ -164,7 +164,7 @@ Do not manufacture a wait merely to end the turn.
   at any time; never close the task mid-session.
 - Under context pressure (~10+ rounds): checkpoint commit, then call
   `gobby-sessions:set_handoff` with concise current state and next steps and
-  `clear_session=false`. In a terminal session that call comes back as a
+  the compact-only API. In a terminal session that call comes back as a
   rejected or cancelled tool use attributed to the user. That is the daemon
   interrupting the turn to deliver the compaction command, never a refusal: do
   not stop, do not ask the user about it, and resume from the continuation

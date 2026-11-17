@@ -338,9 +338,18 @@ def test_stored_clear_context_reads_the_newest_clear_row(
     assert stored[CODEX_CLEAR_ORIGIN_KEY] == "codex-tui"
 
 
-def test_a_new_human_codex_thread_binds_the_gterm_pane_it_names(
-    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+@pytest.mark.parametrize("same_tty", [False, True])
+def test_a_new_human_codex_thread_binds_only_with_matching_tty(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    same_tty: bool,
 ) -> None:
+    monkeypatch.setattr(
+        "gobby.hooks.event_handlers._session_start.terminal_runtime.cli_shares_shell_tty",
+        lambda _pid, _terminal: same_tty,
+    )
     project_id = sample_project["id"]
     terminals = TerminalManager(temp_db)
     pane = str(uuid.uuid4())
@@ -358,7 +367,11 @@ def test_a_new_human_codex_thread_binds_the_gterm_pane_it_names(
         "parent_create_time": time.time() - 5,
     }
     session_id = _register(session_manager, project_id, terminal_context)
-    handler = SimpleNamespace(terminal_manager=terminals, logger=logging.getLogger(__name__))
+    handler = SimpleNamespace(
+        terminal_manager=terminals,
+        _session_manager=session_manager,
+        logger=logging.getLogger(__name__),
+    )
 
     pending = discover_and_bind_external_terminal(
         handler, session_id=session_id, project_id=project_id, terminal_context=terminal_context
@@ -366,5 +379,9 @@ def test_a_new_human_codex_thread_binds_the_gterm_pane_it_names(
 
     assert pending is None
     bound = terminals.get_live_for_session(session_id)
-    assert bound is not None
-    assert bound.id == pane
+    if same_tty:
+        assert bound is not None
+        assert bound.id == pane
+    else:
+        assert bound is None
+        assert "gobby_terminal_id" not in terminal_context

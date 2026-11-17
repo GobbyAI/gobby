@@ -7,15 +7,12 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
 
 import pytest
 
 from gobby import app_context
 from gobby.mcp_proxy.tools.spawn_agent import _factory, _spawn_guards
 from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import resolve_spawn_task_context
-from gobby.sessions.clear_continuation import stage_clear_attempt, take_clear_handoff_marker
-from gobby.sessions.handoff_records import build_handoff_payload
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -47,27 +44,14 @@ def _clear_spawn_session(sessions: SessionManager, predecessor: Session) -> Sess
         project_id=predecessor.project_id,
         agent_depth=0,
     )
-    attempt = uuid4().hex
-    stage_clear_attempt(
-        sessions.db,
-        predecessor.id,
-        attempt_id=attempt,
-        handoff=build_handoff_payload(current_state="Continue.", next_steps=["Continue."]),
-        terminal_context=None,
-        chat_context=None,
-    )
-    transferred = take_clear_handoff_marker(
-        sessions.db, predecessor.id, attempt_id=attempt, successor_id=successor.id
-    )
     updated = sessions.get(successor.id)
     if predecessor.agent_run_id is not None:
-        assert not transferred
         assert updated is not None
         assert updated.parent_session_id is None and updated.agent_run_id is None
         assert updated.agent_depth == 0
         return predecessor
-    assert transferred
-    assert updated is not None and updated.parent_session_id == predecessor.id
+    sessions.update_status(predecessor.id, "expired")
+    assert updated is not None and updated.parent_session_id is None
     return updated
 
 

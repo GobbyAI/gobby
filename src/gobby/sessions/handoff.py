@@ -18,6 +18,7 @@ from gobby.sessions.handoff_records import (
     insert_delivery_receipt,
     insert_handoff_record,
 )
+from gobby.sessions.handoff_retirement import retire_legacy_clear_handoff
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.utils.datetime import utc_now
@@ -391,17 +392,11 @@ def stage_handoff_attempt(
     *,
     attempt_id: str,
     handoff: HandoffPayload,
-    clear_session: bool,
     delivery_mode: Literal["terminal", "in_process", "queued_in_process"] = "terminal",
     additional_markers: Mapping[str, Any] | None = None,
-    transition_status: str | None = None,
 ) -> HandoffAttemptState:
     """Atomically stage authored content, handoff Markdown, and delivery markers.
 
-    ``transition_status`` moves an ``active``, ``paused``, ``waiting`` or ``idle`` row to
-    that status inside the staging transaction (clear attempts use ``awaiting_handoff`` so startup
-    expiry and SessionEnd leave the row alone until its successor binds); the
-    prior status is recorded on the attempt markers and in the returned state.
     Staging always captures the live turn-ended status so compact attempts can restore
     a later PreCompact transition without implying it already ran.
     Terminal delivery arms the turn-end bypass until its compact receipt or SessionStart. Queued
@@ -411,13 +406,12 @@ def stage_handoff_attempt(
     marker_updates = dict(additional_markers or {})
     marker_updates[PENDING_HANDOFF_VARIABLE] = {
         "attempt_id": attempt_id,
-        "clear_session": clear_session,
+        "clear_session": False,
         "created_at": utc_now().isoformat(),
     }
     if delivery_mode != "in_process":
         marker_updates[HANDOFF_TURN_END_PENDING_VARIABLE] = True
-    if not clear_session:
-        marker_updates[HANDOFF_PULL_PENDING_VARIABLE] = True
+    marker_updates[HANDOFF_PULL_PENDING_VARIABLE] = True
     # Always written, so a restaged attempt cannot inherit an earlier attempt's list.
     marker_updates[FOUND_WORK_VARIABLE] = [entry.as_dict() for entry in handoff.found_work]
     with db.transaction() as conn:
@@ -456,17 +450,10 @@ def stage_handoff_attempt(
         }
         variables.update(marker_updates)
 
-        if prior_status is not None and transition_status is not None:
-            conn.execute(
-                "UPDATE sessions SET handoff_markdown = %s, status = %s, updated_at = %s "
-                "WHERE id = %s",
-                (handoff.rendered_markdown, transition_status, utc_now(), session_id),
-            )
-        else:
-            conn.execute(
-                "UPDATE sessions SET handoff_markdown = %s, updated_at = %s WHERE id = %s",
-                (handoff.rendered_markdown, utc_now(), session_id),
-            )
+        conn.execute(
+            "UPDATE sessions SET handoff_markdown = %s, updated_at = %s WHERE id = %s",
+            (handoff.rendered_markdown, utc_now(), session_id),
+        )
         _store_variables(conn, session_id, variables, exists=variable_row is not None)
 
     return HandoffAttemptState(
@@ -649,6 +636,8 @@ def staged_handoff_rejection(variables: Mapping[str, Any], attempt_id: str) -> s
     clear_session = marker.get("clear_session")
     if not isinstance(clear_session, bool):
         return f"{PENDING_HANDOFF_VARIABLE} clear_session is not a bool"
+    if clear_session:
+        return "clear handoffs are no longer deliverable"
     handoff_record_id = marker.get("handoff_record_id")
     if not isinstance(handoff_record_id, str) or not handoff_record_id:
         return f"{PENDING_HANDOFF_VARIABLE} has no handoff_record_id"
@@ -672,6 +661,7 @@ def claim_staged_handoff_delivery(
     recover_unarmed_gate: bool = False,
 ) -> ClaimedHandoffDelivery | None:
     """Claim a staged handoff, optionally recovering a missing AFTER_TOOL gate on Stop."""
+    retire_legacy_clear_handoff(db, session_id)
     with db.transaction() as conn:
         variable_row = conn.execute(
             "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
@@ -779,38 +769,13 @@ def recover_failed_handoff(db: HubDatabase, session_id: str, attempt_id: str) ->
 
 
 def consume_pending_handoff(db: HubDatabase, caller_session_id: str) -> ConsumedHandoff | None:
-    """Resolve and consume the caller's same-row or clear-predecessor handoff."""
-    caller = db.fetchone(
-        "SELECT id, parent_session_id FROM sessions WHERE id = %s",
-        (caller_session_id,),
-    )
-    if caller is None:
-        return None
-    candidates = ((caller_session_id, False), (caller["parent_session_id"], True))
-    for candidate_id, expects_clear in candidates:
-        if not isinstance(candidate_id, str) or not candidate_id:
-            continue
-        consumed = _consume_candidate(
-            db,
-            candidate_id,
-            continuation_session_id=caller_session_id,
-            expects_clear=expects_clear,
-        )
-        if consumed is not None:
-            if expects_clear:
-                _finish_successor_pull(
-                    db, caller_session_id, arm_found_work=bool(consumed.open_found_work)
-                )
-            return consumed
-    return None
+    """Consume only an in-place compact handoff belonging to the caller."""
+    return _consume_candidate(db, caller_session_id)
 
 
 def _consume_candidate(
     db: HubDatabase,
     session_id: str,
-    *,
-    continuation_session_id: str,
-    expects_clear: bool,
 ) -> ConsumedHandoff | None:
     with db.transaction() as conn:
         session_row = conn.execute(
@@ -827,7 +792,7 @@ def _consume_candidate(
             return None
         variables = _load_variables(variable_row["variables"])
         marker = variables.get(PENDING_HANDOFF_VARIABLE)
-        if not isinstance(marker, Mapping) or bool(marker.get("clear_session")) != expects_clear:
+        if not isinstance(marker, Mapping) or marker.get("clear_session") is not False:
             return None
         attempt_id = marker.get("attempt_id")
         if not isinstance(attempt_id, str) or not attempt_id:
@@ -841,27 +806,13 @@ def _consume_candidate(
         ).fetchone()
         if handoff_row is None:
             return None
-        if expects_clear:
-            delivery = conn.execute(
-                """
-                SELECT 1 FROM session_handoff_deliveries
-                WHERE handoff_id = %s
-                  AND attempt_id = %s
-                  AND boundary_kind = 'clear'
-                  AND continuation_session_id = %s
-                """,
-                (handoff_id, attempt_id, continuation_session_id),
-            ).fetchone()
-            if delivery is None:
-                return None
-        else:
-            insert_delivery_receipt(
-                conn,
-                handoff_id=handoff_id,
-                attempt_id=attempt_id,
-                boundary_kind="compact",
-                continuation_session_id=continuation_session_id,
-            )
+        insert_delivery_receipt(
+            conn,
+            handoff_id=handoff_id,
+            attempt_id=attempt_id,
+            boundary_kind="compact",
+            continuation_session_id=session_id,
+        )
         found_work = _found_work_from_marker(variables.pop(FOUND_WORK_VARIABLE, None))
         variables.pop(PENDING_HANDOFF_VARIABLE, None)
         variables.pop(HANDOFF_PULL_PENDING_VARIABLE, None)
@@ -869,7 +820,7 @@ def _consume_candidate(
         consumed = ConsumedHandoff(
             session_id, handoff_id, attempt_id, str(handoff_row["rendered_markdown"]), found_work
         )
-        if not expects_clear and consumed.open_found_work:
+        if consumed.open_found_work:
             arm_found_work_gate(variables)
         gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
         if (
@@ -903,21 +854,6 @@ def _found_work_from_marker(value: Any) -> tuple[FoundWorkEntry, ...]:
         except ValueError:
             continue
     return tuple(entries)
-
-
-def _finish_successor_pull(db: HubDatabase, session_id: str, *, arm_found_work: bool) -> None:
-    """Drop the successor's pull-deferral flag and arm its gate for open findings."""
-    with db.transaction() as conn:
-        variable_row = conn.execute(
-            "SELECT variables FROM session_variables WHERE session_id = %s FOR UPDATE",
-            (session_id,),
-        ).fetchone()
-        variables = _load_variables(variable_row["variables"] if variable_row else None)
-        changed = variables.pop(HANDOFF_PULL_PENDING_VARIABLE, None) is not None
-        if arm_found_work and arm_found_work_gate(variables):
-            changed = True
-        if changed:
-            _store_variables(conn, session_id, variables, exists=variable_row is not None)
 
 
 def _insert_feedback_rows(

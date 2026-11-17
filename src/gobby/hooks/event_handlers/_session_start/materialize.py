@@ -3,34 +3,20 @@
 from __future__ import annotations
 
 import json
-from functools import partial
 from typing import Any
 
 import psycopg
 
-from gobby.hooks.events import ContextPart, HookEvent
+from gobby.hooks.events import ContextPart, HookEvent, HookEventType
 from gobby.hooks.terminal_context import (
     enrich_terminal_context_with_cwd,
     hook_cwd,
     is_gobby_acp_child,
 )
-from gobby.sessions.clear_continuation import (
-    schedule_handoff_continuation,
-    take_clear_handoff_marker,
-)
-from gobby.sessions.compact_continuation import persist_pull_prompt_message
-from gobby.sessions.handoff import (
-    HANDOFF_PULL_PENDING_VARIABLE,
-    build_handoff_continue_prompt,
-)
 from gobby.storage.session_startup_marks import record_startup_mark
-from gobby.workflows.found_work_gate import FOUND_WORK_GATE_ARMED_AT_VARIABLE
 
 from .agents import _seed_parent_turn_seq
 from .claims import (
-    MCP_PROXY_READY_VARIABLE,
-    inherited_mcp_proxy_ready,
-    preserve_task_claim_state,
     rehydrate_found_work_gate_arm,
 )
 from .context import (
@@ -54,15 +40,6 @@ from .terminal_runtime import (
 from .transcripts import replace_session_message_processor
 
 _CONTEXT_MODE_METADATA_KEY = "_session_start_context_mode"
-_CLEAR_SUCCESSOR_VARIABLE_KEYS = (
-    "task_claimed",
-    "claimed_tasks",
-    "active_task_id",
-    FOUND_WORK_GATE_ARMED_AT_VARIABLE,
-    MCP_PROXY_READY_VARIABLE,
-    "_agent_type",
-    "_agent_definition_hash",
-)
 
 
 def _compat_module() -> Any:
@@ -182,160 +159,20 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
         handler.logger.warning("Failed to reset agent context injection flag: %s", exc)
 
 
-def _bind_clear_successor(
-    handler: Any,
-    resolution: SessionStartResolution | None,
-    session_obj: Any,
-) -> bool:
-    """Take the clear marker and apply isolated successor side effects."""
-    predecessor = getattr(resolution, "clear_predecessor", None)
-    attempt_id = getattr(resolution, "clear_attempt_id", None)
-    if predecessor is None or not attempt_id or handler._session_manager is None:
-        return False
-    predecessor_id = getattr(predecessor, "id", None)
-    successor_id = getattr(session_obj, "id", None)
-    if not isinstance(predecessor_id, str) or not isinstance(successor_id, str):
-        return False
-    supersedes = getattr(resolution, "clear_supersedes", None)
-    if not isinstance(supersedes, str):
-        supersedes = None
-    try:
-        won = take_clear_handoff_marker(
-            handler._session_manager.db,
-            predecessor_id,
-            attempt_id=attempt_id,
-            successor_id=successor_id,
-            supersede_successor_id=supersedes,
-        )
-    except Exception as exc:
-        handler.logger.warning(
-            "Failed to take clear handoff marker for successor %s: %s", successor_id, exc
-        )
-        return False
-    if not won:
-        handler.logger.warning(
-            "Clear handoff take lost for predecessor %s successor %s",
-            predecessor_id,
-            successor_id,
-            extra={
-                "event": "clear_handoff_take_lost",
-                "predecessor_id": predecessor_id,
-                "successor_id": successor_id,
-                "attempt_id": attempt_id,
-            },
-        )
-        return False
-    predecessor_vars: dict[str, Any] = {}
-    try:
-        sv_mgr: Any | None = None
-        try:
-            from gobby.workflows.state_manager import SessionVariableManager
-
-            sv_mgr = SessionVariableManager(handler._session_manager.db)
-            predecessor_vars = sv_mgr.get_variable_subset(
-                predecessor_id, _CLEAR_SUCCESSOR_VARIABLE_KEYS
-            )
-        except Exception:
-            predecessor_vars = {}
-        preserve_task_claim_state(
-            handler,
-            sv_mgr,
-            successor_id,
-            predecessor_id,
-            predecessor_vars,
-        )
-        if supersedes is not None:
-            # The stale successor already took the claims on its own bind; move
-            # them again so the newcomer owns them before that row is expired.
-            stale_vars: dict[str, Any] = {}
-            try:
-                if sv_mgr is not None:
-                    stale_vars = sv_mgr.get_variable_subset(
-                        supersedes, _CLEAR_SUCCESSOR_VARIABLE_KEYS
-                    )
-            except Exception:
-                stale_vars = {}
-            preserve_task_claim_state(handler, sv_mgr, successor_id, supersedes, stale_vars)
-    except Exception as exc:
-        handler.logger.warning(
-            "Failed to reassign clear task claims for successor %s: %s",
-            successor_id,
-            exc,
-        )
-    from gobby.hooks.event_handlers.clear_identity import reset_operator_identity
-
-    reset_operator_identity(handler._session_manager.db, successor_id)
-    try:
-        from gobby.workflows.state_manager import SessionVariableManager
-
-        SessionVariableManager(handler._session_manager.db).merge_variables(
-            successor_id,
-            {
-                HANDOFF_PULL_PENDING_VARIABLE: True,
-                **inherited_mcp_proxy_ready(predecessor_vars),
-            },
-        )
-    except Exception as exc:
-        handler.logger.warning(
-            "Failed to mark handoff pull pending for successor %s: %s",
-            successor_id,
-            exc,
-        )
-    try:
-        from gobby.agents.workspace_bindings import bind_session_workspace
-
-        bind_session_workspace(handler._session_manager.db, successor_id)
-    except Exception as exc:
-        handler.logger.warning(
-            "Failed to bind agent workspace for clear successor %s: %s", successor_id, exc
-        )
-    try:
-        from gobby.agents.srt_runtime import inherit_run_socket_root
-
-        inherit_run_socket_root(handler._session_manager.db, successor_id, predecessor_id)
-    except Exception as exc:
-        handler.logger.warning(
-            "Failed to carry the SRT socket root to clear successor %s: %s", successor_id, exc
-        )
-    return True
-
-
-def _schedule_clear_continuation(
-    handler: Any,
-    session_obj: Any,
-    successor_id: str,
-    attempt_id: str | None,
-) -> None:
-    """Type the get_handoff pull prompt into the successor pane.
-
-    The pane resolves through the handler's terminal manager and runtime
-    registry to reach a native (gclient-hosted) successor.
-    When no pane resolves or typing fails, the prompt is queued as a
-    self-addressed message so the operator's next submit still pulls the handoff.
-    """
-    try:
-        prompt = build_handoff_continue_prompt()
-        db = handler._session_manager.db
-        queue_pull_prompt = partial(
-            persist_pull_prompt_message, db, successor_id, prompt, attempt_id
-        )
-        scheduled = schedule_handoff_continuation(
-            session_obj,
-            prompt,
-            loop=getattr(handler._session_coordinator, "_event_loop", None),
-            db=db,
-            terminal_manager=getattr(handler, "terminal_manager", None),
-            terminal_runtime_registry=getattr(handler, "_terminal_runtime_registry", None),
-            on_send_failure=queue_pull_prompt,
-        )
-        if not scheduled:
-            queue_pull_prompt()
-    except Exception as exc:
-        handler.logger.warning(
-            "Failed to schedule clear continuation for successor %s: %s",
-            successor_id,
-            exc,
-        )
+def prepare_fresh_session_event(event: HookEvent) -> None:
+    """Discard launch authority when a provider creates an independent session."""
+    for key in (
+        "parent_session_id",
+        "workflow_name",
+        "agent_depth",
+        "agent_name_override",
+        "skip_default_agent_activation",
+    ):
+        event.data.pop(key, None)
+    if event.event_type == HookEventType.SESSION_START:
+        event.task_id = None
+        event.metadata.pop("_task_title", None)
+    event.metadata.pop("_parent_session_id", None)
 
 
 def activate_materialized_session(
@@ -358,8 +195,6 @@ def activate_materialized_session(
     cli_source = event.source.value
     external_id = str(event.session_id or "").strip()
     session_source = str(input_data.get("source", "startup"))
-    workflow_name = input_data.get("workflow_name")
-    parent_session_id = input_data.get("parent_session_id")
 
     if terminal_context is None:
         raw_terminal_context = input_data.get("terminal_context")
@@ -373,6 +208,20 @@ def activate_materialized_session(
 
     if session_obj is None and handler._session_manager:
         session_obj = handler._session_manager.get(session_id)
+    fresh_boundary = session_source in {"clear", "new"} or (
+        session_source in {"startup", "", "resume"} and getattr(resolution, "session", None) is None
+    )
+    if fresh_boundary and getattr(session_obj, "agent_run_id", None) is None:
+        prepare_fresh_session_event(event)
+        if handler._session_manager is not None:
+            from gobby.hooks.event_handlers.clear_identity import CLEAR_IDENTITY_VARIABLE
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            SessionVariableManager(handler._session_manager.db).merge_variables(
+                session_id, {"_agent_type": "default", CLEAR_IDENTITY_VARIABLE: True}
+            )
+    workflow_name = input_data.get("workflow_name")
+    parent_session_id = input_data.get("parent_session_id")
     project_id = project_id or event.project_id or getattr(session_obj, "project_id", None)
     if transcript_path is None:
         transcript_path = input_data.get("transcript_path") or getattr(
@@ -402,41 +251,13 @@ def activate_materialized_session(
         except Exception as exc:
             handler.logger.warning("Failed to seed memory recall vars: %s", exc)
 
-    clear_predecessor = getattr(resolution, "clear_predecessor", None)
-    if session_obj is not None and (session_source == "clear" or clear_predecessor is not None):
-        bound = _bind_clear_successor(handler, resolution, session_obj)
-        if (
-            not bound
-            and clear_predecessor is None
-            and session_source == "clear"
-            and handler._session_manager is not None
-        ):
-            try:
-                handler._session_manager.bind_native_clear_successor(session_id)
-            except Exception as exc:
-                handler.logger.warning(
-                    "Failed to bind native clear successor %s: %s", session_id, exc
-                )
-        if handler._session_manager is not None:
-            from gobby.hooks.event_handlers.clear_identity import reset_operator_identity
-
-            reset_operator_identity(handler._session_manager.db, session_id)
-        # Codex fires SessionStart only when the successor thread's first prompt is
-        # submitted, so a prompt is already in flight there (the clear delivery typed
-        # the pull prompt itself); typing another would queue a duplicate turn.
-        if bound and session_source == "clear" and cli_source != "codex":
-            successor_id = getattr(session_obj, "id", None)
-            if isinstance(successor_id, str):
-                _schedule_clear_continuation(
-                    handler,
-                    session_obj,
-                    successor_id,
-                    getattr(resolution, "clear_attempt_id", None),
-                )
-        if handler._session_manager is not None:
-            rebound = handler._session_manager.get(session_id)
-            if rebound is not None:
-                session_obj = rebound
+    if session_obj is not None and fresh_boundary and handler._session_manager is not None:
+        try:
+            handler._session_manager.bind_native_clear_successor(session_id)
+        except Exception as exc:
+            handler.logger.warning(
+                "Failed to retire previous terminal session %s: %s", session_id, exc
+            )
     if handler._session_manager is not None:
         try:
             from gobby.agents.agent_workspaces import bind_epic_workspace
@@ -449,8 +270,7 @@ def activate_materialized_session(
                 "Failed to bind agent workspace for session %s: %s", session_id, exc
             )
     rehydrate_found_work_gate_arm(handler, session_id)
-    # Context-reuse expiry runs only after the newcomer is bound and holds the
-    # claims, so a superseded successor is expired after its handoff moved on.
+    # Retire the old identity before retrying physical terminal ownership.
     expire_stale_terminal_sessions_for_context(
         handler,
         session_id=session_id,

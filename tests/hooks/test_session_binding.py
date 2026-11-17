@@ -134,7 +134,6 @@ def test_session_start_skips_foreign_rows(
     )
 
     with (
-        patch(f"{_HANDOFF}.resolve_clear_continuation", return_value=_NO_CLEAR),
         patch(
             f"{_HANDOFF}.resolve_compact_continuation",
             return_value=compact or CompactIdentityResolution(),
@@ -158,7 +157,7 @@ def test_same_machine_precreated_row_binds(
     mock_empty_session_variable_manager: MagicMock,
 ) -> None:
     handlers, manager = _start_handlers(mock_dependencies)
-    own = _row(NODE, id="node-precreated")
+    own = _row(NODE, id="node-precreated", external_id="node-precreated")
     manager.get.side_effect = lambda ref: own if ref == "node-precreated" else None
     event = make_event(
         HookEventType.SESSION_START,
@@ -200,7 +199,6 @@ def test_local_hook_skips_node_rows(
     )
 
     with (
-        patch(f"{_HANDOFF}.resolve_clear_continuation", return_value=_NO_CLEAR),
         patch(f"{_HANDOFF}.resolve_compact_continuation", return_value=CompactIdentityResolution()),
         patch.object(EventHandlers, "_handle_pre_created_session") as pre_created,
     ):

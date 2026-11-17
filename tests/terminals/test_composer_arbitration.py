@@ -2,7 +2,7 @@
 
 #22915 criterion 6: an earlier empty snapshot cannot authorize a later
 overlapping write. These tests race two real writers -- the daemon wake sender
-and the compaction/clear ladder -- on a shared terminal and prove their writes
+and the compaction ladder -- on a shared terminal and prove their writes
 never interleave, so a wake cannot be typed into a staged ``/compact``.
 """
 
@@ -278,7 +278,7 @@ async def test_real_wake_and_compaction_writers_do_not_interleave(
 
 
 @pytest.mark.parametrize("cli_source", ["claude", "codex"])
-@pytest.mark.parametrize("command", ["/compact", "/clear"])
+@pytest.mark.parametrize("command", ["/compact", "/compress"])
 @pytest.mark.parametrize("first_writer", ["wake", "command"])
 async def test_wake_and_handoff_writes_never_concatenate_across_providers(
     temp_db: HubDatabase,
@@ -368,7 +368,7 @@ async def test_wake_and_handoff_writes_never_concatenate_across_providers(
 
 
 @pytest.mark.parametrize("cli_source", ["claude", "codex"])
-@pytest.mark.parametrize("command", ["/compact", "/clear"])
+@pytest.mark.parametrize("command", ["/compact", "/compress"])
 @pytest.mark.parametrize("blocked", [False, True], ids=["draft", "unknown"])
 async def test_wake_keeps_operator_draft_while_set_handoff_wipes_it(
     temp_db: HubDatabase,
@@ -408,7 +408,7 @@ async def test_wake_keeps_operator_draft_while_set_handoff_wipes_it(
 
 
 @pytest.mark.parametrize("cli_source", ["claude", "codex"])
-@pytest.mark.parametrize("command", ["/compact", "/clear"])
+@pytest.mark.parametrize("command", ["/compact", "/compress"])
 async def test_wake_leaves_a_cancelled_staged_handoff_held_and_untyped(
     temp_db: HubDatabase,
     session_manager: SessionManager,
@@ -548,7 +548,7 @@ async def test_grok_compacted_seat_refuses_keys_fail_closed_and_consumes_handoff
                 next_steps=["Consume this handoff and resume the assigned task."],
             )
             attempt = stage_handoff_attempt(
-                temp_db, session_id, attempt_id=attempt_id, handoff=payload, clear_session=False
+                temp_db, session_id, attempt_id=attempt_id, handoff=payload
             )
             with session_context_for_test(session_id):
                 before = await registry.call("get_handoff", {})

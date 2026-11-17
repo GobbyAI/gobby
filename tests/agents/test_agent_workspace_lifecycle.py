@@ -25,7 +25,6 @@ from gobby.workflows.state_manager import SessionVariableManager
 from tests.hooks.test_clear_successor_seat import _pane, _seat_handler, _stage
 from tests.hooks.test_session_materialize import (
     _ACTIVATION_STUBS,
-    _ATTEMPT_ID,
     _MATERIALIZE,
     _event,
     _StagedClear,
@@ -74,7 +73,7 @@ def _activate(
             _seat_handler(pane.sessions),
             event,
             session_id,
-            resolution=resolution,
+            resolution=resolution or SessionStartResolution(session=session, session_source=source),
             session_obj=session,
             project_id=pane.project_id,
             transcript_path=None,
@@ -83,14 +82,11 @@ def _activate(
 
 
 def _clear_into(pane: _StagedClear, external_id: str) -> str:
-    """Stage a marked clear of the predecessor and activate its successor."""
+    """Activate a fresh default session without carrying a handoff or workspace."""
     successor_id = pane.register(external_id)
     resolution = SessionStartResolution(
         session=None,
         session_source="clear",
-        clear_predecessor=pane.sessions.get(pane.predecessor_id),
-        clear_attempt_id=_ATTEMPT_ID,
-        clear_supersedes=None,
     )
     _activate(pane, successor_id, "clear", resolution)
     return successor_id

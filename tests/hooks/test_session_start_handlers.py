@@ -1269,120 +1269,8 @@ class TestSessionStartNewSession:
         for args, _kwargs in mock_sv_mgr.merge_variables.call_args_list:
             assert copied_keys.isdisjoint(args[1])
 
-    @patch("gobby.hooks.event_handlers._session_start.materialize.schedule_handoff_continuation")
-    @patch(
-        "gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker",
-        return_value=True,
-    )
-    @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_clear_continuation")
-    @patch("gobby.workflows.state_manager.SessionVariableManager")
-    @pytest.mark.parametrize(
-        ("cli_source", "observed_source"),
-        [("grok", "new"), ("droid", "resume")],
-        ids=["grok-new", "droid-resume-of-unknown-session"],
-    )
-    @pytest.mark.parametrize("take_fails", [False, True])
-    def test_clear_successor_source_promotes_matching_clear_continuation(
-        self,
-        mock_sv_mgr_cls: MagicMock,
-        mock_resolve_clear: MagicMock,
-        mock_take: MagicMock,
-        mock_schedule: MagicMock,
-        cli_source: str,
-        observed_source: str,
-        take_fails: bool,
-        mock_dependencies: dict[str, Any],
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        """Grok /clear successors emit source=new and Droid's emit source=resume for a
-        session no row knows; a matching marker binds either as the clear successor."""
-        mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
-        if take_fails:
-            mock_take.side_effect = RuntimeError("marker storage unavailable")
-        term = {
-            "gobby_terminal_id": "960e3e05-1677-50aa-a5a8-bfef022d3b85",
-            "parent_pid": 10322,
-            "parent_create_time": 1.0,
-        }
-        predecessor = SimpleNamespace(
-            id="predecessor-sess", terminal_context=term, agent_run_id=None
-        )
-        mock_resolve_clear.return_value = SimpleNamespace(
-            predecessor=predecessor,
-            attempt_id="attempt-1",
-            degrade_reason=None,
-            supersedes=None,
-        )
-        successor = MagicMock()
-        successor.id = "successor-sess"
-        successor.project_id = "proj-123"
-        successor.parent_session_id = None
-        successor.agent_depth = 0
-        successor.agent_run_id = None
-        successor.title = None
-        successor.terminal_context = term
-
-        def _get(session_id: str) -> Any:
-            if session_id == "successor-sess":
-                return successor
-            return None
-
-        mock_dependencies["session_storage"].get.side_effect = _get
-        mock_dependencies["session_manager"].register_session.return_value = "successor-sess"
-
-        handlers = EventHandlers(**mock_dependencies)
-        event = make_event(
-            HookEventType.SESSION_START,
-            session_id=f"{cli_source}-clear-successor-ext",
-            source=cli_source,
-            data={
-                "source": observed_source,
-                "cwd": "/work/gobby",
-                "terminal_context": term,
-            },
-            metadata={},
-        )
-        event.machine_id = "21000000-0000-4000-8000-000000000008"
-        project_resolution = SimpleNamespace(
-            skipped=False,
-            reason="matched test project",
-            project_id="proj-123",
-        )
-        with (
-            patch(
-                "gobby.hooks.event_handlers._session_start.flow.resolve_hook_project_context",
-                return_value=project_resolution,
-            ),
-            patch.object(handlers, "_activate_default_agent", return_value=None),
-        ):
-            response = handlers.handle_session_start(event)
-
-        assert response.decision == "allow"
-        assert event.data["source"] == "clear"
-        mock_dependencies["session_manager"].register_session.assert_called_once()
-        mock_take.assert_called_once()
-        assert mock_take.call_args.args[1] == "predecessor-sess"
-        assert mock_take.call_args.kwargs["attempt_id"] == "attempt-1"
-        assert mock_take.call_args.kwargs["successor_id"] == "successor-sess"
-        if take_fails:
-            mock_schedule.assert_not_called()
-            assert "Failed to take clear handoff marker" in caplog.text
-            assert "marker storage unavailable" in caplog.text
-        else:
-            mock_schedule.assert_called_once()
-        assert any(
-            len(call.args) >= 2
-            and isinstance(call.args[1], dict)
-            and call.args[1].get("handoff_pull_pending") is True
-            for call in mock_sv_mgr_cls.return_value.merge_variables.call_args_list
-        ) is (not take_fails)
-
-    @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_clear_continuation")
-    def test_resume_of_a_known_session_is_never_promoted_to_clear(
-        self,
-        mock_resolve_clear: MagicMock,
-    ) -> None:
-        """A pending clear attempt cannot claim a resume the persisted row already owns."""
+    def test_resume_preserves_a_known_session(self) -> None:
+        """A known provider conversation resumes its persisted row."""
         event_machine_id = "21000000-0000-4000-8000-000000000008"
         known = SimpleNamespace(
             id="known-sess", status="active", terminal_context=None, machine_id=event_machine_id
@@ -1408,26 +1296,12 @@ class TestSessionStartNewSession:
 
         assert resolution.session is known
         assert resolution.session_source == "resume"
-        assert resolution.clear_predecessor is None
         assert input_data["source"] == "resume"
-        mock_resolve_clear.assert_not_called()
 
-    @patch("gobby.hooks.event_handlers._session_start.materialize.schedule_handoff_continuation")
-    @patch("gobby.hooks.event_handlers._session_start.materialize.take_clear_handoff_marker")
-    @patch("gobby.hooks.event_handlers._session_start.handoff.resolve_clear_continuation")
-    def test_grok_new_source_without_clear_marker_still_defers(
+    def test_grok_new_source_defers_until_activity(
         self,
-        mock_resolve_clear: MagicMock,
-        mock_take: MagicMock,
-        mock_schedule: MagicMock,
         mock_dependencies: dict[str, Any],
     ) -> None:
-        mock_resolve_clear.return_value = SimpleNamespace(
-            predecessor=None,
-            attempt_id=None,
-            degrade_reason="expired",
-            supersedes=None,
-        )
         mock_dependencies["session_storage"].get.return_value = None
         mock_dependencies["session_manager"].register_session.return_value = "new-sess"
 
@@ -1445,8 +1319,6 @@ class TestSessionStartNewSession:
 
         assert response.decision == "allow"
         mock_dependencies["session_manager"].register_session.assert_not_called()
-        mock_take.assert_not_called()
-        mock_schedule.assert_not_called()
         assert "_platform_session_id" not in event.metadata
 
     def test_startup_session_does_not_adopt_stale_parent(
@@ -1851,10 +1723,14 @@ class TestSessionStartNewSession:
         assert "new-sess-456" not in handlers._session_message_processors
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_new_session_with_task_id_context(
-        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
+    @pytest.mark.parametrize("agent_run_id", [None, "synthetic-managed-run"])
+    def test_only_managed_first_activation_retains_launch_task_context(
+        self,
+        mock_sv_mgr_cls: MagicMock,
+        mock_dependencies: dict[str, Any],
+        agent_run_id: str | None,
     ) -> None:
-        """Test new session includes task context when task_id present."""
+        """Default sessions cannot inherit a launch task; initial managed seats keep theirs."""
         mock_sv_mgr = MagicMock()
         mock_sv_mgr.get_variables.return_value = {}
         mock_sv_mgr_cls.return_value = mock_sv_mgr
@@ -1874,6 +1750,7 @@ class TestSessionStartNewSession:
             transcript_path=None,
             terminal_context={},
             title=None,
+            agent_run_id=agent_run_id,
         )
 
         additional_context = handlers._activate_materialized_session(
@@ -1882,10 +1759,16 @@ class TestSessionStartNewSession:
             session_obj=session,
             project_id=session.project_id,
         )
-        assert (
+        task_context = (
             "active_task",
             "## Active Task Context\n\nYou are working on task: Implement feature X (task-789)",
-        ) in additional_context
+        )
+        if agent_run_id is None:
+            assert task_context not in additional_context
+            assert event.task_id is None
+        else:
+            assert task_context in additional_context
+            assert event.task_id == "task-789"
 
 
 def test_resolve_agent_name_reads_config_without_resolving_secrets(
@@ -1956,7 +1839,7 @@ def test_native_clear_binding_failure_warns_without_aborting_activation(
             project_id=sample_project["id"],
         )
     bind.assert_called_once_with(session.id)
-    assert "Failed to bind native clear successor" in caplog.text
+    assert "Failed to retire previous terminal session" in caplog.text
     assert "native binding storage unavailable" in caplog.text
 
 

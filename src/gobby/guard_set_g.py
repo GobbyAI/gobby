@@ -533,7 +533,7 @@ GROUP_1_PYTEST = (
     "tests/cli/test_install_setup_gterm.py",
     "tests/gterminal/test_vendor_layer.py",
     "tests/mcp_proxy/tools/sessions/test_terminal.py",
-    "tests/mcp_proxy/tools/sessions/test_terminal_clear.py",
+    "tests/mcp_proxy/tools/sessions/test_compact_only_handoff.py",
     "tests/servers/test_admin_health.py",
     "tests/install/test_version_pins.py",
     "tests/install/test_distribution.py",

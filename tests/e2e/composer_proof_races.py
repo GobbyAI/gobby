@@ -10,13 +10,13 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID
 
 from gobby.events.live_wake import RETRYABLE_WAKE_SKIPS
-from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
 from gobby.sessions.handoff import (
     FAILED_HANDOFF_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
     PENDING_HANDOFF_VARIABLE,
     build_handoff_continue_prompt,
 )
+from gobby.sessions.handoff_retirement import CLEAR_ATTEMPT_VARIABLE
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.e2e.composer_proof import ProofRefused, ProofScope, Surface
 from tests.e2e.composer_proof_cleanup import cancel_caller, retire_terminal

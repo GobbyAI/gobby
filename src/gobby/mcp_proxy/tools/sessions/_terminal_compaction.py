@@ -68,19 +68,18 @@ _INTERRUPT_ATTEMPTS = 3
 _CLI_INTERRUPT_PRESSES: dict[str, int] = {"codex": 1}
 _INTERRUPT_POLL_SECONDS = 0.05
 # After submitting the command, poll the pane this long for the CLI rejecting it
-# because its turn is still running; a rejected /clear interrupts again and resubmits.
+# because its turn is still running. A submitted compact command is never retyped.
 _COMPACTION_REJECTION_SETTLE_SECONDS = 1.0
 _COMPACTION_REJECTION_POLL_SECONDS = 0.1
 # When a turn_settled observer exists, poll it this long before the first interrupt.
 _TURN_SETTLE_WAIT_SECONDS = 30.0
 _TURN_SETTLE_POLL_SECONDS = 0.25
-# Droid 0.219.0 answers a submitted /compress (never /clear) with a "Confirm /compress"
+# Droid 0.219.0 answers a submitted /compress with a "Confirm /compress"
 # modal that waits for Enter; poll the pane this long for it before watching for a rejection.
 _CLI_COMPACT_CONFIRM_PROMPTS: dict[tuple[str, str], str] = {
     ("droid", "/compress"): "Confirm /compress",
 }
 _COMPACTION_CONFIRM_SETTLE_SECONDS = 5.0
-_COMPACTION_REJECTION_RETRIES = 1
 _COMPACTION_REJECTION_CAPTURE_LINES = 30
 # The command and its newline are one write and the Enter follows as its own; both
 # report Delivered whether or not the CLI took them, so `submit_text` reads the
@@ -542,8 +541,7 @@ async def _send_terminal_compaction_command_locked(
     the command is submitted directly and the success detail carries
     ``interrupted: False``. Interrupt only on timeout. A CLI that rejects the
     command because its turn is still running (Grok) fails a compact command at
-    once, since it may have started; ``/clear`` is interrupted again and resubmitted
-    once before the delivery fails. set_handoff owns the composer: an exact pending
+    once, since it may have started. set_handoff owns the composer: an exact pending
     command gets bare Enter without another text write, and anything else it
     holds, an operator draft or stuck continuation text included, is wiped after
     the interrupt. Only text that survives the wipe fails the delivery, with
@@ -555,6 +553,13 @@ async def _send_terminal_compaction_command_locked(
     and each write after a wait: a CLI that left its pane fails the delivery with
     ``no_terminal_target`` before its shell or successor receives anything.
     """
+    if command not in _CLI_COMPACT_COMMANDS.values():
+        return (
+            False,
+            f"unsupported compaction command: {command}",
+            False,
+            {"error_code": "unsupported_compaction_command"},
+        )
     continuation_pending = False
     if seat_left is not None:
         pane = _SeatGuardedPane(pane, seat_left)
@@ -585,142 +590,123 @@ async def _send_terminal_compaction_command_locked(
         # A compact command may have started despite a transient rejection view.
         # Never type it again; only the verified-submit ladder may retry Enter when
         # it can still see the original command in the composer.
-        rejection_retries = (
-            0 if command in _CLI_COMPACT_COMMANDS.values() else _COMPACTION_REJECTION_RETRIES
-        )
-        for resubmission in range(1 + rejection_retries):
-            if resubmission:
-                logger.warning(
-                    "Session %s rejected %s while its task was still running; "
-                    "interrupting again before resubmission %d of %d",
-                    session_id,
-                    command,
-                    resubmission,
-                    _COMPACTION_REJECTION_RETRIES,
-                )
-            # A rejection may race with a turn ending, so only the first submission waits.
-            # The wait also returns once the armed turn has ended and goal mode has
-            # already started the next one. That successor is still interrupted.
-            if not resubmission and not held_command:
-                await _wait_for_turn_to_settle(
-                    turn_settled,
-                    session_id,
-                    command,
-                    wait_seconds=settle_wait_seconds,
-                    poll_seconds=settle_poll_seconds,
-                )
-            if not held_command and (
-                turn_settled is None or (await asyncio.to_thread(turn_settled)) is not True
-            ):
-                interrupted, reason, detail = await _interrupt_turn(
-                    pane,
-                    interrupt_key,
-                    session_id,
-                    observe_interrupt,
-                    settle_seconds=interrupt_seconds,
-                    turn_settled=turn_settled,
-                    presses=_CLI_INTERRUPT_PRESSES.get(cli_source or "", _INTERRUPT_ATTEMPTS),
-                )
-                if not interrupted:
-                    if isinstance(pane, _SeatGuardedPane):
-                        # A CLI that quit under its last press is gone, not unconfirmed.
-                        await pane.require_seat()
-                    if continuation_pending:
-                        clear_continuation_pending()
-                    return False, reason, False, detail
-                interrupt_sent = True
-
-            before_command = await _capture_pane_snapshot(pane)
-            readiness_before_command = before_command
-            if (
-                schedule_continuation_readiness is not None
-                and continuation_readiness_capture_lines is not None
-            ):
-                readiness_before_command = await _capture_pane_snapshot(
-                    pane,
-                    lines=continuation_readiness_capture_lines,
-                )
-            if observe_interrupt is None and not continuation_pending:
-                continuation_pending = bool(mark_continuation_pending())
-            if schedule_continuation_readiness is not None and not continuation_pending:
-                return (
-                    False,
-                    "failed to persist handoff continuation before compaction",
-                    False,
-                    None,
-                )
-
-            # Text may have arrived during the settle wait and interrupt, so read
-            # again: only an exact held command skips the wipe.
-            if _holds_command(pane, command):
-                drain = DrainResult(True)
-            else:
-                drain = await wipe_composer(
-                    pane, cli_source, composer_read, verify_seconds=verify_seconds
-                )
-            if not drain.ok:
-                if continuation_pending:
-                    clear_continuation_pending()
-                log_pane_failure(pane, session_id, "clearing the composer", drain.reason)
-                return (
-                    False,
-                    f"composer could not be cleared before {command}: {drain.reason}",
-                    False,
-                    {"error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE, "continuation_pending": False},
-                )
-
-            if on_command_submitting is not None:
-                on_command_submitting()
-            ok, reason, submit_detail = await _submit_command(
-                pane,
-                command,
+        if not held_command:
+            await _wait_for_turn_to_settle(
+                turn_settled,
                 session_id,
-                cli_source=cli_source,
-                composer_read=composer_read,
-                verify_seconds=verify_seconds,
+                command,
+                wait_seconds=settle_wait_seconds,
+                poll_seconds=settle_poll_seconds,
             )
-            if (
-                not ok
-                and submit_detail is not None
-                and submit_detail.get("error_code") == ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE
-            ):
-                # The text write included a newline, which may have launched /compact.
-                # Keep the marker and await a provider boundary; never type it again.
-                if schedule_continuation_readiness is not None:
-                    schedule_continuation_readiness(readiness_before_command)
-                return True, None, continuation_pending, {"enter_delivery_unconfirmed": True}
-            submit_unverified = (
-                not ok
-                and submit_detail is not None
-                and submit_detail.get("error_code") == SUBMIT_UNVERIFIED_ERROR_CODE
+        if not held_command and (
+            turn_settled is None or (await asyncio.to_thread(turn_settled)) is not True
+        ):
+            interrupted, reason, detail = await _interrupt_turn(
+                pane,
+                interrupt_key,
+                session_id,
+                observe_interrupt,
+                settle_seconds=interrupt_seconds,
+                turn_settled=turn_settled,
+                presses=_CLI_INTERRUPT_PRESSES.get(cli_source or "", _INTERRUPT_ATTEMPTS),
             )
-            if submit_unverified:
-                # Write and Enter were delivered but no read proved the command left the
-                # composer. Never retype it: confirm a modal if one shows, watch for a
-                # rejection, and leave the provider boundary as the only proof.
-                ok = True
-            if ok:
-                submit_detail = None
-                ok, reason = await _confirm_compaction_prompt(
-                    pane,
-                    before_command,
-                    command,
-                    cli_source,
-                    session_id,
-                    window_seconds=confirm_seconds,
-                )
-            if not ok:
+            if not interrupted:
+                if isinstance(pane, _SeatGuardedPane):
+                    # A CLI that quit under its last press is gone, not unconfirmed.
+                    await pane.require_seat()
                 if continuation_pending:
                     clear_continuation_pending()
-                return False, reason, False, submit_detail
+                return False, reason, False, detail
+            interrupt_sent = True
 
-            rejection = await _wait_for_compaction_rejection(
-                pane, before_command, command, window_seconds=rejection_seconds
+        before_command = await _capture_pane_snapshot(pane)
+        readiness_before_command = before_command
+        if (
+            schedule_continuation_readiness is not None
+            and continuation_readiness_capture_lines is not None
+        ):
+            readiness_before_command = await _capture_pane_snapshot(
+                pane,
+                lines=continuation_readiness_capture_lines,
             )
-            if rejection is None:
-                break
-            # The CLI read the command to reject it, and no submit hook records that, so
-            # the ledger would hold it and turn the resubmission into a bare Enter.
+        if observe_interrupt is None and not continuation_pending:
+            continuation_pending = bool(mark_continuation_pending())
+        if schedule_continuation_readiness is not None and not continuation_pending:
+            return (
+                False,
+                "failed to persist handoff continuation before compaction",
+                False,
+                None,
+            )
+
+        # Text may have arrived during the settle wait and interrupt, so read
+        # again: only an exact held command skips the wipe.
+        if _holds_command(pane, command):
+            drain = DrainResult(True)
+        else:
+            drain = await wipe_composer(
+                pane, cli_source, composer_read, verify_seconds=verify_seconds
+            )
+        if not drain.ok:
+            if continuation_pending:
+                clear_continuation_pending()
+            log_pane_failure(pane, session_id, "clearing the composer", drain.reason)
+            return (
+                False,
+                f"composer could not be cleared before {command}: {drain.reason}",
+                False,
+                {"error_code": _COMPOSER_NOT_CLEAN_ERROR_CODE, "continuation_pending": False},
+            )
+
+        if on_command_submitting is not None:
+            on_command_submitting()
+        ok, reason, submit_detail = await _submit_command(
+            pane,
+            command,
+            session_id,
+            cli_source=cli_source,
+            composer_read=composer_read,
+            verify_seconds=verify_seconds,
+        )
+        if (
+            not ok
+            and submit_detail is not None
+            and submit_detail.get("error_code") == ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE
+        ):
+            # The text write included a newline, which may have launched /compact.
+            # Keep the marker and await a provider boundary; never type it again.
+            if schedule_continuation_readiness is not None:
+                schedule_continuation_readiness(readiness_before_command)
+            return True, None, continuation_pending, {"enter_delivery_unconfirmed": True}
+        submit_unverified = (
+            not ok
+            and submit_detail is not None
+            and submit_detail.get("error_code") == SUBMIT_UNVERIFIED_ERROR_CODE
+        )
+        if submit_unverified:
+            # Write and Enter were delivered but no read proved the command left the
+            # composer. Never retype it: confirm a modal if one shows, watch for a
+            # rejection, and leave the provider boundary as the only proof.
+            ok = True
+        if ok:
+            submit_detail = None
+            ok, reason = await _confirm_compaction_prompt(
+                pane,
+                before_command,
+                command,
+                cli_source,
+                session_id,
+                window_seconds=confirm_seconds,
+            )
+        if not ok:
+            if continuation_pending:
+                clear_continuation_pending()
+            return False, reason, False, submit_detail
+
+        rejection = await _wait_for_compaction_rejection(
+            pane, before_command, command, window_seconds=rejection_seconds
+        )
+        if rejection is not None:
             record_composer_submit(pane.target)
 
         if rejection is not None:

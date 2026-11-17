@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from gobby.sessions.contested_expiry import ContestedExpiryCause
 from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.session_models import Session
 
@@ -15,32 +14,26 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 
+FRESH_SESSION_RETIRED_VARIABLE = "fresh_session_retired"
+
+
 class _ManagerState(Protocol):
     db: HubDatabase
 
     def get(self, session_id: str) -> Session | None: ...
 
-    def update_parent_session_id(
-        self, session_id: str, parent_session_id: str | None
-    ) -> Session | None: ...
-
-    def mark_session_expired(self, session_id: str, *, cause: ContestedExpiryCause) -> bool: ...
+    def update_status(self, session_id: str, status: str) -> Session | None: ...
 
     def _notify_status_transition(self, transition: SessionStatusTransition) -> None: ...
 
 
 class _TerminalLineageMixin:
     def bind_native_clear_successor(self: _ManagerState, successor_id: str) -> Session | None:
-        """Link a native clear to its terminal predecessor and notify routing.
-
-        SessionEnd may have expired the predecessor before SessionStart arrives.
-        Publish after the link even when expiry itself is no longer a transition.
-        Staged clears retain their marker-driven binding and routing contract.
-        """
-        from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
+        """Retire the previous native seat without linking the fresh session to it."""
         from gobby.sessions.handoff_identity import terminal_process_contexts_match
-
-        from ._contested_expiry import read_session_variables
+        from gobby.sessions.handoff_retirement import retire_session_handoff
+        from gobby.storage.tasks._transitions import release_task_claim_if_owned
+        from gobby.workflows.state_manager import SessionVariableManager
 
         successor = self.get(successor_id)
         if (
@@ -56,7 +49,7 @@ class _TerminalLineageMixin:
             SELECT * FROM sessions
             WHERE project_id = %s AND machine_id = %s AND source = %s
               AND session_type = 'terminal' AND agent_depth = %s
-              AND status IN ('active', 'paused', 'waiting', 'idle', 'expired')
+              AND status IN ('active', 'paused', 'waiting', 'idle', 'awaiting_handoff', 'expired')
               AND terminal_context IS NOT NULL AND id <> %s
               AND created_at <= %s
               AND terminal_context ->> 'parent_pid' = %s
@@ -81,17 +74,23 @@ class _TerminalLineageMixin:
                 successor.terminal_context, predecessor.terminal_context
             ):
                 continue
-            variables = read_session_variables(
-                self.db, predecessor.id, keys=(CLEAR_ATTEMPT_VARIABLE,)
+            if self.update_status(predecessor.id, "expired") is None:
+                return None
+            retire_session_handoff(self.db, predecessor.id)
+            variables = SessionVariableManager(self.db)
+            variables.merge_variables(predecessor.id, {FRESH_SESSION_RETIRED_VARIABLE: True})
+            claims = self.db.fetchall(
+                "SELECT id FROM tasks WHERE claimed_by_session_id = %s AND closed_at IS NULL",
+                (predecessor.id,),
             )
-            if isinstance((variables or {}).get(CLEAR_ATTEMPT_VARIABLE), dict):
-                return None
-            self.update_parent_session_id(successor.id, predecessor.id)
-            if not self.mark_session_expired(predecessor.id, cause="parent_registration"):
-                self.update_parent_session_id(successor.id, None)
-                return None
+            for task in claims:
+                if (
+                    release_task_claim_if_owned(self.db, task["id"], expected_owner=predecessor.id)
+                    is not None
+                ):
+                    variables.release_task_claim(predecessor.id, task["id"])
             ended = self.get(predecessor.id)
-            if ended is not None:
+            if ended is not None and predecessor.status == "expired":
                 self._notify_status_transition(SessionStatusTransition.from_session(ended))
             return ended
         return None
@@ -106,8 +105,8 @@ def clear_successor_of(db: HubDatabase, current: Session) -> str | None:
     matches.
     """
     # Module-level imports would be circular: both modules import this package.
-    from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
     from gobby.sessions.handoff_identity import terminal_process_contexts_match
+    from gobby.sessions.handoff_retirement import CLEAR_ATTEMPT_VARIABLE
 
     variables = read_session_variables(db, current.id, keys=(CLEAR_ATTEMPT_VARIABLE,))
     marker = variables.get(CLEAR_ATTEMPT_VARIABLE) if variables else None
