@@ -17,7 +17,6 @@ use crate::daemon::{Dialer, RequestOptions};
 const MACHINE_KEY: &str = "machine-key-for-tests";
 const TOKEN: &str = "gobby-agent-v1.payload.signature";
 const SESSION_UUID: &str = "11111111-1111-4111-8111-111111111111";
-const TMUX: &str = "/tmp/tmux-501/default,4242,0";
 
 fn credential() -> SessionCredential {
     SessionCredential {
@@ -28,12 +27,10 @@ fn credential() -> SessionCredential {
     }
 }
 
-/// The environment one client sees: any managed-run marker, the tmux pane it runs in,
-/// and the daemon it dials. Everything else that could select a session is cleared.
+/// The environment one client sees: any managed-run marker and the daemon it dials.
+/// Everything else that could select a session is cleared.
 #[derive(Default)]
 struct Surroundings<'a> {
-    tmux: Option<&'a str>,
-    pane: Option<&'a str>,
     run_id: Option<&'a str>,
     daemon_url: Option<&'a str>,
 }
@@ -50,8 +47,6 @@ fn in_surroundings<R>(home: &Path, surroundings: Surroundings<'_>, body: impl Fn
             ("GOBBY_DAEMON_URL", surroundings.daemon_url.map(OsStr::new)),
             ("GOBBY_PORT", None),
             ("GOBBY_DAEMON_PORT", None),
-            ("TMUX", surroundings.tmux.map(OsStr::new)),
-            ("TMUX_PANE", surroundings.pane.map(OsStr::new)),
         ],
         body,
     )
@@ -106,22 +101,6 @@ fn an_unspawned_cli_reads_the_record_stored_for_its_process() {
         assert_eq!(binding.token, TOKEN);
         assert_eq!(binding.session_id, SESSION_UUID);
     });
-}
-
-#[test]
-fn the_cli_binding_does_not_depend_on_tmux() {
-    let home = machine_key_home();
-    store_for_this_cli(home.path());
-
-    in_surroundings(
-        home.path(),
-        Surroundings {
-            tmux: Some(TMUX),
-            pane: Some("%4"),
-            ..Surroundings::default()
-        },
-        || assert!(cli_binding().is_some()),
-    );
 }
 
 #[test]

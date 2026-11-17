@@ -100,9 +100,6 @@ impl Gmcp {
             .env("GOBBY_AGENT_RUN_ID", "run")
             .env_remove("GOBBY_SESSION_ID")
             .env_remove("GOBBY_PROJECT_ID")
-            // A test runner inside tmux would otherwise pin caller identity to its pane.
-            .env_remove("TMUX")
-            .env_remove("TMUX_PANE")
             .envs(environment.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -706,7 +703,7 @@ fn variable_shortcuts_send_caller_identity_never_the_target() -> Result<()> {
     };
 
     {
-        // Headless caller: no managed session and no tmux pane, so the header must stay
+        // Headless caller: no managed session, so the header must stay
         // empty and the daemon resolves the caller from terminal context.
         let daemon = start_daemon((0..4).map(|_| ok()).collect())?;
         let home = tempfile::tempdir()?;

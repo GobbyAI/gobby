@@ -45,6 +45,7 @@ def test_instructions_copy_matches_bundled_prompt() -> None:
 def test_wrapper_contract_matches_python_constants() -> None:
     contract_path = CRATE_DIR / "contracts/mcp_wrapper.v1.json"
     contract = json.loads(contract_path.read_text())
+    contract.pop("terminal_context_keys")
     assert contract == {
         "protocol_version": wait_tools.MCP_WRAPPER_PROTOCOL_VERSION,
         "protocol_version_header": wait_tools.MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
@@ -56,6 +57,11 @@ def test_wrapper_contract_matches_python_constants() -> None:
         "http_timeout_buffer_seconds": wait_tools.WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS,
         "wrapper_grace_seconds": wait_tools.WAIT_TOOL_WRAPPER_GRACE_SECONDS,
         "heartbeat_interval_seconds": wait_tools.WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS,
-        "terminal_context_keys": list(TERMINAL_CONTEXT_KEYS),
         "agent_identity_env_headers": [list(pair) for pair in _AGENT_IDENTITY_ENV_HEADERS],
     }
+
+
+def test_wrapper_context_keys_are_accepted_by_daemon() -> None:
+    contract = json.loads((CRATE_DIR / "contracts/mcp_wrapper.v1.json").read_text())
+    # The daemon allowlist shrinks in the next purge section.
+    assert set(contract["terminal_context_keys"]) <= set(TERMINAL_CONTEXT_KEYS)

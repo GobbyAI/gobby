@@ -21,8 +21,6 @@ from tests.e2e.test_runtime_boundary import _native_bin
 # Terminal-context keys and the environment variables gmcp captures them from.
 # gmcp takes parent_pid from its real OS parent, which is the test process here.
 _TERMINAL_ENV = {
-    "tmux_pane": "TMUX_PANE",
-    "tmux_socket_path": "TMUX",
     "tty": "TTY",
     "term_program": "TERM_PROGRAM",
     "term_session_id": "TERM_SESSION_ID",
@@ -127,7 +125,7 @@ async def gmcp_session(
     """Start one gmcp process and open its MCP session.
 
     The environment is built from scratch. The MCP SDK adds only its safe defaults, so
-    no tmux, TTY, or GOBBY_* variable from the test runner reaches the wrapper. HOME is
+    no TTY or GOBBY_* variable from the test runner reaches the wrapper. HOME is
     the test home as well: if gmcp ignored GOBBY_HOME, its ~/.gobby fallback would find
     nothing here rather than the operator's daemon and key.
     """

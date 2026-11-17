@@ -42,7 +42,6 @@ pub struct Dialer {
     cwd: PathBuf,
     environment_session: Option<String>,
     terminal_context: String,
-    has_tmux_pane: bool,
     agent: ureq::Agent,
     state: Mutex<CachedState>,
     tool_timeouts: Mutex<Option<BTreeMap<String, Duration>>>,
@@ -126,9 +125,6 @@ impl Dialer {
             cwd: cwd.to_owned(),
             environment_session: env_value("GOBBY_SESSION_ID"),
             terminal_context: terminal_context::serialize(&terminal),
-            has_tmux_pane: terminal
-                .get("tmux_pane")
-                .is_some_and(|v| v.as_str().is_some_and(|s| !s.is_empty())),
             // No idle pool: a kept-alive socket can outlive its daemon process, and a
             // request sent on it after a restart fails (ureq 2's pool liveness peek even
             // surfaces the reset as an error). Loopback connects are cheap.
@@ -327,11 +323,10 @@ impl Dialer {
         }
         // An unspawned client presents its CLI's session credential and names the
         // session; it sends no terminal context.
-        let session = self.environment_session.as_deref().or_else(|| {
-            options
-                .session_id
-                .filter(|id| !id.is_empty() && !self.has_tmux_pane)
-        });
+        let session = self
+            .environment_session
+            .as_deref()
+            .or_else(|| options.session_id.filter(|id| !id.is_empty()));
         if let Some(record) = &binding {
             headers.insert(SESSION_ID_HEADER.into(), record.session_id.clone());
         } else if let Some(session) = session {

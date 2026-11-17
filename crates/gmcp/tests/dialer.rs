@@ -34,10 +34,7 @@ fn request_headers_match_python_wrapper() -> anyhow::Result<()> {
                 ("GOBBY_SESSION_ID", Some("seat")),
             ],
             || -> anyhow::Result<()> {
-                let dialer = Dialer::with_context(
-                    root,
-                    json!({"tmux_pane":"%3"}).as_object().unwrap().clone(),
-                )?;
+                let dialer = Dialer::with_context(root, Default::default())?;
                 let result = dialer.request(
                     "POST",
                     "/test",
@@ -85,16 +82,16 @@ fn headless_terminal_and_agent_identity_headers() -> anyhow::Result<()> {
                         ..Default::default()
                     },
                 );
-                let pane = Dialer::with_context(
+                let terminal = Dialer::with_context(
                     root,
-                    json!({"tmux_pane":"%7", "unknown":1, "tty":null})
+                    json!({"gobby_terminal_id":"terminal", "unknown":1, "tty":null})
                         .as_object()
                         .unwrap()
                         .clone(),
                 )?;
-                pane.request(
+                terminal.request(
                     "GET",
-                    "/pane",
+                    "/terminal",
                     None,
                     RequestOptions {
                         session_id: Some("guess"),
@@ -130,13 +127,8 @@ fn headless_terminal_and_agent_identity_headers() -> anyhow::Result<()> {
                 let requests = server.requests();
                 assert_eq!(requests[0].headers["x-gobby-session-id"], "body-seat");
                 assert!(!requests[0].headers.contains_key("x-gobby-project-id"));
-                assert!(!requests[1].headers.contains_key("x-gobby-session-id"));
-                assert_eq!(
-                    serde_json::from_str::<serde_json::Value>(
-                        &requests[1].headers["x-gobby-terminal-context"]
-                    )?,
-                    json!({"tmux_pane":"%7"})
-                );
+                assert_eq!(requests[1].headers["x-gobby-session-id"], "guess");
+                assert!(!requests[1].headers.contains_key("x-gobby-terminal-context"));
                 assert_eq!(requests[2].headers["x-gobby-project-id"], "initialized");
                 assert_eq!(
                     requests[2].headers["x-gobby-caller-project-id"],
@@ -153,6 +145,57 @@ fn headless_terminal_and_agent_identity_headers() -> anyhow::Result<()> {
                 assert_eq!(
                     requests[3].headers["x-gobby-managed-execution-id"],
                     "execution"
+                );
+                Ok(())
+            },
+        )
+    })
+}
+
+#[test]
+fn wrapper_context_matches_contract() -> anyhow::Result<()> {
+    isolated(|root| {
+        let server = StubDaemon::start(vec![Response::json(200, json!({"success": true}))])?;
+        temp_env::with_var(
+            "GOBBY_DAEMON_URL",
+            Some(server.url()),
+            || -> anyhow::Result<()> {
+                let context = json!({
+                    "parent_pid": 99, "tty": "/dev/test", "term_program": "terminal",
+                    "term_session_id": "native", "gobby_terminal_id": "terminal-id",
+                    "gobby_pane_ref": "pane-ref"
+                });
+                let mut input = context.as_object().unwrap().clone();
+                input.insert("unknown".into(), json!(1));
+                input.insert("absent".into(), serde_json::Value::Null);
+                let result = Dialer::with_context(root, input)?.request(
+                    "GET",
+                    "/context",
+                    None,
+                    Default::default(),
+                );
+                assert_eq!(result, json!({"success": true}));
+                let requests = server.requests();
+                assert_eq!(requests.len(), 1);
+                assert!(!requests[0].headers.contains_key("x-gobby-session-id"));
+                let sent: serde_json::Value =
+                    serde_json::from_str(&requests[0].headers["x-gobby-terminal-context"])?;
+                assert_eq!(sent, context);
+                let contract: serde_json::Value =
+                    serde_json::from_str(include_str!("../contracts/mcp_wrapper.v1.json"))?;
+                let keys: std::collections::BTreeSet<_> = contract["terminal_context_keys"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|key| key.as_str().unwrap())
+                    .collect();
+                assert_eq!(
+                    sent.as_object()
+                        .unwrap()
+                        .keys()
+                        .map(String::as_str)
+                        .collect::<std::collections::BTreeSet<_>>(),
+                    keys
                 );
                 Ok(())
             },
