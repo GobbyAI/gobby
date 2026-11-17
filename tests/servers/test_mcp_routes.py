@@ -2907,7 +2907,7 @@ class TestMCPProxy:
         test_project: dict[str, Any],
     ) -> None:
         """Fresh ambient wrappers resolve terminal identity before dispatch."""
-        terminal_context = {"parent_pid": 4242, "tmux_pane": "%12"}
+        terminal_context = {"parent_pid": 4242, "gobby_pane_ref": "0:0:1:2"}
         session = session_storage.register(
             external_id="ambient-session",
             machine_id="21000000-0000-4000-8000-000000000001",

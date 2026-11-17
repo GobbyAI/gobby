@@ -14,7 +14,7 @@ from tests.mcp_proxy.conftest import BOUND_SESSION_ID
 pytestmark = pytest.mark.unit
 
 HEADLESS_CONTEXT = {"parent_pid": 4321}
-TERMINAL_CONTEXT = {"parent_pid": 4321, "tmux_pane": "%4"}
+TERMINAL_CONTEXT = {"parent_pid": 4321, "gobby_pane_ref": "0:0:1:2"}
 
 
 @pytest.fixture(autouse=True)
@@ -188,7 +188,7 @@ async def test_managed_agent_pins_session_header_to_spawn_env(
 
 
 @pytest.mark.asyncio
-async def test_interactive_tmux_sends_only_the_bound_session_header() -> None:
+async def test_interactive_terminal_sends_wrapper_session_header() -> None:
     with patch(
         "gobby.mcp_proxy.stdio_proxy.current_terminal_context",
         return_value=TERMINAL_CONTEXT,

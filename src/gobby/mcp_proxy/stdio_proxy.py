@@ -180,7 +180,6 @@ class DaemonProxy:
         self._environment_session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
         terminal_context = current_terminal_context()
         self._terminal_context_header = serialize_terminal_context(terminal_context)
-        self._has_tmux_identity = bool(terminal_context.get("tmux_pane"))
         self._last_health_ok_at = 0.0
         # An unspawned CLI never reads the machine key: its session speaks through its bound record.
         self._managed = _managed_execution()
@@ -337,10 +336,9 @@ class DaemonProxy:
             # sessions.id. Spawned/autonomous/managed runs export this; a
             # body ref like "#42" cannot change caller identity.
             effective_session_id = self._environment_session_id
-        elif session_id and not self._has_tmux_identity:
+        elif session_id:
             # Headless callers pass the Gobby session as wrapper session_id.
-            # Interactive tmux omits the header so a guessed "#1" cannot
-            # replace the pane. GROK_SESSION_ID is sessions.external_id.
+            # GROK_SESSION_ID is sessions.external_id.
             effective_session_id = session_id
         else:
             effective_session_id = None

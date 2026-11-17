@@ -99,7 +99,7 @@ class _Harness:
             self.terminals.create_pending(
                 terminal_id,
                 self.project_id,
-                "tmux",
+                "native",
                 "gobby",
                 terminal_id,
                 machine_id=self.machine_id,

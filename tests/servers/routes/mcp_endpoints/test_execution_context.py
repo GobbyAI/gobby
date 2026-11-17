@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from gobby.mcp_proxy.terminal_context import TERMINAL_CONTEXT_KEYS
 from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_PROTOCOL_VERSION,
     MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
@@ -362,6 +363,45 @@ class TestSetContextForRequest:
 
         assert mock_helper.call_args.kwargs["project_ref"] is None
         mock_resolve.assert_not_called()
+
+    async def test_wrapper_accepts_contract_fields(self) -> None:
+        server = _make_server()
+        terminal_context: dict[str, str | int] = {
+            "parent_pid": 4242,
+            "tty": "/dev/ttys004",
+            "term_program": "fixture-terminal",
+            "term_session_id": "fixture-window",
+            "gobby_terminal_id": str(uuid.uuid4()),
+            "gobby_pane_ref": "0:0:1:2",
+        }
+        assert set(terminal_context) == set(TERMINAL_CONTEXT_KEYS)
+        server.session_manager.resolve_current_terminal_session.return_value = SimpleNamespace(
+            id=SESSION_UUID, external_id="external-session", project_id=PROJECT_ID
+        )
+        request = _make_request(
+            project_id=PROJECT_ID, wrapper=True, terminal_context=json.dumps(terminal_context)
+        )
+        with patch(
+            "gobby.servers.routes.mcp.endpoints.request_context.resolve_and_seed_contexts",
+            return_value=SeededContextTokens(resolved_project_id=PROJECT_ID),
+        ) as mock_helper:
+            tokens = await _set_context_for_request(server, {}, request)
+            assert tokens.resolved_session_id == SESSION_UUID
+            server.session_manager.resolve_current_terminal_session.assert_called_once_with(
+                PROJECT_ID, 4242, terminal_context
+            )
+
+            unknown_request = _make_request(
+                project_id=PROJECT_ID,
+                wrapper=True,
+                terminal_context=json.dumps({**terminal_context, "unknown_field": "refused"}),
+            )
+            with pytest.raises(HTTPException) as exc_info:
+                await _set_context_for_request(server, {}, unknown_request)
+            assert exc_info.value.status_code == 409
+            assert _exception_detail(exc_info.value)["error_code"] == "SESSION_REQUIRED"
+            mock_helper.assert_called_once()
+            server.session_manager.resolve_current_terminal_session.assert_called_once()
 
     async def test_wrapper_terminal_context_uses_caller_project_scope(self) -> None:
         """Ambient resolution uses caller scope while target project remains independent."""

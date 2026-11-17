@@ -30,7 +30,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 RESOLVED_SESSION_ID = str(uuid.uuid4())
 PROJECT_ID = str(uuid.uuid4())
-TERMINAL_CONTEXT = {"parent_pid": 4242, "tmux_pane": "%12"}
+TERMINAL_CONTEXT = {"parent_pid": 4242, "gobby_pane_ref": "0:0:1:2"}
 
 
 def _make_server() -> MagicMock:

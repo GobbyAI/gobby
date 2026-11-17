@@ -13,7 +13,7 @@ from tests.mcp_proxy.conftest import BOUND_SESSION_ID
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
-TERMINAL_CONTEXT = {"parent_pid": 4321, "tmux_pane": "%4"}
+TERMINAL_CONTEXT = {"parent_pid": 4321, "gobby_pane_ref": "0:0:1:2"}
 HEADLESS_CONTEXT = {"parent_pid": 4321}
 
 

@@ -11,12 +11,6 @@ from gobby.agents.constants import GOBBY_PANE_REF, GOBBY_TERMINAL_ID
 
 TERMINAL_CONTEXT_KEYS = (
     "parent_pid",
-    "tmux_pane",
-    "tmux_socket_path",
-    "tmux_window_id",
-    "tmux_session",
-    "tmux_server_pid",
-    "tmux_server_start_time",
     "tty",
     "term_program",
     "term_session_id",

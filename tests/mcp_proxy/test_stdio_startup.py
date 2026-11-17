@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
+import os
 import subprocess
 import sys
 import threading
@@ -25,6 +27,8 @@ from gobby.mcp_proxy.stdio_daemon import DaemonStartupDependencies
 from gobby.mcp_proxy.stdio_daemon import ensure_daemon_running as ensure_stdio_daemon_running
 from gobby.mcp_proxy.stdio_daemon import main as run_stdio_bridge
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy, DaemonProxyDependencies
+from gobby.mcp_proxy.terminal_context import TERMINAL_CONTEXT_KEYS
+from gobby.utils.session_context import TERMINAL_CONTEXT_HEADER
 
 BRIDGE_BOOTSTRAP = BootstrapConfig(daemon_port=60887, websocket_port=60888)
 
@@ -224,6 +228,45 @@ async def test_tool_call_after_startup_failure_returns_daemon_unavailable(
     ]
 
 
+@pytest.mark.asyncio
+async def test_stdio_proxy_sends_contract_context(monkeypatch: pytest.MonkeyPatch) -> None:
+    parent_pid = os.getppid()
+    monkeypatch.setenv("GOBBY_AGENT_RUN_ID", "11111111-2222-4333-8444-555555555555")
+    monkeypatch.delenv("GOBBY_SESSION_ID", raising=False)
+    monkeypatch.setenv("TTY", "/dev/ttys004")
+    monkeypatch.setenv("TERM_PROGRAM", "fixture-terminal")
+    monkeypatch.setenv("TERM_SESSION_ID", "fixture-window")
+    monkeypatch.setenv("GOBBY_TERMINAL_ID", "22222222-3333-4444-8555-666666666666")
+    monkeypatch.setenv("GOBBY_PANE_REF", "0:0:1:2")
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.stdio_proxy.daemon_auth_headers",
+        lambda: {"Authorization": "Bearer managed-test-token"},
+    )
+    response = MagicMock(status_code=200, text="")
+    response.json.return_value = {"success": True}
+    client = AsyncMock(spec=httpx.AsyncClient)
+    client.request.return_value = response
+    deps = _proxy_dependencies(check_health=AsyncMock(return_value=True), client=client)
+    proxy = DaemonProxy(60887, deps_factory=lambda: deps)
+    try:
+        assert await proxy.get_status() == {"success": True}
+        client.request.assert_awaited_once()
+        headers = client.request.await_args.kwargs["headers"]
+        assert "X-Gobby-Session-Id" not in headers
+        context = json.loads(headers[TERMINAL_CONTEXT_HEADER])
+        assert set(context) == set(TERMINAL_CONTEXT_KEYS)
+        assert context == {
+            "parent_pid": parent_pid,
+            "tty": "/dev/ttys004",
+            "term_program": "fixture-terminal",
+            "term_session_id": "fixture-window",
+            "gobby_terminal_id": "22222222-3333-4444-8555-666666666666",
+            "gobby_pane_ref": "0:0:1:2",
+        }
+    finally:
+        await proxy.aclose()
+
+
 @pytest.fixture
 def bridge_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Build the real bridge against fixed bootstrap facts."""
@@ -233,8 +276,6 @@ def bridge_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "GOBBY_DAEMON_PORT",
         "GOBBY_PROJECT_ID",
         "GOBBY_SESSION_ID",
-        "TMUX",
-        "TMUX_PANE",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr("gobby.mcp_proxy.stdio.load_bootstrap", lambda **_: BRIDGE_BOOTSTRAP)

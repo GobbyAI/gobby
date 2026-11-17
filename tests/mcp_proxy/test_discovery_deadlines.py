@@ -236,6 +236,15 @@ async def test_discovery_deadline_cancels_listing_and_cleans_exact_connection(
     manager = MCPClientManager(
         server_configs=[config], connection_timeout=0.02, max_connection_retries=0
     )
+    timeout_context = asyncio.timeout
+
+    def ordered_timeout(delay: float | None) -> asyncio.Timeout:
+        # Keep the actual outer budget, with the RPC deadline beyond it so
+        # this test proves outer cancellation rather than an inner RPC expiry.
+        rpc_budget = max(manager.connection_timeout, config.connect_timeout)
+        return timeout_context(1.0 if delay == rpc_budget else delay)
+
+    monkeypatch.setattr(asyncio, "timeout", ordered_timeout)
     cancelled = asyncio.Event()
 
     async def blocked_listing() -> None:
@@ -252,7 +261,11 @@ async def test_discovery_deadline_cancels_listing_and_cleans_exact_connection(
     initial = SimpleNamespace(
         session=SimpleNamespace(
             list_tools=AsyncMock(
-                side_effect=ConnectionError("stale") if stale_first else blocked_listing
+                # Enter the retry deterministically: two tiny real deadlines
+                # can expire in one event-loop turn under worker load.
+                side_effect=ConnectionError("stale")
+                if stale_first
+                else TimeoutError("initial listing timed out")
             )
         ),
         is_connected=True,
@@ -266,7 +279,7 @@ async def test_discovery_deadline_cancels_listing_and_cleans_exact_connection(
 
     connect = AsyncMock(side_effect=reconnect)
     monkeypatch.setattr(manager, "_connect_server", connect)
-    with pytest.raises(MCPError, match="Tool discovery timeout after 0.0"):
+    with pytest.raises(MCPError, match="^Tool discovery timeout after 0.0"):
         await manager.list_tools(config.id)
     assert cancelled.is_set()
     assert config.id not in manager._connections

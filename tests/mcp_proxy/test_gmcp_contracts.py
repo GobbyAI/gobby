@@ -45,7 +45,6 @@ def test_instructions_copy_matches_bundled_prompt() -> None:
 def test_wrapper_contract_matches_python_constants() -> None:
     contract_path = CRATE_DIR / "contracts/mcp_wrapper.v1.json"
     contract = json.loads(contract_path.read_text())
-    contract.pop("terminal_context_keys")
     assert contract == {
         "protocol_version": wait_tools.MCP_WRAPPER_PROTOCOL_VERSION,
         "protocol_version_header": wait_tools.MCP_WRAPPER_PROTOCOL_VERSION_HEADER,
@@ -58,6 +57,7 @@ def test_wrapper_contract_matches_python_constants() -> None:
         "wrapper_grace_seconds": wait_tools.WAIT_TOOL_WRAPPER_GRACE_SECONDS,
         "heartbeat_interval_seconds": wait_tools.WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS,
         "agent_identity_env_headers": [list(pair) for pair in _AGENT_IDENTITY_ENV_HEADERS],
+        "terminal_context_keys": list(TERMINAL_CONTEXT_KEYS),
     }
 
 

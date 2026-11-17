@@ -18,9 +18,6 @@ pytestmark = pytest.mark.unit
 def test_proxy_context_reads_only_native_environment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("TMUX_PANE", "%4")
-    monkeypatch.setenv("TMUX", "/tmp/tmux-501/default,123,0")
-    monkeypatch.setenv("TMUX_SESSION", "work")
     monkeypatch.setenv("TTY", "/dev/ttys004")
     monkeypatch.setenv("TERM_PROGRAM", "iTerm.app")
     monkeypatch.setenv("TERM_SESSION_ID", "w0t0p0")
