@@ -1042,23 +1042,15 @@ class TestSessionManagerLifecycle:
         assert transcript_row is not None
         assert transcript_row["transcript_processed"] is True
 
-    @pytest.mark.parametrize(
-        ("newer_machine_id", "newer_socket_path"),
-        [
-            ("20000000-0000-4000-8000-000000000012", "/tmp/terminal-501/default"),
-            ("20000000-0000-4000-8000-000000000001", "/tmp/terminal-501/other"),
-        ],
-    )
-    def test_terminal_ownership_does_not_cross_machine_or_socket(
+    def test_terminal_ownership_does_not_cross_machines(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
-        newer_machine_id: str,
-        newer_socket_path: str,
     ) -> None:
-        """Identical pane IDs on distinct machines or sockets remain independent."""
+        """Identical terminal IDs on distinct machines remain independent."""
+        newer_machine_id = "20000000-0000-4000-8000-000000000012"
         older = session_manager.register(
-            external_id=f"older-{newer_machine_id}-{newer_socket_path}",
+            external_id="older-terminal-owner",
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
@@ -1067,7 +1059,7 @@ class TestSessionManagerLifecycle:
         session_manager.update_status(older.id, "expired")
         with patch("gobby.utils.machine_id._cached_machine_id", newer_machine_id):
             newer = session_manager.register(
-                external_id=f"newer-{newer_machine_id}-{newer_socket_path}",
+                external_id="newer-terminal-owner",
                 machine_id=newer_machine_id,
                 source="claude",
                 project_id=sample_project["id"],

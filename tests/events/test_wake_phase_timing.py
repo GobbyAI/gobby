@@ -44,7 +44,7 @@ async def test_deferred_wake_line_reports_phases_that_sum_to_duration(
     marks = iter(MARKS)
     monkeypatch.setattr(wake_module, "time", SimpleNamespace(monotonic=lambda: next(marks)))
     dispatcher, refresh = _dispatcher(
-        monkeypatch, {"delivered": True, "method": "tmux", "skipped": None}
+        monkeypatch, {"delivered": True, "method": "terminal", "skipped": None}
     )
     caplog.set_level(logging.DEBUG, logger="gobby.events.wake")
 
@@ -70,7 +70,7 @@ async def test_deferred_wake_line_reports_phases_that_sum_to_duration(
     [
         ({"delivered": False, "method": None, "skipped": "debounced"}, logging.DEBUG),
         ({"delivered": False, "method": None, "skipped": "session_active"}, logging.INFO),
-        ({"delivered": True, "method": "tmux", "skipped": None}, logging.INFO),
+        ({"delivered": True, "method": "terminal", "skipped": None}, logging.INFO),
     ],
     ids=["debounced-debug", "session-active-info", "delivered-info"],
 )

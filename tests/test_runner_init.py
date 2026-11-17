@@ -474,7 +474,7 @@ class TestGobbyRunnerInit:
 
 
 class TestWakeTerminalSenders:
-    """Tests for runner-level tmux wake sender wiring."""
+    """Tests for runner-level terminal wake sender wiring."""
 
     @pytest.mark.asyncio
     async def test_session_wake_clears_the_composer_before_submit(

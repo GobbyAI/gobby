@@ -427,7 +427,7 @@ class AgentLifecycleMonitor:
                 break
 
     def _get_active_terminal_runs(self) -> list[AgentRun]:
-        """Get active terminal agent runs with tmux sessions from DB.
+        """Get active terminal agent runs with managed terminals from DB.
 
         Recovery-protected runs (provisional successors, reconciliation
         pending) are excluded so prompt monitors cannot kill them before
@@ -580,7 +580,7 @@ class AgentLifecycleMonitor:
         return await self._health_monitor.check_initialization_timeout()
 
     async def check_provider_stalls(self) -> int:
-        """Check tmux agents for provider-side stalls (rate limits, outages)."""
+        """Check terminal agents for provider-side stalls (rate limits, outages)."""
         return await self._health_monitor.check_provider_stalls()
 
     async def reconcile_pending_terminations(self) -> int:
@@ -822,7 +822,7 @@ class AgentLifecycleMonitor:
         )
 
     async def _checkpoint_and_kill_looping_agent(self, run: AgentRun) -> None:
-        """Checkpoint work, kill tmux, then full cleanup for a doom-looping agent."""
+        """Checkpoint work, close the terminal, then full cleanup for a doom-looping agent."""
         await self._checkpoint_agent_work(run)
 
         threshold = self._loop_tracker.threshold

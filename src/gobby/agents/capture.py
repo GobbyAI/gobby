@@ -347,7 +347,7 @@ def capture_then_kill_sync(
             if kill_outcome is None:
                 return _failure(
                     TerminationErrorCode.KILL_FAILED,
-                    f"kill callback left tmux session {session_name} alive",
+                    f"kill callback left terminal {session_name} alive",
                     run,
                 )
         else:
@@ -528,7 +528,7 @@ async def capture_then_kill_async(
             if kill_outcome is None:
                 return _failure(
                     TerminationErrorCode.KILL_FAILED,
-                    f"kill callback left tmux session {session_name} alive",
+                    f"kill callback left terminal {session_name} alive",
                     run,
                 )
         else:

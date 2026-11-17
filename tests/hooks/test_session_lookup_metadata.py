@@ -256,9 +256,9 @@ def test_invalid_platform_session_metadata_falls_back_to_external_lookup() -> No
     )
 
 
-def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registering() -> None:
+def test_user_prompt_submit_weak_context_recovers_terminal_session_without_registering() -> None:
     recovered_session = SimpleNamespace(
-        id="tmux-capable-session",
+        id="terminal-capable-session",
         project_id="project-1",
         machine_id=_REAL_MACHINE_ID,
         source="claude",
@@ -289,8 +289,8 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
 
     result = service.resolve(event)
 
-    assert result == "tmux-capable-session"
-    assert event.metadata["_platform_session_id"] == "tmux-capable-session"
+    assert result == "terminal-capable-session"
+    assert event.metadata["_platform_session_id"] == "terminal-capable-session"
     session_manager.recover_session.assert_any_call(
         external_id="codex-external",
         source="codex",
@@ -298,12 +298,12 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
     )
     session_manager.register_session.assert_not_called()
     session_manager.backfill_terminal_context.assert_called_once_with(
-        "tmux-capable-session",
+        "terminal-capable-session",
         {"cwd": "/work/repos/gobby"},
         None,
     )
     session_manager.revive_expired_terminal_session.assert_called_once_with(
-        "tmux-capable-session", recovered_session
+        "terminal-capable-session", recovered_session
     )
 
 

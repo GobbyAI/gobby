@@ -417,12 +417,9 @@ def test_sweep_reclaims_a_final_expiry_without_waiting_out_the_revival_horizon(
 ) -> None:
     """An expiry nobody is contesting releases its claim on the ordinary schedule.
 
-    expire_stale_sessions after a day of inactivity, and the tmux-kill sweep
-    after a tmux server dies, both know the session is finished, so neither
-    records a contested-expiry marker. Making the grace conditional on that
-    marker is what keeps a genuinely dead owner from parking its claim for the
-    full revival horizon -- including the pane-carrying case a pane test alone
-    would have shielded (#20837).
+    Ordinary stale expiry records no contested-expiry marker. Making the grace
+    conditional on that marker keeps a dead owner from parking its claim for
+    the full revival horizon, including a row with a terminal ID (#20837).
     """
     session_id = str(uuid.uuid4())
     _make_session(temp_db, sample_project, session_id, "expired", terminal_id=terminal_id)
@@ -473,14 +470,11 @@ def test_a_nested_cli_start_in_a_plain_terminal_leaves_the_outer_claim_intact(
     monkeypatch: pytest.MonkeyPatch,
     _local_machine_identity: None,
 ) -> None:
-    """The same cascade without tmux, where the contest is settled by tty.
+    """A nested CLI in a plain terminal contests ownership through its tty.
 
-    terminal_contexts_match names four fields, and a session with no tmux pane
-    at all is expired by a tty or parent_pid match -- exactly a nested CLI in a
-    plain terminal. revive_expired_terminal_session reverses that expiry for
-    any paneless session inside the revival horizon, so the outer session is
-    working, not dead, and its claim has to survive the sweep in between
-    (#20837).
+    With no native terminal ID, identity falls back to tty or parent_pid.
+    Revival can reverse that contested expiry inside the revival horizon,
+    so the outer session's claim must survive the sweep in between (#20837).
     """
     manager = SessionManager(temp_db)
     outer_context = {

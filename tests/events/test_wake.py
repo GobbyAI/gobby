@@ -572,12 +572,12 @@ class TestWakeDispatch:
             agent_depth=1,
             terminal_context='{"tmux_session": "gobby-agent-abc", "tmux_pane": "%5"}',
         )
-        failing_tmux = AsyncMock(side_effect=RuntimeError("tmux session dead"))
+        failing_terminal = AsyncMock(side_effect=RuntimeError("tmux session dead"))
 
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,
-            terminal_sender=failing_tmux,
+            terminal_sender=failing_terminal,
             terminal_manager=_managed_terminal(),
         )
         await dispatcher.wake(WAKE_SESSION_ID, "Pipeline completed", {"status": "completed"})
@@ -585,15 +585,15 @@ class TestWakeDispatch:
         ism_manager.create_message.assert_called_once()
         assert ism_manager.create_message.call_count == 1
         assert ism_manager.create_message.call_args is not None
-        failing_tmux.assert_awaited_once_with(
+        failing_terminal.assert_awaited_once_with(
             "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
             clear_before_submit=True,
             cli_source=ANY,
         )
-        assert failing_tmux.await_count == 1
-        assert failing_tmux.await_args is not None
+        assert failing_terminal.await_count == 1
+        assert failing_terminal.await_args is not None
 
     @pytest.mark.asyncio
     async def test_terminal_agent_no_terminal_sender_uses_ism(
@@ -1404,8 +1404,8 @@ class TestWakeDispatch:
             turn_count=8,
         )
 
-        async def slow_tmux_send(
-            _tmux_session_name: str,
+        async def slow_terminal_send(
+            _terminal_name: str,
             _message: str,
             *,
             submit: bool = False,
@@ -1419,7 +1419,7 @@ class TestWakeDispatch:
 
         send_started = asyncio.Event()
         release_send = asyncio.Event()
-        terminal_sender = AsyncMock(side_effect=slow_tmux_send)
+        terminal_sender = AsyncMock(side_effect=slow_terminal_send)
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=ism_manager,

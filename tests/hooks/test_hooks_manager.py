@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -33,6 +34,7 @@ from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.terminals import TerminalManager
 from gobby.utils.session_context import reset_seeded_contexts, resolve_and_seed_contexts
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_for_async_condition
@@ -351,12 +353,14 @@ class TestHookManagerHandle:
         hook_manager_with_mocks: HookManager,
         temp_dir: Path,
     ) -> None:
-        """Historical PostToolUse processing cannot reclaim a reused tmux pane."""
+        """Historical PostToolUse processing cannot reclaim a reused terminal."""
         manager = hook_manager_with_mocks
         project_id = manager._resolve_project_id(None, str(temp_dir))
         terminal_context = {
-            "tmux_pane": "%154",
-            "tmux_socket_path": "/tmp/tmux-501/default",
+            "gobby_terminal_id": str(uuid.uuid4()),
+            "parent_pid": os.getpid(),
+            "parent_create_time": psutil.Process().create_time(),
+            "parent_name": psutil.Process().name(),
         }
         older = manager.session_manager.register(
             external_id="claude-stale-external",
@@ -653,11 +657,8 @@ class TestHookManagerBeforeAgent:
         terminal_context = {
             "parent_pid": 30769,
             "tty": "/dev/ttys091",
-            "tmux_pane": "%91",
-            "tmux_socket_path": "/tmp/tmux-501/default",
-            "tmux_window_id": "@42",
-            "tmux_session": "gobby",
-            "term_program": "tmux",
+            "gobby_terminal_id": "terminal-91",
+            "term_program": "gclient",
         }
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 
@@ -724,10 +725,6 @@ class TestHookManagerBeforeAgent:
         host_context = {
             "parent_pid": host_pid,
             "tty": None,
-            "tmux_pane": None,
-            "tmux_socket_path": None,
-            "tmux_window_id": None,
-            "tmux_session": None,
             "term_program": None,
             "gobby_session_id": None,
             "gobby_agent_run_id": None,
@@ -2031,7 +2028,7 @@ class TestHookManagerSessionLookup:
             data={
                 "tool_name": "Bash",
                 "cwd": str(temp_dir),
-                "terminal_context": {"tmux_pane": "%5", "parent_pid": 999},
+                "terminal_context": {"gobby_terminal_id": "%5", "parent_pid": 999},
             },
             machine_id="21000000-0000-4000-8000-000000000004",
         )
@@ -2042,7 +2039,7 @@ class TestHookManagerSessionLookup:
         updated = manager._session_manager.get(session_id)
         assert updated is not None
         assert updated.terminal_context is not None
-        assert updated.terminal_context["tmux_pane"] == "%5"
+        assert updated.terminal_context["gobby_terminal_id"] == "%5"
         assert updated.terminal_context["cwd"] == str(temp_dir)
 
     def test_handle_resolves_active_task(
@@ -3005,7 +3002,7 @@ def test_copied_session_start_uses_deferred_identity_schema(
             "prompt": "live prompt must not leak",
             "cwd": str(temp_dir),
             "transcript_path": str(temp_dir / "copied-start.jsonl"),
-            "terminal_context": {"tmux_pane": "%77"},
+            "terminal_context": {"gobby_terminal_id": "%77"},
         },
         machine_id=LOCAL_MACHINE_ID,
     )
@@ -3050,7 +3047,7 @@ def test_copied_session_start_uses_deferred_identity_schema(
         "source": "startup",
         "cwd": str(temp_dir),
         "transcript_path": str(temp_dir / "copied-start.jsonl"),
-        "terminal_context": {"tmux_pane": "%77", "cwd": str(temp_dir)},
+        "terminal_context": {"gobby_terminal_id": "%77", "cwd": str(temp_dir)},
     }
     assert synthetic.metadata == {
         "_platform_session_id": event.metadata["_platform_session_id"],
@@ -3390,6 +3387,7 @@ def test_codex_successor_after_a_slow_login_binds_its_existing_pane(
     )
     host = tui(93395, ["codex", "app-server", "--listen", "unix://", "--managed-daemon"], 50.0, "")
     table = [host, neighbour, tui(12856, ["codex", "--yolo"], minted_at - 188, pane_id)]
+    _record_native_shell(terminals, pane_id, 12856)
 
     def lookup(pid: int) -> MagicMock:
         for candidate in table:
@@ -3455,6 +3453,21 @@ def test_codex_successor_after_a_slow_login_binds_its_existing_pane(
     live = terminals.resolve_live_for_session(paused)
     assert live is not None
     assert live.id == pane_id
+
+
+def _record_native_shell(terminals: TerminalManager, terminal_id: str, pid: int) -> None:
+    pending = terminals.get(terminal_id)
+    assert pending is not None
+    assert pending.attempt_started_at is not None
+    assert (
+        terminals.record_process(
+            terminal_id,
+            {"pgid": pid, "host_terminal_id": terminal_id},
+            attempt_generation=pending.attempt_generation,
+            attempt_started_at=pending.attempt_started_at,
+        )
+        is not None
+    )
 
 
 def _codex_tui(
@@ -3546,6 +3559,7 @@ def test_codex_clear_in_running_tui_takes_over_the_pane(
     )
     minted_at = time.time()
     seat = _codex_tui(45647, ["codex", "--yolo"], minted_at - 7200, pane_id, temp_dir)
+    _record_native_shell(terminals, pane_id, seat.pid)
     predecessor_thread = _uuid7_at(minted_at - 7100, 0x1111)
     predecessor_id = sessions.register_session(
         external_id=predecessor_thread,
@@ -3798,6 +3812,7 @@ def test_codex_clear_stored_outcome_governs_every_later_hook(
     )
     minted_at = time.time()
     seat = _codex_tui(45647, ["codex", "--yolo"], minted_at - 7200, pane_id, temp_dir)
+    _record_native_shell(terminals, pane_id, seat.pid)
     predecessor_thread = _uuid7_at(minted_at - 7100, 0x1111)
     predecessor_id = sessions.register_session(
         external_id=predecessor_thread,
@@ -4016,7 +4031,7 @@ def test_codex_first_prompt_after_a_restart_binds_only_a_started_threads_pane(
 
     manager = hook_manager_with_mocks
     sessions = manager._session_manager
-    _terminals, project_id, pane_id = _pending_codex_pane(manager)
+    terminals, project_id, pane_id = _pending_codex_pane(manager)
     minted_at = time.time()
     thread = _uuid7_at(minted_at, 0x3333)
     host = _codex_tui(
@@ -4027,6 +4042,7 @@ def test_codex_first_prompt_after_a_restart_binds_only_a_started_threads_pane(
         temp_dir,
     )
     fresh = _codex_tui(52002, ["codex"], minted_at - 30, pane_id, temp_dir)
+    _record_native_shell(terminals, pane_id, fresh.pid)
     table = [host, fresh]
 
     def lookup(pid: int) -> MagicMock:

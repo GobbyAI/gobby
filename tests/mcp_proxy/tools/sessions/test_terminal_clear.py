@@ -637,7 +637,7 @@ async def test_pending_attempt_timeout_stays_pending() -> None:
 
 
 async def test_codex_clear_continuation_forwards_terminal_runtime() -> None:
-    """A native (gclient-hosted) Codex pane has no tmux identity; the pull routes via the runtime."""
+    """A native (gclient-hosted) Codex pane routes the pull via its runtime."""
     session = _terminal_session(terminal_context={"gobby_terminal_id": "term-1"})
     pane = _Pane(_IDLE_PANE)
     pane.backend = "native"

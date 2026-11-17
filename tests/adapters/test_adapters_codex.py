@@ -56,7 +56,7 @@ def test_app_server_context_has_no_pane_line() -> None:
             "_first_hook_for_session": True,
             "terminal_tty": "/dev/ttys001",
             "terminal_parent_pid": 202,
-            "terminal_tmux_pane": "%4",
+            "terminal_gobby_terminal_id": "%4",
         },
     )
     result = CodexAdapter().translate_from_hook_response(response)

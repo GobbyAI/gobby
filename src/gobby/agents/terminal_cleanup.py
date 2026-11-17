@@ -148,11 +148,11 @@ class TerminalResourceCleaner:
                 # Finalisation must survive a terminal or storage error here; the
                 # sweep retries any row left unsettled.
                 logger.warning(
-                    "Failed to close tmux session for terminal agent %s: %s",
+                    "Failed to close terminal for terminal agent %s: %s",
                     run.id,
                     type(exc).__name__,
                 )
-            finish_phase("tmux")
+            finish_phase("terminal")
         if on_this_machine and not parking:
             try:
                 try:

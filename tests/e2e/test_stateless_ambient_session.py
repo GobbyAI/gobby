@@ -46,8 +46,7 @@ def _terminal_context(label: str) -> dict[str, Any]:
     suffix = f"{label}-{uuid.uuid4()}"
     return {
         "parent_pid": os.getpid(),
-        "tmux_pane": f"%{suffix}",
-        "tmux_socket_path": f"/tmp/{suffix}.sock",
+        "gobby_terminal_id": str(uuid.uuid4()),
         "tty": f"/dev/pts/{suffix}",
         "term_program": "pytest",
         "term_session_id": suffix,
@@ -235,6 +234,11 @@ async def test_ambient_proxy_follows_clear_and_attributes_schema_lease(
         ambient_a = await proxy.list_tools(TARGET_SERVER)
         assert ambient_a.get("success") is True
         assert TARGET_SERVER in variable_manager.get_variables(session_a.id)["listed_servers"]
+
+        # This credential-routing fixture has no live terminal host to transfer
+        # ownership. Expire the predecessor through the hook so this test
+        # exercises credential routing across an explicit lifecycle boundary.
+        cli_events.session_end(external_a, source=cli_source)
 
         start_b = cli_events.session_start(
             external_b,

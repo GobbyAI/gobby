@@ -39,7 +39,7 @@ async def _run_db(function: Callable[..., Any], *args: Any, **kwargs: Any) -> An
 def _roster_entries(
     temp_db: HubDatabase, session_manager: SessionManager, terminals: TerminalManager
 ) -> dict[str, dict[str, Any]]:
-    config = SimpleNamespace(tmux=SimpleNamespace(socket_path="/tmp/gobby.sock"))
+    config = SimpleNamespace(terminals=SimpleNamespace())
     server = SimpleNamespace(
         services=SimpleNamespace(
             attention_manager=AttentionStateManager(temp_db, epoch="native-roster"),

@@ -3,7 +3,7 @@
 Routes wake messages based on session type after first persisting a durable
 InterSessionMessage:
 - Any session Gobby owns a live terminal row for: managed terminal wake through
-  that row, whatever its backend (tmux or native)
+  that native terminal
 - SDK agents (agent_depth > 0, sdk_session_id): SDK resume wake signal
 - Terminal sessions without a live row: explicit missing-channel result
 """
@@ -76,9 +76,8 @@ LIVE_WAKE_SENT_AT_VARIABLE = "live_wake_sent_at"
 # this, so the next message wakes normally.
 LIVE_WAKE_FRESH_SECONDS = 30.0
 # Bounds SDK-resume and web-chat wakes only, which have no internal timeout.
-# Never wrap the tmux senders in wait_for: every tmux subprocess is already
-# bounded (TmuxTextInjectionTimeout), and an outer cancellation can land
-# between paste-buffer and Enter, leaving pasted text unsubmitted.
+# Managed terminal writes own completion and indeterminate outcomes. An outer
+# cancellation can strand text before submission.
 LIVE_WAKE_TIMEOUT_SECONDS = 5.0
 
 # Bounded exponential backoff for a wake withheld from a composer that is not
@@ -627,7 +626,7 @@ class WakeDispatcher:
                 await self._record_live_wake(session_id, utc_now())
             return result
 
-        # The managed terminal row resolves the runtime for native and tmux
+        # The managed terminal row resolves the native runtime
         # sessions. An unbound terminal has no safe input target.
         terminal_route = await self._terminal_route_for_session(session)
         terminal = terminal_route.managed_terminal
@@ -847,8 +846,7 @@ class WakeDispatcher:
         """Wake a session through the terminal row that hosts it.
 
         `send` is the composition root's wake sender: it resolves the row by
-        identity and writes through the write coordinator, so the runtime comes
-        from Terminal.backend and native rows are driven as well as tmux ones.
+        identity and writes through the native terminal's write coordinator.
         """
         from gobby.terminals.runtime import AutomaticWriteDeclined, IndeterminateWrite
 

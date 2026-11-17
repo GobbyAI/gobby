@@ -70,7 +70,7 @@ def mock_codex_prompt_delivery(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """Keep the fire-and-forget Codex prompt delivery task out of resume tests.
 
     Codex resumes schedule a real background coroutine against the spawner's
-    tmux session manager; against MagicMock spawners that coroutine would
+    terminal runtime; against MagicMock spawners that coroutine would
     outlive the test's event loop. Tests that assert delivery use this mock.
     """
     mock_delivery = MagicMock(return_value=True)

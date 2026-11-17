@@ -43,7 +43,7 @@ def _pending(manager: TerminalManager, project_id: str, machine_id: str) -> str:
     row = manager.create_pending(
         terminal_id=terminal_id,
         project_id=project_id,
-        backend="tmux",
+        backend="native",
         ownership="gobby",
         spawn_key=f"gobby-{terminal_id}",
         machine_id=machine_id,
@@ -90,7 +90,7 @@ def _terminal_run(
     prompt: str,
 ) -> str:
     run = manager.create(parent_session_id=session_id, provider="claude", prompt=prompt)
-    make_pending_terminal(run, backend="tmux", db=db)
+    make_pending_terminal(run, backend="native", db=db)
     db.execute(
         """
         UPDATE agent_runs
@@ -108,10 +108,10 @@ async def test_terminal_cleanup_is_machine_scoped(
     sample_project: dict[str, Any],
     session_manager: SessionManager,
 ) -> None:
-    """Tmux cleanup closes this machine's terminal runs and skips a remote one."""
+    """Terminal cleanup closes this machine's terminal runs and skips a remote one."""
     LocalMachineManager(temp_db).upsert_seen(REMOTE_MACHINE_ID, TEST_USER_ID)
     session = session_manager.register(
-        external_id=f"hub-local-tmux-{uuid.uuid4()}",
+        external_id=f"hub-local-terminal-{uuid.uuid4()}",
         machine_id=require_machine_id(),
         source="claude",
         project_id=sample_project["id"],
@@ -147,7 +147,7 @@ async def test_post_cleanup_skips_local_phases_for_remote_run(
     attention = AsyncMock()
     handler._resource_cleaner._attention_manager = attention
     delivery: list[str] = []
-    tmux: list[str] = []
+    terminal: list[str] = []
     srt: list[str] = []
     sandbox: list[str] = []
     ownership: list[str] = []
@@ -155,8 +155,8 @@ async def test_post_cleanup_skips_local_phases_for_remote_run(
     async def fake_delivery(**kwargs: Any) -> None:
         delivery.append(str(kwargs["run_id"]))
 
-    async def fake_tmux(_self: TerminalResourceCleaner, listed: Any) -> bool:
-        tmux.append(listed.id)
+    async def fake_terminal(_self: TerminalResourceCleaner, listed: Any) -> bool:
+        terminal.append(listed.id)
         return True
 
     async def fake_srt(run_id: str) -> None:
@@ -175,7 +175,7 @@ async def test_post_cleanup_skips_local_phases_for_remote_run(
             "gobby.agents.terminal_cleanup.terminal_delivery.deliver_and_cleanup_terminal_run",
             fake_delivery,
         ),
-        patch.object(TerminalResourceCleaner, "_close_terminal_session", fake_tmux),
+        patch.object(TerminalResourceCleaner, "_close_terminal_session", fake_terminal),
         patch("gobby.agents.terminal_cleanup.reap_srt_runner_process_tree", fake_srt),
         patch("gobby.agents.terminal_cleanup.reap_sandbox_run_roots", fake_sandbox),
         patch(
@@ -185,7 +185,7 @@ async def test_post_cleanup_skips_local_phases_for_remote_run(
     ):
         await handler.post_terminal_cleanup(run)
 
-    assert tmux == []
+    assert terminal == []
     assert srt == []
     assert sandbox == []
     assert delivery

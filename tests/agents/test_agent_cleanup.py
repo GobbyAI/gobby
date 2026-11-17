@@ -245,7 +245,7 @@ class _StickyRuntime(FakeRuntime):
 
 
 class _RemainOnExitRuntime(FakeRuntime):
-    """Pane process has exited; remain-on-exit kept the tmux session."""
+    """Pane process has exited; the terminal row remains."""
 
     async def is_live(self, terminal: Terminal) -> bool:
         del terminal
@@ -260,11 +260,11 @@ class _ExplodingProbeRuntime(FakeRuntime):
 
     async def is_live(self, terminal: Terminal) -> bool:
         del terminal
-        raise RuntimeError("tmux probe boom")
+        raise RuntimeError("terminal probe boom")
 
     async def session_present(self, terminal: Terminal) -> bool:
         del terminal
-        raise RuntimeError("tmux probe boom")
+        raise RuntimeError("terminal probe boom")
 
 
 def _capture_services(
@@ -298,7 +298,7 @@ def _capture_services(
     return TerminalServices(manager=store, registry=registry), runtime
 
 
-def _tmux_run(status: AgentRunStatus = "running") -> AgentRun:
+def _terminal_run(status: AgentRunStatus = "running") -> AgentRun:
     return replace(
         _run(task_id=None, child_session_id=None, status=status),
         terminal_id="wf-live",
@@ -320,7 +320,7 @@ def _wrapper_handler(
 
 
 async def test_terminalize_successful_run_captures_live_terminal_before_kill() -> None:
-    storage = _CaptureWrapperStorage(_tmux_run())
+    storage = _CaptureWrapperStorage(_terminal_run())
     services, runtime = _capture_services()
     handler, cleanup_runs = _wrapper_handler(storage, services)
 
@@ -340,7 +340,7 @@ async def test_terminalize_successful_run_captures_live_terminal_before_kill() -
 
 
 async def test_terminalize_successful_run_kill_failure_keeps_run_nonterminal() -> None:
-    storage = _CaptureWrapperStorage(_tmux_run())
+    storage = _CaptureWrapperStorage(_terminal_run())
     services, _runtime = _capture_services(kill_succeeds=False)
     handler, cleanup_runs = _wrapper_handler(storage, services)
 
@@ -359,7 +359,7 @@ async def test_terminalize_successful_run_kill_failure_keeps_run_nonterminal() -
 
 
 async def test_terminalize_cancelled_run_captures_live_terminal_before_kill() -> None:
-    storage = _CaptureWrapperStorage(_tmux_run())
+    storage = _CaptureWrapperStorage(_terminal_run())
     services, runtime = _capture_services()
     handler, cleanup_runs = _wrapper_handler(storage, services)
 
@@ -377,7 +377,7 @@ async def test_terminalize_cancelled_run_captures_live_terminal_before_kill() ->
 
 
 async def test_terminalize_successful_run_kills_remain_on_exit_session() -> None:
-    storage = _CaptureWrapperStorage(_tmux_run())
+    storage = _CaptureWrapperStorage(_terminal_run())
     services, runtime = _capture_services(pane_dead=True)
     handler, cleanup_runs = _wrapper_handler(storage, services)
 
@@ -397,7 +397,7 @@ async def test_terminalize_successful_run_kills_remain_on_exit_session() -> None
 
 
 async def test_terminalize_survives_presence_probe_failure() -> None:
-    storage = _CaptureWrapperStorage(_tmux_run())
+    storage = _CaptureWrapperStorage(_terminal_run())
     terminal = make_memory_terminal(terminal_id="wf-live", session_name="wf-live")
     store = MemoryTerminalStore(terminal)
     runtime = _ExplodingProbeRuntime()
@@ -420,7 +420,7 @@ async def test_terminalize_survives_presence_probe_failure() -> None:
 
 
 async def test_terminalize_wrappers_skip_policy_when_session_absent() -> None:
-    storage = _CaptureWrapperStorage(_tmux_run())
+    storage = _CaptureWrapperStorage(_terminal_run())
     services, runtime = _capture_services(live=False)
     handler, cleanup_runs = _wrapper_handler(storage, services)
 

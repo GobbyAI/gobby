@@ -58,10 +58,10 @@ def test_enrichment_omits_parent_identity_when_process_is_gone() -> None:
         side_effect=psutil.NoSuchProcess(4321),
     ):
         result = enrich_terminal_context_with_cwd(
-            {"parent_pid": 4321, "parent_create_time": 1.0, "tmux_pane": "%1"}, None
+            {"parent_pid": 4321, "parent_create_time": 1.0, "gobby_terminal_id": "%1"}, None
         )
 
-    assert result == {"tmux_pane": "%1"}
+    assert result == {"gobby_terminal_id": "%1"}
 
 
 def _process(

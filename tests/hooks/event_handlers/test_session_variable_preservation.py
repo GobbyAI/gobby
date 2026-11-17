@@ -162,8 +162,7 @@ def test_gobby_session_id_binding_merges_terminal_context(
         source="codex",
         project_id=project_id,
         terminal_context={
-            "tmux_pane": "%42",
-            "tmux_socket_path": "/tmp/tmux.sock",
+            "gobby_terminal_id": "%42",
             "cwd": "/work/old",
             "gobby_agent_run_id": "run-existing",
         },
@@ -174,7 +173,7 @@ def test_gobby_session_id_binding_merges_terminal_context(
             "skip_default_agent_activation": True,
             "terminal_context": {
                 "gobby_session_id": session.id,
-                "tmux_pane": None,
+                "gobby_terminal_id": None,
                 "cwd": "/work/new",
                 "parent_pid": 1234,
             },
@@ -199,8 +198,7 @@ def test_gobby_session_id_binding_merges_terminal_context(
     assert updated is not None
     assert updated.external_id == "native-codex-session"
     assert updated.terminal_context == {
-        "tmux_pane": "%42",
-        "tmux_socket_path": "/tmp/tmux.sock",
+        "gobby_terminal_id": "%42",
         "cwd": "/work/new",
         "gobby_agent_run_id": "run-existing",
         "gobby_session_id": session.id,

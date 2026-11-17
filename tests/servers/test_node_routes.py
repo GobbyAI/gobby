@@ -186,7 +186,7 @@ def _seed_run(
             """
             INSERT INTO terminals (
                 id, backend, ownership, state, spawn_key, machine_id, project_id, agent_run_id
-            ) VALUES (%s, 'tmux', 'gobby', 'pending', %s, %s, %s, %s)
+            ) VALUES (%s, 'native', 'gobby', 'pending', %s, %s, %s, %s)
             """,
             (terminal_id, f"gobby-{terminal_id}", terminal_machine, project_id, run_id),
         )

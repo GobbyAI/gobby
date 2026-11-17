@@ -31,8 +31,6 @@ _EVIDENCE_HEADER = """\
 
 def check_native_backend_flip(evidence_text: str, default_backend: str) -> bool:
     """Return whether the requested default satisfies the documented flip gate."""
-    if default_backend == "tmux":
-        return True
     if default_backend != "native":
         return False
 
@@ -77,7 +75,6 @@ _LINUX_RED = "| 2026-09-13 | Linux | `def5678` | https://ci.example/5 | red |"
 @pytest.mark.parametrize(
     ("default_backend", "rows", "expected"),
     [
-        pytest.param("tmux", (), True, id="tmux-allows-empty-stub"),
         pytest.param("native", (), False, id="native-rejects-empty-stub"),
         pytest.param("ssh", (_MACOS_GREEN,), False, id="unknown-backend-rejected"),
         pytest.param("native", (_MACOS_GREEN,), True, id="native-allows-macos-only-green"),
@@ -158,5 +155,3 @@ def test_checked_in_flip_gate_artifacts() -> None:
     assert "native-backend-flip.md" in backend_status
     assert "`native` is the only spawn backend" in backend_status
     assert "spawn-less adapter for externally discovered sessions" in backend_status
-    assert "a spawn request for tmux is refused" in backend_status
-    assert "default_backend tmux" not in backend_status

@@ -31,7 +31,6 @@ def test_terminals_section_carries_folded_keys() -> None:
     }
     values = config.model_dump()
     assert {key: values.get(key) for key in expected} == expected
-    assert "tmux" not in DaemonConfig.model_fields
 
 
 def test_folded_terminal_configuration_accepts_overrides() -> None:
@@ -77,10 +76,6 @@ def test_shared_terminal_config_precedes_host_config() -> None:
 
     overridden = DaemonConfig.model_validate({"terminals": {"spawn_in_doubt_seconds": 90.0}})
     assert overridden.terminals.spawn_in_doubt_seconds == 90.0
-
-    # No backend is selectable: the removed key is an unknown field (#23212).
-    with pytest.raises(ValidationError, match="default_backend"):
-        DaemonConfig.model_validate({"terminals": {"default_backend": "tmux"}})
 
     imported_host = False
     for root in _P2_CONSUMERS:

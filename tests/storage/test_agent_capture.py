@@ -174,18 +174,18 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
         pane_id="%4",
     )
 
-    no_tmux_manager, no_tmux_id, no_tmux_child = _create_run(
+    no_terminal_manager, no_terminal_id, no_terminal_child = _create_run(
         temp_db,
         session_manager,
         sample_project,
-        suffix="no-tmux",
+        suffix="no-terminal",
         pane_id="%5",
         child_status="expired",
     )
-    no_tmux_run = no_tmux_manager.get(no_tmux_id)
-    assert no_tmux_run is not None
-    assert no_tmux_run.terminal_id is not None
-    no_tmux_manager.clear_live_terminal(no_tmux_id, no_tmux_run.terminal_id)
+    no_terminal_run = no_terminal_manager.get(no_terminal_id)
+    assert no_terminal_run is not None
+    assert no_terminal_run.terminal_id is not None
+    no_terminal_manager.clear_live_terminal(no_terminal_id, no_terminal_run.terminal_id)
 
     candidate_ids = {
         run.id for run in manager.list_termination_candidates(machine_id=require_machine_id())
@@ -193,7 +193,7 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
     assert intended_id in candidate_ids
     assert terminal_child_id in candidate_ids
     assert active_child_id not in candidate_ids
-    assert no_tmux_id not in candidate_ids
+    assert no_terminal_id not in candidate_ids
 
 
 def test_terminal_transition_clears_intent_and_preserves_capture_result(

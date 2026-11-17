@@ -91,8 +91,9 @@ TERMINAL_SOURCES = [
     SessionSource.DROID,
 ]
 
-# The call_tool envelope a Claude tmux session actually received on 2026-09-03
-# (game-goblins S#98, #21713). The proxy strips the tool's top-level ``success``.
+# The call_tool envelope shape captured from a Claude session on 2026-09-03
+# (game-goblins S#98, #21713), updated for native delivery. The proxy strips
+# the tool's top-level ``success``.
 REAL_SET_HANDOFF_OUTPUT: dict[str, Any] = {
     "success": True,
     "result": {
@@ -103,7 +104,7 @@ REAL_SET_HANDOFF_OUTPUT: dict[str, Any] = {
         "clear_session": False,
         "command": "/compact",
         "cli": "claude",
-        "via": "tmux",
+        "via": "native",
     },
 }
 
@@ -124,7 +125,7 @@ def _staged_output(**overrides: Any) -> dict[str, Any]:
         clear_session=False,
         command="/compact",
         cli="claude",
-        via="tmux",
+        via="native",
     )
     result.update(overrides)
     return _proxy_envelope(result)
@@ -931,7 +932,7 @@ def _compact_session_manager(
 def test_stop_claims_staged_unclaimed_grok_handoff_before_stale_cutoff(
     hub_db: HubDatabase,
 ) -> None:
-    session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"}, source="grok")
+    session_manager = _compact_session_manager(hub_db, {"gobby_terminal_id": "%12"}, source="grok")
     variables = SessionVariableManager(hub_db)
     variables.merge_variables(
         SESSION_ID,
@@ -989,7 +990,7 @@ def test_stop_claims_staged_unclaimed_grok_handoff_before_stale_cutoff(
 def test_stop_logs_staged_handoff_refused_by_a_conflicting_gate(
     hub_db: HubDatabase, caplog: pytest.LogCaptureFixture
 ) -> None:
-    session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"}, source="grok")
+    session_manager = _compact_session_manager(hub_db, {"gobby_terminal_id": "%12"}, source="grok")
     variables = SessionVariableManager(hub_db)
     variables.merge_variables(
         SESSION_ID,
@@ -1654,8 +1655,8 @@ async def test_held_compact_failed_interrupt_preserves_undelivered_payload(
 async def test_unmanaged_session_gets_no_continuation(
     hub_db: HubDatabase,
 ) -> None:
-    """Continuations are native-only; a session bound just to a tmux pane has no delivery path."""
-    session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"})
+    """Continuations are native-only; a session without a managed terminal row has no delivery path."""
+    session_manager = _compact_session_manager(hub_db, {"gobby_terminal_id": "%12"})
     assert mark_handoff_compact_continuation_pending(hub_db, SESSION_ID, attempt_id=ATTEMPT_ID)
     runtime = FakeRuntime(backend="native")
     handler = _session_start_handler(
@@ -1685,7 +1686,7 @@ def test_stop_recovers_only_a_dispatch_this_daemon_does_not_own(
     dispatch_owner: str,
     recovers: bool,
 ) -> None:
-    session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"}, source="grok")
+    session_manager = _compact_session_manager(hub_db, {"gobby_terminal_id": "%12"}, source="grok")
     variables = SessionVariableManager(hub_db)
     started_at = datetime.now(UTC).isoformat()
     variables.merge_variables(
@@ -1804,7 +1805,7 @@ async def test_continuation_resubmits_until_before_agent_observed(
     from gobby.sessions import continuation_retry
     from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 
-    session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"})
+    session_manager = _compact_session_manager(hub_db, {"gobby_terminal_id": "%12"})
     pane = _ContinuationPane(continuation_ledger)
     held = "continue the handoff\n"
     continuation_ledger.observe_write(

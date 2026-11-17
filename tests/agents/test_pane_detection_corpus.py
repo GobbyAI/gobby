@@ -190,13 +190,13 @@ def _observe_attention(case: dict[str, Any]) -> dict[str, Any]:
     stall_root._states[RUN_ID] = _start_state(state.get("stall", {}))
     manager = _AttentionManager()
     metadata = _MetadataStore()
-    tmux = SimpleNamespace(auto_enter_approval_prompts=case.get("auto_enter", True))
+    terminal_config = SimpleNamespace(auto_enter_approval_prompts=case.get("auto_enter", True))
     # The doubles stand in for hub collaborators; the attention path reads only these fields.
     tracker = AgentAttentionTracker(
         run_db=_run_db,
         prompt_detector=prompt_root,
         stall_classifier=stall_root,
-        terminal_config=cast(TerminalConfig, tmux),
+        terminal_config=cast(TerminalConfig, terminal_config),
         attention_manager=cast(AttentionStateManager, manager),
         attention_metadata_store=cast(AttentionMetadataStore, metadata),
         get_session_manager=None,

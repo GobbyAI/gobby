@@ -104,7 +104,7 @@ def test_expires_at_contract(
         status="active",
         source="codex",
         model="gpt-5",
-        terminal_context={"tmux_pane": "%1"},
+        terminal_context={"gobby_terminal_id": "%1"},
         updated_at=clock.wall(),
     )
     monkeypatch.setattr(
@@ -116,8 +116,8 @@ def test_expires_at_contract(
                 source_id=session.id,
                 session_id=session.id,
                 lifecycle_status=session.status,
-                task_id=None,
-                task_ref=None,
+                task_id="metadata-task",
+                task_ref="#1",
                 provider=session.source,
                 model=session.model,
                 pid=None,

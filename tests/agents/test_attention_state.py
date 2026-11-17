@@ -38,12 +38,7 @@ pytestmark = pytest.mark.unit
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 APPROVAL_PANE = "Permission required: press Enter to approve this command"
 PANE_CONTEXT: dict[str, Any] = {
-    "tmux_socket_path": "/private/tmp/tmux-501/default",
-    "tmux_pane": "%42",
-    "tmux_session": "interactive",
-    "tmux_window": "@1",
-    "tmux_server_pid": 1658,
-    "tmux_server_start_time": 1784592177,
+    "gobby_terminal_id": "terminal-42",
 }
 
 

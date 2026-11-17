@@ -179,11 +179,11 @@ def e2e_pre_daemon_setup(
                 "terminal_host.socket_dir": str(socket_dir),
                 "terminal_host.max_attachments_total": 64,
                 "terminal_host.max_attachments_per_terminal": 8,
-                "tmux.auto_enter_approval_prompts": False,
-                "tmux.auto_enter_agent_terminals": False,
+                "terminals.auto_enter_approval_prompts": False,
+                "terminals.auto_enter_agent_terminals": False,
                 # The stub never registers its child session; keep the
                 # never-initialized kill beyond both daemon restarts.
-                "tmux.init_timeout_seconds": 600,
+                "terminals.init_timeout_seconds": 600,
             }
         ),
         source="e2e-terminal-stack",

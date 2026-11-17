@@ -71,7 +71,7 @@ def _seat(
         id=row.id,
         ref=row.ref,
         agent_depth=agent_depth,
-        terminal_context={"tmux_pane": "%7"},
+        terminal_context={"gobby_terminal_id": TERMINAL_ID},
         source=source,
     )
     sessions = MagicMock()
@@ -376,7 +376,7 @@ async def test_arrow_over_held_daemon_text_withholds_wake(
 async def test_blocks_with_their_own_valve_raise_no_composer_item(
     seat: Seat, composer_ledger: ComposerLedger, block: str
 ) -> None:
-    # A usage limit raises its own provider item; an untracked seat (a tmux pane, a
+    # A usage limit raises its own provider item; an untracked seat (a terminal, a
     # seat bound before the ledger) has always read unknown until release_composer.
     if block == "provider_limit":
         composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
@@ -506,18 +506,15 @@ async def test_native_submit_before_host_event_preserves_following_wake(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("backend", "worker"), [("native", False), ("tmux", True)])
 async def test_submit_acknowledgement_wait_never_blocks_the_host_reader_loop(
     composer_ledger: ComposerLedger,
     monkeypatch: pytest.MonkeyPatch,
-    backend: str,
-    worker: bool,
 ) -> None:
     composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
     composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="prompt\r")
     assert composer_ledger.read(TERMINAL_ID) == LedgerRead("draft")
     terminals = MagicMock()
-    terminals.get_live_for_session.return_value = MagicMock(id=TERMINAL_ID, backend=backend)
+    terminals.get_live_for_session.return_value = MagicMock(id=TERMINAL_ID, backend="native")
     handlers = EventHandlers(terminal_manager=terminals)
     monkeypatch.setattr(handlers, "_composer_ledger", lambda: composer_ledger)
 
@@ -525,9 +522,6 @@ async def test_submit_acknowledgement_wait_never_blocks_the_host_reader_loop(
         pytest.fail("Only native hook workers can wait for host input")
 
     monkeypatch.setattr(threading.Condition, "wait_for", refuse_wait)
-    if worker:
-        await asyncio.to_thread(handlers._record_composer_submit, "seat-session")
-    else:
-        handlers._record_composer_submit("seat-session")
+    handlers._record_composer_submit("seat-session")
     terminals.get_live_for_session.assert_called_once_with("seat-session")
     assert composer_ledger.read(TERMINAL_ID) == LedgerRead("empty")

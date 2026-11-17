@@ -144,7 +144,7 @@ class AgentCleanupHandler:
         reason: str | None,
         terminalize: Callable[[], Awaitable[AgentRun | None]],
     ) -> tuple[bool, AgentRun | None]:
-        """Route a still-present managed tmux session through capture-before-kill.
+        """Route a still-present managed terminal through capture-before-kill.
 
         Returns (routed, terminal_run). routed=False means the session is already
         gone and the caller applies its direct transition. Pane-process death is
@@ -167,7 +167,7 @@ class AgentCleanupHandler:
             runtime = services.runtime_for(terminal)
             present = await backend_session_present(runtime, terminal)
         except Exception:
-            # Finalisation must not fail on a runtime or tmux probe error; the
+            # Finalisation must not fail on a runtime or terminal probe error; the
             # direct transition proceeds and the sweep reaps any leftover.
             logger.warning(
                 "Capture-policy presence probe failed for run %s",

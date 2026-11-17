@@ -2141,7 +2141,7 @@ class TestLocalAgentRunManager:
         pending = agent_manager.create(
             parent_session_id=sample_session["id"],
             provider="claude",
-            prompt="Tmux initialized pending",
+            prompt="Terminal initialized pending",
         )
         agent_manager.update_runtime(pending.id)
         _live_run = agent_manager.get(pending.id)

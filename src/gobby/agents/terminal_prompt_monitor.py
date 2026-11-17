@@ -1,4 +1,4 @@
-"""Terminal prompt checks for tmux-backed agent runs."""
+"""Terminal prompt checks for native agent runs."""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ def _log_prompt_probe_error(
     *,
     operation: str,
     run_id: str,
-    tmux_target: str,
+    terminal_target: str,
     error: Exception,
 ) -> None:
     """Log expected terminal races quietly and preserve unexpected tracebacks."""
@@ -34,25 +34,25 @@ def _log_prompt_probe_error(
         operation,
         type(error).__name__,
         run_id,
-        tmux_target,
+        terminal_target,
         error.detail or error if isinstance(error, HostUnavailableError) else error,
     )
     if isinstance(error, HostUnavailableError) or is_vanished_terminal_target(error):
         # The host manager owns the outage signal; probes retry on the next pass.
         logger.debug(
-            "Prompt probe %s skipped: exception=%s run_id=%s tmux_target=%s error=%.200s",
+            "Prompt probe %s skipped: exception=%s run_id=%s terminal_target=%s error=%.200s",
             *values,
         )
         return
     logger.warning(
-        "Prompt probe %s failed: exception=%s run_id=%s tmux_target=%s error=%s",
+        "Prompt probe %s failed: exception=%s run_id=%s terminal_target=%s error=%s",
         *values,
         exc_info=True,
     )
 
 
 class TerminalPromptMonitor:
-    """Detect and dismiss blocking prompts in spawned agent tmux panes."""
+    """Detect and dismiss blocking prompts in spawned agent terminals."""
 
     LOOP_PROMPT_DISMISS_MIN_INTERVAL_SECONDS = 60.0
 
@@ -161,7 +161,7 @@ class TerminalPromptMonitor:
                 _log_prompt_probe_error(
                     operation="trust",
                     run_id=run.id,
-                    tmux_target=run.terminal_id or run.id,
+                    terminal_target=run.terminal_id or run.id,
                     error=e,
                 )
 
@@ -232,7 +232,7 @@ class TerminalPromptMonitor:
                 _log_prompt_probe_error(
                     operation="loop",
                     run_id=run.id,
-                    tmux_target=run.terminal_id or run.id,
+                    terminal_target=run.terminal_id or run.id,
                     error=e,
                 )
 
@@ -266,7 +266,7 @@ class TerminalPromptMonitor:
                 _log_prompt_probe_error(
                     operation="approval",
                     run_id=run.id,
-                    tmux_target=run.terminal_id or run.id,
+                    terminal_target=run.terminal_id or run.id,
                     error=e,
                 )
 
@@ -303,7 +303,7 @@ class TerminalPromptMonitor:
                 _log_prompt_probe_error(
                     operation="queued-continuation",
                     run_id=run.id,
-                    tmux_target=run.terminal_id or run.id,
+                    terminal_target=run.terminal_id or run.id,
                     error=e,
                 )
         return 0
@@ -353,7 +353,7 @@ class TerminalPromptMonitor:
                 _log_prompt_probe_error(
                     operation="periodic-enter",
                     run_id=run.id,
-                    tmux_target=run.terminal_id or run.id,
+                    terminal_target=run.terminal_id or run.id,
                     error=e,
                 )
 

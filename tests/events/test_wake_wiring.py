@@ -125,13 +125,13 @@ class TestWakeDispatcherSdkResume:
 
     @pytest.mark.asyncio
     async def test_terminal_sender_tried_before_sdk(self) -> None:
-        """Terminal agents try tmux first, skip SDK if tmux succeeds."""
+        """Terminal agents try their managed terminal first, skip SDK on success."""
         session_mgr = MagicMock()
         session = MagicMock()
         session.status = "paused"
         session.session_type = "terminal"
         session.agent_depth = 1
-        session.terminal_context = '{"tmux_session": "agent-1"}'
+        session.terminal_context = '{"gobby_terminal_id": "agent-1"}'
         session_mgr.get.return_value = session
 
         terminal_sender = AsyncMock()
@@ -171,12 +171,12 @@ class TestWakeDispatcherSdkResume:
         session.status = "paused"
         session.session_type = "terminal"
         session.agent_depth = 1
-        session.terminal_context = '{"tmux_session": "agent-1"}'
+        session.terminal_context = '{"gobby_terminal_id": "agent-1"}'
         session.external_id = "sdk-999"
         session_mgr.get.return_value = session
 
         ism_mgr = MagicMock()
-        terminal_sender = AsyncMock(side_effect=RuntimeError("tmux gone"))
+        terminal_sender = AsyncMock(side_effect=RuntimeError("terminal gone"))
         sdk_resumer = AsyncMock(side_effect=RuntimeError("SDK fail"))
 
         dispatcher = WakeDispatcher(
