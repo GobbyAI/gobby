@@ -153,7 +153,7 @@ def _service(clock: _Clock) -> ProviderCapacityService:
 
 
 def _terminal(*, session_id: str) -> Terminal:
-    # synthetic: a tmux terminal row with the ownership fields the generation hashes.
+    # synthetic: a native terminal row with the ownership fields the generation hashes.
     return Terminal(
         id="term-1",
         backend="native",

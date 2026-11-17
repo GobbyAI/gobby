@@ -10,7 +10,7 @@
 03 : overlay0/panel_bg*1 text/unfocused*24 surface0/panel_bg*1 text/panel_bg*13 surface0/panel_bg*1 text/unfocused*19 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 04 |│                        │ Zoom        │                   ││                                                          │|
 04 : overlay0/panel_bg*1 text/unfocused*24 surface0/panel_bg*1 text/panel_bg*13 surface0/panel_bg*1 text/unfocused*19 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-05 |│                        │ Close pane  │                   ││                                                          │|
+05 |│                        │ Close       │                   ││                                                          │|
 05 : overlay0/panel_bg*1 text/unfocused*24 surface0/panel_bg*1 text/panel_bg*13 surface0/panel_bg*1 text/unfocused*19 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 06 |│                        │ Resize mode │┌─────────────────┐││                                                          │|
 06 : overlay0/panel_bg*1 text/unfocused*24 surface0/panel_bg*1 text/panel_bg*13 surface0/panel_bg*20 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1

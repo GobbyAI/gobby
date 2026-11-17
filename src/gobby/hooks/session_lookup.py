@@ -492,8 +492,13 @@ class SessionLookupService:
             project_id=project_id,
         )
 
-        if platform_session_id or event.event_type == HookEventType.SESSION_START:
+        if platform_session_id:
             return platform_session_id
+        native_parent = self._bind_process_bound_grok_child(event, machine_id=machine_id)
+        if native_parent is not None:
+            return native_parent
+        if event.event_type == HookEventType.SESSION_START:
+            return None
         if event.source == SessionSource.GIT:
             # The protected-branch guard names the committing session by its Gobby id
             # (GOBBY_SESSION_ID). It resolves only a live session and never mints one.
@@ -517,6 +522,52 @@ class SessionLookupService:
                 machine_id=machine_id,
                 project_id=project_id,
             )
+
+    def _bind_process_bound_grok_child(self, event: HookEvent, *, machine_id: str) -> str | None:
+        """Keep in-process Grok child conversations on their native terminal's owner."""
+        context = event.data.get("terminal_context")
+        if event.source.value != "grok" or not isinstance(context, dict):
+            return None
+        terminal_id = context.get("gobby_terminal_id")
+        pid = context.get("parent_pid")
+        created = context.get("parent_create_time")
+        if (
+            not isinstance(terminal_id, str)
+            or not isinstance(pid, int)
+            or isinstance(pid, bool)
+            or pid <= 0
+            or not isinstance(created, (int, float))
+            or isinstance(created, bool)
+            or created <= 0
+        ):
+            return None
+
+        from gobby.storage.terminals import TerminalManager
+
+        try:
+            terminal = TerminalManager(self._session_manager.db).get(terminal_id)
+        except ValueError:
+            return None
+        if (
+            terminal is None
+            or terminal.state != "live"
+            or terminal.machine_id != machine_id
+            or not isinstance(terminal.session_id, str)
+        ):
+            return None
+        owner = self._session_manager.get(terminal.session_id)
+        if (
+            owner is None
+            or owner.machine_id != machine_id
+            or owner.source != "grok"
+            or owner.session_type != "terminal"
+            or owner.status in TERMINAL_SESSION_STATUSES
+            or owner.external_id == event.session_id
+            or not terminal_process_contexts_match(owner.terminal_context, context)
+        ):
+            return None
+        event.metadata["_native_subagent_binding"] = True
+        return owner.id
 
     def _startup_mark(
         self, external_id: str, event: HookEvent, machine_id: str | None

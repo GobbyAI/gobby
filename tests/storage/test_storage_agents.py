@@ -24,6 +24,38 @@ pytestmark = pytest.mark.unit
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 
 
+def test_loop_dismissals_survive_lifecycle_monitor_recreation(
+    temp_db: HubDatabase,
+    agent_manager: LocalAgentRunManager,
+    sample_session: dict[str, Any],
+) -> None:
+    from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+    from tests.agents.test_lifecycle_monitor import DETECTION_REGISTRY
+
+    run = agent_manager.create(
+        parent_session_id=sample_session["id"],
+        provider="claude",
+        prompt="loop test",
+        resume_metadata_json={"execution_mode": "interactive"},
+    )
+
+    def restarted_monitor() -> AgentLifecycleMonitor:
+        return AgentLifecycleMonitor(LocalAgentRunManager(temp_db), temp_db, DETECTION_REGISTRY)
+
+    for expected in (1, 2, 3):
+        monitor = restarted_monitor()
+        assert monitor._loop_tracker.record_dismissal(run.id) == expected
+
+    monitor = restarted_monitor()
+    assert monitor._loop_tracker.should_escalate(run.id)
+    saved_run = agent_manager.get(run.id)
+    assert saved_run is not None
+    assert saved_run.is_interactive
+
+    monitor._loop_tracker.clear(run.id)
+    assert restarted_monitor()._loop_tracker.get_count(run.id) == 0
+
+
 @pytest.fixture(autouse=True)
 def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):

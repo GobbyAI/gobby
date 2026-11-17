@@ -72,10 +72,17 @@ def test_native_binding_accepts_matching_cli_tty() -> None:
 @pytest.mark.parametrize("cli_pid", [None, True, "202", 0, -1])
 def test_native_binding_clears_route_when_cli_pid_is_invalid(cli_pid: object) -> None:
     manager = MagicMock()
+    terminal_id = "20000000-0000-4000-8000-000000000088"
+    manager.get.return_value = SimpleNamespace(
+        id=terminal_id, process={"pgid": 101}, session_id=None
+    )
     sessions = MagicMock()
-    context = {"gobby_terminal_id": "native-pane", "parent_pid": cli_pid}
-    assert (
-        bind_discovered_terminal(
+    context = {"gobby_terminal_id": terminal_id, "parent_pid": cli_pid}
+    with patch(
+        "gobby.hooks.event_handlers._session_start.terminal_runtime.cli_shares_shell_tty",
+        return_value=True,
+    ) as shell_proof:
+        result = bind_discovered_terminal(
             manager,
             MagicMock(),
             session_id="session-1",
@@ -83,11 +90,32 @@ def test_native_binding_clears_route_when_cli_pid_is_invalid(cli_pid: object) ->
             terminal_context=context,
             session_manager=sessions,
         )
-        is None
-    )
+    assert result is None
+    shell_proof.assert_not_called()
     manager.bind_session.assert_not_called()
     sessions.clear_gobby_terminal_id.assert_called_once_with("session-1")
     assert context == {"parent_pid": cli_pid}
+
+
+def test_native_binding_clears_route_when_terminal_id_is_malformed() -> None:
+    manager = MagicMock()
+    manager.get.side_effect = ValueError("badly formed hexadecimal UUID string")
+    sessions = MagicMock()
+    context = {"gobby_terminal_id": "%proof-id", "parent_pid": 202}
+
+    result = bind_discovered_terminal(
+        manager,
+        MagicMock(),
+        session_id="session-1",
+        project_id="project-1",
+        terminal_context=context,
+        session_manager=sessions,
+    )
+
+    assert result is None
+    assert "gobby_terminal_id" not in context
+    manager.bind_session.assert_not_called()
+    sessions.clear_gobby_terminal_id.assert_called_once_with("session-1")
 
 
 def test_native_binding_clears_route_when_row_is_missing() -> None:

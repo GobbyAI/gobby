@@ -41,8 +41,7 @@ is the roadmap and the architecture decision record. The live tracker is
   control only. PRE remains open for #19600 two-machine acceptance, which
   now follows #21575 hub mode and #17436 node mode.
 - **Terminals**: native PTY is the default (#22104; acceptance in
-  `docs/evidence/native-backend-flip.md`). gterm is primary for agents;
-  tmux is a fallback agents cannot select (decision 20). `gclient`
+  `docs/evidence/native-backend-flip.md`). gterm hosts every managed terminal. `gclient`
   supports direct local-host semantic frames, the daemon-WS cell-mode
   proxy, and remote attach over `--daemon-url`.
 

@@ -429,6 +429,23 @@ class TestRecoverTaskFromFailedAgent:
 class TestLoopPromptEscalation:
     """Tests for loop prompt counting and escalation in check_loop_prompts."""
 
+    def _manager(self) -> MagicMock:
+        manager = MagicMock()
+        counts: dict[str, int] = {}
+
+        def increment(run_id: str) -> int:
+            counts[run_id] = counts.get(run_id, 0) + 1
+            return counts[run_id]
+
+        def get(run_id: str) -> AgentRun:
+            run = self._run(run_id)
+            run.resume_metadata_json = {"loop_dismissal_count": counts.get(run_id, 0)}
+            return run
+
+        manager.increment_loop_dismissal_count.side_effect = increment
+        manager.get.side_effect = get
+        return manager
+
     @staticmethod
     def _run(run_id: str = "run-1") -> AgentRun:
         return AgentRun(
@@ -446,7 +463,7 @@ class TestLoopPromptEscalation:
     @pytest.mark.asyncio
     async def test_dismisses_below_threshold(self) -> None:
         """Loop prompts are dismissed normally when count < threshold."""
-        mock_run_mgr = MagicMock()
+        mock_run_mgr = self._manager()
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
@@ -467,7 +484,7 @@ class TestLoopPromptEscalation:
     @pytest.mark.asyncio
     async def test_escalates_at_threshold(self) -> None:
         """After 3 successful dismissals, agent is killed."""
-        mock_run_mgr = MagicMock()
+        mock_run_mgr = self._manager()
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
@@ -498,7 +515,7 @@ class TestLoopPromptEscalation:
     @pytest.mark.asyncio
     async def test_static_loop_prose_without_dialog_chrome_is_ignored(self) -> None:
         """Static prose matching loop terms never sends keys or escalates."""
-        mock_run_mgr = MagicMock()
+        mock_run_mgr = self._manager()
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
@@ -525,7 +542,7 @@ class TestLoopPromptEscalation:
     @pytest.mark.asyncio
     async def test_deduplicates_same_loop_prompt_fingerprint(self) -> None:
         """A repeated visible loop prompt is dismissed once per run."""
-        mock_run_mgr = MagicMock()
+        mock_run_mgr = self._manager()
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
@@ -550,7 +567,7 @@ class TestLoopPromptEscalation:
     @pytest.mark.asyncio
     async def test_throttles_distinct_loop_prompts_by_minimum_interval(self) -> None:
         """Distinct loop prompts still cannot increment the count too quickly."""
-        mock_run_mgr = MagicMock()
+        mock_run_mgr = self._manager()
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
@@ -578,7 +595,7 @@ class TestLoopPromptEscalation:
     @pytest.mark.asyncio
     async def test_send_failure_does_not_count_or_fingerprint_loop_prompt(self) -> None:
         """Loop dismissals are counted only after keys are actually sent."""
-        mock_run_mgr = MagicMock()
+        mock_run_mgr = self._manager()
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,

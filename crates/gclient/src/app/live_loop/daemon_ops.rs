@@ -311,20 +311,6 @@ pub(super) fn tab_close_op(chrome: &Chrome) -> Option<WorkspaceOp> {
     Some(WorkspaceOp::TabClose { tab, node: None })
 }
 
-/// Close the active tab through the daemon; `false` for a local tab.
-pub(super) fn close_daemon_tab(
-    workspace: &Workspace<LiveDaemon>,
-    chrome: &Chrome,
-    outcomes: &UnboundedSender<JobOutcome>,
-    after: Vec<watch::Receiver<bool>>,
-) -> bool {
-    let Some(op) = tab_close_op(chrome) else {
-        return false;
-    };
-    issue_op_after(workspace, outcomes, op, None, after);
-    true
-}
-
 /// Rename the active daemon tab or its focused pane through the daemon; an
 /// empty value clears the title or label. `false` leaves a local tab's
 /// rename, and every project rename, to `apply_rename`.

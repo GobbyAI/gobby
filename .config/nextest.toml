@@ -106,11 +106,6 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]
-filter = 'package(gobby-client) & binary(suite) & test(=loop_liveness::a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking)'
-# Request acknowledgements govern progress; this watchdog catches a stuck test.
-slow-timeout = { period = "60s", terminate-after = 2 }
-
-[[profile.default.overrides]]
 filter = 'package(gobby-client) & binary(suite) & test(/^loop_liveness::/) & test(keystroke_latency)'
 # These acceptance measurements require isolation from sibling test workloads.
 threads-required = "num-test-threads"

@@ -145,7 +145,11 @@ async def test_post_terminal_cleanup_preserves_registry_without_notification(
 async def test_daemon_stop_parking_skips_later_resource_cleanup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from gobby.agents.loop_tracker import LoopTracker
+
     db = RecordingDb()
+    loop_tracker = LoopTracker()
+    loop_tracker.record_dismissal("run-1")
     session_manager = MagicMock()
     session_coordinator = MagicMock()
     runtime_calls: list[tuple[object, str, str | None, str | None]] = []
@@ -176,6 +180,7 @@ async def test_daemon_stop_parking_skips_later_resource_cleanup(
         db,
         session_manager=session_manager,
         session_coordinator=session_coordinator,
+        loop_tracker=loop_tracker,
     ).post_terminal_cleanup(
         _run(task_id=None, terminal_reason="daemon_stop"),
         allow_parent_session_fallback=False,
@@ -185,6 +190,7 @@ async def test_daemon_stop_parking_skips_later_resource_cleanup(
     session_manager.update_status.assert_not_called()
     assert runtime_calls == [(db, "run-1", "child-1", "daemon_stop")]
     assert db.executed == []
+    assert loop_tracker.get_count("run-1") == 1
 
 
 async def test_daemon_stop_parking_with_task_retains_isolation_and_artifacts(

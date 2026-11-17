@@ -403,8 +403,7 @@ impl NativeInput {
     }
 }
 
-/// Resolves a native slot by host id: `not_found` for unknown ids and
-/// Refuses when the terminal is gone.
+/// Resolve a native slot by host ID; refuse unknown or exited terminals.
 fn native_slot_mut<'a>(
     inner: &'a mut Inner,
     host_terminal_id: &str,

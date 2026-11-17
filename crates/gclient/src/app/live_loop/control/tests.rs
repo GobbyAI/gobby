@@ -4,11 +4,50 @@ use gobby_terminal::protocol::{
 use tokio::net::UnixStream;
 
 use super::super::jobs::LoopJobs;
-use super::{flush_attached_input, send_live_input, CLOSING_NATIVE_INPUT};
+use super::{flush_attached_input, send_live_input, send_live_report, CLOSING_NATIVE_INPUT};
 use crate::app::{Backend, Pane, PaneId, Workspace};
 use crate::daemon::{Generation, LiveDaemon};
 use crate::frame_source::{AttachLocator, PaneFrameSource, Transport, UnixSocketFrameSource};
 use crate::ui::Chrome;
+
+#[tokio::test]
+async fn pointer_reports_wait_for_host_recovery() {
+    let daemon = LiveDaemon::unconnected("http://127.0.0.1:1", "test-token").unwrap();
+    let mut workspace = Workspace::live(daemon);
+    let mut pane = Pane::new(PaneId(1), "terminal-1", Backend::Native, "epoch-1");
+    pane.install_attachment(
+        "attachment-1".into(),
+        Transport::Direct,
+        Generation(0),
+        0,
+        PaneFrameSource::Scripted(crate::frame_source::ScriptedFrameSource::new(
+            Transport::Direct,
+        )),
+    );
+    workspace.panes.insert(pane.id, pane);
+    workspace.host_recovering.insert(PaneId(1));
+    let jobs = LoopJobs::new(&workspace);
+    let mut chrome = Chrome::dark();
+    let report = b"\x1b[<0;2;3M";
+
+    send_live_report(&mut workspace, &mut chrome, &jobs, PaneId(1), report).unwrap();
+
+    assert!(workspace
+        .pane(PaneId(1))
+        .scripted_source()
+        .unwrap()
+        .sent_messages()
+        .is_empty());
+    workspace.host_recovering.remove(&PaneId(1));
+    flush_attached_input(&mut workspace, &mut chrome, &jobs);
+    assert!(workspace
+        .pane(PaneId(1))
+        .scripted_source()
+        .unwrap()
+        .sent_messages()
+        .iter()
+        .any(|message| matches!(message, ClientMessage::Input { data } if data == report)));
+}
 
 #[tokio::test]
 async fn daemon_attachment_state_cannot_gate_a_present_native_host_stream() {
@@ -207,10 +246,7 @@ async fn a_key_typed_into_a_closing_native_pane_never_reaches_the_daemon() {
         0,
         cut_direct_source("epoch-1").await,
     );
-    assert!(
-        pane.begin_closing_detach().is_some(),
-        "the pane starts its close"
-    );
+    pane.terminating = true;
     workspace.panes.insert(PaneId(1), pane);
     let mut jobs = LoopJobs::new(&workspace);
     let mut chrome = Chrome::dark();

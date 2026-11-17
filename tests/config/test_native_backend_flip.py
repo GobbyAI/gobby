@@ -153,5 +153,5 @@ def test_checked_in_flip_gate_artifacts() -> None:
     assert "qualifying run recorded" in evidence_text
     assert check_native_backend_flip(evidence_text, default_backend)
     assert "native-backend-flip.md" in backend_status
-    assert "`native` is the only spawn backend" in backend_status
-    assert "spawn-less adapter for externally discovered sessions" in backend_status
+    assert "Native gterm is the only terminal backend." in backend_status
+    assert "there is no silent fallback" in backend_status

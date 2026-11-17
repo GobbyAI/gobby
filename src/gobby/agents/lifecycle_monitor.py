@@ -120,7 +120,7 @@ class AgentLifecycleMonitor:
         self._prompt_detector = PromptDetector(detection_registry)
         self._stall_classifier = StallClassifier(detection_registry)
         self._watchdog_readers = WatchdogReaderRegistry()
-        self._loop_tracker = LoopTracker(threshold=3)
+        self._loop_tracker = LoopTracker(threshold=3, run_manager=agent_run_manager)
         # In-memory tracking for inherently non-persistable state
         self._master_fds: dict[str, int] = {}
 

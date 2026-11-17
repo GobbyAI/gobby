@@ -633,3 +633,20 @@ async def test_hello_reads_the_host_capabilities() -> None:
             assert (await task).capabilities == expected
     finally:
         await client.close()
+
+
+@pytest.mark.parametrize("frame_version", [1, 2, None])
+async def test_hello_reads_the_frame_protocol(frame_version: int | None) -> None:
+    reader = asyncio.StreamReader()
+    writer = _Writer()
+    client = HostClient(reader, writer)
+    try:
+        task = asyncio.create_task(client.hello(host_client.CONTROL_PROTOCOL_VERSION, "t"))
+        request = await writer.next_write()
+        reply: dict[str, object] = {"ok": True, "host_epoch": "epoch-1", "id": request["id"]}
+        if frame_version is not None:
+            reply["frame_protocol_version"] = frame_version
+        reader.feed_data(host_client.encode_control_line(reply))
+        assert (await task).frame_protocol_version == frame_version
+    finally:
+        await client.close()

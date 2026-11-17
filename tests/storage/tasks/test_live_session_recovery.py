@@ -316,8 +316,8 @@ async def test_escalates_when_owner_session_lookup_fails(
 
 @pytest.mark.parametrize(
     "terminal",
-    [{"gobby_terminal_id": "%20"}, {"tty": "/dev/ttys004"}],
-    ids=["tmux-pane", "plain-tty"],
+    [{"gobby_terminal_id": "21000000-0000-4000-8000-000000000020"}, {"tty": "/dev/ttys004"}],
+    ids=["native-terminal", "plain-tty"],
 )
 async def test_preserves_a_dirty_claim_and_its_attribution_through_a_contestable_expiry(
     temp_db: HubDatabase,
@@ -390,7 +390,7 @@ async def test_recovers_a_claim_whose_owner_expired_for_a_final_reason(
 ) -> None:
     """An expiry nobody contested is final, whatever terminal the owner held.
 
-    Inactivity and a killed tmux server both leave the session finished and
+    Inactivity and a terminated host both leave the session finished and
     leave no contested-expiry marker, so recovery runs at once rather than
     parking the claim for the revival horizon (#20837).
     """

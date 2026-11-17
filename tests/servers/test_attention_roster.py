@@ -385,7 +385,7 @@ def test_interactive_entry_end_to_end(
         source="codex",
         model="gpt-5",
         terminal_context={
-            "gobby_pane_id": "interactive-pane",
+            "gobby_terminal_id": "21000000-0000-4000-8000-000000000001",
         },
         updated_at=datetime(2026, 7, 21, tzinfo=UTC),
     )

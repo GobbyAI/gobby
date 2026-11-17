@@ -236,6 +236,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                         "host_epoch": state.host_epoch.as_str(),
                         "version": state.version.as_str(),
                         "protocol_version": PROTOCOL_VERSION,
+                        "frame_protocol_version": crate::protocol::PROTOCOL_VERSION,
                         "capabilities": HOST_CAPABILITIES,
                     }),
                     &request.id,

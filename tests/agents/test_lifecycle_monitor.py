@@ -293,7 +293,7 @@ def test_monitor_ignores_other_machines_runs(
 
 
 def test_monitor_without_terminal_config_uses_defaults(temp_db: HubDatabase) -> None:
-    """No daemon tmux singleton exists, so an omitted config falls back to defaults."""
+    """An omitted terminal config falls back to defaults."""
     monitor = AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,
         agent_run_manager=MagicMock(),
@@ -503,7 +503,6 @@ async def test_stuck_enter_refusal_does_not_abort_other_runs(
         agent_run_manager,
         sample_session,
         run_id=_rid("refused-first"),
-        terminal_id="first",
     )
     second = agent_run_manager.create(
         parent_session_id=sample_session["id"],
@@ -559,7 +558,6 @@ async def test_check_autonomous_stuck_agents_nudges_change_approach(
         agent_run_manager,
         sample_session,
         child_session_id=child.id,
-        terminal_id="gobby-test",
     )
 
     handled = await monitor.check_autonomous_stuck_agents()
@@ -1005,7 +1003,6 @@ def _make_terminal_run(
     agent_run_manager: LocalAgentRunManager,
     sample_session: dict[str, Any],
     run_id: str = _rid("run-abc123"),
-    terminal_id: str = "gobby-1234567890-abc123",
     pid: int | None = None,
     timeout_seconds: float | None = None,
     child_session_id: str | None = None,
@@ -1137,7 +1134,6 @@ def _make_progress_stagnation_monitor(
         agent_run_manager,
         sample_session,
         run_id=_rid("run-progress-draft-grace"),
-        terminal_id="gobby-progress-draft-grace",
         requested_reasoning_effort=requested_reasoning_effort,
     )
     return monitor, run, stuck_detector
@@ -1639,7 +1635,6 @@ async def test_reconcile_pending_termination_captures_kills_and_terminalizes(
         agent_run_manager,
         sample_session,
         run_id=_rid("run-reconcile-termination"),
-        terminal_id="gobby-reconcile-termination",
         backend="native",
     )
     host_terminal_id, host_epoch = _native_host_for(monitor, run)
@@ -1678,7 +1673,6 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-dead"),
-            terminal_id="gobby-dead",
             pid=999999,
         )
 
@@ -1704,7 +1698,6 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-dead-no-pid"),
-            terminal_id="gobby-dead-no-pid",
             pid=None,
         )
 
@@ -1732,7 +1725,6 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-alive"),
-            terminal_id="gobby-alive",
         )
 
         with _terminal_liveness(monitor, True):
@@ -1767,7 +1759,6 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-live-tmux-reused-pid"),
-            terminal_id="gobby-live-tmux-reused-pid",
             pid=999,
         )
 
@@ -1849,7 +1840,6 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-err"),
-            terminal_id="gobby-err",
         )
 
         with _terminal_liveness(monitor, OSError("tmux socket gone")):
@@ -1890,7 +1880,6 @@ class TestCheckDeadAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-wt"),
-            terminal_id="gobby-wt",
             child_session_id=child_session.id,
             pid=999999,
         )
@@ -1984,7 +1973,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-active"),
-            terminal_id="gobby-active",
         )
 
         with _pane_text(idle_monitor, "Running tests...\n"):
@@ -2006,7 +1994,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-idle"),
-            terminal_id="gobby-idle",
         )
 
         # Pre-set idle state to simulate timeout elapsed
@@ -2039,7 +2026,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-unsubmitted-input"),
-            terminal_id="gobby-unsubmitted-input",
         )
 
         state = idle_monitor._idle_detector.get_state(run.id)
@@ -2068,7 +2054,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-idle-delay"),
-            terminal_id="gobby-idle-delay",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 120
@@ -2093,7 +2078,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-exhausted"),
-            terminal_id="gobby-exhausted",
         )
 
         # Set reprompt count at max
@@ -2123,7 +2107,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-queued-continuation"),
-            terminal_id="gobby-queued-continuation",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.reprompt_count = 2
@@ -2160,7 +2143,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-queued-continuation-delayed"),
-            terminal_id="gobby-queued-continuation-delayed",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 360
@@ -2197,7 +2179,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-reprompt-enter-fails"),
-            terminal_id="gobby-reprompt-enter-fails",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 360
@@ -2228,7 +2209,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-reprompt-escape-fails"),
-            terminal_id="gobby-reprompt-escape-fails",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.first_idle_at = time.monotonic() - 360
@@ -2264,7 +2244,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-truncated-queued-prompt"),
-            terminal_id="gobby-truncated-queued-prompt",
         )
         state = idle_monitor._idle_detector.get_state(run.id)
         state.reprompt_count = 2
@@ -2299,7 +2278,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-ctx-full"),
-            terminal_id="gobby-ctx",
         )
 
         with (
@@ -2335,7 +2313,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-skip"),
-            terminal_id="gobby-skip",
         )
 
         handled = await mon.check_idle_agents()
@@ -2353,7 +2330,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-no-capture"),
-            terminal_id="gobby-nocap",
         )
         state = idle_monitor._idle_detector.get_state(_rid("run-no-capture"))
         state.reprompt_count = 2
@@ -2409,7 +2385,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-session-active"),
-            terminal_id="gobby-session-active",
             child_session_id=child.id,
         )
 
@@ -2461,7 +2436,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-hook-active"),
-            terminal_id="gobby-hook-active",
             child_session_id=child.id,
         )
 
@@ -2512,7 +2486,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-pane-active"),
-            terminal_id="gobby-pane-active",
             child_session_id=child.id,
         )
         state = mon._idle_detector.get_state(run.id)
@@ -2578,7 +2551,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-session-stale"),
-            terminal_id="gobby-session-stale",
             child_session_id=child.id,
         )
 
@@ -2666,7 +2638,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-planner-step-idle"),
-            terminal_id="gobby-planner-step-idle",
             child_session_id=child.id,
         )
         mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
@@ -2724,7 +2695,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-session-naive-stale"),
-            terminal_id="gobby-session-naive-stale",
             child_session_id=child.id,
         )
         mon._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
@@ -2781,7 +2751,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-xhigh-scaled-active"),
-            terminal_id="gobby-xhigh-scaled-active",
             child_session_id=child.id,
             requested_reasoning_effort=" XHIGH ",
         )
@@ -2846,7 +2815,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-high-base-stale"),
-            terminal_id="gobby-high-base-stale",
             child_session_id=child.id,
             requested_reasoning_effort="high",
         )
@@ -2905,7 +2873,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-xhigh-scaled-stale"),
-            terminal_id="gobby-xhigh-scaled-stale",
             child_session_id=child.id,
             requested_reasoning_effort="xhigh",
         )
@@ -2968,7 +2935,6 @@ class TestCheckIdleAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stale-active-pane"),
-            terminal_id="gobby-stale-active",
             child_session_id=child.id,
         )
 
@@ -3001,7 +2967,6 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-trust"),
-            terminal_id="gobby-trust",
         )
 
         trust_output = (
@@ -3031,7 +2996,6 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-workspace-trust"),
-            terminal_id="gobby-workspace-trust",
         )
 
         trust_output = (
@@ -3067,7 +3031,6 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-normal"),
-            terminal_id="gobby-normal",
         )
 
         with (
@@ -3090,7 +3053,6 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-once"),
-            terminal_id="gobby-once",
         )
 
         trust_output = "Do you trust the files in this folder?\n"
@@ -3136,7 +3098,6 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-nocap"),
-            terminal_id="gobby-nocap",
         )
 
         with _pane_text(monitor, None):
@@ -3149,9 +3110,9 @@ class TestCheckTrustPrompts:
         "error",
         [
             TimeoutError(),
-            RuntimeError("can't find pane: gobby-probe-race"),
+            FileNotFoundError(2, "No such file or directory", "/tmp/gterm-probe.sock"),
         ],
-        ids=["timeout", "vanished-pane"],
+        ids=["timeout", "vanished-host-socket"],
     )
     async def test_expected_probe_races_log_at_debug(
         self,
@@ -3165,7 +3126,6 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid(f"run-probe-{type(error).__name__}"),
-            terminal_id="gobby-probe-race",
         )
         caplog.set_level("DEBUG", logger="gobby.agents.terminal_prompt_monitor")
 
@@ -3195,7 +3155,6 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-probe-unexpected"),
-            terminal_id="gobby-probe-unexpected",
         )
         caplog.set_level("DEBUG", logger="gobby.agents.terminal_prompt_monitor")
 
@@ -3226,7 +3185,6 @@ class TestCheckTrustPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-cleanup"),
-            terminal_id="gobby-cleanup",
             pid=999999,
         )
 
@@ -3269,7 +3227,6 @@ class TestCheckExpiredAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-no-timeout"),
-            terminal_id="gobby-no-timeout",
             timeout_seconds=None,
         )
         with _terminal_liveness(monitor, True):
@@ -3289,7 +3246,6 @@ class TestCheckExpiredAgents:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-not-expired"),
-            terminal_id="gobby-not-expired",
             timeout_seconds=3600,
         )
         with _terminal_liveness(monitor, True):
@@ -4066,7 +4022,6 @@ class TestCheckProviderStalls:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-healthy"),
-            terminal_id="gobby-healthy",
         )
 
         with _pane_text(monitor, "Working on task...\n"):
@@ -4086,7 +4041,6 @@ class TestCheckProviderStalls:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stall-err"),
-            terminal_id="gobby-stall-err",
         )
 
         with _pane_text(monitor, OSError("tmux error")):
@@ -4107,7 +4061,6 @@ class TestCheckProviderStalls:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stall-missing"),
-            terminal_id="gobby-stall-missing",
         )
         temp_db.execute(
             "UPDATE terminals SET state = %s WHERE id = %s",
@@ -4138,7 +4091,6 @@ class TestCheckProviderStallsKillsAgent:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stall-kill"),
-            terminal_id="gobby-stall-kill",
         )
 
         rate_limit_output = "Error: 429 Too Many Requests - rate limit exceeded\n"
@@ -4187,7 +4139,6 @@ class TestCheckProviderStallsKillsAgent:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stall-checkpoint-order"),
-            terminal_id="gobby-stall-checkpoint-order",
         )
         events: list[tuple[str, str]] = []
 
@@ -4293,7 +4244,6 @@ class TestCheckProviderStallsKillsAgent:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-stall-pattern"),
-            terminal_id="gobby-stall-pattern",
         )
 
         import time
@@ -4448,7 +4398,6 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-uninit"),
-            terminal_id="gobby-uninit",
             child_session_id=child.id,
         )
 
@@ -4648,7 +4597,6 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid(f"run-init-timeout-{scenario}"),
-            terminal_id=f"gobby-init-timeout-{scenario}",
             child_session_id=child.id,
             pid=999,
         )
@@ -4791,7 +4739,6 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-init"),
-            terminal_id="gobby-init",
             child_session_id=child.id,
         )
 
@@ -4862,7 +4809,6 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-young"),
-            terminal_id="gobby-young",
             child_session_id=child.id,
         )
         # started_at is "now" by default — well under 120s
@@ -4900,7 +4846,6 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-naive-uninit"),
-            terminal_id="gobby-naive-uninit",
             child_session_id=child.id,
         )
         started = (datetime.now(UTC) - timedelta(seconds=200)).replace(tzinfo=None).isoformat()
@@ -4951,7 +4896,6 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-pattern"),
-            terminal_id="gobby-pattern",
             child_session_id=child.id,
         )
 
@@ -4984,7 +4928,6 @@ class TestCheckInitializationTimeout:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-nosm"),
-            terminal_id="gobby-nosm",
         )
 
         backdated = (datetime.now(UTC) - timedelta(seconds=200)).isoformat()
@@ -5013,7 +4956,6 @@ class TestCheckLoopPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-loop"),
-            terminal_id="gobby-loop",
         )
 
         loop_output = "It looks like you may be stuck in a loop. Continue? (y/n)\n"
@@ -5043,7 +4985,6 @@ class TestCheckLoopPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-noloop"),
-            terminal_id="gobby-noloop",
         )
 
         with (
@@ -5082,7 +5023,6 @@ class TestCheckLoopPrompts:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-loop-err"),
-            terminal_id="gobby-loop-err",
         )
 
         with _pane_text(monitor, OSError("tmux gone")):
@@ -5268,7 +5208,6 @@ class TestDeadAgentCompletionEvent:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-dead-cr"),
-            terminal_id="gobby-dead-cr",
             pid=999999,
         )
 
@@ -5311,7 +5250,6 @@ class TestDeadAgentCompletionEvent:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-dead-clone"),
-            terminal_id="gobby-dead-clone",
             clone_id="cccccccc-cccc-4ccc-8ccc-cccccccc0789",
             pid=999999,
         )
@@ -5339,7 +5277,6 @@ class TestDeadAgentKillsOrphanedProcess:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-orphan-pid"),
-            terminal_id="gobby-orphan-pid",
             pid=999999,  # Non-existent PID
         )
 
@@ -5381,7 +5318,6 @@ class TestSessionExpirationOnCleanup:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-expire-sess"),
-            terminal_id="gobby-expire-sess",
             child_session_id=child_session.id,
             pid=999999,
         )
@@ -5416,7 +5352,6 @@ class TestSessionExpirationOnCleanup:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-no-sm"),
-            terminal_id="gobby-no-sm",
             pid=999999,
         )
 
@@ -5446,7 +5381,6 @@ class TestCleanupAgentFdClose:
                 agent_run_manager,
                 sample_session,
                 run_id=_rid("run-fd-test"),
-                terminal_id="gobby-fd-test",
             )
             monitor.register_master_fd(_rid("run-fd-test"), r_fd)
 
@@ -5473,7 +5407,6 @@ class TestCleanupAgentFdClose:
             agent_run_manager,
             sample_session,
             run_id=_rid("run-no-fd"),
-            terminal_id="gobby-no-fd",
         )
 
         await monitor._cleanup_agent(run, terminal_payload="test cleanup", is_success=True)
@@ -5863,7 +5796,6 @@ async def test_reconcile_skips_an_already_terminal_run_without_warning(
         agent_run_manager,
         sample_session,
         run_id=_rid("run-already-terminal"),
-        terminal_id="gobby-already-terminal",
     )
     agent_run_manager.record_termination_intent(
         run.id,
@@ -5906,7 +5838,6 @@ async def test_reconcile_still_warns_on_a_retryable_termination_failure(
         agent_run_manager,
         sample_session,
         run_id=_rid("run-kill-failed"),
-        terminal_id="gobby-kill-failed",
         backend="native",
     )
     _native_host_for(monitor, run)

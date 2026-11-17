@@ -524,10 +524,10 @@ class TestKillAgent:
     ):
         agent_run.pid = 999
         mock_kill.side_effect = [None, ProcessLookupError("closed")]
-        mock_close.return_value = {"success": True, "method": "tmux"}
+        mock_close.return_value = {"success": True, "method": "parent_pid"}
         res = await kill_agent(agent_run, mock_db, close_terminal=True)
         assert res["success"] is True
-        assert res["method"] == "tmux"
+        assert res["method"] == "parent_pid"
         mock_close.assert_called_once()
         assert mock_kill.call_args_list == [((999, 0),), ((999, 0),)]
         mock_killpg.assert_not_called()
@@ -571,7 +571,7 @@ class TestKillAgent:
     ):
         agent_run.pid = 999
         mock_kill.return_value = None
-        mock_close.return_value = {"success": True, "method": "tmux"}
+        mock_close.return_value = {"success": True, "method": "parent_pid"}
 
         res = await kill_agent(agent_run, mock_db, close_terminal=True, timeout=0)
 
@@ -812,7 +812,7 @@ async def test_close_terminal_treats_exited_terminal_row_as_already_dead() -> No
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("state", ["pending", "live", "orphaned"])
-async def test_close_terminal_fences_nonnative_row(
+async def test_close_terminal_without_runtime_or_pid_does_not_signal(
     state: Literal["pending", "live", "orphaned"],
 ) -> None:
     from gobby.terminals import TerminalRuntimeRegistry
@@ -821,7 +821,7 @@ async def test_close_terminal_fences_nonnative_row(
 
     terminal = replace(make_memory_terminal(), state=state)
     run = AgentRun(
-        id="run-legacy",
+        id="run-without-target",
         parent_session_id="parent1",
         child_session_id="sess1",
         provider="claude",
@@ -840,6 +840,5 @@ async def test_close_terminal_fences_nonnative_row(
         result = await kill_agent(run, MagicMock(), close_terminal=True, terminal_services=services)
 
     assert result["success"] is False
-    assert result["error_code"] == "unsupported_terminal_backend"
-    assert result["terminal_id"] == terminal.id
+    assert result["error_code"] == "no_target_pid"
     signal_process.assert_not_called()

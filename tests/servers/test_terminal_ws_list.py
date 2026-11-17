@@ -263,7 +263,7 @@ async def test_list_names_the_native_foreground_command(
         page = await listed(server, {"request_id": "commands"})
 
     by_id = {item["terminal_id"]: item for item in page["items"]}
-    # Historical tmux rows are listed without querying a live pane.
+    # Rows without live host metadata are listed without querying a terminal.
     assert by_id[pane.id]["command"] is None
     assert by_id[promoted.id]["command"] == "nvim"
     assert by_id[pane.id]["cwd"] is None

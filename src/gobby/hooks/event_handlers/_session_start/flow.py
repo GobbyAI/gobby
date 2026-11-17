@@ -64,6 +64,8 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     """Handle SESSION_START event."""
     _t0 = time.monotonic()
     machine_id = require_hook_machine_id(event)
+    if event.metadata.get("_native_subagent_binding"):
+        return HookResponse(decision="allow")
     input_data = event.data
     cli_source = event.source.value
     external_id = str(event.session_id or "").strip()

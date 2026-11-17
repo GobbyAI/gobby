@@ -1091,36 +1091,18 @@ async fn mixed_ownership_loop_with(
         "state": "live",
         "ownership": "gobby"
     });
-    let mut items = vec![owned, adopted.clone()];
-    let mut survivors = vec![adopted];
+    let mut items = vec![owned, adopted];
     let mut tabs: Vec<(&[&str], &str)> =
         vec![(&["terminal-gobby", "terminal-mine"], "terminal-mine")];
     if spare_tab {
-        items.push(spare.clone());
-        survivors.push(spare);
+        items.push(spare);
         tabs.push((&["terminal-spare"], "terminal-spare"));
     }
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        json!({
-            "items": items,
-            "next_cursor": null,
-            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-        }),
-    );
-    // The relist after a kill lists only the survivors.
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        json!({
-            "items": survivors,
-            "next_cursor": null,
-            "snapshot": {"daemon_epoch": "epoch-1", "seq": 2}
-        }),
-    );
+    mock.seed_terminal_roster(json!({
+        "items": items,
+        "next_cursor": null,
+        "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+    }));
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
         .expect("connect live daemon");
@@ -1133,11 +1115,9 @@ async fn mixed_ownership_loop_with(
     (workspace, home)
 }
 
-/// Closing a tab kills its owned pane and only releases the adopted
-/// terminal's lease: no `terminal_kill` names it, the tab goes, and the
-/// session stays in the roster.
+/// Closing a tab kills both its owned and adopted terminals.
 #[tokio::test]
-async fn closing_a_tab_spares_adopted_native_terminals() {
+async fn closing_a_tab_kills_owned_and_adopted_native_terminals() {
     let mock = MockDaemon::start("local-token").await;
     let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
@@ -1149,8 +1129,8 @@ async fn closing_a_tab_spares_adopted_native_terminals() {
         wait_for_focus_reports(&mock, 1).await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
-        wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
-        // The tab goes through the daemon once its owned pane is killed.
+        wait_for_websocket_requests(&mock, "terminal_kill", 2).await;
+        // The tab goes through the daemon once both terminals are killed.
         wait_until(|| workspace_ops(&mock, "tab.close").len() == 1).await;
         settle_live_event().await;
         drop(input_tx);
@@ -1169,28 +1149,12 @@ async fn closing_a_tab_spares_adopted_native_terminals() {
     );
     result.expect("live loop exits cleanly");
     let kills = websocket_requests(&mock, "terminal_kill");
-    assert_eq!(kills.len(), 1, "only the gobby-owned terminal is killed");
-    assert_eq!(
-        kills[0].get("terminal_id"),
-        Some(&json!("terminal-gobby")),
-        "the kill names the gobby-owned terminal"
-    );
-    let releases = websocket_requests(&mock, "terminal_detach");
-    assert_eq!(releases.len(), 1, "the adopted pane's lease is released");
-    assert_eq!(
-        releases[0].get("terminal_id"),
-        Some(&json!("terminal-mine"))
-    );
-    // 4.2: the released adopted pane and then the tab leave through the
-    // daemon, which disposes of the rows and tells every window.
-    assert_eq!(
-        workspace_ops(&mock, "pane.close")
-            .iter()
-            .map(|op| op["pane"].clone())
-            .collect::<Vec<_>>(),
-        [json!("mock-pane-3")],
-        "the adopted pane's row (the seed mints tab-1, pane-2, pane-3) is closed, never its terminal"
-    );
+    let mut killed_ids: Vec<_> = kills
+        .iter()
+        .map(|kill| kill["terminal_id"].as_str().expect("terminal id"))
+        .collect();
+    killed_ids.sort_unstable();
+    assert_eq!(killed_ids, ["terminal-gobby", "terminal-mine"]);
     assert_eq!(
         workspace_ops(&mock, "tab.close")
             .iter()
@@ -1200,8 +1164,8 @@ async fn closing_a_tab_spares_adopted_native_terminals() {
         "the tab is closed through the daemon"
     );
     assert!(
-        workspace.pane_for_terminal("terminal-mine").is_some(),
-        "the adopted terminal stays in the roster"
+        workspace.pane_for_terminal("terminal-mine").is_none(),
+        "the killed adopted terminal left the roster"
     );
     assert!(
         workspace.pane_for_terminal("terminal-gobby").is_none(),
@@ -1210,14 +1174,13 @@ async fn closing_a_tab_spares_adopted_native_terminals() {
     mock.shutdown().await;
 }
 
-/// A native terminal adopted into a daemon tab remains live when that tab closes.
+/// A native terminal adopted into a daemon tab is killed when that tab closes.
 #[tokio::test]
-async fn closing_an_adopted_native_tab_releases_its_terminal() {
+async fn closing_an_adopted_native_tab_kills_its_terminal() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     let roster = terminal_page(&["terminal-native"]);
-    mock.enqueue("GET", "/api/terminals?", 200, roster.clone());
-    mock.enqueue("GET", "/api/terminals?", 200, roster);
+    mock.seed_terminal_roster(roster);
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
         .expect("connect live daemon");
@@ -1277,8 +1240,11 @@ async fn closing_an_adopted_native_tab_releases_its_terminal() {
     let (input_tx, input_rx) = mpsc::channel(8);
     let driver = async {
         wait_for_focus_reports(&mock, 1).await;
+        let relists = request_count(&mock, "GET", "/api/terminals?") + 1;
         send_chord(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
         wait_until(|| workspace_ops(&mock, "tab.close").len() == 1).await;
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", relists).await;
+        settle_live_event().await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -1295,14 +1261,14 @@ async fn closing_an_adopted_native_tab_releases_its_terminal() {
     result.expect("close adopted tab live loop");
     assert_eq!(workspace_ops(&mock, "tab.close").len(), 1);
     assert!(workspace_ops(&mock, "pane.close").is_empty());
-    assert!(websocket_requests(&mock, "terminal_kill").is_empty());
-    assert!(workspace.pane_for_terminal("terminal-native").is_some());
+    let kills = websocket_requests(&mock, "terminal_kill");
+    assert_eq!(kills.len(), 1);
+    assert_eq!(kills[0]["terminal_id"], json!("terminal-native"));
+    assert!(workspace.pane_for_terminal("terminal-native").is_none());
     mock.shutdown().await;
 }
 
-/// `close tab` when the daemon refuses the owned kill: the adopted
-/// pane still leaves the tab with its lease released, the refused pane keeps
-/// its place, and so the tab stays.
+/// A refused kill keeps its pane and tab while the other terminal is killed.
 #[tokio::test]
 async fn closing_a_tab_keeps_a_pane_whose_kill_is_refused() {
     let mock = MockDaemon::start("local-token").await;
@@ -1317,9 +1283,7 @@ async fn closing_a_tab_keeps_a_pane_whose_kill_is_refused() {
         wait_for_focus_reports(&mock, 1).await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
-        wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
-        // The detached adopted pane leaves the daemon's tab through pane.close.
-        wait_until(|| workspace_ops(&mock, "pane.close").len() == 1).await;
+        wait_for_websocket_requests(&mock, "terminal_kill", 2).await;
         settle_live_event().await;
         drop(input_tx);
     };
@@ -1336,48 +1300,33 @@ async fn closing_a_tab_keeps_a_pane_whose_kill_is_refused() {
         driver
     );
     result.expect("live loop exits cleanly");
-    assert_eq!(
-        websocket_requests(&mock, "terminal_detach")
-            .iter()
-            .filter(|body| body.get("terminal_id") == Some(&json!("terminal-mine")))
-            .count(),
-        1,
-        "the adopted pane's attachment is detached"
-    );
+    let kills = websocket_requests(&mock, "terminal_kill");
+    assert_eq!(kills.len(), 2);
     assert!(
         workspace_ops(&mock, "tab.close").is_empty(),
         "a refused kill keeps the tab open"
     );
-    let gobby = workspace
-        .pane_for_terminal("terminal-gobby")
+    let refused_id = kills[0]["terminal_id"]
+        .as_str()
+        .expect("refused terminal id");
+    let refused = workspace
+        .pane_for_terminal(refused_id)
         .expect("the refused terminal stays in the roster");
     assert!(
-        !workspace.pane(gobby).is_terminating(),
+        !workspace.pane(refused).is_terminating(),
         "the pane is no longer marked terminating"
     );
     let tab = chrome.active_tab().expect("the tab keeps the refused pane");
     assert!(
-        tab.slot_for(gobby).is_some(),
+        tab.slot_for(refused).is_some(),
         "the refused pane keeps its slot"
     );
-    assert_eq!(
-        workspace_ops(&mock, "pane.close")
-            .iter()
-            .map(|op| op["pane"].clone())
-            .collect::<Vec<_>>(),
-        [json!("mock-pane-3")],
-        "the adopted pane (the seed mints tab-1, pane-2, pane-3) left the tab through the daemon"
-    );
-    workspace
-        .pane_for_terminal("terminal-mine")
-        .expect("the adopted terminal stays in the roster");
     mock.shutdown().await;
 }
 
-/// `close_pane` on an adopted native terminal detaches its attachment and drops
-/// the slot; the session is never killed and the tab keeps its other pane.
+/// Closing an adopted pane kills its terminal and keeps the tab's other pane.
 #[tokio::test]
-async fn closing_a_pane_spares_an_adopted_native_terminal() {
+async fn closing_a_pane_kills_an_adopted_native_terminal() {
     let mock = MockDaemon::start("local-token").await;
     let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
@@ -1407,25 +1356,48 @@ async fn closing_a_pane_spares_an_adopted_native_terminal() {
         driver
     );
     result.expect("live loop exits cleanly");
-    assert!(
-        websocket_requests(&mock, "terminal_kill").is_empty(),
-        "an adopted terminal is never killed"
-    );
+    let kills = websocket_requests(&mock, "terminal_kill");
+    assert_eq!(kills.len(), 1);
+    assert_eq!(kills[0]["terminal_id"], json!("terminal-mine"));
     let tab = chrome.active_tab().expect("the tab keeps its other pane");
     assert_eq!(tab.slots.len(), 1);
-    let mine = workspace
-        .pane_for_terminal("terminal-mine")
-        .expect("the adopted terminal stays in the roster");
     assert!(
-        tab.slot_for(mine).is_none(),
-        "the adopted pane left the tab"
+        workspace.pane_for_terminal("terminal-mine").is_none(),
+        "closing the adopted pane removes its killed terminal from the roster"
     );
-    assert!(
-        websocket_requests(&mock, "terminal_detach")
-            .iter()
-            .any(|body| body.get("terminal_id") == Some(&json!("terminal-mine"))),
-        "closing the adopted pane detaches its attachment and leaves the session running"
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn quitting_gclient_preserves_owned_and_adopted_terminals() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(32);
+    let driver = async {
+        wait_for_focus_reports(&mock, 1).await;
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
     );
+    result.expect("quit exits cleanly");
+    assert_eq!(workspace.exit_reason(), Some("quit"));
+    assert!(websocket_requests(&mock, "terminal_kill").is_empty());
+    assert!(workspace_ops(&mock, "pane.close").is_empty());
+    assert!(workspace_ops(&mock, "tab.close").is_empty());
+    assert!(workspace.pane_for_terminal("terminal-mine").is_some());
+    assert!(workspace.pane_for_terminal("terminal-gobby").is_some());
     mock.shutdown().await;
 }
 
@@ -6849,7 +6821,7 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         .expect("the spawned terminal attaches");
 
         // Click immediately after migration, before an unrelated timer redraw.
-        // Keys reach `close pane`; its adopted terminal stays live.
+        // Keys reach `close pane`; confirmation kills its adopted terminal.
         press(MouseButton::Right, center_of(&initial)).await;
         for _ in 0..20 {
             key(KeyCode::Down).await;
@@ -6859,6 +6831,12 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         assert!(
             websocket_requests(&mock, "terminal_kill").is_empty(),
             "close pane must wait for confirmation"
+        );
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            roster_page(&[other, SPAWNED]),
         );
         key(KeyCode::Char('y')).await;
         settle_live_event().await;
@@ -6897,7 +6875,9 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         1,
         "the click immediately after migration must close the adopted pane"
     );
-    assert!(websocket_requests(&mock, "terminal_kill").is_empty());
+    let kills = websocket_requests(&mock, "terminal_kill");
+    assert_eq!(kills.len(), 1);
+    assert_eq!(kills[0]["terminal_id"], json!(initial));
     assert!(chrome.menu.is_none(), "activation closes the menu");
     assert_eq!(chrome.mode, Mode::ConfirmClose, "close tab asks first");
     assert!(
@@ -6920,8 +6900,8 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         "reload config re-read the keymap overrides"
     );
     assert!(
-        workspace.pane_for_terminal(&initial).is_some(),
-        "closing an adopted pane leaves its terminal live"
+        workspace.pane_for_terminal(&initial).is_none(),
+        "closing an adopted pane kills its terminal"
     );
     assert!(workspace
         .workspace_model()

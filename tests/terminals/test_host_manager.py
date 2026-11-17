@@ -1805,7 +1805,7 @@ def test_gterm_bin_requires_vt_engine() -> None:
     assert gterm.get("required-features") == ["vt-engine"]
 
 
-def test_host_spawn_forwards_attachment_pool_args(short_socket_dir: Path) -> None:
+def test_host_spawn_forwards_attachment_and_scrollback_limits(short_socket_dir: Path) -> None:
     from gobby.config.terminal_host import TerminalHostConfig
     from gobby.terminals.host_manager import TerminalHostManager
 
@@ -1823,6 +1823,8 @@ def test_host_spawn_forwards_attachment_pool_args(short_socket_dir: Path) -> Non
             binary_path="/bin/echo",
             max_attachments_total=8,
             max_attachments_per_terminal=4,
+            native_scrollback_max_lines=4567,
+            native_scrollback_max_bytes=890123,
         ),
         terminal_config=TerminalConfig(),
     )
@@ -1832,6 +1834,8 @@ def test_host_spawn_forwards_attachment_pool_args(short_socket_dir: Path) -> Non
     argv = captured[0]
     assert argv[argv.index("--max-attachments-total") + 1] == "8"
     assert argv[argv.index("--max-attachments-per-terminal") + 1] == "4"
+    assert argv[argv.index("--native-scrollback-max-lines") + 1] == "4567"
+    assert argv[argv.index("--native-scrollback-max-bytes") + 1] == "890123"
 
 
 def test_host_spawn_preserves_environment_and_attachment_limits(
@@ -1843,6 +1847,8 @@ def test_host_spawn_preserves_environment_and_attachment_limits(
 
     monkeypatch.setenv("GOBBY_TEST_HOST_SENTINEL", "preserved")
     monkeypatch.setenv("GOBBY_SUPERVISOR_FD", "17")
+    monkeypatch.setenv("GOBBY_PANE_ID", "launching-seat")
+    monkeypatch.setenv("GOBBY_PANE_REF", "launching-seat-ref")
     envs: list[dict[str, str]] = []
     commands: list[list[str]] = []
 
@@ -1863,6 +1869,8 @@ def test_host_spawn_preserves_environment_and_attachment_limits(
 
     assert envs[0]["GOBBY_TEST_HOST_SENTINEL"] == "preserved"
     assert "GOBBY_SUPERVISOR_FD" not in envs[0]
+    assert "GOBBY_PANE_ID" not in envs[0]
+    assert "GOBBY_PANE_REF" not in envs[0]
     assert commands[0][1:] == [
         "host",
         "--socket-dir",
@@ -1871,6 +1879,10 @@ def test_host_spawn_preserves_environment_and_attachment_limits(
         "128",
         "--max-attachments-per-terminal",
         "8",
+        "--native-scrollback-max-lines",
+        "10000",
+        "--native-scrollback-max-bytes",
+        "8388608",
     ]
     assert envs[0]["GTERM_LOG_FILE"].endswith(".log")
 

@@ -44,9 +44,8 @@ impl Workspace<LiveDaemon> {
         if !self.apply_workspace_event(event) {
             return false;
         }
-        // A removed pane takes its owned live pane with it, unless the accepted
-        // model still shows the terminal in another pane. An adopted
-        // terminal outlives its placement: closing its pane only detaches it.
+        // A removed pane takes its terminal view with it, unless the accepted
+        // model still shows that terminal in another pane.
         if event.kind == WorkspaceEventKind::PaneRemoved {
             for pane in &event.panes {
                 let Some(terminal_id) = pane.terminal_id.as_deref() else {
@@ -57,7 +56,7 @@ impl Workspace<LiveDaemon> {
                         .panes()
                         .any(|pane| pane.terminal_id.as_deref() == Some(terminal_id))
                 });
-                if pane.owns_terminal && !shown {
+                if !shown {
                     self.drop_terminal_panes(terminal_id);
                 }
             }

@@ -86,8 +86,7 @@ pub fn attention_pane<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<PaneId
 }
 
 /// What the chrome calls the terminal behind an attention entry: its name,
-/// then its address when it has one the name does not already show, so a
-/// blocked session reads `15 %15` and never its session uuid.
+/// with its session reference when available, never its session UUID.
 pub fn attention_label<W: WorkspaceView>(ws: &W, entry_id: &str) -> String {
     if let Some(agent) = agent_entry(ws, entry_id) {
         return agent_label(agent);

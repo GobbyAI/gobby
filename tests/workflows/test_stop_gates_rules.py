@@ -1096,12 +1096,12 @@ class TestClaimedTaskReconciliation:
         parent_session = MagicMock()
         parent_session.parent_session_id = None
         parent_session.terminal_context = {
-            "gobby_terminal_id": "%12",
+            "gobby_terminal_id": "21000000-0000-4000-8000-000000000012",
         }
         child_session = MagicMock()
         child_session.parent_session_id = "parent-sess"
         child_session.terminal_context = {
-            "gobby_terminal_id": "%12",
+            "gobby_terminal_id": "21000000-0000-4000-8000-000000000012",
         }
         session_manager.get.side_effect = lambda sid: {
             "parent-sess": parent_session,
@@ -1153,12 +1153,12 @@ class TestClaimedTaskReconciliation:
         parent_session = MagicMock()
         parent_session.parent_session_id = None
         parent_session.terminal_context = {
-            "gobby_terminal_id": "%5815",
+            "gobby_terminal_id": "21000000-0000-4000-8000-000000005815",
         }
         child_session = MagicMock()
         child_session.parent_session_id = "parent-sess"
         child_session.terminal_context = {
-            "gobby_terminal_id": "%5867",
+            "gobby_terminal_id": "21000000-0000-4000-8000-000000005867",
         }
         session_manager.get.side_effect = lambda sid: {
             "parent-sess": parent_session,

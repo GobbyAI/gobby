@@ -301,7 +301,7 @@ def _set_handoff_tool(
         session_type="terminal",
         source="grok",
         status="active",
-        terminal_context={"tmux_pane": "%12"},
+        terminal_context={"gobby_terminal_id": "21000000-0000-4000-8000-000000000012"},
         transcript_path=None,
     )
     session_manager = MagicMock()

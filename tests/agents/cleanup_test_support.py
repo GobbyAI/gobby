@@ -13,6 +13,7 @@ from gobby.agents.agent_cleanup import AgentCleanupHandler
 from gobby.storage.agents import AgentRun, AgentRunStatus, AgentRunTerminalReason
 
 if TYPE_CHECKING:
+    from gobby.agents.loop_tracker import LoopTracker
     from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -112,6 +113,7 @@ def _handler(
     task_recovery: Any | None = None,
     clone_storage: Any | None = None,
     terminal_services: Any | None = None,
+    loop_tracker: LoopTracker | None = None,
 ) -> AgentCleanupHandler:
     async def default_run_db(
         func: Callable[..., Any],
@@ -132,7 +134,7 @@ def _handler(
         prompt_detector=clearable,
         terminal_prompt_monitor=clearable,
         stall_classifier=clearable,
-        loop_tracker=clearable,
+        loop_tracker=loop_tracker if loop_tracker is not None else clearable,
         master_fds={},
         run_db=run_db or default_run_db,
         terminal_services=terminal_services,

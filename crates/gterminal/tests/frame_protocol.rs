@@ -19,6 +19,31 @@ use std::time::Duration;
 
 const LOCAL: &str = "local-token";
 
+#[test]
+fn incompatible_hello_with_retired_fields_gets_a_version_refusal() {
+    let (dir, _host) = start_host("old-hello");
+    let mut stream = connect(&dir.path().join(FRAMES_SOCKET));
+    let hello = ClientMessage::Hello {
+        version: PROTOCOL_VERSION - 1,
+        encoding: RenderEncoding::SemanticFrame,
+        local_token: LOCAL.into(),
+        cols: 80,
+        rows: 24,
+    };
+    let mut payload = bincode::serde::encode_to_vec(&hello, bincode::config::standard()).unwrap();
+    payload.extend(
+        bincode::serde::encode_to_vec(Some("retired-identity"), bincode::config::standard())
+            .unwrap(),
+    );
+    stream
+        .write_all(&(payload.len() as u32).to_le_bytes())
+        .unwrap();
+    stream.write_all(&payload).unwrap();
+    assert!(
+        matches!(read_msg(&mut stream), ServerMessage::Error { code, .. } if code == "unsupported_protocol")
+    );
+}
+
 fn hello_frame(cols: u16, rows: u16) -> ClientMessage {
     ClientMessage::Hello {
         version: PROTOCOL_VERSION,

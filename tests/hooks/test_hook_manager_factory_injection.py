@@ -286,6 +286,35 @@ def _create_kwargs(session_manager: SessionManager, default_config: DaemonConfig
     }
 
 
+@pytest.mark.parametrize("hosted", [False, True])
+def test_factory_workflow_handler_detects_native_terminal_hosting(
+    session_manager: SessionManager, default_config: DaemonConfig, hosted: bool
+) -> None:
+    from gobby.workflows.observer_terminal_hosting import detect_native_terminal_hosting
+
+    terminal_manager = MagicMock()
+    terminal_manager.resolve_live_for_session.return_value = object() if hosted else None
+    session = SimpleNamespace(session_type="terminal")
+    with (
+        patch.object(HookManagerFactory, "_create_memory", return_value=MagicMock()),
+        patch.object(HookManagerFactory, "_create_webhooks", return_value=MagicMock()),
+    ):
+        components = HookManagerFactory.create(
+            **_create_kwargs(session_manager, default_config),
+            terminal_manager=terminal_manager,
+        )
+    handler = components.workflow_handler
+    try:
+        with patch.object(session_manager, "get", return_value=session):
+            variables: dict[str, Any] = {}
+            detect_native_terminal_hosting(handler, "terminal-session", variables)
+        assert variables["native_terminal_hosted"] is hosted
+        terminal_manager.resolve_live_for_session.assert_called_once_with(session)
+    finally:
+        assert handler._evaluation_runtime is not None
+        handler._evaluation_runtime.shutdown()
+
+
 def test_factory_create_uses_injected_memory_manager(
     temp_db: HubDatabase,
     session_manager: SessionManager,

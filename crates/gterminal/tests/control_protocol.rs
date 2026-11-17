@@ -98,6 +98,10 @@ fn hello_required_before_any_verb() {
     let hello = recv_json(&mut stream);
     assert_eq!(hello["ok"], true);
     assert_eq!(hello["protocol_version"], 1);
+    assert_eq!(
+        hello["frame_protocol_version"],
+        gobby_terminal::protocol::PROTOCOL_VERSION
+    );
     assert!(hello["host_epoch"].as_str().unwrap().len() > 8);
     assert!(hello["version"].as_str().is_some());
 
@@ -1620,24 +1624,17 @@ fn snapshot_mode_selects_the_returned_representation() {
     let one_line_text = one_line["text"].as_str().expect("snapshot text");
     assert_eq!(one_line_text.lines().count(), 1, "{one_line}");
     assert_eq!(one_line["truncated"], true, "{one_line}");
-    assert!(
-        one_line["dropped_bytes"].as_u64().expect("dropped bytes") > 0,
-        "{one_line}"
-    );
-    assert_eq!(
-        one_line["total_bytes"], plain["total_bytes"],
-        "line caps do not change the representation's size: {one_line}"
-    );
+    // Bounded history capture does not traverse the omitted prefix to count it.
+    assert!(one_line["dropped_bytes"].is_null(), "{one_line}");
+    assert!(one_line["total_bytes"].is_null(), "{one_line}");
 
     let few_bytes = snapshot_request(&mut stream, &host_terminal_id, Some(json!("ansi")), 4, 50);
     assert_eq!(few_bytes["mode"], "ansi", "{few_bytes}");
     let few_bytes_text = few_bytes["text"].as_str().expect("snapshot text");
     assert!(few_bytes_text.len() <= 4, "{few_bytes}");
     assert_eq!(few_bytes["truncated"], true, "{few_bytes}");
-    assert_eq!(
-        few_bytes["total_bytes"], styled["total_bytes"],
-        "byte caps do not change the representation's size: {few_bytes}"
-    );
+    assert!(few_bytes["dropped_bytes"].is_null(), "{few_bytes}");
+    assert!(few_bytes["total_bytes"].is_null(), "{few_bytes}");
 
     shutdown_after_snapshot(&mut stream, &mut child, &host_terminal_id);
 }
@@ -1688,7 +1685,6 @@ fn snapshot_text_mode_answers_plainly_when_history_holds_only_styling() {
 /// Native terminals admissible at once: `max_attachments_total` (128) less the
 /// four slots reserved for host health, `list`, and lifecycle work.
 const NATIVE_LIST_CEILING: usize = 124;
-/// Distinct tmux panes the host will observe at once (`max_attached_terminals`).
 /// `TITLE_MAX_BYTES`: the widest title the host registry will store.
 const LIST_TITLE_BYTES: usize = 1024;
 /// The pane OSC layer keeps at most 256 code points of an OSC 0/2 payload, so a
@@ -1700,15 +1696,14 @@ const WIDEST_OBSERVATION_REASON: &str = "geometry_exceeds_max_cells";
 /// a title while an observer is bound, and every bound observer costs the host a
 /// blit encode per tick, so the population is titled in bounded groups.
 const NATIVE_BIND_GROUP: usize = 8;
-/// Slow the tmux poll so 64 observers do not fork a `tmux` batch every 50 ms.
-/// Populating and titling 188 rows outlasts the shared five-second helper.
+/// Populating and titling the full native roster can outlast ordinary helper bounds.
 const LIST_SETTLE_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Plan 7.2.3: the `list` envelope at the shipped admission ceilings.
 ///
-/// The population is the whole admissible registry — 124 native terminals plus
-/// 64 tmux observers — every row carrying a title at `TITLE_MAX_BYTES` and the
-/// widest identity fields its half of the host can carry. Those numbers are the
+/// The population is the whole admissible registry: 124 native terminals,
+/// every row carrying a title at `TITLE_MAX_BYTES` and its widest identity
+/// fields. Those numbers are the
 /// population of this one scenario, never a number of tests.
 #[test]
 fn list_envelope_fits_under_line_cap() {
@@ -1781,9 +1776,6 @@ fn list_envelope_fits_under_line_cap() {
     assert_eq!(refused["ok"], false, "{refused}");
     assert_eq!(refused["error"], "capacity", "{refused}");
 }
-
-/// The tmux half of the scenario, kept alive for the whole measurement: closing
-/// a tmux observer reaps its registry row, so the streams outlive the assertions.
 
 /// Fill the native entitlement ceiling with committed, titled terminals.
 ///
@@ -1917,56 +1909,6 @@ fn connect_ansi_frames(host: &host_support::HostProc) -> std::os::unix::net::Uni
     match embed_support::read_msg(&mut stream) {
         ServerMessage::Welcome { .. } => stream,
         other => panic!("frames hello refused: {other:?}"),
-    }
-}
-
-/// A real draining frame peer for the observers this scenario holds open. An
-/// observer whose queue never drains is closed `lagged`, which would reap the
-/// very rows the envelope is measured over.
-struct FrameDrain {
-    streams: std::sync::Arc<std::sync::Mutex<Vec<std::os::unix::net::UnixStream>>>,
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
-    worker: Option<std::thread::JoinHandle<()>>,
-}
-
-impl FrameDrain {
-    fn start() -> Self {
-        let streams: std::sync::Arc<std::sync::Mutex<Vec<std::os::unix::net::UnixStream>>> =
-            std::sync::Arc::default();
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let worker_streams = std::sync::Arc::clone(&streams);
-        let worker_stop = std::sync::Arc::clone(&stop);
-        let worker = std::thread::spawn(move || {
-            let mut buffer = [0_u8; 64 * 1024];
-            while !worker_stop.load(std::sync::atomic::Ordering::Relaxed) {
-                {
-                    let mut owned = worker_streams.lock().expect("drain streams");
-                    for stream in owned.iter_mut() {
-                        while matches!(std::io::Read::read(stream, &mut buffer), Ok(n) if n > 0) {}
-                    }
-                }
-                std::thread::sleep(Duration::from_millis(10));
-            }
-        });
-        Self {
-            streams,
-            stop,
-            worker: Some(worker),
-        }
-    }
-
-    fn adopt(&self, stream: std::os::unix::net::UnixStream) {
-        stream.set_nonblocking(true).expect("non-blocking drain");
-        self.streams.lock().expect("drain streams").push(stream);
-    }
-}
-
-impl Drop for FrameDrain {
-    fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
     }
 }
 
@@ -2265,6 +2207,27 @@ fn host_upgrade_admission_is_serialized_and_rechecked() {
 }
 
 /// Plan gterm-host-handover 1.3.6.
+#[test]
+fn pane_text_retries_transient_capture_responses() {
+    let (mut client, mut server) = std::os::unix::net::UnixStream::pair().unwrap();
+    let responder = std::thread::spawn(move || {
+        for error in ["capture_busy", "capture_invalidated"] {
+            let request = recv_json(&mut server);
+            send_json(
+                &mut server,
+                &json!({"id": request["id"], "ok": false, "error": error}),
+            );
+        }
+        let request = recv_json(&mut server);
+        send_json(
+            &mut server,
+            &json!({"id": request["id"], "ok": true, "text": "ready"}),
+        );
+    });
+    assert_eq!(pane_text(&mut client, "test-terminal"), "ready");
+    responder.join().unwrap();
+}
+
 #[test]
 fn mutation_gate_blocks_and_refuses_during_upgrade() {
     use gobby_terminal::protocol::{ClientMessage, ServerMessage};

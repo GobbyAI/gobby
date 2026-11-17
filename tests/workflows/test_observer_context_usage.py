@@ -149,3 +149,23 @@ def test_unhosted_session_gets_no_pressure_guidance(mid_turn: bool, hosted: bool
     assert bool(variables["context_compact_block_message"]) is hosted
     assert variables["context_compact_guidance_kind"] == ("block" if hosted else "")
     assert variables["context_compact_mid_turn_pressure_band"] == ("block" if hosted else "none")
+
+
+@pytest.mark.parametrize("pending_key", ["delivery_pending", "attempt_pending", "compacted"])
+def test_unhosted_turn_start_releases_pending_handoff_gate(pending_key: str) -> None:
+    variables: dict[str, Any] = {
+        "native_terminal_hosted": False,
+        "context_compact_handoff_result": {pending_key: True},
+        "context_compact_guidance_kind": "block",
+        "context_compact_guidance_message": "stale guidance",
+        "context_compact_mid_turn_pressure_band": "block",
+        "context_compact_block_message": "stale block",
+    }
+
+    detect_context_compact_guidance(variables, "session-1", None)
+
+    assert variables["context_compact_handoff_result"] is None
+    assert variables["context_compact_guidance_kind"] == ""
+    assert variables["context_compact_guidance_message"] == ""
+    assert variables["context_compact_mid_turn_pressure_band"] == "none"
+    assert variables["context_compact_block_message"] == ""

@@ -58,7 +58,7 @@ class SessionLivenessMonitor:
     """Background task that detects dead CLI sessions via terminal liveness.
 
     When the owning process for a session exits (e.g. user typed ``/exit``,
-    process crashed, terminal closed) or its tmux pane is gone, this monitor:
+    process crashed, terminal closed) or its native terminal is gone, this monitor:
 
     1. Dispatches summary generation while the transcript file is still fresh.
     2. Marks the session as ``expired``.

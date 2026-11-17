@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from gobby.config.values import ConfigRuntimeReader
     from gobby.llm.service import LLMService
     from gobby.sessions.transcripts.base import TranscriptParser
+    from gobby.storage.terminals import TerminalManager
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.templates import TemplateEngine
 
@@ -232,6 +233,7 @@ class HookManagerFactory:
             tool_proxy_getter,
             broadcaster,
             loop,
+            terminal_manager=terminal_manager,
         )
 
         # Initialize webhooks
@@ -612,6 +614,7 @@ class HookManagerFactory:
         tool_proxy_getter: Any | None,
         broadcaster: Any | None,
         daemon_loop: asyncio.AbstractEventLoop | None,
+        terminal_manager: TerminalManager | None = None,
     ) -> _WorkflowComponents:
         from gobby.mcp_proxy.metrics_events import MetricsEventStore
         from gobby.skills.materialization import get_skill_script_materializer
@@ -697,6 +700,7 @@ class HookManagerFactory:
                 ),
                 llm_service_resolver=llm_service_resolver,
                 evaluation_runtime=evaluation_runtime,
+                terminal_manager=terminal_manager,
             )
         except Exception:
             evaluation_runtime.shutdown()

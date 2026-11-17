@@ -632,18 +632,32 @@ fn replied(stream: &UnixStream) -> bool {
 
 /// The pane's text through the control `snapshot` verb.
 pub fn pane_text(stream: &mut UnixStream, host_terminal_id: &str) -> String {
-    let snap = rpc(
-        stream,
-        "snapshot",
-        serde_json::json!({
-            "host_terminal_id": host_terminal_id,
-            "mode": "text",
-            "max_bytes": 65536,
-            "max_lines": 200,
-        }),
-    );
-    assert_eq!(snap["ok"], true, "{snap}");
-    snap["text"].as_str().unwrap_or_default().to_string()
+    let deadline = Instant::now() + COLD_START;
+    loop {
+        let snap = rpc(
+            stream,
+            "snapshot",
+            serde_json::json!({
+                "host_terminal_id": host_terminal_id,
+                "mode": "text",
+                "max_bytes": 65536,
+                "max_lines": 200,
+            }),
+        );
+        if matches!(
+            snap["error"].as_str(),
+            Some("capture_busy" | "capture_invalidated")
+        ) {
+            assert!(
+                Instant::now() < deadline,
+                "capture retry deadline exceeded: {snap}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        }
+        assert_eq!(snap["ok"], true, "{snap}");
+        return snap["text"].as_str().unwrap_or_default().to_string();
+    }
 }
 
 /// Writes `text` to a pane through the control `write` verb.

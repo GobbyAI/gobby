@@ -123,6 +123,7 @@ class HelloResult:
     # none, and a feature missing here must not be used on the host's frame
     # streams: an unknown frame message ends the stream.
     capabilities: tuple[str, ...] = ()
+    frame_protocol_version: int | None = None
 
 
 @dataclass(frozen=True)
@@ -481,10 +482,12 @@ class HostClient:
         self._control_token = control_token
         self.host_epoch = str(payload.get("host_epoch", ""))
         raw_capabilities = payload.get("capabilities")
+        frame_version = payload.get("frame_protocol_version")
         return HelloResult(
             host_epoch=self.host_epoch,
             version=str(payload.get("version", "")),
             protocol_version=int(payload.get("protocol_version", protocol_version)),
+            frame_protocol_version=frame_version if type(frame_version) is int else None,
             capabilities=tuple(item for item in raw_capabilities if isinstance(item, str))
             if isinstance(raw_capabilities, list)
             else (),

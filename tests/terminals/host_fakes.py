@@ -21,6 +21,7 @@ class FakeHello:
     version: str = "0.1.0"
     protocol_version: int = 1
     capabilities: tuple[str, ...] = ()
+    frame_protocol_version: int | None = 2
 
 
 @dataclass

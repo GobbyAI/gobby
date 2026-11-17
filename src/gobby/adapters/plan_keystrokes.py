@@ -43,8 +43,8 @@ class PlanKeystroke:
     * ``literal=False`` (default) sends a native key name
       (``enter``, ``down``, ``up``, ``escape``, ``ctrl_c``). Use for menu
       navigation and confirmation.
-    * ``literal=True`` types ``keys`` verbatim; a trailing newline
-      becomes an Enter. Use for typed input such as a menu number.
+    * ``literal=True`` types ``keys`` verbatim. Use for typed input such as a
+      menu number, followed by a separate native ``enter`` event to confirm.
     """
 
     keys: str

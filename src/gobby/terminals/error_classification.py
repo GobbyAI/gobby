@@ -6,12 +6,6 @@ from collections.abc import Iterator
 
 _MAX_CHAIN_DEPTH = 16
 
-_VANISHED_TARGET_MARKERS = (
-    "can't find pane",
-    "can't find session",
-    "failed to connect to server",
-    "no server running on",
-)
 _SOCKET_PATH_MARKERS = (".sock",)
 _VANISHED_TARGET_TYPE_NAMES = frozenset(
     {
@@ -53,6 +47,4 @@ def is_vanished_terminal_target(error: BaseException) -> bool:
             if any(marker in message for marker in _SOCKET_PATH_MARKERS):
                 return True
             continue
-        if any(marker in message for marker in _VANISHED_TARGET_MARKERS):
-            return True
     return False

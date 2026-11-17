@@ -427,7 +427,7 @@ gobby cutover [--path PATH] [--allow-dirty] [--wait]
 ```
 
 Set `GOBBY_SCHEMA_TEST_DATABASE_URL` before running cutover. Candidate catalog
-preflight requires an isolated schema-test database; `DATABASE_URL` alone does
+preflight requires a separate schema-test PostgreSQL cluster; `DATABASE_URL` alone does
 not supply this setting. With the local test hub running:
 
 ```bash

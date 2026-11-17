@@ -1,8 +1,7 @@
 """Live-backend acceptance fixtures (plan 7.2).
 
-Every test in this package drives a real backend: a ``gterm host`` built from
-this tree, or a pane on a private tmux server the test starts itself and records
-as an external terminal (Gobby spawns no tmux). Each child gets a 120x40 PTY,
+Every test in this package drives a real ``gterm host`` built from this tree.
+Each child gets a 120x40 PTY,
 the geometry the plan names for acceptance.
 
 The package is gated on ``GOBBY_RUN_VENDOR_BUILD=1`` because it builds the

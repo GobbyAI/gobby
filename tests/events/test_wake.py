@@ -158,7 +158,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
-            terminal_context={"tmux_session": "gobby-agent-abc", "tmux_pane": "%7"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
             status=status,
         )
         terminal_sender = AsyncMock()
@@ -207,7 +207,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
-            terminal_context={"tmux_session": "gobby-agent-abc"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
             status="active",
         )
         dispatcher = WakeDispatcher(
@@ -248,7 +248,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
-            terminal_context={"tmux_session": "gobby-agent-abc"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
             status="active",
         )
         dispatcher = WakeDispatcher(
@@ -283,7 +283,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
-            terminal_context={"tmux_session": "gobby-agent-abc"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
             status="paused",
         )
         probe = AsyncMock(return_value=TerminalActivity(ComposerRead("draft", "hello draft")))
@@ -340,7 +340,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context={"tmux_pane": "%1"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
         )
 
         async def timing_out_sender(*_args: object, **_kwargs: object) -> None:
@@ -369,7 +369,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context={"tmux_pane": "%1"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
         )
         completed = asyncio.Event()
         release = asyncio.Event()
@@ -454,7 +454,7 @@ class TestWakeDispatch:
         assert result["error_code"] == "session_not_found"
 
     @pytest.mark.asyncio
-    async def test_terminal_agent_gets_tmux(
+    async def test_terminal_agent_gets_terminal_wake(
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
@@ -464,7 +464,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
-            terminal_context='{"tmux_session": "gobby-agent-abc", "tmux_pane": "%5"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
         )
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
@@ -499,7 +499,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
-            terminal_context={"tmux_session": "gobby-agent-abc", "tmux_pane": "%5"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
         )
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
@@ -521,19 +521,16 @@ class TestWakeDispatch:
         assert terminal_sender.await_args is not None
 
     @pytest.mark.asyncio
-    async def test_terminal_agent_uses_managed_terminal_when_session_name_missing(
+    async def test_terminal_agent_uses_managed_terminal(
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
     ) -> None:
-        """A bound child terminal wakes even when its legacy context has only a pane."""
+        """A bound child terminal receives a managed wake."""
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
-            terminal_context={
-                "tmux_pane": "%5",
-                "tmux_socket_path": "/tmp/tmux-501/gobby",
-            },
+            terminal_context={"gobby_terminal_id": "terminal-1"},
         )
         terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
@@ -558,7 +555,7 @@ class TestWakeDispatch:
         assert "Task completed" not in terminal_sender.await_args.args[1]
 
     @pytest.mark.asyncio
-    async def test_terminal_agent_fallback_to_ism_when_tmux_fails(
+    async def test_terminal_agent_fallback_to_ism_when_terminal_fails(
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
@@ -567,9 +564,9 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
-            terminal_context='{"tmux_session": "gobby-agent-abc", "tmux_pane": "%5"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
         )
-        failing_terminal = AsyncMock(side_effect=RuntimeError("tmux session dead"))
+        failing_terminal = AsyncMock(side_effect=RuntimeError("native host unavailable"))
 
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
@@ -602,7 +599,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
-            terminal_context='{"tmux_session": "gobby-agent-abc"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
         )
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
@@ -626,7 +623,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id="parent-1",
             agent_depth=1,
-            terminal_context={"tmux_session": "gobby-agent-parent"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
         )
         ism_manager.list_messages.return_value = []
         ism_manager.create_message.side_effect = lambda **_kwargs: events.append("ism")
@@ -738,7 +735,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context='{"tmux_window_id": "@7", "tmux_pane": "%19"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
         )
         terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
@@ -757,19 +754,16 @@ class TestWakeDispatch:
         terminal_sender.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_unbound_socket_path_does_not_authorize_raw_wake(
+    async def test_unbound_terminal_id_does_not_authorize_raw_wake(
         self,
         session_manager: MagicMock,
         ism_manager: MagicMock,
     ) -> None:
-        """A recorded socket does not establish live terminal ownership."""
+        """A recorded terminal ID does not establish live terminal ownership."""
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context={
-                "tmux_pane": "%12",
-                "tmux_socket_path": "/tmp/tmux-501/gobby",
-            },
+            terminal_context={"gobby_terminal_id": "terminal-1"},
         )
         terminal_sender = AsyncMock()
         dispatcher = WakeDispatcher(
@@ -795,7 +789,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context='{"tmux_pane": "%12"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
         )
         terminal_sender = AsyncMock(
             side_effect=AutomaticWriteDeclined(
@@ -901,7 +895,7 @@ class TestWakeDispatch:
     ) -> None:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
             status="active",
         )
         lifecycle_refresh = AsyncMock(side_effect=RuntimeError("refresh failed"))
@@ -931,7 +925,7 @@ class TestWakeDispatch:
     ) -> None:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
             status="paused",
         )
         refresh_started = asyncio.Event()
@@ -965,12 +959,12 @@ class TestWakeDispatch:
         session_manager.get.side_effect = [
             FakeSession(
                 id=WAKE_SESSION_ID,
-                terminal_context={"tmux_pane": "%12"},
+                terminal_context={"gobby_terminal_id": "terminal-1"},
                 status="paused",
             ),
             FakeSession(
                 id=WAKE_SESSION_ID,
-                terminal_context={"tmux_pane": "%12"},
+                terminal_context={"gobby_terminal_id": "terminal-1"},
                 status="active",
             ),
         ]
@@ -995,7 +989,7 @@ class TestWakeDispatch:
     ) -> None:
         session = FakeSession(
             id=WAKE_SESSION_ID,
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
             status="active",
         )
         session_manager.get.return_value = session
@@ -1033,7 +1027,7 @@ class TestWakeDispatch:
         """An active Claude row idle at its prompt takes the wake at once (#25155)."""
         session = FakeSession(
             id=WAKE_SESSION_ID,
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
             status="active",
             source="claude",
             updated_at=datetime(2026, 9, 23, 23, 14, tzinfo=UTC),
@@ -1151,7 +1145,7 @@ class TestWakeDispatch:
         """A working turn or a typed draft is not paused by the deferred retry."""
         session = FakeSession(
             id=WAKE_SESSION_ID,
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
             status="active",
             source=source,
             updated_at=datetime(2026, 9, 23, 23, 14, tzinfo=UTC),
@@ -1225,7 +1219,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
         )
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
@@ -1266,7 +1260,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context='{"tmux_session": "some-session"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
         )
         dispatcher = WakeDispatcher(
             session_manager=session_manager,
@@ -1288,7 +1282,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context='{"tmux_pane": "%12"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
             turn_count=5,
         )
         terminal_sender = AsyncMock()
@@ -1324,7 +1318,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context='{"tmux_pane": "%12"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
             turn_count=5,
         )
 
@@ -1397,7 +1391,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
-            terminal_context='{"tmux_session": "gobby-agent-abc", "tmux_pane": "%5"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
             turn_count=8,
         )
 
@@ -1470,13 +1464,13 @@ class TestWakeDispatch:
         first_session = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context='{"tmux_pane": "%12"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
             turn_count=5,
         )
         second_session = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context='{"tmux_pane": "%12"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
             turn_count=6,
         )
         session_manager.get.side_effect = [
@@ -1512,7 +1506,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=0,
-            terminal_context='{"tmux_pane": "%12"}',
+            terminal_context='{"gobby_terminal_id": "terminal-1"}',
             turn_count=5,
         )
         terminal_sender = AsyncMock(
@@ -1668,7 +1662,7 @@ class TestWakeDispatch:
         session_manager.get.return_value = FakeSession(
             id=WAKE_SESSION_ID,
             agent_depth=1,
-            terminal_context={"tmux_session": "gobby-agent-abc"},
+            terminal_context={"gobby_terminal_id": "terminal-1"},
             status="paused",
         )
         probe = AsyncMock(return_value=TerminalActivity(ComposerRead("empty", None)))
@@ -1719,7 +1713,7 @@ class TestComposerGate:
 
         session_manager = MagicMock()
         session_manager.get.return_value = FakeSession(
-            id=WAKE_SESSION_ID, terminal_context={"tmux_pane": "%7"}
+            id=WAKE_SESSION_ID, terminal_context={"gobby_terminal_id": "terminal-1"}
         )
         terminal_manager = MagicMock()
         terminal_manager.resolve_live_for_session.return_value = MagicMock(

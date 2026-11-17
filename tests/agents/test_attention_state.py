@@ -573,7 +573,7 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
     run_manager = MagicMock()
     run_manager.list_active_for_machine.return_value = [run]
     services = _memory_terminal_services("agent-run-1")
-    runtime = cast(LifecycleRuntime, services.registry.resolve("tmux"))
+    runtime = cast(LifecycleRuntime, services.registry.resolve("native"))
     runtime.snapshot_text = APPROVAL_PANE
     config = MagicMock()
     config.auto_enter_approval_prompts = False
@@ -617,7 +617,7 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
     run_manager.list_active_for_machine.return_value = [run]
     run_manager.get.return_value = run
     services = _memory_terminal_services("agent-run-1")
-    runtime = cast(LifecycleRuntime, services.registry.resolve("tmux"))
+    runtime = cast(LifecycleRuntime, services.registry.resolve("native"))
     runtime.snapshot_text = APPROVAL_PANE
     config = MagicMock()
     config.auto_enter_approval_prompts = False

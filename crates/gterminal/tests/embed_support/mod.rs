@@ -1,4 +1,4 @@
-//! Shared helpers for gterm tmux-observation integration tests.
+//! Shared helpers for gterm embedded-terminal integration tests.
 
 #![allow(dead_code)]
 
@@ -44,9 +44,7 @@ pub fn spawn_host_with_env(extra: &[&str], env: &[(&str, &str)], removed: &[&str
         format!("api_key: {LOCAL}\n"),
     )
     .unwrap();
-    let mut args = vec!["--tmux-poll-interval-ms", "50"];
-    args.extend_from_slice(extra);
-    let mut host = super::host_support::spawn_host_with_env(dir.path(), &args, env, removed);
+    let mut host = super::host_support::spawn_host_with_env(dir.path(), extra, env, removed);
     host.own_socket_dir(dir);
     wait_socket(&host.socket_dir().join(CONTROL_SOCKET));
     wait_socket(&host.socket_dir().join(FRAMES_SOCKET));

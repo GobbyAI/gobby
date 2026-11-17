@@ -216,7 +216,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
             "Split right",
             "Split down",
             "Zoom",
-            "Close pane",
+            "Close",
             "Resize mode",
             "Arrange ▸",
         ]

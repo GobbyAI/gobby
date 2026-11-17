@@ -1776,7 +1776,7 @@ class _FrameHost:
             while True:
                 header = await reader.readexactly(4)
                 payload = await reader.readexactly(int.from_bytes(header, "little"))
-                message = decode_frame(header + payload)
+                message = decode_frame(header + payload, direction="client")
                 if message["type"] == "hello":
                     writer.write((_WIRE_GOLDEN / "welcome.bin").read_bytes())
                     await writer.drain()

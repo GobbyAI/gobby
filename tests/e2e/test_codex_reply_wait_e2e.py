@@ -45,7 +45,8 @@ def e2e_pre_daemon_setup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(_gterm_bin_dir()))
-    socket_dir = create_host_socket_dir(Path("/tmp"), prefix="")
+    socket_root = os.environ.get("CLAUDE_CODE_TMPDIR")
+    socket_dir = create_host_socket_dir(Path(socket_root) if socket_root else None, prefix="")
     daemon_home = e2e_config[0].parent
     for directory in (daemon_home, daemon_home / ".gobby", socket_dir):
         directory.mkdir(exist_ok=True)

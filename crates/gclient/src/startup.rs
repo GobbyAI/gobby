@@ -6,6 +6,7 @@ use crate::teardown::{CrosstermBackend, ModeBackend, TerminalGuard};
 use crate::ui::keymap::{default_override_path, default_prefix, Keymap};
 use crate::ui::settings::ClientPrefs;
 use gobby_terminal::host::CONTROL_PROTOCOL_VERSION;
+use gobby_terminal::protocol::PROTOCOL_VERSION as FRAME_PROTOCOL_VERSION;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -101,6 +102,7 @@ pub struct GtermHostState {
     pub adopted: bool,
     pub host_epoch: Option<String>,
     pub protocol_version: Option<u32>,
+    pub frame_protocol_version: Option<u32>,
     #[serde(default)]
     pub restart_count: u64,
     #[serde(default)]
@@ -137,6 +139,7 @@ pub enum StartupError {
     #[error(
         "gterm host is unusable: running={running} adopted={adopted} epoch={epoch} \
          protocol_version={protocol_version} expected_protocol_version={expected_protocol_version} \
+         frame_protocol_version={frame_protocol_version} expected_frame_protocol_version={expected_frame_protocol_version} \
          restart_count={restart_count} backoff_seconds={backoff_seconds} \
          last_error={last_error}\n\
          Native terminals require a running compatible host. Check `gobby status`."
@@ -147,6 +150,8 @@ pub enum StartupError {
         epoch: String,
         protocol_version: String,
         expected_protocol_version: u32,
+        frame_protocol_version: String,
+        expected_frame_protocol_version: u32,
         restart_count: u64,
         backoff_seconds: f64,
         last_error: String,
@@ -500,7 +505,9 @@ pub fn prepare_at(
     let (host, host_notice) = match health.fetch_health(&env.daemon_url) {
         Ok(host) => {
             if !host.as_ref().is_some_and(|host| {
-                host.running && host.protocol_version == Some(CONTROL_PROTOCOL_VERSION)
+                host.running
+                    && host.protocol_version == Some(CONTROL_PROTOCOL_VERSION)
+                    && host.frame_protocol_version == Some(FRAME_PROTOCOL_VERSION)
             }) {
                 return Err(degraded_host(host.as_ref()));
             }
@@ -602,6 +609,11 @@ fn degraded_host(host: Option<&GtermHostState>) -> StartupError {
             .map(|version| version.to_string())
             .unwrap_or_else(|| "none".to_string()),
         expected_protocol_version: CONTROL_PROTOCOL_VERSION,
+        frame_protocol_version: host
+            .and_then(|host| host.frame_protocol_version)
+            .map(|version| version.to_string())
+            .unwrap_or_else(|| "none".to_string()),
+        expected_frame_protocol_version: FRAME_PROTOCOL_VERSION,
         restart_count: host.map_or(0, |host| host.restart_count),
         backoff_seconds: host.map_or(0.0, |host| host.backoff_seconds),
         last_error: host

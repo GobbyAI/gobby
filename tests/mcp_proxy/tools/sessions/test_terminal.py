@@ -566,22 +566,32 @@ class TestRegisterTerminalTools:
         assert request.submit is True
 
     def test_capture_output_does_not_probe_unhosted_context(self) -> None:
-        """A pane hint without a managed row cannot trigger raw tmux capture."""
+        """A valid terminal ID without a live row cannot trigger runtime capture."""
         registry = _TestRegistry(name="test", description="test")
         session = MagicMock()
-        session.terminal_context = {"gobby_terminal_id": "%12"}
+        terminal_id = "11111111-1111-4111-8111-111111111111"
+        session.terminal_context = {"gobby_terminal_id": terminal_id}
+        session.transcript_path = None
 
         session_manager = MagicMock()
         session_manager.get.return_value = session
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
+        terminal_manager = MagicMock()
+        terminal_manager.get_live_for_session.return_value = None
+        terminal_manager.get.return_value = None
+        runtime_registry = MagicMock()
 
         with patch(
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
             return_value=agent_run_manager,
         ):
             register_terminal_tools(
-                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+                registry,
+                session_manager,
+                MagicMock(fetchone=MagicMock(return_value=None)),
+                terminal_manager=terminal_manager,
+                terminal_runtime_registry=runtime_registry,
             )
 
         capture_metadata = registry.get_tool_metadata("capture_output")
@@ -596,6 +606,9 @@ class TestRegisterTerminalTools:
 
         assert result["success"] is False
         assert result["error_code"] == "no_live_pane_or_transcript"
+        terminal_manager.get_live_for_session.assert_called_once_with("session-1")
+        terminal_manager.get.assert_called_once_with(terminal_id)
+        runtime_registry.resolve.assert_not_called()
 
     def test_capture_output_falls_back_to_transcript_tail(self, tmp_path: Path) -> None:
         """When no tmux target exists, capture_output returns a transcript tail."""

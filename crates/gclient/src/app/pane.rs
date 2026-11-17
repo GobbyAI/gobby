@@ -403,22 +403,9 @@ impl Pane {
         self.is_live() && !self.terminating
     }
 
-    /// A native pane's keys stay on its host stream, so a
-    /// closing native pane refuses them (`closing_native`). A recovery detach
-    /// holds its keys for the attachment that follows (#25653).
+    /// Only an attached terminal accepts input; termination fences new writes.
     pub fn accepts_input(&self) -> bool {
-        !self.terminating
-            && match self.attach {
-                AttachState::Attached { .. } => true,
-                AttachState::Detaching { closing, .. } => closing && !self.backend.is_native(),
-                AttachState::Attaching { .. } | AttachState::Detached => false,
-            }
-    }
-
-    /// A native pane whose close is in flight. Its keys never ride the daemon.
-    pub(super) fn closing_native(&self) -> bool {
-        self.backend.is_native()
-            && matches!(self.attach, AttachState::Detaching { closing: true, .. })
+        !self.terminating && matches!(self.attach, AttachState::Attached { .. })
     }
 
     /// Frames arrive on a direct socket and the backend is one gclient can

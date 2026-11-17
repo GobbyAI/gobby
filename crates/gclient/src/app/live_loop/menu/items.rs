@@ -161,7 +161,7 @@ pub(super) fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId
             passthrough_label(state),
             MenuAction::TogglePassthrough(pane),
         ),
-        item("Close pane", MenuAction::Act(Action::ClosePane)),
+        item("Close", MenuAction::Act(Action::ClosePane)),
     ]);
     items
 }
@@ -263,7 +263,7 @@ pub(super) fn agent_items<W: WorkspaceView>(ws: &W, entry_id: &str) -> Vec<MenuI
         ),
         None => enabled_if(
             item(
-                "Close terminal",
+                "Close",
                 pane.map_or(
                     MenuAction::Act(Action::CloseTerminal),
                     MenuAction::CloseTerminal,

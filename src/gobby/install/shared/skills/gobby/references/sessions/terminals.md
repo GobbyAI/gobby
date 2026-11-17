@@ -51,10 +51,10 @@ session cannot release its own composer. Operators can use
 
 `terminate_terminal` accepts a terminal ID or root-session reference. It applies
 the caller's project and session-tree scope before using the terminal row's
-recorded backend and socket, then marks the row exited synchronously. It is the
-explicit operation that may kill an externally owned terminal. `close_pane`,
-`close_tab`, and `close_workspace` retain their narrower rule: they release an
-external terminal without killing it. Managed-agent termination remains a
+native host identity, then marks the row exited synchronously. `close_pane`,
+`close_tab`, and `close_workspace` kill every terminal in the closed placement,
+including adopted terminals, under the same target-scope authorization. Quitting
+gclient preserves terminals and workspace state. Managed-agent termination remains a
 separate lifecycle operation with capture requirements.
 
 For waiting on output, load the waits topic and
@@ -71,6 +71,6 @@ until it lapses.
 
 Guide: [Terminal tools](../../../../../../../../docs/guides/sessions.md#terminal-tools).
 
-_Version: 2.0.1_
+_Version: 3.0.0_
 
-_Last verified: 2026-11-04_
+_Last verified: 2026-11-17_

@@ -31,8 +31,8 @@ def register_terminate_terminal_tool(
         name="terminate_terminal",
         description=(
             "Explicitly terminate a daemon-tracked terminal by terminal id or root-session "
-            "reference. This can terminate an externally owned terminal; close_pane, "
-            "close_tab, and close_workspace only kill terminals they own."
+            "reference. Closing a pane, tab, or workspace also kills its terminals, "
+            "including adopted terminals. Quitting gclient leaves terminals running."
         ),
     )
     async def terminate_terminal(reference: str) -> dict[str, Any]:

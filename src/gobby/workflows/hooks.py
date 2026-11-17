@@ -45,6 +45,7 @@ if TYPE_CHECKING:
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.terminals import TerminalManager
     from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 
     from .engine import RuleEngine
@@ -143,11 +144,13 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         config_section_resolver: Callable[[str], Any | None] | None = None,
         llm_service_resolver: Callable[[], Any | None] | None = None,
         evaluation_runtime: "WorkflowEvaluationRuntime | None" = None,
+        terminal_manager: "TerminalManager | None" = None,
     ):
         self.rule_engine = rule_engine
         self._task_manager = task_manager
         self._session_manager = session_manager
         self._session_task_manager = session_task_manager
+        self.terminal_manager = terminal_manager
         self._config = config
         self._config_resolver = config_resolver or (lambda: self._config)
         # Per-hook readers resolve only their section; the whole config is a ~5 ms copy (#23359).

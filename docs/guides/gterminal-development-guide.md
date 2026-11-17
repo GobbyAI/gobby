@@ -316,18 +316,19 @@ panes, manages tabs and splits, projects daemon-owned layouts, and shows attenti
 Roster, lifecycle, attention, resize, and
 automatic writes use the daemon's public HTTP/WS API. Operator keystrokes do not:
 a direct native pane types on its own frame socket, so no keystroke waits on a
-daemon round trip. A direct native pane is writable with no lease. Remote proxy
-viewers use the daemon's writer lease.
+daemon round trip. A direct native pane is writable with no lease. Browser proxy
+viewers use the daemon's writer lease; gclient input requires a direct host stream.
 
 Two native terminal delivery paths are available:
 
 | Terminal path | Frame delivery | Keystrokes |
 | --- | --- | --- |
 | Local native terminal | Direct semantic frames from `gterm-frames.sock`. | Direct on the frame socket, with no lease or grant check. |
-| Remote proxy viewer | Daemon WS proxy with `encoding: "semantic_frame"`; `terminal_frame` carries base64 bincode frames. | Through the daemon's writer lease. |
+| Gclient pane using proxy frames | Daemon WS proxy with `encoding: "semantic_frame"`; `terminal_frame` carries base64 bincode frames. | Held during direct promotion, or refused with a reattach notice. |
 
 A failed direct connection can fall back to proxy frames for that pane. Native
-gclient input waits for direct host reconnection. No chrome reports which transport a
+gclient holds keys during host recovery or a pending direct promotion. Otherwise
+it refuses the key with a notice and requests direct reattachment. No chrome reports which transport a
 pane ended up on; `~/.gobby/logs/gclient.log` does. The browser uses the ANSI
 proxy path described in
 [the protocol contract](../contracts/gterm-protocols.md#daemon-websocket-messages).

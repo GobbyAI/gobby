@@ -36,8 +36,10 @@ spool recovery require isolated state, not live sessions.
 
 Run focused package/test commands named by the relevant guide. A source build
 does not change the daemon's installed binary. After actual crate changes,
-coordinate and install through the supported managed promotion contract
-(`promote_workspace_binary_set`). It stages a new inode, signs it and records
+coordinate and install through the supported managed promotion contract:
+`promote_workspace_binary_set` for `gcode`, `gdaemon` and `ghook`, and the
+component installer's `stage_and_promote_binary_file` for `gterm` and `gclient`.
+Promotion stages a new inode, signs it and records
 release identity; manual copying omits required coherence checks. Read hashes
 from the installed binaries after signing, since signing changes their bytes.
 Never overwrite an executing signed macOS binary in place.
@@ -80,4 +82,4 @@ or any rule active. Template defaults are source evidence only. Native spawning
 requires an available host and has no silent fallback; use typed failures
 and the relevant agent/session recovery procedure.
 
-_Version: 1.1.1_
+_Version: 1.1.2_

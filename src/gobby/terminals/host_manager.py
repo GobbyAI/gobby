@@ -139,6 +139,7 @@ class TerminalHostManager(HostShutdown):
         # relay reconnects only to a later one (None from hosts predating it).
         self.host_generation: int | None = None
         self.protocol_version: int | None = CONTROL_PROTOCOL_VERSION
+        self.frame_protocol_version: int | None = None
         self.capabilities: tuple[str, ...] = ()
         self.host_pid: int | None = None
         self.restart_count = 0
@@ -185,6 +186,7 @@ class TerminalHostManager(HostShutdown):
             "adopted": self.adopted,
             "host_epoch": self.host_epoch,
             "protocol_version": self.protocol_version,
+            "frame_protocol_version": self.frame_protocol_version,
             "capabilities": list(self.capabilities),
             "restart_count": self.restart_count,
             "backoff_seconds": self.backoff_seconds,
@@ -672,6 +674,7 @@ class TerminalHostManager(HostShutdown):
         self.host_generation = ping.generation
         self.host_pid = ping.host_pid
         self.protocol_version = int(hello.protocol_version)
+        self.frame_protocol_version = hello.frame_protocol_version
         self.capabilities = tuple(hello.capabilities)
         self.adopted = True
         self.spawned_this_construction = False
@@ -730,6 +733,7 @@ class TerminalHostManager(HostShutdown):
         self.host_generation = ping.generation
         self.host_pid = ping.host_pid
         self.protocol_version = int(hello.protocol_version)
+        self.frame_protocol_version = hello.frame_protocol_version
         self.capabilities = tuple(hello.capabilities)
         self.adopted = False
         self.spawned_this_construction = True
@@ -756,6 +760,9 @@ class TerminalHostManager(HostShutdown):
         env = os.environ.copy()
         # The supervisor descriptor belongs to the daemon.
         env.pop("GOBBY_SUPERVISOR_FD", None)
+        # A new host's shells are independent of the seat that launched the daemon.
+        env.pop("GOBBY_PANE_ID", None)
+        env.pop("GOBBY_PANE_REF", None)
         env["GTERM_LOG_FILE"] = str(log_path)
         with log_path.open("a", encoding="utf-8") as log_file:
             return __import__("subprocess").Popen(  # nosec B603
@@ -768,6 +775,10 @@ class TerminalHostManager(HostShutdown):
                     str(self.config.max_attachments_total),
                     "--max-attachments-per-terminal",
                     str(self.config.max_attachments_per_terminal),
+                    "--native-scrollback-max-lines",
+                    str(self.config.native_scrollback_max_lines),
+                    "--native-scrollback-max-bytes",
+                    str(self.config.native_scrollback_max_bytes),
                 ],
                 stdin=__import__("subprocess").DEVNULL,
                 stdout=log_file,

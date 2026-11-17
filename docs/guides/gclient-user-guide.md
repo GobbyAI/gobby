@@ -576,12 +576,11 @@ shell in it, the daemon-owned tab takes its place and survives reattachment.
 Splitting a tab of bare terminals moves its current pane layout into the daemon
 workspace. Those existing terminals stay adopted; the new shell is owned.
 
-**Pane and tab close preserve adopted terminals.** `close_pane` and `close tab`
-ask the daemon to kill a terminal Gobby started. The terminal is not backgrounded
-and does not reappear in the sidebar. They detach an adopted native terminal
-without killing it. Explicit `close_terminal` kills the selected native terminal
-regardless of adoption. Closing a tab
-kills every gobby-owned pane in it. With `Confirm close` on (the default),
+**Closing kills; quitting preserves terminals.** `close_pane` kills the terminal
+in that pane, including an adopted terminal. `close tab` kills every terminal
+in that tab, and `close_terminal` kills the selected terminal. A killed terminal
+is not backgrounded and does not reappear in the sidebar. Quitting gclient leaves
+the terminals and workspace running for the next window. With `Confirm close` on (the default),
 closing a tab first opens a dialog that names the tab and counts its panes; `y`
 or `enter` confirms, `n` or `esc` cancels. If the daemon refuses a kill, that
 pane stays, and so does its tab.

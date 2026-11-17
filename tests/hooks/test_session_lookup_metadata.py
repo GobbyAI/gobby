@@ -419,6 +419,96 @@ def test_tool_hook_without_parent_subagent_still_auto_registers() -> None:
     session_manager.register_session.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        HookEventType.SESSION_START,
+        HookEventType.BEFORE_TOOL,
+        HookEventType.STOP,
+        HookEventType.SESSION_END,
+    ],
+)
+def test_hintless_grok_child_keeps_the_live_native_parent(event_type: HookEventType) -> None:
+    from gobby.hooks.event_handlers import EventHandlers
+
+    session_manager, session_tasks, service = _uncached_service()
+    event = _pane_event(event_type, session_id="grok-child")
+    context = event.data["terminal_context"]
+    context["parent_create_time"] = 1789400000.0
+    parent = SimpleNamespace(
+        id="parent-session",
+        external_id="grok-parent",
+        machine_id=_REAL_MACHINE_ID,
+        project_id="project-1",
+        status="active",
+        source="grok",
+        session_type="terminal",
+        terminal_context=dict(context),
+    )
+    session_manager.get.return_value = parent
+    terminal = SimpleNamespace(
+        session_id=parent.id,
+        machine_id=_REAL_MACHINE_ID,
+        backend="native",
+        state="live",
+    )
+    with patch("gobby.storage.terminals.TerminalManager") as terminals:
+        terminals.return_value.get.return_value = terminal
+        assert service.resolve(event) == parent.id
+
+    assert event.metadata["_native_subagent_binding"] is True
+    if event_type == HookEventType.SESSION_START:
+        handlers = EventHandlers(
+            session_manager=session_manager, session_task_manager=session_tasks
+        )
+        assert handlers.handle_session_start(event).decision == "allow"
+    session_manager.register_session.assert_not_called()
+    session_manager.update_status_if_non_terminal.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "value"),
+    [
+        ("context", "parent_pid", 999999),
+        ("context", "parent_create_time", 1789400001.0),
+        ("owner", "machine_id", "another-machine"),
+        ("owner", "source", "codex"),
+        ("terminal", "machine_id", "another-machine"),
+        ("terminal", "state", "exited"),
+    ],
+)
+def test_hintless_grok_child_refuses_unproven_native_parent(
+    target: str, field: str, value: object
+) -> None:
+    session_manager, _, service = _uncached_service()
+    event = _pane_event(HookEventType.BEFORE_TOOL, session_id="grok-child")
+    context = event.data["terminal_context"]
+    context["parent_create_time"] = 1789400000.0
+    owner_context = dict(context)
+    owner = SimpleNamespace(
+        id="parent-session",
+        external_id="grok-parent",
+        machine_id=_REAL_MACHINE_ID,
+        source="grok",
+        status="active",
+        session_type="terminal",
+        terminal_context=owner_context,
+    )
+    terminal = SimpleNamespace(session_id=owner.id, machine_id=_REAL_MACHINE_ID, state="live")
+    if target == "context":
+        owner_context[field] = value
+    else:
+        setattr(owner if target == "owner" else terminal, field, value)
+    session_manager.get.return_value = owner
+
+    with patch("gobby.storage.terminals.TerminalManager") as terminals:
+        terminals.return_value.get.return_value = terminal
+        assert service._bind_process_bound_grok_child(event, machine_id=_REAL_MACHINE_ID) is None
+
+    assert "_native_subagent_binding" not in event.metadata
+    session_manager.register_session.assert_not_called()
+
+
 def test_grok_tool_hook_from_another_process_in_the_pane_auto_registers() -> None:
     """A new Grok process in a pane with a stale live owner is not its subagent."""
     session_manager, _, service = _uncached_service()

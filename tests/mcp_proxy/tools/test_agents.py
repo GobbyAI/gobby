@@ -1680,7 +1680,7 @@ class TestKillAgent:
     async def test_parent_kill_forwards_terminal_services(self) -> None:
         """A parent kill must hand kill.py the services that reach capture.py.
 
-        Without terminal_services, _close_terminal_session short-circuits before
+        Without terminal_services, _close_managed_terminal short-circuits before
         terminate_managed_runtime_async and _close_terminal_window raw-kills the
         process group, losing the final transcript capture.
         """

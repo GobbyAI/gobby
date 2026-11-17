@@ -105,6 +105,29 @@ def _register_terminal(
     return updated
 
 
+def test_resolve_current_terminal_session_rejects_different_terminal_on_same_pid(
+    session_manager: SessionManager,
+    sample_project: dict[str, str],
+) -> None:
+    _register_terminal(
+        session_manager,
+        sample_project["id"],
+        "other-terminal",
+        terminal_context={
+            "parent_pid": 4242,
+            "gobby_terminal_id": "1e557198-09a7-56ec-ba24-bb707c6faf68",
+        },
+    )
+
+    resolved = session_manager.resolve_current_terminal_session(
+        sample_project["id"],
+        4242,
+        {"gobby_terminal_id": "2e557198-09a7-56ec-ba24-bb707c6faf68"},
+    )
+
+    assert resolved is None
+
+
 def test_resolve_current_terminal_session_prefers_active_status(
     session_manager: SessionManager,
     sample_project: dict[str, str],

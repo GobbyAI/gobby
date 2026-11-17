@@ -211,7 +211,7 @@ class TerminalPromptMonitor:
                 self.mark_enter_sent(run.id)
                 self._last_loop_dismissed_at[run.id] = now
                 detector.mark_loop_prompt_dismissed(run.id, pane_output)
-                count = self._loop_tracker.record_dismissal(run.id)
+                count = await self._run_db(self._loop_tracker.record_dismissal, run.id)
                 logger.info(
                     "Auto-dismissed loop prompt for agent %s (%s/%s)",
                     run.id,
@@ -220,7 +220,7 @@ class TerminalPromptMonitor:
                 )
                 handled += 1
 
-                if self._loop_tracker.should_escalate(run.id):
+                if count >= self._loop_tracker.threshold:
                     logger.warning(
                         "Doom loop detected for agent %s: %s loop prompts dismissed, "
                         "escalating to kill",

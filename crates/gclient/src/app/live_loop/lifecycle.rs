@@ -11,36 +11,14 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use super::super::viewer_state::EMPTY_LOCAL_TAB_PREFIX;
 use super::super::{PaneId, Workspace};
-use super::control::{close_barrier, detach_barrier};
-use super::daemon_ops::{
-    close_daemon_pane, close_daemon_tab, kill_live_panes, op_tag, pane_close_op, tab_close_op,
-};
+use super::control::close_barrier;
+use super::daemon_ops::{close_daemon_pane, kill_live_panes, op_tag, pane_close_op, tab_close_op};
 use super::jobs::{spawn_job, JobOutcome, JobResult, PaneAction};
 use super::mouse::Placement;
-use super::projection::close_slot;
 use super::sync_live_chrome;
-use super::workspace_actions::{daemon_pane_id, refusal_message, spawn_owned_live_shell};
+use super::workspace_actions::{refusal_message, spawn_owned_live_shell};
 
-/// The daemon row decides whether closing this pane may kill its terminal.
-fn daemon_pane_is_adopted(
-    workspace: &Workspace<LiveDaemon>,
-    chrome: &Chrome,
-    slot: layout::PaneId,
-) -> Result<bool, FrameError> {
-    if chrome.active_tab().is_none_or(Tab::is_local) {
-        return Ok(false);
-    }
-    let pane_id = daemon_pane_id(chrome, slot)
-        .ok_or_else(|| FrameError::Protocol("daemon pane has no slot mapping".into()))?;
-    let pane = workspace
-        .workspace_model()
-        .and_then(|model| model.pane(&pane_id))
-        .ok_or_else(|| FrameError::Protocol("daemon pane is missing from the workspace".into()))?;
-    Ok(!pane.owns_terminal)
-}
-
-/// Close the focused pane: owned terminals are killed; adopted terminals
-/// leave the daemon tab with their lease released and remain in the roster.
+/// Close the focused pane by killing its terminal, including an adopted terminal.
 pub(super) async fn close_live_pane(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -60,17 +38,6 @@ pub(super) async fn close_live_pane(
         close_daemon_pane(workspace, chrome, outcomes, slot, Vec::new());
         return Ok(());
     };
-    // An adopted terminal outlives the pane, so the close detaches
-    // this client's attachment once the pane's accepted input went out.
-    if daemon_pane_is_adopted(workspace, chrome, slot)? {
-        let after = detach_barrier(workspace, outcomes, pane_id)
-            .into_iter()
-            .collect();
-        if !close_daemon_pane(workspace, chrome, outcomes, slot, after) {
-            chrome.close_focused();
-        }
-        return Ok(());
-    }
     // A refused kill keeps the pane; only a killed one's row is closed.
     let after = close_barrier(workspace, outcomes, pane_id)
         .into_iter()
@@ -80,7 +47,7 @@ pub(super) async fn close_live_pane(
     Ok(())
 }
 
-/// Close the active tab: kill owned terminals and release adopted ones.
+/// Close the active tab and kill every terminal it contains.
 pub(super) async fn close_live_tab(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -93,60 +60,19 @@ pub(super) async fn close_live_tab(
         chrome.close_focused();
         return Ok(());
     }
-    let slots: Vec<(layout::PaneId, PaneId)> = chrome
+    let panes: Vec<PaneId> = chrome
         .active_tab()
-        .map(|tab| {
-            tab.slots
-                .iter()
-                .map(|(slot, pane)| (*slot, *pane))
-                .collect()
-        })
+        .map(|tab| tab.slots.values().copied().collect())
         .unwrap_or_default();
-    let local = chrome.active_tab().is_some_and(Tab::is_local);
-    let mut panes = Vec::with_capacity(slots.len());
-    for (slot, pane_id) in slots {
-        let preserve_terminal = daemon_pane_is_adopted(workspace, chrome, slot)?;
-        panes.push((slot, pane_id, preserve_terminal));
-    }
-    if !local
-        && panes
-            .iter()
-            .all(|(_, _, preserve_terminal)| *preserve_terminal)
-    {
-        let mut after = Vec::new();
-        for &(_, pane_id, _) in &panes {
-            after.extend(detach_barrier(workspace, outcomes, pane_id));
-        }
-        close_daemon_tab(workspace, chrome, outcomes, after);
-        sync_live_chrome(workspace, chrome);
-        return Ok(());
-    }
-    let mut owned_native = Vec::new();
-    let mut owned_after = Vec::new();
-    for &(slot, pane_id, preserve_terminal) in &panes {
-        if preserve_terminal {
-            let after = detach_barrier(workspace, outcomes, pane_id)
-                .into_iter()
-                .collect();
-            if local || !close_daemon_pane(workspace, chrome, outcomes, slot, after) {
-                let index = chrome.active_index();
-                let viewer = &mut chrome.viewer;
-                if let Some(tab) = chrome.project_tabs.set_mut().tabs.get_mut(index) {
-                    close_slot(tab, viewer, slot);
-                }
-            }
-        } else {
-            // A killed pane leaves the roster and `sync_live_chrome` reaps
-            // its slot; a refused kill keeps the pane, and so its tab.
-            owned_native.push(pane_id);
-            owned_after.extend(close_barrier(workspace, outcomes, pane_id));
-        }
+    let mut after = Vec::new();
+    for &pane_id in &panes {
+        after.extend(close_barrier(workspace, outcomes, pane_id));
     }
     // A refused kill keeps its pane in the roster, and so its tab: the
-    // daemon closes a tab only once every owned pane is gone. A local tab
+    // daemon closes a tab only once every pane is gone. A local tab
     // goes when it empties.
     let then = tab_close_op(chrome);
-    kill_live_panes(workspace, outcomes, owned_native, owned_after, then);
+    kill_live_panes(workspace, outcomes, panes, after, then);
     sync_live_chrome(workspace, chrome);
     Ok(())
 }

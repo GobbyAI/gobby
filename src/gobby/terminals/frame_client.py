@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from struct import Struct
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.dimensions import MAX_FRAME_SIZE
@@ -404,19 +404,11 @@ def _frame_payload(raw: bytes) -> memoryview:
     return memoryview(raw)[4 : 4 + claimed]
 
 
-def decode_frame(raw: bytes) -> dict[str, Any]:
+def decode_frame(
+    raw: bytes, *, direction: Literal["client", "server"] = "server"
+) -> dict[str, Any]:
     payload = _frame_payload(raw)
-    claimed = len(payload)
-    tag = payload[0] if payload else 255
-    if tag == 0 and claimed > 13 and len(payload) > 1 and payload[1] == PROTOCOL_VERSION:
-        return _decode_client(_Reader(payload))
-    if tag == 4 and claimed == 1:
-        return {"type": "detach"}
-    if tag == 5 and claimed > 8:
-        return _decode_client(_Reader(payload))
-    if tag == 6 and claimed == 3:
-        return _decode_client(_Reader(payload))
-    if tag == 7 and claimed == 2:
+    if direction == "client":
         return _decode_client(_Reader(payload))
     return _decode_server(_Reader(payload))
 

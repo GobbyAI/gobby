@@ -938,6 +938,7 @@ fn test_reports_degraded_host_state() {
                 "adopted": true,
                 "host_epoch": "epoch-recovered",
                 "protocol_version": {PROTOCOL_VERSION},
+                "frame_protocol_version": 2,
                 "restart_count": 3,
                 "backoff_seconds": 4.5,
                 "last_error": "stale socket failure"
@@ -968,6 +969,16 @@ fn test_reports_degraded_host_state() {
     }
 
     let unavailable = [
+        (
+            "incompatible frame wire",
+            r#"{"gterm_host":{"running":true,"protocol_version":1,"frame_protocol_version":1}}"#.to_string(),
+            "frame_protocol_version=1",
+        ),
+        (
+            "unknown frame wire",
+            r#"{"gterm_host":{"running":true,"protocol_version":1}}"#.to_string(),
+            "frame_protocol_version=none",
+        ),
         (
             "absent",
             r#"{"status":"degraded","degraded_services":["gterm_host"]}"#.to_string(),
@@ -1067,6 +1078,7 @@ fn project_is_resolved_before_raw_mode() {
             "adopted": false,
             "host_epoch": "epoch-ok",
             "protocol_version": 1,
+                "frame_protocol_version": 2,
             "restart_count": 0,
             "last_error": null
         }
@@ -1182,6 +1194,7 @@ impl HealthClient for HealthyHost {
             adopted: false,
             host_epoch: Some("epoch-ok".to_string()),
             protocol_version: Some(PROTOCOL_VERSION),
+            frame_protocol_version: Some(gobby_terminal::protocol::PROTOCOL_VERSION),
             restart_count: 0,
             backoff_seconds: 0.0,
             last_error: None,

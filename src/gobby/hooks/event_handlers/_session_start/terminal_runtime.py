@@ -65,7 +65,10 @@ def bind_discovered_terminal(
     if not isinstance(native_terminal_id, str) or not native_terminal_id:
         return None
     cli_pid = terminal_context.get("parent_pid")
-    terminal = terminal_manager.get(native_terminal_id)
+    try:
+        terminal = terminal_manager.get(native_terminal_id)
+    except ValueError:
+        terminal = None
     if (
         isinstance(cli_pid, bool)
         or not isinstance(cli_pid, int)

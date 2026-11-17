@@ -443,19 +443,26 @@ class TestSessionManagerPruning:
         assert stale is not None
         assert stale.status == "expired"
 
-    @pytest.mark.parametrize("target_field", ["pane_id", "window_id"])
-    def test_pane_only_session_expires_on_normal_schedule(
+    @pytest.mark.parametrize(
+        ("target_field", "target_value"),
+        [
+            ("gobby_terminal_id", "21000000-0000-4000-8000-000000000304"),
+            ("tty", "/dev/ttys042"),
+        ],
+    )
+    def test_unbound_terminal_context_expires_on_normal_schedule(
         self,
         session_manager: SessionManager,
         sample_project: dict,
         target_field: str,
+        target_value: str,
     ) -> None:
         session = session_manager.register(
             external_id=f"idle-pane-{target_field}",
             machine_id="20000000-0000-4000-8000-000000000001",
             source="claude",
             project_id=sample_project["id"],
-            terminal_context={target_field: "%304" if target_field == "pane_id" else "@42"},
+            terminal_context={target_field: target_value},
         )
         session_manager.db.execute(
             "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours', "

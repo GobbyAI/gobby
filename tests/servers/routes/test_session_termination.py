@@ -64,7 +64,7 @@ def test_expire_session_does_not_fall_back_after_tracked_terminal_failure() -> N
     session = SimpleNamespace(
         id=session_id,
         status="active",
-        terminal_context={"tmux_pane": "%1", "parent_pid": 123},
+        terminal_context={"gobby_terminal_id": terminal.id, "parent_pid": 123},
     )
     terminal_manager = MagicMock()
     terminal_manager.get_live_for_session.return_value = terminal

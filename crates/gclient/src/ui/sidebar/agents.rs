@@ -32,8 +32,7 @@ const GROUP_ROW: &str = "group:";
 
 /// What the row calls the entry: `#ref: title` for a session, the ref
 /// leading whether the daemon's title carried it (`gobby#12856: fix` reads
-/// `#12856: fix`) or not; else the name with the workspace address that keeps
-/// two same-named terminals apart, never a raw UUID.
+/// `#12856: fix`) or not; otherwise the terminal name.
 pub fn agent_label(agent: &AgentEntry) -> String {
     match agent.session_ref.as_deref() {
         Some(reference) => match agent.name.find(reference) {

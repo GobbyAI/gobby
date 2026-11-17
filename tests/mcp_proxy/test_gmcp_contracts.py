@@ -63,5 +63,4 @@ def test_wrapper_contract_matches_python_constants() -> None:
 
 def test_wrapper_context_keys_are_accepted_by_daemon() -> None:
     contract = json.loads((CRATE_DIR / "contracts/mcp_wrapper.v1.json").read_text())
-    # The daemon allowlist shrinks in the next purge section.
     assert set(contract["terminal_context_keys"]) <= set(TERMINAL_CONTEXT_KEYS)

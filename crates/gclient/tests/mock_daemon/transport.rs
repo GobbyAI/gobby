@@ -1244,6 +1244,14 @@ fn websocket_reply(
             let refusal = state.kill_refusals.pop_front();
             if refusal.is_none() {
                 if let Some(terminal_id) = request.get("terminal_id").and_then(Value::as_str) {
+                    if let Some(items) = state
+                        .terminal_roster
+                        .as_mut()
+                        .and_then(|roster| roster.get_mut("items"))
+                        .and_then(Value::as_array_mut)
+                    {
+                        items.retain(|row| row["terminal_id"].as_str() != Some(terminal_id));
+                    }
                     let events = state.workspace.reap_terminal(terminal_id);
                     state.pending_workspace_events.extend(events);
                 }

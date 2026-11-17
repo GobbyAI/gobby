@@ -45,7 +45,7 @@ def test_default_backend_config_is_removed() -> None:
     assert "default_backend" not in contract_text
     guide = _GUIDE.read_text(encoding="utf-8")
     assert "default_backend" not in guide
-    assert "native gterm is always attempted first" in guide
+    assert "Native gterm is the only terminal backend." in guide
 
 
 @pytest.mark.asyncio

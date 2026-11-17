@@ -28,7 +28,6 @@ def _create_run(
     *,
     suffix: str,
     child_status: str = "active",
-    pane_id: str = "%1",
 ) -> tuple[LocalAgentRunManager, str, str]:
     parent = session_manager.register(
         external_id=f"capture-parent-{suffix}",
@@ -154,7 +153,6 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
         session_manager,
         sample_project,
         suffix="intent",
-        pane_id="%2",
     )
     manager.record_termination_intent(intended_id, action="timeout", reason="deadline")
 
@@ -163,7 +161,6 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
         session_manager,
         sample_project,
         suffix="terminal-child",
-        pane_id="%3",
         child_status="expired",
     )
     _manager, active_child_id, _ = _create_run(
@@ -171,7 +168,6 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
         session_manager,
         sample_project,
         suffix="active-child",
-        pane_id="%4",
     )
 
     no_terminal_manager, no_terminal_id, no_terminal_child = _create_run(
@@ -179,7 +175,6 @@ def test_termination_candidates_include_intent_and_terminal_child_only(
         session_manager,
         sample_project,
         suffix="no-terminal",
-        pane_id="%5",
         child_status="expired",
     )
     no_terminal_run = no_terminal_manager.get(no_terminal_id)

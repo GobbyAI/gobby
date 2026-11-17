@@ -75,7 +75,7 @@ pub fn menu_bar_items<W: WorkspaceView>(
                     chrome.focused_pane().is_some(),
                 ),
                 enabled_if(
-                    act("Close pane", Action::ClosePane),
+                    act("Close", Action::ClosePane),
                     chrome.focused_pane().is_some(),
                 ),
                 enabled_if(

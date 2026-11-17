@@ -119,10 +119,6 @@ def _capture_marker(capture_id: str) -> str:
     return f"--- GOBBY TERMINAL CAPTURE {capture_id} ---"
 
 
-def _capture_end_marker(capture_id: str) -> str:
-    return f"--- END GOBBY TERMINAL CAPTURE {capture_id} ---"
-
-
 def _capture_slot(
     capture_id: str,
     capture: str,
@@ -130,6 +126,7 @@ def _capture_slot(
     truncated: bool = False,
     dropped_bytes: int | None = 0,
     total_bytes: int | None = None,
+    marker: str | None = None,
 ) -> str:
     meta = json.dumps(
         {
@@ -139,7 +136,9 @@ def _capture_slot(
         },
         separators=(",", ":"),
     )
-    return f"{_capture_marker(capture_id)}\n{meta}\n{capture}\n{_capture_end_marker(capture_id)}"
+    marker = marker or _capture_marker(capture_id)
+    end_marker = marker.replace("--- ", "--- END ", 1)
+    return f"{marker}\n{meta}\n{capture}\n{end_marker}"
 
 
 @dataclass(frozen=True)
@@ -155,13 +154,17 @@ class ParsedCaptureSlot:
 def parse_capture_slot(result: str) -> ParsedCaptureSlot:
     """Read truncation metadata from a stored capture-before-kill artifact."""
     start = result.find("--- GOBBY TERMINAL CAPTURE ")
+    label = "TERMINAL"
+    if start < 0:
+        label = "TMUX"
+        start = result.find(f"--- GOBBY {label} CAPTURE ")
     if start < 0:
         return ParsedCaptureSlot(text=result, truncated=False, dropped_bytes=0, total_bytes=None)
     body_start = result.find("\n", start)
     if body_start < 0:
         return ParsedCaptureSlot(text=result, truncated=False, dropped_bytes=0, total_bytes=None)
     rest = result[body_start + 1 :]
-    end = rest.find("--- END GOBBY TERMINAL CAPTURE ")
+    end = rest.find(f"--- END GOBBY {label} CAPTURE ")
     payload = rest if end < 0 else rest[:end]
     first, _, remainder = payload.partition("\n")
     try:
@@ -240,12 +243,18 @@ def _persist_capture_sync(
     capture: str,
 ) -> AgentRun | None:
     capture_id = run.capture_id or str(uuid.uuid4())
+    marker = _capture_marker(capture_id)
+    # Native runs from the pinned pre-purge generation retain their stored
+    # delimiter so either generation can CAS-update an in-flight capture.
+    previous_marker = f"--- GOBBY TMUX CAPTURE {capture_id} ---"
+    if run.capture_id and previous_marker in (run.result or ""):
+        marker = previous_marker
     return storage.replace_capture_slot(
         run.id,
         capture_id=capture_id,
         expected_revision=run.capture_revision,
-        marker=_capture_marker(capture_id),
-        slot_content=_capture_slot(capture_id, capture),
+        marker=marker,
+        slot_content=_capture_slot(capture_id, capture, marker=marker),
     )
 
 
@@ -596,6 +605,7 @@ class _SnapshotCaptureStorage:
                 truncated=self._snapshot.truncated,
                 dropped_bytes=self._snapshot.dropped_bytes,
                 total_bytes=self._snapshot.total_bytes,
+                marker=marker,
             ),
         )
 

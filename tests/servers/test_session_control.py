@@ -1399,8 +1399,8 @@ class TestContinueInChatTerminalKill:
         assert response["context_window"] == 444_000
 
     @pytest.mark.asyncio
-    async def test_attach_to_session_keeps_live_handoff_tmux_proxy_attachable(self) -> None:
-        """Live tmux metadata should keep resume-only terminal rows attachable."""
+    async def test_attach_to_session_keeps_live_handoff_proxy_attachable(self) -> None:
+        """Live native terminal metadata keeps resume-only terminal rows attachable."""
         from gobby.servers.websocket.session_control import SessionControlMixin
 
         ws = MagicMock()

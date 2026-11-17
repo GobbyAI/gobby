@@ -149,6 +149,17 @@ async def _terminate_child[T](
                 break
     child.cancel()
 
+    # Loop lag can exhaust the cleanup budget before cancellation is delivered.
+    # Give the child a scheduling turn without granting another timed wait.
+    if not child.done() and _remaining(cleanup_deadline) <= 0.0:
+        try:
+            await asyncio.wait({child}, timeout=0)
+        except BaseException as exc:
+            if isinstance(exc, asyncio.CancelledError):
+                state.caller_cancellation = state.caller_cancellation or exc
+            termination_error = termination_error or exc
+            child.cancel()
+
     while not child.done() and (reap_budget := _remaining(cleanup_deadline)) > 0.0:
         try:
             await asyncio.wait({child}, timeout=reap_budget)

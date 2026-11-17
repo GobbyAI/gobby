@@ -26,7 +26,7 @@
 11 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
 12 |│                                                          ││       │ Main horizontal ││ Send right-clicks to pane │   │|
 12 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
-13 |│                                                          ││       │ Main vertical   ││ Close pane                │   │|
+13 |│                                                          ││       │ Main vertical   ││ Close                     │   │|
 13 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
 14 |│                                                          ││       │ Tiled           │└───────────────────────────┘   │|
 14 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*30 text/panel_bg*3 accent/panel_bg*1

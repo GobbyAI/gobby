@@ -1033,7 +1033,7 @@ async def test_codex_readiness_does_not_take_marker_replaced_during_capture(
 
 
 @pytest.mark.asyncio
-async def test_codex_readiness_stops_when_gobby_terminal_id_disappears(
+async def test_codex_readiness_stops_when_terminal_capture_fails(
     session_db: HubDatabase,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -2410,6 +2410,25 @@ async def test_schedule_continuation_resolves_native_terminal_without_runtime(
     assert writes.count(("text", prompt, True)) == 1
     assert writes.count(("key", "enter")) == 1
     assert not _HANDOFF_COMPACT_CONTINUATION_TASKS
+
+
+def test_continuation_pane_stops_when_context_terminal_row_disappears() -> None:
+    terminal_id = "11111111-1111-4111-8111-111111111111"
+    session = SimpleNamespace(
+        id="session-1",
+        project_id="proj-1",
+        terminal_context={"gobby_terminal_id": terminal_id},
+    )
+    terminal_manager = MagicMock()
+    terminal_manager.get_live_for_session.return_value = None
+    terminal_manager.get.return_value = None
+    registry = MagicMock()
+
+    pane = _continuation_pane(session, "session-1", terminal_manager, registry)
+
+    assert pane is None
+    terminal_manager.get.assert_called_once_with(terminal_id)
+    registry.resolve.assert_not_called()
 
 
 def test_continuation_pane_uses_unbound_gterm_named_by_context() -> None:

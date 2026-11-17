@@ -21,12 +21,12 @@ def _host_gone(detail: str) -> HostUnavailableError:
 
 def test_chained_write_error_is_recognized() -> None:
     """The exact production shape: the marker lives only in __cause__."""
-    cause = _host_gone("can't find session: 2f0c6f1e-1d2b-4a1e-9d33-0f5b7c9a1e42")
+    cause = _host_gone("gterm host unavailable")
     try:
         raise TerminalWriteError(stage="none") from cause
     except TerminalWriteError as error:
         # The wrapper's own message says nothing about why the write failed.
-        assert "can't find session" not in str(error)
+        assert "gterm host unavailable" not in str(error)
         assert is_vanished_terminal_target(error) is True
 
 
@@ -60,7 +60,7 @@ def test_missing_executable_is_not_a_vanished_target() -> None:
 
 def test_missing_executable_does_not_mask_a_later_vanished_link() -> None:
     """The socket rule rejects one link; it must not abandon the rest of the chain."""
-    cause = _host_gone("can't find pane: %7")
+    cause = _host_gone("gterm host unavailable")
     error = FileNotFoundError(2, "No such file or directory", "gterm")
     error.__cause__ = cause
 
@@ -69,7 +69,7 @@ def test_missing_executable_does_not_mask_a_later_vanished_link() -> None:
 
 def test_timeout_anywhere_in_the_chain_is_a_vanished_target() -> None:
     error = TerminalWriteError(stage="none")
-    error.__cause__ = TimeoutError("tmux invocation timed out")
+    error.__cause__ = TimeoutError("native host request timed out")
 
     assert is_vanished_terminal_target(error) is True
 
@@ -88,7 +88,7 @@ def test_depth_is_bounded() -> None:
     """A marker deeper than _MAX_CHAIN_DEPTH is out of reach by design."""
     marker_depth = 30
     links = [RuntimeError(f"link {index}") for index in range(40)]
-    links[marker_depth] = RuntimeError("can't find session: deep")
+    links[marker_depth] = HostUnavailableError("gterm host unavailable")
     for shallower, deeper in zip(links, links[1:], strict=False):
         shallower.__cause__ = deeper
 

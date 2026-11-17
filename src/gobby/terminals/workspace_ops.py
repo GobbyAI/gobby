@@ -904,10 +904,10 @@ class WorkspaceOps(WorkspacePaneIOMixin):
             return
 
     def _closing(self, actor: str, panes: Iterable[WorkspacePane]) -> list[Terminal]:
-        """Scope-check the owned terminals a close would kill; storage refuses in-flight panes."""
+        """Scope-check every terminal a close would kill; storage refuses in-flight panes."""
         doomed: list[Terminal] = []
         for pane in panes:
-            if pane.terminal_id is None or not pane.owns_terminal:
+            if pane.terminal_id is None:
                 continue
             terminal = self._terminals.get(pane.terminal_id)
             if terminal is not None and terminal.state in _KILLABLE_STATES:

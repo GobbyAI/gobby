@@ -16,6 +16,7 @@ from gobby.agents.capture import (
     _async_storage_call,
     capture_then_kill_async,
     capture_then_kill_sync,
+    parse_capture_slot,
 )
 from gobby.storage.agents import AgentRun, AgentRunStatus, TerminalAction
 
@@ -173,7 +174,8 @@ class FakeCaptureStorage:
         return self._terminal(run_id, "cancelled")
 
 
-def test_kill_failure_retries_with_capture_slot_replacement() -> None:
+@pytest.mark.parametrize("slot_label", ["TERMINAL", "TMUX"])
+def test_kill_failure_retries_with_capture_slot_replacement(slot_label: str) -> None:
     storage = FakeCaptureStorage(_run("retry"))
     alive = True
     pane = "first output"
@@ -200,6 +202,14 @@ def test_kill_failure_retries_with_capture_slot_replacement() -> None:
     assert storage.runs["retry"].status == "running"
     assert storage.runs["retry"].capture_revision == 1
 
+    # The pinned pre-purge generation wrote the old label for native runs too.
+    original = storage.runs["retry"]
+    assert original.result is not None
+    storage.runs["retry"] = replace(
+        original,
+        result=original.result.replace("GOBBY TERMINAL CAPTURE", f"GOBBY {slot_label} CAPTURE"),
+    )
+
     pane = "first output\nprinted after failed kill"
 
     def successful_kill() -> bool:
@@ -225,7 +235,8 @@ def test_kill_failure_retries_with_capture_slot_replacement() -> None:
     assert final.capture_revision == 2
     assert final.result is not None
     assert "printed after failed kill" in final.result
-    assert final.result.count("--- GOBBY TERMINAL CAPTURE ") == 1
+    assert final.result.count(f"--- GOBBY {slot_label} CAPTURE ") == 1
+    assert parse_capture_slot(final.result).text == pane
     assert storage.events.index("persist:retry") < storage.events.index("kill:false")
     assert storage.events[-1] == "terminal:retry:error"
 

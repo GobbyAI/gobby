@@ -3284,10 +3284,10 @@ class TestExternalNavigationScope:
         assert data["canonical_repo_mutation"] is True
         assert not data.get("canonical_file_paths")
 
-    def test_terminal_snapshot_is_not_repo_mutation(self) -> None:
+    def test_terminal_version_is_not_repo_mutation(self) -> None:
         data: dict[str, Any] = {
             "tool_name": "Bash",
-            "tool_input": {"command": "gterm snapshot terminal-1"},
+            "tool_input": {"command": "gterm --version"},
         }
 
         normalize_tool_fields(data)

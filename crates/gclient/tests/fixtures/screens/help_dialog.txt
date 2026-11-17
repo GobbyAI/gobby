@@ -40,8 +40,8 @@
 18 : text/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*12 overlay1/panel_bg*15 text/panel_bg*66 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 19 |  │ prefix+shift+w     Rename the selected terminal (rename_terminal)                                               ▐│ │|
 19 : text/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*28 overlay1/panel_bg*18 text/panel_bg*47 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
-20 |  │ prefix+shift+d     Close the selected terminal (close_terminal)                                                 ▐│ │|
-20 : text/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*27 overlay1/panel_bg*17 text/panel_bg*49 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
+20 |  │ prefix+shift+d     Close (close_terminal)                                                                       ▐│ │|
+20 : text/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*5 overlay1/panel_bg*17 text/panel_bg*71 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 21 |  │ prefix+w           Open the terminal picker (terminal_picker)                                                   ▐│ │|
 21 : text/panel_bg+d*2 accent/panel_bg*1 subtext0/panel_bg+b*20 text/panel_bg*24 overlay1/panel_bg*18 text/panel_bg*51 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg+d*1 accent/panel_bg+d*1
 22 |  │ prefix+g           Open the navigator (goto)                                                                    ▐│ │|

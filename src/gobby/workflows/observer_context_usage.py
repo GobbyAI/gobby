@@ -89,11 +89,6 @@ def detect_context_compact_guidance(
     hold_open: bool = False,
 ) -> None:
     """Populate compact guidance variables for turn_start evaluation."""
-    if variables.get("native_terminal_hosted") is False:
-        variables["context_compact_guidance_kind"] = ""
-        variables["context_compact_guidance_message"] = ""
-        _write_band(variables, "none", None, None)
-        return
     gate = _handoff_gate(variables)
     turns_since_compact = _turns_since_compact(variables)
     # A held lifecycle inside its grace window may still clear a reset, and its usage predates the
@@ -102,6 +97,13 @@ def detect_context_compact_guidance(
         variables.get("pending_context_reset") is True
         and not _is_stale_pending_reset(variables, turns_since_compact)
     )
+    if variables.get("native_terminal_hosted") is False:
+        variables["context_compact_guidance_kind"] = ""
+        variables["context_compact_guidance_message"] = ""
+        if gate == "pending" or pending_reset:
+            _reset_epoch_state(variables)
+        _write_band(variables, "none", None, None)
+        return
     skip_session_lookup = gate in {"pending", "failed"} or pending_reset or _is_plan_mode(variables)
     # A timed-out or failed read must leave the previous guidance and turn counters intact.
     try:

@@ -731,6 +731,8 @@ fn host_command(options: &HostOptions, log: std::fs::File, stderr: std::fs::File
         .arg("--socket-dir")
         .arg(&options.socket_dir)
         .args(&options.spawn_args)
+        .env_remove("GOBBY_PANE_ID")
+        .env_remove("GOBBY_PANE_REF")
         .env(
             "GTERM_LOG_FILE",
             options.socket_dir.join("logs").join("gterm.log"),

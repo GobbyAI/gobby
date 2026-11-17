@@ -55,7 +55,7 @@ export interface RosterPage {
 }
 
 export function asSession(
-  row: Partial<TerminalSession> & { terminal_id?: string },
+  row: Partial<TerminalSession> & { command?: string | null; cwd?: string | null },
 ): TerminalSession {
   const terminalId = row.terminal_id ?? "";
   return {
@@ -72,8 +72,8 @@ export function asSession(
     pane_pid: row.pane_pid ?? null,
     pane_dead: row.pane_dead ?? false,
     pane_title: row.pane_title ?? row.title ?? null,
-    pane_command: row.pane_command ?? null,
-    pane_path: row.pane_path ?? null,
+    pane_command: row.command ?? null,
+    pane_path: row.cwd ?? null,
     window_name: row.window_name ?? null,
     gobby_session_id: row.gobby_session_id ?? row.session_id ?? null,
     agent_managed: row.agent_managed ?? row.ownership === "gobby",

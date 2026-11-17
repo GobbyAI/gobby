@@ -167,7 +167,7 @@ pub(super) fn send_live_input(
     if workspace.exit_reason().is_some() {
         return Ok(());
     }
-    if workspace.pane(pane_id).closing_native() {
+    if workspace.pane(pane_id).is_terminating() {
         chrome.notify(Toast::warning(CLOSING_NATIVE_INPUT));
         return Ok(());
     }
@@ -241,38 +241,6 @@ pub(super) fn close_barrier(
     writer.enqueue_barrier(None, None, flushed, attachment)
 }
 
-/// Detaches the pane's attachment behind every write it accepted, so a pane
-/// that leaves the view never stays attached. An external or adopted terminal
-/// outlives its pane; this detach is what stops the stream and frees the
-/// attachment. `None` when there is nothing to detach: the daemon is away, or
-/// the pane is not live, and its attachment died with the socket.
-pub(super) fn detach_barrier(
-    workspace: &mut Workspace<LiveDaemon>,
-    outcomes: &UnboundedSender<JobOutcome>,
-    pane_id: PaneId,
-) -> Option<watch::Receiver<bool>> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return None;
-    }
-    let pane = workspace.panes.get_mut(&pane_id)?;
-    if !pane.is_live() {
-        return None;
-    }
-    let flushed = pane
-        .frame_source_mut()
-        .and_then(PaneFrameSource::take_write_receipt);
-    let attachment = pane.begin_closing_detach()?;
-    let pane = pane_writer(workspace, outcomes, pane_id);
-    let message = json!({
-        "type": "terminal_detach",
-        "request_id": uuid::Uuid::new_v4().to_string(),
-        "terminal_id": pane.terminal_id,
-        "attachment_id": attachment,
-    });
-    let writer = pane.writer.as_ref().expect("writer spawned");
-    writer.enqueue_barrier(Some(message), None, flushed, attachment)
-}
-
 /// A forwarded mouse report. It queues behind a pane that is still attaching,
 /// so the report of a click is not lost. A report that overruns the queue is
 /// dropped without a toast, because pointer motion would make a storm of them.
@@ -283,6 +251,17 @@ pub(super) fn send_live_report(
     pane_id: PaneId,
     data: &[u8],
 ) -> Result<(), FrameError> {
+    if workspace.exit_reason().is_some() {
+        return Ok(());
+    }
+    if workspace.pane(pane_id).is_terminating() {
+        chrome.notify(Toast::warning(CLOSING_NATIVE_INPUT));
+        return Ok(());
+    }
+    if workspace.host_recovering.contains(&pane_id) {
+        queue_while_attaching(workspace, chrome, pane_id, data, false);
+        return Ok(());
+    }
     // A wheel's arrow keys and pointer reports are input too. A native pane on
     // the daemon's proxy refuses them on the stream like a key (ruling
     // b59e4ce9), so they never reach the daemon one report at a time.
@@ -324,7 +303,6 @@ fn pane_writer<'a>(
 // daemon. Explicit local close/kill still stops further input.
 fn types_on_host(pane: &Pane) -> bool {
     pane.backend.is_native()
-        && !pane.closing_native()
         && !pane.is_terminating()
         && pane
             .frame_source()

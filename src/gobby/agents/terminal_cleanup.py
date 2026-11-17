@@ -179,7 +179,15 @@ class TerminalResourceCleaner:
         self._prompt_detector.clear(run.id)
         self._terminal_prompt_monitor.clear(run.id)
         self._stall_classifier.clear(run.id)
-        self._loop_tracker.clear(run.id)
+        if not parking:
+            try:
+                await self._run_db(self._loop_tracker.clear, run.id)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to clear loop tracking for terminal agent %s: %s",
+                    run.id,
+                    type(exc).__name__,
+                )
 
         # Ownership and the dispatch mutex are what the next same-task spawn needs
         # back. They get their own bounded window so an operation deadline the

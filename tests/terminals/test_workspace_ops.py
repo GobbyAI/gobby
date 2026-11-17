@@ -494,15 +494,16 @@ async def test_adopt_close_and_move_semantics(harness: _Harness) -> None:
     assert layout_pane_ids(tabs[destination_tab.id].layout) == [destination_pane.id, owned.id]
     assert (moved.panes[0].tab_id, moved.panes[0].ref) == (destination_tab.id, 1)
 
-    # pane.close kills an owned live terminal and releases an adopted one.
+    # pane.close kills both owned and adopted live terminals.
     await h.ops.pane_close(OPERATOR, owned.id)
     owned_terminal = h.terminals.get(str(owned.terminal_id))
     assert owned_terminal is not None and owned_terminal.state == "exited"
     assert ("ht-1", owned_terminal.id) in h.native.terminated_host_ids
     await h.ops.pane_close(OPERATOR, external_pane.id)
-    released = h.terminals.get(external.id)
-    assert released is not None and released.state == "live"
-    assert all(host_epoch != "adopted" for _host, host_epoch in h.native.terminated_host_ids)
+    closed = h.terminals.get(external.id)
+    assert closed is not None and closed.state == "exited"
+    assert external.locator is not None
+    assert (external.locator["host_terminal_id"], "adopted") in h.native.terminated_host_ids
 
     # An exited terminal's pane row goes at once with nothing left to settle.
     exited = (await h.ops.pane_split(OPERATOR, agent_pane.id, "horizontal")).panes[0]
@@ -515,7 +516,7 @@ async def test_adopt_close_and_move_semantics(harness: _Harness) -> None:
     assert agent_row is not None and agent_row.state == "live"
 
 
-async def test_closing_a_migrated_tab_kills_only_its_new_shell(harness: _Harness) -> None:
+async def test_closing_a_migrated_tab_kills_all_its_terminals(harness: _Harness) -> None:
     h = harness
     workspace = await h.ops.workspace_create(OPERATOR)
     first = _live_terminal(h.terminals, h.project_id, "native")
@@ -537,11 +538,11 @@ async def test_closing_a_migrated_tab_kills_only_its_new_shell(harness: _Harness
     assert not h.workspaces.list_tabs(workspace.id)
     for terminal_id in (first.id, second.id):
         row = h.terminals.get(terminal_id)
-        assert row is not None and row.state == "live"
+        assert row is not None and row.state == "exited"
     owned_row = h.terminals.get(str(owned.terminal_id))
     assert owned_row is not None and owned_row.state == "exited"
     assert h.native.create_calls == 1
-    assert len(h.native.terminated_host_ids) == 1
+    assert len(h.native.terminated_host_ids) == 3
 
 
 async def test_actor_scope_guards_kill_spawn_and_adopt(harness: _Harness) -> None:
@@ -592,7 +593,7 @@ async def test_actor_scope_guards_kill_spawn_and_adopt(harness: _Harness) -> Non
     assert (await h.ops.pane_read(tree_actor, adopted.id)).text == "lead view"
     await _raises("forbidden", h.ops.pane_split(tree_actor, adopted.id, "horizontal"))
 
-    # Row-only ops, and releasing an adopted terminal, are open to any actor.
+    # Row-only ops are open to any actor; closing a terminal requires target scope.
     for actor in (f"session:{outsider.id}", f"session:{autonomous.id}"):
         side = await h.ops.workspace_create(actor, f"side-{actor[-8:]}")
         assert (await h.ops.workspace_rename(actor, side.id, f"renamed-{actor[-8:]}")).name == (
@@ -606,7 +607,8 @@ async def test_actor_scope_guards_kill_spawn_and_adopt(harness: _Harness) -> Non
         )
         assert hints.focused_tab_id == tab.id
         assert focused is not None and focused.focused_pane_id == pane.id
-    await h.ops.pane_close(f"session:{outsider.id}", adopted.id)
+    await _raises("forbidden", h.ops.pane_close(f"session:{outsider.id}", adopted.id))
+    assert adopted.id in {row.id for row in h.workspaces.list_panes(workspace.id)}
     still_live = h.terminals.get(agent.id)
     assert still_live is not None and still_live.state == "live"
 
@@ -793,7 +795,7 @@ async def test_split_spawn_timeout_rolls_back_and_leaves_workspace_closable(
     assert ("ht-1", str(minted.terminal_id)) in h.native.terminated_host_ids
 
 
-async def test_close_ops_kill_owned_terminals_and_release_adopted_ones(
+async def test_close_ops_kill_owned_and_adopted_terminals(
     harness: _Harness,
 ) -> None:
     h = harness
@@ -822,9 +824,10 @@ async def test_close_ops_kill_owned_terminals_and_release_adopted_ones(
         assert owned is not None and owned.state == "exited"
         assert ("ht-1", owned.id) in h.native.terminated_host_ids
     for adopted in (external, agent):
-        released = h.terminals.get(adopted.id)
-        assert released is not None and released.state == "live"
-    assert all(host_epoch != "adopted" for _host, host_epoch in h.native.terminated_host_ids)
+        closed = h.terminals.get(adopted.id)
+        assert closed is not None and closed.state == "exited"
+        assert adopted.locator is not None
+        assert (adopted.locator["host_terminal_id"], "adopted") in h.native.terminated_host_ids
 
     # A kill that fails after the rows are gone orphans the terminal, so it stays
     # listed and killable instead of live behind no pane.

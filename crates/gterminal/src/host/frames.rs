@@ -50,7 +50,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut read_buffer = Vec::new();
-    let hello = match read_frame::<ClientMessage>(&mut reader, &mut read_buffer).await {
+    let hello = match read_hello(&mut reader, &mut read_buffer).await {
         Ok(msg) => msg,
         Err(error) => {
             tracing::debug!(%error, "frame connection closed while reading hello");
@@ -418,6 +418,34 @@ async fn read_frame<M: for<'de> serde::Deserialize<'de>>(
     reader: &mut (impl AsyncBufRead + Unpin),
     buffer: &mut Vec<u8>,
 ) -> io::Result<M> {
+    let framed = read_frame_bytes(reader, buffer).await?;
+    read_message(&mut Cursor::new(framed), MAX_FRAME_SIZE)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+async fn read_hello(
+    reader: &mut (impl AsyncBufRead + Unpin),
+    buffer: &mut Vec<u8>,
+) -> io::Result<ClientMessage> {
+    let framed = read_frame_bytes(reader, buffer).await?;
+    let (message, _): (ClientMessage, usize) =
+        bincode::serde::decode_from_slice(&framed[4..], bincode::config::standard())
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    // Decode only enough of an incompatible Hello to authenticate and refuse it.
+    // Current-version messages still require the exact wire shape.
+    if matches!(&message, ClientMessage::Hello { version, .. }
+        if matches!(check_client_version(*version), VersionCheck::Incompatible(_)))
+    {
+        return Ok(message);
+    }
+    read_message(&mut Cursor::new(framed), MAX_FRAME_SIZE)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+async fn read_frame_bytes(
+    reader: &mut (impl AsyncBufRead + Unpin),
+    buffer: &mut Vec<u8>,
+) -> io::Result<Vec<u8>> {
     fill_frame_buffer(reader, buffer, 4).await?;
     let len_buf: [u8; 4] = buffer[..4]
         .try_into()
@@ -434,9 +462,7 @@ async fn read_frame<M: for<'de> serde::Deserialize<'de>>(
     }
     let frame_len = 4 + len;
     fill_frame_buffer(reader, buffer, frame_len).await?;
-    let framed = buffer.drain(..frame_len).collect::<Vec<_>>();
-    read_message(&mut Cursor::new(framed), MAX_FRAME_SIZE)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+    Ok(buffer.drain(..frame_len).collect())
 }
 
 async fn write_frame<M: serde::Serialize>(

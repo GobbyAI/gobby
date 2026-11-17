@@ -78,8 +78,7 @@ fn an_oversized_frame_is_painted_from_its_origin() {
     }
 }
 
-/// The letterbox itself is the reason this branch exists, so it has to
-/// survive: a frame smaller than its area still sits in the middle of it.
+/// A frame smaller than its area remains anchored at the origin.
 #[test]
 fn an_undersized_frame_is_anchored_at_its_origin() {
     let source = coordinate_frame(10, 4, None);

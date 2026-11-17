@@ -34,7 +34,7 @@ def test_hello_v2_round_trips() -> None:
     # Version 2 ends at the dimensions, with no optional identity byte.
     expected = b"\x11\x00\x00\x00\x00\x02\x00\x0blocal-token\x50\x18"
     assert encode_frame(hello) == expected
-    assert decode_frame(expected) == hello
+    assert decode_frame(expected, direction="client") == hello
 
 
 GOLDEN = (
@@ -49,6 +49,19 @@ GOLDEN = (
 
 def _golden(name: str) -> bytes:
     return (GOLDEN / name).read_bytes()
+
+
+@pytest.mark.parametrize("host_terminal_id", ["ht-1", "t" * 300])
+@pytest.mark.parametrize("reservation_id", [None, "rsv-1"])
+def test_client_attach_decoding_uses_its_direction(
+    host_terminal_id: str, reservation_id: str | None
+) -> None:
+    payload = {
+        "type": "attach_terminal",
+        "host_terminal_id": host_terminal_id,
+        "reservation_id": reservation_id,
+    }
+    assert decode_frame(encode_frame(payload), direction="client") == payload
 
 
 def test_frame_client_matches_golden_corpus() -> None:
@@ -111,7 +124,7 @@ def test_frame_client_matches_golden_corpus() -> None:
     # protocol version field sits after the enum tag in the payload
     mutated[5] = 99
     with pytest.raises(FrameProtocolError):
-        decode_frame(bytes(mutated))
+        decode_frame(bytes(mutated), direction="client")
 
 
 @pytest.mark.asyncio
@@ -192,7 +205,7 @@ def test_bincode_varint_encodes_values_above_127() -> None:
         "rows": 24,
     }
     encoded = encode_frame(payload)
-    assert decode_frame(encoded) == payload
+    assert decode_frame(encoded, direction="client") == payload
     assert encoded[7:12] == b"\xfc\x70\x11\x01\x00"
     assert encoded.endswith(b"\xfb\x2c\x01\x18")
     # Bincode-2 single-byte varints go up to 250; protobuf uleb128 would split at 128.
@@ -258,7 +271,6 @@ async def test_default_handshake_reads_bootstrap_key_fresh(
                     "local_token": expected,
                     "cols": 80,
                     "rows": 24,
-                    "tmux_identity": None,
                 }
             )
         ]

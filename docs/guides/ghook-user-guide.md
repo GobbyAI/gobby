@@ -112,8 +112,9 @@ Environment knobs:
 
 ### Terminal Context
 
-For normalized `SessionStart`, `SessionEnd`, `Stop`, `AfterAgent`, and
-`PostInvocation` aliases, `ghook` adds full `input_data.terminal_context`. Tool
+For lifecycle and turn-boundary aliases, including normalized `SessionStart`,
+`SessionEnd`, `Stop`, `AfterAgent`, and `PostInvocation`, `ghook` adds full
+`input_data.terminal_context`. Tool
 hooks receive minimal sender context with `parent_pid` and `gobby_agent_run_id`.
 Existing provider fields are preserved, and
 `gobby_agent_run_id` is stamped from the trusted `GOBBY_AGENT_RUN_ID`
@@ -286,7 +287,7 @@ $ ghook --diagnose --cli=claude --type=session-start
     "tty": "/dev/ttys005",
     "gobby_terminal_id": "<terminal-uuid>",
     "gobby_pane_ref": "0:0:1:2",
-    "term_program": "gclient",
+    "term_program": null,
     "...": "..."
   },
   "cli_recognized": true,

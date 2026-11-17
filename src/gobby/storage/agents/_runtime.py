@@ -33,6 +33,28 @@ class _AgentRunRuntimeHost(Protocol):
 
 
 class _AgentRunRuntimeMixin:
+    def increment_loop_dismissal_count(self: _AgentRunRuntimeHost, run_id: str) -> int:
+        """Persist a dismissal atomically without replacing other resume metadata."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                UPDATE agent_runs
+                SET resume_metadata_json = jsonb_set(
+                    COALESCE(resume_metadata_json, '{}'::jsonb),
+                    '{loop_dismissal_count}',
+                    to_jsonb(COALESCE(
+                        (resume_metadata_json->>'loop_dismissal_count')::integer, 0
+                    ) + 1)
+                )
+                WHERE id = %s
+                RETURNING resume_metadata_json->>'loop_dismissal_count' AS count
+                """,
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"Agent run not found: {run_id}")
+        return int(row["count"])
+
     def record_spawn_error(self: _AgentRunRuntimeHost, run_id: str, error: str) -> None:
         """Retain the originating failure before rollback can lose the terminal."""
         self.db.execute(

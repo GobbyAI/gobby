@@ -77,20 +77,20 @@ def test_prompt_submit_consumes_the_typed_prompt(
 
 
 @pytest.mark.parametrize(
-    ("backend", "after"),
-    [("native", _EMPTY), ("tmux", LedgerRead("blocked", "untracked"))],
+    ("has_terminal", "after"),
+    [(True, _EMPTY), (False, LedgerRead("blocked", "untracked"))],
     ids=["native-adopted", "untracked-seat"],
 )
 def test_prompt_submit_adopts_an_untracked_seat_only_when_its_input_is_observed(
     handlers: EventHandlers,
     ledger: ComposerLedger,
     terminals: MagicMock,
-    backend: str,
+    has_terminal: bool,
     after: LedgerRead,
 ) -> None:
     terminals.get_live_for_session.side_effect = None
-    terminals.get_live_for_session.return_value = SimpleNamespace(
-        id="pre-ledger-seat", backend=backend
+    terminals.get_live_for_session.return_value = (
+        SimpleNamespace(id="pre-ledger-seat", backend="native") if has_terminal else None
     )
 
     handlers.handle_before_agent(_event(HookEventType.BEFORE_AGENT, {"prompt": "continue"}))

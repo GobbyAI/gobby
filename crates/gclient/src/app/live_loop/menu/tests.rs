@@ -178,7 +178,7 @@ fn menus_list_items_per_target_and_state() {
             "Arrange ▸",
             "Copy mode",
             "Send right-clicks to pane",
-            "Close pane",
+            "Close",
         ],
         "one tab leaves Move to tab ▸ out"
     );
@@ -229,7 +229,7 @@ fn menus_list_items_per_target_and_state() {
             "Respond",
             "Copy mode",
             "Use gclient menu",
-            "Close pane",
+            "Close",
         ]
     );
     assert_eq!(menu.items[1].action, MenuAction::ClearPaneName(focused));
@@ -444,7 +444,7 @@ fn menu_bar_menus_regroup_items_per_title() {
             "Split right",
             "Split down",
             "Zoom",
-            "Close pane",
+            "Close",
             "Resize mode",
             "Arrange ▸",
         ]
@@ -676,10 +676,7 @@ fn row_menu_labels_orphaned_rows() {
         ContextMenuKind::Agent("run:term-live".to_string()),
         (3, 22),
     );
-    assert!(
-        !labels(&menu).contains(&"Close terminal"),
-        "no pane to close"
-    );
+    assert!(!labels(&menu).contains(&"Close"), "no pane to close");
 }
 
 /// 5.3.1: the sidebar rows' menus. A git project with worktree children
@@ -830,13 +827,7 @@ fn row_menus_list_items_per_target_and_state() {
     let menu = build_menu(&ws, &chrome, agent("run:term-blocked"), (3, 20));
     assert_eq!(
         labels(&menu),
-        [
-            "Focus",
-            "Open in new tab",
-            "Respond",
-            "Mark seen",
-            "Close terminal",
-        ]
+        ["Focus", "Open in new tab", "Respond", "Mark seen", "Close",]
     );
     assert_eq!(
         menu.items[0].action,
@@ -858,10 +849,7 @@ fn row_menus_list_items_per_target_and_state() {
     assert_eq!(menu.items[4].action, MenuAction::CloseTerminal(blocked));
     assert!(menu.items.iter().all(|item| item.enabled));
     let menu = build_menu(&ws, &chrome, agent("run:term-held"), (3, 22));
-    assert_eq!(
-        labels(&menu),
-        ["Focus", "Open in new tab", "Close terminal"]
-    );
+    assert_eq!(labels(&menu), ["Focus", "Open in new tab", "Close"]);
     assert_eq!(menu.items[2].action, MenuAction::CloseTerminal(held));
     let menu = build_menu(&ws, &chrome, agent("run:term-away"), (3, 24));
     assert_eq!(labels(&menu), ["Focus", "Open in new tab"]);
@@ -903,7 +891,7 @@ fn agent_row_close_activates_with_the_row_pane_not_the_focused_one() {
     menu.selected = menu
         .items
         .iter()
-        .position(|item| item.label == "Close terminal")
+        .position(|item| item.label == "Close")
         .expect("close terminal item");
 
     assert_eq!(

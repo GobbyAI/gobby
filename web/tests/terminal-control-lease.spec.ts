@@ -415,9 +415,7 @@ async function pasteInto(page: Page, text: string): Promise<void> {
 
 /**
  * Park the viewport in history, which is what puts the jump control on screen.
- * Retried rather than done once: a layout change re-fits the grid on a debounce
- * and that re-fit snaps the viewport back, exactly as a real scroll would be
- * undone — so the user's answer, scrolling again, is the honest one here.
+ * Wait for retained history and scroll until the jump control is visible.
  */
 async function parkInHistory(page: Page): Promise<void> {
   await scrollContainer(page).hover();

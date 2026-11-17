@@ -1,4 +1,4 @@
-"""Byte encodings for NamedKey values shared by the tmux and native runtimes."""
+"""Byte encodings for NamedKey values sent to native terminals."""
 
 from __future__ import annotations
 
