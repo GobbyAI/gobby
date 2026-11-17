@@ -36,9 +36,12 @@ spool recovery require isolated state, not live sessions.
 
 Run focused package/test commands named by the relevant guide. A source build
 does not change the daemon's installed binary. After actual crate changes,
-coordinate and reinstall via a new inode (copy to a dotfile, then rename over
-the binary); compare built and installed hashes. Never overwrite an executing
-signed macOS binary in place. `gterm` needs `--features vt-engine --bin gterm`
+coordinate and install through the supported managed promotion contract
+(`promote_workspace_binary_set`). It stages a new inode, signs it and records
+release identity; manual copying omits required coherence checks. Read hashes
+from the installed binaries after signing, since signing changes their bytes.
+Never overwrite an executing signed macOS binary in place.
+`gterm` needs `--features vt-engine --bin gterm`
 and its supported Zig/SDK toolchain; a library-only build does not validate it.
 `gclient` builds without Zig. See
 [rebuild and reinstall](../../../../../../../../docs/guides/gterminal-development-guide.md#rebuild-and-reinstall).
@@ -64,7 +67,7 @@ operator grants remain separate and `allowAllUnixSockets` remains false.
 Linux/WSL2 retain socket restrictions while allowing run-local file writes.
 Web-chat permissions are separate.
 
-Terminal Guard H groups 2, 3 and 6, runtime-contract tests and external attach
+Terminal Guard H groups 2, 3 and 6, runtime-contract tests and native attach
 can require live sockets. Record OS/provider/run, commit, policy/temp path,
 commands/results and process sets before/after. Skipped or policy-denied cases
 are UNVALIDATED; the coordinator must obtain the required platform evidence.
@@ -74,7 +77,7 @@ Never kill baseline operator hosts to hide a leak. See
 
 Inspect installed configuration before declaring the effective terminal backend
 or any rule active. Template defaults are source evidence only. Native spawning
-requires an available host and has no silent tmux fallback; use typed failures
+requires an available host and has no silent fallback; use typed failures
 and the relevant agent/session recovery procedure.
 
-_Version: 1.1.0_
+_Version: 1.1.1_

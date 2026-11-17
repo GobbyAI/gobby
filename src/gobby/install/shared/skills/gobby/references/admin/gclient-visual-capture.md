@@ -3,9 +3,8 @@
 Load when an agent must see the live gclient window as pixels: visual QA of
 the running client or reproducing a layout report from the user. `capture-pane`
 and `read_pane` return one pane's text; they cannot show chrome, colors,
-dividers, or how panes sit together. For a candidate build, use the isolated
-tmux preview recipe in memory `06aaaa63` instead; this reference captures only
-the user's live window.
+dividers, or how panes sit together. This reference captures only the user's
+live window.
 
 ## Preconditions
 
@@ -63,4 +62,4 @@ gclient UI. Judge only the gclient area. View the file with the Read tool.
 For gclient controls and layout, see the
 [gclient user guide](../../../../../../../../docs/guides/gclient-user-guide.md).
 
-_Version: 1.0.0_
+_Version: 1.0.1_

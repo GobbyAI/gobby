@@ -63,7 +63,7 @@ Use targetless `global` only for machine-local coordination across projects. The
 daemon announces its own restarts and cutovers with system globals: a hold
 notice before it stops and DAEMON BACK once it is healthy; no session sends them. Direct
 `session` and `agent` sends require `target_id`. AGY sessions interrupted
-through direct tmux input remain unconfirmed and therefore active; positive
+through direct terminal input remain unconfirmed and therefore active; positive
 hook or Gobby-mediated key/output evidence is required for protected interruption state.
 
 ## Configurability Convention

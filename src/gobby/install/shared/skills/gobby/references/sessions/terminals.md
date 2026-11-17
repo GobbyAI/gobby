@@ -7,8 +7,8 @@ Fetch the applicable `gobby-sessions:capture_output`, `send_keys`,
 use `gobby-agents:send_message` instead.
 
 Capture once to inspect a permission prompt, trust dialog, or stalled terminal.
-Managed terminal runtimes are preferred, with tmux and then transcript-tail
-fallback for capture. Inspect `via` and truncation metadata when present: a
+Use the native gterm runtime, with transcript-tail fallback for capture.
+Inspect `via` and truncation metadata when present: a
 transcript tail is not proof of a live terminal screen. Missing pane/transcript
 errors require restoring the actual runtime or using transcript diagnostics.
 
@@ -20,18 +20,18 @@ does the same for `send_wake`, which types one fixed line; only the Assistant
 holds its `send_wake` capability. Before any key is written,
 the target must show an idle agent CLI composer: a bare shell, an empty or dead
 terminal, a session with no live agent CLI, a draft or held composer, and a
-credential prompt are refused, and undeterminable state fails closed. A tmux
-target without a process group is refused as unconfirmed.
+credential prompt are refused, and undeterminable state fails closed. A native
+terminal without a recorded process group is refused as unconfirmed.
 The selected `block-cross-project-send-keys` rule restricts targets to the caller,
 its project, or its ancestor/descendant tree, and `block-web-chat-send-keys`
 blocks `send_keys`, `send_wake` and `capture_output` for web-chat callers, and
 `send_wake` also applies the target's `message_sender_capabilities` admission. Seat guidance permits stalled-session
 resume only, never steering. No seat may enter credentials or type into a password
 or credential prompt. These permissions do not authorize answering a user's approval dialog.
-Use the session target intentionally; do not use raw tmux to evade a refusal.
+Use the session target intentionally; do not use raw terminal input to evade a refusal.
 
 Literal input defaults to true. Trailing newlines request one Enter after paste;
-nonliteral input selects named keys such as `Enter` or `C-c`. A `/fast` first
+nonliteral input selects native named keys such as `enter` or `ctrl_c`. A `/fast` first
 token is refused: ask the user to run the provider speed toggle. Managed writes
 can be indeterminate; inspect the resulting state before risking duplicate input.
 
@@ -71,6 +71,6 @@ until it lapses.
 
 Guide: [Terminal tools](../../../../../../../../docs/guides/sessions.md#terminal-tools).
 
-_Version: 2.0.0_
+_Version: 2.0.1_
 
 _Last verified: 2026-11-04_
