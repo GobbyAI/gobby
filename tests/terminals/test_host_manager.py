@@ -23,7 +23,12 @@ from gobby.storage.terminals import AttachLocator, Terminal, TerminalManager, na
 from gobby.terminals import host_event_reader, host_events
 from gobby.terminals.composer_ledger import LedgerRead
 from gobby.terminals.frame_client import FrameClient
-from gobby.terminals.host_client import HostManagerStopped, HostUnavailableError
+from gobby.terminals.host_client import (
+    HelloResult,
+    HostManagerStopped,
+    HostUnavailableError,
+    PingResult,
+)
 from gobby.terminals.host_events import (
     HostInventorySnapshot,
     InputActivityEvent,
@@ -177,6 +182,29 @@ def test_health_state_observes_recorded_host_pid(
 
     assert host.health_state()["running"] is False
     assert host.running is True
+
+
+def test_reconnected_host_refreshes_advertised_protocol_versions(
+    short_socket_dir: Path,
+    temp_db: HubDatabase,
+) -> None:
+    client = FakeControlClient(host_pid=9100)
+    host = _host(short_socket_dir, TerminalManager(temp_db), client)
+    host.protocol_version = None
+    host.frame_protocol_version = None
+    hello = HelloResult(
+        host_epoch=client.host_epoch,
+        version="test",
+        protocol_version=1,
+        frame_protocol_version=2,
+    )
+    ping = PingResult(host_epoch=client.host_epoch, version="test", host_pid=client.host_pid)
+
+    host._adopt_client(client, hello, ping)
+
+    health = host.health_state()
+    assert health["protocol_version"] == 1
+    assert health["frame_protocol_version"] == 2
 
 
 class _ControlledSleep:

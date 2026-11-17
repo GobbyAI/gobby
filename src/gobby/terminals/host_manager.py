@@ -867,6 +867,8 @@ class TerminalHostManager(HostShutdown):
         self.host_generation = ping.generation
         self.host_pid = ping.host_pid
         self.capabilities = tuple(hello.capabilities)
+        self.protocol_version = int(hello.protocol_version)
+        self.frame_protocol_version = hello.frame_protocol_version
         self.failure_reason = None
         self._record_healthy_ping()
 
