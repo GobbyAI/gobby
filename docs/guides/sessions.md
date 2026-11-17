@@ -4,6 +4,11 @@ Gobby sessions are durable records of CLI and web-chat work. They connect
 transcripts, tasks, commits, handoff summaries, token usage, terminal state, and
 agent-run metadata across daemon restarts and context compactions.
 
+Native gterm-hosted terminals are the only terminal kind. A CLI session without
+a native terminal keeps its hooks, tasks, closing, security, and messaging rules,
+but has no terminal control and receives no context-pressure warning or handoff demand.
+It compacts according to its own CLI configuration.
+
 ## Quick Start
 
 ```bash
@@ -244,8 +249,8 @@ calls.
 | `release_session_claims_hold` | Root terminal operators: release that hold so the seat's claims return to the ordinary sweep schedule. Only the session that placed a live hold may renew or release it (`claim_hold_held_by_other`). |
 | `restore_session_transcript` | Restore one transcript from archive. |
 | `get_transcript_status` | Check archive availability and transcript file stats. |
-| `send_keys` | Send authorized terminal input through the managed runtime or tmux. |
-| `capture_output` | Capture a diagnostic runtime/tmux snapshot, with transcript-tail fallback. |
+| `send_keys` | Send authorized input to a native terminal. |
+| `capture_output` | Capture a native terminal snapshot, with transcript-tail fallback. |
 | `terminate_terminal` | Explicitly terminate an authorized daemon-tracked terminal or root-session terminal and mark its row exited synchronously. |
 
 ### Finding Your Own Session
@@ -509,7 +514,7 @@ call_tool("gobby-sessions", "register_session", {
 
 ### Terminal Tools
 
-Terminal tools prefer the managed terminal runtime and fall back to tmux.
+Terminal tools use the native gterm runtime.
 Capture can fall back to transcript-tail evidence; inspect `via` and truncation
 metadata before treating it as a live screen. `send_keys` requires caller context
 and the `send_keys` capability, which only the Orchestrator and Assistant
@@ -545,7 +550,7 @@ call_tool("gobby-sessions", "terminate_terminal", {
 })
 ```
 
-Use `capture_output` before raw tmux fallback when inspecting prompts,
+Use `capture_output` when inspecting prompts,
 permission dialogs, or stalled terminals.
 
 ## Handoff Flow

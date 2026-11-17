@@ -54,9 +54,9 @@ Recorded verbatim:
 
 - Definition label: `src/gobby/sessions/display_labels.py`
   (`definition_display_name`), the single source of the definition label. The
-  communications seat label and the spawn pane title derive from ref and
-  definition through it. The tmux window fallback is the session ref alone
-  (`_synthesize_fallback_title` in `src/gobby/sessions/tmux_window_naming.py`).
+  spawn pane title is that whole label. For a seat with no definition, the
+  communications label uses the provider display name (`provider_display_name`,
+  used by `agent_label` in `src/gobby/communications/agent_labels.py`).
 - Schema: `crates/gcore/assets/schema/migrations/497_drop_session_titles.sql`.
 - Roster: `src/gobby/storage/attention.py` (`AttentionRosterRow.definition`,
   `task_claim_held`) and `src/gobby/servers/routes/attention_roster.py` (entry

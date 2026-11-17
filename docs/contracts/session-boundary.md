@@ -309,8 +309,8 @@ run those reloads ahead of the pull.
 Sessions store no title (#25485). Labels are derived from the session ref, the agent
 definition, the claimed task, and the status line. The `set_title` tool and the
 `POST /api/sessions/{session_id}/rename` route are removed. Clear successors and
-closed claims recompute their labels from the same inputs. Tmux window names derive
-from the session ref until tmux is removed (#25486).
+closed claims recompute their labels from the same inputs. Spawn pane titles use
+the definition display label; see [seat titles](seat-titles.md).
 
 ## Archival Summaries And Memory
 

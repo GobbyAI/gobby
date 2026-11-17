@@ -19,7 +19,7 @@ Operator configuration is documented in [sandboxing.md](./sandboxing.md).
   access remains an independent capability.
 - Provider credentials are masked and scoped to provider/API-base hosts.
 - Every supported terminal provider command is wrapped once after command
-  construction and before tmux creation.
+  construction and before native terminal creation.
 - Daemon-stop resume creates a fresh policy and fails closed before spawning.
 - A stale web-chat policy hash invalidates direct resume; continuation is recreated
   under the current policy snapshot.
@@ -56,20 +56,20 @@ alpha and is not part of Gobby's supported compatibility gate.
 | Canonical paths, home/Gobby denials, symlinks, linked Git metadata | `tests/agents/test_sandbox.py` |
 | SRT settings schema, credential host scoping, private policy files, fail-closed network validation, installation verification | `tests/agents/test_srt_runtime.py` |
 | Immutable tarball/lock installation flow | `tests/cli/test_install_setup_srt.py` |
-| Once-only wrapping, Droid support, pre-tmux failure, wrapper-aware auth inference | `tests/agents/test_srt_spawn.py` |
+| Once-only wrapping, Droid support, pre-spawn failure, wrapper-aware auth inference | `tests/agents/test_srt_spawn.py` |
 | All managed provider command builders and native rollout renderers | `tests/agents/test_spawn_executor.py` |
 | Fresh policy on daemon-stop resume and legacy sandbox-field non-replay | `tests/agents/test_resume_executor.py` |
 | Run-record policy metadata and trusted violation projection | `tests/storage/test_agent_sandbox_records.py` |
 | Web-chat SRT wrapping, session ownership, translation, and policy-hash resume behavior | `tests/servers/websocket/chat/test_runtime_manager.py`, `tests/servers/websocket/chat/test_agy_backend.py`, `tests/servers/test_session_control.py` |
 
-## Tmux And Process-Tree Invariants
+## Process-Tree Invariants
 
 SRT changes the pane's top-level argv, not Gobby's lifecycle ownership. The
 following established suites remain part of the compatibility gate:
 
 | Invariant | Coverage |
 | --- | --- |
-| Interactive tmux creation, pane PID capture, resize, detach/reattach, and process-group cleanup | `tests/agents/test_tmux.py`, `tests/agents/test_tmux_integration.py` |
+| Native terminal creation, pane PID capture, resize, detach/reattach, and process-group cleanup | `tests/terminals/test_native_runtime.py`, `tests/terminals/test_runtime_contract.py` |
 | Capture-before-kill and terminalization ordering | `tests/agents/test_capture.py`, `tests/agents/test_capture_consumers.py`, `tests/agents/test_agent_cleanup.py` |
 | Daemon lifecycle reconciliation and descendant cleanup | `tests/agents/test_lifecycle_monitor.py` |
 | Wrapper signal forwarding and inherited stdio | `src/gobby/agents/srt_runner.mjs`, validated by the SRT runner checks and host integration run |
@@ -116,7 +116,7 @@ boundary:
 
 1. Update the pinned tarball checksum, npm integrity, generated lockfile, and
    Gobby receipt expectations together.
-2. Run the focused policy, installer, spawn, resume, storage, tmux, capture,
+2. Run the focused policy, installer, spawn, resume, storage, native terminal, capture,
    lifecycle, and memory tests above on macOS and Linux.
 3. Run the opt-in host sandbox integration package where provider binaries are
    available.

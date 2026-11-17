@@ -563,7 +563,7 @@ session's next turn. An operator comms wake to a pane the operator has focused i
 the same way (`skipped: "pane_focused"`) and dispatched when focus ends. The probe reads
 a styled snapshot, so faint text (Claude Code's prompt suggestion, the Codex and Droid
 placeholders) reads as an empty composer. Priority never authorizes typing. A later
-mailbox receipt, not a live trigger outcome, acknowledges delivery. Direct tmux
+mailbox receipt, not a live trigger outcome, acknowledges delivery. Direct terminal
 interruption in Antigravity cannot be protected without positive provider or
 Gobby-mediated key/output evidence, so unconfirmed sessions remain active.
 

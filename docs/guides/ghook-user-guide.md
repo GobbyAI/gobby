@@ -113,14 +113,14 @@ Environment knobs:
 ### Terminal Context
 
 For normalized `SessionStart`, `SessionEnd`, `Stop`, `AfterAgent`, and
-`PostInvocation` aliases, `ghook` adds `input_data.terminal_context`. Tool
-hooks remain unenriched. Existing provider fields are preserved, and
+`PostInvocation` aliases, `ghook` adds full `input_data.terminal_context`. Tool
+hooks receive minimal sender context with `parent_pid` and `gobby_agent_run_id`.
+Existing provider fields are preserved, and
 `gobby_agent_run_id` is stamped from the trusted `GOBBY_AGENT_RUN_ID`
 environment variable.
 
-When `TMUX` is set and `TMUX_PANE` matches `^%\d+$`, the pane ID is passed
-through exactly as provided by tmux. Missing or invalid tmux data produces null
-tmux fields while the remaining process context is still captured.
+Native panes provide `GOBBY_TERMINAL_ID` and workspace pane context. Process
+context is still captured when the CLI is not hosted by a native terminal.
 
 ## CLI Surface
 
@@ -223,8 +223,8 @@ Lifecycle hook criticality (`session-start`, `session-end`, `pre-compact`) comes
 
 Same pattern with different `--cli` and `--type` values. ghook's per-CLI
 registry (see `crates/ghook/src/cli_config.rs`) defines which hooks are
-critical. Terminal-context enrichment is CLI-agnostic and only depends on valid
-tmux pane env vars.
+critical. Terminal-context enrichment is CLI-agnostic and captures process and
+available native terminal identity for supported lifecycle hooks.
 
 | CLI | Critical hooks |
 |-----|----------------|
@@ -284,9 +284,9 @@ $ ghook --diagnose --cli=claude --type=session-start
   "terminal_context_preview": {
     "parent_pid": 72441,
     "tty": "/dev/ttys005",
-    "tmux_pane": "%179",
-    "tmux_socket_path": "/private/tmp/tmux-501/default",
-    "term_program": "tmux",
+    "gobby_terminal_id": "<terminal-uuid>",
+    "gobby_pane_ref": "0:0:1:2",
+    "term_program": "gclient",
     "...": "..."
   },
   "cli_recognized": true,
@@ -301,7 +301,7 @@ Look for:
 - **`critical: true/false`** — does ghook consider this hook type critical under the current per-CLI hook protocol?
 - **`terminal_context_enabled: true`** — this recognized CLI lifecycle hook
   receives terminal context. `terminal_context_preview` shows the captured
-  values; unavailable tmux fields are `null`.
+  process and native terminal values.
 - **`daemon_url`** — where will the POST go? If this is wrong, check
   `GOBBY_DAEMON_URL`, `GOBBY_PORT`, then `~/.gobby/bootstrap.yaml`.
 - **`project_root` / `project_id`** — marker lookup from the current directory. Diagnose does not consume provider stdin, so this view does not include payload workspace fallback. No marker and no other managed identity makes live dispatch skip.

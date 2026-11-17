@@ -173,13 +173,8 @@ gterm host [OPTIONS]
 | `--socket-dir PATH` | `$GTERM_SOCKET_DIR`, else `~/.gobby` (`.` when home is unavailable) |
 | `--max-attachments-per-terminal N` | `8` |
 | `--max-attachments-total N` | `128` |
-| `--max-attached-terminals N` | `64` |
 | `--native-scrollback-max-lines N` | `10000` |
 | `--native-scrollback-max-bytes N` | `8388608` (8 MiB) |
-| `--tmux-attach-history-lines N` | `500` |
-| `--tmux-attach-history-max-bytes N` | `262144` (256 KiB) |
-| `--tmux-poll-interval-ms N` | `150` |
-| `--tmux-poll-backoff-ceiling-ms N` | `5000` |
 | `--delta-queue-bytes N` | `2097152` (2 MiB) |
 | `--lag-timeout-ms N` | `5000` |
 | `--control-deadline-ms N` | `2000` |

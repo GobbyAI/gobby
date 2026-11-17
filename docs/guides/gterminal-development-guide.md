@@ -141,10 +141,10 @@ frame streams from the host and talks to the daemon only through the public
 HTTP/WS API.
 
 A frame stream types directly: the client sends `Input { data }` or
-`Paste { text }` on a frame stream bound to its attachment, and the host delivers
+`Paste { text }` on a stream after `AttachTerminal`, and the host delivers
 it to the PTY. No grant or read-only state gates it. A refusal is an `InputRefused { code }`
 on the same stream and never closes it. Automatic writes, PTY resize, and every
-tmux or proxied pane stay on the control socket behind the daemon's lease checks.
+proxied pane stay on the control socket behind the daemon's lease checks.
 Full shapes and refusal codes: [input](../contracts/gterm-protocols.md#input).
 
 Editing this path, note that the trap lives in the build, not in the code. The
@@ -177,18 +177,16 @@ version is unpublished or yanked. Do not invent a combined workflow.
 
 ## Backend status
 
-`native` is the only spawn backend, and no setting or request selects one:
-native gterm is always attempted first (#23212). `TerminalConfig` has no backend key and rejects unknown keys;
-the MCP `spawn_agent` tool, the HTTP spawn body, the CLI, dispatch actions, and cron spawns
-carry no backend selector; and an agent definition naming `terminal_backend` is refused on
-store and on resolution. Each spawn instead carries an internal lifetime: a workspace pane with
-a durable role spawns as `persistent_role`, every other spawn as `run`. The lifetime never
-changes selection; it only decides whether a fallback is legal. `tmux` remains only as a spawn-less adapter for externally discovered sessions
-(`ownership: external`), which are always tmux: send_keys, wake, and capture reach
-them, and a spawn request for tmux is refused (#22856). A native spawn requires an installed
-`gterm`. When the host is unavailable it fails before fork with the typed refusal
-`host_unavailable` (`HostUnavailableError`, a `HostCommandError`); there is no silent
-tmux fallback. The flip landed under #22104 on the evidence in
+Native gterm is the only terminal backend. `TerminalConfig` has no backend key and
+rejects unknown keys. The MCP `spawn_agent` tool, HTTP spawn body, CLI, dispatch
+actions, and cron spawns carry no backend selector; an agent definition naming
+`terminal_backend` is refused on store and resolution. Each spawn carries an
+internal lifetime: a workspace pane with a durable role uses `persistent_role`,
+and every other spawn uses `run`. Both require an installed `gterm`. When the
+host is unavailable, creation fails before fork with `host_unavailable`
+(`HostUnavailableError`, a `HostCommandError`); there is no silent fallback.
+External terminal multiplexers are outside Gobby's discovery, attach, and control
+surfaces. The native flip landed under #22104 on the evidence in
 `docs/evidence/native-backend-flip.md`: P7's host-driven acceptance suite green in
 ordinary CI at one commit with no later red row for a required OS. The required OS
 set is macOS only — Linux is deferred by user decision (2026-09-16) and its rows stay
@@ -208,27 +206,25 @@ is currently active. Inspect installed worktree/task rows before acting on it.
   `agent_runs.terminal_id`, backend-neutral WS messages), pins stay at schema 407
   until migration 408 lands, tests take the union with 0.5.0 assertions ported to
   the renamed seams (`manager_for_terminal_context`, `snapshot_lines`,
-  `dispatch_keys`). Web delivery goes through the gterm host for every backend.
-  A `native` row is the host's own pane, and the daemon sends it one empty
-  `terminal_attach_history` before its first output because the host captures
-  history only for tmux panes. A `tmux` row is an external pane the user started:
-  Gobby spawns no tmux (#22856 deleted the tmux-client PTY bridge and its
-  `pty_bridge.py`, `history.py` and `alt_screen.py`), and the host observes the
-  pane on its recorded socket. Operator flags, exit codes, and stale-socket start
-  recovery for that host are in
-  [CLI commands — gterm host](cli-commands.md#gterm-host). The #20805
-  no-op-resize guard lives in
-  `src/gobby/servers/websocket/terminal_sizing.py::_apply_terminal_sizing` for
-  both backends; a native `terminal_resize` also moves the sender's host viewport
-  to the new grid so its frames repaint at that size. The current gclient
-  renders tmux rows through a gterm host observer (see *Client status*).
+  `dispatch_keys`).
+
+Current web delivery uses the native gterm host. Before the first output, the
+daemon sends snapshot-backed ANSI `terminal_attach_history`, using the current
+`terminals.attach_history_lines` setting. It includes truncation and byte-count
+metadata; empty or unavailable capture is reported without inventing history.
+Host operator flags,
+exit codes, and stale-socket start recovery are in
+[CLI commands — gterm host](cli-commands.md#gterm-host). The no-op-resize guard
+lives in `src/gobby/servers/websocket/terminal_sizing.py::_apply_terminal_sizing`;
+`terminal_resize` also moves the sender's host viewport to the new grid so its
+frames repaint at that size.
 
 ## Sandboxed validation by operating system
 
 Managed-agent SRT launches on macOS permit Unix sockets beneath the canonical
 current-run temp directory. Use `CLAUDE_CODE_TMPDIR` or the run's `TMPDIR`, with
 short unique fixture names and an encoded path shorter than 104 bytes. Fixtures
-own cleanup of their hosts, tmux servers, sockets, and temporary files, including
+own cleanup of their hosts, sockets, and temporary files, including
 setup failures. The grant includes nested directories but excludes other runs
 and symlink escapes. Separate operator grants remain intact and
 `allowAllUnixSockets` remains false.
@@ -240,9 +236,9 @@ managed agents; web-chat socket permissions are separate.
 The *Guard set H* section below carries the client-completion gate.
 Socket-dependent validation includes group 2 (Rust terminal tests),
 group 3 (Python terminal/runtime and websocket contracts), and group 6 (terminal
-client stack e2e), plus `tests/e2e/test_external_terminal_attach.py`.
+client stack e2e), plus `tests/e2e/test_terminal_host_reap.py`.
 `tests/terminals/test_runtime_contract.py` belongs to group 3. Group 7 compares
-host PID sets around groups 2, 3, and 6; record owned tmux processes too.
+host PID sets around groups 2, 3, and 6.
 
 Coordinators must record the OS, provider, agent run/session IDs, checkout/commit,
 generated policy and canonical temp path, exact commands, result counts, and
@@ -305,8 +301,7 @@ the installed `gdaemon` is at schema 407, so `agent_runs.terminal_id` and the
 `terminals` table are absent from the test hub —
 `psycopg.errors.UndefinedColumn: column ar.terminal_id does not exist`); the red
 tests named in 1.4 — `tests/test_runner_lifecycle_restart_replay.py::TestAgentRestartReconciliation`,
-`tests/agents/test_resume_executor.py::test_codex_resume_delivers_prompt_via_composer_not_argv`,
-`tests/terminals/test_no_direct_tmux_spawn.py`, `tests/terminals/test_no_direct_tmux_consumers.py`
+`tests/agents/test_resume_executor.py::test_codex_resume_delivers_prompt_via_composer_not_argv`
 (owner 1.4, until 1.4 closes); and
 `tests/config/test_runtime_config_contract.py::test_checked_in_contract_matches_registry`
 (owner 1.3, until 1.3 closes — it passes on the merged tree, so it is carved out only
@@ -317,22 +312,22 @@ never at collection.
 ## Client status
 
 `gclient` is the workspace TUI: it lists terminals by project, renders terminal
-panes, manages tabs and splits, persists layouts, shows attention, and takes or
-releases control for input and resize. Roster, lifecycle, attention, and
+panes, manages tabs and splits, projects daemon-owned layouts, and shows attention.
+Roster, lifecycle, attention, resize, and
 automatic writes use the daemon's public HTTP/WS API. Operator keystrokes do not:
 a direct native pane types on its own frame socket, so no keystroke waits on a
-daemon round trip. A direct native pane is writable with no lease. A proxied pane (tmux, or a remote terminal) types through the daemon while its gclient attachment holds the writer lease, which the attach claims without a takeover.
+daemon round trip. A direct native pane is writable with no lease. Remote proxy
+viewers use the daemon's writer lease.
 
-Three terminal paths are available:
+Two native terminal delivery paths are available:
 
 | Terminal path | Frame delivery | Keystrokes |
 | --- | --- | --- |
 | Local native terminal | Direct semantic frames from `gterm-frames.sock`. | Direct on the frame socket, with no lease or grant check. |
-| Local tmux terminal | Direct semantic frames from the gterm host's tmux observer, identified by socket, server PID/start time, and pane ID. | Through the daemon; the host refuses frame input for a tmux slot with `not_native`. |
-| Remote terminal | Daemon WS proxy with `encoding: "semantic_frame"`; `terminal_frame` carries base64 bincode frames. | Through the daemon. |
+| Remote proxy viewer | Daemon WS proxy with `encoding: "semantic_frame"`; `terminal_frame` carries base64 bincode frames. | Through the daemon's writer lease. |
 
-A failed direct connection falls back to the proxy for that pane, which also
-moves that pane's keystrokes onto the daemon. No chrome reports which transport a
+A failed direct connection can fall back to proxy frames for that pane. Native
+gclient input waits for direct host reconnection. No chrome reports which transport a
 pane ended up on; `~/.gobby/logs/gclient.log` does. The browser uses the ANSI
 proxy path described in
 [the protocol contract](../contracts/gterm-protocols.md#daemon-websocket-messages).
@@ -375,7 +370,7 @@ below when executing them.
 1. `cargo build --release -p gobby-client && cargo clippy -p gobby-terminal -p gobby-client --all-targets -- -D warnings && cargo nextest run -p gobby-client`
 2. `cargo nextest run -p gobby-terminal` (the embed suite's `gclient_views` source
    assertion and the host contract stay green)
-3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_tmux_bridge_authority.py tests/servers/test_tmux_mixin.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
+3. `uv run pytest tests/terminals tests/servers/test_terminal_ws_golden.py tests/servers/test_terminal_ws_create.py tests/servers/test_terminal_ws_lease.py tests/servers/test_terminal_ws_viewport.py tests/servers/test_native_web_proxy.py tests/servers/test_attention_respond.py tests/servers/websocket/test_broadcast.py tests/mcp_proxy/test_sessions_terminal_tools.py tests/storage/test_terminals.py` (DB-backed; `GOBBY_POSTGRES_TEST_DSN` exported)
 4. `uv run ruff check src/ && uv run ruff format --check src/ && uv run mypy src/ && uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`
 5. `cd web && npx vitest run src/hooks src/components/activity`
 6. From 4.3 close onward: `uv run pytest tests/e2e/test_terminal_client_stack.py`

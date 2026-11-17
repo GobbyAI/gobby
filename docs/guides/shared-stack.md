@@ -198,7 +198,7 @@ for current physical-run evidence; old blocker IDs are not a live readiness chec
 
 PostgreSQL task/session metadata, memories, vector data, graph data, and shared
 configuration follow the user between machines. Each machine still owns its processes,
-tmux sessions, worktrees, clones, and local transcript paths. Shared metadata is not
+native terminals, worktrees, clones, and local transcript paths. Shared metadata is not
 authorization to operate another machine's filesystem. Use session services for
 supported transcript and archive access.
 

@@ -320,7 +320,7 @@ Grok 1.0.30 dispatches `subagent_start` non-blocking with the parent's
 without a hooks-log row. Older builds sent the child `sessionId`. One start can
 cover a batch of parallel children, so after the first `subagent_stop` the
 counter can read zero while children still run. Child hooks carry their own
-`sessionId` but run inside the parent's process: same tmux pane, `parent_pid`,
+`sessionId` but run inside the parent's process: same terminal pane, `parent_pid`,
 and `parent_create_time`. Gobby binds a Grok hook whose session is unknown to
 the live pane owner only when `terminal_process_contexts_match` proves that
 shared process, then derives `is_subagent` / `subagent_count` from the bind; a

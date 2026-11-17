@@ -59,7 +59,7 @@ src/gobby/
 ├── agents/                             # Agent spawning and lifecycle: spawn.py,
 │                                       #   runner.py (AgentRunner), runner_queries.py,
 │                                       #   lifecycle_monitor.py, kill.py, isolation.py,
-│                                       #   session.py, spawners/, tmux/
+│                                       #   session.py, spawners/
 │                                       #   (definition models: workflows/definitions.py)
 ├── ai/                                 # AI feature configuration support
 ├── autonomous/                         # Autonomous execution support (progress
@@ -128,7 +128,7 @@ src/gobby/
 │   │                                   #   skills.py, projects.py, source_control.py,
 │   │                                   #   github_triage.py, admin/, mcp/, ...
 │   └── websocket/                      # WebSocket server: server.py, broadcast.py,
-│                                       #   handlers/, chat/, voice/, tmux.py, auth.py
+│                                       #   handlers/, chat/, voice/, auth.py
 ├── sessions/                           # Session lifecycle: lifecycle.py, processor.py
 │                                       #   (SessionMessageProcessor), mailbox.py,
 │                                       #   summarize.py, token_tracker.py

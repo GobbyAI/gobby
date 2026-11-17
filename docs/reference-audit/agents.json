@@ -78,7 +78,7 @@
         "current-contract",
         "runtime-matrix",
         "policy-coverage",
-        "tmux-and-process-tree-invariants",
+        "process-tree-invariants",
         "hook-binary-compatibility",
         "compatibility-gate"
       ],
