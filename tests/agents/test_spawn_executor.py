@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import os
-import signal
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
@@ -14,6 +13,8 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from gobby.terminals.runtime import TerminalRuntime
 
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
@@ -140,7 +141,7 @@ def mock_codex_prompt_delivery() -> Iterator[MagicMock]:
     """Keep the fire-and-forget Codex prompt delivery task out of spawn tests.
 
     Codex spawns schedule a real background coroutine against the spawner's
-    tmux session manager; against MagicMock spawners that coroutine would
+    terminal runtime; against MagicMock spawners that coroutine would
     outlive the test's event loop. Tests that assert delivery use this mock.
     """
     with patch("gobby.agents.spawn_executor_codex.schedule_codex_prompt_delivery") as mock_delivery:
@@ -528,19 +529,6 @@ class TestSpawnResult:
         assert result.message is None
 
 
-def test_spawn_result_has_no_tmux_aliases() -> None:
-    result = SpawnResult(True, "run", "child", "pending")
-    session_alias = "tmux_" + "session_name"
-    pane_alias = "tmux_" + "pane"
-
-    assert not hasattr(result, session_alias)
-    assert not hasattr(result, pane_alias)
-    with pytest.raises(TypeError):
-        cast(Any, SpawnResult)(True, "run", "child", "pending", **{session_alias: "alias"})
-    with pytest.raises(TypeError):
-        cast(Any, SpawnResult)(True, "run", "child", "pending", **{pane_alias: "%1"})
-
-
 class TestExecuteSpawn:
     """Tests for execute_spawn function."""
 
@@ -684,7 +672,7 @@ class TestExecuteSpawn:
         assert storage.row.workspace_generation == 1
 
     @pytest.mark.asyncio
-    async def test_tmux_run_pid_is_pane_pid_not_server_pid(self) -> None:
+    async def test_run_pid_is_child_pid(self) -> None:
         from tests.terminals.fakes import _FAKE_PANE_PID, _FAKE_SERVER_PID
 
         run_manager = MagicMock()
@@ -855,7 +843,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            backend="tmux",
+            backend="native",
             terminal_id="agent-run-abc123def456",
         )
 
@@ -905,7 +893,7 @@ class TestExecuteSpawn:
             assert not any("GOBBY_PARENT_SESSION_ID" in argument for argument in command)
             assert "--full-auto" not in command
 
-            # Env is passed to the tmux spawner so the SessionStart hook can
+            # Env is passed to the terminal runtime so the SessionStart hook can
             # late-link via GOBBY_SESSION_ID.
             assert spawn_kwargs.get("env") is not None
             assert spawn_kwargs["env"].get("GOBBY_SESSION_ID") == "gobby-sess-123"
@@ -971,7 +959,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            backend="tmux",
+            backend="native",
             terminal_id="agent-run-abc123def456",
         )
         agent_body = MagicMock()
@@ -1028,7 +1016,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            backend="tmux",
+            backend="native",
             terminal_id="agent-run-local123456",
         )
 
@@ -1082,7 +1070,7 @@ class TestExecuteSpawn:
 
         def fake_spawn(**_kwargs: object) -> MagicMock:
             call_order.append("spawn")
-            return MagicMock(success=True, pid=12345, backend="tmux")
+            return MagicMock(success=True, pid=12345, backend="native")
 
         mock_spawner.spawn.side_effect = fake_spawn
 
@@ -1155,7 +1143,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            backend="tmux",
+            backend="native",
             terminal_id="agent-run-xyz",
         )
 
@@ -1244,7 +1232,7 @@ class TestExecuteSpawn:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            backend="tmux",
+            backend="native",
             terminal_id="agent-run-grok123",
         )
 
@@ -1305,7 +1293,7 @@ class TestExecuteSpawn:
             )
         )
         mock_spawner = MagicMock()
-        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345, backend="tmux")
+        mock_spawner.spawn.return_value = MagicMock(success=True, pid=12345, backend="native")
 
         with (
             patch("gobby.agents.spawn.prepare_terminal_spawn", mock_prepare),
@@ -1525,7 +1513,6 @@ class TestExecuteSpawn:
     ) -> None:
         from gobby.adapters.agy import AgyAdapter
         from gobby.agents.spawn_executor import kill_spawn_key
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
         from gobby.hooks.adapter_execution import run_adapter_hook
         from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 
@@ -1602,28 +1589,13 @@ class TestExecuteSpawn:
         spawned = runtime.last_request
         assert spawned is not None
         await kill_spawn_key(
-            runtime,
+            cast(TerminalRuntime, runtime),
             spawned.spawn_key,
             pending=None,
             host_terminal_id="ht-1",
             host_epoch=runtime.host_epoch,
         )
         assert "ht-1" in runtime.killed_host_ids
-
-        mgr = TmuxSessionManager("/tmp/gobby-test-tmux.sock")
-        with (
-            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
-            patch("os.killpg") as mock_killpg,
-            patch("os.getpgid", return_value=12345),
-        ):
-            mock_run.side_effect = [
-                (0, "12345\n", ""),
-                (0, "", ""),
-            ]
-            killed = await mgr.kill_session("agy-spawn", timeout=0)
-        assert killed is True
-        mock_killpg.assert_any_call(12345, signal.SIGTERM)
-        mock_killpg.assert_any_call(12345, signal.SIGKILL)
 
 
 class TestExecuteSpawnSandbox:
@@ -1949,7 +1921,7 @@ class TestExecuteSpawnErrorPaths:
 
     @pytest.mark.asyncio
     async def test_codex_terminal_spawn_failure(self) -> None:
-        """Codex terminal returns failure when tmux spawn fails."""
+        """Codex terminal returns failure when native spawn fails."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test",
@@ -1974,7 +1946,7 @@ class TestExecuteSpawnErrorPaths:
         mock_spawner = MagicMock()
         mock_spawner.spawn.return_value = MagicMock(
             success=False,
-            error="tmux failed",
+            error="native spawn failed",
             message=None,
         )
 
@@ -1987,12 +1959,12 @@ class TestExecuteSpawnErrorPaths:
         ):
             request.prepared_spawn = mock_prepare.return_value
             _runtime_of(request).typed_fail = True
-            _runtime_of(request).spawn_error = "tmux failed"
+            _runtime_of(request).spawn_error = "native spawn failed"
             result = await execute_spawn(request)
 
         mock_preapprove.assert_called_once_with("codex", "/path", ())
         assert result.success is False
-        assert "tmux failed" in (result.error or "")
+        assert "native spawn failed" in (result.error or "")
 
     @pytest.mark.asyncio
     async def test_claude_terminal_passes_machine_id_env(self) -> None:
@@ -2020,7 +1992,7 @@ class TestExecuteSpawnErrorPaths:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            backend="tmux",
+            backend="native",
             terminal_id="gobby-test",
         )
 
@@ -2065,7 +2037,7 @@ class TestExecuteSpawnErrorPaths:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=99,
-            backend="tmux",
+            backend="native",
         )
 
         with (
@@ -2196,7 +2168,7 @@ class TestExecuteSpawnErrorPaths:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=99,
-            backend="tmux",
+            backend="native",
         )
 
         with (
@@ -2912,7 +2884,7 @@ class TestCodexPromptDelivery:
 
         releaser = AsyncMock(side_effect=release)
         await spawn_executor_support._fail_codex_prompt_delivery(
-            runtime,
+            cast(TerminalRuntime, runtime),
             terminal,
             "run-1",
             run_manager,
@@ -2932,7 +2904,7 @@ class TestCodexPromptDelivery:
         releaser = AsyncMock()
 
         await spawn_executor_support._fail_codex_prompt_delivery(
-            runtime,
+            cast(TerminalRuntime, runtime),
             terminal,
             "run-1",
             run_manager,
@@ -2956,7 +2928,7 @@ class TestCodexPromptDelivery:
 
         with caplog.at_level(logging.ERROR, logger="gobby.agents.spawn_executor_support"):
             await spawn_executor_support._fail_codex_prompt_delivery(
-                runtime,
+                cast(TerminalRuntime, runtime),
                 terminal,
                 "run-1",
                 run_manager,
@@ -2995,7 +2967,7 @@ class TestCodexPromptDelivery:
                     )
                 )
             await spawn_executor_support._fail_codex_prompt_delivery(
-                runtime,
+                cast(TerminalRuntime, runtime),
                 terminal,
                 "run-1",
                 run_manager,
@@ -3069,7 +3041,7 @@ class TestCodexPromptDelivery:
     ) -> None:
         runtime = FakeRuntime()
         runtime.snapshot_text = "› "
-        runtime.raise_on_write = OSError("tmux socket vanished; Do the task; sk-test-secret")
+        runtime.raise_on_write = OSError("host socket vanished; Do the task; sk-test-secret")
         coordinator, terminal = _codex_delivery_target(runtime)
         run_manager = MagicMock()
 
@@ -3916,21 +3888,18 @@ async def test_reaper_terminates_by_backend_identity(
     native = manager.create_pending("native-old", "proj", "native", "gobby", "native-old")
     native.host_epoch = "epoch-a"
     native.process = {"host_terminal_id": "ht-old", "pgid": 100}
-    tmux = manager.create_pending("tmux-old", "proj", "tmux", "gobby", "gobby-tmux-old")
     missing = manager.create_pending("native-missing", "proj", "native", "gobby", "native-missing")
     missing.host_epoch = "epoch-a"
     native_runtime = FakeRuntime(backend="native")
-    tmux_runtime = FakeRuntime(backend="tmux")
 
     reaped = await reap_stale_pending_terminals(
         cast(TerminalManager, manager),
-        runtime_registry(native_runtime, tmux_runtime),
+        runtime_registry(native_runtime),
         in_doubt_seconds=0,
     )
 
-    assert set(reaped) == {native.id, tmux.id, missing.id}
+    assert set(reaped) == {native.id, missing.id}
     assert native_runtime.terminated_host_ids == [("ht-old", "epoch-a")]
-    assert tmux_runtime.killed == [tmux.spawn_key]
     assert missing.state == "exited"
     assert sorted(group_proofs, key=repr) == [None, {"host_terminal_id": "ht-old", "pgid": 100}]
 
@@ -4048,7 +4017,7 @@ async def test_delayed_kill_refuses_reused_host_id_after_respawn() -> None:
     )
     web_result = await spawn_web_terminal(
         manager=cast(TerminalManager, web_manager),
-        runtime=web_runtime,
+        runtime=cast(TerminalRuntime, web_runtime),
         project_id="proj",
         session_id=None,
         rows=24,
@@ -4114,7 +4083,7 @@ async def test_timeout_callback_is_owned_by_attempt_generation() -> None:
     web_runtime = FakeRuntime(backend="native", spawn_hold=asyncio.Event())
     web_result = await spawn_web_terminal(
         manager=cast(TerminalManager, web_manager),
-        runtime=web_runtime,
+        runtime=cast(TerminalRuntime, web_runtime),
         project_id="proj",
         session_id=None,
         rows=24,
@@ -4288,7 +4257,7 @@ def _connector(client: FakeControlClient) -> Callable[[], Any]:
 
 def _host_backed_request(
     host: TerminalHostManager, *, lifetime: TerminalLifetime = "run"
-) -> tuple[SpawnRequest, _HostBackedRuntime, FakeRuntime, MemoryTerminalStore]:
+) -> tuple[SpawnRequest, _HostBackedRuntime, MemoryTerminalStore]:
     request = SpawnRequest(
         prompt="Test",
         cwd="/path",
@@ -4304,15 +4273,14 @@ def _host_backed_request(
     )
     manager = _manager_of(request)
     native = _HostBackedRuntime(backend="native", control=HostManagerControl(host))
-    tmux = FakeRuntime(backend="tmux")
-    registry = runtime_registry(native, tmux)
+    registry = runtime_registry(native)
     request.terminal_runtime_registry = registry
     request.write_coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, manager),
         registry,
         lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
-    return request, native, tmux, manager
+    return request, native, manager
 
 
 @pytest.fixture
@@ -4370,7 +4338,7 @@ async def test_host_unavailable_reasons_fail_closed_with_typed_code(
     expected: str | None,
 ) -> None:
     host = await _host_in_state(short_socket_dir, state)
-    request, native, tmux, manager = _host_backed_request(host)
+    request, native, manager = _host_backed_request(host)
     if stage is not None:
         monkeypatch.setattr(native, f"{stage}_spawn", AsyncMock(side_effect=error))
     try:
@@ -4379,7 +4347,6 @@ async def test_host_unavailable_reasons_fail_closed_with_typed_code(
     finally:
         await host.stop()
 
-    assert tmux.create_calls == 0
     if expected is None:
         assert health["adopted"] is True
         assert result.success is True
@@ -4406,7 +4373,7 @@ async def test_dropped_commit_the_host_never_received_is_resent_and_launches(
 ) -> None:
     """A websocket close before the host got the commit is retried, not a lost seat."""
     host = await _host_in_state(short_socket_dir, "healthy")
-    request, native, tmux, manager = _host_backed_request(host)
+    request, native, manager = _host_backed_request(host)
     commit = native.commit_spawn
     commits: list[TerminalPreparedSpawn] = []
 
@@ -4424,7 +4391,6 @@ async def test_dropped_commit_the_host_never_received_is_resent_and_launches(
 
     assert result.success is True, result.error
     assert len(commits) == 2
-    assert tmux.create_calls == 0
     assert result.backend == "native"
     assert manager.rows[str(result.terminal_id)].backend == "native"
 
@@ -4436,7 +4402,7 @@ async def test_commit_the_host_may_have_received_is_never_resent(
 ) -> None:
     """A commit whose send may have reached the host is not resent: a resend could spawn twice."""
     host = await _host_in_state(short_socket_dir, "healthy")
-    request, native, tmux, _manager = _host_backed_request(host)
+    request, native, _manager = _host_backed_request(host)
     commits: list[TerminalPreparedSpawn] = []
 
     async def lose_reply(prepared: TerminalPreparedSpawn) -> TerminalHandle:
@@ -4450,7 +4416,6 @@ async def test_commit_the_host_may_have_received_is_never_resent(
         await host.stop()
 
     assert len(commits) == 1
-    assert tmux.create_calls == 0
     assert result.success is False
 
 
@@ -4474,7 +4439,7 @@ async def test_adopted_host_spawns_while_first_reconcile_outlasts_ready_deadline
     with patch("gobby.utils.machine_id._cached_machine_id", _LOCAL_MACHINE_ID):
         starting = asyncio.create_task(host.start())
         await reconciling.wait()
-    request, native, tmux, manager = _host_backed_request(host)
+    request, native, manager = _host_backed_request(host)
     try:
         result = await execute_spawn(request)
         # The first start is still reconciling, so startup never settled.
@@ -4488,7 +4453,6 @@ async def test_adopted_host_spawns_while_first_reconcile_outlasts_ready_deadline
     assert result.success is True
     assert result.backend == "native"
     assert native.create_calls == 1
-    assert tmux.create_calls == 0
     assert manager.rows[str(result.terminal_id)].backend == "native"
 
 
@@ -4499,7 +4463,7 @@ async def test_every_lifetime_fails_closed_without_host(
     short_socket_dir: Path, lifetime: TerminalLifetime
 ) -> None:
     host = await _host_in_state(short_socket_dir, "gterm_missing")
-    request, native, tmux, manager = _host_backed_request(host, lifetime=lifetime)
+    request, native, manager = _host_backed_request(host, lifetime=lifetime)
     try:
         result = await execute_spawn(request)
     finally:
@@ -4508,7 +4472,7 @@ async def test_every_lifetime_fails_closed_without_host(
     assert result.success is False
     assert result.error == "host_unavailable:gterm_missing"
     assert result.error_detail == "native terminals are unavailable (gterm_missing)"
-    assert (native.create_calls, tmux.create_calls, manager.rows) == (0, 0, {})
+    assert (native.create_calls, manager.rows) == (0, {})
 
 
 @pytest.mark.asyncio
@@ -4516,15 +4480,14 @@ async def test_every_lifetime_fails_closed_without_host(
 async def test_fail_closed_spawn_has_no_side_effects(short_socket_dir: Path) -> None:
     # A start that never settles misses the ready deadline the same way.
     undecided = _host_manager(short_socket_dir, connector=_refused_connect, spawner=_missing_gterm)
-    request, native, tmux, manager = _host_backed_request(undecided)
+    request, native, manager = _host_backed_request(undecided)
     result = await execute_spawn(request)
 
     assert result.error == "host_unavailable:host_start_timeout"
     assert result.terminal_id is None
     assert manager.rows == {}
-    # Nothing reached either backend: no reservation, no process, no tmux session.
+    # The native runtime made no reservation or process.
     assert (native.last_request, native.create_calls, native.live_keys) == (None, 0, set())
-    assert (tmux.last_request, tmux.create_calls) == (None, 0)
     assert undecided.health_state()["failure_reason"] is None
 
 
@@ -4533,7 +4496,7 @@ async def test_fail_closed_spawn_has_no_side_effects(short_socket_dir: Path) -> 
 async def test_spawn_recovers_after_host_readoption(short_socket_dir: Path) -> None:
     host = await _host_in_state(short_socket_dir, "host_start_timeout")
     try:
-        refused, _native, _tmux, refused_rows = _host_backed_request(host)
+        refused, _native, refused_rows = _host_backed_request(host)
         first = await execute_spawn(refused)
         assert first.error == "host_unavailable:host_start_timeout"
         assert refused_rows.rows == {}
@@ -4543,7 +4506,7 @@ async def test_spawn_recovers_after_host_readoption(short_socket_dir: Path) -> N
         await host._start_host()
         assert host.health_state()["failure_reason"] is None
 
-        request, native, tmux, manager = _host_backed_request(host)
+        request, native, manager = _host_backed_request(host)
         result = await execute_spawn(request)
     finally:
         await host.stop()
@@ -4551,5 +4514,4 @@ async def test_spawn_recovers_after_host_readoption(short_socket_dir: Path) -> N
     assert result.success is True
     assert result.backend == "native"
     assert native.create_calls == 1
-    assert tmux.create_calls == 0
     assert manager.rows[str(result.terminal_id)].backend == "native"

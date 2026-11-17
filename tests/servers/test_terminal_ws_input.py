@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock
 import psycopg
 import pytest
 
-from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.hub.caller_scope import bind_caller, reset_caller
 from gobby.servers.websocket import terminal_ws, terminal_ws_write
 from gobby.servers.websocket.handlers import HandlerMixin
@@ -22,7 +21,6 @@ from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.storage.terminals import Terminal
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, TerminalWriteError, WriteOutcome
-from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from gobby.terminals.write_coordinator import WriteCoordinator
 from tests.terminals.fakes import (
     MachineOwnerRows,
@@ -31,29 +29,14 @@ from tests.terminals.fakes import (
     runtime_registry,
 )
 
-TmuxResult = tuple[int, str, str]
 OWNER_USER_ID = "20000000-0000-4000-8000-000000000001"
 OTHER_USER_ID = "20000000-0000-4000-8000-000000000002"
 REMOTE_MACHINE = "30000000-0000-4000-8000-000000000003"
 
 
 @dataclass
-class _Sessions:
-    calls: list[tuple[str, ...]] = field(default_factory=list)
-
-    def base_args(self) -> list[str]:
-        return ["tmux"]
-
-    async def _run(self, *args: str, **_kwargs: object) -> TmuxResult:
-        if "#{pid}" in args[-1]:
-            return 0, "1658\t1784592177\n", ""
-        self.calls.append(args)
-        return 0, "", ""
-
-
-@dataclass
 class _RecordingRuntime:
-    backend: Literal["tmux", "native"] = "tmux"
+    backend: Literal["native"] = "native"
     effects: list[WriteOutcome | BaseException] = field(default_factory=list)
     inputs: list[bytes] = field(default_factory=list)
     pastes: list[str] = field(default_factory=list)
@@ -77,7 +60,7 @@ class _RecordingRuntime:
 
 
 class _PausedRuntime:
-    backend: Literal["tmux", "native"] = "tmux"
+    backend: Literal["native"] = "native"
 
     def __init__(self) -> None:
         self.started = asyncio.Event()
@@ -177,14 +160,9 @@ def _input_message(
 
 
 @pytest.mark.asyncio
-async def test_input_bytes_are_key_codes_and_paste_stays_bracketed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    sessions = _Sessions()
-    runtime = TmuxTerminalRuntime(
-        sessions_for_socket=lambda _socket: cast(TmuxSessionManager, sessions)
-    )
-    terminal = make_memory_terminal()
+async def test_input_bytes_and_paste_reach_the_native_runtime() -> None:
+    runtime = _RecordingRuntime()
+    terminal = make_memory_terminal(backend="native")
     server, attachment_id, owner = await _server(terminal, runtime)
     websocket = owner
 
@@ -194,27 +172,7 @@ async def test_input_bytes_are_key_codes_and_paste_stays_bracketed(
             _input_message(terminal, attachment_id, seq=seq, data=data),
         )
 
-    encoded = bytes(
-        int(part, 16)
-        for call in sessions.calls
-        if call and call[0] == "send-keys"
-        for part in call[4:]
-    )
-    assert encoded == b"\x04\x03\x1b[A"
-
-    pasted: list[str] = []
-
-    async def query_flags(_terminal: Terminal, _target: str) -> tuple[bool, bool, bool]:
-        return False, False, True
-
-    async def capture_paste(_target: str, text: str, **_kwargs: object) -> None:
-        pasted.append(text)
-
-    monkeypatch.setattr(runtime, "_query_flags", query_flags)
-    monkeypatch.setattr(
-        "gobby.terminals.tmux_runtime.paste_literal_text_to_tmux_target",
-        capture_paste,
-    )
+    assert runtime.inputs == [b"\x04", b"\x03", b"\x1b[A"]
     payload = "paste-data" * 2_000
     await server._handle_terminal_paste(
         websocket,
@@ -225,13 +183,13 @@ async def test_input_bytes_are_key_codes_and_paste_stays_bracketed(
             "client_write_seq": 4,
         },
     )
-    assert pasted == [f"\x1b[200~{payload}\x1b[201~"]
+    assert runtime.pastes == [payload]
 
 
 @pytest.mark.asyncio
 async def test_single_input_handler_is_bound_and_backend_neutral() -> None:
     assert not hasattr(HandlerMixin, "_handle_terminal_input")
-    terminal = make_memory_terminal()
+    terminal = make_memory_terminal(backend="native")
     server, attachment_id, owner = await _server(terminal, _RecordingRuntime())
     websocket = owner
     # Shadow the mixin method on the instance: dispatch must bind TerminalWsMixin
@@ -269,7 +227,7 @@ async def test_partial_write_reports_indeterminate_on_the_wire() -> None:
             TerminalWriteError(stage="partial"),
         ]
     )
-    terminal = make_memory_terminal()
+    terminal = make_memory_terminal(backend="native")
     server, attachment_id, owner = await _server(terminal, runtime)
     websocket = owner
 
@@ -299,7 +257,7 @@ async def test_failed_write_completes_ledger_and_admits_next_seq() -> None:
     runtime = _RecordingRuntime(
         effects=[TerminalWriteError(stage="none", delivered_bytes=0), Delivered()]
     )
-    terminal = make_memory_terminal()
+    terminal = make_memory_terminal(backend="native")
     server, attachment_id, owner = await _server(terminal, runtime)
     websocket = owner
     first = _input_message(terminal, attachment_id, seq=1, data="failed")
@@ -328,7 +286,7 @@ async def test_failed_write_completes_ledger_and_admits_next_seq() -> None:
 @pytest.mark.asyncio
 async def test_disconnect_cancellation_closes_ledger_without_replying() -> None:
     runtime = _RecordingRuntime(effects=[asyncio.CancelledError(), Delivered()])
-    terminal = make_memory_terminal()
+    terminal = make_memory_terminal(backend="native")
     server, attachment_id, owner = await _server(terminal, runtime)
     websocket = owner
     first = _input_message(terminal, attachment_id, seq=1, data="cancelled")
@@ -368,7 +326,7 @@ async def test_disconnect_cancellation_closes_ledger_without_replying() -> None:
 @pytest.mark.asyncio
 async def test_operator_writes_route_through_coordinator() -> None:
     for index, kind in enumerate(("input", "paste", "text"), start=1):
-        terminal = make_memory_terminal()
+        terminal = make_memory_terminal(backend="native")
         runtime = _PausedRuntime()
         server, attachment_id, owner = await _server(terminal, runtime)
         coordinator_write = AsyncMock(wraps=server.write_coordinator.write)

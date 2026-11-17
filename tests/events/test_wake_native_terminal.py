@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, cast
+from typing import cast
 from unittest.mock import ANY, AsyncMock, MagicMock
 from uuid import UUID
 
@@ -39,16 +39,12 @@ from tests.terminals.fakes import (
     runtime_registry,
 )
 
-if TYPE_CHECKING:
-    pass
-
 pytestmark = pytest.mark.unit
 
 WAKE_SESSION_ID = "9264a39c-68db-5eed-917c-6f7babb8e6b1"
 REPRO_SESSION_ID = "b3010944-ba0e-408b-a8a2-e55f43cbf41e"
 REPRO_TERMINAL_ID = "4e0a798f-984f-4c92-8ae2-e6395a496c75"
-# A gterm-hosted session: it has terminal_context, but $TMUX_PANE never set a
-# pane in it, which is exactly what used to end the wake as `no_tmux_pane`.
+# A gterm-hosted session resolves its terminal through the managed row.
 NATIVE_TERMINAL_CONTEXT = {"parent_pid": 4242, "term_program": "gterm"}
 WAKE_SEQUENCE = [
     *(("key", key) for key in composer_clear_sequence(None)),
@@ -74,7 +70,6 @@ class ManagedChain:
 
     store: MemoryTerminalStore
     native: FakeRuntime
-    tmux: FakeRuntime
     row: Terminal
 
 
@@ -102,17 +97,16 @@ def _session_manager(
 
 @pytest.fixture
 def managed_chain(monkeypatch: pytest.MonkeyPatch) -> ManagedChain:
-    """Bind `_send_terminal_session_wake` to a native row and a two-runtime registry."""
+    """Bind `_send_terminal_session_wake` to a native row and runtime registry."""
     row = replace(
         make_memory_terminal(backend="native"),
         session_id=WAKE_SESSION_ID,
     )
     store = MemoryTerminalStore(row)
     native = FakeRuntime(backend="native")
-    tmux = FakeRuntime(backend="tmux")
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
-        runtime_registry(tmux, native),
+        runtime_registry(native),
         lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
 
@@ -124,14 +118,14 @@ def managed_chain(monkeypatch: pytest.MonkeyPatch) -> ManagedChain:
         lambda: (store, coordinator),
     )
     monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", no_sleep)
-    return ManagedChain(store=store, native=native, tmux=tmux, row=row)
+    return ManagedChain(store=store, native=native, row=row)
 
 
 @pytest.mark.asyncio
 async def test_native_backed_interactive_session_wakes_through_its_terminal_row(
     managed_chain: ManagedChain,
 ) -> None:
-    """A gterm-hosted session has no tmux_pane, so the row is what makes it wakeable."""
+    """A gterm-hosted session wakes through its managed terminal row."""
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
@@ -145,12 +139,9 @@ async def test_native_backed_interactive_session_wakes_through_its_terminal_row(
     assert result["method"] == "terminal"
     assert result.get("error_code") is None
     assert managed_chain.native.write_log == WAKE_SEQUENCE
-    # FakeRuntime ignores Terminal.backend, so the tmux runtime staying untouched
-    # is the only thing separating a routed write from a bound one.
-    assert managed_chain.tmux.write_log == []
 
 
-@pytest.mark.parametrize("backend", ["native", "tmux"])
+@pytest.mark.parametrize("backend", ["native"])
 async def test_wake_requires_backend_registered_by_native_only_runner(
     managed_chain: ManagedChain,
     monkeypatch: pytest.MonkeyPatch,
@@ -203,9 +194,7 @@ async def test_native_context_id_wakes_through_unbound_terminal_row(
         terminal_sender=_send_terminal_session_wake,
         terminal_manager=managed_chain.store,
     )
-    dispatcher.set_terminal_runtime_registry(
-        runtime_registry(managed_chain.tmux, managed_chain.native)
-    )
+    dispatcher.set_terminal_runtime_registry(runtime_registry(managed_chain.native))
 
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
@@ -311,7 +300,7 @@ async def test_batch_keeps_active_recipient_out_of_terminal_injection() -> None:
     assert results[1]["delivered"] is False
     assert results[1]["method"] == "next_call_context"
     assert results[1]["skipped"] == "session_active"
-    # An active turn takes no typed input: the batch excludes it and the tmux path is never reached.
+    # An active turn takes no typed input and is excluded from the batch.
     terminal_sender.assert_not_awaited()
     assert all(target.session_id != active_id for target in targets)
 
@@ -345,21 +334,19 @@ async def test_final_preflight_suppresses_session_that_becomes_protected(
     assert result["error_code"] == "session_awaiting_input"
     assert result["delivered"] is False
     assert managed_chain.native.write_log == []
-    assert managed_chain.tmux.write_log == []
 
 
 @pytest.mark.asyncio
-async def test_tmux_agent_wake_resolves_name_without_uuid_lookup_traceback(
+async def test_non_uuid_wake_identity_reports_no_terminal(
     monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Reproduce the b3010944 wake whose identity was gobby-4e0a798f."""
+    """A legacy display name cannot authorize writes to a managed terminal."""
     row = replace(
-        make_memory_terminal(terminal_id=REPRO_TERMINAL_ID),
+        make_memory_terminal(terminal_id=REPRO_TERMINAL_ID, backend="native"),
         session_id=REPRO_SESSION_ID,
     )
     store = UUIDValidatingTerminalStore(row)
-    runtime = FakeRuntime(backend="tmux")
+    runtime = FakeRuntime(backend="native")
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
         runtime_registry(runtime),
@@ -374,34 +361,17 @@ async def test_tmux_agent_wake_resolves_name_without_uuid_lookup_traceback(
         lambda: (store, coordinator),
     )
     monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", no_sleep)
-    dispatcher = WakeDispatcher(
-        session_manager=_session_manager(
-            {
-                "tmux_session": f"gobby-{REPRO_TERMINAL_ID}",
-                "tmux_pane": "%21",
-            },
-            session_id=REPRO_SESSION_ID,
-            agent_depth=1,
-        ),
-        ism_manager=MagicMock(),
-        terminal_sender=_send_terminal_session_wake,
-        terminal_manager=store,
-    )
-
-    with caplog.at_level(logging.WARNING, logger="gobby.events.wake"):
-        result = await dispatcher.dispatch_live_wake(REPRO_SESSION_ID)
-
-    assert result["delivered"] is True
-    assert result["method"] == "terminal"
-    assert runtime.write_log == WAKE_SEQUENCE
-    assert not [record for record in caplog.records if record.exc_info]
+    assert row.session_name is not None
+    with pytest.raises(RuntimeError, match="no terminal for wake identity"):
+        await _send_terminal_session_wake(row.session_name, CONTINUE_WAKE_MESSAGE, submit=True)
+    assert runtime.write_log == []
 
 
 @pytest.mark.asyncio
 async def test_interactive_session_without_a_managed_row_reports_no_route() -> None:
     managed_sender = AsyncMock()
     dispatcher = WakeDispatcher(
-        session_manager=_session_manager({"tmux_pane": "%12", "tmux_socket_path": "/tmp/s"}),
+        session_manager=_session_manager({"terminal_id": REPRO_TERMINAL_ID}),
         ism_manager=MagicMock(),
         terminal_sender=managed_sender,
         terminal_manager=MemoryTerminalStore(),
@@ -645,12 +615,12 @@ async def test_quarantined_agent_terminal_wake_falls_back_without_traceback(
 ) -> None:
     """A quarantined agent terminal refuses wake without a raw pane fallback."""
     row = replace(
-        make_memory_terminal(terminal_id=REPRO_TERMINAL_ID),
+        make_memory_terminal(terminal_id=REPRO_TERMINAL_ID, backend="native"),
         session_id=REPRO_SESSION_ID,
     )
     store = UUIDValidatingTerminalStore(row)
     store.set_automatic_write_quarantine(row.id, "handoff:compact")
-    runtime = FakeRuntime(backend="tmux")
+    runtime = FakeRuntime(backend="native")
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
         runtime_registry(runtime),
@@ -662,7 +632,7 @@ async def test_quarantined_agent_terminal_wake_falls_back_without_traceback(
     )
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(
-            {"tmux_session": f"gobby-{REPRO_TERMINAL_ID}", "tmux_pane": "%21"},
+            {"terminal_id": REPRO_TERMINAL_ID},
             session_id=REPRO_SESSION_ID,
             agent_depth=1,
         ),
@@ -682,14 +652,16 @@ async def test_quarantined_agent_terminal_wake_falls_back_without_traceback(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["terminal gone", "no terminal for wake identity seat-name"])
 async def test_failed_terminal_wake_is_structured_and_does_not_fall_back_to_the_pane(
     managed_chain: ManagedChain,
+    message: str,
 ) -> None:
     """The pane would target the same terminal, so a retry there would double-write."""
     dispatcher = WakeDispatcher(
-        session_manager=_session_manager({**NATIVE_TERMINAL_CONTEXT, "tmux_pane": "%12"}),
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
         ism_manager=MagicMock(),
-        terminal_sender=AsyncMock(side_effect=RuntimeError("terminal gone")),
+        terminal_sender=AsyncMock(side_effect=RuntimeError(message)),
         terminal_manager=managed_chain.store,
     )
 
@@ -698,15 +670,15 @@ async def test_failed_terminal_wake_is_structured_and_does_not_fall_back_to_the_
     assert result["delivered"] is False
     assert result["method"] == "terminal"
     assert result["error_code"] == "terminal_wake_failed"
-    assert result["error_message"] == "terminal gone"
+    assert result["error_message"] == message
 
 
 @pytest.mark.asyncio
-async def test_terminal_row_lookup_failure_does_not_use_raw_tmux_pane() -> None:
+async def test_terminal_row_lookup_failure_does_not_use_context_target() -> None:
     failing_manager = MagicMock()
     failing_manager.resolve_live_for_session.side_effect = RuntimeError("hub down")
     dispatcher = WakeDispatcher(
-        session_manager=_session_manager({"tmux_pane": "%12"}),
+        session_manager=_session_manager({"terminal_id": REPRO_TERMINAL_ID}),
         ism_manager=MagicMock(),
         terminal_sender=AsyncMock(),
         terminal_manager=failing_manager,
@@ -910,7 +882,7 @@ async def test_batch_wake_still_injects_an_empty_composer() -> None:
 async def test_native_spawned_agent_wakes_through_its_terminal_row(
     managed_chain: ManagedChain,
 ) -> None:
-    """A gterm-hosted agent has no tmux keys, so its row is its only wake channel."""
+    """A gterm-hosted agent wakes through its managed terminal row."""
     sdk_resumer = AsyncMock()
     dispatcher = WakeDispatcher(
         session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT, agent_depth=1),
@@ -929,7 +901,6 @@ async def test_native_spawned_agent_wakes_through_its_terminal_row(
         ("text", CONTINUE_WAKE_MESSAGE),
         ("key", "enter"),
     ]
-    assert managed_chain.tmux.write_log == []
     sdk_resumer.assert_not_awaited()
 
 
@@ -954,12 +925,10 @@ async def test_native_spawned_agent_wake_is_withheld_for_a_draft(
 
 
 @pytest.mark.asyncio
-async def test_spawned_agent_without_a_managed_row_does_not_use_raw_tmux_session() -> None:
+async def test_spawned_agent_without_a_managed_row_does_not_use_context_target() -> None:
     managed_sender = AsyncMock()
     dispatcher = WakeDispatcher(
-        session_manager=_session_manager(
-            {"tmux_session": "gobby-agent-abc", "tmux_pane": "%7"}, agent_depth=1
-        ),
+        session_manager=_session_manager({"terminal_id": REPRO_TERMINAL_ID}, agent_depth=1),
         ism_manager=MagicMock(),
         terminal_sender=managed_sender,
         terminal_manager=MemoryTerminalStore(),

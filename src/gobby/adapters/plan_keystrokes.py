@@ -1,6 +1,6 @@
 """Per-CLI keystroke mapping for native-TUI plan-approval driving (Path B).
 
-Path B drives the *native* plan menu of a CLI running in a tmux pane (a
+Path B drives the *native* plan menu of a CLI running in a terminal pane (a
 "proxy-terminal" / attached session) by sending keystrokes, instead of
 resolving an in-memory ``ChatSession`` plan gate (Path A -- the managed,
 headless web-chat path in :mod:`gobby.servers.websocket.handlers.plan_approval`).
@@ -38,14 +38,12 @@ REQUEST_CHANGES_OPTION_ID = "request_changes"
 
 @dataclass(frozen=True)
 class PlanKeystroke:
-    """One key event sent to a native CLI plan prompt in a tmux pane.
+    """One key event sent to a native CLI plan prompt in a terminal pane.
 
-    Mirrors :meth:`gobby.agents.tmux.session_manager.TmuxSessionManager.send_keys`:
-
-    * ``literal=False`` (default) sends ``keys`` raw, so tmux key *names* apply
-      (``Enter``, ``Down``, ``Up``, ``Escape``, ``C-c``). Use for menu
+    * ``literal=False`` (default) sends a native key name
+      (``enter``, ``down``, ``up``, ``escape``, ``ctrl_c``). Use for menu
       navigation and confirmation.
-    * ``literal=True`` types ``keys`` verbatim (``-l``); a trailing newline
+    * ``literal=True`` types ``keys`` verbatim; a trailing newline
       becomes an Enter. Use for typed input such as a menu number.
     """
 
@@ -147,7 +145,7 @@ class PlanKeystrokeRegistry:
     ) -> PlanKeystrokeSequence | None:
         """Resolve using a pane-aware resolver when present, else the static map.
 
-        ``pane_text`` is the live tmux pane content; it is consulted only when a
+        ``pane_text`` is the live terminal pane content; it is consulted only when a
         resolver is registered for ``source``. Returns ``None`` when no sequence
         applies, so the caller errors rather than sending a guessed key.
         """
@@ -219,7 +217,7 @@ def resolve_action_option_id(
 
 
 async def dispatch_plan_keystrokes(
-    tmux: SupportsSendKeys,
+    terminal: SupportsSendKeys,
     pane: str,
     sequence: PlanKeystrokeSequence,
     *,
@@ -233,14 +231,14 @@ async def dispatch_plan_keystrokes(
     for index, stroke in enumerate(sequence.strokes):
         if index and sequence.settle_seconds > 0:
             await sleep(sequence.settle_seconds)
-        sent = await tmux.dispatch_keys(pane, stroke.keys, literal=stroke.literal)
+        sent = await terminal.dispatch_keys(pane, stroke.keys, literal=stroke.literal)
         if not sent:
             return False
     return True
 
 
 # --- Claude Code native plan menus -------------------------------------------
-# Captured empirically from Claude Code v2.1.169 in a gobby-managed tmux pane
+# Captured empirically from Claude Code v2.1.169 in a gobby-managed terminal pane
 # (task #15727). Claude shows TWO menu shapes when leaving plan mode, and they
 # differ in BOTH the option set AND the activation mechanic, so the menu must be
 # read from the live pane before keys are chosen -- a static map would mis-fire
@@ -311,7 +309,7 @@ def _claude_plan_keystrokes(option_id: str, pane_text: str) -> PlanKeystrokeSequ
 
 
 # --- Codex native plan-mode approval menu ------------------------------------
-# Captured empirically from Codex CLI v0.138.0 in a tmux pane
+# Captured empirically from Codex CLI v0.138.0 in a terminal pane
 # (task #15728). Entering Plan mode (`/plan`) and letting the model propose a
 # plan renders ONE approval menu; typing the item number selects AND activates
 # it immediately -- the "Press enter to confirm" hint applies only to arrow-key
@@ -345,7 +343,7 @@ _CODEX_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
 
 # --- Droid native spec-mode (ExitSpecMode) approval menu ---------------------
 # Captured empirically from Droid CLI v0.137.1 (Factory, spec model Opus 4.8) in
-# a tmux pane (task #15729). Entering spec mode (`droid --use-spec`) and giving
+# a terminal pane (task #15729). Entering spec mode (`droid --use-spec`) and giving
 # the agent a real planning task renders ONE approval menu when it proposes a
 # spec; typing the item number selects AND activates immediately -- the footer's
 # "Enter select" hint applies only to arrow-key (up/down) navigation, the digit

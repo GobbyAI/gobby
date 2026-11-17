@@ -225,7 +225,7 @@ class TerminalRuntime(Protocol):
     Continuous output streaming is deliberately outside this contract.
     """
 
-    backend: Literal["tmux", "native"]
+    backend: Literal["native"]
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn: ...
 

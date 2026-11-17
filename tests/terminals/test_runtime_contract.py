@@ -771,7 +771,7 @@ def _list_live(client: httpx.Client, terminal_id: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-# The daemon registers only the native runtime, so web terminal_create has no tmux cell.
+# Web terminal_create resolves the native runtime.
 @pytest.mark.parametrize("contract_backend", ["native"])
 async def test_daemon_restart_continuity(
     contract_backend: str,

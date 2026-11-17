@@ -1,4 +1,4 @@
-"""PaneIO adapters over the terminal runtime and raw tmux, the composer drain, and
+"""PaneIO adapters over the native terminal runtime, the composer drain, and
 the verified-submit ladder every daemon-driven injection presses Enter through."""
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from gobby.agents.detection.matcher import CompiledManifest, compile_manifest
 from gobby.agents.idle_detector import ComposerRead, IdleDetector
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.composer_ledger import ComposerLedger
+from gobby.terminals.key_bytes import normalize_named_key
 from gobby.terminals.native_runtime import (
     NativeBatchFailure,
     NativeBatchResult,
@@ -26,7 +27,6 @@ from gobby.terminals.pane_io import (
     PaneIO,
     RuntimePaneIO,
     SubmitResult,
-    TmuxPaneIO,
     clear_composer,
     submit_text,
 )
@@ -38,6 +38,14 @@ from gobby.terminals.runtime import (
     TerminalRuntime,
     TerminalWriteError,
 )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("Enter", "enter"), ("CTRL_U", "ctrl_u"), ("C-u", None), ("BSpace", None), ("DC", None)],
+)
+def test_named_key_normalization_uses_native_vocabulary(value: str, expected: str | None) -> None:
+    assert normalize_named_key(value) == expected
 
 
 class _FakeRuntime:
@@ -77,27 +85,6 @@ class _Terminal:
     backend = "native"
 
 
-class _FakeTmux:
-    def __init__(self, *, dispatch_ok: bool = True, error: Exception | None = None) -> None:
-        self.calls: list[tuple[str, str, bool]] = []
-        self.dispatch_ok = dispatch_ok
-        self.error = error
-        self.capture: str | None = "> "
-        self.snapshot_modes: list[SnapshotMode] = []
-
-    async def dispatch_keys(self, target: str, keys: str, *, literal: bool) -> bool:
-        self.calls.append((target, keys, literal))
-        if self.error is not None:
-            raise self.error
-        return self.dispatch_ok
-
-    async def snapshot_lines(self, target: str, *, lines: int, mode: SnapshotMode = "text") -> str:
-        self.snapshot_modes.append(mode)
-        if self.capture is None:
-            raise RuntimeError("pane gone")
-        return self.capture
-
-
 @pytest.mark.asyncio
 async def test_runtime_pane_sends_named_keys_and_unsubmitted_text() -> None:
     runtime = _FakeRuntime()
@@ -115,7 +102,7 @@ async def test_runtime_pane_sends_named_keys_and_unsubmitted_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_runtime_pane_submits_text_ending_in_a_newline_like_tmux() -> None:
+async def test_runtime_pane_submits_text_ending_in_a_newline() -> None:
     runtime = _FakeRuntime()
     pane = RuntimePaneIO(cast(TerminalRuntime, runtime), _Terminal())
 
@@ -247,45 +234,6 @@ async def test_runtime_pane_snapshot_failure_returns_none() -> None:
     runtime.snapshot_text = None
 
     assert await RuntimePaneIO(cast(TerminalRuntime, runtime), _Terminal()).snapshot(3) is None
-
-
-@pytest.mark.asyncio
-async def test_tmux_pane_maps_named_keys_and_types_literal_text() -> None:
-    tmux = _FakeTmux()
-    pane = TmuxPaneIO(tmux, "%7")
-
-    assert pane.backend == "tmux"
-    assert pane.target == "%7"
-    assert await pane.send_key("ctrl_l") == (True, None)
-    assert await pane.send_key("backspace") == (True, None)
-    assert await pane.type_text("/clear") == (True, None)
-    assert tmux.calls == [("%7", "C-l", False), ("%7", "BSpace", False), ("%7", "/clear", True)]
-    assert await pane.snapshot(2) == "> "
-    assert await pane.snapshot(2, mode="ansi") == "> "
-    assert tmux.snapshot_modes == ["text", "ansi"]
-
-
-@pytest.mark.asyncio
-async def test_tmux_pane_rejects_keys_tmux_cannot_name() -> None:
-    ok, reason = await TmuxPaneIO(_FakeTmux(), "%7").send_key("kp0")
-
-    assert ok is False
-    assert reason == "tmux has no key name for kp0"
-
-
-@pytest.mark.asyncio
-async def test_tmux_pane_reports_dispatch_failures() -> None:
-    ok, reason = await TmuxPaneIO(_FakeTmux(dispatch_ok=False), "%7").send_key("enter")
-    assert ok is False
-    assert reason == "tmux send-keys returned false while sending enter to %7"
-
-    ok, reason = await TmuxPaneIO(_FakeTmux(error=TimeoutError()), "%7").type_text("x")
-    assert ok is False
-    assert reason == "tmux send-keys timed out while typing text to %7"
-
-    tmux = _FakeTmux()
-    tmux.capture = None
-    assert await TmuxPaneIO(tmux, "%7").snapshot(1) is None
 
 
 class _RecordingPane:

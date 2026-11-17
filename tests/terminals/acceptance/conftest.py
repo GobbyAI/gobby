@@ -20,7 +20,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import AsyncIterator, Iterator, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -39,10 +39,8 @@ from gobby.terminals.runtime import (
     TerminalRuntime,
     TerminalSpawnRequest,
 )
-from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from gobby.utils.machine_id import require_machine_id
 from tests._timing import wait_for_awaited_condition
-from tests.terminals.fakes import make_memory_terminal
 
 ACCEPTANCE_ROWS = 40
 ACCEPTANCE_COLS = 120
@@ -196,77 +194,6 @@ async def native_host(
         if not manager.host_drained:
             await manager.stop(drain_host=True)
         shutil.rmtree(socket_dir, ignore_errors=True)
-
-
-def _tmux(socket: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """Run one tmux command against the private server on ``socket``."""
-    return subprocess.run(
-        ["tmux", "-S", str(socket), "-f", "/dev/null", *args],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={key: value for key, value in os.environ.items() if key != "TMUX"},
-        timeout=10.0,
-    )
-
-
-@pytest.fixture
-def external_tmux_pane(acceptance_workdir: Path) -> Iterator[LiveTerminal]:
-    """A shell pane on a private tmux server, recorded as an external terminal.
-
-    The test starts the server itself, the way a user starts tmux by hand, and
-    the row carries what a hook records from ``$TMUX``: the socket, the pane,
-    and the server generation. The runtime addresses only that socket. Await
-    ``answering_shell`` on the result before writing to it.
-    """
-    if shutil.which("tmux") is None:
-        pytest.skip("tmux binary is not available")
-    socket = acceptance_workdir / "tmux.sock"
-    name = f"acc-{uuid4().hex[:8]}"
-    started = _tmux(
-        socket,
-        "new-session",
-        "-d",
-        "-x",
-        str(ACCEPTANCE_COLS),
-        "-y",
-        str(ACCEPTANCE_ROWS),
-        "-s",
-        name,
-        "-c",
-        str(acceptance_workdir),
-        "--",
-        "/usr/bin/env",
-        "-i",
-        *(f"{key}={value}" for key, value in SHELL_ENV.items()),
-        *SHELL_COMMAND,
-    )
-    if started.returncode != 0:
-        pytest.fail(f"tmux new-session failed: {started.stderr or started.stdout}")
-    try:
-        shown = _tmux(
-            socket, "display-message", "-p", "-t", f"={name}:", "#{pane_id}\t#{pid}\t#{start_time}"
-        )
-        assert shown.returncode == 0, shown.stderr
-        pane_id, server_pid, start_time = shown.stdout.strip().split("\t")
-        terminal = replace(
-            make_memory_terminal(session_name=name),
-            backend="tmux",
-            ownership="external",
-            locator={
-                "socket_path": str(socket),
-                "pane_id": pane_id,
-                "server_pid": int(server_pid),
-                "server_start_time": int(start_time),
-            },
-            rows=ACCEPTANCE_ROWS,
-            cols=ACCEPTANCE_COLS,
-        )
-        yield LiveTerminal(backend="tmux", runtime=TmuxTerminalRuntime(), terminal=terminal)
-    finally:
-        # The exit and terminate cases already took the server down with the pane.
-        _tmux(socket, "kill-server")
-        socket.unlink(missing_ok=True)
 
 
 def terminal_from_prepared(

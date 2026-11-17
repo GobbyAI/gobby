@@ -69,7 +69,7 @@ class _HostClient:
 
 
 class _StickyRuntime(FakeRuntime):
-    """A tmux runtime whose kill returns without removing the session."""
+    """A native runtime whose kill returns without removing the session."""
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         del terminal, grace_seconds
@@ -224,12 +224,14 @@ async def test_kill_terminal_refuses_held_ids() -> None:
 
 @pytest.mark.asyncio
 async def test_kill_terminal_requires_proven_kill(monkeypatch: pytest.MonkeyPatch) -> None:
-    # tmux: a terminate that leaves the session present is not a kill.
-    tmux_row = make_memory_terminal(session_name="sticky-shell")
-    sticky = _StickyRuntime()
+    # A terminate that leaves the session present is not a kill.
+    terminal_row = make_memory_terminal(backend="native", session_name="sticky-shell")
+    sticky = _StickyRuntime(backend="native")
     with pytest.raises(TerminalKillUnprovenError):
-        await kill_terminal(MemoryTerminalStore(tmux_row), runtime_registry(sticky), tmux_row)
-    assert tmux_row.state == "live"
+        await kill_terminal(
+            MemoryTerminalStore(terminal_row), runtime_registry(sticky), terminal_row
+        )
+    assert terminal_row.state == "live"
 
     reaps = _ReapRecorder(monkeypatch, group_alive=False)
 
@@ -582,7 +584,7 @@ async def test_reaper_needs_dead_group_for_hostless_pending_row(
 class _ParkedHostKill(FakeRuntime):
     """A native runtime whose host kill parks until the test releases it."""
 
-    backend: Literal["tmux", "native"] = "native"
+    backend: Literal["native"] = "native"
     terminate_host_hold: asyncio.Event | None = field(default_factory=asyncio.Event)
     # Whether the released kill ends the host terminal, so a strict listing misses it.
     kill_ends_terminal: bool = True

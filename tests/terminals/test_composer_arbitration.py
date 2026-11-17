@@ -26,7 +26,7 @@ from gobby.terminals import composer_lock as composer_lock_module
 from gobby.terminals.composer_ledger import ComposerLedger, WriteKind
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.pane_io import RuntimePaneIO
-from gobby.terminals.runtime import Delivered, SnapshotResult, WriteOutcome
+from gobby.terminals.runtime import Delivered, SnapshotResult, TerminalRuntime, WriteOutcome
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.terminals.fakes import (
     FakeRuntime,
@@ -150,7 +150,7 @@ def _editor_seat(
     )
     monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", _no_sleep)
     monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
-    pane = RuntimePaneIO(runtime, terminal)
+    pane = RuntimePaneIO(cast(TerminalRuntime, runtime), terminal)
     messages = InterSessionMessageManager(temp_db)
     messages.create_message(
         from_session=session.id,
@@ -212,7 +212,7 @@ async def test_real_wake_and_compaction_writers_do_not_interleave(
     store, runtime, coordinator, terminal_id = _arbitrated(composer_ledger)
     terminal = store.get(terminal_id)
     assert terminal is not None
-    pane = RuntimePaneIO(runtime, terminal)
+    pane = RuntimePaneIO(cast(TerminalRuntime, runtime), terminal)
 
     monkeypatch.setattr(
         "gobby.runner_init.orchestration.wake_write_services", lambda: (store, coordinator)
@@ -238,7 +238,7 @@ async def test_real_wake_and_compaction_writers_do_not_interleave(
     async def wake_writer() -> None:
         _PHASE.set("wake")
         await _send_terminal_session_wake(
-            "gobby-agent-arbitration",
+            terminal.id,
             "Message from Gobby daemon: New activity available.",
             submit=True,
             clear_before_submit=True,
@@ -461,7 +461,7 @@ async def test_compaction_holds_the_lock_across_its_whole_ladder(
     store, runtime, coordinator, terminal_id = _arbitrated(composer_ledger)
     terminal = store.get(terminal_id)
     assert terminal is not None
-    pane = RuntimePaneIO(runtime, terminal)
+    pane = RuntimePaneIO(cast(TerminalRuntime, runtime), terminal)
 
     monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", _no_sleep)
     monkeypatch.setattr(composer_lock_module, "_coordinator", coordinator)

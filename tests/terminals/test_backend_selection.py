@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import ast
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -19,7 +18,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.terminals.host_client import HostCommandError, HostUnavailableError
 from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
 from gobby.terminals.runtime import PreparedSpawn, TerminalRuntime, TerminalSpawnRequest
-from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from gobby.terminals.web_spawn import spawn_web_terminal
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _manager
 
@@ -51,21 +49,15 @@ def test_default_backend_config_is_removed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_explicit_and_external_selection_under_native_default(
+async def test_native_spawn_refuses_unavailable_host_and_capacity(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    guide = _GUIDE.read_text(encoding="utf-8")
-    assert "## Backend status" in guide
-    assert "`native` is the only spawn backend" in guide
-    assert "spawn-less adapter for externally discovered sessions" in guide
-    assert "`host_unavailable`" in guide
-
     monkeypatch.setattr("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID)
     manager = _manager(temp_db)
     # An explicit native request with no gterm host is refused before fork with the
-    # typed host_unreachable code; the pending row fails and no tmux row appears.
+    # typed host_unreachable code; the pending row fails.
     assert issubclass(HostUnavailableError, HostCommandError)
     no_host = NativeTerminalRuntime(HostManagerControl(SimpleNamespace(_client=None)))
     refused = await spawn_web_terminal(
@@ -159,48 +151,3 @@ async def test_explicit_and_external_selection_under_native_default(
     assert overflow.success is False
     assert "capacity" in (overflow.error or "")
     assert str(overflow.terminal_id) not in prepares
-
-    tree = ast.parse(_TERMINAL_CREATE_WS.read_text(encoding="utf-8"))
-    create_fn = None
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef):
-            for item in node.body:
-                if (
-                    isinstance(item, ast.AsyncFunctionDef)
-                    and item.name == "_handle_terminal_create"
-                ):
-                    create_fn = item
-    assert create_fn is not None
-    calls = [
-        n.func.id
-        for n in ast.walk(create_fn)
-        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-    ]
-    assert "spawn_web_terminal" in calls
-    bind = [n.attr for n in ast.walk(create_fn) if isinstance(n, ast.Attribute)]
-    assert "reserve_observer" not in bind
-    assert "prepare_spawn" not in bind
-    literals = {n.value for n in ast.walk(create_fn) if isinstance(n, ast.Constant)}
-    assert "native" not in literals
-    assert "tmux" not in literals
-
-    # An explicit tmux runtime refuses to spawn: tmux terminals are external only,
-    # so the pending row fails and no live tmux row appears.
-    explicit = await spawn_web_terminal(
-        manager=manager,
-        runtime=TmuxTerminalRuntime(),
-        project_id=sample_project["id"],
-        session_id=None,
-        rows=24,
-        cols=80,
-        cwd="/tmp",
-        command=["zsh"],
-    )
-    assert explicit.success is False
-    assert explicit.error == "tmux backend does not spawn terminals"
-    assert explicit.terminal_id is not None
-    row = manager.get(explicit.terminal_id)
-    assert row is not None
-    assert row.backend == "tmux"
-    assert row.state == "exited"
-    assert row.locator is None

@@ -12,11 +12,10 @@ _VANISHED_TARGET_MARKERS = (
     "failed to connect to server",
     "no server running on",
 )
-_SOCKET_PATH_MARKERS = ("tmux-", "tmux socket", ".sock")
+_SOCKET_PATH_MARKERS = (".sock",)
 _VANISHED_TARGET_TYPE_NAMES = frozenset(
     {
         "HostUnavailableError",
-        "TmuxTargetUnavailableError",
     }
 )
 
@@ -36,7 +35,7 @@ def iter_exception_chain(error: BaseException) -> Iterator[BaseException]:
 def is_vanished_terminal_target(error: BaseException) -> bool:
     """Return whether a terminal operation failed because its target went away.
 
-    Both backends bury the reason: the tmux and native runtimes re-raise as
+    The native runtime can bury the reason by re-raising as
     TerminalWriteError(stage="none"), whose own message says nothing, so the
     whole chain has to be walked. Matching type names instead of importing the
     backend exceptions keeps this module free of any backend dependency.
@@ -48,7 +47,7 @@ def is_vanished_terminal_target(error: BaseException) -> bool:
             return True
         message = str(link).casefold()
         if "no such file or directory" in message:
-            # A missing tmux binary is a real misconfiguration, not a race;
+            # A missing executable is a real misconfiguration, not a race;
             # only a missing socket path means the target itself vanished.
             # Keep walking either way so a later link can still match.
             if any(marker in message for marker in _SOCKET_PATH_MARKERS):

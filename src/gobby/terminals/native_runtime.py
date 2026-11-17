@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from gobby.agents.constants import GOBBY_TERMINAL_ID
-from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
 from gobby.storage.terminals import (
     AttachLocator,
     Terminal,
@@ -62,6 +61,7 @@ from gobby.terminals.runtime import (
 from gobby.terminals.termination import TerminalKillUnprovenError
 
 MAX_SPAWN_ERROR_CODE_LENGTH = 128
+TEXT_ENTER_DELAY_SECONDS = 1.0
 # The host escalates to SIGKILL after grace; allow for its delivery and reap.
 GROUP_EXIT_MARGIN_SECONDS = 2.0
 GROUP_EXIT_POLL_SECONDS = 0.05
@@ -167,7 +167,6 @@ def classify_native_spawn_failure(
             "capacity",
             "stale",
             "stale_reservation",
-            "not_native",
         }:
             reason = "stale" if exc.error == "stale_reservation" else exc.error
             return _bounded_spawn_code(f"host_refused:{reason}"), detail, "fail_pending"
@@ -275,7 +274,7 @@ __all__ = [
 class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
     """Control-client backend; does not write terminal rows."""
 
-    backend: Literal["tmux", "native"] = "native"
+    backend: Literal["native"] = "native"
 
     def __init__(
         self,
@@ -654,8 +653,8 @@ class NativeTerminalRuntime(NativeFrameStreamMixin, NativeHostProbeMixin):
                 raise TerminalWriteError(stage="none") from exc
             except ConnectionError as exc:
                 return IndeterminateWrite(detail=str(exc))
-            if TMUX_TEXT_ENTER_DELAY_SECONDS > 0:
-                await asyncio.sleep(TMUX_TEXT_ENTER_DELAY_SECONDS)
+            if TEXT_ENTER_DELAY_SECONDS > 0:
+                await asyncio.sleep(TEXT_ENTER_DELAY_SECONDS)
             try:
                 await self._client.write(
                     host_terminal_id=host_id,

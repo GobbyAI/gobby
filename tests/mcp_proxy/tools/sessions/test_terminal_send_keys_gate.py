@@ -640,7 +640,7 @@ def held_compact() -> Iterator[ComposerLedger]:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("keys", ["ctrl_u", "C-u"])
+@pytest.mark.parametrize("keys", ["ctrl_u", "CTRL_U"])
 async def test_clear_key_drains_a_held_compact_so_a_later_handoff_does_not_replay_it(
     monkeypatch: pytest.MonkeyPatch,
     public_send_keys: tuple[Callable[..., Any], AsyncMock, str],

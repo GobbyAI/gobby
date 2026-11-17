@@ -61,7 +61,7 @@ def resolve_terminal_runtime(
 class RemoteTerminalRuntime:
     """Reads and stops a node terminal from the hub's store, never a local host."""
 
-    backend: Literal["tmux", "native"] = "native"
+    backend: Literal["native"] = "native"
 
     def __init__(self, db: HubDatabase) -> None:
         self._db = db

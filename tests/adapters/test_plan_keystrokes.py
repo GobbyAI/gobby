@@ -18,7 +18,7 @@ from gobby.adapters.plan_keystrokes import (
     resolve_action_option_id,
 )
 
-# Verbatim captures from Claude Code v2.1.169 in a gobby-managed tmux pane.
+# Verbatim captures from Claude Code v2.1.169 in a gobby-managed terminal pane.
 # FULL menu renders when a plan was written; the bare CONFIRM menu when not.
 _CLAUDE_FULL_MENU_PANE = """\
  Claude has written up a plan and is ready to execute. Would you like to proceed?
@@ -48,7 +48,7 @@ _CLAUDE_NO_MENU_PANE = (
 )
 
 
-class _FakeTmux:
+class _RecordingTerminal:
     """Records send_keys calls; returns queued results or True by default."""
 
     def __init__(self, results: list[bool] | None = None) -> None:
@@ -194,7 +194,7 @@ class TestResolveActionOptionId:
 class TestDispatchPlanKeystrokes:
     @pytest.mark.asyncio
     async def test_sends_strokes_in_order_with_literal_flags(self) -> None:
-        tmux = _FakeTmux()
+        terminal = _RecordingTerminal()
         sleeps: list[float] = []
 
         async def fake_sleep(delay: float) -> None:
@@ -204,16 +204,16 @@ class TestDispatchPlanKeystrokes:
             strokes=(PlanKeystroke("2", literal=True), PlanKeystroke("Enter")),
             settle_seconds=0.05,
         )
-        ok = await dispatch_plan_keystrokes(tmux, "%9", seq, sleep=fake_sleep)
+        ok = await dispatch_plan_keystrokes(terminal, "%9", seq, sleep=fake_sleep)
 
         assert ok is True
-        assert tmux.calls == [("%9", "2", True), ("%9", "Enter", False)]
+        assert terminal.calls == [("%9", "2", True), ("%9", "Enter", False)]
         # One settle pause between the two strokes; none before the first.
         assert sleeps == [pytest.approx(0.05)]
 
     @pytest.mark.asyncio
     async def test_no_sleep_when_settle_zero(self) -> None:
-        tmux = _FakeTmux()
+        terminal = _RecordingTerminal()
         sleeps: list[float] = []
 
         async def fake_sleep(delay: float) -> None:
@@ -222,24 +222,24 @@ class TestDispatchPlanKeystrokes:
         seq = PlanKeystrokeSequence(
             strokes=(PlanKeystroke("Down"), PlanKeystroke("Enter")), settle_seconds=0.0
         )
-        ok = await dispatch_plan_keystrokes(tmux, "%9", seq, sleep=fake_sleep)
+        ok = await dispatch_plan_keystrokes(terminal, "%9", seq, sleep=fake_sleep)
 
         assert ok is True
         assert sleeps == []
-        assert len(tmux.calls) == 2
+        assert len(terminal.calls) == 2
 
     @pytest.mark.asyncio
     async def test_stops_on_first_failed_send(self) -> None:
-        tmux = _FakeTmux(results=[True, False, True])
+        terminal = _RecordingTerminal(results=[True, False, True])
         seq = PlanKeystrokeSequence(
             strokes=(PlanKeystroke("Down"), PlanKeystroke("Down"), PlanKeystroke("Enter")),
             settle_seconds=0.0,
         )
-        ok = await dispatch_plan_keystrokes(tmux, "%9", seq)
+        ok = await dispatch_plan_keystrokes(terminal, "%9", seq)
 
         assert ok is False
         # Stopped after the failing second send; the third was never attempted.
-        assert len(tmux.calls) == 2
+        assert len(terminal.calls) == 2
 
 
 def _full(digit: str) -> PlanKeystrokeSequence:
@@ -350,7 +350,7 @@ class TestClaudeResolver:
         )
 
 
-# Verbatim capture from Codex CLI v0.138.0 in a tmux pane: the single
+# Verbatim capture from Codex CLI v0.138.0 in a terminal pane: the single
 # plan-mode approval menu shown after `/plan` proposes a plan.
 _CODEX_PLAN_MENU_PANE = """\
   Implement this plan?
@@ -413,7 +413,7 @@ class TestCodexPlanMenu:
 
 
 # Verbatim capture from Droid CLI v0.137.1 (Factory, spec model Opus 4.8) in a
-# tmux pane: the single spec-mode approval menu shown after the agent proposes a
+# terminal pane: the single spec-mode approval menu shown after the agent proposes a
 # spec in `droid --use-spec`.
 _DROID_PLAN_MENU_PANE = """\
  1. Proceed with the proposal
@@ -474,7 +474,7 @@ class TestDroidPlanMenu:
         assert DEFAULT_PLAN_KEYSTROKES.resolve("droid", "approve_bogus") is None
 
 
-# Verbatim captures from a retired ACP CLI in a tmux pane:
+# Verbatim captures from a retired ACP CLI in a terminal pane:
 # the per-action approval menus shown in manual/default mode. The reject option's
 # DIGIT differs between tool types (4 vs 3) while "Allow once"/"Allow for this
 # session" stay at positions 1/2 and the "(esc)" shortcut always rejects.

@@ -3,25 +3,16 @@
 from __future__ import annotations
 
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.terminals import TerminalManager, tmux_locator_key
 from gobby.terminals.host_client import HostEpochChangedError
-from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
-from tests.fixtures.isolated_checkout import patch_local_machine_id
 from tests.servers.terminal_fakes import MockWebSocket
 from tests.servers.test_terminal_ws_golden import TERMINAL_ID, _server
-from tests.storage.test_terminals import LOCAL_MACHINE_ID
 
 pytestmark = pytest.mark.unit
-
-DEFAULT_SOCKET = "/private/tmp/tmux-501/default"
 
 
 async def _kill(server: Any, terminal_id: str) -> dict[str, Any]:
@@ -84,59 +75,3 @@ async def test_kill_answers_a_runtime_failure_instead_of_dropping_the_reply() ->
         "code": "kill_failed",
         "reason": "host_epoch_changed",
     }
-
-
-@pytest.mark.asyncio
-async def test_kill_refuses_live_external_tmux_row_without_probing_its_socket(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A live legacy row is fenced until its process state is known."""
-    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
-    manager = TerminalManager(temp_db)
-    row = manager.upsert_external(
-        project_id=sample_project["id"],
-        backend="tmux",
-        locator={
-            "socket_path": DEFAULT_SOCKET,
-            "server_pid": 6051,
-            "server_start_time": 1787385464,
-            "pane_id": "%7",
-        },
-        locator_key=tmux_locator_key(
-            socket_path=DEFAULT_SOCKET, server_pid=6051, server_start_time=1787385464, pane_id="%7"
-        ),
-        session_name="scratch",
-        title="scratch",
-    )
-    killed: list[tuple[str | None, str]] = []
-
-    async def fake_kill(
-        self: TmuxSessionManager, name: str, *, missing_ok: bool = False, timeout: float = 5.0
-    ) -> bool:
-        killed.append((self.base_args()[-1], name))
-        return True
-
-    monkeypatch.setattr(TmuxSessionManager, "kill_session", fake_kill)
-    config = MagicMock()
-    config.host = "localhost"
-    config.port = 60888
-    config.ping_interval = 30
-    config.ping_timeout = 10
-    config.max_message_size = 1024
-    server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
-    server.terminal_manager = manager
-    runtime = TmuxTerminalRuntime()
-    server.terminal_runtime_registry = MagicMock(resolve=lambda _backend: runtime)
-    broadcast = AsyncMock()
-    cast(Any, server).broadcast_terminal_event = broadcast
-
-    reply = await _kill(server, row.id)
-
-    assert killed == []
-    refreshed = manager.get(row.id)
-    assert refreshed is not None and refreshed.state == "live"
-    broadcast.assert_not_awaited()
-    assert reply["success"] is False
-    assert reply["code"] == "unsupported_terminal_backend"

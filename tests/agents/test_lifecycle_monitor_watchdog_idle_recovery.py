@@ -16,7 +16,6 @@ import pytest
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
 from gobby.autonomous.stuck_detector import StuckDetector
 from gobby.config.terminals import TerminalConfig
@@ -28,6 +27,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.composer_ledger import ComposerLedger
+from gobby.terminals.host_client import HostUnavailableError
 from gobby.terminals.runtime import TerminalWriteError
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_context import IncompleteStepWorkflow, StepWorkflowContext
@@ -2023,7 +2023,7 @@ async def test_watchdog_task_audit_programming_error_propagates(
 
 
 @pytest.mark.asyncio
-async def test_tmux_cleanup_failure_preserves_watchdog_recovery_state(
+async def test_terminal_cleanup_failure_preserves_watchdog_recovery_state(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -2119,12 +2119,7 @@ async def test_terminal_and_unmonitored_runs_clear_completed_turn_recovery_state
 def _vanished_write_error() -> TerminalWriteError:
     """The production shape: the reason lives in __cause__, never in the wrapper."""
     error = TerminalWriteError(stage="none")
-    error.__cause__ = TmuxTargetUnavailableError(
-        "tmux target is unavailable: can't find session: agent",
-        command=("tmux", "send-keys"),
-        stderr="can't find session: agent",
-        returncode=1,
-    )
+    error.__cause__ = HostUnavailableError("host socket disappeared")
     return error
 
 

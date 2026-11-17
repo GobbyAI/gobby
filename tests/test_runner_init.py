@@ -508,7 +508,7 @@ class TestWakeTerminalSenders:
         monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", fake_sleep)
 
         await _send_terminal_session_wake(
-            "gobby-agent-abc",
+            terminal.id,
             "[Gobby] Check messages",
             submit=True,
             clear_before_submit=True,
@@ -578,7 +578,7 @@ class TestWakeTerminalSenders:
         )
         first = asyncio.create_task(
             _send_terminal_session_wake(
-                terminal.session_name or "",
+                terminal.id,
                 "first",
                 submit=True,
                 clear_before_submit=True,
@@ -588,7 +588,7 @@ class TestWakeTerminalSenders:
         assert await asyncio.to_thread(started.wait, 5)
         second = asyncio.create_task(
             _send_terminal_session_wake(
-                terminal.session_name or "",
+                terminal.id,
                 "second",
                 submit=True,
                 clear_before_submit=True,

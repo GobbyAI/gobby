@@ -1005,7 +1005,7 @@ async def test_native_spawn_failure_outcome_table(case: str) -> None:
         assert getattr(cancelled_host, "_commit_write_states", {}) == {}
         return
     if case == "reserve_refused":
-        for reason in ("host_draining", "capacity", "stale", "not_native"):
+        for reason in ("host_draining", "capacity", "stale", "stale_reservation"):
             host = ObservingHost()
             request, _runtime, manager = _native_request(
                 host=host,
@@ -1017,7 +1017,8 @@ async def test_native_spawn_failure_outcome_table(case: str) -> None:
                 new=AsyncMock(side_effect=HostCommandError(reason)),
             ):
                 result = await _execute_native_failure(request)
-            assert result.error == f"host_refused:{reason}"
+            expected_reason = "stale" if reason == "stale_reservation" else reason
+            assert result.error == f"host_refused:{expected_reason}"
             refused_row = manager.get(result.terminal_id or "")
             assert refused_row is not None
             assert refused_row.state == "exited"

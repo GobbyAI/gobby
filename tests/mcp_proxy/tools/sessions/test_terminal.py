@@ -805,7 +805,8 @@ def test_send_keys_reports_terminal_write_refusal(stage: str, keys: str, literal
     coordinator.write.assert_awaited_once()
 
 
-def test_send_keys_named_key_never_pastes_literally() -> None:
+@pytest.mark.parametrize("unsupported_key", ["C-u", "not-a-native-key"])
+def test_send_keys_named_key_never_pastes_literally(unsupported_key: str) -> None:
     registry = _TestRegistry(name="test", description="test")
     session = MagicMock(
         id="session-1",
@@ -834,7 +835,7 @@ def test_send_keys_named_key_never_pastes_literally() -> None:
     send_keys = registry.get_tool("send_keys")
     assert send_keys is not None
     with patch("gobby.utils.session_context.get_current_session_id", return_value="session-1"):
-        result = asyncio.run(send_keys(session_id="session-1", keys="C-u", literal=False))
+        result = asyncio.run(send_keys(session_id="session-1", keys="CTRL_U", literal=False))
 
     assert result["success"] is True
     request = write_coordinator.write.await_args.args[0]
@@ -843,7 +844,7 @@ def test_send_keys_named_key_never_pastes_literally() -> None:
 
     with patch("gobby.utils.session_context.get_current_session_id", return_value="session-1"):
         unsupported = asyncio.run(
-            send_keys(session_id="session-1", keys="not-a-native-key", literal=False)
+            send_keys(session_id="session-1", keys=unsupported_key, literal=False)
         )
 
     assert unsupported["success"] is False

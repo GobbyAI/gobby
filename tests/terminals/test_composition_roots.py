@@ -18,6 +18,7 @@ from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from gobby.terminals.runtime import TerminalRuntime
 from tests.terminals.fakes import FakeRuntime
 
 pytestmark = pytest.mark.unit
@@ -49,7 +50,7 @@ def test_single_lease_registry_is_injected() -> None:
 
     manager = MagicMock(spec=TerminalManager)
     registry = TerminalRuntimeRegistry()
-    registry.register(FakeRuntime(backend="tmux"))
+    registry.register(cast(TerminalRuntime, FakeRuntime(backend="native")))
     leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
     coordinator = WriteCoordinator(manager, registry, lease_registry=leases)
 
@@ -148,18 +149,16 @@ def test_composition_roots_give_the_coordinator_the_registry() -> None:
     wiring_source = Path(terminal_wiring.__file__).read_text(encoding="utf-8")
     flattened = " ".join(wiring_source.split())
     assert "lease_registry=runner.lease_registry" in flattened
-    # The single-runtime resolve is what broke every write to a native terminal.
-    assert 'resolve("tmux")' not in wiring_source
 
     monitor_source = Path(lifecycle_monitor.__file__).read_text(encoding="utf-8")
     assert "build_terminal_services(" in monitor_source
 
 
-def test_wiring_registers_the_external_tmux_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
-    """External tmux rows resolve a runtime, so send_keys and wake reach them."""
+def test_wiring_registers_only_the_native_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Terminal operations resolve only the managed native runtime."""
     from gobby.config.terminals import TerminalConfig
     from gobby.runner_init import terminal_wiring
-    from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+    from gobby.terminals.runtime import UnregisteredBackendError
 
     for target in (
         "gobby.storage.terminals.TerminalManager",
@@ -180,14 +179,14 @@ def test_wiring_registers_the_external_tmux_adapter(monkeypatch: pytest.MonkeyPa
     runner.agent_runner = None
     config = MagicMock()
     config.terminals = TerminalConfig()
-    config.terminals = TerminalConfig()
     config.terminal_host = None
 
     terminal_wiring.init_terminal_wiring(cast(Any, runner), cast(Any, config))
 
     registry = runner.terminal_runtime_registry
     assert registry.resolve("native") is native
-    assert isinstance(registry.resolve("tmux"), TmuxTerminalRuntime)
+    with pytest.raises(UnregisteredBackendError):
+        registry.resolve("tmux")
 
 
 def _wire_terminals(monkeypatch: pytest.MonkeyPatch, *, front_door: bool) -> MagicMock:
@@ -260,7 +259,7 @@ def test_wiring_sweeps_orphans_before_accepting_writes() -> None:
 
 
 def test_orchestration_gives_the_wake_dispatcher_its_terminal_lookup() -> None:
-    """Without the row lookup, every interactive wake falls back to a tmux pane."""
+    """Interactive wake routing resolves the managed terminal row."""
     from gobby.runner_init import terminal_wiring
 
     source = Path(terminal_wiring.__file__).read_text(encoding="utf-8")

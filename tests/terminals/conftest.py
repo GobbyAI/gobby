@@ -109,7 +109,7 @@ def require_backend(backend: str) -> None:
         pytest.skip("gterm binary is not available")
 
 
-# tmux spawns nothing (#22856), so the spawn contract has one cell.
+# The native spawn contract has one cell.
 @pytest.fixture(params=["native"])
 def contract_backend(request: pytest.FixtureRequest) -> str:
     backend = str(request.param)

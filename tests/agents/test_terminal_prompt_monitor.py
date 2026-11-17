@@ -5,19 +5,19 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
-from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.agents import AgentRun
 from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.host_client import HostConnectionLost, HostUnavailableError
 from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.runtime import TerminalWriteError
+from gobby.terminals.runtime import TerminalRuntime, TerminalWriteError
 from gobby.terminals.services import TerminalServices
 from gobby.terminals.write_coordinator import WriteCoordinator
 from tests.terminals.fakes import (
@@ -60,7 +60,7 @@ async def test_prompt_callback_failure_preserves_successful_injection(
     runtime = FakeRuntime()
     runtime.snapshot_text = "trust prompt"
     registry = TerminalRuntimeRegistry()
-    registry.register(runtime)
+    registry.register(cast(TerminalRuntime, runtime))
     services = TerminalServices(
         manager=store,
         registry=registry,
@@ -124,12 +124,7 @@ def _monitor_with_probe_error(error: Exception) -> TerminalPromptMonitor:
 @pytest.mark.asyncio
 async def test_chained_write_error_logs_at_debug(caplog: pytest.LogCaptureFixture) -> None:
     """The vanished-target marker lives in __cause__; the probe must stay quiet."""
-    cause = TmuxTargetUnavailableError(
-        "tmux target is unavailable: can't find session: agent-run-1",
-        command=("tmux", "capture-pane"),
-        stderr="can't find session: agent-run-1",
-        returncode=1,
-    )
+    cause = HostUnavailableError("host socket disappeared")
     try:
         raise TerminalWriteError(stage="none") from cause
     except TerminalWriteError as chained:

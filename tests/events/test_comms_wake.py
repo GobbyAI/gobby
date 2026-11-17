@@ -142,7 +142,6 @@ async def test_native_comms_wake_withholds_a_real_draft(native_chain: ManagedCha
     assert result["delivered"] is False
     assert result["skipped"] == "composer_occupied"
     assert native_chain.native.write_log == []
-    assert native_chain.tmux.write_log == []
 
 
 async def test_native_comms_wake_types_into_an_empty_composer(native_chain: ManagedChain) -> None:
@@ -160,7 +159,6 @@ async def test_native_comms_wake_types_into_an_empty_composer(native_chain: Mana
 
     assert result["delivered"] is True
     assert native_chain.native.write_log == [("text", CONTINUE_WAKE_MESSAGE), ("key", "enter")]
-    assert native_chain.tmux.write_log == []
 
 
 @pytest.mark.parametrize("channel", ["telegram", "slack", "teams"])

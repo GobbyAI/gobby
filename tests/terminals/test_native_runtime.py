@@ -19,7 +19,6 @@ from uuid import uuid4
 import pytest
 
 from gobby.agents.constants import GOBBY_TERMINAL_ID
-from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
 from gobby.storage.terminals import AttachLocator, HostEpochMismatchError, native_locator_key
 from gobby.terminals.composer_ledger import ComposerLedger, LedgerRead
 from gobby.terminals.frame_client import decode_frame
@@ -39,6 +38,7 @@ from gobby.terminals.host_protocol import HostListRow, control_socket_path, fram
 from gobby.terminals.key_bytes import encode_named_key
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import (
+    TEXT_ENTER_DELAY_SECONDS,
     HostManagerControl,
     NativeBatchFailure,
     NativeBatchOperation,
@@ -63,7 +63,6 @@ from gobby.terminals.write_coordinator import (
     WriteRequest,
 )
 from tests.terminals.fakes import (
-    FakeRuntime,
     MemoryTerminalStore,
     make_memory_terminal,
     runtime_registry,
@@ -446,7 +445,7 @@ async def test_ctrl_c_reaches_gterm_as_key_bar_bytes() -> None:
 async def test_trailing_newline_is_text_then_a_separate_enter() -> None:
     """A submit is two host writes: the text as one paste, then Enter.
 
-    Short text pastes too, as tmux does (#23445). Codex drops a newline inside one write.
+    Short text pastes too. Codex drops a newline inside one write.
     """
     runtime, host = _runtime()
     terminal = _native_terminal(host)
@@ -460,10 +459,10 @@ async def test_trailing_newline_is_text_then_a_separate_enter() -> None:
     assert host.pty == [b"resume", b"\n"]
 
 
-async def test_submit_enter_waits_out_the_tmux_paste_gap(
+async def test_submit_enter_waits_out_the_paste_gap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Enter is its own write, and only after the tmux paste-settle gap.
+    """Enter is its own write, and only after the paste-settle gap.
 
     Codex treats an Enter that arrives in the same burst as the paste as part
     of the paste, so the draft stays in the composer.
@@ -480,7 +479,7 @@ async def test_submit_enter_waits_out_the_tmux_paste_gap(
     delivered = await runtime.write_text(terminal, "resume", submit=True)
 
     assert isinstance(delivered, Delivered)
-    assert gaps == [(TMUX_TEXT_ENTER_DELAY_SECONDS, 1)]
+    assert gaps == [(TEXT_ENTER_DELAY_SECONDS, 1)]
     assert [item["kind"] for item in host.writes] == ["paste", "key"]
 
 
@@ -1679,18 +1678,15 @@ async def test_native_wake_batch_decode_failure_is_indeterminate_and_keeps_latch
 async def test_coordinator_writes_reach_the_native_runtime() -> None:
     """The acceptance test: a native row is driven by the native runtime.
 
-    A registry holding both backends is the production shape. Before per-terminal
-    resolution the coordinator injected every write through tmux, so a gterm-hosted
-    agent was undrivable while its terminal still read as live.
+    The coordinator resolves the registered runtime from the managed terminal row.
     """
     host = FakeHostClient()
     native = NativeTerminalRuntime(host, frame_host_epoch=host.host_epoch)
-    tmux = FakeRuntime(backend="tmux")
     terminal = _native_terminal(host)
     store = MemoryTerminalStore(terminal)
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
-        runtime_registry(tmux, native),
+        runtime_registry(native),
         lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
 
@@ -1706,7 +1702,6 @@ async def test_coordinator_writes_reach_the_native_runtime() -> None:
 
     assert isinstance(outcome, Delivered)
     assert b"".join(host.pty) == b"are you there"
-    assert tmux.write_log == []
 
 
 @dataclass

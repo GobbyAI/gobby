@@ -14,18 +14,19 @@ from fastapi.testclient import TestClient
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.prompt_detector import PromptDetector
-from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.app_context import ServiceContainer
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.hub.caller_scope import bind_caller, reset_caller
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.attention import (
     AttentionAnswer,
+    AttentionInjectionError,
     AttentionPane,
     create_attention_router,
 )
 from gobby.storage.attention import AttentionState, AttentionStateManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.terminals.runtime import TerminalRuntime
 from gobby.utils.machine_id import require_machine_id
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.terminals.fakes import MachineOwnerRows
@@ -631,7 +632,7 @@ def test_attention_router_composes_session_pane_dependencies(
     store = MemoryTerminalStore(row)
     runtime = FakeRuntime(snapshot_text=APPROVAL_PROMPT)
     registry = TerminalRuntimeRegistry()
-    registry.register(runtime)
+    registry.register(cast(TerminalRuntime, runtime))
     injected: list[AttentionAnswer] = []
 
     async def run_db(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:

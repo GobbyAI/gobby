@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from gobby.agents.attention_metadata import validate_metadata_text, validate_metadata_ttl_ms
 from gobby.agents.prompt_detector import PromptDetector
-from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.hub.caller_scope import require_machine_owned
 from gobby.hub.machine_routing import is_local_machine
 from gobby.hub.node_client import NodeCommandError
@@ -40,6 +39,18 @@ if TYPE_CHECKING:
 
 AttentionKey = Literal["enter", "escape", "tab", "up", "down"]
 ATTENTION_ROSTER_CACHE_TTL_SECONDS = 1.0
+
+AttentionInjectionStage = Literal["none", "partial"]
+
+
+class AttentionInjectionError(RuntimeError):
+    """An attention answer failed before or after payload delivery."""
+
+    def __init__(self, *, stage: AttentionInjectionStage, code: str | None = None) -> None:
+        super().__init__(f"attention injection failed at stage {stage}")
+        self.stage = stage
+        self.code = code
+
 
 logger = logging.getLogger(__name__)
 

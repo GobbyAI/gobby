@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from gobby.terminals.runtime import NamedKey, TerminalWriteError, is_named_key
 
-__all__ = ["TMUX_KEY_NAMES", "encode_named_key", "normalize_named_key", "tmux_key_name"]
+__all__ = ["encode_named_key", "normalize_named_key"]
 
 _CURSOR_LETTERS: dict[str, str] = {"up": "A", "down": "B", "right": "C", "left": "D"}
 _KEYPAD_APP: dict[str, bytes] = {
@@ -77,30 +77,9 @@ def encode_named_key(key: NamedKey, *, cursor_app: bool = False, keypad_app: boo
     return encoded
 
 
-# tmux send-keys names for the NamedKeys Gobby injects into composers.
-TMUX_KEY_NAMES: dict[NamedKey, str] = {
-    "enter": "Enter",
-    "escape": "Escape",
-    "tab": "Tab",
-    "backspace": "BSpace",
-    "delete": "DC",
-    "ctrl_c": "C-c",
-    "ctrl_k": "C-k",
-    "ctrl_l": "C-l",
-    "ctrl_u": "C-u",
-}
-
-_NAMED_KEYS_BY_TMUX_NAME = {name.lower(): key for key, name in TMUX_KEY_NAMES.items()}
-
-
 def normalize_named_key(value: str) -> NamedKey | None:
-    """Accept the internal vocabulary and equivalent tmux-style key names."""
-    normalized = value.lower()
+    """Accept case-insensitive names from the native key vocabulary."""
+    normalized = value.casefold()
     if is_named_key(normalized):
         return normalized
-    return _NAMED_KEYS_BY_TMUX_NAME.get(normalized)
-
-
-def tmux_key_name(key: NamedKey) -> str | None:
-    """Return the tmux ``send-keys`` name for ``key``, or None when tmux has none."""
-    return TMUX_KEY_NAMES.get(key)
+    return None

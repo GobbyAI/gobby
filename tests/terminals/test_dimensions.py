@@ -16,7 +16,7 @@ from gobby.terminals.dimensions import (
     InvalidTerminalDimensionsError,
     validate_dimensions,
 )
-from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+from gobby.terminals.native_runtime import NativeTerminalRuntime
 from tests.terminals.fakes import make_memory_terminal
 
 pytestmark = pytest.mark.unit
@@ -50,10 +50,10 @@ def test_bounds_rejected_before_side_effects() -> None:
 
 @pytest.mark.asyncio
 async def test_resize_validates_before_backend() -> None:
-    sessions = MagicMock()
-    sessions._run = AsyncMock()
-    runtime = TmuxTerminalRuntime(sessions_for_socket=lambda _socket: sessions)
-    terminal = make_memory_terminal()
+    host = MagicMock()
+    host.resize = AsyncMock()
+    runtime = NativeTerminalRuntime(host, frame_host_epoch="epoch-1")
+    terminal = make_memory_terminal(backend="native")
     with pytest.raises(InvalidTerminalDimensionsError):
         await runtime.resize(terminal, 0, 80)
-    sessions._run.assert_not_awaited()
+    host.resize.assert_not_awaited()

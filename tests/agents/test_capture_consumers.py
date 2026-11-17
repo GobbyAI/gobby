@@ -10,9 +10,7 @@ _POLICY_CALLS = {
 }
 _RAW_KILL_ALLOWLIST = {
     ("src/gobby/agents/lifecycle_monitor.py", "AgentLifecycleMonitor.__init__"),
-    ("src/gobby/agents/tmux/session_manager.py", "TmuxSessionManager.kill_session"),
     ("src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py", "_terminate_spawn_process"),
-    ("src/gobby/terminals/tmux_runtime.py", "TmuxTerminalRuntime.terminate"),
 }
 
 
@@ -56,7 +54,7 @@ def _qualified_functions(tree: ast.AST) -> list[tuple[str, ast.FunctionDef | ast
     return functions
 
 
-def test_managed_tmux_kills_route_through_capture_policy() -> None:
+def test_managed_kills_route_through_capture_policy() -> None:
     root = Path(__file__).resolve().parents[2]
     violations: list[str] = []
 
@@ -74,4 +72,4 @@ def test_managed_tmux_kills_route_through_capture_policy() -> None:
             raw_lines = ",".join(str(call.lineno) for call in raw_calls)
             violations.append(f"{relative}:{qualifier}:{raw_lines}")
 
-    assert violations == [], "raw tmux kill bypasses capture policy: " + "; ".join(violations)
+    assert violations == [], "raw terminal kill bypasses capture policy: " + "; ".join(violations)

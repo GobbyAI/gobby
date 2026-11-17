@@ -61,7 +61,7 @@ def _coordinator(
     runtime: FakeRuntime | None = None,
     *,
     unresolved: dict[str, Any] | None = None,
-    backend: Literal["tmux", "native"] = "tmux",
+    backend: Literal["native"] = "native",
 ) -> tuple[WriteCoordinator, FakeRuntime, MemoryTerminalStore]:
     terminal = make_memory_terminal(backend=backend, unresolved_writes=unresolved)
     store = MemoryTerminalStore(terminal)
@@ -269,7 +269,7 @@ async def test_dispatch_records_the_write_origin_in_the_composer_ledger(
 @pytest.mark.asyncio
 async def test_attention_and_lease_writes_serialize() -> None:
     hold = asyncio.Event()
-    runtime = FakeRuntime(hold=hold)
+    runtime = FakeRuntime(backend="native", hold=hold)
     recapture_at: list[int] = []
     coordinator, _fake, store = _coordinator(runtime)
     terminal = store.get(next(iter(store.rows)))
@@ -478,7 +478,7 @@ async def test_sequence_holds_lock_across_steps(monkeypatch: pytest.MonkeyPatch)
 
 @pytest.mark.asyncio
 async def test_sequence_cancellation_settles_once() -> None:
-    for backend in ("tmux", "native"):
+    for backend in ("native",):
         hold = asyncio.Event()
         runtime = FakeRuntime(backend=backend, hold=hold)
         coordinator, _runtime, store = _coordinator(runtime, backend=backend)
@@ -549,7 +549,7 @@ async def test_sequence_cancellation_settles_once() -> None:
 async def test_revalidate_before_persist() -> None:
     hold = asyncio.Event()
     started = asyncio.Event()
-    runtime = FakeRuntime(hold=hold)
+    runtime = FakeRuntime(backend="native", hold=hold)
     runtime.started = started
     coordinator, _fake, store = _coordinator(runtime)
     terminal = next(iter(store.rows.values()))
@@ -604,7 +604,7 @@ async def test_gclient_operator_write_is_not_revalidated_against_the_lease() -> 
     # a web viewer takes the lease while the write is still held.
     hold = asyncio.Event()
     started = asyncio.Event()
-    runtime = FakeRuntime(hold=hold)
+    runtime = FakeRuntime(backend="native", hold=hold)
     runtime.started = started
     coordinator, _fake, store = _coordinator(runtime)
     terminal = next(iter(store.rows.values()))
@@ -691,9 +691,9 @@ class _CountingStore(MemoryTerminalStore):
 
 
 def _counting_coordinator() -> tuple[WriteCoordinator, FakeRuntime, _CountingStore, Terminal]:
-    terminal = make_memory_terminal()
+    terminal = make_memory_terminal(backend="native")
     store = _CountingStore(terminal)
-    runtime = FakeRuntime()
+    runtime = FakeRuntime(backend="native")
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
         runtime_registry(runtime),
@@ -831,7 +831,7 @@ async def test_operator_write_lifts_quarantine_once() -> None:
 async def test_lease_mutations_linearize_with_dispatch() -> None:
     for mutation in ("takeover", "release", "finalize", "exit"):
         hold = asyncio.Event()
-        coordinator, runtime, store = _coordinator(FakeRuntime(hold=hold))
+        coordinator, runtime, store = _coordinator(FakeRuntime(backend="native", hold=hold))
         terminal = next(iter(store.rows.values()))
         generation = await _grant(coordinator, terminal.id)
         if mutation == "takeover":
@@ -1023,9 +1023,9 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
             )
             raise RuntimeError("hard-kill")
 
-    terminal = make_memory_terminal()
+    terminal = make_memory_terminal(backend="native")
     store = KillAfterPersist(terminal)
-    runtime = FakeRuntime()
+    runtime = FakeRuntime(backend="native")
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
         runtime_registry(runtime),
@@ -1049,8 +1049,8 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
             self.write_log.append(("text", text))
             raise RuntimeError("killed-after-bytes")
 
-    store2 = MemoryTerminalStore(make_memory_terminal())
-    runtime2 = KillAfterBytes()
+    store2 = MemoryTerminalStore(make_memory_terminal(backend="native"))
+    runtime2 = KillAfterBytes(backend="native")
     coordinator2 = WriteCoordinator(
         cast(UnresolvedWriteStore, store2),
         runtime_registry(runtime2),
@@ -1069,8 +1069,8 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
         )
     assert "k2" in _unresolved(store2, terminal2.id)
 
-    store3 = MemoryTerminalStore(make_memory_terminal())
-    runtime3 = FakeRuntime(outcome=Delivered())
+    store3 = MemoryTerminalStore(make_memory_terminal(backend="native"))
+    runtime3 = FakeRuntime(backend="native", outcome=Delivered())
     coordinator3 = WriteCoordinator(
         cast(UnresolvedWriteStore, store3),
         runtime_registry(runtime3),
@@ -1092,8 +1092,8 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
         async def write_text(self, terminal: Any, text: str, submit: bool) -> Any:
             raise RuntimeError("no-effect")
 
-    store4 = MemoryTerminalStore(make_memory_terminal())
-    runtime4 = FailTyped()
+    store4 = MemoryTerminalStore(make_memory_terminal(backend="native"))
+    runtime4 = FailTyped(backend="native")
     coordinator4 = WriteCoordinator(
         cast(UnresolvedWriteStore, store4),
         runtime_registry(runtime4),
@@ -1114,8 +1114,8 @@ async def test_write_ahead_latch_survives_hard_kill() -> None:
     # Delivered is the path that clears. Sequence write-ahead is asserted below.
 
     hold = asyncio.Event()
-    runtime5 = FakeRuntime(hold=hold)
-    store5 = MemoryTerminalStore(make_memory_terminal())
+    runtime5 = FakeRuntime(backend="native", hold=hold)
+    store5 = MemoryTerminalStore(make_memory_terminal(backend="native"))
     coordinator5 = WriteCoordinator(
         cast(UnresolvedWriteStore, store5),
         runtime_registry(runtime5),
@@ -1179,7 +1179,11 @@ def _wake_steps(terminal_id: str) -> list[WriteRequest]:
 async def test_sequence_failure_before_any_dispatch_clears_latch() -> None:
     """Nothing reached the terminal, so nothing is left to resolve."""
     coordinator, runtime, store = _coordinator(
-        FakeRuntime(raise_on_write=TerminalWriteError(stage="none"), raise_on_write_after=0)
+        FakeRuntime(
+            backend="native",
+            raise_on_write=TerminalWriteError(stage="none"),
+            raise_on_write_after=0,
+        )
     )
     terminal = next(iter(store.rows.values()))
 
@@ -1196,7 +1200,11 @@ async def test_sequence_failure_before_any_dispatch_clears_latch() -> None:
 async def test_sequence_failure_after_a_dispatched_step_keeps_latch() -> None:
     """A step that landed may have changed the terminal; the action stays open."""
     coordinator, runtime, store = _coordinator(
-        FakeRuntime(raise_on_write=TerminalWriteError(stage="none"), raise_on_write_after=1)
+        FakeRuntime(
+            backend="native",
+            raise_on_write=TerminalWriteError(stage="none"),
+            raise_on_write_after=1,
+        )
     )
     terminal = next(iter(store.rows.values()))
 
@@ -1241,7 +1249,7 @@ async def test_unregistered_backend_is_a_stage_none_write_error() -> None:
     store = MemoryTerminalStore(terminal)
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
-        runtime_registry(FakeRuntime(backend="tmux")),
+        runtime_registry(),
         lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
 
@@ -1278,7 +1286,7 @@ def _drain_step(terminal_id: str) -> WriteRequest:
 async def test_unlatched_sequence_leaves_no_entry_for_a_lost_reply() -> None:
     """An idempotent action opts out of the latch, so a lost reply cannot suppress its retry."""
     coordinator, runtime, store = _coordinator(
-        FakeRuntime(outcomes=[IndeterminateWrite(detail="lost")])
+        FakeRuntime(backend="native", outcomes=[IndeterminateWrite(detail="lost")])
     )
     terminal = next(iter(store.rows.values()))
 

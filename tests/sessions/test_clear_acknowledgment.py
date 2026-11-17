@@ -39,7 +39,7 @@ def _terminal_context(pane: str = "%91") -> dict[str, Any]:
 class _Pane:
     """PaneIO fake showing a fixed capture and recording the keys it receives."""
 
-    backend = "tmux"
+    backend = "native"
     target = "%91"
 
     def __init__(self, text: str = "> ") -> None:

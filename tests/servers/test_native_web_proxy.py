@@ -25,7 +25,6 @@ from gobby.storage.terminals import (
     Terminal,
     TerminalManager,
     native_locator_key,
-    tmux_locator_key,
 )
 from gobby.terminals import TerminalRuntime, TerminalRuntimeRegistry
 from gobby.terminals.dimensions import MAX_CELLS, MAX_FRAME_SIZE
@@ -55,7 +54,7 @@ from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _man
 
 pytestmark = pytest.mark.unit
 
-_SOCKET = "/private/tmp/tmux-501/default"
+_SOCKET = "/tmp/gobby/host.sock"
 _REPO = Path(__file__).resolve().parents[2]
 _FRAME_SOCKET = "/private/tmp/gobby-test/frames.sock"
 _WIRE_GOLDEN = _REPO / "crates" / "gterminal" / "tests" / "fixtures" / "wire_golden"
@@ -177,10 +176,9 @@ class FakeProxyFrame:
 class RecordingRuntime:
     """Records writes and resizes; never writes on a frame attachment."""
 
-    backend: Literal["tmux", "native"]
+    backend: Literal["native"] = "native"
     write_log: list[tuple[str, str | bytes]] = field(default_factory=list)
     resize_calls: list[tuple[int, int]] = field(default_factory=list)
-    tmux_commands: list[list[str]] = field(default_factory=list)
     outcome: WriteOutcome = field(default_factory=Delivered)
     drop_next: bool = False
     hold: asyncio.Event | None = None
@@ -210,26 +208,12 @@ class RecordingRuntime:
         if self.locator_result is not None:
             return self.locator_result
         locator = terminal.locator or {}
-        if self.backend == "native":
-            host_id = locator.get("host_terminal_id")
-            return AttachLocator(
-                backend="native",
-                frame_host_epoch=str(terminal.host_epoch or "epoch-1"),
-                host_socket=_FRAME_SOCKET,
-                host_terminal_id=None if host_id is None else str(host_id),
-            )
-        pane_id = None if locator.get("pane_id") is None else str(locator["pane_id"])
-        pid = locator.get("server_pid")
-        start = locator.get("server_start_time")
+        host_id = locator.get("host_terminal_id")
         return AttachLocator(
-            backend="tmux",
+            backend="native",
             frame_host_epoch=str(terminal.host_epoch or "epoch-1"),
             host_socket=_FRAME_SOCKET,
-            host_terminal_id=pane_id,
-            socket_path=None if locator.get("socket_path") is None else str(locator["socket_path"]),
-            pane_id=pane_id,
-            server_pid=pid if isinstance(pid, int) else None,
-            server_start_time=start if isinstance(start, int) else None,
+            host_terminal_id=None if host_id is None else str(host_id),
         )
 
     async def write_text(self, terminal: Terminal, text: str, submit: bool) -> WriteOutcome:
@@ -246,17 +230,12 @@ class RecordingRuntime:
         return await self._record("key", key, terminal)
 
     async def resize(self, terminal: Terminal, rows: int, cols: int) -> None:
+        del terminal
         self.resize_calls.append((rows, cols))
-        if terminal.backend == "tmux":
-            self.tmux_commands.append(["resize-pane", str(rows), str(cols)])
 
     async def _record(self, kind: str, payload: str | bytes, terminal: Terminal) -> WriteOutcome:
         self.write_log.append((kind, payload))
-        if self.backend == "native":
-            self.host_writes.append({"kind": kind, "payload": payload, "terminal_id": terminal.id})
-        else:
-            wire_payload = payload.hex() if isinstance(payload, bytes) else payload
-            self.tmux_commands.append(["send-keys", "-H", kind, wire_payload])
+        self.host_writes.append({"kind": kind, "payload": payload, "terminal_id": terminal.id})
         if self.hold is not None:
             await self.hold.wait()
         if self.drop_next:
@@ -290,10 +269,7 @@ class _Harness:
     server: WebSocketServer
     manager: TerminalManager
     native_row: Terminal
-    tmux_row: Terminal
-    external_row: Terminal
     native_rt: RecordingRuntime
-    tmux_rt: RecordingRuntime
     frames: dict[str, FakeProxyFrame]
     frame_list: list[FakeProxyFrame]
 
@@ -313,50 +289,12 @@ def _promote_native(manager: TerminalManager, project_id: str) -> Terminal:
     return promoted
 
 
-def _promote_tmux(manager: TerminalManager, project_id: str, *, pane: str) -> Terminal:
-    pending = _create_pending(manager, project_id, backend="tmux")
-    locator = {
-        "socket_path": _SOCKET,
-        "server_pid": 9,
-        "server_start_time": 9,
-        "pane_id": pane,
-    }
-    promoted = manager.promote_to_live(
-        pending.id,
-        locator=locator,
-        locator_key=tmux_locator_key(
-            socket_path=_SOCKET, server_pid=9, server_start_time=9, pane_id=pane
-        ),
-        session_name="tmux-sess",
-    )
-    assert promoted is not None
-    return promoted
-
-
 def _harness(temp_db: HubDatabase, sample_project: dict[str, Any]) -> _Harness:
     manager = _manager(temp_db)
     native_row = _promote_native(manager, sample_project["id"])
-    tmux_row = _promote_tmux(manager, sample_project["id"], pane="%9")
-    external_row = manager.upsert_external(
-        project_id=sample_project["id"],
-        backend="tmux",
-        locator={
-            "socket_path": _SOCKET,
-            "server_pid": 11,
-            "server_start_time": 11,
-            "pane_id": "%11",
-        },
-        locator_key=tmux_locator_key(
-            socket_path=_SOCKET, server_pid=11, server_start_time=11, pane_id="%11"
-        ),
-        session_name="ext-sess",
-        title="external",
-    )
     native_rt = RecordingRuntime(backend="native")
-    tmux_rt = RecordingRuntime(backend="tmux")
     registry = TerminalRuntimeRegistry()
     registry.register(cast(TerminalRuntime, native_rt))
-    registry.register(cast(TerminalRuntime, tmux_rt))
     server = _ws_server()
     leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
     server.configure_terminals(
@@ -380,10 +318,7 @@ def _harness(temp_db: HubDatabase, sample_project: dict[str, Any]) -> _Harness:
         server=server,
         manager=manager,
         native_row=native_row,
-        tmux_row=tmux_row,
-        external_row=external_row,
         native_rt=native_rt,
-        tmux_rt=tmux_rt,
         frames=frames,
         frame_list=frame_list,
     )
@@ -555,9 +490,8 @@ async def test_web_attach_native_terminal(
     assert frame.reservation_ids == [None]
     assert frame.encoding == "terminal_ansi"
     await _take(harness, ws, harness.native_row, attachment)
-    # The host captures attach history only for tmux panes, so the fake host
-    # sends none; the daemon builds the history frame from the native snapshot
-    # instead, and an empty scrollback still owes the viewer the frame.
+    # The fake host sends no attach history; the daemon builds the history frame
+    # from the native snapshot, and an empty scrollback still owes the viewer the frame.
     await frame.queue.put(
         {
             "type": "terminal",
@@ -906,12 +840,6 @@ async def test_viewport_independent_of_resize_and_only_paste_is_leased(
     assert outcome["outcome"] == "refused"
     assert not any(kind == "paste" for kind, _ in harness.native_rt.write_log)
 
-    ext_ws = MockWebSocket()
-    external = await _attach_result(harness, ext_ws, harness.external_row, request_id="ext")
-    assert external["success"] is True
-    # An external pane keeps its owner's geometry; attaching never resizes it.
-    assert harness.tmux_rt.resize_calls == []
-
 
 @pytest.mark.asyncio
 async def test_attach_history_then_max_keyframe_is_fragmented_under_cap(
@@ -1171,7 +1099,7 @@ async def test_write_outcome_indeterminate_native(
 
 
 @pytest.mark.asyncio
-async def test_write_seq_ledger_tmux_and_native(
+async def test_native_write_seq_ledger(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     harness = _harness(temp_db, sample_project)
@@ -1390,21 +1318,6 @@ async def test_direct_attach_result_carries_locator(
     assert themed["host_capabilities"] == ["terminal_theme"]
     await harness.server._cleanup_terminal_client(themed_ws)
 
-    tmux_ws = MockWebSocket()
-    tmux = await _attach_result(harness, tmux_ws, harness.tmux_row, request_id="direct-tmux")
-    assert tmux["success"] is True
-    assert tmux["direct"] == {
-        "host_epoch": "epoch-1",
-        "frame_socket_path": _FRAME_SOCKET,
-        "host_terminal_id": "%9",
-        "pane": {
-            "socket_path": _SOCKET,
-            "pane_id": "%9",
-            "server_pid": 9,
-            "server_start_time": 9,
-        },
-    }
-
     proxy_ws = MockWebSocket()
     proxy = await _attach_result(
         harness,
@@ -1456,7 +1369,7 @@ async def test_direct_attach_result_carries_locator(
             server_start_time=9,
         ),
         AttachLocator(
-            backend="tmux",
+            backend=cast(Any, "unknown"),
             frame_host_epoch="epoch-1",
             host_socket=_FRAME_SOCKET,
             host_terminal_id="%9",
@@ -1477,28 +1390,7 @@ async def test_direct_attach_result_carries_locator(
         runtime.locator_result = None
 
     await harness.server._cleanup_terminal_client(native_ws)
-    await harness.server._cleanup_terminal_client(tmux_ws)
     await harness.server._cleanup_terminal_client(proxy_ws)
-
-
-@pytest.mark.asyncio
-async def test_proxied_tmux_attach_opens_a_relayed_frame(
-    temp_db: HubDatabase, sample_project: dict[str, Any]
-) -> None:
-    harness = _harness(temp_db, sample_project)
-    for suffix, encoding in (("semantic", "semantic_frame"), ("ansi", "terminal_ansi")):
-        ws = MockWebSocket()
-        result = await _attach_result(
-            harness,
-            ws,
-            harness.tmux_row,
-            request_id=f"tmux-{suffix}",
-            frame_delivery="proxy",
-            encoding=encoding,
-        )
-        assert result["success"] is True
-        assert result["direct"] is None
-    assert len(harness.frame_list) == 2
 
 
 @pytest.mark.asyncio

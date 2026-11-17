@@ -85,14 +85,13 @@ def _wake_result_for(
 
 async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[str, Any]]:
     """Send complete composer-clear/wake sequences in one native-host request."""
-    from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
     from gobby.events.wake import CONTINUE_WAKE_MESSAGE
     from gobby.terminals.composer_ledger import composer_drain_keys
-    from gobby.terminals.native_runtime import NativeBatchOperation
+    from gobby.terminals.native_runtime import TEXT_ENTER_DELAY_SECONDS, NativeBatchOperation
     from gobby.terminals.write_coordinator import NativeWakeBatchRequest
 
     _, coordinator = wake_write_services()
-    delay_ms = round(TMUX_TEXT_ENTER_DELAY_SECONDS * 1_000)
+    delay_ms = round(TEXT_ENTER_DELAY_SECONDS * 1_000)
     requests = []
     submit_marks: dict[str, datetime] = {}
 
@@ -148,8 +147,8 @@ async def _send_terminal_session_wake(
     composer_stranded: bool = False,
     cli_source: str | None = None,
 ) -> datetime | None:
-    from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
     from gobby.hub.machine_routing import is_local_machine
+    from gobby.terminals.native_runtime import TEXT_ENTER_DELAY_SECONDS
     from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
 
     submitted_at: datetime | None = None
@@ -163,11 +162,7 @@ async def _send_terminal_session_wake(
     try:
         UUID(identity)
     except ValueError:
-        terminal = (
-            manager.get_live_by_session_name(identity)
-            if hasattr(manager, "get_live_by_session_name")
-            else None
-        )
+        terminal = None
     else:
         terminal = manager.get(identity)
         if terminal is None and hasattr(manager, "get_live_for_session"):
@@ -201,7 +196,7 @@ async def _send_terminal_session_wake(
             elif clear_before_submit:
                 await _drain_composer_before_wake(coordinator, terminal, identity, cli_source)
                 if literal_text and local:
-                    steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
+                    steps.append(SequenceDelay(seconds=TEXT_ENTER_DELAY_SECONDS))
             if not local:
                 # A node terminal's wake is one submitted write: the node sends the
                 # text and its submit together, with no enter key to follow.
@@ -226,7 +221,7 @@ async def _send_terminal_session_wake(
                             payload=literal_text,
                         )
                     )
-                    steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
+                    steps.append(SequenceDelay(seconds=TEXT_ENTER_DELAY_SECONDS))
                 steps.append(
                     WriteRequest(
                         terminal_id=terminal.id,

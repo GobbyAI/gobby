@@ -818,7 +818,7 @@ class _Isolation:
 class _StickyRuntime(FakeRuntime):
     """A runtime whose terminate returns while the session stays present."""
 
-    backend: Literal["tmux", "native"] = "native"
+    backend: Literal["native"] = "native"
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         del grace_seconds
@@ -830,7 +830,7 @@ class _StickyRuntime(FakeRuntime):
 class _UnprovableRuntime(FakeRuntime):
     """A native runtime that cannot prove a pid-less pending terminal dead."""
 
-    backend: Literal["tmux", "native"] = "native"
+    backend: Literal["native"] = "native"
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         del grace_seconds

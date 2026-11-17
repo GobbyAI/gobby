@@ -263,9 +263,7 @@ class TestRunDaemonSetup:
 
         mock_run.return_value = MagicMock(returncode=0)
 
-        with patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux:
-            mock_tmux.return_value = {"success": True, "updated": True, "config_path": "/tmp"}
-            run_daemon_setup(tmp_path, configure_ide_settings=True)
+        run_daemon_setup(tmp_path, configure_ide_settings=True)
 
         mock_init.assert_called_once()
         assert mock_init.call_count == 1
@@ -287,7 +285,6 @@ class TestRunDaemonSetup:
         mock_ide.assert_called_once()
         assert mock_ide.call_count == 1
         assert mock_ide.call_args is not None
-        mock_tmux.assert_called_once_with()
         output = capsys.readouterr().out
         assert "Configured VS Code-family terminal integration: Code\n" in output
         assert "Cursor" not in output
@@ -337,10 +334,8 @@ class TestRunDaemonSetup:
         mock_ide.return_value = {"Code": {"added": False}}
         mock_run.return_value = MagicMock(returncode=0)
 
-        with patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux:
-            mock_tmux.return_value = {"success": True, "updated": False}
-            with pytest.raises(click.ClickException) as exc_info:
-                run_daemon_setup(tmp_path, configure_ide_settings=True)
+        with pytest.raises(click.ClickException) as exc_info:
+            run_daemon_setup(tmp_path, configure_ide_settings=True)
 
         assert exc_info.value.message == (
             "Failed to install managed Sandbox Runtime: Node.js 20.11 or newer is required"
@@ -350,7 +345,6 @@ class TestRunDaemonSetup:
         mock_gcode.assert_not_called()
         mock_ghook.assert_not_called()
         mock_ide.assert_not_called()
-        mock_tmux.assert_not_called()
 
     @patch("gobby.cli.install_setup_impeccable.install_impeccable_cli")
     @patch("gobby.cli.install_setup_srt.install_srt_runtime")
@@ -382,7 +376,6 @@ class TestRunDaemonSetup:
         mock_impeccable.side_effect = ImpeccableInstallError("npm failed")
 
         with (
-            patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard"),
             pytest.raises(click.ClickException) as exc_info,
         ):
             run_daemon_setup(tmp_path, configure_ide_settings=False)
@@ -451,9 +444,7 @@ class TestRunDaemonSetup:
             patch("gobby.cli.install_setup.Path.home", return_value=tmp_path),
             patch("gobby.utils.native_bin.Path.home", return_value=tmp_path),
             patch.dict(os.environ, {"GOBBY_NATIVE_BIN_DIR": str(tmp_path / ".gobby" / "bin")}),
-            patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux,
         ):
-            mock_tmux.return_value = {"success": True, "updated": False}
             run_daemon_setup(tmp_path, configure_ide_settings=True)
             command = build_hook_command("codex", "SessionStart", tmp_path / ".gobby" / "hooks")
 
@@ -514,9 +505,7 @@ class TestRunDaemonSetup:
             for name in ("gcode", "ghook", "gterm", "gclient")
         ]
 
-        with patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux:
-            mock_tmux.return_value = {"success": True, "updated": False}
-            run_daemon_setup(tmp_path, configure_ide_settings=False)
+        run_daemon_setup(tmp_path, configure_ide_settings=False)
 
         output = capsys.readouterr().out
         assert "Skipping global npm installs in Homebrew distribution mode" in output
@@ -531,7 +520,7 @@ class TestRunDaemonSetup:
 
 def _stub_post_hub_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     from gobby.cli import install_setup, install_setup_impeccable, install_setup_srt
-    from gobby.cli.installers import ide_config, tmux_config
+    from gobby.cli.installers import ide_config
 
     monkeypatch.setattr(
         "gobby.sync_registry.sync_bundled_content_to_db",
@@ -552,7 +541,6 @@ def _stub_post_hub_setup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Non
         "reconcile_impeccable_installation",
         lambda _project_path: None,
     )
-    monkeypatch.setattr(tmux_config, "configure_tmux_clipboard", lambda: {"success": True})
     monkeypatch.setattr(
         ide_config,
         "configure_vscode_family_terminal_integration",
@@ -1463,10 +1451,8 @@ def test_run_daemon_setup_stops_when_ocr_install_fails(
     mock_ide.return_value = {"Code": {"added": False}}
     mock_run.return_value = MagicMock(returncode=0)
 
-    with patch("gobby.cli.installers.tmux_config.configure_tmux_clipboard") as mock_tmux:
-        mock_tmux.return_value = {"success": True, "updated": False}
-        with pytest.raises(click.ClickException) as exc_info:
-            install_setup.run_daemon_setup(tmp_path, configure_ide_settings=True)
+    with pytest.raises(click.ClickException) as exc_info:
+        install_setup.run_daemon_setup(tmp_path, configure_ide_settings=True)
 
     assert exc_info.value.message == (
         "Failed to install OCR CLI: npm failed to install OCR: ENOTFOUND"
@@ -1475,7 +1461,6 @@ def test_run_daemon_setup_stops_when_ocr_install_fails(
     mock_gcode.assert_not_called()
     mock_ghook.assert_not_called()
     mock_ide.assert_not_called()
-    mock_tmux.assert_not_called()
 
 
 @pytest.fixture(autouse=True)

@@ -13,7 +13,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_schedule_handoff_continuation_forwards_runtime_and_fallback() -> None:
-    """The clear pull routes like compaction: live terminals row first, then tmux."""
+    """The clear pull routes like compaction: through the managed native terminal row."""
     session = SimpleNamespace(
         id="succ-1", source="claude", terminal_context={"gobby_terminal_id": "term-1"}
     )

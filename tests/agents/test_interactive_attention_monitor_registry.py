@@ -71,38 +71,34 @@ async def test_native_row_is_snapshotted_through_the_native_runtime(
             id="session-1",
             source="claude",
             updated_at=datetime(2026, 1, 1, tzinfo=UTC),
-            terminal_context={"tmux_pane": "%42"},
+            terminal_context={},
         )
     ]
     attention_manager = Mock()
     attention_manager.get.return_value = None
     attention_manager.list_blocked.return_value = []
     attention_manager.transition_async = AsyncMock()
-    tmux_runtime = LifecycleRuntime(backend="tmux", snapshot_text="idle shell")
     native_runtime = LifecycleRuntime(backend="native", snapshot_text="alpha trust")
 
     monitor = InteractiveAttentionMonitor(
         session_manager=session_manager,
         attention_manager=attention_manager,
         detection_registry=detection_registry,
-        registry=runtime_registry(tmux_runtime, native_runtime),
+        registry=runtime_registry(native_runtime),
     )
 
     await monitor._check_attention_panes(active_agent_sessions=set())
 
     assert native_runtime.snapshot_calls == [15]
-    # FakeRuntime ignores Terminal.backend, so the wrong runtime staying untouched
-    # is the only thing that separates a routed read from a bound one.
-    assert tmux_runtime.snapshot_calls == []
-    # The native runtime's text is what reached detection, not the tmux one's.
+    # The native runtime's text reached detection.
     assert attention_manager.transition_async.await_count == 1
 
 
-async def test_native_session_without_a_tmux_pane_still_gets_attention(
+async def test_native_session_without_terminal_context_still_gets_attention(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """tmux_pane comes from $TMUX_PANE, so gating on it skipped every native session."""
+    """Attention resolves the managed row even without terminal context."""
     replace_detection_manifest(temp_db, "claude", "alpha")
     detection_registry = DetectionManifestRegistry(temp_db, staleness_seconds=0.0)
     native_row = make_memory_terminal(backend="native")
@@ -121,7 +117,7 @@ async def test_native_session_without_a_tmux_pane_still_gets_attention(
             id="session-1",
             source="claude",
             updated_at=datetime(2026, 1, 1, tzinfo=UTC),
-            # A gterm-hosted session: no tmux_pane anywhere in its context.
+            # A gterm-hosted session needs no terminal context to find its managed row.
             terminal_context={"parent_pid": 4242},
         )
     ]

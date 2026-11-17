@@ -14,9 +14,6 @@ from unittest.mock import ANY, AsyncMock, MagicMock
 import pytest
 
 from gobby.agents.idle_detector import ComposerRead, IdleDetector
-from gobby.agents.tmux.text_injection import (
-    TmuxTextInjectionTimeout,
-)
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.live_wake import TerminalActivity
 from gobby.events.wake import (
@@ -347,7 +344,7 @@ class TestWakeDispatch:
         )
 
         async def timing_out_sender(*_args: object, **_kwargs: object) -> None:
-            raise TmuxTextInjectionTimeout(command=("tmux", "paste-buffer"), timeout=10.0)
+            raise TimeoutError("native text write timed out")
 
         dispatcher = WakeDispatcher(
             session_manager=session_manager,

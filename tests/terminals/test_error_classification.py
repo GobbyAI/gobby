@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.agents.tmux.text_injection import TmuxTargetUnavailableError
 from gobby.terminals.error_classification import (
     _MAX_CHAIN_DEPTH,
     is_vanished_terminal_target,
@@ -16,19 +15,13 @@ from gobby.terminals.runtime import TerminalWriteError, UnregisteredBackendError
 pytestmark = pytest.mark.unit
 
 
-def _tmux_target_gone(detail: str) -> TmuxTargetUnavailableError:
-    """Build the error exactly as classify_tmux_text_injection_error builds it."""
-    return TmuxTargetUnavailableError(
-        f"tmux target is unavailable: {detail}",
-        command=("tmux", "send-keys"),
-        stderr=detail,
-        returncode=1,
-    )
+def _host_gone(detail: str) -> HostUnavailableError:
+    return HostUnavailableError(detail)
 
 
 def test_chained_write_error_is_recognized() -> None:
     """The exact production shape: the marker lives only in __cause__."""
-    cause = _tmux_target_gone("can't find session: 2f0c6f1e-1d2b-4a1e-9d33-0f5b7c9a1e42")
+    cause = _host_gone("can't find session: 2f0c6f1e-1d2b-4a1e-9d33-0f5b7c9a1e42")
     try:
         raise TerminalWriteError(stage="none") from cause
     except TerminalWriteError as error:
@@ -53,12 +46,12 @@ def test_unregistered_backend_still_logs_loudly() -> None:
         assert is_vanished_terminal_target(error) is False
 
 
-def test_missing_tmux_executable_is_not_a_vanished_target() -> None:
-    missing_executable = FileNotFoundError(2, "No such file or directory", "tmux")
+def test_missing_executable_is_not_a_vanished_target() -> None:
+    missing_executable = FileNotFoundError(2, "No such file or directory", "gterm")
     missing_socket = FileNotFoundError(
         2,
         "No such file or directory",
-        "/tmp/tmux-501/gobby.sock",
+        "/tmp/gobby/host.sock",
     )
 
     assert is_vanished_terminal_target(missing_executable) is False
@@ -67,8 +60,8 @@ def test_missing_tmux_executable_is_not_a_vanished_target() -> None:
 
 def test_missing_executable_does_not_mask_a_later_vanished_link() -> None:
     """The socket rule rejects one link; it must not abandon the rest of the chain."""
-    cause = _tmux_target_gone("can't find pane: %7")
-    error = FileNotFoundError(2, "No such file or directory", "tmux")
+    cause = _host_gone("can't find pane: %7")
+    error = FileNotFoundError(2, "No such file or directory", "gterm")
     error.__cause__ = cause
 
     assert is_vanished_terminal_target(error) is True
