@@ -1,12 +1,11 @@
 //! Terminal frame renderer for a workspace pane.
 
-use crate::app::{Backend, Pane};
+use crate::app::Pane;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier};
 use ratatui::Frame;
 
-/// Paint the latest semantic frame from its origin, letterboxing a tmux pane
-/// that is smaller than the area it was given.
+/// Paint the latest semantic frame from its origin.
 ///
 /// `focused` decides whether this pane may place the terminal cursor.
 /// ratatui's `set_cursor_position` is last-write-wins across a frame, so a
@@ -28,23 +27,7 @@ pub fn render(frame: &mut Frame<'_>, area: Rect, pane: &Pane, focused: bool) {
 
     let width = area.width.min(grid.width);
     let height = area.height.min(grid.height);
-    // A tmux pane carries a geometry of its own, so a frame smaller than the
-    // viewport is letterboxed into the middle of it.
-    //
-    // An oversized frame is the opposite case and is read from its origin. A
-    // terminal is anchored there — column 0 begins every line, row 0 is the
-    // earliest output — so the far edges are what may be clipped, exactly as
-    // the native branch already does. Centering the source instead cropped the
-    // prompt and the left of every line away, which rendered a pane wider than
-    // its viewport as an empty body.
-    let (dst_x, dst_y) = if pane.backend == Backend::Tmux {
-        (
-            area.x + (area.width - width) / 2,
-            area.y + (area.height - height) / 2,
-        )
-    } else {
-        (area.x, area.y)
-    };
+    let (dst_x, dst_y) = (area.x, area.y);
 
     for row in 0..height {
         for col in 0..width {

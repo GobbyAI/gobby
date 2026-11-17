@@ -1154,13 +1154,13 @@ fn sidebar_rows_paint_the_option_b_roles() {
         let terminal = SidebarRow {
             kind: RowKind::Terminal,
             label: "zsh".into(),
-            address: "tmux %16".into(),
+            address: "peer %16".into(),
             detail: "~/Projects/gobby".into(),
             ..SidebarRow::default()
         };
         let line = row_line(&terminal, 30, &chrome, 0);
         assert_role(&line, "zsh", p.text, false, case);
-        assert_role(&line, "tmux %16", p.subtext0, false, case);
+        assert_role(&line, "peer %16", p.subtext0, false, case);
         let second = row_second_line(&terminal, 30, &chrome);
         assert_role(&second, "~/Projects/gobby", p.subtext0, false, case);
 

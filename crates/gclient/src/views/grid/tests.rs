@@ -59,14 +59,14 @@ fn symbol_at(terminal: &Terminal<TestBackend>, x: u16, y: u16) -> String {
     terminal.backend().buffer()[(x, y)].symbol().to_string()
 }
 
-/// The defect this file's comment describes: a 200x50 tmux pane rendered
+/// The defect this file's comment describes: a 200x50 peer pane rendered
 /// into a smaller viewport showed an empty body because the source was
 /// centred, cutting away the prompt and the left of every line.
 #[test]
-fn an_oversized_tmux_frame_is_painted_from_its_origin() {
+fn an_oversized_frame_is_painted_from_its_origin() {
     let source = coordinate_frame(200, 50, None);
     let area = Rect::new(0, 0, 94, 38);
-    let terminal = paint("tmux", source.clone(), area, (94, 38));
+    let terminal = paint("native", source.clone(), area, (94, 38));
 
     for (x, y) in [(0, 0), (1, 0), (0, 1), (93, 37)] {
         let index = usize::from(y) * usize::from(source.width) + usize::from(x);
@@ -81,13 +81,13 @@ fn an_oversized_tmux_frame_is_painted_from_its_origin() {
 /// The letterbox itself is the reason this branch exists, so it has to
 /// survive: a frame smaller than its area still sits in the middle of it.
 #[test]
-fn an_undersized_tmux_frame_is_still_centred() {
+fn an_undersized_frame_is_anchored_at_its_origin() {
     let source = coordinate_frame(10, 4, None);
-    let terminal = paint("tmux", source.clone(), Rect::new(0, 0, 20, 10), (20, 10));
+    let terminal = paint("native", source.clone(), Rect::new(0, 0, 20, 10), (20, 10));
 
-    assert_eq!(symbol_at(&terminal, 5, 3), source.cells[0].symbol);
-    assert_eq!(symbol_at(&terminal, 4, 3), " ", "left of the letterbox");
-    assert_eq!(symbol_at(&terminal, 5, 2), " ", "above the letterbox");
+    assert_eq!(symbol_at(&terminal, 0, 0), source.cells[0].symbol);
+    assert_eq!(symbol_at(&terminal, 10, 0), " ", "right of the frame");
+    assert_eq!(symbol_at(&terminal, 0, 4), " ", "below the frame");
 }
 
 #[test]
@@ -150,7 +150,7 @@ fn the_cursor_follows_the_same_origin_and_leaves_the_viewport_when_clipped() {
         })
     };
     let mut inside = paint(
-        "tmux",
+        "native",
         coordinate_frame(200, 50, cursor(3, 2)),
         Rect::new(0, 0, 94, 38),
         (94, 38),
@@ -160,7 +160,7 @@ fn the_cursor_follows_the_same_origin_and_leaves_the_viewport_when_clipped() {
     // A cursor beyond the clipped region has nowhere to sit; painting it at
     // the edge would claim a position the pane does not have.
     let mut outside = paint(
-        "tmux",
+        "native",
         coordinate_frame(200, 50, cursor(120, 2)),
         Rect::new(0, 0, 94, 38),
         (94, 38),
@@ -170,15 +170,15 @@ fn the_cursor_follows_the_same_origin_and_leaves_the_viewport_when_clipped() {
         (120, 2).into()
     );
 
-    let mut letterboxed = paint(
-        "tmux",
+    let mut undersized = paint(
+        "native",
         coordinate_frame(10, 4, cursor(1, 1)),
         Rect::new(0, 0, 20, 10),
         (20, 10),
     );
     assert_eq!(
-        letterboxed.get_cursor_position().expect("cursor"),
-        (6, 4).into()
+        undersized.get_cursor_position().expect("cursor"),
+        (1, 1).into()
     );
 }
 

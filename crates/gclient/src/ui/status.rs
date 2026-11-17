@@ -479,7 +479,7 @@ pub fn render_status_line<W: WorkspaceView>(
         optional_spans += if first { 1 } else { 2 };
     }
     // The prefix is the way into every chord, quit included, so the status
-    // line always names it; under an outer tmux it is the shifted chord.
+    // line always names it.
     // Drawn last, it keeps the right end when the row is too narrow for both.
     let mut hint = vec![Span::styled(
         format!("prefix {}", chrome.keymap.prefix_label),
@@ -667,7 +667,7 @@ mod tests {
         }));
         ws.reconcile_subscribe_first().unwrap();
         ws.open_terminal("term-alpha", "native", "epoch").unwrap();
-        ws.open_terminal("term-beta", "tmux", "epoch").unwrap();
+        ws.open_terminal("term-beta", "native", "epoch").unwrap();
         let mut chrome = Chrome::dark();
         chrome.open_pane(ws.pane_for_terminal("term-alpha").unwrap(), "alpha");
         chrome.open_pane(ws.pane_for_terminal("term-beta").unwrap(), "alpha");
@@ -694,7 +694,7 @@ mod tests {
         for x in 71..79 {
             assert_eq!(buffer[(x, 0)].fg, p.text, "the mode word, x={x}");
         }
-        for pane_local in ["observe", "tmux", "Focused", "term-beta"] {
+        for pane_local in ["observe", "native", "Focused", "term-beta"] {
             assert!(
                 !text.contains(pane_local),
                 "status duplicates {pane_local:?}: {text}"
@@ -744,28 +744,26 @@ mod tests {
 
     #[test]
     fn lone_pane_keeps_its_metadata_on_its_edge() {
-        for backend in ["native", "tmux"] {
-            let mut ws = Workspace::scripted();
-            ws.daemon_mut().set_roster(json!({
-                "epoch": "e1",
-                "seq": 1,
-                "entries": []
-            }));
-            ws.reconcile_subscribe_first().unwrap();
-            ws.open_terminal("term-alpha", backend, "epoch").unwrap();
-            let id = ws.pane_for_terminal("term-alpha").unwrap();
-            let mut chrome = Chrome::dark();
-            chrome.open_pane(id, "alpha");
-            chrome.prefs.status_left.clear();
-            chrome.prefs.status_right.clear();
-            // A lone pane draws all four edges, and its top edge has room,
-            // so its metadata stays off the status line.
-            chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
-            assert_eq!(chrome.view.pane_infos[0].borders, Borders::ALL);
+        let mut ws = Workspace::scripted();
+        ws.daemon_mut().set_roster(json!({
+            "epoch": "e1",
+            "seq": 1,
+            "entries": []
+        }));
+        ws.reconcile_subscribe_first().unwrap();
+        ws.open_terminal("term-alpha", "native", "epoch").unwrap();
+        let id = ws.pane_for_terminal("term-alpha").unwrap();
+        let mut chrome = Chrome::dark();
+        chrome.open_pane(id, "alpha");
+        chrome.prefs.status_left.clear();
+        chrome.prefs.status_right.clear();
+        // A lone pane draws all four edges, and its top edge has room,
+        // so its metadata stays off the status line.
+        chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
+        assert_eq!(chrome.view.pane_infos[0].borders, Borders::ALL);
 
-            let text = draw_status(&ws, &chrome);
-            assert_eq!(text.trim(), "prefix ctrl+b", "{text}");
-        }
+        let text = draw_status(&ws, &chrome);
+        assert_eq!(text.trim(), "prefix ctrl+b", "{text}");
     }
 
     #[test]

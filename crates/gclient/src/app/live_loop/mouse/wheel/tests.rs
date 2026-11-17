@@ -169,7 +169,7 @@ fn a_notch_moves_a_pick_list_selection_one_row() {
             .iter()
             .map(|name| OrphanRow {
                 terminal_id: name.to_string(),
-                backend: Backend::Tmux,
+                backend: Backend::Native,
                 name: name.to_string(),
                 owner: None,
                 last_seen: None,

@@ -39,8 +39,6 @@ pub struct RosterEntry {
     #[serde(default)]
     pub model_display_name: Option<String>,
     pub terminal: Option<TerminalRef>,
-    #[serde(default, rename = "tmux", deserialize_with = "tmux_session_name")]
-    pub tmux_session_name: Option<String>,
     pub last_activity_at: Option<String>,
     /// How full the subject's context window is, for the status bar.
     #[serde(default)]
@@ -81,17 +79,4 @@ pub struct TerminalRef {
     /// The terminal row's lifecycle state (`live`, `orphaned`, ...); an
     /// `orphaned` row lost its host and can only be destroyed.
     pub state: Option<String>,
-}
-
-/// The daemon nests the tmux name as `tmux: {session_name}`; a `null` block
-/// means the terminal is not tmux.
-fn tmux_session_name<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    struct Tmux {
-        session_name: Option<String>,
-    }
-    Ok(Option::<Tmux>::deserialize(deserializer)?.and_then(|tmux| tmux.session_name))
 }

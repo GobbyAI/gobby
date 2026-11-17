@@ -1,7 +1,7 @@
 //! The direct locator carried on a `terminal_attach_result` reply.
 //!
 //! The reply ships the nested `direct_block()`: a native terminal is named
-//! by `host_terminal_id`; a tmux pane is named by its physical locator.
+//! by `host_terminal_id`.
 
 use super::*;
 use serde_json::json;
@@ -10,15 +10,17 @@ use crate::mock_daemon;
 
 #[tokio::test]
 async fn buffered_proxy_finalization_never_detaches_the_retired_attachment() {
-    assert_buffered_finalization_has_no_cleanup(true).await;
+    let cleanup = buffered_finalization_cleanup(true).await;
+    assert!(cleanup.is_empty(), "retired attach requests: {cleanup:?}");
 }
 
 #[tokio::test]
 async fn buffered_public_proxy_finalization_never_detaches_the_retired_attachment() {
-    assert_buffered_finalization_has_no_cleanup(false).await;
+    let cleanup = buffered_finalization_cleanup(false).await;
+    assert!(cleanup.is_empty(), "retired attach requests: {cleanup:?}");
 }
 
-async fn assert_buffered_finalization_has_no_cleanup(live_request: bool) {
+async fn buffered_finalization_cleanup(live_request: bool) -> Vec<Value> {
     let mock = mock_daemon::MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     mock.finalize_next_proxy_attach_before_reply(
@@ -74,15 +76,11 @@ async fn assert_buffered_finalization_has_no_cleanup(live_request: bool) {
             )
         })
         .collect();
-    assert!(
-        forbidden.is_empty(),
-        "retired attach requests: {forbidden:?}"
-    );
     mock.shutdown().await;
+    forbidden
 }
 
-/// `direct_block()` for a tmux pane: the pane object carries the identity and
-/// `host_terminal_id` rides along as null.
+/// A native direct locator names its host terminal.
 fn native_reply() -> Value {
     json!({
         "backend": "native",

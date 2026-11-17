@@ -288,7 +288,6 @@ impl PaneWriter {
         daemon: &LiveDaemon,
         outcomes: &UnboundedSender<JobOutcome>,
         pane: PaneId,
-        ready: Option<JoinHandle<Result<(), FrameError>>>,
     ) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let generation = daemon.generation();
@@ -298,12 +297,6 @@ impl PaneWriter {
         let backlog = Arc::new(Backlog::default());
         let drained = Arc::clone(&backlog);
         tokio::spawn(async move {
-            if let Some(ready) = ready {
-                if !matches!(ready.await, Ok(Ok(()))) {
-                    // A failed transfer cannot send input under an unclaimed attachment.
-                    drained.stopped.store(true, Ordering::Release);
-                }
-            }
             let mut abandoned = Abandoned::default();
             let mut inflight = VecDeque::new();
             let mut fences = Fences::default();

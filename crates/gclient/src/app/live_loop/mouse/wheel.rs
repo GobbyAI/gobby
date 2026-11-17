@@ -74,10 +74,8 @@ pub(super) fn overlay<W: WorkspaceView>(
 /// delivered where a key would be; any other
 /// native pane scrolls its scrollback `MOUSE_SCROLL_LINES` rows, up into
 /// history and down toward the live edge, clamped to the depth the daemon
-/// has confirmed so far, and a notch that would not move it is consumed. A
-/// tmux pane has no daemon-side scroll offset — the daemon skips the host
-/// verb for it and would answer with the client's own number — so its notch
-/// is consumed rather than pretending to scroll. Focus never moves on a
+/// has confirmed so far, and a notch that would not move it is consumed.
+/// Focus never moves on a
 /// scroll, since a scroll is not a claim on the pane. A slot
 /// whose pane has left the roster is stale until the next chrome sync and is
 /// left alone.

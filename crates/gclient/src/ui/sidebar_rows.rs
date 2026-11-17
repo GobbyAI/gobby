@@ -60,7 +60,7 @@ pub struct SidebarRow {
     /// a terminal row's working directory.
     pub detail: String,
     /// A terminal row's address at the right of its first line: the
-    /// pane's workspace ref, `tmux %16`, or the backend word alone.
+    /// pane's workspace ref or the backend word alone.
     pub address: String,
     /// The project card's branch, `~` without one.
     pub branch: Option<String>,

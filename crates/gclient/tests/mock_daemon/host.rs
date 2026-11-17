@@ -34,6 +34,7 @@ const WAIT: Duration = Duration::from_secs(10);
 /// records what the client sends after the handshake, and lets the test hold
 /// the exec, move the advertised epoch, inject server messages, or drop a live
 /// connection.
+#[derive(Debug)]
 pub struct DirectHost {
     socket_dir: tempfile::TempDir,
     socket_path: std::path::PathBuf,
@@ -326,6 +327,13 @@ impl DirectHost {
     }
 
     /// Abort the host's accept loop and its socket.
+    pub fn abort(&self) {
+        self.task.abort();
+        if let Some((_, task)) = &self.control {
+            task.abort();
+        }
+    }
+
     pub async fn shutdown(self) {
         if let Some((_, control)) = self.control {
             control.abort();
@@ -516,6 +524,7 @@ async fn serve(
 }
 
 /// What the fake control socket shares across its connections.
+#[derive(Debug)]
 struct ControlShared {
     token: String,
     requests: Mutex<Vec<Value>>,

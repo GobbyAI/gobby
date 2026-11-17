@@ -14,7 +14,7 @@ use unicode_width::UnicodeWidthStr;
 
 pub const PASTE_MAX_BYTES: usize = 1024 * 1024;
 
-/// Soft-wrap marker preserved in tmux `capture-pane -J` history payloads.
+/// Soft-wrap marker in history payloads.
 pub const SOFT_WRAP: char = '\u{23CE}';
 
 fn join_visual_lines(text: &str, wrap_cols: usize, preserve_hard_breaks: bool) -> String {

@@ -20,7 +20,7 @@ use super::actions::{activate_live_tab, open_live_rename};
 use super::control::{close_barrier, focus_live_pane};
 use super::daemon_ops::{kill_live_panes, place_live_terminal};
 use super::jobs::JobOutcome;
-use super::lifecycle::{close_live_pane, spawn_live_shell};
+use super::lifecycle::spawn_live_shell;
 use super::menu::{attention_id, ContextMenuKind, MenuAction};
 use super::modal_input::{close_modal, edit_text, ModalOutcome};
 use super::mouse::Placement;
@@ -152,15 +152,6 @@ pub(super) async fn close_live_terminal(
     pane_id: PaneId,
 ) -> Result<(), FrameError> {
     if !workspace.panes.contains_key(&pane_id) {
-        return Ok(());
-    }
-    // An external pane is a terminal the user attached rather than one
-    // gclient spawned, so closing it is a detach. A shown pane also leaves
-    // its slot.
-    if workspace.pane(pane_id).external {
-        if chrome.focus_pane(pane_id) {
-            close_live_pane(workspace, chrome, outcomes).await?;
-        }
         return Ok(());
     }
     // The kill waits for what was typed into the pane before the close.
@@ -666,7 +657,7 @@ mod tests {
     fn orphan(terminal_id: &str) -> OrphanRow {
         OrphanRow {
             terminal_id: terminal_id.to_string(),
-            backend: Backend::Tmux,
+            backend: Backend::Native,
             name: terminal_id.to_string(),
             owner: None,
             last_seen: None,

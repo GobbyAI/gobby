@@ -1689,7 +1689,7 @@ async fn outbound_messages_match_corpus() {
         json!({
             "items": [{
                 "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                "backend": "tmux",
+                "backend": "native",
                 "state": "live"
             }],
             "next_cursor": null,

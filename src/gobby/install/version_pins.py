@@ -8,7 +8,7 @@ MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     "gcode": "1.9.125",
     "gdaemon": "0.4.172",
     "gterm": "0.1.36",
-    "gclient": "0.1.143",
+    "gclient": "0.1.144",
     "gmcp": "0.1.51",
 }
 

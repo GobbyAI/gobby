@@ -773,60 +773,17 @@ impl LiveShutdownStall {
     }
 }
 
-async fn wait_for_ws_request(mock: &MockDaemon, kind: &str, context: &str) {
-    timeout(
-        Duration::from_secs(1),
-        mock.wait_for_request(|request| {
-            request
-                .body
-                .as_ref()
-                .and_then(|body| body.get("type"))
-                .and_then(Value::as_str)
-                == Some(kind)
-        }),
-    )
-    .await
-    .unwrap_or_else(|_| panic!("{context} timed out waiting for {kind}"));
-}
-
 async fn wait_for_live_readiness(mock: &MockDaemon, terminal_id: &str) {
-    // Startup is an event precondition, distinct from the timed input and
-    // shutdown assertions. The caller bounds the whole setup/exit operation.
-    for kind in ["terminal_set_viewport", "terminal_focus"] {
-        let matches_body = |body: &Value| {
-            body["type"] == kind
+    // Readiness is separate from the bounded input and shutdown assertions.
+    mock.wait_for_request(|request| {
+        request.body.as_ref().is_some_and(|body| {
+            body["type"] == "terminal_focus"
                 && body["terminal_id"] == terminal_id
-                && (kind != "terminal_focus"
-                    || (body["focused"] == true && body["attachment_id"].as_str().is_some()))
-        };
-        mock.wait_for_request(|request| request.body.as_ref().is_some_and(&matches_body))
-            .await;
-    }
-}
-
-async fn wait_for_ws_request_count(mock: &MockDaemon, kind: &str, expected: usize) {
-    timeout(Duration::from_secs(5), async {
-        loop {
-            let count = mock
-                .requests()
-                .iter()
-                .filter(|request| {
-                    request
-                        .body
-                        .as_ref()
-                        .and_then(|body| body.get("type"))
-                        .and_then(Value::as_str)
-                        == Some(kind)
-                })
-                .count();
-            if count >= expected {
-                break;
-            }
-            tokio::task::yield_now().await;
-        }
+                && body["focused"] == true
+                && body["attachment_id"].as_str().is_some()
+        })
     })
-    .await
-    .unwrap_or_else(|_| panic!("timed out waiting for {expected} {kind} requests"));
+    .await;
 }
 
 async fn wait_for_trace_stage(trace: &Arc<Mutex<Vec<String>>>, stage: &str) {
@@ -864,13 +821,14 @@ async fn send_process_signal(signal: &str) {
 async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShutdownStall) {
     let mock = MockDaemon::start("shutdown-token").await;
     mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-shutdown", "tmux");
+    let host = mock_daemon::DirectHost::start("epoch-1").await;
+    mock.serve_direct_attach(host.attach_locator("terminal-shutdown"));
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
         json!({
-            "items": [{"terminal_id": "terminal-shutdown", "backend": "tmux", "state": "live"}],
+            "items": [{"terminal_id": "terminal-shutdown", "backend": "native", "state": "live", "attach": host.roster_attach("terminal-shutdown")}],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
         }),
@@ -888,6 +846,11 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
     let observer = daemon.clone();
     let mut workspace = Workspace::live(daemon);
     let _home = pin_tab(&mock, &mut workspace, "project-1", "terminal-shutdown");
+    std::fs::write(
+        _home.path().join("bootstrap.yaml"),
+        "api_key: shutdown-token\n",
+    )
+    .expect("API key");
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
@@ -909,7 +872,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
             )
         });
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_ws_request(&mock, "terminal_input", &format!("{trigger:?}/{stall:?}")).await;
+        host.wait_for("native x", |messages| messages.iter().any(|message| matches!(message, gobby_terminal::protocol::ClientMessage::Input { data } if data == b"x"))).await;
         let reconnect = if matches!(stall, LiveShutdownStall::ReconnectJoin) {
             let gate = mock.pause_next_websocket();
             let reconnect = {
@@ -1015,6 +978,7 @@ async fn assert_live_shutdown_stall(trigger: LiveShutdownTrigger, stall: LiveShu
         .await
         .unwrap_or_else(|_| panic!("{trigger:?}/{stall:?} left the WebSocket connected"));
     mock.shutdown().await;
+    host.shutdown().await;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1039,13 +1003,14 @@ impl LiveExitCause {
 async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<String>>>) {
     let mock = MockDaemon::start("exit-token").await;
     mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-exit", "tmux");
+    let host = mock_daemon::DirectHost::start("epoch-exit").await;
+    mock.serve_direct_attach(host.attach_locator("terminal-exit"));
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
         json!({
-            "items": [{"terminal_id": "terminal-exit", "backend": "tmux", "state": "live"}],
+            "items": [{"terminal_id": "terminal-exit", "backend": "native", "state": "live", "attach": host.roster_attach("terminal-exit")}],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-exit", "seq": 1}
         }),
@@ -1069,6 +1034,7 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
     }
     let mut workspace = Workspace::live(daemon);
     let _home = pin_tab(&mock, &mut workspace, "project-1", "terminal-exit");
+    std::fs::write(_home.path().join("bootstrap.yaml"), "api_key: exit-token\n").expect("API key");
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(16);
@@ -1078,7 +1044,7 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
     let driver = async {
         wait_for_live_readiness(&mock, "terminal-exit").await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_ws_request(&mock, "terminal_input", &format!("{cause:?}")).await;
+        host.wait_for("native x", |messages| messages.iter().any(|message| matches!(message, gobby_terminal::protocol::ClientMessage::Input { data } if data == b"x"))).await;
         match cause {
             LiveExitCause::Quit => {
                 send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
@@ -1092,7 +1058,7 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
                 send_process_signal("-HUP").await;
                 wait_for_trace_stage(&trace, "sighup-ignored").await;
                 send_key(&input_tx, KeyCode::Char('y'), KeyModifiers::NONE).await;
-                wait_for_ws_request_count(&mock, "terminal_input", 2).await;
+                host.wait_for("native y after SIGHUP", |messages| messages.iter().any(|message| matches!(message, gobby_terminal::protocol::ClientMessage::Input { data } if data == b"y"))).await;
                 send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
                 send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
             }
@@ -1157,6 +1123,7 @@ async fn assert_live_exit_trace(cause: LiveExitCause, trace: Arc<Mutex<Vec<Strin
     drop(guard);
     assert_eq!(workspace.exit_reason(), Some(cause.reason()));
     mock.shutdown().await;
+    host.shutdown().await;
 }
 
 #[tokio::test]

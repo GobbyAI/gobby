@@ -53,8 +53,11 @@ pub(super) fn flush_attached_input(
     let ready: Vec<PaneId> = workspace
         .panes
         .iter()
-        .filter(|(_, pane)| {
-            pane.writable() && !pane.native_proxy() && !pane.pending_input.is_empty()
+        .filter(|(id, pane)| {
+            !workspace.host_recovering.contains(id)
+                && pane.writable()
+                && !pane.native_proxy()
+                && !pane.pending_input.is_empty()
         })
         .map(|(id, _)| *id)
         .collect();
@@ -166,6 +169,10 @@ pub(super) fn send_live_input(
     }
     if workspace.pane(pane_id).closing_native() {
         chrome.notify(Toast::warning(CLOSING_NATIVE_INPUT));
+        return Ok(());
+    }
+    if workspace.host_recovering.contains(&pane_id) {
+        queue_while_attaching(workspace, chrome, pane_id, data, paste);
         return Ok(());
     }
     if types_on_host(workspace.pane(pane_id)) {
@@ -307,12 +314,7 @@ fn pane_writer<'a>(
         .as_ref()
         .is_some_and(|writer| writer.serves(generation))
     {
-        pane.writer = Some(PaneWriter::spawn(
-            &workspace.daemon,
-            outcomes,
-            pane_id,
-            pane.writer_ready.take(),
-        ));
+        pane.writer = Some(PaneWriter::spawn(&workspace.daemon, outcomes, pane_id));
     }
     pane
 }
@@ -330,7 +332,7 @@ fn types_on_host(pane: &Pane) -> bool {
 }
 
 // INVARIANT (#25653): a native host stream has no daemon writer fallback.
-// Enqueue locally and return; only legacy tmux writes use the daemon worker.
+// Enqueue locally and return.
 /// Hand one write to the pane's path without waiting on the daemon.
 pub(super) fn send_live_write(
     workspace: &mut Workspace<LiveDaemon>,

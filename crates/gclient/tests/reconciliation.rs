@@ -421,7 +421,7 @@ async fn reconnect_reattaches_once_per_pane() {
         200,
         json!({
             "items": [
-                {"terminal_id": "terminal-1", "backend": "tmux", "state": "live"},
+                {"terminal_id": "terminal-1", "backend": "native", "state": "live"},
                 {"terminal_id": "terminal-2", "backend": "native", "state": "live"}
             ],
             "next_cursor": null,
@@ -500,7 +500,7 @@ async fn reconnect_reattaches_once_per_pane() {
         "/api/terminals?",
         json!({
             "items": [
-                {"terminal_id": "terminal-1", "backend": "tmux", "state": "live"},
+                {"terminal_id": "terminal-1", "backend": "native", "state": "live"},
                 {"terminal_id": "terminal-2", "backend": "native", "state": "live"}
             ],
             "next_cursor": null,
@@ -568,7 +568,7 @@ async fn reconnect_reattaches_once_per_pane() {
         200,
         json!({
             "items": [
-                {"terminal_id": "terminal-1", "backend": "tmux", "state": "live"},
+                {"terminal_id": "terminal-1", "backend": "native", "state": "live"},
                 {"terminal_id": "terminal-2", "backend": "native", "state": "live"},
                 {"terminal_id": "terminal-3", "backend": "native", "state": "live"}
             ],

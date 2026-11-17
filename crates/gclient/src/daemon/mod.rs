@@ -339,8 +339,6 @@ pub trait Daemon: Send + Sync {
     ) -> Result<Page<TerminalRow>, DaemonError>;
     /// One page of the daemon's whole terminal inventory (every project, every
     /// ownership) over WS `terminal_list`, restricted to rows in `states`.
-    /// The sweep behind it refreshes the external tmux rows first, so the
-    /// page carries `attached_clients` for those.
     async fn inventory_page(
         &self,
         states: &[&str],

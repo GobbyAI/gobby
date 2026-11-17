@@ -23,8 +23,8 @@ use serde_json::json;
 #[test]
 fn scrollback_copy_is_lease_independent() {
     let mut ws = Workspace::scripted();
-    let a = ws.open_terminal("term-a", "tmux", "epoch-a").unwrap();
-    let b = ws.open_terminal("term-b", "tmux", "epoch-a").unwrap();
+    let a = ws.open_terminal("term-a", "native", "epoch-a").unwrap();
+    let b = ws.open_terminal("term-b", "native", "epoch-a").unwrap();
     ws.seed_attach_history(a, "hello 👩‍💻 wrapped\nhard\n");
     ws.seed_attach_history(b, "hello 👩‍💻 wrapped\nhard\n");
     ws.set_scroll_offset(a, 4).unwrap();
@@ -49,7 +49,7 @@ fn scrollback_copy_is_lease_independent() {
     assert!(!source.sent_host_input());
     assert!(!source.sent_resize());
 
-    let joiner = ws.open_terminal("term-join", "tmux", "epoch-a").unwrap();
+    let joiner = ws.open_terminal("term-join", "native", "epoch-a").unwrap();
     ws.seed_attach_history(joiner, "later joiner history");
     assert!(ws.pane(joiner).copy_seeded_from_history());
     assert!(!ws.pane(joiner).required_created_flag());
@@ -129,7 +129,7 @@ async fn client_copy_path_emits_finalized_selection_as_osc52() {
 fn client_copy_path_uses_attach_history_before_the_first_frame() {
     let mut ws = Workspace::scripted();
     let pane = ws
-        .open_terminal("term-history", "tmux", "epoch-history")
+        .open_terminal("term-history", "native", "epoch-history")
         .expect("open terminal");
     ws.seed_attach_history(pane, "joined from history");
     let mut chrome = Chrome::dark();
@@ -168,7 +168,7 @@ fn client_paste_event_routes_through_terminal_paste() {
 }
 
 #[test]
-fn native_set_scroll_offset_and_tmux_wrap_history() {
+fn native_set_scroll_offset_and_peer_wrap_history() {
     let mut ws = Workspace::scripted();
     let native = ws.open_terminal("n1", "native", "epoch-n").unwrap();
     ws.attach_frames(native).unwrap();
@@ -200,9 +200,9 @@ fn native_set_scroll_offset_and_tmux_wrap_history() {
     assert!(!source.sent_mouse_report());
     assert!(!source.sent_tiocswinsz());
 
-    let tmux = ws.open_terminal("tm", "tmux", "epoch-t").unwrap();
-    ws.seed_attach_history(tmux, "wide 👩‍💻 continues\u{23CE}on wrap\nhard line\n");
-    let hist = ws.pane(tmux).attach_history().unwrap();
+    let peer = ws.open_terminal("tm", "native", "epoch-t").unwrap();
+    ws.seed_attach_history(peer, "wide 👩‍💻 continues\u{23CE}on wrap\nhard line\n");
+    let hist = ws.pane(peer).attach_history().unwrap();
     assert!(hist.contains('\u{23CE}'));
     assert!(hist.contains('\n'));
     let logical = extract_logical_line(hist, 0);

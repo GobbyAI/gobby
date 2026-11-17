@@ -379,7 +379,7 @@ fn seat_on_roster(mock: &MockDaemon) {
         "provider": "claude",
         "model": null,
         "terminal": {"terminal_id": AGENT, "backend": "native"},
-        "tmux": null,
+        "native": null,
         "last_activity_at": null,
     }]});
     // Every relist reads the roster again; each must still know the seat.

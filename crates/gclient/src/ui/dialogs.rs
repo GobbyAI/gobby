@@ -118,7 +118,7 @@ pub struct WorktreeChoice {
 pub struct OrphanRow {
     pub terminal_id: String,
     pub backend: Backend,
-    /// The tmux session name, the row title, or the short terminal id.
+    /// The row title or the short terminal id.
     pub name: String,
     /// The Gobby session still owning the row's pane, when one does.
     pub owner: Option<String>,

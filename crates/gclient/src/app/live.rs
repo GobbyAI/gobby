@@ -119,8 +119,6 @@ impl Workspace<LiveDaemon> {
         let pane_id = self.ensure_live_pane(terminal_id, backend);
         let pane = self.panes.get_mut(&pane_id).expect("live pane exists");
         pane.direct_available = row_has_direct_locator(row);
-        pane.external = row_is_external(row);
-        pane.address = row_address(row);
         pane.command = row_command(row);
         pane.cwd = row_cwd(row);
         pane.terminal_state = row
@@ -476,8 +474,8 @@ fn is_cursor_error(error: &DaemonError) -> bool {
 }
 
 /// The command in the terminal's foreground, as the daemon observed it when it
-/// served the row: `pane_current_command` for tmux, the foreground process
-/// group of the recorded shell pid for native. Absent on a row the daemon could
+/// served the row: the foreground process group of the recorded shell pid.
+/// Absent on a row the daemon could
 /// not probe, which the label ladder answers with its literal last rung.
 fn row_command(row: &TerminalRow) -> Option<String> {
     let command = row.fields.get("command")?.as_str()?;
@@ -491,33 +489,10 @@ fn row_cwd(row: &TerminalRow) -> Option<String> {
     (!cwd.is_empty()).then(|| cwd.to_string())
 }
 
-/// The terminal's address on its backend. Only tmux has one the user can act
-/// on; a native row's host terminal id is another UUID, so it stays hidden.
-fn row_address(row: &TerminalRow) -> Option<String> {
-    let attach = row.fields.get("attach")?.as_object()?;
-    if attach.get("backend").and_then(Value::as_str) != Some("tmux") {
-        return None;
-    }
-    let pane_id = attach.get("pane_id").and_then(Value::as_str)?;
-    (!pane_id.is_empty()).then(|| pane_id.to_string())
-}
-
-fn row_is_external(row: &TerminalRow) -> bool {
-    row.fields.get("ownership").and_then(Value::as_str) == Some("external")
-}
-
 /// Whether a `/api/terminals` row advertises enough to attempt a direct attach.
 ///
 /// The row's `attach` block is a flat `AttachLocator` (`asdict`, not
-/// `direct_block`), and identity in it is backend shaped: a native terminal is
-/// named by its `host_terminal_id`, while a tmux pane is named by its physical
-/// locator — socket, pane id, and the server generation that keeps a recycled
-/// pane id unambiguous. The frame host draws the same line: `embed::attach_frame`
-/// ignores `host_terminal_id` outright once a pane locator is present.
-///
-/// The daemon's row producer leaves `host_terminal_id` null for tmux, so
-/// demanding it here matched no real tmux row and silently downgraded every one
-/// of them to proxy.
+/// `direct_block`); the host terminal id names the native terminal.
 fn row_has_direct_locator(row: &TerminalRow) -> bool {
     let Some(attach) = row.fields.get("attach").and_then(Value::as_object) else {
         return false;
@@ -528,19 +503,11 @@ fn row_has_direct_locator(row: &TerminalRow) -> bool {
             .and_then(Value::as_str)
             .is_some_and(|value| !value.is_empty())
     };
-    // `as_i64` rejects a JSON bool and a float, which is the generation check.
-    let generation = |name: &str| attach.get(name).and_then(Value::as_i64).is_some();
     if !filled("frame_host_epoch") || !filled("host_socket") {
         return false;
     }
     match attach.get("backend").and_then(Value::as_str) {
         Some("native") => filled("host_terminal_id"),
-        Some("tmux") => {
-            filled("socket_path")
-                && filled("pane_id")
-                && generation("server_pid")
-                && generation("server_start_time")
-        }
         _ => false,
     }
 }

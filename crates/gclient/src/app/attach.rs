@@ -1,6 +1,6 @@
 //! Attachment lifecycle transitions and request guards.
 
-use super::{Backend, Pane, PaneId, Workspace};
+use super::{Pane, PaneId, Workspace};
 use crate::daemon::{Daemon, DaemonError, Generation};
 use crate::frame_source::{FrameError, PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_terminal::protocol::ClientMessage;
@@ -82,7 +82,6 @@ impl Pane {
         if let Some(writer) = self.writer.take() {
             writer.retire();
         }
-        self.writer_ready = None;
         self.attach = AttachState::Attached {
             attachment_id,
             transport,
@@ -399,7 +398,7 @@ impl Workspace {
                 );
             return Ok(());
         }
-        if matches!(transport, Transport::Proxy) || self.panes[&pane_id].backend == Backend::Tmux {
+        if matches!(transport, Transport::Proxy) {
             // Daemon-written panes claim independently of frame delivery, as live attaches do.
             let terminal_id = self.panes[&pane_id].terminal_id.clone();
             self.daemon.send_ws(json!({
@@ -555,28 +554,6 @@ mod tests {
                 "attachment_id": "att-1",
                 "takeover": false,
             })]
-        );
-    }
-
-    #[test]
-    fn a_scripted_direct_tmux_attach_claims_the_writer_lease_without_takeover() {
-        let mut ws = Workspace::scripted();
-        let generation = Daemon::subscribe(&ws.daemon).0.generation;
-        let mut pane = Pane::new(PaneId(1), "term-tmux", Backend::Tmux, "epoch-1");
-        pane.begin_attaching("req-1".into(), Transport::Direct, generation);
-        ws.panes.insert(pane.id, pane);
-        ws.order.push(PaneId(1));
-        ws.apply_scripted_attach_result(&json!({
-            "request_id": "req-1", "success": true, "attachment_id": "att-1",
-        }))
-        .expect("attach applies");
-        assert!(
-            ws.daemon().ws_sent().iter().any(|message| {
-                message["type"] == "terminal_take_control"
-                    && message["attachment_id"] == "att-1"
-                    && message["takeover"] == false
-            }),
-            "a daemon-written tmux pane claims even with direct frames"
         );
     }
 }

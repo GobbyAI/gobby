@@ -423,8 +423,8 @@ fn status_segments() -> (Workspace, Chrome) {
 /// The upper pane hosts a session whose Unicode title outranks the pane's
 /// name. Its lease is lost, so its metadata reads `Read-only` in the warning
 /// tone. It shares its bottom line with the pane below, so that metadata sits
-/// top-right beside the title. The focused lower pane runs under tmux and
-/// keeps `tmux · Focused` bottom-right. The Agents row puts the same title
+/// top-right beside the title. The focused lower pane runs under peer and
+/// keeps `peer · Focused` bottom-right. The Agents row puts the same title
 /// behind its stationary `#1742:` prefix.
 fn pane_edges() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
@@ -453,7 +453,7 @@ fn pane_edges() -> (Workspace, Chrome) {
     ws.reconcile_subscribe_first().expect("install roster");
     ws.open_terminal("term-alpha", "native", "epoch")
         .expect("open term-alpha");
-    ws.open_terminal("term-beta", "tmux", "epoch")
+    ws.open_terminal("term-beta", "native", "epoch")
         .expect("open term-beta");
     let alpha = ws.pane_for_terminal("term-alpha").expect("term-alpha pane");
     let beta = ws.pane_for_terminal("term-beta").expect("term-beta pane");

@@ -60,9 +60,9 @@ pub(super) async fn close_live_pane(
         close_daemon_pane(workspace, chrome, outcomes, slot, Vec::new());
         return Ok(());
     };
-    // An external or adopted terminal outlives the pane, so the close detaches
+    // An adopted terminal outlives the pane, so the close detaches
     // this client's attachment once the pane's accepted input went out.
-    if workspace.pane(pane_id).external || daemon_pane_is_adopted(workspace, chrome, slot)? {
+    if daemon_pane_is_adopted(workspace, chrome, slot)? {
         let after = detach_barrier(workspace, outcomes, pane_id)
             .into_iter()
             .collect();
@@ -105,8 +105,7 @@ pub(super) async fn close_live_tab(
     let local = chrome.active_tab().is_some_and(Tab::is_local);
     let mut panes = Vec::with_capacity(slots.len());
     for (slot, pane_id) in slots {
-        let preserve_terminal =
-            workspace.pane(pane_id).external || daemon_pane_is_adopted(workspace, chrome, slot)?;
+        let preserve_terminal = daemon_pane_is_adopted(workspace, chrome, slot)?;
         panes.push((slot, pane_id, preserve_terminal));
     }
     if !local

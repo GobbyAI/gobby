@@ -439,7 +439,7 @@ async fn direct_and_proxy_panes_run_together() {
     mock.shutdown().await;
 }
 
-// -------------------------------------------- oversized tmux frame anchoring
+// -------------------------------------------- oversized native frame anchoring
 
 /// A cell that names its own coordinate, so a capture says exactly which region
 /// of the source frame was painted.
@@ -448,7 +448,7 @@ fn coordinate_symbol(x: u16, y: u16) -> String {
     char::from(b'a' + u8::try_from(index).expect("index fits 0..26")).to_string()
 }
 
-/// #21913: a tmux frame larger than its pane body is painted from its origin.
+/// #21913: a native frame larger than its pane body is painted from its origin.
 ///
 /// This drives the real composition rather than the renderer in isolation:
 /// `Chrome::compute_view` supplies the pane geometry and `render_workspace_with`
@@ -459,7 +459,7 @@ fn coordinate_symbol(x: u16, y: u16) -> String {
 /// is the earliest output — so an oversized frame must be clipped at its far
 /// edges, exactly as the native branch already does. Centering the source
 /// instead cropped equally from all four edges, discarding the prompt and the
-/// left of every line; a real 200x50 tmux pane rendered as an empty body.
+/// left of every line; a real 200x50 native pane rendered as an empty body.
 /// Restoring that source centering moves the origin cell and fails this test.
 #[tokio::test]
 async fn an_oversized_native_frame_renders_from_its_origin() {
@@ -481,8 +481,8 @@ async fn an_oversized_native_frame_renders_from_its_origin() {
 
     let mut ws = Workspace::scripted();
     let pane = ws
-        .open_terminal("term-native-oversized", "tmux", "epoch-native")
-        .expect("open tmux terminal");
+        .open_terminal("term-native-oversized", "native", "epoch-native")
+        .expect("open native terminal");
     let mut source = ScriptedFrameSource::new(Transport::Direct);
     source.queue(ServerMessage::Frame(FrameData {
         cells,
@@ -499,7 +499,7 @@ async fn an_oversized_native_frame_renders_from_its_origin() {
 
     let area = Rect::new(0, 0, 120, 40);
     let mut chrome = Chrome::dark();
-    let slot = chrome.open_pane(pane, "tmux");
+    let slot = chrome.open_pane(pane, "native");
     chrome.compute_view(&ws, area);
     let inner = chrome
         .view

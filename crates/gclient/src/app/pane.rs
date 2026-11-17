@@ -20,41 +20,33 @@ use gobby_terminal::terminal_theme::ThemeDeclaration;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PaneId(pub u32);
 
-/// Which runtime owns a terminal: a gclient-native pty or a tmux pane. The
-/// daemon reports it as `backend: "native" | "tmux"`; any other word reads as
+/// The native terminal runtime. The daemon reports it as `backend: "native"`;
+/// any other word reads as
 /// native, the one a pane can least go wrong as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Backend {
-    Tmux,
     #[default]
     #[serde(other)]
     Native,
 }
 
 impl Backend {
-    pub fn parse(raw: &str) -> Self {
-        if raw == "tmux" {
-            Self::Tmux
-        } else {
-            Self::Native
-        }
+    pub fn parse(_raw: &str) -> Self {
+        Self::Native
     }
 
     /// The word the daemon uses for this backend on the wire.
     pub fn wire(self) -> &'static str {
         match self {
             Self::Native => "native",
-            Self::Tmux => "tmux",
         }
     }
 
-    /// The word the chrome prints: `gclient` for a native pane, `tmux` for a
-    /// tmux one. The wire word `native` names nothing the user can see.
+    /// The chrome calls the native runtime `gclient`.
     pub fn label(self) -> &'static str {
         match self {
             Self::Native => "gclient",
-            Self::Tmux => "tmux",
         }
     }
 
@@ -120,10 +112,6 @@ pub struct Pane {
     /// The name the user gave this pane in the rename dialog. Roster pages
     /// leave it alone; `display_name` shows it first.
     pub label: Option<String>,
-    /// The terminal's address on its backend — the tmux pane id, `%15`. Unique
-    /// and stable where a name is neither, and it is what the user types into
-    /// tmux, so the chrome shows it wherever two terminals could be confused.
-    pub address: Option<String>,
     /// The Gobby session running in this terminal, when one is. Attention
     /// entries are keyed by session, not by terminal, so this is what points
     /// a blocked session at the row the user can act on.
@@ -155,9 +143,6 @@ pub struct Pane {
     pub in_flight_write: Option<u64>,
     /// The task that sends this pane's daemon writes in typed order (plan A2).
     pub(super) writer: Option<PaneWriter>,
-    /// A promoted tmux pane releases its proxy lease and claims the replacement
-    /// before its daemon writer sends queued input. Native input never waits here.
-    pub(super) writer_ready: Option<tokio::task::JoinHandle<Result<(), FrameError>>>,
     /// Keys and pastes typed while this pane's attachment is still coming up,
     /// kept in the order they were typed. A person typing into a pane that is
     /// reattaching is not asking to lose the first word, so this queue is
@@ -189,9 +174,6 @@ pub struct Pane {
     pub(super) host_locator: Option<AttachLocator>,
     pub(super) fallback_in_flight: bool,
     pub(super) direct_available: bool,
-    /// The daemon lists this terminal with `ownership: external`: a tmux
-    /// session someone else started, which closing must never kill.
-    pub external: bool,
     pub(super) attach: AttachState,
     /// When the live loop tries a deferred attach again: set by
     /// `defer_attach` after the daemon did not answer or refused for a
@@ -245,7 +227,6 @@ impl Pane {
             terminal_id: terminal_id.into(),
             backend,
             label: None,
-            address: None,
             session_id: None,
             command: None,
             cwd: None,
@@ -262,7 +243,6 @@ impl Pane {
             required_created_flag: false,
             in_flight_write: None,
             writer: None,
-            writer_ready: None,
             pending_input: Vec::new(),
             pending_input_bytes: 0,
             host_bound_attachment: None,
@@ -277,7 +257,6 @@ impl Pane {
             host_locator: None,
             fallback_in_flight: false,
             direct_available: false,
-            external: false,
             attach: AttachState::Attached {
                 attachment_id,
                 transport: Transport::Direct,
@@ -320,9 +299,7 @@ impl Pane {
     /// the sidebar instead, so the provider is no rung here.
     ///
     /// The ID fallback distinguishes unnamed terminals. The daemon's own
-    /// `title` is no rung and the client does not keep it: it comes from
-    /// `window_name or pane_title or session_name`, which yields `zsh` for one
-    /// pane and `75`, `[tmux]` or a whole session banner for the next.
+    /// `title` is no rung; the client uses the terminal name or foreground command.
     pub fn display_name(&self) -> &str {
         if let Some(label) = self.label.as_deref().filter(|name| !name.is_empty()) {
             return label;
@@ -426,8 +403,7 @@ impl Pane {
         self.is_live() && !self.terminating
     }
 
-    /// Keys typed behind a closing tmux detach still go out: that detach rides
-    /// the daemon writer. A native pane's keys stay on its host stream, so a
+    /// A native pane's keys stay on its host stream, so a
     /// closing native pane refuses them (`closing_native`). A recovery detach
     /// holds its keys for the attachment that follows (#25653).
     pub fn accepts_input(&self) -> bool {

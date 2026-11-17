@@ -20,7 +20,6 @@ fn corners(title: &str, address: &str) -> PaneCorners {
     PaneCorners {
         title: title.to_owned(),
         address: address.to_owned(),
-        backend: None,
         sandbox: SandboxState::Sandboxed,
         sandbox_mark: sandbox_mark(SandboxState::Sandboxed, true),
         tone: MetadataTone::Focused,
@@ -91,25 +90,6 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
         "  gobby#1742: default"
     );
     chrome.sidebar.all_sessions = false;
-
-    // A tmux pane the workspace holds takes its gclient address over the
-    // tmux id (#23120), and the tmux id stays on the pane untouched.
-    let mut held = Pane::new(PaneId(99), "term-alpha", Backend::Tmux, "epoch");
-    held.address = Some("%14".to_owned());
-    assert_eq!(
-        pane_corners(&ws, &chrome, &held, true).address_label(),
-        "tmux · 0:0:1:2"
-    );
-    assert_eq!(held.address.as_deref(), Some("%14"));
-    let mut tmux_pane = Pane::new(PaneId(100), "term-outside", Backend::Tmux, "epoch");
-    tmux_pane.address = Some("%15".to_owned());
-    // Josh's order (#23049): mark, then tmux for a tmux pane, then the address.
-    // This seat has no SRT record, so no mark leads (#23096).
-    let tmux = pane_corners(&ws, &chrome, &tmux_pane, true);
-    assert_eq!(tmux.address_label(), "tmux · %15");
-    tmux_pane.address = None;
-    let unaddressed = pane_corners(&ws, &chrome, &tmux_pane, true);
-    assert_eq!(unaddressed.address_label(), "tmux");
 
     // No session ref: the definition alone.
     ws.daemon_mut().set_sidebar_rows(SidebarRows::default());
@@ -272,23 +252,21 @@ fn a_seat_that_needs_you_reads_in_the_attention_tone() {
 }
 
 #[test]
-fn corners_map_focus_per_backend() {
+fn native_corners_map_focus() {
     let ws = Workspace::scripted();
     let chrome = Chrome::dark();
-    for (backend, name) in [(Backend::Native, "gclient"), (Backend::Tmux, "tmux")] {
-        let mut pane = Pane::new(PaneId(1), "term", backend, "epoch");
-        pane.command = Some("zsh".to_owned());
-        let reads = |pane: &Pane, focused| {
-            let corners = pane_corners(&ws, &chrome, pane, focused);
-            (corners.title, corners.address, corners.tone)
-        };
-        let expect = |title: &str, tone| (title.to_owned(), name.to_owned(), tone);
-        assert_eq!(reads(&pane, false), expect("  zsh", MetadataTone::Ordinary));
-        assert_eq!(
-            reads(&pane, true),
-            expect("  zsh · Focused", MetadataTone::Focused)
-        );
-    }
+    let mut pane = Pane::new(PaneId(1), "term", Backend::Native, "epoch");
+    pane.command = Some("zsh".to_owned());
+    let reads = |pane: &Pane, focused| {
+        let corners = pane_corners(&ws, &chrome, pane, focused);
+        (corners.title, corners.address, corners.tone)
+    };
+    let expect = |title: &str, tone| (title.to_owned(), "gclient".to_owned(), tone);
+    assert_eq!(reads(&pane, false), expect("  zsh", MetadataTone::Ordinary));
+    assert_eq!(
+        reads(&pane, true),
+        expect("  zsh · Focused", MetadataTone::Focused)
+    );
 }
 
 #[test]
@@ -380,20 +358,17 @@ fn only_a_sandboxed_pane_leads_its_address_with_a_mark() {
     let mut text = corners("  zsh", "0:0:1:2");
     assert_eq!(text.address_label(), "\u{f023} · 0:0:1:2");
     text.sandbox_mark = sandbox_mark(SandboxState::Sandboxed, false);
-    text.backend = Some("tmux");
-    assert_eq!(text.address_label(), "sbx · tmux · 0:0:1:2");
+    assert_eq!(text.address_label(), "sbx · 0:0:1:2");
     let rect = Rect::new(10, 2, 50, 8);
     let address = address_rect(&info(rect, Borders::ALL, true), &text).unwrap();
     assert_eq!(
         usize::from(address.width),
-        display_width("sbx · tmux · 0:0:1:2") + 2
+        display_width("sbx · 0:0:1:2") + 2
     );
     assert_eq!(address.right(), rect.right() - 1);
 
     text.sandbox = SandboxState::Unrestricted;
     text.sandbox_mark = sandbox_mark(SandboxState::Unrestricted, true);
-    assert_eq!(text.address_label(), "tmux · 0:0:1:2");
-    text.backend = None;
     assert_eq!(text.address_label(), "0:0:1:2");
 }
 

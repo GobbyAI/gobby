@@ -992,23 +992,10 @@ async fn input_encoder_covers_named_keys() {
     assert_eq!(kitty.as_deref(), Some(b"\x1b[15;5~".as_slice()));
 
     let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-input", "tmux");
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        json!({
-            "items": [{"terminal_id": "terminal-input", "backend": "tmux", "state": "live"}],
-            "next_cursor": null,
-            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-        }),
-    );
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    let _home = pin_tabs(&mock, &mut workspace, "project-1", &["terminal-input"]);
+    let host = mock_daemon::DirectHost::start("epoch-1").await;
+    mock.seed_workspace("project-1", &[(&["terminal-input"], "terminal-input")]);
+    let (mut workspace, _home) =
+        mock_daemon::live_workspace_on_direct_host(&mock, &host, "terminal-input").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(256);
@@ -1042,14 +1029,11 @@ async fn input_encoder_covers_named_keys() {
                 .send(RawInputEvent::Key(key.clone()))
                 .await
                 .expect("live loop input");
-            wait_for_websocket_requests(&mock, "terminal_input", index + 1).await;
+            wait_until(|| native_input_texts(&host).len() == index + 1).await;
         }
 
-        let writes = websocket_requests(&mock, "terminal_input");
-        let data: Vec<_> = writes
-            .iter()
-            .map(|write| write.get("data").and_then(Value::as_str))
-            .collect();
+        let writes = native_input_texts(&host);
+        let data: Vec<_> = writes.iter().map(|write| Some(write.as_str())).collect();
         let expected: Vec<_> = live_cases
             .iter()
             .map(|(_, expected)| Some(*expected))
@@ -1071,10 +1055,11 @@ async fn input_encoder_covers_named_keys() {
     );
     result.expect("live loop exits cleanly");
     mock.shutdown().await;
+    host.shutdown().await;
 }
 
-/// A tab showing the user's own tmux session (`ownership: external`) next
-/// to a gobby-owned terminal: the external pane holds the lease, so closing
+/// A tab showing the user's adopted native terminal (`owns_terminal: false`) next
+/// to a gobby-owned terminal: the adopted pane holds the lease, so closing
 /// the tab releases it and kills only the gobby-owned terminal.
 async fn mixed_ownership_loop(mock: &MockDaemon) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
     mixed_ownership_loop_with(mock, false).await
@@ -1088,11 +1073,11 @@ async fn mixed_ownership_loop_with(
     spare_tab: bool,
 ) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
     mock.use_unique_attachment_ids();
-    let external = json!({
+    let adopted = json!({
         "terminal_id": "terminal-mine",
-        "backend": "tmux",
+        "backend": "native",
         "state": "live",
-        "ownership": "external"
+        "ownership": "gobby"
     });
     let owned = json!({
         "terminal_id": "terminal-gobby",
@@ -1106,8 +1091,8 @@ async fn mixed_ownership_loop_with(
         "state": "live",
         "ownership": "gobby"
     });
-    let mut items = vec![owned, external.clone()];
-    let mut survivors = vec![external];
+    let mut items = vec![owned, adopted.clone()];
+    let mut survivors = vec![adopted];
     let mut tabs: Vec<(&[&str], &str)> =
         vec![(&["terminal-gobby", "terminal-mine"], "terminal-mine")];
     if spare_tab {
@@ -1142,16 +1127,17 @@ async fn mixed_ownership_loop_with(
     let mut workspace = Workspace::live(daemon);
     let home = tempfile::tempdir().expect("gobby home");
     mock.seed_workspace("project-1", &tabs);
+    mock.adopt_seeded_terminal("terminal-mine");
     workspace.set_gobby_home(home.path().to_path_buf());
     workspace.select_project("project-1");
     (workspace, home)
 }
 
-/// Closing a tab kills its gobby-owned pane and only releases the external
-/// tmux session's lease: no `terminal_kill` names it, the tab goes, and the
+/// Closing a tab kills its owned pane and only releases the adopted
+/// terminal's lease: no `terminal_kill` names it, the tab goes, and the
 /// session stays in the roster.
 #[tokio::test]
-async fn closing_a_tab_spares_external_tmux_sessions() {
+async fn closing_a_tab_spares_adopted_native_terminals() {
     let mock = MockDaemon::start("local-token").await;
     let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
@@ -1190,12 +1176,12 @@ async fn closing_a_tab_spares_external_tmux_sessions() {
         "the kill names the gobby-owned terminal"
     );
     let releases = websocket_requests(&mock, "terminal_detach");
-    assert_eq!(releases.len(), 1, "the external pane's lease is released");
+    assert_eq!(releases.len(), 1, "the adopted pane's lease is released");
     assert_eq!(
         releases[0].get("terminal_id"),
         Some(&json!("terminal-mine"))
     );
-    // 4.2: the released external pane and then the tab leave through the
+    // 4.2: the released adopted pane and then the tab leave through the
     // daemon, which disposes of the rows and tells every window.
     assert_eq!(
         workspace_ops(&mock, "pane.close")
@@ -1203,7 +1189,7 @@ async fn closing_a_tab_spares_external_tmux_sessions() {
             .map(|op| op["pane"].clone())
             .collect::<Vec<_>>(),
         [json!("mock-pane-3")],
-        "the external pane's row (the seed mints tab-1, pane-2, pane-3) is closed, never its terminal"
+        "the adopted pane's row (the seed mints tab-1, pane-2, pane-3) is closed, never its terminal"
     );
     assert_eq!(
         workspace_ops(&mock, "tab.close")
@@ -1215,7 +1201,7 @@ async fn closing_a_tab_spares_external_tmux_sessions() {
     );
     assert!(
         workspace.pane_for_terminal("terminal-mine").is_some(),
-        "the external session stays in the roster"
+        "the adopted terminal stays in the roster"
     );
     assert!(
         workspace.pane_for_terminal("terminal-gobby").is_none(),
@@ -1314,7 +1300,7 @@ async fn closing_an_adopted_native_tab_releases_its_terminal() {
     mock.shutdown().await;
 }
 
-/// `close tab` when the daemon refuses the gobby-owned kill: the external
+/// `close tab` when the daemon refuses the owned kill: the adopted
 /// pane still leaves the tab with its lease released, the refused pane keeps
 /// its place, and so the tab stays.
 #[tokio::test]
@@ -1332,7 +1318,7 @@ async fn closing_a_tab_keeps_a_pane_whose_kill_is_refused() {
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
-        // The detached external pane leaves the daemon's tab through pane.close.
+        // The detached adopted pane leaves the daemon's tab through pane.close.
         wait_until(|| workspace_ops(&mock, "pane.close").len() == 1).await;
         settle_live_event().await;
         drop(input_tx);
@@ -1356,7 +1342,7 @@ async fn closing_a_tab_keeps_a_pane_whose_kill_is_refused() {
             .filter(|body| body.get("terminal_id") == Some(&json!("terminal-mine")))
             .count(),
         1,
-        "the external pane's attachment is detached"
+        "the adopted pane's attachment is detached"
     );
     assert!(
         workspace_ops(&mock, "tab.close").is_empty(),
@@ -1380,18 +1366,18 @@ async fn closing_a_tab_keeps_a_pane_whose_kill_is_refused() {
             .map(|op| op["pane"].clone())
             .collect::<Vec<_>>(),
         [json!("mock-pane-3")],
-        "the external pane (the seed mints tab-1, pane-2, pane-3) left the tab through the daemon"
+        "the adopted pane (the seed mints tab-1, pane-2, pane-3) left the tab through the daemon"
     );
     workspace
         .pane_for_terminal("terminal-mine")
-        .expect("the external session stays in the roster");
+        .expect("the adopted terminal stays in the roster");
     mock.shutdown().await;
 }
 
-/// `close_pane` on an external tmux session detaches its attachment and drops
+/// `close_pane` on an adopted native terminal detaches its attachment and drops
 /// the slot; the session is never killed and the tab keeps its other pane.
 #[tokio::test]
-async fn closing_a_pane_spares_an_external_tmux_session() {
+async fn closing_a_pane_spares_an_adopted_native_terminal() {
     let mock = MockDaemon::start("local-token").await;
     let (mut workspace, _home) = mixed_ownership_loop(&mock).await;
     let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
@@ -1423,22 +1409,22 @@ async fn closing_a_pane_spares_an_external_tmux_session() {
     result.expect("live loop exits cleanly");
     assert!(
         websocket_requests(&mock, "terminal_kill").is_empty(),
-        "an external session is never killed"
+        "an adopted terminal is never killed"
     );
     let tab = chrome.active_tab().expect("the tab keeps its other pane");
     assert_eq!(tab.slots.len(), 1);
     let mine = workspace
         .pane_for_terminal("terminal-mine")
-        .expect("the external session stays in the roster");
+        .expect("the adopted terminal stays in the roster");
     assert!(
         tab.slot_for(mine).is_none(),
-        "the external pane left the tab"
+        "the adopted pane left the tab"
     );
     assert!(
         websocket_requests(&mock, "terminal_detach")
             .iter()
             .any(|body| body.get("terminal_id") == Some(&json!("terminal-mine"))),
-        "closing the external pane detaches its attachment and leaves the session running"
+        "closing the adopted pane detaches its attachment and leaves the session running"
     );
     mock.shutdown().await;
 }
@@ -1532,40 +1518,29 @@ async fn a_project_less_explicit_shell_uses_the_launch_directory() {
     mock.shutdown().await;
 }
 
-/// One live terminal pinned into a tab, for the control-refusal tests. `backend`
-/// is the attach and roster backend: `tmux` relays keys through the daemon,
-/// `native` types on the direct path.
-async fn single_terminal_loop(
-    mock: &MockDaemon,
-    backend: &str,
-) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
-    mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-a", backend);
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        json!({
-            "items": [{"terminal_id": "terminal-a", "backend": backend, "state": "live"}],
-            "next_cursor": null,
-            "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-        }),
-    );
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    let home = pin_tabs(mock, &mut workspace, "project-1", &["terminal-a"]);
-    (workspace, home)
+fn native_input_texts(host: &mock_daemon::DirectHost) -> Vec<String> {
+    host.drain()
+        .into_iter()
+        .filter_map(|message| match message {
+            gobby_terminal::protocol::ClientMessage::Input { data } => {
+                Some(String::from_utf8_lossy(&data).into_owned())
+            }
+            gobby_terminal::protocol::ClientMessage::Paste { text } => Some(text),
+            _ => None,
+        })
+        .collect()
 }
 
-/// Keys and a paste typed into a proxy pane are written in the order they were
+/// Keys and a paste typed into a native pane are written in the order they were
 /// typed. Nothing is dropped, and nothing announces a control-acquiring mode:
 /// the pane is writable from the moment it is attached (#22573).
 #[tokio::test]
 async fn keys_and_a_paste_flush_in_typed_order() {
     let mock = MockDaemon::start("local-token").await;
-    let (mut workspace, _home) = single_terminal_loop(&mock, "tmux").await;
+    let host = mock_daemon::DirectHost::start("epoch-1").await;
+    mock.seed_workspace("project-1", &[(&["term-write"], "term-write")]);
+    let (mut workspace, _home) =
+        mock_daemon::live_workspace_on_direct_host(&mock, &host, "term-write").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(256);
@@ -1578,8 +1553,7 @@ async fn keys_and_a_paste_flush_in_typed_order() {
             .await
             .expect("live loop input");
         send_key(&input_tx, KeyCode::Char('!'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
-        wait_for_websocket_requests(&mock, "terminal_paste", 1).await;
+        wait_until(|| native_input_texts(&host).len() == 3).await;
         drop(input_tx);
     };
 
@@ -1595,27 +1569,7 @@ async fn keys_and_a_paste_flush_in_typed_order() {
         driver
     );
     result.expect("live loop exits cleanly");
-    // Keys and pastes travel as different messages, so the write sequence is
-    // what proves they reached the terminal in the order they were typed.
-    let mut writes: Vec<(u64, String)> = websocket_requests(&mock, "terminal_input")
-        .iter()
-        .chain(websocket_requests(&mock, "terminal_paste").iter())
-        .map(|request| {
-            let seq = request
-                .get("client_write_seq")
-                .and_then(Value::as_u64)
-                .expect("write sequence");
-            let text = request
-                .get("data")
-                .or_else(|| request.get("text"))
-                .and_then(Value::as_str)
-                .expect("write payload")
-                .to_string();
-            (seq, text)
-        })
-        .collect();
-    writes.sort_by_key(|(seq, _)| *seq);
-    let typed: Vec<&str> = writes.iter().map(|(_, text)| text.as_str()).collect();
+    let typed = native_input_texts(&host);
     assert_eq!(
         typed,
         ["h", "ello", "!"],
@@ -1630,110 +1584,7 @@ async fn keys_and_a_paste_flush_in_typed_order() {
         chrome.alert_log
     );
     mock.shutdown().await;
-}
-
-#[tokio::test]
-async fn write_outcomes_drive_pane_state() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.set_attach_backend("term-write", "tmux");
-    mock.enqueue_write_outcome("delivered", None);
-    mock.enqueue_write_outcome("indeterminate", Some("indeterminate_backend"));
-    mock.enqueue_write_outcome("refused", Some("write_refused"));
-    mock.enqueue_write_outcome("refused", Some("write_seq_conflict"));
-    mock.enqueue_write_outcome("refused", Some("write_seq_expired"));
-    mock.enqueue_write_outcome("refused", Some("write_seq_capacity"));
-    mock.enqueue(
-        "GET",
-        "/api/terminals?",
-        200,
-        json!({
-            "items": [{"terminal_id": "term-write", "backend": "tmux", "state": "live"}],
-            "next_cursor": null,
-            "snapshot": {"daemon_epoch": "epoch-write", "seq": 1}
-        }),
-    );
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    let _home = pin_tabs(&mock, &mut workspace, "project-1", &["term-write"]);
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    let (input_tx, input_rx) = mpsc::channel(256);
-
-    let driver = async {
-        wait_for_focus_reports(&mock, 1).await;
-
-        send_key(&input_tx, KeyCode::Char('d'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-        settle_live_event().await;
-
-        send_key(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
-        settle_live_event().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_input").len(),
-            2,
-            "an indeterminate write must not be resent"
-        );
-        // An unknown write outcome never gates typing: the next key is sent.
-        send_key(&input_tx, KeyCode::Char('r'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 3).await;
-        settle_live_event().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_input").len(),
-            3,
-            "a refused write must not be resent"
-        );
-
-        send_key(&input_tx, KeyCode::Char('c'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 4).await;
-        settle_live_event().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_input").len(),
-            4,
-            "write_seq_conflict must not resend"
-        );
-
-        send_key(&input_tx, KeyCode::Char('e'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 5).await;
-        settle_live_event().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_input").len(),
-            5,
-            "write_seq_expired must not resend"
-        );
-
-        send_key(&input_tx, KeyCode::Char('p'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 6).await;
-        settle_live_event().await;
-        assert_eq!(
-            websocket_requests(&mock, "terminal_input").len(),
-            6,
-            "write_seq_capacity must not resend"
-        );
-        drop(input_tx);
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("live loop exits cleanly");
-    let pane_id = workspace
-        .pane_for_terminal("term-write")
-        .expect("live write pane");
-    assert!(workspace.pane(pane_id).in_flight_write().is_none());
-    assert!(workspace.pane(pane_id).writable());
-    assert_eq!(websocket_requests(&mock, "terminal_input").len(), 6);
-    mock.shutdown().await;
+    host.shutdown().await;
 }
 
 #[tokio::test]
@@ -2353,7 +2204,7 @@ async fn live_resize_propagates_geometry_by_policy() {
                     "items": [
                         {"terminal_id": "term-controlled", "backend": "native", "state": "live"},
                         {"terminal_id": "term-observed", "backend": "native", "state": "live"},
-                        {"terminal_id": "term-tmux", "backend": "tmux", "state": "live"}
+                        {"terminal_id": "term-peer", "backend": "native", "state": "live"}
                     ],
                     "next_cursor": null,
                     "snapshot": {"daemon_epoch": "epoch-resize", "seq": 1}
@@ -2519,7 +2370,7 @@ async fn live_resize_propagates_geometry_by_policy() {
             "direct source receives the recomputed rectangle"
         );
         let viewports = websocket_requests(&mock, "terminal_set_viewport");
-        for terminal_id in ["term-observed", "term-tmux"] {
+        for terminal_id in ["term-observed", "term-peer"] {
             let pane_id = workspace
                 .pane_for_terminal(terminal_id)
                 .expect("proxy resize pane");
@@ -2538,7 +2389,7 @@ async fn live_resize_propagates_geometry_by_policy() {
             );
         }
         let resizes = websocket_requests(&mock, "terminal_resize");
-        for terminal_id in ["term-controlled", "term-observed", "term-tmux"] {
+        for terminal_id in ["term-controlled", "term-observed", "term-peer"] {
             let pane_id = workspace
                 .pane_for_terminal(terminal_id)
                 .expect("resized pane");
@@ -2710,24 +2561,24 @@ async fn resize_geometry_policy_reducer() {
         .expect("observed native pane");
     ws.reattach_frames(observed_proxy)
         .expect("proxy frame source");
-    let controlled_tmux = ws
-        .open_terminal("term-tmux", "tmux", "epoch-resize")
-        .expect("tmux pane");
+    let controlled_peer = ws
+        .open_terminal("term-peer", "native", "epoch-resize")
+        .expect("peer pane");
 
     ws.propagate_geometry(&[
         (controlled_native, 0, 0),
         (controlled_native, 28, 96),
         (controlled_native, 30, 100),
         (observed_proxy, 20, 70),
-        (controlled_tmux, 15, 60),
+        (controlled_peer, 15, 60),
     ])
     .await
     .expect("propagate geometry");
 
     assert_eq!(ws.pane(controlled_native).viewport(), (30, 100));
     assert_eq!(ws.pane(observed_proxy).viewport(), (20, 70));
-    assert_eq!(ws.pane(controlled_tmux).viewport(), (15, 60));
-    for pane in [controlled_native, observed_proxy, controlled_tmux] {
+    assert_eq!(ws.pane(controlled_peer).viewport(), (15, 60));
+    for pane in [controlled_native, observed_proxy, controlled_peer] {
         let (rows, cols) = ws.pane(pane).viewport();
         assert!(matches!(
             ws.pane(pane)
@@ -2751,7 +2602,7 @@ async fn resize_geometry_policy_reducer() {
     for (pane, terminal_id) in [
         (controlled_native, "term-controlled"),
         (observed_proxy, "term-observed"),
-        (controlled_tmux, "term-tmux"),
+        (controlled_peer, "term-peer"),
     ] {
         let (rows, cols) = ws.pane(pane).viewport();
         let resize = resizes
@@ -4556,28 +4407,32 @@ async fn bare_navigation_keys_reach_a_focused_terminal() {
 async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-a", "tmux");
-    mock.set_attach_backend("terminal-b", "tmux");
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [
-                    {"terminal_id": "terminal-a", "backend": "tmux", "state": "live"},
-                    {"terminal_id": "terminal-b", "backend": "tmux", "state": "live"}
-                ],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
+    let host_a = mock_daemon::DirectHost::start("epoch-1").await;
+    let host_b = mock_daemon::DirectHost::start("epoch-1").await;
+    let hosts = [("terminal-a", &host_a), ("terminal-b", &host_b)];
+    let mut rows = Vec::new();
+    for (id, host) in hosts {
+        mock.serve_direct_attach(host.attach_locator(id));
+        rows.push(json!({"terminal_id":id,"backend":"native","state":"live","attach":host.roster_attach(id)}));
     }
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        json!({"items":rows,"next_cursor":null,"snapshot":{"daemon_epoch":"epoch-1","seq":1}}),
+    );
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
         .expect("connect live daemon");
     let mut workspace = Workspace::live(daemon);
+    let _home = tempfile::tempdir().expect("native mouse home");
+    workspace.set_gobby_home(_home.path().to_path_buf());
     workspace.select_project("project-1");
+    std::fs::write(
+        _home.path().join("bootstrap.yaml"),
+        "api_key: local-token\n",
+    )
+    .expect("API key");
     workspace
         .reconcile_subscribe_first()
         .await
@@ -4587,18 +4442,15 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
         let pane = workspace
             .pane_for_terminal(terminal_id)
             .expect("roster pane");
-        let attachment_id = workspace.pane(pane).attachment_id().to_string();
-        // Keep the daemon-backed proxy alive after this first frame. A
-        // one-frame scripted source returns EOF immediately after the frame
-        // and races attachment recovery against the mouse reports.
-        mock.send_event_and_wait(json!({
-            "type": "terminal_frame",
-            "terminal_id": terminal_id,
-            "attachment_id": attachment_id,
-            "encoding": "bincode-b64",
-            "payload": encode_frame(&reporting_frame("mouse app")),
-        }))
-        .await;
+        let host = hosts
+            .iter()
+            .find(|(id, _)| id == terminal_id)
+            .expect("native host")
+            .1;
+        host.expect_attaches(1).await;
+        host.to_client
+            .send(reporting_frame("mouse app"))
+            .expect("native frame");
         workspace
             .recv_pane_frame(pane)
             .await
@@ -4659,19 +4511,55 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
         let left_up = MouseEventKind::Up(MouseButton::Left);
         let right_down = MouseEventKind::Down(MouseButton::Right);
         let right_up = MouseEventKind::Up(MouseButton::Right);
-        let inputs = || websocket_requests(&mock, "terminal_input").len();
+        let inputs = || native_input_texts(&host_a).len() + native_input_texts(&host_b).len();
 
         // A click in the held pane is reported: press, then release.
         mouse(left_down, cell_of(&initial), KeyModifiers::NONE).await;
         mouse(left_up, cell_of(&initial), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
+        timeout(WAIT_BUDGET, async {
+            while inputs() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "expected 2 mouse reports; A={:?}; B={:?}",
+                host_a.drain(),
+                host_b.drain()
+            )
+        });
 
         // A press in the other pane focuses it and is reported there.
         mouse(left_down, cell_of(&other), KeyModifiers::NONE).await;
         wait_for_focus_reports(&mock, 2).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 3).await;
+        timeout(WAIT_BUDGET, async {
+            while inputs() != 3 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "expected 3 mouse reports; A={:?}; B={:?}",
+                host_a.drain(),
+                host_b.drain()
+            )
+        });
         mouse(left_up, cell_of(&other), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 4).await;
+        timeout(WAIT_BUDGET, async {
+            while inputs() != 4 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "expected 4 mouse reports; A={:?}; B={:?}",
+                host_a.drain(),
+                host_b.drain()
+            )
+        });
         assert_eq!(
             focused_report_count(&mock),
             2,
@@ -4681,12 +4569,48 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
         // alt+right-click passes through with the modifier hidden; the pane
         // flag passes a plain one through.
         mouse(right_down, cell_of(&other), KeyModifiers::ALT).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 5).await;
+        timeout(WAIT_BUDGET, async {
+            while inputs() != 5 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "expected 5 mouse reports; A={:?}; B={:?}",
+                host_a.drain(),
+                host_b.drain()
+            )
+        });
         mouse(right_up, cell_of(&other), KeyModifiers::ALT).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 6).await;
+        timeout(WAIT_BUDGET, async {
+            while inputs() != 6 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "expected 6 mouse reports; A={:?}; B={:?}",
+                host_a.drain(),
+                host_b.drain()
+            )
+        });
         mouse(right_down, cell_of(&other), KeyModifiers::NONE).await;
         mouse(right_up, cell_of(&other), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 8).await;
+        timeout(WAIT_BUDGET, async {
+            while inputs() != 8 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "expected 8 mouse reports; A={:?}; B={:?}",
+                host_a.drain(),
+                host_b.drain()
+            )
+        });
 
         // ctrl is not the configured modifier, so the press opens gclient's
         // context menu instead of reporting; Esc dismisses it and shift keeps
@@ -4723,50 +4647,36 @@ async fn mouse_forwarding_follows_pane_modes_and_passthrough() {
         driver
     );
     result.expect("live loop exits cleanly");
-    let writes = websocket_requests(&mock, "terminal_input");
-    let data: Vec<&str> = writes
-        .iter()
-        .map(|write| {
-            write
-                .get("data")
-                .and_then(Value::as_str)
-                .expect("write data")
-        })
-        .collect();
+    let reports = |id: &str| {
+        native_input_texts(
+            hosts
+                .iter()
+                .find(|(terminal, _)| *terminal == id)
+                .expect("native host")
+                .1,
+        )
+    };
+    assert_eq!(reports(&initial), ["\u{1b}[<0;2;2M", "\u{1b}[<0;2;2m"]);
     assert_eq!(
-        data,
+        reports(&other),
         [
             "\u{1b}[<0;2;2M",
             "\u{1b}[<0;2;2m",
-            "\u{1b}[<0;2;2M",
-            "\u{1b}[<0;2;2m",
             "\u{1b}[<2;2;2M",
             "\u{1b}[<2;2;2m",
             "\u{1b}[<2;2;2M",
-            "\u{1b}[<2;2;2m",
+            "\u{1b}[<2;2;2m"
         ],
-        "every report is SGR at the pane cell, modifiers stripped"
+        "SGR reports reach the pointed pane, with passthrough modifiers stripped"
     );
-    let targets: Vec<&str> = writes
-        .iter()
-        .map(|write| {
-            write
-                .get("terminal_id")
-                .and_then(Value::as_str)
-                .expect("write target")
-        })
-        .collect();
-    let (initial, other) = (initial.as_str(), other.as_str());
-    assert_eq!(
-        targets,
-        [initial, initial, other, other, other, other, other, other],
-        "reports go to the pane under the pointer"
-    );
+    assert!(websocket_requests(&mock, "terminal_input").is_empty());
     assert!(
         chrome.selection.is_some(),
         "shift+drag selects instead of reporting"
     );
     mock.shutdown().await;
+    host_a.shutdown().await;
+    host_b.shutdown().await;
 }
 
 /// 2.4.2: a wheel notch over a pane that reports no mouse scrolls its
@@ -5023,7 +4933,7 @@ async fn wheel_and_scrollbar_drive_scrollback() {
         // A pane on its alternate screen gets arrow keys instead of scrolling.
         // This pane is native on the daemon's proxy, so the arrows are refused
         // on the stream rather than relayed one by one through the daemon
-        // (ruling b59e4ce9). A tmux pane relays them; its test is separate.
+        // (ruling b59e4ce9). Native input uses the direct host control path.
         mock.send_event_and_wait(json!({
             "type": "terminal_frame",
             "terminal_id": "terminal-scroll",
@@ -5071,214 +4981,6 @@ async fn wheel_and_scrollbar_drive_scrollback() {
         u64::from(workspace.pane(pane).scroll_offset()),
         dragged,
         "the pane mirrors the last offset it asked for"
-    );
-    mock.shutdown().await;
-}
-
-/// A wheel notch on a pane that is on its alternate screen types arrow keys.
-/// A tmux pane is daemon-backed, so those arrows relay through the daemon.
-#[tokio::test]
-async fn an_alternate_screen_wheel_over_a_tmux_pane_types_three_arrows_a_notch() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-tmux", "tmux");
-    mock.enqueue_write_outcome("delivered", None);
-    mock.enqueue_write_outcome("delivered", None);
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [{"terminal_id": "terminal-tmux", "backend": "tmux", "state": "live"}],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    workspace.select_project("project-1");
-    workspace
-        .reconcile_subscribe_first()
-        .await
-        .expect("install initial attachments");
-    let pane = workspace
-        .pane_for_terminal("terminal-tmux")
-        .expect("roster pane");
-    let attachment = workspace.pane(pane).attachment_id().to_string();
-
-    // Mirror the loop's one-pane chrome to find a cell on the pane.
-    let mut probe = Chrome::dark();
-    probe.open_pane(pane, "terminal-tmux");
-    probe.compute_view(&workspace, Rect::new(0, 0, 120, 40));
-    let inner = probe.view.pane_infos[0].inner_rect;
-    let (column, row) = (inner.x + 1, inner.y + 1);
-
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(32);
-
-    let driver = async {
-        wait_for_focus_reports(&mock, 1).await;
-        mock.send_event_and_wait(json!({
-            "type": "terminal_frame",
-            "terminal_id": "terminal-tmux",
-            "attachment_id": attachment,
-            "encoding": "bincode-b64",
-            "payload": encoded_alternate_frame("full-screen app"),
-        }))
-        .await;
-        settle_live_event().await;
-        send_mouse(
-            &input_tx,
-            MouseEventKind::ScrollUp,
-            column,
-            row,
-            KeyModifiers::NONE,
-        )
-        .await;
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-        send_mouse(
-            &input_tx,
-            MouseEventKind::ScrollDown,
-            column,
-            row,
-            KeyModifiers::NONE,
-        )
-        .await;
-        wait_for_websocket_requests(&mock, "terminal_input", 2).await;
-        settle_live_event().await;
-        let inputs: Vec<String> = websocket_requests(&mock, "terminal_input")
-            .iter()
-            .map(|request| {
-                request
-                    .get("data")
-                    .and_then(Value::as_str)
-                    .expect("input data")
-                    .to_string()
-            })
-            .collect();
-        assert_eq!(
-            inputs,
-            vec![
-                "\x1b[A\x1b[A\x1b[A".to_string(),
-                "\x1b[B\x1b[B\x1b[B".to_string()
-            ],
-            "alternate-scroll types three arrow keys a notch"
-        );
-        drop(input_tx);
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("live loop exits cleanly");
-    mock.shutdown().await;
-}
-
-/// A tmux-backed pane has no daemon-side scrollback to ask for: the daemon
-/// skips the host verb for it and would answer with the client's own number,
-/// so the notch is consumed rather than pretending to scroll.
-#[tokio::test]
-async fn wheel_over_a_tmux_pane_asks_the_daemon_for_nothing() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-tmux", "tmux");
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [{"terminal_id": "terminal-tmux", "backend": "tmux", "state": "live"}],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    workspace.select_project("project-1");
-    workspace
-        .reconcile_subscribe_first()
-        .await
-        .expect("install initial attachments");
-    let pane = workspace
-        .pane_for_terminal("terminal-tmux")
-        .expect("roster pane");
-    assert!(
-        !workspace.pane(pane).backend.is_native(),
-        "tmux roster row stays tmux after attachment"
-    );
-
-    // Mirror the loop's one-pane chrome and confirm the notch's cell really
-    // lands on the pane, so an empty request log means the wheel was consumed
-    // rather than never routed.
-    let area = Rect::new(0, 0, 120, 40);
-    let mut probe = Chrome::dark();
-    probe.open_pane(pane, "terminal-tmux");
-    probe.compute_view(&workspace, area);
-    let inner = probe.view.pane_infos[0].inner_rect;
-    let (column, row) = (inner.x + 1, inner.y + 1);
-    assert!(
-        matches!(hit_test(&probe.view, column, row), Hit::Pane { .. }),
-        "the notch lands on the pane"
-    );
-
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(32);
-
-    // The loop draws its hit map before its first select and reads input ahead
-    // of the closed channel, so one notch then a drop is deterministic.
-    let driver = async {
-        send_mouse(
-            &input_tx,
-            MouseEventKind::ScrollUp,
-            column,
-            row,
-            KeyModifiers::NONE,
-        )
-        .await;
-        drop(input_tx);
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("live loop exits cleanly");
-    assert!(
-        websocket_requests(&mock, "terminal_set_scroll_offset").is_empty(),
-        "a tmux pane never asks the daemon to scroll: {:?}",
-        websocket_requests(&mock, "terminal_set_scroll_offset")
-    );
-    assert_eq!(
-        workspace.pane(pane).scroll_offset(),
-        0,
-        "the pane stays at the live edge"
     );
     mock.shutdown().await;
 }
@@ -6296,15 +5998,31 @@ async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
 
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
-    for terminal in ["terminal-a", "terminal-b", "terminal-c"] {
-        mock.set_attach_backend(terminal, "tmux");
+    let hosts = [
+        (
+            "terminal-a",
+            mock_daemon::DirectHost::start("epoch-1").await,
+        ),
+        (
+            "terminal-b",
+            mock_daemon::DirectHost::start("epoch-1").await,
+        ),
+        (
+            "terminal-c",
+            mock_daemon::DirectHost::start("epoch-1").await,
+        ),
+    ];
+    let mut rows = Vec::new();
+    for (id, host) in &hosts {
+        mock.serve_direct_attach(host.attach_locator(id));
+        rows.push(json!({"terminal_id":id,"backend":"native","state":"live","attach":host.roster_attach(id)}));
     }
     for _ in 0..3 {
         mock.enqueue(
             "GET",
             "/api/terminals?",
             200,
-            roster_items(&["terminal-a", "terminal-b", "terminal-c"]),
+            json!({"items":rows,"next_cursor":null,"snapshot":{"daemon_epoch":"epoch-1","seq":1}}),
         );
     }
     let seeded = mock.seed_workspace(
@@ -6324,6 +6042,9 @@ async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
         .await
         .expect("connect live daemon");
     let mut workspace = Workspace::live(daemon);
+    let home = tempfile::tempdir().expect("native home");
+    std::fs::write(home.path().join("bootstrap.yaml"), "api_key: local-token\n").expect("API key");
+    workspace.set_gobby_home(home.path().to_path_buf());
     workspace.select_project("project-1");
     workspace
         .reconcile_subscribe_first()
@@ -6341,7 +6062,7 @@ async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
     let driver = async {
         wait_for_focus_reports(&mock, 1).await;
         send_chord(&input_tx, KeyCode::Char('2'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        wait_for_focus_reports(&mock, 2).await;
         send_chord(&input_tx, KeyCode::Left, KeyModifiers::SHIFT).await;
         wait_for_websocket_requests(&mock, "workspace_op", 2).await;
         move_release.notify_one();
@@ -6351,7 +6072,7 @@ async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
         // before the rightward move, even though it publishes no workspace op.
         wait_for_drawn_text(&mut frames_rx, "Focused").await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
+        wait_until(|| native_input_texts(&hosts[1].1) == ["x"]).await;
         assert_eq!(
             websocket_requests(&mock, "workspace_op")
                 .iter()
@@ -6404,6 +6125,9 @@ async fn keyboard_tab_reorder_persists_and_stops_at_edges() {
         ]
     );
     mock.shutdown().await;
+    for (_, host) in hosts {
+        host.shutdown().await;
+    }
 }
 
 #[tokio::test]
@@ -6927,12 +6651,22 @@ async fn context_menu_dispatches_items_and_closes_outside() {
     let mock = MockDaemon::start("local-token").await;
     mock.queue_owned_terminal_id(SPAWNED);
     mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-a", "tmux");
-    mock.set_attach_backend("terminal-b", "tmux");
+    let host_a = mock_daemon::DirectHost::start("epoch-1").await;
+    let host_b = mock_daemon::DirectHost::start("epoch-1").await;
+    let hosts = [("terminal-a", &host_a), ("terminal-b", &host_b)];
+    for (id, host) in hosts {
+        mock.serve_direct_attach(host.attach_locator(id));
+    }
     let roster_page = |ids: &[&str]| {
         let items: Vec<Value> = ids
             .iter()
-            .map(|id| json!({"terminal_id": id, "backend": "tmux", "state": "live"}))
+            .map(|id| {
+                let mut row = json!({"terminal_id":id,"backend":"native","state":"live"});
+                if let Some((_, host)) = hosts.iter().find(|(terminal, _)| terminal == id) {
+                    row["attach"] = host.roster_attach(id);
+                }
+                row
+            })
             .collect();
         json!({
             "items": items,
@@ -6950,13 +6684,14 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         .await
         .expect("connect live daemon");
     let mut workspace = Workspace::live(daemon);
+    let home = tempfile::tempdir().expect("gobby home");
+    std::fs::write(home.path().join("bootstrap.yaml"), "api_key: local-token\n").expect("API key");
+    workspace.set_gobby_home(home.path().to_path_buf());
     workspace.select_project("project-1");
     workspace
         .reconcile_subscribe_first()
         .await
         .expect("install initial attachments");
-    let home = tempfile::tempdir().expect("gobby home");
-    workspace.set_gobby_home(home.path().to_path_buf());
     let light = ClientPrefs {
         theme: "light".to_string(),
         sidebar_pinned: false,
@@ -7062,25 +6797,26 @@ async fn context_menu_dispatches_items_and_closes_outside() {
             )
         };
         let key = |code| send_key(&input_tx, code, KeyModifiers::NONE);
-        let terminal_of = |request: &Value| {
-            request
-                .get("terminal_id")
-                .and_then(Value::as_str)
-                .expect("request terminal")
-                .to_string()
-        };
-
         // A press outside the open menu closes it and goes no further: the
         // pane under it is not focused, so the next key still reaches the
         // pane that had focus.
         press(MouseButton::Right, cell_of(&initial)).await;
         press(MouseButton::Left, cell_of(other)).await;
         key(KeyCode::Char('x')).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-        assert_eq!(
-            terminal_of(&websocket_requests(&mock, "terminal_input")[0]),
-            initial,
-            "the press that closed the menu must not reach the pane under it"
+        let initial_host = hosts
+            .iter()
+            .find(|(id, _)| *id == initial)
+            .expect("native host")
+            .1;
+        wait_until(|| native_input_texts(initial_host) == ["x"]).await;
+        let other_host = hosts
+            .iter()
+            .find(|(id, _)| *id == other)
+            .expect("other native host")
+            .1;
+        assert!(
+            native_input_texts(other_host).is_empty(),
+            "closing the menu does not focus the pane under it"
         );
         assert_eq!(focused_report_count(&mock), 1);
         send_click(&input_tx, cell_of(other), KeyModifiers::NONE).await;
@@ -7217,6 +6953,8 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         "split right lands beside the menu's pane: {spawned:?} vs {other_rect:?}"
     );
     mock.shutdown().await;
+    host_a.shutdown().await;
+    host_b.shutdown().await;
 }
 
 #[tokio::test]
@@ -7575,7 +7313,7 @@ fn sidebar_roster_entry(entry_id: &str, run_id: &str, terminal_id: &str) -> Valu
         "provider": "codex",
         "model": null,
         "terminal": {"terminal_id": terminal_id, "backend": "native"},
-        "tmux": null,
+        "native": null,
         "last_activity_at": null,
     })
 }
@@ -9607,7 +9345,7 @@ async fn tab_sets_follow_the_focused_project() {
     mock.shutdown().await;
 }
 
-/// Plan 2.3.1: after startup and after a slot change every shown pane, tmux
+/// Plan 2.3.1: after startup and after a slot change every shown pane, peer
 /// or native, held or observing, carries the geometry of its inner rect: a
 /// `SetViewport` plus a `terminal_resize` claiming the pane's size.
 #[tokio::test]
@@ -9631,7 +9369,7 @@ async fn every_shown_pane_sizes_its_terminal() {
         "GET",
         "/api/terminals?",
         200,
-        page(&[("term-native", "native"), ("term-tmux", "tmux")]),
+        page(&[("term-native", "native"), ("term-peer", "native")]),
     );
     mock.enqueue(
         "GET",
@@ -9639,7 +9377,7 @@ async fn every_shown_pane_sizes_its_terminal() {
         200,
         page(&[
             ("term-native", "native"),
-            ("term-tmux", "tmux"),
+            ("term-peer", "native"),
             (SPAWNED, "native"),
         ]),
     );
@@ -9651,7 +9389,7 @@ async fn every_shown_pane_sizes_its_terminal() {
         &mock,
         &mut workspace,
         "project-1",
-        &["term-native", "term-tmux"],
+        &["term-native", "term-peer"],
     );
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
     let mut chrome = Chrome::dark();
@@ -9669,8 +9407,8 @@ async fn every_shown_pane_sizes_its_terminal() {
             "startup sizes the native pane: {sized_at_startup:?}"
         );
         assert!(
-            sized_at_startup.contains(&json!("term-tmux")),
-            "startup sizes the tmux pane: {sized_at_startup:?}"
+            sized_at_startup.contains(&json!("term-peer")),
+            "startup sizes the peer pane: {sized_at_startup:?}"
         );
         send_chord(&input_tx, KeyCode::Char('-'), KeyModifiers::NONE).await;
         wait_until(|| workspace_ops(&mock, "pane.split").len() == 1).await;
@@ -9757,13 +9495,13 @@ async fn every_shown_pane_sizes_its_terminal() {
             (info.inner_rect.height, info.inner_rect.width)
         );
     }
-    let tmux = workspace.pane_for_terminal("term-tmux").expect("tmux pane");
+    let peer = workspace.pane_for_terminal("term-peer").expect("peer pane");
     let native = workspace
         .pane_for_terminal("term-native")
         .expect("native pane");
     assert!(
-        workspace.pane(tmux).writable(),
-        "the focused tmux pane stays writable"
+        workspace.pane(peer).writable(),
+        "the focused peer pane stays writable"
     );
     assert!(
         workspace.pane(native).writable(),
@@ -11363,7 +11101,7 @@ async fn an_unknown_pane_close_stays_quiet() {
 
     let driver = async {
         wait_for_focus_reports(&mock, 1).await;
-        // The fixture focuses the external pane; cycle to the owned one.
+        // The fixture focuses the adopted pane; cycle to the owned one.
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Tab, KeyModifiers::NONE).await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
@@ -11456,14 +11194,6 @@ fn focused_attachment(mock: &MockDaemon, terminal_id: &str) -> Option<String> {
         .into_iter()
         .rfind(|body| body.get("terminal_id") == Some(&json!(terminal_id)))
         .filter(|body| body.get("focused") == Some(&json!(true)))
-        .and_then(|body| body.get("attachment_id")?.as_str().map(str::to_owned))
-}
-
-/// The attachment of the latest focused report, whatever its terminal.
-fn last_focused_attachment(mock: &MockDaemon) -> Option<String> {
-    websocket_requests(mock, "terminal_focus")
-        .into_iter()
-        .rfind(|body| body.get("focused") == Some(&json!(true)))
         .and_then(|body| body.get("attachment_id")?.as_str().map(str::to_owned))
 }
 
@@ -12060,124 +11790,6 @@ async fn closing_an_unshown_agent_row_kills_that_row_not_the_focused_pane() {
     mock.shutdown().await;
 }
 
-/// Closing an external row detaches instead of killing.
-///
-/// An external row is a terminal the user attached -- a tmux pane gclient
-/// never created -- so "close terminal" on it means hand the lease back and
-/// drop the pane, which is what `close_live_pane` already does for the same
-/// case. Without the guard the sidebar's close destroyed a terminal living
-/// outside gclient entirely.
-#[tokio::test]
-async fn closing_an_external_row_detaches_instead_of_killing_it() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    for _ in 0..3 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [
-                    {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
-                    {
-                        "terminal_id": "terminal-tmux",
-                        "backend": "tmux",
-                        "state": "live",
-                        "ownership": "external"
-                    }
-                ],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    workspace.select_project("project-1");
-    workspace
-        .reconcile_subscribe_first()
-        .await
-        .expect("install initial attachments");
-    let external = workspace
-        .pane_for_terminal("terminal-tmux")
-        .expect("pane for terminal-tmux");
-    assert!(
-        workspace.pane(external).external,
-        "the roster marks this pane external"
-    );
-
-    let area = Rect::new(0, 0, 120, 40);
-    let mut probe = pinned_chrome();
-    show_roster(&workspace, &mut probe);
-    probe.compute_view(&workspace, area);
-    let mut probe_terminal = Terminal::new(TestBackend::new(120, 40)).expect("probe terminal");
-    let mut hits = None;
-    probe_terminal
-        .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
-        .expect("draw probe frame");
-    probe.view.apply_hits(hits.expect("probe frame drawn"));
-    let row_id = format!("{TERMINAL_ROW}terminal-tmux");
-    let anchor = probe
-        .view
-        .agent_hit_areas
-        .iter()
-        .find(|(entry, _)| *entry == row_id)
-        .map(|(_, rect)| (rect.x + 1, rect.y))
-        .expect("external terminal row drawn");
-
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
-    let mut chrome = pinned_chrome();
-    chrome.prefs.confirm_close = false;
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(32);
-    let driver = async {
-        let press = |button, (column, row): (u16, u16)| {
-            send_mouse(
-                &input_tx,
-                MouseEventKind::Down(button),
-                column,
-                row,
-                KeyModifiers::NONE,
-            )
-        };
-        tokio::time::pause();
-        press(MouseButton::Right, anchor).await;
-        tokio::time::advance(RENDER_TICK * 2).await;
-        settle_live_event().await;
-        tokio::time::resume();
-        // `close terminal` is the third item of an unblocked row's menu.
-        press(MouseButton::Left, (anchor.0 + 2, anchor.1 + 1 + 2)).await;
-        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
-        drop(input_tx);
-    };
-
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("live loop exits cleanly");
-    assert!(
-        websocket_requests(&mock, "terminal_kill").is_empty(),
-        "an external terminal is never killed from the sidebar"
-    );
-    assert!(
-        websocket_requests(&mock, "terminal_detach")
-            .iter()
-            .any(|body| body.get("terminal_id") == Some(&json!("terminal-tmux"))),
-        "closing it detaches this client's attachment and leaves the terminal running"
-    );
-    mock.shutdown().await;
-}
-
 /// An id naming neither a sidebar agent nor a terminal row still resolves to
 /// nothing, so the prefix branch widens the resolver without loosening it.
 #[tokio::test]
@@ -12622,10 +12234,6 @@ async fn reconnect_rearms_direct_from_the_fresh_roster_row() {
                     "frame_host_epoch": "host-epoch",
                     "host_socket": "/nonexistent/gobby-frames.sock",
                     "host_terminal_id": "ht-rearm",
-                    "socket_path": null,
-                    "pane_id": null,
-                    "server_pid": null,
-                    "server_start_time": null,
                 }
             }],
             "next_cursor": null,
@@ -13346,96 +12954,34 @@ async fn a_relist_older_than_a_pane_opened_here_does_not_reap_it() {
 /// still queued for the old attachment are reported unsent and never go out
 /// under it; the next key goes out under the new one.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_reattach_never_moves_typed_writes_to_the_new_attachment() {
-    const TERMINAL_ID: &str = "terminal-reattached";
+async fn native_host_recovery_never_replays_typed_writes() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
-    mock.set_attach_backend(TERMINAL_ID, "tmux");
-    for _ in 0..6 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [{"terminal_id": TERMINAL_ID, "backend": "tmux", "state": "live"}],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon.clone());
-    workspace.select_project("project-1");
-    workspace
-        .reconcile_subscribe_first()
-        .await
-        .expect("attached pane");
+    let host = mock_daemon::DirectHost::start("epoch-1").await;
+    mock.seed_workspace(
+        "project-1",
+        &[(&["terminal-reattached"], "terminal-reattached")],
+    );
+    let (mut workspace, _home) =
+        mock_daemon::live_workspace_on_direct_host(&mock, &host, "terminal-reattached").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
-    let typed = |mock: &MockDaemon| -> Vec<(String, Value)> {
-        websocket_requests(mock, "terminal_input")
-            .iter()
-            .map(|body| {
-                (
-                    body["data"].as_str().unwrap_or_default().to_owned(),
-                    body["attachment_id"].clone(),
-                )
-            })
-            .collect()
-    };
     let driver = async {
         wait_for_focus_reports(&mock, 1).await;
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-        // The hold is one-shot, so x's reply must be out before it is set.
-        timeout(WAIT_BUDGET, async {
-            while mock.replies("terminal_input") < 1 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("x is answered");
-        // y, z and w are each held on the wire, so all three stay unsettled
-        // when the attachment changes.
-        let releases: Vec<_> = (0..3)
-            .map(|_| mock.hold_ws("terminal_input", |_| true))
-            .collect();
+        wait_until(|| native_input_texts(&host).len() == 1).await;
         for key in ['y', 'z', 'w'] {
             send_key(&input_tx, KeyCode::Char(key), KeyModifiers::NONE).await;
         }
-        wait_for_websocket_requests(&mock, "terminal_input", 4).await;
-        settle_before_lag(&mock).await;
-        lag_the_loop_receiver(&mock, &daemon);
-        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
-        // The attach sets its own viewport before the loop installs it; only
-        // the loop's resize says the pane is live on attachment-2.
-        timeout(WAIT_BUDGET, async {
-            while !websocket_requests(&mock, "terminal_resize")
-                .iter()
-                .any(|body| body["attachment_id"] == "attachment-2")
-            {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("attachment-2 installed");
-        for release in releases {
-            release.notify_one();
-        }
+        wait_until(|| native_input_texts(&host).len() == 4).await;
+        host.disconnect();
+        host.expect_attaches(2).await;
         // The new attachment is writable at once; the loop reports it focused.
         send_key(&input_tx, KeyCode::Char('q'), KeyModifiers::NONE).await;
-        wait_for_focus_reports(&mock, 2).await;
-        timeout(WAIT_BUDGET, async {
-            while !typed(&mock).iter().any(|(data, _)| data == "q") {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("q goes out under the new attachment");
+
+        wait_until(|| native_input_texts(&host).len() == 5).await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -13450,19 +12996,12 @@ async fn a_reattach_never_moves_typed_writes_to_the_new_attachment() {
         driver
     );
     result.expect("reattached loop");
-    let sent = typed(&mock);
-    let data: Vec<&str> = sent.iter().map(|(data, _)| data.as_str()).collect();
     assert_eq!(
-        data,
+        native_input_texts(&host),
         ["x", "y", "z", "w", "q"],
-        "y, z and w went out before the reattach; q is the first write after it"
+        "reattach never replays an earlier native write"
     );
-    let old = sent[1].1.clone();
-    assert!(
-        sent[1..4].iter().all(|(_, attachment)| *attachment == old),
-        "y, z and w stay on the attachment they were typed for: {sent:?}"
-    );
-    assert_ne!(sent[4].1, old, "q goes out under the new attachment");
+    assert!(websocket_requests(&mock, "terminal_input").is_empty());
     let titles: Vec<&str> = chrome
         .alert_log
         .iter()
@@ -13471,56 +13010,40 @@ async fn a_reattach_never_moves_typed_writes_to_the_new_attachment() {
     // Every write reached the wire before the reattach, so none is abandoned.
     assert!(titles.is_empty(), "no write is reported unsent: {titles:?}");
     mock.shutdown().await;
+    host.shutdown().await;
 }
 
 /// A key typed while a lag re-attach still waits on its attach reply is the
 /// pane's ask for control: it lands under the new attachment once that is
 /// installed, after a takeover take, instead of being dropped (#23559).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_key_typed_while_reattaching_lands_on_the_new_attachment() {
+async fn a_key_and_paste_typed_while_the_native_host_recovers_arrive_once_in_order() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-reattached", "tmux");
-    for _ in 0..6 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [{"terminal_id": "terminal-reattached", "backend": "tmux", "state": "live"}],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon.clone());
-    workspace.select_project("project-1");
-    workspace
-        .reconcile_subscribe_first()
-        .await
-        .expect("attached pane");
+    let host = mock_daemon::DirectHost::start("epoch-1").await;
+    mock.seed_workspace(
+        "project-1",
+        &[(&["terminal-reattached"], "terminal-reattached")],
+    );
+    let (mut workspace, _home) =
+        mock_daemon::live_workspace_on_direct_host(&mock, &host, "terminal-reattached").await;
     let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
     let mut chrome = Chrome::dark();
     show_roster(&workspace, &mut chrome);
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
         wait_for_focus_reports(&mock, 1).await;
-        settle_before_lag(&mock).await;
-        // Holding the re-attach's reply keeps the pane attaching.
-        let attached = mock.hold_ws("terminal_attach", |_| true);
-        lag_the_loop_receiver(&mock, &daemon);
-        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
-        // Input outranks recoveries, so 'q' is handled before the attach
-        // reply released behind it is applied.
+        let gate = host.hold_accepts();
+        host.disconnect();
+        wait_until(|| host.connections() >= 2).await;
         send_key(&input_tx, KeyCode::Char('q'), KeyModifiers::NONE).await;
-        attached.notify_one();
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-        // The reattached pane's focus report leaves on a render tick, which can
-        // land after the input closes. Wait for it before the count below.
-        wait_for_focus_reports(&mock, 2).await;
+        input_tx
+            .send(RawInputEvent::Paste("pasted text".to_owned()))
+            .await
+            .expect("paste during recovery");
+        host.release_accepts(&gate);
+        host.expect_attaches(2).await;
+        wait_until(|| native_input_texts(&host) == ["q", "pasted text"]).await;
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
@@ -13535,98 +13058,15 @@ async fn a_key_typed_while_reattaching_lands_on_the_new_attachment() {
         driver
     );
     result.expect("reattached loop");
-    assert_eq!(focused_report_count(&mock), 2);
-    assert_eq!(
-        last_focused_attachment(&mock).as_deref(),
-        Some("attachment-2"),
-        "the new attachment is the one reported focused"
-    );
-    let typed = websocket_requests(&mock, "terminal_input");
-    assert_eq!(typed.len(), 1);
-    assert_eq!(typed[0]["data"], "q");
-    assert_eq!(typed[0]["attachment_id"], "attachment-2");
+    assert_eq!(native_input_texts(&host), ["q", "pasted text"]);
+    assert!(websocket_requests(&mock, "terminal_input").is_empty());
     mock.shutdown().await;
+    host.shutdown().await;
 }
 
 /// A key typed while a lag recovery still detaches the old attachment waits
 /// for the attachment the recovery installs next: neither the finalize event
 /// nor the retire and re-attach that follow drop it (#23559).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_key_typed_while_a_recovery_detaches_lands_on_the_new_attachment() {
-    let mock = MockDaemon::start("local-token").await;
-    mock.use_unique_attachment_ids();
-    mock.set_attach_backend("terminal-reattached", "tmux");
-    for _ in 0..6 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [{"terminal_id": "terminal-reattached", "backend": "tmux", "state": "live"}],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon.clone());
-    workspace.select_project("project-1");
-    workspace
-        .reconcile_subscribe_first()
-        .await
-        .expect("attached pane");
-    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
-    let mut chrome = Chrome::dark();
-    show_roster(&workspace, &mut chrome);
-    let (input_tx, input_rx) = mpsc::channel(16);
-    let driver = async {
-        wait_for_focus_reports(&mock, 1).await;
-        settle_before_lag(&mock).await;
-        // Holding the detach's reply keeps the pane detaching.
-        let detached = mock.hold_ws("terminal_detach", |_| true);
-        lag_the_loop_receiver(&mock, &daemon);
-        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
-        send_key(&input_tx, KeyCode::Char('q'), KeyModifiers::NONE).await;
-        // The daemon finalizes the attachment before it answers the detach.
-        mock.send_event(json!({
-            "type": "terminal_attachment_finalized",
-            "daemon_epoch": "epoch-1",
-            "seq": 2,
-            "terminal_id": "terminal-reattached",
-            "attachment_id": "attachment-1",
-            "reason": "detach",
-        }));
-        detached.notify_one();
-        wait_for_websocket_requests(&mock, "terminal_input", 1).await;
-        wait_for_focus_reports(&mock, 2).await;
-        drop(input_tx);
-    };
-    let mut switch = TerminalGuard::recording().0;
-    let (result, ()) = tokio::join!(
-        run_live_loop(
-            &mut workspace,
-            &mut terminal,
-            &mut chrome,
-            input_rx,
-            &mut switch
-        ),
-        driver
-    );
-    result.expect("reattached loop");
-    assert_eq!(focused_report_count(&mock), 2);
-    assert_eq!(
-        last_focused_attachment(&mock).as_deref(),
-        Some("attachment-2"),
-        "the new attachment is the one reported focused"
-    );
-    let typed = websocket_requests(&mock, "terminal_input");
-    assert_eq!(typed.len(), 1);
-    assert_eq!(typed[0]["data"], "q");
-    assert_eq!(typed[0]["attachment_id"], "attachment-2");
-    mock.shutdown().await;
-}
 
 #[tokio::test]
 async fn provider_error_shows_sanitized_warning_without_opening_response() {
@@ -13706,10 +13146,10 @@ async fn provider_error_shows_sanitized_warning_without_opening_response() {
 
 /// gobby-#23213 1.7.5: native is the unmarked default and a foreign backend is
 /// named. Pane chrome prints a native pane's bare address (`gclient` when it
-/// has none) and prefixes a tmux pane's with `tmux`; the navigator and the
+/// has none); the navigator and the
 /// orphan dialog name the backend of every terminal.
 #[test]
-fn terminal_inventory_renders_each_backend() {
+fn terminal_inventory_renders_native_workspace_addresses() {
     let mut ws = Workspace::scripted();
     let native = ws
         .open_terminal("term-native", "native", "epoch")
@@ -13717,15 +13157,22 @@ fn terminal_inventory_renders_each_backend() {
     let addressless = ws
         .open_terminal("term-bare", "native", "epoch")
         .expect("addressless native pane");
-    let tmux = ws
-        .open_terminal("term-tmux", "tmux", "epoch")
-        .expect("tmux pane");
-    ws.pane_mut(native).address = Some("0:1".to_owned());
-    ws.pane_mut(tmux).address = Some("%16".to_owned());
+    let peer = ws
+        .open_terminal("term-peer", "native", "epoch")
+        .expect("peer pane");
+    let mut snapshot: gobby_client::daemon::WorkspaceSnapshot = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/terminal_ws_golden/workspace_snapshot.json"
+    ))
+    .expect("workspace snapshot");
+    snapshot.workspace.node_ref = Some(0);
+    snapshot.workspace.reference = 0;
+    snapshot.panes[0].terminal_id = Some("term-native".to_owned());
+    snapshot.panes[1].terminal_id = Some("term-peer".to_owned());
+    ws.apply_workspace_snapshot(snapshot);
 
-    assert_eq!(pane_address(&ws, ws.pane(native)), "0:1");
+    assert_eq!(pane_address(&ws, ws.pane(native)), "0:0:1:1");
     assert_eq!(pane_address(&ws, ws.pane(addressless)), "gclient");
-    assert_eq!(pane_address(&ws, ws.pane(tmux)), "tmux %16");
+    assert_eq!(pane_address(&ws, ws.pane(peer)), "0:0:1:2");
 
     let rows = navigator_rows(&ws, &Chrome::dark());
     let detail = |terminal_id: &str| {
@@ -13734,9 +13181,9 @@ fn terminal_inventory_renders_each_backend() {
             .map(|row| row.detail.clone())
             .expect("navigator row for every terminal")
     };
-    assert!(detail("term-native").ends_with(" · 0:1 gclient"));
+    assert!(detail("term-native").ends_with(" · 0:0:1:1 gclient"));
     assert!(detail("term-bare").ends_with(" · gclient"));
-    assert!(detail("term-tmux").ends_with(" · %16 tmux"));
+    assert!(detail("term-peer").ends_with(" · 0:0:1:2 gclient"));
 
     let orphan = |backend: Backend, name: &str| {
         row_summary(&OrphanRow {
@@ -13750,9 +13197,5 @@ fn terminal_inventory_renders_each_backend() {
     assert_eq!(
         orphan(Backend::Native, "agent"),
         "agent · gclient · no session"
-    );
-    assert_eq!(
-        orphan(Backend::Tmux, "hand-started"),
-        "hand-started · tmux · no session"
     );
 }

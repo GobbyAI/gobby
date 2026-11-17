@@ -31,6 +31,16 @@ pub struct WorkspaceSim {
 }
 
 impl super::MockDaemon {
+    /// Mark a seeded native terminal as adopted by its workspace pane.
+    pub fn adopt_seeded_terminal(&self, terminal_id: &str) {
+        let mut state = self.state.lock().expect("mock state");
+        for pane in &mut state.workspace.panes {
+            if pane["terminal_id"].as_str() == Some(terminal_id) {
+                pane["owns_terminal"] = json!(false);
+            }
+        }
+    }
+
     /// The workspace events ops have published so far. The mock answers each
     /// op's events on the sender's connection only, so a test relays another
     /// client's event to an attached window the way the daemon's broadcast does.

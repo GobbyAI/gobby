@@ -58,7 +58,7 @@ async fn send_key(input: &mpsc::Sender<RawInputEvent>, code: KeyCode, modifiers:
 }
 
 /// One live terminal pinned into a project, as `client_loop.rs` sets it up.
-/// `backend` is the attach and roster backend: `tmux` relays keys through the
+/// `backend` is the attach and roster backend: `peer` relays keys through the
 /// daemon, `native` types on the direct path.
 async fn single_terminal_loop(
     mock: &MockDaemon,

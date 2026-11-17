@@ -342,7 +342,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 .or_else(|| run.and_then(|(_, run)| run.provider.clone()))
                 .or_else(|| session.and_then(|(_, session)| session.source.clone()))
                 .filter(|provider| !provider.is_empty());
-            // The name ladder: the agent definition, then the tmux name, then the
+            // The name ladder: the agent definition, then the
             // pane's own name, and the short terminal id for a roster entry with
             // no pane open. The provider is no rung: it rides on the row's second
             // line with the model.
@@ -365,12 +365,6 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
             };
             let name = agent_definition_name
                 .clone()
-                .or_else(|| {
-                    entry
-                        .tmux_session_name
-                        .clone()
-                        .filter(|name| !name.is_empty())
-                })
                 .or_else(|| pane.map(|pane| pane.display_name().to_string()))
                 .unwrap_or_else(|| short_terminal_id(anchor).to_string());
             let machine_id = [

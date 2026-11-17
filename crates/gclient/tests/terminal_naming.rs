@@ -4,10 +4,8 @@
 //! the user gave the pane, then the command in its foreground, then a short
 //! terminal ID. The provider belongs on the agent row, not the terminal row.
 //!
-//! `title` is deliberately not a rung, and the rows here carry misleading ones
-//! to prove it: the daemon fills `title` from `window_name or pane_title or
-//! session_name`, so it is `zsh` for one pane and `75`, `[tmux]` or a whole
-//! session banner for the next.
+//! `title` is deliberately not a rung. Native rows carry misleading titles
+//! here to prove that terminal names, foreground commands and short IDs win.
 
 use super::mock_daemon;
 
@@ -27,39 +25,14 @@ const SHELL: &str = "fe6f6dc6-6b00-4bf0-b5ac-e69a0b73b80c";
 const ABSENT: &str = "910ed674-bb52-404e-bd67-5372f69a9cab";
 const SESSION: &str = "8c97a3b9-a98d-4c92-b35b-0fddeb48570f";
 
-/// A live tmux row exactly as `/api/terminals` ships it. `title` is null rather
-/// than absent when the pane never reported one, which is the shape the daemon
-/// actually sends, and `command` is null for a row the daemon could not probe.
-fn tmux_row(terminal_id: &str, title: Value, pane: &str, command: Value) -> Value {
-    json!({
-        "terminal_id": terminal_id,
-        "state": "live",
-        "backend": "tmux",
-        "title": title,
-        "command": command,
-        "attach": {
-            "backend": "tmux",
-            "frame_host_epoch": "host-epoch",
-            "host_socket": "/tmp/gobby-frames.sock",
-            "host_terminal_id": null,
-            "socket_path": "/tmp/tmux-501/default",
-            "pane_id": pane,
-            "server_pid": 2212,
-            "server_start_time": 1788478295,
-        }
-    })
+/// A native terminal with a reported title and foreground command.
+fn titled_row(terminal_id: &str, title: Value, command: Value) -> Value {
+    json!({"terminal_id":terminal_id,"state":"live","backend":"native","title":title,"command":command})
 }
 
-/// A native row: no tmux pane, so the foreground command is the only thing
-/// about it the daemon can observe.
+/// A native terminal that has not reported a title.
 fn native_row(terminal_id: &str, command: Value) -> Value {
-    json!({
-        "terminal_id": terminal_id,
-        "state": "live",
-        "backend": "native",
-        "title": null,
-        "command": command,
-    })
+    titled_row(terminal_id, Value::Null, command)
 }
 
 /// The attention-roster entry that lists `terminal_id` in the sessions section.
@@ -129,16 +102,16 @@ async fn sidebar(rows: Vec<Value>, attention: Vec<Value>) -> (Vec<SidebarRow>, V
 
 /// Rung 2, and the rung the daemon had to grow a new mechanism to serve: with
 /// no name of its own and no session bound to it, a terminal is called after
-/// whatever is running in it. The titles here are what tmux actually reports
+/// whatever is running in it. The titles here are possible reported terminal titles
 /// for such panes, and none of them reaches the row.
 #[tokio::test]
 async fn the_foreground_command_names_a_terminal_with_no_name_of_its_own() {
     let (roster, named) = sidebar(
         vec![
-            tmux_row(AGENT, json!("75"), "%533", json!("nvim")),
+            titled_row(AGENT, json!("75"), json!("nvim")),
             native_row(SHELL, json!("cargo")),
         ],
-        vec![entry(AGENT, "tmux"), entry(SHELL, "native")],
+        vec![entry(AGENT, "native"), entry(SHELL, "native")],
     )
     .await;
 
@@ -158,13 +131,8 @@ async fn the_foreground_command_names_a_terminal_with_no_name_of_its_own() {
 #[tokio::test]
 async fn a_managed_run_is_named_by_its_command_without_a_provider_token() {
     let (roster, named) = sidebar(
-        vec![tmux_row(
-            AGENT,
-            json!("gobby-codex-d0"),
-            "%533",
-            json!("node"),
-        )],
-        vec![entry_with_provider(AGENT, "tmux", "codex")],
+        vec![titled_row(AGENT, json!("gobby-codex-d0"), json!("node"))],
+        vec![entry_with_provider(AGENT, "native", "codex")],
     )
     .await;
 
@@ -177,10 +145,10 @@ async fn a_managed_run_is_named_by_its_command_without_a_provider_token() {
 async fn a_terminal_with_no_name_or_session_reads_its_daemon_command() {
     let (roster, named) = sidebar(
         vec![
-            tmux_row(AGENT, Value::Null, "%3", json!("zsh")),
+            titled_row(AGENT, Value::Null, json!("zsh")),
             native_row(SHELL, json!("zsh")),
         ],
-        vec![entry(AGENT, "tmux"), entry(SHELL, "native")],
+        vec![entry(AGENT, "native"), entry(SHELL, "native")],
     )
     .await;
 
@@ -197,10 +165,10 @@ async fn a_terminal_with_no_name_or_session_reads_its_daemon_command() {
 async fn two_terminals_running_the_same_command_keep_distinct_row_ids() {
     let (roster, _) = sidebar(
         vec![
-            tmux_row(AGENT, json!("15"), "%0", json!("zsh")),
-            tmux_row(SHELL, json!("[tmux]"), "%7", json!("zsh")),
+            titled_row(AGENT, json!("15"), json!("zsh")),
+            titled_row(SHELL, json!("[editor]"), json!("zsh")),
         ],
-        vec![entry(AGENT, "tmux"), entry(SHELL, "tmux")],
+        vec![entry(AGENT, "native"), entry(SHELL, "native")],
     )
     .await;
 
@@ -215,10 +183,10 @@ async fn two_terminals_running_the_same_command_keep_distinct_row_ids() {
 async fn unnamed_terminals_use_distinct_short_ids_without_exposing_uuids() {
     let (roster, named) = sidebar(
         vec![
-            tmux_row(AGENT, Value::Null, "%3", Value::Null),
+            titled_row(AGENT, Value::Null, Value::Null),
             native_row(SHELL, Value::Null),
         ],
-        vec![entry(AGENT, "tmux"), entry(SHELL, "native")],
+        vec![entry(AGENT, "native"), entry(SHELL, "native")],
     )
     .await;
 
@@ -253,13 +221,13 @@ async fn unnamed_terminals_use_distinct_short_ids_without_exposing_uuids() {
 /// left its row unmarked while its session sat blocked.
 #[tokio::test]
 async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
-    let mut row = tmux_row(AGENT, json!("gobby-codex-d0"), "%533", json!("node"));
+    let mut row = titled_row(AGENT, json!("gobby-codex-d0"), json!("node"));
     row["session_id"] = json!(SESSION);
     let (rows, _) = sidebar(
         vec![row],
         vec![json!({
             "entry_id": format!("session:{SESSION}"),
-            "terminal": {"terminal_id": AGENT, "backend": "tmux"},
+            "terminal": {"terminal_id": AGENT, "backend": "native"},
             "provider": "codex",
             "attention": {"attention_id": "att-1", "kind": "actionable", "fingerprint": "fp-1"}
         })],
@@ -286,7 +254,7 @@ async fn an_attention_row_keyed_by_session_names_the_terminal_that_hosts_it() {
 #[tokio::test]
 async fn an_attention_row_for_an_unknown_terminal_reads_as_its_short_id() {
     let (rows, named) = sidebar(
-        vec![tmux_row(AGENT, json!("75"), "%533", json!("nvim"))],
+        vec![titled_row(AGENT, json!("75"), json!("nvim"))],
         vec![json!({"entry_id": format!("blocked:{ABSENT}"), "kind": "blocked"})],
     )
     .await;

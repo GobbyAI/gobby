@@ -25,12 +25,6 @@ fn apply_newer_tab(workspace: &mut Workspace<LiveDaemon>, snapshot: &WorkspaceSn
     tab.id
 }
 
-fn assert_newer_model_survives(workspace: &Workspace<LiveDaemon>, seq: u64, tab: &str) {
-    let model = workspace.workspace_model().expect("model");
-    assert_eq!(model.watermark.seq, seq, "watermark is not rolled back");
-    assert!(model.tab(tab).is_some(), "the newer tab survives");
-}
-
 #[tokio::test]
 async fn an_older_shell_snapshot_does_not_replace_a_newer_model() {
     let mock = MockDaemon::start("local-token").await;
@@ -47,7 +41,9 @@ async fn an_older_shell_snapshot_does_not_replace_a_newer_model() {
         roster: None,
     };
     chain_apply::apply_shell(&mut workspace, &mut chrome, &mut jobs, true, Ok(shell));
-    assert_newer_model_survives(&workspace, seq, &newer_tab);
+    let model = workspace.workspace_model().expect("model");
+    assert_eq!(model.watermark.seq, seq, "watermark is not rolled back");
+    assert!(model.tab(&newer_tab).is_some(), "the newer tab survives");
     mock.shutdown().await;
 }
 
@@ -75,6 +71,8 @@ async fn an_older_adoption_snapshot_does_not_replace_a_newer_model() {
         old_tab,
         adopted,
     );
-    assert_newer_model_survives(&workspace, seq, &newer_tab);
+    let model = workspace.workspace_model().expect("model");
+    assert_eq!(model.watermark.seq, seq, "watermark is not rolled back");
+    assert!(model.tab(&newer_tab).is_some(), "the newer tab survives");
     mock.shutdown().await;
 }

@@ -209,19 +209,19 @@ async fn agent_row_click_jumps_and_labels_the_session() {
         "items": [
             {
                 "terminal_id": "terminal-1",
-                "backend": "tmux",
+                "backend": "native",
                 "state": "live",
                 "title": "15",
                 "session_id": "sess-1",
-                "attach": {"backend": "tmux", "pane_id": "%15"}
+                "attach": null
             },
             {
                 "terminal_id": "terminal-2",
-                "backend": "tmux",
+                "backend": "native",
                 "state": "live",
                 "title": "zsh",
                 "command": "zsh",
-                "attach": {"backend": "tmux", "pane_id": "%16"}
+                "attach": null
             }
         ],
         "next_cursor": null,
@@ -235,7 +235,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
                 "entry_id": "session:sess-1",
                 "session_id": "sess-1",
                 "definition": "Architect",
-                "terminal": {"terminal_id": "terminal-1", "backend": "tmux"},
+                "terminal": {"terminal_id": "terminal-1", "backend": "native"},
                 "attention": {
                     "attention_id": "att-1",
                     "state": "blocked",
@@ -249,7 +249,7 @@ async fn agent_row_click_jumps_and_labels_the_session() {
             },
             {
                 "entry_id": "run:terminal-2",
-                "terminal": {"terminal_id": "terminal-2", "backend": "tmux"}
+                "terminal": {"terminal_id": "terminal-2", "backend": "native"}
             }
         ]
     });

@@ -2,10 +2,11 @@ use serde_json::Value;
 
 /// Check actual emitted client messages against production daemon admission, rather
 /// than trusting the transport mock's permissive terminal_write_outcome replies.
-pub fn assert_tmux_write_admission(requests: &[Value], terminal_id: &str) {
+pub fn assert_proxy_write_admission(requests: &[Value], terminal_id: &str) {
     let output = std::process::Command::new("uv")
         .args([
             "run",
+            "--no-sync",
             "python",
             "-c",
             r#"
@@ -24,7 +25,7 @@ async def check():
         if kind == 'terminal_attach':
             attaches += 1
             await registry.attach(terminal, message['frame_delivery'], websocket=socket,
-                                  attachment_id=f'attachment-{attaches}', backend='tmux')
+                                  attachment_id=f'attachment-{attaches}', backend='native')
         elif kind == 'terminal_detach':
             await registry.finalize(message['attachment_id'], 'detached')
         elif kind == 'terminal_take_control':

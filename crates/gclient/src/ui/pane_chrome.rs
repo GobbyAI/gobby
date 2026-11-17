@@ -41,11 +41,9 @@ impl MetadataTone {
 pub struct PaneCorners {
     /// Top left: state glyph, ref, definition, and the focus word.
     pub title: String,
-    /// Bottom right: the pane address (`0:0:1:2`, tmux's `%16`), or the
+    /// Bottom right: the pane address (`0:0:1:2`), or the
     /// backend alone until it is known.
     pub address: String,
-    /// A pane on a foreign backend names it between the mark and the address.
-    pub backend: Option<&'static str>,
     /// Drawn just before the address: whether an OS sandbox wraps the pane.
     pub sandbox: SandboxState,
     /// The mark `sandbox` draws as, from the glyph preference.
@@ -54,10 +52,9 @@ pub struct PaneCorners {
 }
 
 impl PaneCorners {
-    /// The address corner's text: the sandbox mark, the backend on a tmux
-    /// pane, then the address (`<lock> · tmux · %16`).
+    /// The address corner's text: the sandbox mark, then the address.
     pub fn address_label(&self) -> String {
-        [self.sandbox_mark, self.backend, Some(self.address.as_str())]
+        [self.sandbox_mark, Some(self.address.as_str())]
             .into_iter()
             .flatten()
             .collect::<Vec<_>>()
@@ -129,19 +126,10 @@ pub fn pane_corners<W: WorkspaceView>(
     };
     // A pane with no agent row (a bare shell) has no SRT launch record.
     let sandbox = agent.map_or(SandboxState::Unrestricted, |agent| agent.sandbox);
-    // A foreign backend with no address yet names only itself.
-    let (backend, address) = match (pane.backend.is_native(), own_address(ws, pane)) {
-        (true, address) => (
-            None,
-            address.unwrap_or_else(|| pane.backend.label().to_owned()),
-        ),
-        (false, Some(address)) => (Some(pane.backend.label()), address),
-        (false, None) => (None, pane.backend.label().to_owned()),
-    };
+    let address = own_address(ws, pane).unwrap_or_else(|| pane.backend.label().to_owned());
     PaneCorners {
         title,
         address,
-        backend,
         sandbox,
         sandbox_mark: sandbox_mark(sandbox, chrome.prefs.nerd_glyphs),
         tone,
@@ -155,27 +143,15 @@ pub(crate) fn exited(pane: &Pane, agent: Option<&AgentEntry>) -> bool {
 }
 
 /// The pane's address: machine:workspace:tab:pane wherever the workspace
-/// holds the terminal, a tmux pane included (`tmux 0:0:1:2`); a tmux pane
-/// the workspace does not hold keeps its own id (`tmux %16`).
+/// holds the terminal.
 pub fn pane_address<W: WorkspaceView>(ws: &W, pane: &Pane) -> String {
-    let backend = pane.backend.label();
-    let address = own_address(ws, pane);
-    if pane.backend.is_native() {
-        address.unwrap_or_else(|| backend.to_owned())
-    } else {
-        address.map_or_else(
-            || backend.to_owned(),
-            |address| format!("{backend} {address}"),
-        )
-    }
+    own_address(ws, pane).unwrap_or_else(|| pane.backend.label().to_owned())
 }
 
-/// The gclient ref of the workspace pane holding the terminal, whatever its
-/// backend, else the pane's own id; `None` when it has neither.
+/// The gclient ref of the workspace pane holding the terminal.
 fn own_address<W: WorkspaceView>(ws: &W, pane: &Pane) -> Option<String> {
     ws.workspace_model()
         .and_then(|model| model.pane_ref_for_terminal(&pane.terminal_id))
-        .or_else(|| pane.address.clone())
 }
 
 /// Cells the top-left title may fill: the edge less its corners and padding,

@@ -1197,7 +1197,7 @@ switch_project = "ctrl+1..9"
                     // project cards over agent rows (3.1), and again when the
                     // agents header gained its sort label over two-line rows
                     // (3.2), and again when the status line began naming the
-                    // prefix outside tmux, again when the sidebar split
+                    // prefix outside peer, again when the sidebar split
                     // into machines, projects, sessions and agents, and
                     // again when the sidebar became bands over one-line
                     // cards with the runs nested under their sessions and

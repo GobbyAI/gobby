@@ -191,8 +191,8 @@ async fn assert_project_operation_live(
     let mut terminal = Terminal::new(backend).expect("terminal");
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
-        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames).with_native_hosts(&_home);
+        probe.ready(0).await;
         probe.draws_continue().await;
         probe.key(KeyCode::Enter, KeyModifiers::NONE).await;
         timeout(
@@ -305,8 +305,8 @@ async fn held_project_kill_keeps_direct_input_live() {
     let mut terminal = Terminal::new(backend).expect("terminal");
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
-        wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames).with_native_hosts(&_home);
+        probe.ready(0).await;
         probe.draws_continue().await;
         probe.key(KeyCode::Enter, KeyModifiers::NONE).await;
         wait_for_websocket_requests(&mock, "terminal_kill", 1).await;

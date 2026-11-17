@@ -1,9 +1,7 @@
 //! Destroy orphaned terminals from the global menu or an agent row.
 //!
 //! An orphan is a row only the daemon can clean up: a native row in state
-//! `orphaned` (its host epoch is gone) or an external tmux session with no
-//! attached client (a tmux session started by hand and left detached).
-//! Gobby-owned tmux rows are always detached and are never listed. The
+//! `orphaned` (its host epoch is gone). The
 //! candidates come from the WS `terminal_list` inventory on activation, so
 //! the menu item needs no polling; the dialog pre-checks every row, and the
 //! kills go through the same `terminal_kill` the close-terminal action uses.
@@ -31,12 +29,7 @@ const CANDIDATE_STATES: [&str; 2] = ["live", "orphaned"];
 /// The orphan rule over one inventory row.
 pub fn is_orphan(row: &TerminalRow) -> bool {
     let field = |key: &str| row.fields.get(key).and_then(Value::as_str);
-    if field("state") == Some("orphaned") {
-        return true;
-    }
-    field("backend") == Some("tmux")
-        && field("ownership") == Some("external")
-        && row.fields.get("attached_clients").and_then(Value::as_u64) == Some(0)
+    field("backend") == Some("native") && field("state") == Some("orphaned")
 }
 
 /// The orphan candidates among `rows`, named for the dialog and sorted.
@@ -305,7 +298,7 @@ mod tests {
     fn target(terminal_id: &str, name: &str) -> OrphanRow {
         OrphanRow {
             terminal_id: terminal_id.to_string(),
-            backend: Backend::Tmux,
+            backend: Backend::Native,
             name: name.to_string(),
             owner: None,
             last_seen: None,
@@ -313,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn orphan_rows_keeps_native_orphaned_and_detached_external_tmux_only() {
+    fn orphan_rows_keep_native_rows_only() {
         let rows = [
             row(json!({
                 "terminal_id": "native-orphan",
@@ -323,8 +316,8 @@ mod tests {
                 "command": "zsh",
             })),
             row(json!({
-                "terminal_id": "tmux-detached",
-                "backend": "tmux",
+                "terminal_id": "peer-detached",
+                "backend": "native",
                 "ownership": "external",
                 "state": "live",
                 "name": "scratch",
@@ -333,16 +326,16 @@ mod tests {
                 "updated_at": "2026-09-10T14:05:00+00:00",
             })),
             row(json!({
-                "terminal_id": "tmux-attached",
-                "backend": "tmux",
+                "terminal_id": "peer-attached",
+                "backend": "native",
                 "ownership": "external",
                 "state": "live",
                 "name": "editor",
                 "attached_clients": 1,
             })),
             row(json!({
-                "terminal_id": "tmux-agent",
-                "backend": "tmux",
+                "terminal_id": "peer-agent",
+                "backend": "native",
                 "ownership": "gobby",
                 "state": "live",
                 "name": "gobby-1234",
@@ -371,22 +364,13 @@ mod tests {
 
         assert_eq!(
             orphan_rows(&rows, &sidebar),
-            [
-                OrphanRow {
-                    terminal_id: "tmux-detached".to_string(),
-                    backend: Backend::Tmux,
-                    name: "scratch".to_string(),
-                    owner: Some("#12".to_string()),
-                    last_seen: Some("14:05".to_string()),
-                },
-                OrphanRow {
-                    terminal_id: "native-orphan".to_string(),
-                    backend: Backend::Native,
-                    name: "zsh".to_string(),
-                    owner: None,
-                    last_seen: None,
-                },
-            ]
+            [OrphanRow {
+                terminal_id: "native-orphan".to_string(),
+                backend: Backend::Native,
+                name: "zsh".to_string(),
+                owner: None,
+                last_seen: None,
+            },]
         );
     }
 

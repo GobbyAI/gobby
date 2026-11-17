@@ -35,19 +35,11 @@ async fn chord(probe: &LivenessProbe<'_>, key: char) {
 /// Take a bounded observation while the mutation is held, then release it.
 /// Fail on the missing rendered content/input, rather than on a timeout.
 async fn assert_progress_while_held(probe: &LivenessProbe<'_>, terminal: &str, release: &Notify) {
-    let attachment = attachment_for(probe.mock, terminal);
     let before = probe.draws.load(Ordering::SeqCst);
-    let writes_before = written(probe.mock, terminal).len();
+    let writes_before = probe.input_receipts(terminal).len();
     let tag = format!("lifecycle-held-{before}");
     for _ in 0..PROBE_FRAMES {
-        probe
-            .mock
-            .send_event_and_wait(json!({
-                "type": "terminal_frame", "terminal_id": terminal,
-                "attachment_id": attachment, "encoding": "bincode-b64",
-                "payload": encoded_frame(&tag),
-            }))
-            .await;
+        probe.feed_frame(terminal, frame_message(&tag)).await;
         tokio::time::sleep(RENDER_TICK).await;
     }
     probe.key(KeyCode::Char('v'), KeyModifiers::NONE).await;
@@ -61,7 +53,8 @@ async fn assert_progress_while_held(probe: &LivenessProbe<'_>, terminal: &str, r
         .last()
         .is_some_and(|frame| frame.contains(&tag));
     let drew = probe.draws.load(Ordering::SeqCst) > before;
-    let typed = written(probe.mock, terminal)
+    let typed = probe
+        .input_receipts(terminal)
         .get(writes_before..)
         .is_some_and(|writes| writes.iter().any(|text| text == "v"));
     release.notify_one();
@@ -223,7 +216,7 @@ async fn two_new_tabs_before_the_first_create_lands_place_both() {
     let mut terminal = Terminal::new(backend).expect("terminal");
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames).with_native_hosts(&_home);
         wait_until("a pane is focused", || {
             websocket_requests(&mock, "terminal_focus")
                 .iter()
@@ -296,20 +289,30 @@ async fn two_new_tabs_before_the_first_create_lands_place_both() {
 async fn a_held_adoption_step_keeps_the_window_live_and_rolls_back_on_refusal() {
     let mock = MockDaemon::start("local-token").await;
     mock.refuse_workspace_op_at("pane.split", 1, "busy", "adoption split refused");
-    // The focused pane types through the daemon, so both are tmux-backed (see
-    // `pane_workspace`).
-    mock.set_attach_backend("terminal-a", "tmux");
-    mock.set_attach_backend("terminal-b", "tmux");
+    let home = tempfile::tempdir().expect("native fixture home");
+    std::fs::write(home.path().join("bootstrap.yaml"), "api_key: local-token\n").expect("API key");
+    let mut fixture = NativeFixture {
+        _home: home,
+        hosts: std::collections::HashMap::new(),
+    };
+    let mut rows = Vec::new();
+    for id in ["terminal-a", "terminal-b"] {
+        let host = Arc::new(mock_daemon::DirectHost::start(HOST_EPOCH).await);
+        mock.serve_direct_attach(host.attach_locator(id));
+        rows.push(json!({"terminal_id":id,"backend":"native","state":"live","attach":host.roster_attach(id)}));
+        fixture.hosts.insert(id.to_owned(), host);
+    }
     mock.enqueue(
         "GET",
         "/api/terminals?",
         200,
-        roster_items_on("tmux", &["terminal-a", "terminal-b"]),
+        json!({"items": rows, "next_cursor":null,"snapshot":{"daemon_epoch":"epoch-1","seq":1}}),
     );
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
         .expect("daemon");
     let mut workspace = Workspace::live(daemon);
+    workspace.set_gobby_home(fixture._home.path().to_path_buf());
     workspace.select_project("project-1");
     workspace
         .reconcile_subscribe_first()
@@ -330,7 +333,7 @@ async fn a_held_adoption_step_keeps_the_window_live_and_rolls_back_on_refusal() 
     let mut terminal = Terminal::new(backend).expect("terminal");
     let (input_tx, input_rx) = mpsc::channel(16);
     let driver = async {
-        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        let probe = LivenessProbe::new(&mock, &input_tx, draws, frames).with_native_hosts(&fixture);
         wait_until("the focused pane is attached", || {
             focused_attachment(&mock, &focused).is_some()
         })
@@ -423,7 +426,8 @@ async fn closing_a_tab_issues_tab_close_only_after_every_kill_settles() {
         let mut terminal = Terminal::new(backend).expect("terminal");
         let (input_tx, input_rx) = mpsc::channel(16);
         let driver = async {
-            let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+            let probe =
+                LivenessProbe::new(&mock, &input_tx, draws, frames).with_native_hosts(&_home);
             wait_until("terminal-b focused", || {
                 focused_attachment(&mock, "terminal-b").is_some()
             })
@@ -458,7 +462,8 @@ async fn closing_a_tab_issues_tab_close_only_after_every_kill_settles() {
                     &input_tx,
                     Arc::clone(&probe.draws),
                     Arc::clone(&probe.frames),
-                );
+                )
+                .with_native_hosts(&_home);
                 probe_frames.frames_render("terminal-c").await;
                 probe.key_reaches("terminal-c", 'w').await;
             } else {
@@ -541,7 +546,8 @@ async fn a_held_arrange_or_grid_op_keeps_frames_flowing_and_places_from_returned
         let mut terminal = Terminal::new(backend).expect("terminal");
         let (input_tx, input_rx) = mpsc::channel(16);
         let driver = async {
-            let probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+            let probe =
+                LivenessProbe::new(&mock, &input_tx, draws, frames).with_native_hosts(&_home);
             wait_until("terminal-b focused", || {
                 focused_attachment(&mock, "terminal-b").is_some()
             })

@@ -9,6 +9,20 @@ use ratatui::backend::TestBackend;
 use ratatui::Terminal;
 use serde_json::json;
 
+fn place_native_terminals(ws: &mut Workspace, terminals: [&str; 2]) {
+    let mut snapshot: crate::daemon::WorkspaceSnapshot = serde_json::from_str(include_str!(
+        "../../../../../tests/fixtures/terminal_ws_golden/workspace_snapshot.json"
+    ))
+    .unwrap();
+    snapshot.workspace.node_ref = Some(0);
+    snapshot.workspace.reference = 0;
+    snapshot.tabs[0].reference = 1;
+    for (pane, terminal) in snapshot.panes.iter_mut().zip(terminals) {
+        pane.terminal_id = Some(terminal.to_owned());
+    }
+    ws.apply_workspace_snapshot(snapshot);
+}
+
 fn scripted() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
     ws.daemon_mut().set_roster(json!({
@@ -116,12 +130,12 @@ fn render_panes_draws_titles_and_focus_word() {
 fn corners_render_with_and_without_pane_gaps() {
     for pane_gaps in [true, false] {
         let (mut ws, mut chrome) = scripted();
+        place_native_terminals(&mut ws, ["term-alpha", "term-beta"]);
         for terminal_id in ["term-alpha", "term-beta"] {
             let pane_id = ws.pane_for_terminal(terminal_id).unwrap();
             let pane = ws.pane_mut(pane_id);
             pane.label = None;
             pane.command = Some("zsh".to_owned());
-            pane.address = Some("0:0:1:2".to_owned());
         }
         chrome.prefs.pane_gaps = pane_gaps;
         chrome.compute_view(&ws, Rect::new(0, 0, 120, 20));
@@ -143,7 +157,13 @@ fn corners_render_with_and_without_pane_gaps() {
                 "gaps={pane_gaps}: bottom edge {edge:?}"
             );
             assert!(
-                edge.ends_with(" 0:0:1:2 "),
+                edge.ends_with(
+                    if chrome.pane_for_slot(info.id) == ws.pane_for_terminal("term-alpha") {
+                        " 0:0:1:1 "
+                    } else {
+                        " 0:0:1:2 "
+                    }
+                ),
                 "gaps={pane_gaps}: bottom edge {edge:?}"
             );
         }
@@ -156,7 +176,7 @@ fn stacked_panes_without_gaps_keep_the_upper_address_beside_its_title() {
     ws.daemon_mut()
         .set_roster(json!({"epoch": "e1", "seq": 1, "entries": []}));
     ws.reconcile_subscribe_first().unwrap();
-    ws.open_terminal("term-alpha", "tmux", "epoch").unwrap();
+    ws.open_terminal("term-alpha", "native", "epoch").unwrap();
     ws.open_terminal("term-beta", "native", "epoch").unwrap();
     let mut chrome = Chrome::dark();
     chrome.open_pane(ws.pane_for_terminal("term-alpha").unwrap(), "alpha");
@@ -175,11 +195,11 @@ fn stacked_panes_without_gaps_keep_the_upper_address_beside_its_title() {
     );
     let top = cells(&terminal, upper.rect.y, upper.rect.x, upper.rect.right());
     assert!(top.contains("   term-alpha "), "{top:?}");
-    assert!(top.ends_with(" tmux ┐"), "{top:?}");
+    assert!(top.ends_with(" gclient ┐"), "{top:?}");
 
     let lower = info_of(&ws, &chrome, "term-beta");
     let shared = cells(&terminal, lower.rect.y, lower.rect.x, lower.rect.right());
-    assert!(!shared.contains("tmux"), "{shared:?}");
+    assert!(!shared.contains("gclient"), "{shared:?}");
     assert!(shared.contains("   term-beta · Focused "), "{shared:?}");
     let bottom = cells(
         &terminal,
@@ -442,11 +462,11 @@ fn srt_lock_draws_red_and_unrestricted_addresses_draw_no_mark() {
         ws.reconcile_subscribe_first().unwrap();
         ws.open_terminal("term-srt", "native", "epoch").unwrap();
         ws.open_terminal("term-seat", "native", "epoch").unwrap();
+        place_native_terminals(&mut ws, ["term-seat", "term-srt"]);
         let mut chrome = Chrome::new(Theme::new(kind));
         for terminal in ["term-srt", "term-seat"] {
             let pane_id = ws.pane_for_terminal(terminal).unwrap();
             chrome.open_pane(pane_id, "alpha");
-            ws.pane_mut(pane_id).address = Some("0:0:1:2".to_owned());
         }
         chrome.compute_view(&ws, Rect::new(0, 0, 120, 20));
         let terminal = draw(&ws, &chrome, 120, 20);
@@ -469,7 +489,7 @@ fn srt_lock_draws_red_and_unrestricted_addresses_draw_no_mark() {
         );
         let seat_edge = edge(&seat);
         assert!(
-            seat_edge.ends_with("─ 0:0:1:2 ")
+            seat_edge.ends_with("─ 0:0:1:1 ")
                 && !seat_edge.contains('\u{f023}')
                 && !seat_edge.contains('\u{f09c}'),
             "{kind:?}: unrestricted edge {seat_edge:?}"
