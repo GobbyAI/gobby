@@ -45,7 +45,7 @@ fn procargs2_argv_excludes_environment_entries() {
         &["node", "/Users/can/.local/bin/pi"],
         &[
             "PATH=/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin",
-            "TERM=tmux-256color",
+            "TERM=screen-256color",
         ],
     );
 

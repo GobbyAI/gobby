@@ -442,8 +442,8 @@ fn default_color_event_tracker_ignores_other_osc_and_dcs_payloads() {
 
     tracker.observe(b"\x1b]0;title\x07");
     tracker.observe(b"\x1b]52;c;?\x07");
-    tracker.observe(b"\x1bPtmux;\x1b\x1b]11;?\x07\x1b\\");
-    tracker.observe(b"\x1bPtmux;payload\x07\x1b]11;?\x07\x1b\\");
+    tracker.observe(b"\x1bPx;\x1b\x1b]11;?\x07\x1b\\");
+    tracker.observe(b"\x1bPx;payload\x07\x1b]11;?\x07\x1b\\");
 
     assert!(tracker.drain_pending().is_empty());
 }

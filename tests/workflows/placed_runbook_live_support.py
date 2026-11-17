@@ -526,7 +526,7 @@ def start_fixture_host(
     """Start ``gterm host`` in its own session with the daemon's environment."""
     log_dir = socket_dir / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    host_env = {key: value for key, value in env.items() if key not in ("TMUX", "TMUX_PANE")}
+    host_env = dict(env)
     host_env["GTERM_LOG_FILE"] = str(log_dir / HOST_LOG_NAME)
     with (log_dir / HOST_LOG_NAME).open("ab") as log:
         process = subprocess.Popen(

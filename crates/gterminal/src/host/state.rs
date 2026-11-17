@@ -38,7 +38,7 @@ pub(crate) enum CommitState {
 
 #[derive(Clone, Debug)]
 pub(crate) enum ObserverBind {
-    #[cfg(feature = "vt-engine")]
+    #[cfg(any(feature = "vt-engine", test))]
     None,
     #[cfg(feature = "vt-engine")]
     Reserved {

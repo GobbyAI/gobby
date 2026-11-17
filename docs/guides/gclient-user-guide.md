@@ -356,7 +356,7 @@ navigate mode. An outage leads the line with
 beside it. The active, paused, no-live, and blank counts give way to the focused
 pane's title or drop whole when the window is too narrow for the right-hand hints.
 The right end shows the prefix chord,
-shifted when the client runs inside tmux, and the current mode when it is not
+configured by the keymap override, and the current mode when it is not
 plain terminal mode. Pane-local title, address, and control state stay on that
 pane's borders. Every pane draws a top edge; a focused pane four cells wide or
 narrower has no room for its title there and hands it here, where it leads the

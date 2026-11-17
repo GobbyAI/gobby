@@ -105,29 +105,17 @@ fn keyboard_enhancement_flags_stay_ime_compatible() {
 }
 
 #[test]
-fn modify_other_keys_mode_is_enabled_for_tmux() {
+fn modify_other_keys_mode_follows_host_terminal_identity() {
     assert_eq!(
-        host_modify_other_keys_mode_for_env(true, Some("WezTerm"), true, true),
-        Some(ModifyOtherKeysMode::Mode2)
-    );
-}
-
-#[test]
-fn modify_other_keys_mode_is_enabled_for_wezterm_hosts() {
-    assert_eq!(
-        host_modify_other_keys_mode_for_env(false, Some("WezTerm"), false, false),
+        host_modify_other_keys_mode_for_env(Some("WezTerm"), false, false),
         Some(ModifyOtherKeysMode::Mode1)
     );
     assert_eq!(
-        host_modify_other_keys_mode_for_env(false, None, true, false),
+        host_modify_other_keys_mode_for_env(None, true, false),
         Some(ModifyOtherKeysMode::Mode1)
     );
-}
-
-#[test]
-fn modify_other_keys_mode_is_enabled_for_alacritty_hosts() {
     assert_eq!(
-        host_modify_other_keys_mode_for_env(false, None, false, true),
+        host_modify_other_keys_mode_for_env(None, false, true),
         Some(ModifyOtherKeysMode::Mode1)
     );
 }
@@ -135,11 +123,11 @@ fn modify_other_keys_mode_is_enabled_for_alacritty_hosts() {
 #[test]
 fn modify_other_keys_mode_is_not_enabled_for_unknown_hosts() {
     assert_eq!(
-        host_modify_other_keys_mode_for_env(false, Some("ghostty"), false, false),
+        host_modify_other_keys_mode_for_env(Some("ghostty"), false, false),
         None
     );
     assert_eq!(
-        host_modify_other_keys_mode_for_env(false, None, false, false),
+        host_modify_other_keys_mode_for_env(None, false, false),
         None
     );
 }

@@ -223,14 +223,12 @@ pub fn ime_compatible_keyboard_enhancement_flags() -> KeyboardEnhancementFlags {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModifyOtherKeysMode {
     Mode1,
-    Mode2,
 }
 
 impl ModifyOtherKeysMode {
     pub fn set_sequence(self) -> &'static [u8] {
         match self {
             Self::Mode1 => b"\x1b[>4;1m",
-            Self::Mode2 => b"\x1b[>4;2m",
         }
     }
 }
@@ -242,7 +240,6 @@ pub fn host_modify_other_keys_mode() -> Option<ModifyOtherKeysMode> {
     let alacritty_window_id = false;
 
     host_modify_other_keys_mode_for_env(
-        std::env::var("TMUX").is_ok(),
         std::env::var("TERM_PROGRAM").ok().as_deref(),
         std::env::var_os("WEZTERM_PANE").is_some(),
         alacritty_window_id,
@@ -250,15 +247,10 @@ pub fn host_modify_other_keys_mode() -> Option<ModifyOtherKeysMode> {
 }
 
 fn host_modify_other_keys_mode_for_env(
-    in_tmux: bool,
     term_program: Option<&str>,
     wezterm_pane: bool,
     alacritty_window_id: bool,
 ) -> Option<ModifyOtherKeysMode> {
-    if in_tmux {
-        return Some(ModifyOtherKeysMode::Mode2);
-    }
-
     if wezterm_pane
         || alacritty_window_id
         || term_program.is_some_and(|program| program.eq_ignore_ascii_case("wezterm"))

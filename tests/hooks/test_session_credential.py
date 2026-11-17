@@ -1158,7 +1158,7 @@ def _client_environment(gobby_home: Path, home: Path, daemon_url: str) -> dict[s
     environment = {
         name: value
         for name, value in os.environ.items()
-        if not name.startswith(("GOBBY_", "TMUX", "CLAUDE"))
+        if not name.startswith(("GOBBY_", "CLAUDE"))
     }
     environment.update(
         {"HOME": str(home), "GOBBY_HOME": str(gobby_home), "GOBBY_DAEMON_URL": daemon_url}

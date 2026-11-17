@@ -169,8 +169,6 @@ fn kitty_storage_generation_skips_only_proven_empty_storage() {
 #[test]
 fn build_info_contract_matches_expected_vendored_features() {
     let _simd = build_info_bool(ffi::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_SIMD);
-    let _tmux_control_mode =
-        build_info_bool(ffi::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_TMUX_CONTROL_MODE);
     let _kitty_graphics = build_info_bool(ffi::GhosttyBuildInfo_GHOSTTY_BUILD_INFO_KITTY_GRAPHICS);
 
     let optimize = build_info_optimize();

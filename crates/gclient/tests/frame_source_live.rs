@@ -137,7 +137,6 @@ impl TestHost {
             .env("GTERM_TEST_HELPER", "1")
             .env("GOBBY_HOME", dir.path())
             .env("RUST_LOG", "debug")
-            .env_remove("TMUX")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::from(stderr_file))

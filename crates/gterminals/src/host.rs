@@ -709,24 +709,7 @@ async fn spawn(inner: &Inner) -> Result<Child, HostFailure> {
         .open(logs.join("gterm.log"))
         .map_err(pre_io)?;
     let stderr = log.try_clone().map_err(pre_io)?;
-    let mut command = Command::new(&options.binary_path);
-    command
-        .arg("host")
-        .arg("--socket-dir")
-        .arg(&options.socket_dir)
-        .args(&options.spawn_args)
-        .env_remove("TMUX")
-        .env_remove("TMUX_PANE")
-        .env("GTERM_LOG_FILE", logs.join("gterm.log"))
-        .stdin(std::process::Stdio::null())
-        .stdout(log)
-        .stderr(stderr)
-        .kill_on_drop(false);
-    // The persistent host must not receive the daemon terminal's Ctrl-C.
-    command.process_group(0);
-    if let Some(home) = &options.gobby_home {
-        command.env("GOBBY_HOME", home);
-    }
+    let mut command = host_command(options, log, stderr);
     // Serialize the final spawn with shutdown; no guard crosses an await.
     let _task = inner.task.lock().expect("lifecycle task lock poisoned");
     if inner.stopped.load(Ordering::Acquire) {
@@ -739,6 +722,29 @@ async fn spawn(inner: &Inner) -> Result<Child, HostFailure> {
             pre_io(error)
         }
     })
+}
+
+fn host_command(options: &HostOptions, log: std::fs::File, stderr: std::fs::File) -> Command {
+    let mut command = Command::new(&options.binary_path);
+    command
+        .arg("host")
+        .arg("--socket-dir")
+        .arg(&options.socket_dir)
+        .args(&options.spawn_args)
+        .env(
+            "GTERM_LOG_FILE",
+            options.socket_dir.join("logs").join("gterm.log"),
+        )
+        .stdin(std::process::Stdio::null())
+        .stdout(log)
+        .stderr(stderr)
+        .kill_on_drop(false);
+    // The persistent host must not receive the daemon terminal's Ctrl-C.
+    command.process_group(0);
+    if let Some(home) = &options.gobby_home {
+        command.env("GOBBY_HOME", home);
+    }
+    command
 }
 
 fn pre_io(error: std::io::Error) -> HostFailure {
@@ -767,3 +773,7 @@ fn control_failure(error: ControlError, adopted: bool) -> HostFailure {
         error => HostFailure::PreAdoptionIo(error.to_string()),
     }
 }
+
+#[cfg(test)]
+#[path = "host/tests.rs"]
+mod tests;

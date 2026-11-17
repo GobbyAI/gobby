@@ -155,7 +155,7 @@ class GclientDriver:
         self.exit_code: int | None = None
         self.eof = False
         child_env = dict(env, TERM="xterm-256color", COLORTERM="truecolor")
-        for name in ("TMUX", "TMUX_PANE", "COLUMNS", "LINES"):
+        for name in ("COLUMNS", "LINES"):
             child_env.pop(name, None)
         self.pid, self.fd = pty.fork()
         if self.pid == 0:

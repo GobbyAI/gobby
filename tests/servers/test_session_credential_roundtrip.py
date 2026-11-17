@@ -52,12 +52,10 @@ def ready_health_monitor() -> Iterator[None]:
         yield
 
 
-@pytest.mark.parametrize("in_tmux", [False, True])
 async def test_minted_token_completes_mcp_and_hook_without_machine_credentials(
     temp_db: HubDatabase,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    in_tmux: bool,
 ) -> None:
     daemon_home = tmp_path / "daemon"
     client_home = tmp_path / "client"
@@ -75,12 +73,6 @@ async def test_minted_token_completes_mcp_and_hook_without_machine_credentials(
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("GOBBY_HOME", str(client_home))
-    if in_tmux:
-        monkeypatch.setenv("TMUX", "/tmp/isolated-tmux,123,0")
-        monkeypatch.setenv("TMUX_PANE", "%77")
-    else:
-        monkeypatch.delenv("TMUX", raising=False)
-        monkeypatch.delenv("TMUX_PANE", raising=False)
     monkeypatch.setattr("gobby.utils.session_credential_record.stable_cli_pid", os.getpid)
     sessions = SessionManager(temp_db)
     checkout = install_isolated_checkout_project(
