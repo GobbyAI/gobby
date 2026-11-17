@@ -228,3 +228,28 @@ fn pidfile_write_does_not_recreate_a_removed_socket_dir() {
         "the removed socket dir must stay removed so the ticker can shut the host down"
     );
 }
+#[test]
+fn retired_host_arguments_are_consumed_only_during_resume() {
+    for flag in [
+        "--max-attached-terminals",
+        "--tmux-attach-history-lines",
+        "--tmux-attach-history-max-bytes",
+        "--tmux-poll-interval-ms",
+        "--tmux-poll-backoff-ceiling-ms",
+    ] {
+        let parse =
+            |args: &[&str]| super::HostArgs::from_args(args.iter().map(|s| (*s).to_owned()));
+        assert!(
+            parse(&[flag, "150"]).is_err(),
+            "fresh start accepted {flag}"
+        );
+        for args in [
+            vec![flag, "150", "--resume-state", "/tmp/handover.json"],
+            vec!["--resume-state", "/tmp/handover.json", flag, "150"],
+        ] {
+            assert!(parse(&args).is_ok(), "resume rejected {args:?}");
+        }
+        assert!(parse(&["--probe-resume", "1", flag, "150"]).is_err());
+        assert!(parse(&["--resume-state", "/tmp/handover.json", flag]).is_err());
+    }
+}

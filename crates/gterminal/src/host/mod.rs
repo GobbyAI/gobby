@@ -418,6 +418,7 @@ impl HostArgs {
         let mut resume_state = None;
         let mut resume_fallback = false;
         let mut probe_resume = None;
+        let mut retired_argument = None;
         let mut args = argv.into_iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -442,6 +443,16 @@ impl HostArgs {
                 "--max-attachments-total" => {
                     host_config.max_attachments_total = parse_u32(value_for(&arg, &mut args)?)
                 }
+                "--max-attached-terminals"
+                | "--tmux-attach-history-lines"
+                | "--tmux-attach-history-max-bytes"
+                | "--tmux-poll-interval-ms"
+                | "--tmux-poll-backoff-ceiling-ms" => {
+                    // The pinned pre-purge host forwards its argv during handover.
+                    // Consume removed settings only for that resume boundary.
+                    let _ = value_for(&arg, &mut args)?;
+                    retired_argument = Some(arg);
+                }
                 "--native-scrollback-max-lines" => {
                     host_config.native_scrollback_max_lines = parse_u32(value_for(&arg, &mut args)?)
                 }
@@ -465,6 +476,9 @@ impl HostArgs {
                 }
                 _ => return Err(ArgError::Invalid(format!("unknown argument `{arg}`"))),
             }
+        }
+        if let (None, Some(arg)) = (&resume_state, retired_argument) {
+            return Err(ArgError::Invalid(format!("unknown argument `{arg}`")));
         }
         let log_file = std::env::var("GTERM_LOG_FILE")
             .ok()
