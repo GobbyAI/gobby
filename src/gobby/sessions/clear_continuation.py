@@ -806,13 +806,7 @@ def schedule_handoff_continuation(
     terminal_runtime_registry: Any | None = None,
     on_send_failure: Callable[[], None] | None = None,
 ) -> bool:
-    """Schedule delivery of the continue prompt to the successor terminal.
-
-    The pane routes like compaction delivery: the session's live terminals row
-    through ``terminal_manager`` and ``terminal_runtime_registry`` first (a
-    native, gclient-hosted pane carries no tmux identity), else the tmux
-    target in its terminal context.
-    """
+    """Schedule delivery of the continue prompt to the successor terminal."""
     kwargs: dict[str, Any] = {
         "loop": loop,
         "db": db,

@@ -456,7 +456,7 @@ def test_session_start_with_title_emits_session_title() -> None:
     line = json.dumps(
         {
             "type": "session_start",
-            "title": "Investigate tmux title issues",
+            "title": "Investigate terminal title issues",
             "timestamp": "2026-04-22T10:00:00Z",
         }
     )
@@ -464,7 +464,7 @@ def test_session_start_with_title_emits_session_title() -> None:
     assert len(msgs) == 1
     assert msgs[0].content_type == "session_title"
     assert msgs[0].role == "system"
-    assert msgs[0].content == "Investigate tmux title issues"
+    assert msgs[0].content == "Investigate terminal title issues"
 
     single = parser.parse_line(line, 0)
     assert single is not None

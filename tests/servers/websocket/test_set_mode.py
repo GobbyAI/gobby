@@ -247,17 +247,17 @@ class TestSetModeAttachedSession:
             svm_cls.return_value = svm_instance
             await server._handle_set_mode(
                 ws,
-                {"target_session_id": "tmux-uuid-1", "mode": "plan"},
+                {"target_session_id": "terminal-uuid-1", "mode": "plan"},
             )
 
-        server.session_manager.update_chat_mode.assert_called_once_with("tmux-uuid-1", "plan")
+        server.session_manager.update_chat_mode.assert_called_once_with("terminal-uuid-1", "plan")
         svm_instance.merge_variables.assert_called_once()
         merged_vars = svm_instance.merge_variables.call_args[0][1]
         assert merged_vars["chat_mode"] == "plan"
         run_db.assert_any_await(
             server,
             svm_instance.merge_variables,
-            "tmux-uuid-1",
+            "terminal-uuid-1",
             {"chat_mode": "plan", "mode_level": 0},
         )
         assert attached_session.chat_mode == "normal"
@@ -271,7 +271,7 @@ class TestSetModeAttachedSession:
 
         await server._handle_set_mode(
             ws,
-            {"target_session_id": "tmux-uuid-1", "mode": "plan"},
+            {"target_session_id": "terminal-uuid-1", "mode": "plan"},
         )
 
         server.session_manager.update_chat_mode.assert_not_called()

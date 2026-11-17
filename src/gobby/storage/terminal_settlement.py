@@ -70,8 +70,8 @@ ALLOWED_EDGES: frozenset[tuple[str, str]] = frozenset(
 class OrphanIdentity:
     """The physical identity a ``pending`` row gains when its kill is unproven.
 
-    ``locator`` must already be the normalized native locator for a native row.
-    ``host_epoch`` and ``process`` are native-only and stay ``None`` for tmux.
+    ``locator`` must already be the normalized native locator.
+    ``host_epoch`` and ``process`` identify the host generation and shell group.
     """
 
     locator: Mapping[str, object]

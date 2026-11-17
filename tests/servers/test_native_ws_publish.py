@@ -850,7 +850,7 @@ async def test_server_subscriptions_precede_later_publishes_and_replies(
         source.git_branch = "main"
         source.context_window = 200000
         source.session_type = "terminal"
-        source.terminal_context = {"tmux_pane": "%8"}
+        source.terminal_context = {"gobby_terminal_id": "%8"}
         source.workflow_name = None
         source.agent_run_id = None
         host = MagicMock()

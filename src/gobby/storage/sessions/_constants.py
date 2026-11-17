@@ -119,7 +119,7 @@ def is_contestable_terminal_expiry(
     a session in this state is working, not dead.
 
     A speculative expiry says so on the way out, and only that marker earns the
-    grace -- an expiry from inactivity, a killed tmux server or an explicit close
+    grace -- an expiry from inactivity, an explicit close
     leaves none and stays sweepable on the ordinary schedule. The marker's own age
     bounds the grace, so a session contested once and revived does not carry the
     grace into a later, final expiry. ``release_task_claim`` enforces the same rule

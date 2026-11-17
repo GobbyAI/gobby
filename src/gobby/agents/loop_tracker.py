@@ -4,9 +4,8 @@ Tracks how many times each agent run has had its loop detection prompt
 auto-dismissed. When the count exceeds a threshold, the lifecycle monitor
 should escalate (checkpoint + kill) instead of dismissing again.
 
-Pure in-memory — no DB persistence needed because daemon restarts kill
-all running agents anyway (orphaned tmux sessions are cleaned up by
-check_unhealthy_agents).
+Pure in-memory — dismissal counts reset when the daemon restarts.
+Terminal hosts retain running agents independently of the daemon.
 """
 
 from __future__ import annotations

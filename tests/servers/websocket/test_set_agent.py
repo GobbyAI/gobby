@@ -298,7 +298,7 @@ class TestSetAgentPersonaValidation:
 
 
 class TestSetAgentAttachedSession:
-    async def test_rejects_unsafe_persona_name_before_tmux_send(self) -> None:
+    async def test_rejects_unsafe_persona_name_before_terminal_send(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
 

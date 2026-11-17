@@ -353,7 +353,7 @@ def register_lifecycle_routes(
 
     @router.post("/{session_id}/expire")
     async def expire_session(session_id: str) -> dict[str, Any]:
-        """Expire a session, killing any associated terminal/tmux pane."""
+        """Expire a session, killing any associated terminal pane."""
         try:
             if server.session_manager is None:
                 raise HTTPException(status_code=503, detail="Session manager not available")

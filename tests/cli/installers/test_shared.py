@@ -1208,14 +1208,14 @@ class TestConfigureIdeTerminalIntegration:
         user_dir = config_dir / "User"
         user_dir.mkdir(parents=True)
         settings_path = user_dir / "settings.json"
-        custom_tmux = {"path": "/custom/tmux", "args": ["attach-session", "-t", "work"]}
+        custom_terminal = {"path": "/custom/gclient", "args": ["--layout", "work"]}
         settings_path.write_text(
             json.dumps(
                 {
                     "editor.fontSize": 15,
                     "terminal.integrated.profiles.osx": {
                         "zsh": {"path": "/bin/zsh"},
-                        "tmux": custom_tmux,
+                        "gclient": custom_terminal,
                     },
                 }
             )
@@ -1228,7 +1228,7 @@ class TestConfigureIdeTerminalIntegration:
         settings = json.loads(settings_path.read_text())
         assert settings["editor.fontSize"] == 15
         assert settings["terminal.integrated.profiles.osx"]["zsh"] == {"path": "/bin/zsh"}
-        assert settings["terminal.integrated.profiles.osx"]["tmux"] == custom_tmux
+        assert settings["terminal.integrated.profiles.osx"]["gclient"] == custom_terminal
         assert "terminal.integrated.defaultProfile.osx" not in settings
 
     def test_idempotent_rerun_does_not_replace_settings(self, temp_dir: Path) -> None:

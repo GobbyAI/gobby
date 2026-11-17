@@ -130,7 +130,7 @@ async def resume_agent_run(
         resume_metadata: Persisted launch snapshot from the original run.
         runner: Agent runner exposing child session creation and run storage.
         session_manager: Session lookup used to recover provider-native IDs.
-        daemon_config: Optional daemon config used for tmux spawn settings.
+        daemon_config: Optional daemon config used for terminal spawn settings.
         agent_pane_reserver: Daemon pane reserver; a placed snapshot is refused without it.
     """
     provider = _metadata_str(resume_metadata, "provider") or original_run.provider

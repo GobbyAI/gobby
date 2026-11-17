@@ -1,4 +1,4 @@
-"""Durable storage operations for serialized tmux termination."""
+"""Durable storage operations for serialized terminal termination."""
 
 from __future__ import annotations
 

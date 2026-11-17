@@ -242,7 +242,7 @@ class TestSessionManagerLookup:
             source="codex",
             project_id=test_project["id"],
             transcript_path="/tmp/rollout.jsonl",
-            terminal_context={"tmux_pane": "%1"},
+            terminal_context={"gobby_terminal_id": "%1"},
         )
         session_storage.register(
             external_id="shared-external-id",

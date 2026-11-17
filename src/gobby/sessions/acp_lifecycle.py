@@ -71,7 +71,7 @@ class ACPSessionNotFoundError(ACPLifecycleError):
 
 
 class ACPTargetNotSupportedError(ACPLifecycleError):
-    """Target row is not an ACP session, e.g. tmux or a non-ACP provider (REST → 400)."""
+    """Target row is not an ACP session, e.g. a terminal or a non-ACP provider (REST → 400)."""
 
 
 class ACPProviderUnavailableError(ACPLifecycleError):

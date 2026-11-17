@@ -214,7 +214,7 @@ class EventHandlersBase:
     def _record_composer_submit(self, session_id: str) -> None:
         """A provider submit record: the session's composer input up to now was consumed.
 
-        Only a native seat is adopted: the ledger observes gterm input, never tmux keys.
+        Only a native seat is adopted: the ledger observes gterm input.
         """
         composer = self._composer_terminal(session_id)
         if composer is not None:

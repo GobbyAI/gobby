@@ -96,7 +96,7 @@ def test_a_speculatively_expired_terminal_session_is_contestable(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    """No tmux pane anywhere: the contest here was settled on tty."""
+    """The contest here was settled on tty."""
     manager = SessionManager(temp_db)
     session = _registered(temp_db, sample_project)
     manager.mark_session_expired(session.id, cause="context_reuse")
@@ -125,7 +125,7 @@ def test_an_expiry_that_recorded_nothing_is_final(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    """Inactivity and tmux-kill expiries go through update_status and leave no mark."""
+    """Inactivity and terminal-kill expiries go through update_status and leave no mark."""
     manager = SessionManager(temp_db)
     session = _registered(temp_db, sample_project)
     manager.update_status(session.id, "expired")
@@ -299,7 +299,7 @@ def test_a_cleared_session_whose_marker_was_consumed_is_never_revived(
 ) -> None:
     """A consumed clear marker means the CLI cleared the session and a successor
     owns the pane; a late hook carrying the old external id must not bring the
-    row back beside the successor (#22525, native branch: no tmux identity).
+    row back beside the successor (#22525, native terminal identity).
     """
     manager = SessionManager(temp_db)
     session = _registered(temp_db, sample_project)
@@ -314,13 +314,15 @@ def test_a_cleared_session_whose_marker_was_consumed_is_never_revived(
     assert cast(Session, manager.get(successor.id)).status == "active"
 
 
-def test_a_cleared_tmux_session_whose_marker_was_consumed_is_never_revived(
+def test_a_cleared_terminal_session_whose_marker_was_consumed_is_never_revived(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    """The tmux ownership branch honors the same marker (#22525)."""
+    """Terminal ownership honors the same marker (#22525)."""
     manager = SessionManager(temp_db)
-    terminal_context = {"tmux_pane": "%154", "tmux_socket_path": "/tmp/tmux-501/default"}
+    terminal_context = {
+        "gobby_terminal_id": "%154",
+    }
     session = _registered(temp_db, sample_project, terminal_context=terminal_context)
     successor = _registered(temp_db, sample_project, terminal_context=terminal_context)
     manager.update_status(session.id, "expired")

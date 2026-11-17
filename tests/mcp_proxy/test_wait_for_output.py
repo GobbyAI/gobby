@@ -7,7 +7,7 @@ import asyncio
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,7 +15,7 @@ import pytest
 from gobby.mcp_proxy.tools.agents import create_agents_registry
 from gobby.storage.terminals import Terminal
 from gobby.terminals import TerminalRuntimeRegistry
-from gobby.terminals.runtime import SnapshotMode, SnapshotResult
+from gobby.terminals.runtime import SnapshotMode, SnapshotResult, TerminalRuntime
 from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
@@ -37,17 +37,17 @@ def _runner(run: Any | None) -> MagicMock:
 
 
 class _CaptureRuntime(FakeRuntime):
-    """FakeRuntime that delegates snapshot/liveness to the historical tmux mock."""
+    """FakeRuntime that delegates snapshot/liveness to a capture adapter."""
 
-    def __init__(self, tmux: MagicMock) -> None:
+    def __init__(self, capture: MagicMock) -> None:
         super().__init__()
-        self._tmux = tmux
+        self._capture = capture
 
     async def snapshot(
         self, terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
     ) -> SnapshotResult:
         del terminal, lines, mode
-        text = await self._tmux.capture_pane("agent-test")
+        text = await self._capture.capture_pane("agent-test")
         if text is None:
             raise RuntimeError("capture returned none")
         return SnapshotResult(
@@ -59,21 +59,21 @@ class _CaptureRuntime(FakeRuntime):
 
     async def is_live(self, terminal: Terminal) -> bool:
         del terminal
-        has_session = getattr(self._tmux, "has_session", None)
+        has_session = getattr(self._capture, "has_session", None)
         if has_session is None:
             return True
         return bool(await has_session("agent-test"))
 
 
-async def _invoke(run: Any | None, tmux: MagicMock, **kwargs: Any) -> dict[str, Any]:
+async def _invoke(run: Any | None, capture: MagicMock, **kwargs: Any) -> dict[str, Any]:
     runner = _runner(run)
     store = MemoryTerminalStore()
-    runtime = _CaptureRuntime(tmux)
+    runtime = _CaptureRuntime(capture)
     if run is not None and run.terminal_id:
         terminal = make_memory_terminal(terminal_id=run.terminal_id)
         store.rows[terminal.id] = terminal
     registry = TerminalRuntimeRegistry()
-    registry.register(runtime)
+    registry.register(cast(TerminalRuntime, runtime))
     runner.terminal_manager = store
     runner.terminal_runtime_registry = registry
     tools = create_agents_registry(runner)
@@ -96,12 +96,12 @@ async def test_wait_for_output_requires_managed_runtime_registry() -> None:
 
 @pytest.mark.asyncio
 async def test_wait_for_output_returns_bounded_matching_excerpt() -> None:
-    match_tmux = MagicMock()
+    match_capture = MagicMock()
     pane_output = f"{'a' * 3_000}\nREADY: port 60887\n{'b' * 3_000}"
-    match_tmux.capture_pane = AsyncMock(return_value=pane_output)
+    match_capture.capture_pane = AsyncMock(return_value=pane_output)
     matched = await _invoke(
         _run(),
-        match_tmux,
+        match_capture,
         pattern=r"READY: port \d+",
         timeout_seconds=1,
         poll_interval_seconds=0.1,
@@ -114,11 +114,11 @@ async def test_wait_for_output_returns_bounded_matching_excerpt() -> None:
 
 @pytest.mark.asyncio
 async def test_wait_for_output_returns_timeout() -> None:
-    timeout_tmux = MagicMock()
-    timeout_tmux.capture_pane = AsyncMock(return_value="still working")
+    timeout_capture = MagicMock()
+    timeout_capture.capture_pane = AsyncMock(return_value="still working")
     timed_out = await _invoke(
         _run(),
-        timeout_tmux,
+        timeout_capture,
         pattern="READY",
         timeout_seconds=0,
         poll_interval_seconds=0.1,
@@ -133,11 +133,11 @@ async def test_wait_for_output_returns_timeout() -> None:
 
 @pytest.mark.asyncio
 async def test_wait_for_output_returns_terminal_status() -> None:
-    terminal_tmux = MagicMock()
-    terminal_tmux.capture_pane = AsyncMock(return_value="finished cleanly")
+    terminal_capture = MagicMock()
+    terminal_capture.capture_pane = AsyncMock(return_value="finished cleanly")
     terminal = await _invoke(
         _run(status="success"),
-        terminal_tmux,
+        terminal_capture,
         pattern="READY",
         timeout_seconds=1,
     )
@@ -179,12 +179,12 @@ async def test_wait_for_output_validates_payload(
 
 @pytest.mark.asyncio
 async def test_wait_for_output_returns_pane_lost() -> None:
-    lost_tmux = MagicMock()
-    lost_tmux.capture_pane = AsyncMock(return_value=None)
-    lost_tmux.has_session = AsyncMock(return_value=False)
+    lost_capture = MagicMock()
+    lost_capture.capture_pane = AsyncMock(return_value=None)
+    lost_capture.has_session = AsyncMock(return_value=False)
     pane_lost = await _invoke(
         _run(),
-        lost_tmux,
+        lost_capture,
         pattern="READY",
         timeout_seconds=1,
         poll_interval_seconds=0.1,
@@ -199,27 +199,27 @@ async def test_wait_for_output_returns_pane_lost() -> None:
 
 @pytest.mark.asyncio
 async def test_wait_for_output_returns_capture_failed_after_three_attempts() -> None:
-    failing_tmux = MagicMock()
-    failing_tmux.capture_pane = AsyncMock(side_effect=RuntimeError("capture failed"))
-    failing_tmux.has_session = AsyncMock(return_value=True)
+    failing_capture = MagicMock()
+    failing_capture.capture_pane = AsyncMock(side_effect=RuntimeError("capture failed"))
+    failing_capture.has_session = AsyncMock(return_value=True)
     capture_failed = await _invoke(
         _run(),
-        failing_tmux,
+        failing_capture,
         pattern="READY",
         timeout_seconds=1,
         poll_interval_seconds=0.1,
     )
     assert capture_failed["error"] == "capture_failed"
-    assert failing_tmux.capture_pane.await_count == 3
+    assert failing_capture.capture_pane.await_count == 3
 
 
 @pytest.mark.asyncio
 async def test_wait_for_output_returns_pattern_timeout() -> None:
-    pathological_tmux = MagicMock()
-    pathological_tmux.capture_pane = AsyncMock(return_value="a" * 10_000 + "!")
+    pathological_capture = MagicMock()
+    pathological_capture.capture_pane = AsyncMock(return_value="a" * 10_000 + "!")
     pattern_timeout = await _invoke(
         _run(),
-        pathological_tmux,
+        pathological_capture,
         pattern=r"(a+)+$",
         timeout_seconds=1,
     )
@@ -228,11 +228,11 @@ async def test_wait_for_output_returns_pattern_timeout() -> None:
 
 @pytest.mark.asyncio
 async def test_wait_for_output_match_precedes_terminal_status() -> None:
-    collision_tmux = MagicMock()
-    collision_tmux.capture_pane = AsyncMock(return_value="READY")
+    collision_capture = MagicMock()
+    collision_capture.capture_pane = AsyncMock(return_value="READY")
     match_beats_terminal = await _invoke(
         _run(status="error"),
-        collision_tmux,
+        collision_capture,
         pattern="READY",
         timeout_seconds=0,
     )
@@ -241,9 +241,9 @@ async def test_wait_for_output_match_precedes_terminal_status() -> None:
 
 @pytest.mark.asyncio
 async def test_wait_for_output_capture_failure_precedes_deadline() -> None:
-    deadline_collision_tmux = MagicMock()
-    deadline_collision_tmux.capture_pane = AsyncMock(side_effect=TimeoutError)
-    deadline_collision_tmux.has_session = AsyncMock(return_value=True)
+    deadline_collision_capture = MagicMock()
+    deadline_collision_capture.capture_pane = AsyncMock(side_effect=TimeoutError)
+    deadline_collision_capture.has_session = AsyncMock(return_value=True)
     clock = MagicMock()
     clock.monotonic.side_effect = [0.0, 0.1, 0.2]
     agents = SimpleNamespace(
@@ -254,13 +254,13 @@ async def test_wait_for_output_capture_failure_precedes_deadline() -> None:
     with patch("gobby.mcp_proxy.tools.agents_query_tools.facade", return_value=agents):
         capture_beats_deadline = await _invoke(
             _run(),
-            deadline_collision_tmux,
+            deadline_collision_capture,
             pattern="READY",
             timeout_seconds=1,
             poll_interval_seconds=0.1,
         )
     assert capture_beats_deadline["error"] == "capture_failed"
-    assert deadline_collision_tmux.capture_pane.await_count == 3
+    assert deadline_collision_capture.capture_pane.await_count == 3
 
 
 @pytest.mark.asyncio
@@ -275,16 +275,16 @@ async def test_wait_for_output_cancellation_finishes_capture_cleanup() -> None:
         finally:
             capture_finished.set()
 
-    cancelling_tmux = MagicMock()
-    cancelling_tmux.capture_pane = AsyncMock(side_effect=blocking_capture)
-    cancelling_tmux.has_session = AsyncMock(return_value=True)
+    cancelling_capture = MagicMock()
+    cancelling_capture.capture_pane = AsyncMock(side_effect=blocking_capture)
+    cancelling_capture.has_session = AsyncMock(return_value=True)
     runner = _runner(_run())
     store = MemoryTerminalStore()
     terminal = make_memory_terminal(terminal_id="agent-test")
     store.rows[terminal.id] = terminal
-    runtime = _CaptureRuntime(cancelling_tmux)
+    runtime = _CaptureRuntime(cancelling_capture)
     registry = TerminalRuntimeRegistry()
-    registry.register(runtime)
+    registry.register(cast(TerminalRuntime, runtime))
     runner.terminal_manager = store
     runner.terminal_runtime_registry = registry
     tools = create_agents_registry(runner)

@@ -1,4 +1,4 @@
-"""Detect and auto-dismiss blocking CLI prompts in tmux pane output.
+"""Detect and auto-dismiss blocking CLI prompts in terminal pane output.
 
 When agents are spawned in clone/worktree directories, CLI tools like
 Claude Code show a "Do you trust the files in this folder?" prompt that
@@ -17,8 +17,8 @@ from gobby.agents.detection.provider import DetectionRegistry, resolve_manifest
 
 PromptKind = Literal["approval", "trust", "question", "stall"]
 
-# An ``ansi`` pane snapshot carries SGR sequences (tmux ``-e``, the native
-# host's ``recent_unwrapped_ansi``). A reader that positions on a character —
+# An ``ansi`` pane snapshot carries SGR sequences from the native
+# host's ``recent_unwrapped_ansi``. A reader that positions on a character —
 # the selection marker below — has to work on the visible text.
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 
@@ -43,7 +43,7 @@ class DetectedPrompt:
 
 
 class PromptDetector:
-    """Detects blocking CLI prompts (e.g. folder trust, loop detection) in tmux pane output.
+    """Detects blocking CLI prompts (e.g. folder trust, loop detection) in terminal pane output.
 
     Separate from ``IdleDetector`` — that handles idle-at-prompt vs working.
     This handles interactive prompts that block agent startup or execution.

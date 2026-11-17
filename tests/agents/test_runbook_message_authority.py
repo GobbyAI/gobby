@@ -468,7 +468,7 @@ async def test_retired_definition_fields_refuse_delivery_without_aborting_fanout
     definitions = AgentDefinitionManager(temp_db)
     row = definitions.get_by_name(broken_role, project)
     assert row is not None
-    stored = replace(row, definition_json={**row.definition_json, "terminal_backend": "tmux"})
+    stored = replace(row, definition_json={**row.definition_json, "terminal_backend": "retired"})
     original_lookup = AgentDefinitionManager.get_by_name
 
     def lookup(

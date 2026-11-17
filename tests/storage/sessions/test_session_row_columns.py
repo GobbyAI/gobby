@@ -31,7 +31,7 @@ def test_session_reads_decode_terminal_context_once_without_redumping(
 ) -> None:
     # The pool's jsonb loader decoded and re-dumped terminal_context, and
     # Session.from_row decoded it again (#23359).
-    terminal_context = {"tmux_pane": "%7", "parent_pid": 4242}
+    terminal_context = {"gobby_terminal_id": "%7", "parent_pid": 4242}
     machine_id = require_machine_id()
     session = session_manager.register(
         external_id=f"row-columns-{uuid.uuid4()}",

@@ -51,7 +51,7 @@ class HostCommandError(RuntimeError):
 
 
 class HostUnavailableError(HostCommandError):
-    """The gterm host cannot be reached: a `host_unavailable` refusal, never a tmux fallback."""
+    """The gterm host cannot be reached: a `host_unavailable` refusal."""
 
     def __init__(self, message: str = "gterm host unavailable") -> None:
         super().__init__("host_unavailable", detail=message)

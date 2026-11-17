@@ -129,7 +129,7 @@ class TestExecuteSpawnDroid:
         mock_spawner.spawn.return_value = MagicMock(
             success=True,
             pid=12345,
-            terminal_type="tmux",
+            terminal_type="native",
             terminal_id="agent-run-droid",
         )
 
@@ -192,7 +192,7 @@ class TestExecuteSpawnDroid:
             )
         )
         mock_spawner = MagicMock()
-        mock_spawner.spawn.return_value = MagicMock(success=False, error="tmux failed")
+        mock_spawner.spawn.return_value = MagicMock(success=False, error="terminal spawn failed")
 
         with (
             patch("gobby.agents.spawn_executor.shutil.which", return_value="/usr/bin/droid"),
@@ -201,12 +201,12 @@ class TestExecuteSpawnDroid:
         ):
             request.prepared_spawn = mock_prepare.return_value
             _runtime_of(request).typed_fail = True
-            _runtime_of(request).spawn_error = "tmux failed"
+            _runtime_of(request).spawn_error = "terminal spawn failed"
             result = await execute_spawn(request)
 
         assert result.success is False
         assert result.child_session_id == "gobby-sess-123"
-        assert result.error == "tmux failed"
+        assert result.error == "terminal spawn failed"
 
     @pytest.mark.asyncio
     async def test_droid_interactive_terminal_builds_tui_command(self) -> None:
@@ -233,7 +233,7 @@ class TestExecuteSpawnDroid:
 @pytest.mark.skipif(shutil.which("droid") is None, reason="droid CLI not installed")
 @pytest.mark.skipif(
     os.environ.get("GOBBY_RUN_DROID_HOOK_INTEGRATION") != "1",
-    reason="set GOBBY_RUN_DROID_HOOK_INTEGRATION=1 to launch a live Droid/tmux hook test",
+    reason="set GOBBY_RUN_DROID_HOOK_INTEGRATION=1 to launch a live Droid/terminal hook test",
 )
 def test_droid_worktree_spawn_fires_pre_tool_use_against_gobby_daemon(
     tmp_path: Path,

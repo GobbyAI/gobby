@@ -349,7 +349,7 @@ class TestVoiceWarmup:
 
         target_session = MagicMock()
         target_session.session_type = "terminal"
-        target_session.terminal_context = {"tmux_pane": "%21"}
+        target_session.terminal_context = {"gobby_terminal_id": "%21"}
         target_session.metadata = None
 
         session_manager = MagicMock()

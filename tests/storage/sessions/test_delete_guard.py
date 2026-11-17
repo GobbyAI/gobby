@@ -24,8 +24,7 @@ def _local_machine_identity() -> Iterator[None]:
 
 
 TERMINAL_CONTEXT = {
-    "tmux_pane": "%guard-test",
-    "tmux_socket_path": "/tmp/tmux-delete-guard-test",
+    "gobby_terminal_id": "%guard-test",
     "parent_pid": 19332,
     "parent_create_time": 1785396785.0,
 }

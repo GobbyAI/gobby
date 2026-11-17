@@ -416,7 +416,7 @@ class TestWakeCallback:
 
         async def flaky_wake(session_id: str, message: str, result: dict[str, Any]) -> None:
             if session_id == PRIMARY_SUBSCRIBER_ID:
-                raise RuntimeError("tmux session gone")
+                raise RuntimeError("terminal gone")
             woken.append(session_id)
 
         registry = CompletionEventRegistry(wake_callback=flaky_wake)

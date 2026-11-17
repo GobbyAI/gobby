@@ -1,6 +1,6 @@
 """The terminal env policy on the native spawn path.
 
-Retargets the tmux spawner's AGY passthrough-strip and denied-credential specs onto
+Exercises AGY passthrough-strip and denied-credential specs on
 ``NativeTerminalRuntime.prepare_spawn``: the argv and env it hands the gterm host.
 Every credential value here is a dummy.
 """

@@ -293,7 +293,7 @@ async def test_partial_task_filing_keeps_only_failed_observations_retryable(
     reviewer = _FakeLLM(
         response={
             "clusters": [
-                _cluster([first], title="First fix", theme="tmux launch"),
+                _cluster([first], title="First fix", theme="terminal launch"),
                 _cluster([second], title="Second fix", theme="vector restore"),
             ]
         }
@@ -926,7 +926,7 @@ async def test_run_review_without_gobby_project_keeps_failed_inputs_retryable(
     ("error", "agent_run_id"),
     [
         pytest.param(
-            FeedbackReviewerLaunchError("feedback reviewer launch failed: tmux unavailable"),
+            FeedbackReviewerLaunchError("feedback reviewer launch failed: terminal unavailable"),
             None,
             id="launch",
         ),

@@ -79,7 +79,7 @@ def test_prompt_submit_consumes_the_typed_prompt(
 @pytest.mark.parametrize(
     ("backend", "after"),
     [("native", _EMPTY), ("tmux", LedgerRead("blocked", "untracked"))],
-    ids=["native-adopted", "tmux-unobserved"],
+    ids=["native-adopted", "untracked-seat"],
 )
 def test_prompt_submit_adopts_an_untracked_seat_only_when_its_input_is_observed(
     handlers: EventHandlers,

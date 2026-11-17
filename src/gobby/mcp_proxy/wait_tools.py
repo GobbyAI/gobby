@@ -38,7 +38,7 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     "create_worktree",
     "delete_worktree",
     # Agent spawn performs bounded isolation repair (env preseed, hook copy),
-    # child-session creation, and tmux launch; under concurrent fleet load the
+    # child-session creation, and terminal launch; under concurrent fleet load the
     # daemon side exceeds 30s while still succeeding, so keep the caller alive
     # for the authoritative run record instead of losing the result envelope.
     "spawn_agent",

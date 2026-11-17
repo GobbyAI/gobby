@@ -1232,7 +1232,7 @@ def _outcome(decision: _Decision, answer_id: str) -> str | None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("wake_error", [None, ConnectionError("tmux unavailable")])
+@pytest.mark.parametrize("wake_error", [None, ConnectionError("terminal unavailable")])
 async def test_cli_asker_reads_its_answer_once_from_the_mailbox(
     decision: _Decision, wake_error: Exception | None
 ) -> None:

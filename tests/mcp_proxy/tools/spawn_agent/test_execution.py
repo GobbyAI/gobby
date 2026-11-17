@@ -1258,7 +1258,7 @@ class TestSpawnAgentPreRegistration:
             assert request.agent_run_id is not None
             captured["run_id"] = request.agent_run_id
             captured["child_session_id"] = request.session_id
-            raise RuntimeError("tmux spawn exploded")
+            raise RuntimeError("terminal spawn exploded")
 
         registry = create_spawn_agent_registry(mock_runner, db=temp_db)
         with (

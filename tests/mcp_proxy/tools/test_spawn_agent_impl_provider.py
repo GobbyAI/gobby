@@ -203,7 +203,7 @@ def _make_execute_spawn_result() -> MagicMock:
     result.success = True
     result.child_session_id = "child-session-abc"
     result.pid = 12345
-    result.terminal_type = "tmux"
+    result.terminal_type = "native"
     result.terminal_id = None
     result.status = "running"
     result.message = None

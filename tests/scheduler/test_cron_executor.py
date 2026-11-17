@@ -544,12 +544,12 @@ async def test_execute_agent_spawn_failure_records_failed_run(
     with patch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         new_callable=AsyncMock,
-        return_value={"success": False, "error": "tmux unavailable"},
+        return_value={"success": False, "error": "terminal unavailable"},
     ):
         result = await executor.execute(job, run)
 
     assert result.status == "failed"
-    assert result.error == "Agent spawn failed: tmux unavailable"
+    assert result.error == "Agent spawn failed: terminal unavailable"
 
 
 @pytest.mark.asyncio

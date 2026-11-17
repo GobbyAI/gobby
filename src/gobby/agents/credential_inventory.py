@@ -1,7 +1,7 @@
 """Closed provider credential inventories shared by terminal stripping and sandbox masking.
 
 This module has no gobby imports so both ``gobby.agents.spawners.auth_env``
-(tmux ``unset`` stripping) and ``gobby.agents.sandbox_policy`` (SRT credential
+(terminal environment stripping) and ``gobby.agents.sandbox_policy`` (SRT credential
 masking) can read the same normalized provider/key table without an import
 cycle. A provider listed here refuses the named ambient variables outright: the
 CLI authenticates another way (AGY is Keychain-only, per record 1.1.15) and an

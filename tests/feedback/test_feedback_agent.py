@@ -230,10 +230,10 @@ async def test_reviewer_refuses_disabled_definition(
 async def test_named_reviewer_reports_launch_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     reviewer, registry, _captured = _reviewer(
         monkeypatch,
-        spawn_result={"success": False, "run_id": "agent-run-1", "error": "tmux unavailable"},
+        spawn_result={"success": False, "run_id": "agent-run-1", "error": "terminal unavailable"},
     )
 
-    with pytest.raises(FeedbackReviewerLaunchError, match="tmux unavailable") as error:
+    with pytest.raises(FeedbackReviewerLaunchError, match="terminal unavailable") as error:
         await reviewer.review("observations", run_id="review-1", timeout_seconds=20.0)
 
     assert error.value.agent_run_id == "agent-run-1"
@@ -242,7 +242,7 @@ async def test_named_reviewer_reports_launch_failure(monkeypatch: pytest.MonkeyP
 
 @pytest.mark.parametrize(
     ("detail", "retryable"),
-    [("tmux: message too long", True), ("invalid provider configuration", False)],
+    [("terminal: message too long", True), ("invalid provider configuration", False)],
 )
 async def test_serialized_launch_error_preserves_retry_classification(
     monkeypatch: pytest.MonkeyPatch, detail: str, retryable: bool
@@ -263,7 +263,7 @@ async def test_background_boot_error_is_a_retryable_launch_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     reviewer, _registry, _captured = _reviewer(
-        monkeypatch, run_status="cancelled", run_error="tmux: message too long"
+        monkeypatch, run_status="cancelled", run_error="terminal: message too long"
     )
     assert reviewer.runner is not None
     run = reviewer.runner.get_run("agent-run-1")

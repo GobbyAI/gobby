@@ -5,7 +5,7 @@ composer write until a provider submit or the operator's ``release_composer``
 vouches for the composer again. An idle seat never submits, so the withheld wake raises one item on the
 seat's session entry naming the seat and that valve, and retires it once the
 ledger no longer blocks. A usage limit raises its own provider item, and an
-untracked seat (a tmux pane) is vouched for only by ``release_composer``.
+untracked seat is vouched for only by ``release_composer``.
 """
 
 from __future__ import annotations

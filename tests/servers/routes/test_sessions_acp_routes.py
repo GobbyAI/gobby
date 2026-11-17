@@ -391,8 +391,10 @@ def test_delete_unsupported_capability_returns_409() -> None:
 def test_list_sessions_attaches_acp_block_only_for_acp_rows() -> None:
     grok_row = _Session(id="s-grok", external_id="acp-1", source="grok")
     claude_row = _Session(id="s-claude", external_id="ext-2", source="claude")
-    tmux_row = _Session(id="s-tmux", external_id="ext-3", source="claude", session_type="terminal")
-    sm = _SM([grok_row, claude_row, tmux_row])
+    terminal_row = _Session(
+        id="s-terminal", external_id="ext-3", source="claude", session_type="terminal"
+    )
+    sm = _SM([grok_row, claude_row, terminal_row])
     backend = _Backend(capabilities={"resume": True, "close": True})
     client = _client(sm, _RM({"grok": backend}))
 
@@ -405,7 +407,7 @@ def test_list_sessions_attaches_acp_block_only_for_acp_rows() -> None:
         "additional_directories": [],
     }
     assert "acp" not in by_id["s-claude"]  # non-ACP provider
-    assert "acp" not in by_id["s-tmux"]  # not web_chat
+    assert "acp" not in by_id["s-terminal"]  # not web_chat
 
 
 def test_list_sessions_acp_block_present_with_empty_caps_without_runtime_manager() -> None:

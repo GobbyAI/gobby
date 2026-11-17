@@ -104,7 +104,7 @@ class StallClassifier:
 
         Args:
             run_id: Agent run ID.
-            pane_output: Recent tmux pane output (optional).
+            pane_output: Recent terminal pane output (optional).
             error: Error string from agent_runs.error (optional).
 
         Returns:

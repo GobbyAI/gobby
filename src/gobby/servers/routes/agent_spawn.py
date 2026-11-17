@@ -303,7 +303,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 prompt=prompt,
             )
 
-        # Spawn agent via tmux
+        # Spawn agent in a terminal
         runner = server.services.agent_runner
         if not runner:
             return AgentSpawnResponse(success=False, error="Agent runner unavailable")

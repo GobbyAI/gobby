@@ -1,7 +1,7 @@
 """Tests for gobby.agents.prompt_detector module.
 
 Tests for the PromptDetector that identifies blocking CLI prompts
-(e.g. folder trust dialogs) in tmux pane output.
+(e.g. folder trust dialogs) in terminal pane output.
 """
 
 from __future__ import annotations
@@ -37,8 +37,7 @@ WORKSPACE_TRUST_PANE = (
 )
 
 
-# The same dialog as the runtime delivers it. Both pane sources keep SGR: tmux
-# captures with ``-e``, and the native host's "text" snapshot is
+# The same dialog as the runtime delivers it. The native host's "text" snapshot is
 # ``recent_unwrapped_ansi``. Native Ask probe attempt 26 is the evidence: its
 # highlighted row arrived as " \x1b[0m\x1b[38;5;153m\u276f No, exit\x1b[0m",
 # reproduced verbatim below, and the monitor answered it with the bare Enter

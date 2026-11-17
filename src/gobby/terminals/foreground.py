@@ -197,8 +197,7 @@ def shell_pid(row: object) -> int | None:
     """The pid of the shell a terminal row runs, when the row records one.
 
     A native row carries it as ``process.pgid``, written when the host promotes
-    the spawn. A tmux row's pane pid is not persisted -- the pane sweep reports
-    ``pane_current_command`` directly -- so this returns ``None`` for those.
+    the spawn. Rows without a recorded process group return ``None``.
     """
     process = getattr(row, "process", None)
     if not isinstance(process, Mapping):

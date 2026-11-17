@@ -75,7 +75,7 @@ LAUNCH_LOG = "inert-launches.log"
 # Only these spawn-reply fields are copied into the reached witness.
 _HELD_FIELDS = ("success", "adopted", "run_id", "terminal_id", "tab_ref", "pane_ref")
 # Real tools the isolated daemon and SRT need, linked beside the stand-ins.
-_TOOLS = ("node", "git", "tmux", "rg")
+_TOOLS = ("node", "git", "rg")
 _SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
 # Evidence never carries credentials, prompts or provider argv.
 _REDACTED_KEY_PARTS = (

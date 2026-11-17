@@ -172,7 +172,7 @@ def _attached_session_dir(session_id: str) -> Path:
 
 
 async def store_proxy_attachments(session_id: str, attachments: list[Any]) -> list[Path]:
-    """Persist uploaded files for a tmux-delivered proxy message.
+    """Persist uploaded files for a terminal-delivered proxy message.
 
     Files live under ``attachments/attached-sessions/{session_id}`` and are
     daemon-local scratch data. Session-expiry and cron cleanup callers should

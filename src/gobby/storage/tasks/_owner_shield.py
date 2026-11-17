@@ -49,7 +49,7 @@ OWNER_MAY_RESUME_GUARD_SQL = f"""
         -- routinely reverses it. That writer records the cause on the way out,
         -- so the owner's status is transiently stale in the same way a
         -- mid-compaction owner's is, and the claim outlives it. An expiry that
-        -- left no marker -- inactivity, a killed tmux server, an explicit
+        -- left no marker -- inactivity, an explicit
         -- close -- is final and keeps the ordinary schedule, which is what
         -- stops this from shadowing the marker grace above for every other
         -- expired terminal session. session_variables is a shared store, so

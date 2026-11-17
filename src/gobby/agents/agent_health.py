@@ -207,7 +207,7 @@ class AgentHealthMonitor:
         )
         if not result.success:
             logger.warning(
-                "Managed tmux termination failed for run %s: %s (%s)",
+                "Managed terminal termination failed for run %s: %s (%s)",
                 run.id,
                 result.error,
                 result.error_code,
@@ -571,7 +571,7 @@ class AgentHealthMonitor:
         return killed
 
     async def check_provider_stalls(self) -> int:
-        """Check tmux agents for provider-side stalls (rate limits, outages)."""
+        """Check terminal agents for provider-side stalls (rate limits, outages)."""
         runs = await self._run_db(self._get_active_terminal_runs)
 
         stalled = 0
@@ -627,6 +627,6 @@ class AgentHealthMonitor:
         return stalled
 
     def _get_active_terminal_runs(self) -> list[AgentRun]:
-        """Get active terminal agent runs with tmux sessions from DB."""
+        """Get active agent runs with terminals from DB."""
         runs = self._agent_run_manager.list_active_for_machine(require_machine_id())
         return [run for run in runs if run.terminal_id and not is_recovery_protected(run)]

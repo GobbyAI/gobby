@@ -18,7 +18,7 @@ __all__ = ["COMPOSER_CLEAR_KEYS", "COMPOSER_DRAIN_LINES", "composer_clear_sequen
 COMPOSER_DRAIN_LINES = 8
 
 # ctrl+u and ctrl+k kill to the line start and end in Claude Code (which ignores
-# ctrl+l when driven through tmux); backspace and delete then join the emptied
+# ctrl+l when driven through terminal input); backspace and delete then join the emptied
 # line with its neighbours. Codex binds no line kill: ctrl+u on a held ``/compact``
 # opened its slash popup, and each backspace removes one character, so this pass
 # alone clears at most COMPOSER_DRAIN_LINES characters there. Each key is a no-op

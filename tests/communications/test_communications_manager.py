@@ -4383,8 +4383,7 @@ async def test_native_clear_does_not_take_sibling_panes_dm(
 
     sessions = SessionManager(temp_db)
     shared_context = {
-        "tmux_session": "operator-panes",
-        "tmux_socket_path": "/tmp/native-clear-test.sock",
+        "gobby_terminal_id": "operator-pane",
     }
     sibling = sessions.register(
         external_id="native-clear-sibling",
@@ -5103,9 +5102,7 @@ async def test_context_reuse_session_start_preserves_sibling_dm(
 
     sessions = SessionManager(temp_db)
     context = {
-        "tmux_pane": "%1",
-        "tmux_session": "fleet",
-        "tmux_socket_path": "/tmp/test-context-reuse/socket",
+        "gobby_terminal_id": "%1",
         "parent_pid": 4242,
         "parent_create_time": 1234.5,
     }
@@ -5134,7 +5131,7 @@ async def test_context_reuse_session_start_preserves_sibling_dm(
     if reuse != "same-pane":
         next_context.update(parent_pid=4343, parent_create_time=2345.6)
     if reuse == "sibling":
-        next_context["tmux_pane"] = "%2"
+        next_context["gobby_terminal_id"] = "%2"
     elif reuse == "restarted-tty":
         context = {"tty": "/dev/test-reused", "parent_pid": 4242, "parent_create_time": 1234.5}
         sessions.update(predecessor.id, terminal_context=context)

@@ -1095,10 +1095,14 @@ class TestClaimedTaskReconciliation:
         )
         parent_session = MagicMock()
         parent_session.parent_session_id = None
-        parent_session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        parent_session.terminal_context = {
+            "gobby_terminal_id": "%12",
+        }
         child_session = MagicMock()
         child_session.parent_session_id = "parent-sess"
-        child_session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        child_session.terminal_context = {
+            "gobby_terminal_id": "%12",
+        }
         session_manager.get.side_effect = lambda sid: {
             "parent-sess": parent_session,
             "child-sess": child_session,
@@ -1148,10 +1152,14 @@ class TestClaimedTaskReconciliation:
         )
         parent_session = MagicMock()
         parent_session.parent_session_id = None
-        parent_session.terminal_context = {"tmux_pane": "%5815", "tmux_socket_path": "/tmp/tmux"}
+        parent_session.terminal_context = {
+            "gobby_terminal_id": "%5815",
+        }
         child_session = MagicMock()
         child_session.parent_session_id = "parent-sess"
-        child_session.terminal_context = {"tmux_pane": "%5867", "tmux_socket_path": "/tmp/tmux"}
+        child_session.terminal_context = {
+            "gobby_terminal_id": "%5867",
+        }
         session_manager.get.side_effect = lambda sid: {
             "parent-sess": parent_session,
             "child-sess": child_session,

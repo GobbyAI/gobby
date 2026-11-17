@@ -825,7 +825,7 @@ class TestComputeSandboxPaths:
         assert str(workspace) in paths.write_paths
 
     async def test_unix_sockets_are_only_the_configured_ones(self, tmp_path: Path) -> None:
-        """Agents never reach a tmux server, so no tmux socket directory is granted."""
+        """Agents never reach a terminal host directly, so no host socket directory is granted."""
         socket = tmp_path / "gobby.sock"
         config = SandboxConfig(enabled=True, allow_unix_sockets=[str(socket)])
 

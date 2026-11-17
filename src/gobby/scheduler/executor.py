@@ -386,7 +386,7 @@ class CronExecutor:
                 if "provider" not in config and agent_body.provider != "inherit":
                     provider = agent_body.provider
 
-        # Spawn agent via spawn_agent_impl (all agents go through tmux)
+        # Spawn agent via spawn_agent_impl
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         daemon_config = getattr(self.services, "config", None) or getattr(

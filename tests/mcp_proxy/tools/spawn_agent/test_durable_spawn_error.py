@@ -196,7 +196,7 @@ async def test_originating_error_is_durable_before_capture_and_terminalization(
     )
     storage = LocalAgentRunManager(temp_db)
     run = storage.create(parent_session_id=session.id, provider="codex", prompt="test launch")
-    origin = "tmux launch rejected 40960-byte command: message too long"
+    origin = "terminal launch rejected 40960-byte command: message too long"
 
     async def capture(_row: object) -> SimpleNamespace:
         recorded = storage.get(run.id)

@@ -477,7 +477,7 @@ async def handle_plan_approval_response(
     ``option_id`` falls back to the generic-approve default (``normal`` mode,
     auto-continue), so older clients stay compatible.
     """
-    # Path B: an attached proxy-terminal session (CLI in a tmux pane) has no
+    # Path B: an attached proxy-terminal session (CLI in a terminal pane) has no
     # in-memory ChatSession; its plan choice is a native TUI menu driven by
     # keystrokes. Mirror the set_mode/set_agent target_session_id convention.
     raw_target_session_id = data.get("target_session_id")

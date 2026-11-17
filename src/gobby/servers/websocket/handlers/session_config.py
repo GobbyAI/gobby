@@ -43,7 +43,7 @@ async def _set_attached_session_mode(
 ) -> None:
     """Persist chat_mode for a session the caller is attached to but does not own.
 
-    Used when the web chat client drives a tmux/CLI session's mode via
+    Used when the web chat client drives a terminal CLI session's mode via
     set_mode with a target_session_id. The session has no in-memory ChatSession
     on this server; we update the storage row and session_variables, then
     rely on the next attach_to_session_result reload to confirm.
@@ -286,7 +286,7 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
         "mode": "normal" | "accept_edits" | "bypass" | "plan",
         "conversation_id": "stable-id",
         "target_session_id": "db-uuid"  # optional: drives an attached
-                                        # tmux/CLI session instead of the
+                                        # terminal CLI session instead of the
                                         # caller's chat session
     }
     """

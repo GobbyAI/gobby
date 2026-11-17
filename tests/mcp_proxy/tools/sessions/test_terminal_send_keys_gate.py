@@ -177,7 +177,9 @@ def _scene(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> _Manager:
 
 REFUSALS = [
     pytest.param({"terminal": None}, "send_keys_no_live_terminal", id="no-live-terminal"),
-    pytest.param({"terminal": _terminal(pgid=None)}, "send_keys_target_unconfirmed", id="tmux-pid"),
+    pytest.param(
+        {"terminal": _terminal(pgid=None)}, "send_keys_target_unconfirmed", id="missing-pgid"
+    ),
     pytest.param({"foreground": {}}, "send_keys_target_unconfirmed", id="foreground-unread"),
     pytest.param(
         {"foreground": {TERMINAL_ID: "zsh"}}, "send_keys_target_bare_shell", id="bare-shell"

@@ -171,14 +171,14 @@ def test_memo_hands_out_independent_copies(
     with session_manager.db.transaction() as conn:
         conn.execute(
             "UPDATE sessions SET terminal_context = %s WHERE id = %s",
-            ('{"tmux_pane": "%1"}', session.id),
+            ('{"gobby_terminal_id": "%1"}', session.id),
         )
 
     with hub_read_scope():
         first = session_manager.get(session.id)
         assert first is not None and first.terminal_context is not None
-        first.terminal_context["tmux_pane"] = "mutated"
+        first.terminal_context["gobby_terminal_id"] = "mutated"
         second = session_manager.get(session.id)
 
     assert second is not None and second.terminal_context is not None
-    assert second.terminal_context["tmux_pane"] == "%1"
+    assert second.terminal_context["gobby_terminal_id"] == "%1"

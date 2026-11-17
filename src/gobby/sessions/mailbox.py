@@ -317,7 +317,7 @@ class MailboxService:
     async def dispatch_wakes(self, result: MailboxSendResult) -> list[dict[str, Any]]:
         """Wake the recipients whose committed rows still owe a live wake."""
         # Persistence is complete. The dispatcher owns live-wake policy and
-        # channel-specific bounds; an outer timeout can interrupt tmux submission.
+        # channel-specific bounds; an outer timeout can interrupt terminal submission.
         owed = set(result.wake_session_ids)
         pairs = [
             (message, session_id)

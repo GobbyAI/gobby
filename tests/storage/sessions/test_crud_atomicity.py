@@ -233,8 +233,7 @@ def test_update_terminal_context_merges_partial_context_and_notifies_once(
         source="codex",
         project_id=sample_project["id"],
         terminal_context={
-            "tmux_pane": "%7",
-            "tmux_socket_path": "/tmp/tmux.sock",
+            "gobby_terminal_id": "%7",
             "cwd": "/work/old",
         },
     )
@@ -246,7 +245,7 @@ def test_update_terminal_context_merges_partial_context_and_notifies_once(
     updated = manager.update(
         session.id,
         terminal_context={
-            "tmux_pane": None,
+            "gobby_terminal_id": None,
             "cwd": "/work/new",
             "gobby_agent_run_id": "run-1",
         },
@@ -254,8 +253,7 @@ def test_update_terminal_context_merges_partial_context_and_notifies_once(
 
     assert updated is not None
     assert updated.terminal_context == {
-        "tmux_pane": "%7",
-        "tmux_socket_path": "/tmp/tmux.sock",
+        "gobby_terminal_id": "%7",
         "cwd": "/work/new",
         "gobby_agent_run_id": "run-1",
     }
@@ -272,7 +270,7 @@ def test_update_terminal_context_merges_concurrent_disjoint_keys(
         machine_id="20000000-0000-4000-8000-000000000002",
         source="codex",
         project_id=sample_project["id"],
-        terminal_context={"tmux_pane": "%9"},
+        terminal_context={"gobby_terminal_id": "%9"},
     )
     barrier = threading.Barrier(2)
     errors: list[BaseException] = []
@@ -300,7 +298,7 @@ def test_update_terminal_context_merges_concurrent_disjoint_keys(
     updated = manager.get(session.id)
     assert updated is not None
     assert updated.terminal_context == {
-        "tmux_pane": "%9",
+        "gobby_terminal_id": "%9",
         "cwd": "/work/repo",
         "gobby_agent_run_id": "run-2",
     }

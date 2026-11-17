@@ -172,7 +172,7 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
 
 
 @pytest.mark.asyncio
-async def test_srt_preflight_failure_prevents_tmux_spawn() -> None:
+async def test_srt_preflight_failure_prevents_terminal_spawn() -> None:
     session_manager = MagicMock()
     # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
     session_manager._storage.db.fetchone.return_value = None

@@ -802,7 +802,7 @@ def test_resolve_pane_io_uses_gterm_terminal_named_by_context() -> None:
     session = MagicMock(
         id="session-1",
         project_id="proj-1",
-        terminal_context={"gobby_terminal_id": terminal_id, "tmux_pane": None},
+        terminal_context={"gobby_terminal_id": terminal_id},
     )
     session_manager = MagicMock()
     session_manager.get.return_value = session

@@ -7,7 +7,7 @@ them, so an ``expired`` status written by either one can simply be wrong. So can
 the liveness monitor's expiry of a session whose native pane exited under a
 terminal host that has since been replaced: a host drain ends every pane, and
 the seats are resumed into the same sessions afterwards. Every other expiry
-writer -- inactivity, a killed tmux server, a pane closed under the live host,
+writer -- inactivity, a pane closed under the live host,
 an explicit close -- knows the session is finished.
 
 The row itself cannot tell those apart, so the speculative writer records why it

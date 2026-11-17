@@ -160,8 +160,7 @@ async def test_send_text_2600_reaches_live_claude_pane_whole(
 
     terminal_context = {
         "parent_pid": os.getpid(),
-        "tmux_pane": f"%proof-{head_id}",
-        "tmux_socket_path": f"/tmp/proof-{head_id}.sock",
+        "gobby_terminal_id": f"%proof-{head_id}",
         "tty": f"/dev/pts/proof-{head_id}",
         "term_program": "pytest",
         "term_session_id": f"proof-{head_id}",

@@ -362,7 +362,7 @@ def _reset_process_global_state() -> None:
 
 @pytest.fixture(autouse=True)
 def _restore_process_global_state() -> Generator[None]:
-    """Isolate OpenTelemetry, terminal-delivery, tmux, ledger and probe-cache state per test.
+    """Isolate OpenTelemetry, terminal-delivery, runtime, ledger and probe-cache state per test.
 
     OpenTelemetry provider registration uses process-global one-shot guards.
     Terminal delivery also owns process-global admission and in-flight task

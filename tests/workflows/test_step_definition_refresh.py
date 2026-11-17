@@ -535,7 +535,7 @@ async def test_unavailable_current_workflow_retains_snapshot_permissions(
     )
     if invalid_row:
         # Reproduce a pre-existing row; the public write boundary rejects this field.
-        body["terminal_backend"] = "tmux"
+        body["terminal_backend"] = "retired"
         with hub_db.transaction() as conn:
             conn.execute(
                 "UPDATE agent_definitions SET definition_json = %s WHERE id = %s",

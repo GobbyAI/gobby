@@ -189,7 +189,7 @@ async def handle_continue_in_chat(
 
     resume_in_place = bool(source_session and _is_terminal_session(source_session))
     if resume_in_place:
-        # Resuming a tmux session preserves the same durable session identity.
+        # Resuming a terminal session preserves the same durable session identity.
         conversation_id = source_session_id
 
     runtime_manager = getattr(mixin, "web_chat_runtime_manager", None)

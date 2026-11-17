@@ -504,9 +504,9 @@ async def reap_stale_pending_terminals(
     The reaper claims each id for its whole kill and proof, so a held id belongs
     to its in-doubt owner and a placed retry cannot claim one mid-reap. After the
     claim the row is read again and reaped only while it is still the listed
-    pending attempt. It settles only on proof: a tmux session gone after the
-    kill, or a native row missing from the strict host listing with its recorded
-    group dead. A present session, a listed row or a raised probe leaves the row
+    pending attempt. It settles only on proof: a native row missing from the
+    strict host listing with its recorded group dead. A listed row or a raised
+    probe leaves the row
     pending for the next pass. `now` is accepted so tests can name the observed
     clock; selection uses attempt_started_at via list_stale_pending.
     """

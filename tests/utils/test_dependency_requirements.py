@@ -195,7 +195,7 @@ def _collect_dependency_report(
     ("minimum", "exact", "below", "newer"),
     [
         ("3.13.0", "3.13.0", "3.12.9", "3.14.0"),
-        ("3.2", "tmux 3.2", "tmux 3.1", "tmux 3.7b"),
+        ("3.2", "ExampleTool 3.2", "ExampleTool 3.1", "ExampleTool 3.7b"),
         ("2.38.0", "git version 2.38.0", "git version 2.37.9", "git version 2.50.1"),
         ("20.11.0", "v20.11.0", "v20.10.9", "v26.5.0"),
         ("2.7.0", "Docker Compose version v2.7.0", "v2.6.9", "v2.39.1"),
@@ -239,7 +239,7 @@ def test_malformed_required_versions_fail_closed(output: str) -> None:
 @pytest.mark.parametrize(
     ("output", "display"),
     [
-        ("tmux 3.7b", "3.7b"),
+        ("ExampleTool 3.7b", "3.7b"),
         ("v26.5.0", "26.5.0"),
         ("git version 2.50.1 (Apple Git-155)", "2.50.1"),
     ],

@@ -1,7 +1,7 @@
-"""Idle agent classification via tmux pane content analysis.
+"""Idle agent classification via terminal pane content analysis.
 
 Secondary idle detection layer: classifies *why* an agent is idle by
-examining the last few lines of its tmux pane (prompt, context full, etc.).
+examining the last few lines of its terminal pane (prompt, context full, etc.).
 The primary idle signal is session updated_at in lifecycle_monitor.py;
 pane analysis only runs when the session appears stale.
 """
@@ -142,7 +142,7 @@ class IdleState:
 
 
 class IdleDetector:
-    """Detects idle agents by pattern-matching tmux pane output.
+    """Detects idle agents by pattern-matching terminal pane output.
 
     Three detection modes:
     1. **Idle prompt** — agent is sitting at ❯ or $ prompt (repromptable)
@@ -304,7 +304,7 @@ class IdleDetector:
         """Classify pane output as 'idle', 'context_full', or 'active'.
 
         Args:
-            pane_output: Last few lines captured from the tmux pane.
+            pane_output: Last few lines captured from the terminal pane.
 
         Returns:
             One of: 'idle', 'context_full', 'active'

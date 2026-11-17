@@ -1,7 +1,7 @@
 """The handoff compaction sequence: interrupt, drain, submit, verify, watch.
 
-Backend-neutral by construction — every write and read goes through the ``PaneIO``
-protocol, so the same sequence drives a native (gterm) pane and a tmux one.
+Every write and read goes through the ``PaneIO`` protocol to drive the native
+(gterm) pane.
 """
 
 from __future__ import annotations

@@ -1806,7 +1806,7 @@ def test_clear_delivery_compensation_restores_status_and_clears_markers(
         session.id,
         attempt_id=attempt_id,
         handoff=build_handoff_payload(current_state="Ready.", next_steps=["Continue."]),
-        terminal_context={"tmux_pane": "%1"},
+        terminal_context={"gobby_terminal_id": "%1"},
         chat_context=None,
     )
     failure = {"delivery_failed": True, "retry_guidance": "Retry set_handoff."}
