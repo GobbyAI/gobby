@@ -159,8 +159,6 @@ fn ghook_command(home: &Path, daemon_url: &str) -> Command {
         .env("GOBBY_DAEMON_URL", daemon_url)
         .env_remove("GOBBY_HOOKS_DISABLED")
         .env_remove("GOBBY_IS_SPAWNED_AGENT")
-        .env_remove("TMUX")
-        .env_remove("TMUX_PANE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

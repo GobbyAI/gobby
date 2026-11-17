@@ -566,21 +566,9 @@ fn success_failure_kind(response_body: &str) -> diagnostics::FailureKind {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::ffi::OsStr;
     use std::sync::Mutex;
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn with_tmux_env<T>(tmux: Option<&str>, tmux_pane: Option<&str>, f: impl FnOnce() -> T) -> T {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let gobby_home = tempfile::tempdir().unwrap();
-        let vars: [(&str, Option<&OsStr>); 3] = [
-            ("TMUX", tmux.map(OsStr::new)),
-            ("TMUX_PANE", tmux_pane.map(OsStr::new)),
-            ("GOBBY_HOME", Some(gobby_home.path().as_os_str())),
-        ];
-        temp_env::with_vars(vars, f)
-    }
 
     fn with_gobby_home<T>(gobby_home: &Path, f: impl FnOnce() -> T) -> T {
         let _guard = ENV_LOCK.lock().unwrap();
@@ -692,8 +680,9 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_envelope_injects_valid_tmux_pane_for_context_bearing_hooks() {
-        with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), Some("%17"), || {
+    fn dispatch_envelope_captures_terminal_context_for_context_bearing_hooks() {
+        let home = tempfile::tempdir().unwrap();
+        with_gobby_home(home.path(), || {
             let cfg = CliConfig::for_cli("grok").expect("supported CLI");
             for hook_type in [
                 "SessionStart",
@@ -704,8 +693,8 @@ mod tests {
                 let envelope =
                     build_dispatch_envelope(&cfg, hook_type, json!({"session_id": "sess-1"}), None);
 
-                assert_eq!(
-                    envelope.input_data["terminal_context"]["tmux_pane"], "%17",
+                assert!(
+                    envelope.input_data["terminal_context"].is_object(),
                     "{hook_type}"
                 );
             }
@@ -713,58 +702,15 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_envelope_captures_terminal_context_sender_without_tmux_for_tool_hooks() {
-        with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), Some("%17"), || {
+    fn dispatch_envelope_captures_terminal_context_sender_for_tool_hooks() {
+        let home = tempfile::tempdir().unwrap();
+        with_gobby_home(home.path(), || {
             let cfg = CliConfig::for_cli("codex").expect("supported CLI");
             let envelope =
                 build_dispatch_envelope(&cfg, "PreToolUse", json!({"session_id": "sess-1"}), None);
 
             let context = &envelope.input_data["terminal_context"];
             assert!(context["parent_pid"].as_i64().unwrap() > 0);
-            assert!(context.get("tmux_pane").is_none());
-        });
-    }
-
-    #[test]
-    fn dispatch_envelope_nulls_tmux_fields_for_missing_or_invalid_tmux_pane() {
-        for pane in [None, Some(""), Some("17"), Some("%"), Some("%x")] {
-            with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), pane, || {
-                let cfg = CliConfig::for_cli("codex").expect("supported CLI");
-                let envelope = build_dispatch_envelope(
-                    &cfg,
-                    "SessionStart",
-                    json!({"session_id": "sess-1"}),
-                    None,
-                );
-
-                assert_eq!(
-                    envelope.input_data["terminal_context"]["tmux_pane"],
-                    json!(null)
-                );
-                assert_eq!(
-                    envelope.input_data["terminal_context"]["tmux_socket_path"],
-                    json!(null)
-                );
-            });
-        }
-
-        with_tmux_env(None, Some("%17"), || {
-            let cfg = CliConfig::for_cli("codex").expect("supported CLI");
-            let envelope = build_dispatch_envelope(
-                &cfg,
-                "SessionStart",
-                json!({"session_id": "sess-1"}),
-                None,
-            );
-
-            assert_eq!(
-                envelope.input_data["terminal_context"]["tmux_pane"],
-                json!(null)
-            );
-            assert_eq!(
-                envelope.input_data["terminal_context"]["tmux_socket_path"],
-                json!(null)
-            );
         });
     }
 

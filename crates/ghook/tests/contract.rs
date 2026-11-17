@@ -115,8 +115,6 @@ fn malformed_stdin_ignores_closed_stdout_pipe() -> TestResult {
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
-        .env_remove("TMUX")
-        .env_remove("TMUX_PANE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -687,10 +685,7 @@ fn prompt_start_hooks_enqueue_terminal_context() -> TestResult {
             &daemon_url,
             VALID_STDIN,
             RunGhookExtras {
-                env: &[
-                    ("TMUX", "/tmp/tmux-501/default,12345,0"),
-                    ("TMUX_PANE", "%17"),
-                ],
+                env: &[],
                 args: &["--enqueue-only"],
                 cwd: None,
             },
@@ -698,10 +693,11 @@ fn prompt_start_hooks_enqueue_terminal_context() -> TestResult {
 
         assert!(output.status.success(), "{cli} {hook_type}");
         let envelope = read_single_inbox_envelope(gobby_home.path())?;
-        assert_eq!(
-            envelope["input_data"]["terminal_context"]["tmux_pane"], "%17",
-            "{cli} {hook_type}"
-        );
+        let context = envelope["input_data"]["terminal_context"]
+            .as_object()
+            .expect("context");
+        assert_eq!(context.len(), 11, "{cli} {hook_type}");
+        assert!(context["parent_pid"].as_i64().expect("parent pid") > 0);
     }
 
     Ok(())
@@ -1046,8 +1042,6 @@ fn detached_noncritical_action_ignores_closed_stdout_pipe() -> TestResult {
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
-        .env_remove("TMUX")
-        .env_remove("TMUX_PANE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -2074,8 +2068,6 @@ fn run_diagnose_with_dirs(
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
-        .env_remove("TMUX")
-        .env_remove("TMUX_PANE")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()?;
@@ -2131,8 +2123,6 @@ fn run_ghook_with_closed_stdout(
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
-        .env_remove("TMUX")
-        .env_remove("TMUX_PANE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2176,8 +2166,6 @@ fn run_ghook_with_dirs_and_args(
         .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
         .env_remove("GOBBY_SOURCE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
-        .env_remove("TMUX")
-        .env_remove("TMUX_PANE")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

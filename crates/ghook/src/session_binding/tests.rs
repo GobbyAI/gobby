@@ -43,7 +43,7 @@ fn envelope(provider_session_id: &str, headers: &[(&str, &str)]) -> Envelope {
     )
 }
 
-/// Run `body` against an isolated home with no managed-run markers and no tmux.
+/// Run `body` against an isolated home with no managed-run markers.
 fn isolated<R>(home: &Path, body: impl FnOnce() -> R) -> R {
     isolated_with(home, &[], body)
 }
@@ -57,8 +57,6 @@ fn isolated_with<R>(home: &Path, extra: &[(&str, Option<&str>)], body: impl FnOn
             (gobby_core::grant::MANAGED_BOOTSTRAP_ENV, None),
             (gobby_core::local_token::AGENT_API_TOKEN_ENV, None),
             ("GOBBY_SESSION_ID", None),
-            ("TMUX", None),
-            ("TMUX_PANE", None),
         ],
         || {
             let owned: Vec<(&str, Option<&str>)> = extra.to_vec();
@@ -265,31 +263,23 @@ fn response_credential_is_stored_for_this_cli_only_and_stripped() {
     })
     .to_string();
 
-    isolated_with(
-        home.path(),
-        &[
-            ("TMUX", Some("/tmp/tmux-501/default,4242,0")),
-            ("TMUX_PANE", Some("%4")),
-        ],
-        || {
-            let stripped =
-                remember_response_credential(&envelope("sid-1", &[]), &body).into_owned();
+    isolated(home.path(), || {
+        let stripped = remember_response_credential(&envelope("sid-1", &[]), &body).into_owned();
 
-            let rest: Value = serde_json::from_str(&stripped).unwrap();
-            assert_eq!(rest, json!({"continue": true}));
-            assert!(session_credential::bound_for_provider(home.path(), "sid-1").is_none());
-            let cli = current_cli_pid().expect("the parent CLI process is readable");
-            let by_cli = session_credential::load(home.path(), &cli_pid_key(cli))
-                .expect("record stored under the CLI key");
-            assert_eq!(by_cli.token, TOKEN);
-            assert_eq!(by_cli.provider_session_id, "sid-1");
-            assert_eq!(
-                record_count(home.path()),
-                1,
-                "the CLI key only; neither the provider session nor a tmux pane is a key"
-            );
-        },
-    );
+        let rest: Value = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(rest, json!({"continue": true}));
+        assert!(session_credential::bound_for_provider(home.path(), "sid-1").is_none());
+        let cli = current_cli_pid().expect("the parent CLI process is readable");
+        let by_cli = session_credential::load(home.path(), &cli_pid_key(cli))
+            .expect("record stored under the CLI key");
+        assert_eq!(by_cli.token, TOKEN);
+        assert_eq!(by_cli.provider_session_id, "sid-1");
+        assert_eq!(
+            record_count(home.path()),
+            1,
+            "the CLI key only; the provider session is not a key"
+        );
+    });
 }
 
 fn agy_envelope(hook_type: &str, conversation_id: &str) -> Envelope {

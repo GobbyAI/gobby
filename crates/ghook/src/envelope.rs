@@ -20,7 +20,7 @@ pub const RESPONSE_CAPABILITY: &str = "hook-response.v1";
 ///
 /// Field order follows the schema. `headers` is serialized as a plain
 /// object; absent headers are not keys. `input_data` is the original stdin
-/// payload verbatim (with valid tmux `terminal_context` injected when present).
+/// payload verbatim (with native `terminal_context` injected for context-bearing hooks).
 #[derive(Debug, Serialize)]
 pub struct Envelope {
     pub schema_version: u32,
