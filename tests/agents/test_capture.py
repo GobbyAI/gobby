@@ -589,7 +589,7 @@ async def test_terminate_managed_runtime_kills_remain_on_exit_session() -> None:
             return getattr(terminal, "id", None) not in self.killed_ids
 
     storage = FakeCaptureStorage(_run("remain"))
-    terminal = make_memory_terminal(session_name="gobby-remain")
+    terminal = make_memory_terminal()
     runtime = RemainOnExitRuntime()
     runtime.snapshot_full_result = SnapshotResult(
         text="orphan scrollback",
@@ -607,5 +607,5 @@ async def test_terminate_managed_runtime_kills_remain_on_exit_session() -> None:
     )
     assert result.success
     assert result.kill_outcome == KillOutcome.KILLED
-    assert runtime.killed == ["gobby-remain"]
+    assert runtime.killed_ids == {terminal.id}
     assert await runtime.session_present(terminal) is False

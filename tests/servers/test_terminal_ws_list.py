@@ -17,7 +17,7 @@ from gobby.servers.browser_sessions import BrowserSession
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.terminals import TerminalManager, tmux_locator_key
+from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.utils.local_token import AgentApiTokenClaims
 from tests.fixtures.isolated_checkout import patch_local_machine_id
@@ -27,7 +27,6 @@ from tests.terminals.fakes import MachineOwnerRows
 
 pytestmark = pytest.mark.unit
 
-SOCKET = "/private/tmp/tmux-501/default"
 OWNER_USER_ID = "20000000-0000-4000-8000-000000000001"
 OTHER_USER_ID = "20000000-0000-4000-8000-000000000002"
 
@@ -60,22 +59,16 @@ def server(manager: TerminalManager) -> WebSocketServer:
 
 
 def seed_pane(manager: TerminalManager, project_id: str, pane_id: str, title: str) -> Any:
-    locator = {
-        "socket_path": SOCKET,
-        "server_pid": 6051,
-        "server_start_time": 1787385464,
-        "pane_id": pane_id,
-    }
-    return manager.upsert_external(
-        project_id=project_id,
-        backend="tmux",
-        locator=locator,
-        locator_key=tmux_locator_key(
-            socket_path=SOCKET, server_pid=6051, server_start_time=1787385464, pane_id=pane_id
-        ),
-        session_name=title,
+    pending = _create_pending(manager, project_id)
+    live = manager.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": pane_id},
+        locator_key=native_locator_key("list-epoch", pane_id),
+        host_epoch="list-epoch",
         title=title,
     )
+    assert live is not None
+    return live
 
 
 async def listed(server: WebSocketServer, request: dict[str, Any]) -> dict[str, Any]:
@@ -85,7 +78,7 @@ async def listed(server: WebSocketServer, request: dict[str, Any]) -> dict[str, 
 
 
 @pytest.mark.asyncio
-async def test_list_without_a_project_is_machine_wide_without_tmux_probes(
+async def test_list_without_a_project_is_machine_wide(
     server: WebSocketServer,
     manager: TerminalManager,
     sample_project: dict[str, Any],
@@ -101,8 +94,8 @@ async def test_list_without_a_project_is_machine_wide_without_tmux_probes(
     assert page["next_cursor"] is None
     by_id = {item["terminal_id"]: item for item in page["items"]}
     assert set(by_id) == {here.id, elsewhere.id}
-    assert by_id[here.id]["backend"] == "tmux"
-    assert by_id[elsewhere.id]["backend"] == "tmux"
+    assert by_id[here.id]["backend"] == "native"
+    assert by_id[elsewhere.id]["backend"] == "native"
     assert "pane_command" not in by_id[here.id]
 
 
@@ -321,7 +314,7 @@ async def test_terminal_list_exposes_backend(
     manager: TerminalManager,
     sample_project: dict[str, Any],
 ) -> None:
-    tmux_row = seed_pane(manager, sample_project["id"], "%3", "tmux-pane")
+    first = seed_pane(manager, sample_project["id"], "host-3", "first-pane")
     native = _create_pending(manager, sample_project["id"], backend="native")
     promoted = manager.promote_to_live(
         native.id,
@@ -330,8 +323,8 @@ async def test_terminal_list_exposes_backend(
         host_epoch="epoch-1",
     )
     assert promoted is not None
-    stored = {row.id: row.backend for row in (tmux_row, promoted)}
-    assert sorted(stored.values()) == ["native", "tmux"]
+    stored = {row.id: row.backend for row in (first, promoted)}
+    assert sorted(stored.values()) == ["native", "native"]
 
     page = await listed(server, {"request_id": "backends"})
 

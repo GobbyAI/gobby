@@ -55,9 +55,7 @@ def _memory_terminal_services(*terminal_ids: str) -> TerminalServices:
     """Live in-memory terminal rows for runs built without a database."""
     store = MemoryTerminalStore()
     for terminal_id in terminal_ids:
-        store.rows[terminal_id] = make_memory_terminal(
-            terminal_id=terminal_id, session_name=terminal_id
-        )
+        store.rows[terminal_id] = make_memory_terminal(terminal_id=terminal_id)
     runtime = LifecycleRuntime()
     registry = TerminalRuntimeRegistry()
     registry.register(runtime)
@@ -394,7 +392,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_run_mgr.get.return_value = db_run
         session_manager = MagicMock()
         services = _memory_terminal_services("agent-run-1")
-        runtime = cast(LifecycleRuntime, services.registry.resolve("tmux"))
+        runtime = cast(LifecycleRuntime, services.registry.resolve("native"))
         runtime.snapshot_text = "working"
         idle_detector = IdleDetector(DETECTION_REGISTRY, "claude")
         cleanup_handler = AsyncMock()

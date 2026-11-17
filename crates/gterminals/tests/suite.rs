@@ -26,9 +26,6 @@ mod protocol_contract;
 #[path = "reconcile.rs"]
 mod reconcile;
 
-#[path = "tmux_write.rs"]
-mod tmux_write;
-
 #[path = "write_coordinator.rs"]
 mod write_coordinator;
 

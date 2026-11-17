@@ -11,10 +11,11 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from tests.servers.test_terminals_routes import _client
 from tests.storage.test_terminals import (
+    _EPOCH,
     LOCAL_MACHINE_ID,
     _manager,
-    _tmux_key,
-    _tmux_locator,
+    _native_key,
+    _native_locator,
 )
 
 pytestmark = pytest.mark.unit
@@ -33,28 +34,40 @@ def test_terminal_list_and_get_exclude_foreign_machine(
     sample_project: dict[str, Any],
 ) -> None:
     manager = _manager(temp_db)
-    local_locator = _tmux_locator(pane_id="%local")
-    local = manager.upsert_external(
+    local_locator = _native_locator(host_terminal_id="local-host")
+    local_pending = manager.create_pending(
+        terminal_id="41000000-0000-4000-8000-000000000001",
         machine_id=LOCAL_MACHINE_ID,
         project_id=sample_project["id"],
-        backend="tmux",
+        backend="native",
+        ownership="gobby",
+        spawn_key="local-spawn",
+    )
+    local = manager.promote_to_live(
+        local_pending.id,
         locator=local_locator,
-        locator_key=_tmux_key(local_locator),
-        session_name="local",
-        window_id="@1",
+        locator_key=_native_key(local_locator),
+        host_epoch=_EPOCH,
         title="local",
     )
-    foreign_locator = _tmux_locator(pane_id="%foreign")
-    foreign = manager.upsert_external(
+    assert local is not None
+    foreign_locator = _native_locator(host_terminal_id="foreign-host")
+    foreign_pending = manager.create_pending(
+        terminal_id="41000000-0000-4000-8000-000000000002",
         machine_id=FOREIGN_MACHINE_ID,
         project_id=sample_project["id"],
-        backend="tmux",
+        backend="native",
+        ownership="gobby",
+        spawn_key="foreign-spawn",
+    )
+    foreign = manager.promote_to_live(
+        foreign_pending.id,
         locator=foreign_locator,
-        locator_key=_tmux_key(foreign_locator),
-        session_name="foreign",
-        window_id="@2",
+        locator_key=_native_key(foreign_locator),
+        host_epoch=_EPOCH,
         title="foreign",
     )
+    assert foreign is not None
 
     with _client(temp_db) as client:
         listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})

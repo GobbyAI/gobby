@@ -55,7 +55,7 @@ UNSETTLED_BARRIER = HookReplayBarrierOutcome(settled=False, session_recovery_saf
 
 
 class TestAgentRestartReconciliation:
-    """Recover preserved tmux-backed agents after daemon startup."""
+    """Recover preserved native agents after daemon startup."""
 
     @pytest.mark.asyncio
     async def test_restart_reconciles_and_rotates_managed_credentials_without_agent_runner(
@@ -286,7 +286,7 @@ class TestAgentRestartReconciliation:
         finalize.assert_not_awaited()
         runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_not_awaited()
 
-    @pytest.mark.parametrize("backend", ["native", "tmux"])
+    @pytest.mark.parametrize("backend", ["native"])
     async def test_provisional_orphaned_row_never_relaunches(self, backend: str) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
@@ -385,7 +385,7 @@ class TestAgentRestartReconciliation:
         )
         row = SimpleNamespace(
             id="5c0a4b6e-7f1d-4c1e-9d2a-3e4f5a6b7c8d",
-            backend="tmux",
+            backend="native",
             state="exited",
             agent_run_id=run.id,
         )
@@ -499,57 +499,13 @@ class TestAgentRestartReconciliation:
         ]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("state", ["live", "pending", "orphaned"])
-    async def test_uncertain_legacy_terminal_stays_fenced_without_tmux_probe(
-        self, caplog: pytest.LogCaptureFixture, state: str
-    ) -> None:
-        run = SimpleNamespace(
-            id="ac314d27-4314-5fe3-a0ab-01645086e137",
-            terminal_id="5c0a4b6e-7f1d-4c1e-9d2a-3e4f5a6b7c8d",
-            pid=111,
-            resume_metadata_json={},
-        )
-        row = SimpleNamespace(id=run.terminal_id, backend="tmux", state=state)
-        run_storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
-        run_storage.merge_resume_metadata = MagicMock(
-            side_effect=lambda _run_id, updates: run.resume_metadata_json.update(updates)
-        )
-        runner = self._runner(run_storage)
-        runner.terminal_manager = SimpleNamespace(get=MagicMock(return_value=row))
-        runner.terminal_runtime_registry = SimpleNamespace(
-            resolve=MagicMock(side_effect=AssertionError("legacy runtime must not be probed"))
-        )
-        resolved_run_ids: set[str] = set()
-
-        with caplog.at_level(logging.WARNING, logger="gobby.runner_lifecycle"):
-            await runner_lifecycle._reconcile_agent_runs_after_restart(
-                runner, resolved_run_ids=resolved_run_ids
-            )
-            await runner_lifecycle._reconcile_agent_runs_after_restart(
-                runner, resolved_run_ids=resolved_run_ids
-            )
-
-        assert resolved_run_ids == set()
-        assert run.resume_metadata_json == {
-            "reconciliation_pending": True,
-            "reconciliation_blocked_reason": f"unsupported_terminal_backend:tmux:{state}",
-        }
-        assert run_storage.merge_resume_metadata.call_count == 1
-        assert (
-            len([record for record in caplog.records if "reconciliation-fenced" in record.message])
-            == 1
-        )
-        runner.terminal_runtime_registry.resolve.assert_not_called()
-        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_not_awaited()
-
-    @pytest.mark.asyncio
     async def test_exited_legacy_row_parks_run_without_mutating_historical_row(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
             terminal_id="5c0a4b6e-7f1d-4c1e-9d2a-3e4f5a6b7c8d",
             resume_metadata_json={},
         )
-        row = SimpleNamespace(id=run.terminal_id, backend="tmux", state="exited")
+        row = SimpleNamespace(id=run.terminal_id, backend="native", state="exited")
         storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
         runner = self._runner(storage, parked_run=run)
         runner.terminal_manager = SimpleNamespace(get=MagicMock(return_value=row))
@@ -713,7 +669,7 @@ class TestAgentRestartReconciliation:
         resume.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_reconcile_active_non_tmux_run_only_hydrates_completion(self) -> None:
+    async def test_reconcile_active_run_without_terminal_only_hydrates_completion(self) -> None:
         run = SimpleNamespace(
             id="ac314d27-4314-5fe3-a0ab-01645086e137",
             terminal_id=None,
@@ -783,14 +739,14 @@ class TestAgentRestartReconciliation:
         assert mutex.lease_until > datetime.now(UTC)
 
     @pytest.mark.asyncio
-    async def test_reconcile_missing_tmux_run_does_not_refresh_expired_mutex(
+    async def test_reconcile_missing_terminal_does_not_refresh_expired_mutex(
         self, temp_db: HubDatabase, sample_project: dict[str, Any]
     ) -> None:
         task = LocalTaskManager(temp_db).create_task(
             sample_project["id"],
-            "Missing tmux task",
+            "Missing terminal task",
             category="code",
-            validation_criteria="Missing tmux sessions are terminalized instead of refreshed.",
+            validation_criteria="Missing terminals are terminalized instead of refreshed.",
             implementation_domain="backend",
         )
         parent = SessionManager(temp_db).register(
@@ -811,7 +767,7 @@ class TestAgentRestartReconciliation:
         run_storage.update_runtime(run.id, pid=111)
         _live_run = run_storage.get(run.id)
         assert _live_run is not None
-        make_live_terminal(_live_run, db=run_storage.db, session_name="gobby-run-1")
+        make_live_terminal(_live_run, db=run_storage.db)
 
         past = datetime.now(UTC) - timedelta(minutes=20)
         mutexes = TaskDispatchMutexManager(temp_db)
@@ -839,7 +795,7 @@ class TestAgentRestartReconciliation:
         assert reloaded.terminal_id == linked_id
         linked = TerminalManager(temp_db).get(linked_id)
         assert linked is not None
-        assert linked.session_name == "gobby-run-1"
+        assert linked.backend == "native"
 
     def test_list_active_agent_runs_requires_agent_runner(self) -> None:
         # A runner without an agent_runner is exactly the invalid input under

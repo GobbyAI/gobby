@@ -259,14 +259,12 @@ pub trait BatchRuntime: Send + Sync {
 #[derive(Clone)]
 pub struct Runtimes {
     pub native: Option<Arc<dyn Runtime>>,
-    pub tmux: Option<Arc<dyn Runtime>>,
 }
 
 impl Runtimes {
     fn resolve(&self, backend: Backend) -> Result<&Arc<dyn Runtime>, Refusal> {
         match backend {
             Backend::Native => self.native.as_ref(),
-            Backend::Tmux => self.tmux.as_ref(),
         }
         .ok_or(Refusal::RuntimeUnavailable(backend))
     }

@@ -33,7 +33,7 @@ def _paused_seat_has_live_pane_or_run(
     A native pane is live only under the running host's epoch. A row stamped with
     another epoch, or a pending row (which never carries an epoch), belongs to a host
     that stopped, so it does not hold the seat. An unknown epoch keeps every native
-    row holding it. Tmux panes survive a host respawn, so they count by state alone.
+    row holding it.
     A paused seat whose pane is gone and whose run is cancelled, failed or absent
     is a dead seat, and it must stay resumable.
     """
@@ -42,7 +42,7 @@ def _paused_seat_has_live_pane_or_run(
         SELECT 1 FROM terminals
         WHERE session_id = %s
           AND state IN ('pending', 'live')
-          AND (%s::text IS NULL OR backend <> 'native' OR host_epoch = %s)
+          AND (%s::text IS NULL OR host_epoch = %s)
         LIMIT 1
         """,
         (session.id, live_host_epoch, live_host_epoch),

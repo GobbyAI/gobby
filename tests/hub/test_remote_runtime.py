@@ -192,7 +192,7 @@ def _draft(ledger: ComposerLedger, terminal_id: str) -> None:
 
 def test_runtime_for_routes_by_machine(temp_db: HubDatabase) -> None:
     native = FakeRuntime(backend="native")
-    tmux = FakeRuntime(backend="tmux")
+    tmux = FakeRuntime(backend="native")
     services = TerminalServices(
         manager=TerminalManager(temp_db),
         registry=runtime_registry(tmux, native),

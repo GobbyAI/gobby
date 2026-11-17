@@ -41,8 +41,6 @@ class SupportsIdentityLookup(Protocol):
         locator: Any,
         locator_key: str,
         host_epoch: str | None = None,
-        session_name: str | None = None,
-        window_id: str | None = None,
         title: str | None = None,
     ) -> Terminal | None: ...
 
@@ -112,9 +110,8 @@ def _orphan_and_interrupt(
 def _canonical_terminal_id(terminal_id: str) -> str | None:
     """Normalize a host row's gobby terminals-table id.
 
-    Tmux observers use ``locator_key`` (``tmux:socket:pid:start:%pane``) as
-    ``terminal_id``. Those slots are not unknown native children and must not
-    be UUID-parsed or killed during adoption.
+    Non-UUID host slots are not unknown native children and must not be killed
+    during adoption.
     """
     try:
         return str(UUID(terminal_id))

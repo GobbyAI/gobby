@@ -1867,7 +1867,7 @@ class TestLocalAgentRunManager:
         agent_manager.update_runtime(run.id)
         _live_run = agent_manager.get(run.id)
         assert _live_run is not None
-        make_live_terminal(_live_run, db=agent_manager.db, session_name="gobby-stale-live")
+        make_live_terminal(_live_run, db=agent_manager.db)
 
         agent_manager.db.execute(
             "UPDATE agent_runs SET started_at = NOW() - INTERVAL '35 minutes' WHERE id = %s",
@@ -2146,7 +2146,7 @@ class TestLocalAgentRunManager:
         agent_manager.update_runtime(pending.id)
         _live_run = agent_manager.get(pending.id)
         assert _live_run is not None
-        make_live_terminal(_live_run, db=agent_manager.db, session_name="gobby-agent-1")
+        make_live_terminal(_live_run, db=agent_manager.db)
 
         agent_manager.db.execute(
             "UPDATE agent_runs SET created_at = NOW() - INTERVAL '23 hours' WHERE id = %s",

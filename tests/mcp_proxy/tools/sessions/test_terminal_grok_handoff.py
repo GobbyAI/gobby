@@ -388,7 +388,7 @@ def test_set_handoff_still_stages_delivery_for_a_tui_agent_run(
     agent_run_manager = MagicMock()
     agent_run_manager.get_by_session.return_value = agent_run
     set_handoff, _session_manager = _set_handoff_tool(agent_run_manager)
-    pane = MagicMock(backend="tmux", target="%12")
+    pane = MagicMock(backend="native", target="%12")
     pane.snapshot = MagicMock(return_value=_ready())
 
     with (

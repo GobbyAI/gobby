@@ -306,17 +306,6 @@ def test_rebind_releases_only_stale_non_agent_owner_rows(
         agent_run_id=run.id,
     )
     assert terminals.transition_for_test(agent.id, "pending", "exited") is not None
-    external_host_epoch = "cleanup-external-epoch"
-    external_host_terminal_id = "cleanup-external-host"
-    external = terminals.upsert_external(
-        project_id=project_id,
-        backend="native",
-        locator={"host_terminal_id": external_host_terminal_id},
-        locator_key=native_locator_key(external_host_epoch, external_host_terminal_id),
-        host_epoch=external_host_epoch,
-        session_id=session.id,
-    )
-    assert terminals.mark_exited(external.id) is not None
 
     target = _native_row(terminals, project_id)
     assert terminals.bind_session(target.id, session.id, project_id) is not None
@@ -326,7 +315,6 @@ def test_rebind_releases_only_stale_non_agent_owner_rows(
     assert _bound_session_id(terminals, pending.id) == session.id
     assert _bound_session_id(terminals, live.id) == session.id
     assert _bound_session_id(terminals, agent.id) == session.id
-    assert _bound_session_id(terminals, external.id) == session.id
 
 
 async def test_revival_rebinds_the_native_pane_that_expiry_released(

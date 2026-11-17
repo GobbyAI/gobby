@@ -114,7 +114,6 @@ def _live_row(temp_db: HubDatabase, sample_project: dict[str, Any]) -> str:
         locator={"host_terminal_id": _HOST_TERMINAL_ID},
         locator_key=native_locator_key(_HOST_EPOCH, _HOST_TERMINAL_ID),
         host_epoch=_HOST_EPOCH,
-        session_name="web-sess",
     )
     assert promoted is not None
     return promoted.id

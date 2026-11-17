@@ -51,6 +51,95 @@ static COPY_THEN_DESTRUCTIVE: &[EmbeddedMigration] = &[COPY_THEN_FENCE, DESTRUCT
 
 pub(super) static DATABASE_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+fn native_only_terminals_fixture() -> anyhow::Result<Option<(ScratchDatabase, Client)>> {
+    let Some((database, mut client)) = scratch_database()? else {
+        return Ok(None);
+    };
+    let next = MIGRATIONS
+        .iter()
+        .position(|migration| migration.version > 502)
+        .unwrap_or(MIGRATIONS.len());
+    SchemaRunner::with_migrations_for_test(&mut client, "public", &MIGRATIONS[..next])?.apply()?;
+    client.batch_execute("\
+        INSERT INTO users(id,email,name,password_hash) VALUES
+          ('10000000-0000-4000-8000-000000000001','native@test.invalid','test','test');
+        INSERT INTO machines(id,hostname,owner_user_id) VALUES
+          ('10000000-0000-4000-8000-000000000002','native-test','10000000-0000-4000-8000-000000000001');
+        INSERT INTO projects(id,name) VALUES
+          ('10000000-0000-4000-8000-000000000003','native terminals');
+        INSERT INTO sessions(id,external_id,machine_id,source,project_id) VALUES
+          ('10000000-0000-4000-8000-000000000004','native-test','10000000-0000-4000-8000-000000000002',
+           'test','10000000-0000-4000-8000-000000000003');
+        INSERT INTO terminals(id,backend,ownership,state,spawn_key,machine_id,project_id,locator,locator_key) VALUES
+          ('10000000-0000-4000-8000-000000000005','native','gobby','pending','owned',
+           '10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000003',NULL,NULL),
+          ('10000000-0000-4000-8000-000000000006','native','external','exited',NULL,
+           '10000000-0000-4000-8000-000000000002','10000000-0000-4000-8000-000000000003','{}','external');
+        INSERT INTO agent_runs(id,machine_id,parent_session_id,provider,prompt,terminal_id) VALUES
+          ('10000000-0000-4000-8000-000000000007','10000000-0000-4000-8000-000000000002',
+           '10000000-0000-4000-8000-000000000004','test','owned','10000000-0000-4000-8000-000000000005'),
+          ('10000000-0000-4000-8000-000000000008','10000000-0000-4000-8000-000000000002',
+           '10000000-0000-4000-8000-000000000004','test','external','10000000-0000-4000-8000-000000000006');
+    ")?;
+    Ok(Some((database, client)))
+}
+
+#[test]
+fn native_only_terminals_migration_deletes_non_native_rows() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = native_only_terminals_fixture()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    let terminals = client.query("SELECT id FROM terminals ORDER BY id", &[])?;
+    assert_eq!(terminals.len(), 1);
+    let owned = Uuid::parse_str("10000000-0000-4000-8000-000000000005")?;
+    assert_eq!(terminals[0].get::<_, Uuid>(0), owned);
+    let runs = client.query(
+        "SELECT prompt, terminal_id FROM agent_runs ORDER BY prompt",
+        &[],
+    )?;
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].get::<_, String>(0), "external");
+    assert_eq!(runs[0].get::<_, Option<Uuid>>(1), None);
+    assert_eq!(runs[1].get::<_, Option<Uuid>>(1), Some(owned));
+    assert_eq!(
+        SchemaRunner::new(&mut client, "public")?
+            .apply()?
+            .migrations_applied,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn native_only_terminals_migration_narrows_checks() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = native_only_terminals_fixture()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    for (column, value) in [("backend", "other"), ("ownership", "external")] {
+        let error = client
+            .execute(&format!("UPDATE terminals SET {column} = $1"), &[&value])
+            .expect_err("native-owned terminal contract rejects other values");
+        assert_eq!(error.code(), Some(&SqlState::CHECK_VIOLATION));
+    }
+    let columns: i64 = client
+        .query_one(
+            "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' \
+         AND table_name = 'terminals' AND column_name IN ('session_name','window_id')",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(columns, 0);
+    Ok(())
+}
+
 fn preflight_migrations(sql: &'static str) -> &'static [EmbeddedMigration] {
     let checksum = Box::leak(super::assets::sha256_hex(sql.as_bytes()).into_boxed_str());
     Box::leak(Box::new([EmbeddedMigration {

@@ -35,6 +35,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._transitions import release_task_claim_if_owned
+from gobby.storage.terminals import TerminalManager
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.detection_test_support import BundledDetectionRegistry
@@ -77,10 +78,11 @@ def _server(
     capability_resolver: Any | None = None,
 ) -> SimpleNamespace:
     live_sessions = sessions or []
-    config = SimpleNamespace(tmux=SimpleNamespace(socket_path="/tmp/gobby.sock"))
+    config = SimpleNamespace()
     return SimpleNamespace(
         services=SimpleNamespace(
             attention_manager=manager,
+            terminal_manager=TerminalManager(temp_db),
             provider_capability_resolver=capability_resolver,
             agent_lifecycle_monitor=SimpleNamespace(
                 prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude")
@@ -144,7 +146,14 @@ def _roster_session(session: Any) -> AttentionRosterRow:
         updated_at=session.updated_at,
         terminal_context=session.terminal_context,
         terminal_id=None,
-        terminal=None,
+        terminal=AttentionRosterTerminal(
+            id=f"terminal-{session.id}",
+            backend="native",
+            state="live",
+            machine_id=require_machine_id(),
+            host_epoch="roster-epoch",
+            locator={"host_terminal_id": f"host-{session.id}"},
+        ),
     )
 
 
@@ -376,10 +385,7 @@ def test_interactive_entry_end_to_end(
         source="codex",
         model="gpt-5",
         terminal_context={
-            "tmux_pane": "%42",
-            "tmux_session": "interactive-shell",
-            "tmux_socket_path": "/tmp/interactive.sock",
-            "parent_pid": 4242,
+            "gobby_pane_id": "interactive-pane",
         },
         updated_at=datetime(2026, 7, 21, tzinfo=UTC),
     )
@@ -402,7 +408,7 @@ def test_interactive_entry_end_to_end(
         async def capture() -> str:
             return QUESTION_PROMPT
 
-        return AttentionPane(target="%42", capture=capture)
+        return AttentionPane(target="interactive-pane", capture=capture)
 
     async def inject(_pane: AttentionPane, answer: AttentionAnswer) -> None:
         injected.append(answer)
@@ -410,17 +416,11 @@ def test_interactive_entry_end_to_end(
     server = _server(temp_db, manager, [session])
     terminal = AttentionRosterTerminal(
         id="term-run-2",
-        backend="tmux",
+        backend="native",
         state="orphaned",
         machine_id=require_machine_id(),
         host_epoch=None,
-        session_name="agent-run-2",
-        locator={
-            "socket_path": "/tmp/gobby.sock",
-            "pane_id": "%1",
-            "server_pid": 123,
-            "server_start_time": 456,
-        },
+        locator={"host_terminal_id": "host-run-2"},
     )
     monkeypatch.setattr(
         manager,
@@ -455,12 +455,7 @@ def test_interactive_entry_end_to_end(
     run_entry = entries["run:run-2"]
     assert roster_payload["seq"] == 1
     assert entry["attention"]["attention_id"] == state.attention_id
-    assert entry["tmux"] == {
-        "socket_path": "/tmp/interactive.sock",
-        "session_name": "interactive-shell",
-        "parent_pid": 4242,
-    }
-    assert run_entry["tmux"] is None
+    assert entry["terminal"]["backend"] == "native"
     assert run_entry["terminal"]["terminal_id"] == "term-run-2"
     assert run_entry["terminal"]["state"] == "orphaned"
     assert seen.status_code == 200 and responded.status_code == 200
@@ -477,8 +472,7 @@ def test_roster_spells_the_model_as_its_provider_prints_it(
         status="active",
         source="codex",
         model="gpt-5",
-        # A roster row needs a pane or a terminal block; the tmux pane is the cheaper one.
-        terminal_context={"tmux_pane": "%7"},
+        terminal_context={"gobby_pane_id": "pane-7"},
         updated_at=datetime(2026, 7, 21, tzinfo=UTC),
     )
     run = SimpleNamespace(
@@ -792,7 +786,7 @@ def test_roster_row_decodes_the_hub_serialized_terminal_json() -> None:
             "session_id": "session-1",
             "lifecycle_status": "active",
             "provider": "codex",
-            "terminal_context": '{"tmux_pane":"%7"}',
+            "terminal_context": '{"gobby_pane_id":"pane-7"}',
             "terminal_id": "terminal-1",
             "terminal_backend": "native",
             "terminal_state": "live",
@@ -802,7 +796,7 @@ def test_roster_row_decodes_the_hub_serialized_terminal_json() -> None:
         }
     )
 
-    assert row.terminal_context == {"tmux_pane": "%7"}
+    assert row.terminal_context == {"gobby_pane_id": "pane-7"}
     assert row.terminal is not None
     assert row.terminal.locator == {"host_terminal_id": "host-terminal-1"}
 
@@ -1006,7 +1000,26 @@ def test_roster_session_entries_carry_the_open_claimed_task(
         machine_id=require_machine_id(),
         source="codex",
         project_id=sample_project["id"],
-        terminal_context={"tmux_pane": "%7"},
+        terminal_context={"gobby_pane_id": "pane-7"},
+    )
+    terminals = TerminalManager(temp_db)
+    pending = terminals.create_pending(
+        terminal_id="41000000-0000-4000-8000-000000000004",
+        project_id=sample_project["id"],
+        backend="native",
+        ownership="gobby",
+        spawn_key="roster-claimed-task",
+        machine_id=require_machine_id(),
+        session_id=session.id,
+    )
+    assert (
+        terminals.promote_to_live(
+            pending.id,
+            locator={"host_terminal_id": "roster-task-host"},
+            locator_key="native:roster-epoch:roster-task-host",
+            host_epoch="roster-epoch",
+        )
+        is not None
     )
     tasks = LocalTaskManager(temp_db)
     task = tasks.create_task(
@@ -1082,7 +1095,7 @@ def test_roster_follows_second_claim_even_when_previous_task_is_updated(
         machine_id=require_machine_id(),
         source="codex",
         project_id=sample_project["id"],
-        terminal_context={"tmux_pane": "%7"},
+        terminal_context={"gobby_pane_id": "pane-7"},
     )
     tasks = LocalTaskManager(temp_db)
     first = tasks.create_task(
@@ -1177,7 +1190,7 @@ def test_roster_exposes_provider_error_before_attention_blocks(
         source="claude",
         project_id=sample_project["id"],
     )
-    session.terminal_context = {"tmux_pane": "%1"}
+    session.terminal_context = {"gobby_pane_id": "pane-1"}
     attention = AttentionStateManager(temp_db)
     lifecycle = TurnLifecycleReducer(sessions, attention)
     evidence = TurnEvidence(source="claude", provider_turn_key="provider-turn-1")

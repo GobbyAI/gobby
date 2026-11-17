@@ -593,17 +593,6 @@ class FrameClient:
             "reservation_id": reservation_id,
             "locator": None,
         }
-        if locator.backend == "tmux" and locator.socket_path and locator.pane_id:
-            pid = locator.server_pid
-            start = locator.server_start_time
-            if not isinstance(pid, int) or not isinstance(start, int):
-                raise FrameProtocolError("tmux attach requires server generation")
-            payload["locator"] = {
-                "socket_path": locator.socket_path,
-                "server_pid": pid,
-                "server_start_time": start,
-                "pane_id": locator.pane_id,
-            }
         await self._send(payload)
         self.attached = True
 

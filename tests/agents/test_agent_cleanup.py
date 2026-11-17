@@ -239,7 +239,7 @@ class _CaptureWrapperStorage(FakeCaptureStorage):
 class _StickyRuntime(FakeRuntime):
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         del grace_seconds
-        name = terminal.session_name or terminal.spawn_key
+        name = terminal.spawn_key
         if name is not None:
             self.killed.append(name)
 
@@ -273,7 +273,7 @@ def _capture_services(
     kill_succeeds: bool = True,
     pane_dead: bool = False,
 ) -> tuple[TerminalServices, FakeRuntime]:
-    terminal = make_memory_terminal(terminal_id="wf-live", session_name="wf-live")
+    terminal = make_memory_terminal(terminal_id="wf-live")
     if not live:
         terminal.state = "exited"
     store = MemoryTerminalStore(terminal)
@@ -330,7 +330,7 @@ async def test_terminalize_successful_run_captures_live_terminal_before_kill() -
         message="done",
     )
 
-    assert runtime.killed == ["wf-live"]
+    assert runtime.killed_ids == {"wf-live"}
     stored = storage.get("run-1")
     assert stored is not None
     assert stored.status == "success"
@@ -368,7 +368,7 @@ async def test_terminalize_cancelled_run_captures_live_terminal_before_kill() ->
         terminal_reason="user_cancelled",
     )
 
-    assert runtime.killed == ["wf-live"]
+    assert runtime.killed_ids == {"wf-live"}
     stored = storage.get("run-1")
     assert stored is not None
     assert stored.status == "cancelled"
@@ -387,7 +387,7 @@ async def test_terminalize_successful_run_kills_remain_on_exit_session() -> None
         message="done",
     )
 
-    assert runtime.killed == ["wf-live"]
+    assert runtime.killed_ids == {"wf-live"}
     stored = storage.get("run-1")
     assert stored is not None
     assert stored.status == "success"
@@ -398,7 +398,7 @@ async def test_terminalize_successful_run_kills_remain_on_exit_session() -> None
 
 async def test_terminalize_survives_presence_probe_failure() -> None:
     storage = _CaptureWrapperStorage(_terminal_run())
-    terminal = make_memory_terminal(terminal_id="wf-live", session_name="wf-live")
+    terminal = make_memory_terminal(terminal_id="wf-live")
     store = MemoryTerminalStore(terminal)
     runtime = _ExplodingProbeRuntime()
     registry = TerminalRuntimeRegistry()

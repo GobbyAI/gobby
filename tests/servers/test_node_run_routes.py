@@ -186,7 +186,7 @@ def _run(
     assert runs.start(run.id) is not None
     started = runs.get(run.id)
     assert started is not None
-    make_live_terminal(started, db=db, session_name=f"node-{run.id[:8]}")
+    make_live_terminal(started, db=db)
     return run.id
 
 

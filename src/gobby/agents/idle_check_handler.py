@@ -455,7 +455,7 @@ class IdleCheckHandler:
             logger.warning("Skipping idle check for run %s: missing terminal", run.id)
             idle_detector.reset_idle(run.id)
             return 0
-        terminal_name = terminal.session_name or terminal.id
+        terminal_name = terminal.id
         idle_timeout_seconds = self._idle_timeout_seconds_for_run(run)
 
         session_manager = self._get_session_manager()

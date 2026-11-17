@@ -266,8 +266,6 @@ async def settle_promotion(
     locator: Mapping[str, object],
     locator_key: str,
     host_epoch: str | None = None,
-    session_name: str | None = None,
-    window_id: str | None = None,
     title: str | None = None,
 ) -> Terminal | None:
     """Serialize promotion with exit settlement for one durable row."""
@@ -278,8 +276,6 @@ async def settle_promotion(
             locator=locator,
             locator_key=locator_key,
             host_epoch=host_epoch,
-            session_name=session_name,
-            window_id=window_id,
             title=title,
         )
 
@@ -489,7 +485,7 @@ async def _stale_pending_absent(
         )
     if terminate:
         await kill_spawn_key(runtime, spawn_key, pending=row)
-    return not await backend_session_present(runtime, replace(row, session_name=spawn_key))
+    return not await backend_session_present(runtime, row)
 
 
 async def reap_stale_pending_terminals(

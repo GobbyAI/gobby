@@ -10,14 +10,12 @@ use uuid::Uuid;
 #[serde(rename_all = "snake_case")]
 pub enum Backend {
     Native,
-    Tmux,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Ownership {
     Gobby,
-    External,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,8 +59,6 @@ pub struct Terminal {
     pub agent_run_id: Option<Uuid>,
     pub locator: Option<Value>,
     pub locator_key: Option<String>,
-    pub session_name: Option<String>,
-    pub window_id: Option<String>,
     pub title: Option<String>,
     pub host_epoch: Option<String>,
     pub rows: Option<i32>,

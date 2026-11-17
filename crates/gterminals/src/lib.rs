@@ -22,7 +22,6 @@ pub mod leases;
 pub mod native_write;
 pub mod reconcile;
 pub mod repository;
-pub mod tmux_write;
 pub mod write;
 pub mod write_api;
 pub mod ws_protocol;

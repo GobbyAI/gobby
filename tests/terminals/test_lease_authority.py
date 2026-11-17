@@ -276,34 +276,6 @@ async def test_web_viewer_sizes_only_while_holding_the_input_lease() -> None:
 
 
 @pytest.mark.asyncio
-async def test_releasing_the_only_sizing_web_viewer_unpins_the_terminal() -> None:
-    registry = TerminalLeaseRegistry()
-    web = await registry.attach("term-1", viewer="web", backend="tmux")
-    await registry.take_control("term-1", web.attachment_id)
-    assert registry.resize_pty(web.attachment_id, rows=24, cols=80).applied is True
-
-    released = await registry.release_control(web.attachment_id)
-
-    assert released.sizing is not None
-    assert released.sizing.owner_viewer is None
-    assert released.sizing.applied is False
-
-
-@pytest.mark.asyncio
-async def test_tmux_web_watcher_without_lease_does_not_size() -> None:
-    # A tmux window has the human's own client on it; a watching phone must
-    # not pin that client to its grid.
-    registry = TerminalLeaseRegistry()
-    phone = await registry.attach("term-1", viewer="web", backend="tmux")
-
-    watching = registry.resize_pty(phone.attachment_id, rows=38, cols=50)
-
-    assert watching.ok is True
-    assert watching.applied is False
-    assert watching.owner_viewer is None
-
-
-@pytest.mark.asyncio
 async def test_geometry_less_gclient_seat_does_not_block_unattended_web_sizing() -> None:
     # A gclient attachment that never declared a grid has nothing to protect,
     # so the native web watcher still sizes the terminal until that seat

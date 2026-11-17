@@ -22,7 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.terminals import Terminal, TerminalManager, tmux_locator_key
+from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
 from gobby.storage.workspace_layout import layout_pane_ids
 from gobby.storage.workspaces import (
     InvalidWorkspaceOpError,
@@ -53,7 +53,7 @@ LOCAL_MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000001"
 REMOTE_MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000002"
 OPERATOR = "operator"
 MESSAGE_MARKER = "exception-message-marker"
-_TMUX_PANES = itertools.count(1)
+_HOST_TERMINALS = itertools.count(1)
 
 
 @pytest.fixture(autouse=True)
@@ -68,7 +68,7 @@ class _Harness:
     workspaces: WorkspaceManager
     terminals: TerminalManager
     sessions: SessionManager
-    tmux: FakeRuntime
+    native: FakeRuntime
     events: list[WorkspaceEvent]
     publish_failures: dict[str, Exception]
     minted: list[str]
@@ -84,8 +84,8 @@ def harness(
     LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID, hostname="local")
     workspaces, terminals = WorkspaceManager(temp_db), TerminalManager(temp_db)
     sessions = SessionManager(temp_db)
-    tmux = FakeRuntime(backend="tmux")
-    registry = runtime_registry(tmux, FakeRuntime(backend="native"))
+    native = FakeRuntime(backend="native")
+    registry = runtime_registry(native)
     events: list[WorkspaceEvent] = []
     publish_failures: dict[str, Exception] = {}
 
@@ -107,7 +107,7 @@ def harness(
         workspaces=workspaces,
         terminals=terminals,
         sessions=sessions,
-        tmux=tmux,
+        native=native,
         events=events,
         publish_failures=publish_failures,
         minted=minted,
@@ -139,27 +139,19 @@ def _workspace(h: _Harness, name: str = "agents") -> Workspace:
 
 
 def _terminal(h: _Harness, state: str = "live") -> Terminal:
-    """A tmux terminal row in ``state``: pending, live, orphaned or exited."""
+    """A native terminal row in ``state``: pending, live, orphaned or exited."""
     terminal_id = str(uuid.uuid4())
     row = h.terminals.create_pending(
-        terminal_id, h.project_id, "tmux", "gobby", terminal_id, machine_id=LOCAL_MACHINE_ID
+        terminal_id, h.project_id, "native", "gobby", terminal_id, machine_id=LOCAL_MACHINE_ID
     )
     if state == "pending":
         return row
-    pane_id = f"%{next(_TMUX_PANES)}"
-    socket = "/private/tmp/tmux-501/agent-panes"
+    host_terminal_id = f"host-{next(_HOST_TERMINALS)}"
     live = h.terminals.promote_to_live(
         row.id,
-        locator={
-            "socket_path": socket,
-            "server_pid": 1658,
-            "server_start_time": 1784592177,
-            "pane_id": pane_id,
-        },
-        locator_key=tmux_locator_key(
-            socket_path=socket, server_pid=1658, server_start_time=1784592177, pane_id=pane_id
-        ),
-        session_name=row.spawn_key,
+        locator={"host_terminal_id": host_terminal_id},
+        locator_key=native_locator_key("agent-panes-epoch", host_terminal_id),
+        host_epoch="agent-panes-epoch",
     )
     assert live is not None
     if state == "live":
@@ -455,7 +447,7 @@ async def test_release_is_idempotent(harness: _Harness) -> None:
         assert _pane_ids(h, ws) == {anchor.id}
         assert _tab_ids(h, ws) == {anchor_tab.id}
         assert _kinds(h) == ["pane.removed"]
-    assert h.tmux.killed_ids == set()
+    assert h.native.killed_ids == set()
     assert _in_flight(h) == []
     await h.reserver.preflight(OPERATOR, h.project_id, _split(anchor.id, "scout"))
 

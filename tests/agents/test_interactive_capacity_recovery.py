@@ -48,14 +48,23 @@ def placed_seat(
         project_id=sample_project["id"],
         transcript_path=str(transcript),
     )
-    terminal = TerminalManager(temp_db).upsert_external(
+    terminals = TerminalManager(temp_db)
+    pending = terminals.create_pending(
+        terminal_id="41000000-0000-4000-8000-000000000003",
         machine_id=machine_id,
         project_id=sample_project["id"],
-        backend="tmux",
-        locator={"pane_id": "%capacity"},
-        locator_key="tmux:%capacity",
+        backend="native",
+        ownership="gobby",
+        spawn_key="capacity-seat",
         session_id=session.id,
     )
+    terminal = terminals.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": "capacity-host"},
+        locator_key="native:capacity-epoch:capacity-host",
+        host_epoch="capacity-epoch",
+    )
+    assert terminal is not None
     composer_ledger.record_spawn(str(terminal.id), "")
     attention = AttentionStateManager(temp_db)
     runtime = LifecycleRuntime(

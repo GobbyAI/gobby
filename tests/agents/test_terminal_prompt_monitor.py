@@ -55,7 +55,7 @@ async def test_prompt_callback_failure_preserves_successful_injection(
     detector.detect_trust_prompt.return_value = True
     prompt_detector = MagicMock()
     prompt_detector.for_provider.return_value = detector
-    terminal = make_memory_terminal(terminal_id="agent-run-1", session_name="agent-run-1")
+    terminal = make_memory_terminal(terminal_id="agent-run-1")
     store = MemoryTerminalStore(terminal)
     runtime = FakeRuntime()
     runtime.snapshot_text = "trust prompt"
@@ -92,7 +92,7 @@ async def test_prompt_callback_failure_preserves_successful_injection(
 
 def _monitor_with_probe_error(error: Exception) -> TerminalPromptMonitor:
     """Build a monitor whose first pane probe raises `error`."""
-    terminal = make_memory_terminal(terminal_id="agent-run-1", session_name="agent-run-1")
+    terminal = make_memory_terminal(terminal_id="agent-run-1")
     store = MemoryTerminalStore(terminal)
     runtime = FakeRuntime()
     runtime.snapshot_effects = [error]

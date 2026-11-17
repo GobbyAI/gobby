@@ -3,7 +3,7 @@ use std::time::Duration;
 use super::common::{Hub, terminal};
 use gobby_terminals::host::{EpochAuthority, HostOptions, HostSupervisor};
 use gobby_terminals::reconcile::{self, Effects, Observation, Options, ProcessStatus};
-use gobby_terminals::repository::{self, Backend, Ownership, State, Terminal};
+use gobby_terminals::repository::{self, State, Terminal};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -21,16 +21,6 @@ async fn terminal_row_round_trips_all_runtime_fields() -> anyhow::Result<()> {
         hub.insert(&row).await?;
         assert_eq!(hub.get(row.id).await?, row, "native {state:?}");
     }
-    let mut row = terminal();
-    row.backend = Backend::Tmux;
-    row.ownership = Ownership::External;
-    row.state = State::Live;
-    row.spawn_key = None;
-    row.process = None;
-    row.locator = Some(json!({"socket": "/tmp/owned", "pane": "%42"}));
-    row.locator_key = Some("tmux:/tmp/owned:1:2:%42".into());
-    hub.insert(&row).await?;
-    assert_eq!(hub.get(row.id).await?, row, "external tmux");
     Ok(())
 }
 
@@ -855,7 +845,7 @@ async fn listed_foreign_rows_new_epochs_and_local_spawn_holds_are_fenced() -> an
     held_entry["host_terminal_id"] = json!("held-slot");
     host.terminals.push(held_entry);
     host.terminals
-        .push(json!({"terminal_id": "tmux:/tmp/owned:1:2:%42", "spawn_key": null}));
+        .push(json!({"terminal_id": "unmanaged-slot", "spawn_key": null}));
     reconcile::reconcile(
         &hub.pool,
         machine,

@@ -7,7 +7,6 @@ use gobby_core::postgres_pool::Pool;
 use crate::host::{EpochAuthority, HostFailure, HostInfo, HostOptions, HostSupervisor};
 use crate::leases::Registry;
 use crate::native_write::NativeWrite;
-use crate::tmux_write::{SystemTmux, TmuxWrite};
 use crate::write::{Coordinator, Runtime, Runtimes};
 use crate::write_api::{Route, TokenSlot};
 
@@ -113,10 +112,8 @@ impl TerminalFamily {
         // Nothing consumes lifecycle events yet; draining them keeps publication from faulting.
         tokio::spawn(async move { while lifecycle.recv().await.is_some() {} });
         let native: Arc<dyn Runtime> = Arc::new(NativeWrite::new(options.clone()));
-        let tmux: Arc<dyn Runtime> = Arc::new(TmuxWrite::new(Arc::new(SystemTmux)));
         let runtimes = Runtimes {
             native: Some(native),
-            tmux: Some(tmux),
         };
         let coordinator = Coordinator::new(pool, Arc::new(leases), runtimes);
         self.route = Some(Arc::new(Route::new(Arc::new(coordinator), token)));

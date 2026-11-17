@@ -83,20 +83,13 @@ def _paused_seat(
         session_id=seat.id,
     )
     if state == "live":
-        if backend == "native":
-            host_terminal_id = f"ht-{terminal_id[:8]}"
-            promoted = terminals.promote_to_live(
-                terminal_id,
-                locator={"host_terminal_id": host_terminal_id},
-                locator_key=native_locator_key(epoch or "", host_terminal_id),
-                host_epoch=epoch,
-            )
-        else:
-            promoted = terminals.promote_to_live(
-                terminal_id,
-                locator={"pane_id": "%12"},
-                locator_key=f"tmux-{terminal_id}",
-            )
+        host_terminal_id = f"ht-{terminal_id[:8]}"
+        promoted = terminals.promote_to_live(
+            terminal_id,
+            locator={"host_terminal_id": host_terminal_id},
+            locator_key=native_locator_key(epoch or "", host_terminal_id),
+            host_epoch=epoch,
+        )
         assert promoted is not None
     return seat.id
 
@@ -108,14 +101,12 @@ def _paused_seat(
         ("native", "pending", None, CURRENT_EPOCH, True),
         ("native", "live", CURRENT_EPOCH, CURRENT_EPOCH, False),
         ("native", "live", PRIOR_EPOCH, None, False),
-        ("tmux", "live", None, CURRENT_EPOCH, False),
     ],
     ids=[
         "prior-epoch-live-pane-resumes",
         "pending-row-resumes",
         "current-epoch-live-pane-refuses",
         "unknown-epoch-refuses",
-        "tmux-pane-refuses-by-state",
     ],
 )
 def test_paused_seat_liveness_follows_the_running_host_epoch(

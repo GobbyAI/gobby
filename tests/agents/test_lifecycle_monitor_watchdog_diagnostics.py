@@ -63,7 +63,7 @@ def _make_terminal_run(
     agent_run_manager.update_runtime(run.id)
     _live_run = agent_run_manager.get(run.id)
     assert _live_run is not None
-    make_live_terminal(_live_run, db=agent_run_manager.db, session_name=terminal_id)
+    make_live_terminal(_live_run, db=agent_run_manager.db)
 
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None

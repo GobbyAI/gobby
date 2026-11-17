@@ -43,7 +43,7 @@ _PHASE: contextvars.ContextVar[str] = contextvars.ContextVar("composer_phase", d
 def _arbitrated(
     ledger: ComposerLedger,
 ) -> tuple[MemoryTerminalStore, FakeRuntime, WriteCoordinator, str]:
-    terminal = make_memory_terminal(session_name="gobby-agent-arbitration")
+    terminal = make_memory_terminal()
     store = MemoryTerminalStore(terminal)
     runtime = FakeRuntime()
     runtime.write_log = []

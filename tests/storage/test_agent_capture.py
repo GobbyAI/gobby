@@ -56,7 +56,7 @@ def _create_run(
     manager.update_runtime(run.id)
     _live_run = manager.get(run.id)
     assert _live_run is not None
-    make_live_terminal(_live_run, db=manager.db, session_name=f"gobby-{suffix}", pane_id=pane_id)
+    make_live_terminal(_live_run, db=manager.db)
 
     return manager, run.id, child.id
 

@@ -145,8 +145,6 @@ fn terminal(backend: Backend) -> Terminal {
         agent_run_id: None,
         locator: None,
         locator_key: None,
-        session_name: None,
-        window_id: None,
         title: None,
         host_epoch: None,
         rows: Some(40),
@@ -309,10 +307,9 @@ impl BatchRuntime for FakeBatch {
     }
 }
 
-fn runtimes(native: &Arc<FakeRuntime>, tmux: &Arc<FakeRuntime>) -> Runtimes {
+fn runtimes(native: &Arc<FakeRuntime>) -> Runtimes {
     Runtimes {
         native: Some(native.clone() as Arc<dyn Runtime>),
-        tmux: Some(tmux.clone() as Arc<dyn Runtime>),
     }
 }
 
@@ -389,49 +386,29 @@ async fn pane_claim(leases: &Registry, terminal: Uuid) -> anyhow::Result<LeaseCl
 async fn runtime_is_resolved_from_terminal_row() -> anyhow::Result<()> {
     let hub = Hub::new().await?;
     let native_row = hub.insert(Backend::Native).await?;
-    let tmux_row = hub.insert(Backend::Tmux).await?;
     let (leases, _events) = Registry::new(16);
     let leases = Arc::new(leases);
     let native = FakeRuntime::new();
-    let tmux = FakeRuntime::new();
-    let coordinator = Coordinator::new(hub.pool.clone(), leases.clone(), runtimes(&native, &tmux));
-
+    let coordinator = Coordinator::new(hub.pool.clone(), leases.clone(), runtimes(&native));
     let outcome = coordinator
         .write(automatic(native_row, "a:native", text("to-native")))
         .await?;
     assert_eq!(outcome, Outcome::Delivered);
-    let outcome = coordinator
-        .write(automatic(tmux_row, "a:tmux", text("to-tmux")))
-        .await?;
-    assert_eq!(outcome, Outcome::Delivered);
     assert_eq!(native.payloads(), vec!["to-native"]);
-    assert_eq!(tmux.payloads(), vec!["to-tmux"]);
     assert_eq!(native.calls()[0].terminal, native_row);
-    assert_eq!(tmux.calls()[0].terminal, tmux_row);
 
-    // A row whose backend has no runtime fails closed: no other runtime is a
-    // fallback, nothing is emitted, and the stage-none refusal leaves no latch.
-    let native_only = Coordinator::new(
-        hub.pool.clone(),
-        leases.clone(),
-        Runtimes {
-            native: Some(native.clone() as Arc<dyn Runtime>),
-            tmux: None,
-        },
-    );
-    let refused = native_only
-        .write(automatic(tmux_row, "a:unavailable", text("lost")))
+    // An unavailable native runtime fails before writing or recording a latch.
+    let unavailable = Coordinator::new(hub.pool.clone(), leases.clone(), Runtimes { native: None });
+    let refused = unavailable
+        .write(automatic(native_row, "a:unavailable", text("lost")))
         .await;
     assert!(
-        matches!(refused, Err(Refusal::RuntimeUnavailable(Backend::Tmux))),
+        matches!(refused, Err(Refusal::RuntimeUnavailable(Backend::Native))),
         "{refused:?}"
     );
     assert_eq!(native.payloads(), vec!["to-native"]);
-    assert_eq!(tmux.payloads(), vec!["to-tmux"]);
-    assert!(hub.unresolved(tmux_row).await?.is_empty());
+    assert!(hub.unresolved(native_row).await?.is_empty());
 
-    // The row, not the request, names the backend; the database rejects any
-    // backend the coordinator has no variant for.
     let unknown = hub
         .pool
         .transaction(None, async |tx| {
@@ -443,7 +420,6 @@ async fn runtime_is_resolved_from_terminal_row() -> anyhow::Result<()> {
         })
         .await;
     assert!(unknown.is_err(), "unknown backend must not persist");
-
     let missing = Uuid::new_v4();
     let refused = coordinator
         .write(automatic(missing, "a:missing", text("nowhere")))
@@ -452,7 +428,7 @@ async fn runtime_is_resolved_from_terminal_row() -> anyhow::Result<()> {
         matches!(refused, Err(Refusal::TerminalNotFound(id)) if id == missing),
         "{refused:?}"
     );
-    assert_eq!(native.calls().len() + tmux.calls().len(), 2);
+    assert_eq!(native.calls().len(), 1);
     Ok(())
 }
 
@@ -465,11 +441,10 @@ async fn gclient_operator_write_is_admitted_without_a_lease() -> anyhow::Result<
     let (leases, _events) = Registry::new(16);
     let leases = Arc::new(leases);
     let native = FakeRuntime::new();
-    let tmux = FakeRuntime::new();
     let coordinator = Arc::new(Coordinator::new(
         hub.pool.clone(),
         leases.clone(),
-        runtimes(&native, &tmux),
+        runtimes(&native),
     ));
 
     let pane_req = requester();
@@ -524,11 +499,10 @@ async fn finalized_gclient_claim_is_refused_like_any_stale_lease() -> anyhow::Re
     let (leases, _events) = Registry::new(16);
     let leases = Arc::new(leases);
     let native = FakeRuntime::new();
-    let tmux = FakeRuntime::new();
     let coordinator = Arc::new(Coordinator::new(
         hub.pool.clone(),
         leases.clone(),
-        runtimes(&native, &tmux),
+        runtimes(&native),
     ));
 
     let pane_req = requester();
@@ -561,11 +535,10 @@ async fn stale_lease_never_emits_bytes() -> anyhow::Result<()> {
     let (leases, _events) = Registry::new(16);
     let leases = Arc::new(leases);
     let native = FakeRuntime::new();
-    let tmux = FakeRuntime::new();
     let coordinator = Arc::new(Coordinator::new(
         hub.pool.clone(),
         leases.clone(),
-        runtimes(&native, &tmux),
+        runtimes(&native),
     ));
 
     // A web attachment without a holder holds no lease, so its claim is refused
@@ -603,8 +576,7 @@ async fn idempotency_and_uncertainty_are_fail_closed() -> anyhow::Result<()> {
     let (leases, _events) = Registry::new(16);
     let leases = Arc::new(leases);
     let native = FakeRuntime::probing(&hub.pool);
-    let tmux = FakeRuntime::new();
-    let coordinator = Coordinator::new(hub.pool.clone(), leases.clone(), runtimes(&native, &tmux));
+    let coordinator = Coordinator::new(hub.pool.clone(), leases.clone(), runtimes(&native));
     let payload = "h\u{e9}llo \u{2603}\u{1b}[A\n";
     let keyed = |payload: &str| WriteRequest {
         idempotency_key: Some("idem-1".into()),
@@ -652,7 +624,7 @@ async fn idempotency_and_uncertainty_are_fail_closed() -> anyhow::Result<()> {
     let (restarted, _events) = Registry::new(16);
     let restarted = Arc::new(restarted);
     assert_ne!(restarted.epoch(), leases.epoch());
-    let after_restart = Coordinator::new(hub.pool.clone(), restarted, runtimes(&native, &tmux));
+    let after_restart = Coordinator::new(hub.pool.clone(), restarted, runtimes(&native));
     let replay = after_restart.write(keyed(payload)).await?;
     assert!(matches!(replay, Outcome::Uncertain { .. }), "{replay:?}");
     let suppressed = after_restart
@@ -708,8 +680,7 @@ async fn each_evidence_mutation_path_is_explicit() -> anyhow::Result<()> {
     let (leases, _events) = Registry::new(16);
     let leases = Arc::new(leases);
     let native = FakeRuntime::probing(&hub.pool);
-    let tmux = FakeRuntime::new();
-    let coordinator = Coordinator::new(hub.pool.clone(), leases.clone(), runtimes(&native, &tmux));
+    let coordinator = Coordinator::new(hub.pool.clone(), leases.clone(), runtimes(&native));
 
     // Persist: unrelated evidence from an earlier operation.
     coordinator
@@ -823,8 +794,7 @@ async fn batch_and_sequence_stop_at_first_uncertain_step() -> anyhow::Result<()>
     let (leases, _events) = Registry::new(16);
     let leases = Arc::new(leases);
     let native = FakeRuntime::batching();
-    let tmux = FakeRuntime::new();
-    let coordinator = Coordinator::new(hub.pool.clone(), leases.clone(), runtimes(&native, &tmux));
+    let coordinator = Coordinator::new(hub.pool.clone(), leases.clone(), runtimes(&native));
     let sequence = |action: &str, latch: bool| SequenceRequest {
         terminal_id: row,
         action_key: action.into(),
@@ -916,7 +886,6 @@ async fn batch_and_sequence_stop_at_first_uncertain_step() -> anyhow::Result<()>
     let enter_refused = hub.insert(Backend::Native).await?;
     let duplicated = hub.insert(Backend::Native).await?;
     let quarantined = hub.insert(Backend::Native).await?;
-    let tmux_row = hub.insert(Backend::Tmux).await?;
     let missing = Uuid::new_v4();
     coordinator.quarantine(quarantined, "other").await?;
     let wake = |id: &str, terminal: Uuid| WakeRequest {
@@ -951,7 +920,6 @@ async fn batch_and_sequence_stop_at_first_uncertain_step() -> anyhow::Result<()>
             wake("dup-1", duplicated),
             wake("dup-2", duplicated),
             wake("quarantined", quarantined),
-            wake("tmux", tmux_row),
             wake("missing", missing),
         ])
         .await?;
@@ -961,7 +929,7 @@ async fn batch_and_sequence_stop_at_first_uncertain_step() -> anyhow::Result<()>
             .find(|r| r.result_id == id)
             .unwrap_or_else(|| panic!("result {id}"))
     };
-    assert_eq!(results.len(), 8);
+    assert_eq!(results.len(), 7);
     assert_eq!(
         results
             .iter()
@@ -974,7 +942,6 @@ async fn batch_and_sequence_stop_at_first_uncertain_step() -> anyhow::Result<()>
             "dup-1",
             "dup-2",
             "quarantined",
-            "tmux",
             "missing"
         ]
     );
@@ -993,7 +960,6 @@ async fn batch_and_sequence_stop_at_first_uncertain_step() -> anyhow::Result<()>
     for (id, code) in [
         ("dup-1", "duplicate_terminal"),
         ("dup-2", "duplicate_terminal"),
-        ("tmux", "native_batch_unavailable"),
         ("missing", "terminal_not_found"),
     ] {
         let result = by_id(id);
@@ -1031,7 +997,6 @@ async fn batch_and_sequence_stop_at_first_uncertain_step() -> anyhow::Result<()>
         native.calls().len() == before,
         "batch never uses single writes"
     );
-    assert!(tmux.calls().is_empty());
 
     // Settlement: delivered clears its wake latch; uncertain and partial keep it.
     assert!(hub.unresolved(delivered).await?.is_empty());
@@ -1055,8 +1020,7 @@ async fn unnamed_keys_are_refused_before_any_latch() -> anyhow::Result<()> {
     let (leases, _events) = Registry::new(16);
     let leases = Arc::new(leases);
     let native = FakeRuntime::batching();
-    let tmux = FakeRuntime::new();
-    let coordinator = Coordinator::new(hub.pool.clone(), leases.clone(), runtimes(&native, &tmux));
+    let coordinator = Coordinator::new(hub.pool.clone(), leases.clone(), runtimes(&native));
     let invalid = |result: &Result<Outcome, Refusal>| {
         matches!(result, Err(Refusal::Write(WriteFailure { stage: Stage::None, code, .. }))
             if code == "invalid_key")

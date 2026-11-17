@@ -34,7 +34,7 @@ def terminal_columns(table: str = "terminals") -> str:
     """
     return f"""{table}.id, {table}.backend, {table}.ownership, {table}.state,
         {table}.spawn_key, {table}.machine_id, {table}.locator::text AS locator,
-        {table}.locator_key, {table}.session_name, {table}.window_id, {table}.title,
+        {table}.locator_key, {table}.title,
         {table}.host_epoch, {table}.unresolved_writes::text AS unresolved_writes,
         {table}.automatic_write_quarantined_at, {table}.automatic_write_quarantine_action_key,
         {table}.attempt_generation, {table}.attempt_started_at,

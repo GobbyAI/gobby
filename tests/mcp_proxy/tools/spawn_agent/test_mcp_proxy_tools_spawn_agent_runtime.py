@@ -59,7 +59,7 @@ def test_build_spawn_response_reports_reused_worktree() -> None:
             extra={"reused_worktree": True},
         ),
         base_commit_sha="abc123",
-        terminal=SimpleNamespace(id="terminal-123", backend="tmux"),
+        terminal=SimpleNamespace(id="terminal-123", backend="native"),
         code_index_preflight_warning=None,
         reasoning=None,
     )

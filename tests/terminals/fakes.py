@@ -21,7 +21,6 @@ from gobby.storage.terminals import (
     TerminalManager,
     UnresolvedWriteCapacityError,
     native_locator_key,
-    tmux_locator_key,
 )
 from gobby.terminals.runtime import (
     Delivered,
@@ -37,34 +36,26 @@ from gobby.terminals.runtime import (
 from gobby.utils.datetime import utc_now
 from gobby.utils.machine_id import require_machine_id
 
-_SOCKET = "/private/tmp/tmux-501/default"
-_FAKE_SERVER_PID = 4242
 _FAKE_PANE_PID = 12345
 
 
 def make_memory_terminal(
     *,
     terminal_id: str | None = None,
-    backend: Literal["tmux", "native"] = "tmux",
+    backend: Literal["native"] = "native",
     unresolved_writes: Mapping[str, Any] | None = None,
-    session_name: str | None = None,
     machine_id: str | None = None,
 ) -> Terminal:
     """Build a live Terminal dataclass without touching the database."""
     now = datetime.now(UTC)
     tid = terminal_id or str(uuid4())
-    pane_id = "%1"
-    locator = {
-        "socket_path": _SOCKET,
-        "server_pid": 1658,
-        "server_start_time": 1784592177,
-        "pane_id": pane_id,
-    }
-    name = session_name or f"gobby-{tid}"
+    host_terminal_id = "ht-1"
+    host_epoch = "epoch"
+    locator = {"host_terminal_id": host_terminal_id}
     return Terminal(
         id=tid,
         backend=backend,
-        ownership="external" if backend == "tmux" else "gobby",
+        ownership="gobby",
         state="live",
         machine_id=machine_id or require_machine_id(),
         project_id=str(uuid4()),
@@ -73,15 +64,10 @@ def make_memory_terminal(
         attempt_generation=1,
         attempt_started_at=now,
         unresolved_writes=dict(unresolved_writes or {}),
-        spawn_key=name,
+        spawn_key=tid,
         locator=locator,
-        locator_key=tmux_locator_key(
-            socket_path=_SOCKET,
-            server_pid=1658,
-            server_start_time=1784592177,
-            pane_id=pane_id,
-        ),
-        session_name=name,
+        locator_key=native_locator_key(host_epoch, host_terminal_id),
+        host_epoch=host_epoch,
         rows=24,
         cols=80,
     )
@@ -181,8 +167,6 @@ class MemoryTerminalStore:
         locator: Mapping[str, object],
         locator_key: str,
         host_epoch: str | None = None,
-        session_name: str | None = None,
-        window_id: str | None = None,
         title: str | None = None,
     ) -> Terminal | None:
         current = self.rows.get(terminal_id)
@@ -192,10 +176,6 @@ class MemoryTerminalStore:
         current.locator = dict(locator)
         current.locator_key = locator_key
         current.host_epoch = host_epoch
-        if session_name is not None:
-            current.session_name = session_name
-        if window_id is not None:
-            current.window_id = window_id
         if title is not None:
             current.title = title
         current.updated_at = datetime.now(UTC)
@@ -402,15 +382,6 @@ class MemoryTerminalStore:
         current.updated_at = datetime.now(UTC)
         return current
 
-    def get_live_by_session_name(self, session_name: str) -> Terminal | None:
-        matches = [
-            row
-            for row in self.rows.values()
-            if row.state in {"pending", "live"}
-            and (row.session_name == session_name or row.spawn_key == session_name)
-        ]
-        return matches[-1] if matches else None
-
     def get_live_for_session(self, session_id: str) -> Terminal | None:
         matches = [
             row
@@ -545,7 +516,7 @@ class MemoryTerminalStore:
 class FakeRuntime:
     """Recording TerminalRuntime used by coordinator, registry, and spawn tests."""
 
-    backend: Literal["tmux", "native"] = "tmux"
+    backend: Literal["native"] = "native"
     write_log: list[tuple[str, str | bytes]] = field(default_factory=list)
     hold: asyncio.Event | None = None
     release: asyncio.Event | None = None
@@ -598,38 +569,20 @@ class FakeRuntime:
         if self.fail_spawn:
             raise RuntimeError(self.spawn_error)
         self.live_keys.add(request.spawn_key)
-        pane_id = "ht-1" if self.backend == "native" else "%1"
-        stored: dict[str, object] = (
-            {"host_terminal_id": pane_id}
-            if self.backend == "native"
-            else {
-                "socket_path": _SOCKET,
-                "server_pid": _FAKE_SERVER_PID,
-                "server_start_time": 1784592177,
-                "pane_id": pane_id,
-            }
-        )
-        locator_key = (
-            native_locator_key(self.host_epoch, pane_id)
-            if self.backend == "native"
-            else tmux_locator_key(
-                socket_path=_SOCKET,
-                server_pid=_FAKE_SERVER_PID,
-                server_start_time=1784592177,
-                pane_id=pane_id,
-            )
-        )
+        host_terminal_id = "ht-1"
+        stored: dict[str, object] = {"host_terminal_id": host_terminal_id}
+        locator_key = native_locator_key(self.host_epoch, host_terminal_id)
         return PreparedSpawn(
             terminal_id=request.terminal_id,
             spawn_key=request.spawn_key,
             locator=AttachLocator(
                 backend=self.backend,
                 frame_host_epoch=self.host_epoch,
-                socket_path=_SOCKET,
-                pane_id=pane_id,
+                host_socket="/tmp/gterm-frames.sock",
+                host_terminal_id=host_terminal_id,
             ),
             process=None,
-            host_terminal_id=pane_id,
+            host_terminal_id=host_terminal_id,
             stored_locator=stored,
             locator_key=locator_key,
             pid=_FAKE_PANE_PID,
@@ -653,7 +606,7 @@ class FakeRuntime:
     async def is_live(self, terminal: Terminal) -> bool:
         if terminal.id in self.killed_ids:
             return False
-        spawn_key = terminal.spawn_key or terminal.session_name
+        spawn_key = terminal.spawn_key
         if spawn_key in self.live_keys:
             return True
         return terminal.state == "live"
@@ -721,22 +674,15 @@ class FakeRuntime:
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         del grace_seconds
         self.terminate_started.set()
-        if self.backend == "native":
-            process = terminal.process or terminal.locator or {}
-            host_terminal_id = process.get("host_terminal_id")
-            if isinstance(host_terminal_id, str):
-                mismatch = await self.terminate_host_id(host_terminal_id, terminal.host_epoch)
-                if mismatch is not None:
-                    # The native runtime kills a stale-epoch row this host still
-                    # lists through the host id its strict listing returns.
-                    self.killed_host_ids.append(host_terminal_id)
-                self.killed_ids.add(terminal.id)
-            return
-        self.killed_ids.add(terminal.id)
-        name = terminal.session_name or terminal.spawn_key
-        if name is not None:
-            self.killed.append(name)
-            self.live_keys.discard(name)
+        process = terminal.process or terminal.locator or {}
+        host_terminal_id = process.get("host_terminal_id")
+        if isinstance(host_terminal_id, str):
+            mismatch = await self.terminate_host_id(host_terminal_id, terminal.host_epoch)
+            if mismatch is not None:
+                # The native runtime kills a stale-epoch row this host still
+                # lists through the host id its strict listing returns.
+                self.killed_host_ids.append(host_terminal_id)
+            self.killed_ids.add(terminal.id)
 
     async def terminate_host_id(
         self, host_terminal_id: str, host_epoch: str | None

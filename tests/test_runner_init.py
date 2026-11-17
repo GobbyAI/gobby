@@ -489,7 +489,7 @@ class TestWakeTerminalSenders:
             runtime_registry,
         )
 
-        terminal = make_memory_terminal(session_name="gobby-agent-abc")
+        terminal = make_memory_terminal()
         store = MemoryTerminalStore(terminal)
         runtime = FakeRuntime()
         coordinator = WriteCoordinator(
@@ -536,7 +536,7 @@ class TestWakeTerminalSenders:
             runtime_registry,
         )
 
-        terminal = make_memory_terminal(session_name="gobby-agent-concurrent")
+        terminal = make_memory_terminal()
         store = MemoryTerminalStore(terminal)
         runtime = FakeRuntime()
         coordinator = WriteCoordinator(

@@ -163,8 +163,8 @@ async def test_all_provider_interactive_signals(
     service = _service(temp_db, sink)
     admitted = _admissions(monkeypatch, service)
     session = _session(f"{provider}-placed", provider)
-    _rows(monkeypatch, {session.id: make_memory_terminal(backend="tmux")})
-    runtime = LifecycleRuntime(backend="tmux")
+    _rows(monkeypatch, {session.id: make_memory_terminal(backend="native")})
+    runtime = LifecycleRuntime(backend="native")
     runtime.snapshot_effects = [_BASE, _BASE + _FORMS[provider]]
     monitor = _interactive([session], runtime, service)
 
@@ -188,9 +188,9 @@ async def test_interactive_observation_guards(
     admitted = _admissions(monkeypatch, service)
     form = _FORMS["codex"]
     session = _session("codex-placed", "codex")
-    row = make_memory_terminal(backend="tmux")
+    row = make_memory_terminal(backend="native")
     _rows(monkeypatch, {session.id: row})
-    runtime = LifecycleRuntime(backend="tmux")
+    runtime = LifecycleRuntime(backend="native")
 
     # First capture after attach baselines retained history; an identical redraw is silent.
     runtime.snapshot_effects = [_BASE + form, _BASE + form]
@@ -211,7 +211,7 @@ async def test_interactive_observation_guards(
     assert admitted == [True]
 
     # Ownership: a replacement terminal starts a new generation with its own baseline.
-    _rows(monkeypatch, {session.id: make_memory_terminal(backend="tmux")})
+    _rows(monkeypatch, {session.id: make_memory_terminal(backend="native")})
     runtime.snapshot_effects = [_BASE + form + form]
     await restarted._check_attention_panes(active_agent_sessions=set())
     assert admitted == [True]
@@ -256,9 +256,9 @@ async def test_shared_provider_edge_across_seats(
     )
     spawned.set_provider_capacity_service(service)
     placed = _session("codex-placed", "codex")
-    placed_row = make_memory_terminal(backend="tmux")
+    placed_row = make_memory_terminal(backend="native")
     _rows(monkeypatch, {placed.id: placed_row})
-    placed_runtime = LifecycleRuntime(backend="tmux")
+    placed_runtime = LifecycleRuntime(backend="native")
     interactive = _interactive([placed], placed_runtime, service)
     form = _FORMS["codex"]
 
@@ -311,11 +311,11 @@ async def test_restart_keeps_placed_digests_past_spawned_retirement(
     sink = _Sink()
     form = _FORMS["codex"]
     placed = _session("codex-placed", "codex")
-    _rows(monkeypatch, {placed.id: make_memory_terminal(backend="tmux")})
+    _rows(monkeypatch, {placed.id: make_memory_terminal(backend="native")})
 
     # Before restart: the placed seat notifies once and its occurrence digest is persisted.
     before = _service(temp_db, sink, lambda: clock["now"])
-    first_runtime = LifecycleRuntime(backend="tmux")
+    first_runtime = LifecycleRuntime(backend="native")
     first_runtime.snapshot_effects = [_BASE, _BASE + form]
     first = _interactive([placed], first_runtime, before)
     await first._check_attention_panes(active_agent_sessions=set())
@@ -332,7 +332,7 @@ async def test_restart_keeps_placed_digests_past_spawned_retirement(
         temp_db, session_manager, sample_project, agent_run_manager, child_source="codex"
     )
     spawned.set_provider_capacity_service(after)
-    restart_runtime = LifecycleRuntime(backend="tmux")
+    restart_runtime = LifecycleRuntime(backend="native")
     restart_runtime.snapshot_effects = [_BASE, _BASE + form]
     restarted = _interactive([placed], restart_runtime, after)
     with _pane_text(spawned, [_BASE]):
@@ -376,8 +376,8 @@ async def test_placed_observation_runs_under_coordination_hold(
     assert seated is not None
     status_before = seated.status
     session = _session(seat.id, provider)
-    _rows(monkeypatch, {session.id: make_memory_terminal(backend="tmux")})
-    runtime = LifecycleRuntime(backend="tmux")
+    _rows(monkeypatch, {session.id: make_memory_terminal(backend="native")})
+    runtime = LifecycleRuntime(backend="native")
     runtime.snapshot_effects = [_BASE, _BASE + _FORMS[provider]]
     monitor = _interactive([session], runtime, service)
 
@@ -404,8 +404,8 @@ async def test_quoted_bottom_form_yields_hint_only(
     service = _service(temp_db, sink)
     admitted = _admissions(monkeypatch, service)
     session = _session(f"{provider}-quoted", provider)
-    _rows(monkeypatch, {session.id: make_memory_terminal(backend="tmux")})
-    runtime = LifecycleRuntime(backend="tmux")
+    _rows(monkeypatch, {session.id: make_memory_terminal(backend="native")})
+    runtime = LifecycleRuntime(backend="native")
     # The banner arrives as quoted text at the bottom of a newly appended block.
     runtime.snapshot_effects = [_BASE, _BASE + "> " + _FORMS[provider]]
     monitor = _interactive([session], runtime, service)

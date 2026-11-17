@@ -622,7 +622,6 @@ class TestAgentRunCompletion:
         make_live_terminal(
             run,
             db=temp_db,
-            session_name="gobby-transcript-fallback",
         )
         run_manager.start(run.id)
         transcript_reader = MagicMock()
@@ -672,7 +671,6 @@ class TestAgentRunCompletion:
         make_live_terminal(
             run,
             db=temp_db,
-            session_name="gobby-flush-fallback",
         )
         run_manager.start(run.id)
         message_processor = MagicMock()

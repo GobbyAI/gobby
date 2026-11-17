@@ -148,10 +148,8 @@ async fn fixture() -> anyhow::Result<Fixture> {
     tokio::spawn(async move { while events.recv().await.is_some() {} });
     let leases = Arc::new(leases);
     let native = Arc::new(FakeRuntime::default());
-    let tmux = Arc::new(FakeRuntime::default());
     let runtimes = Runtimes {
         native: Some(native.clone() as Arc<dyn Runtime>),
-        tmux: Some(tmux as Arc<dyn Runtime>),
     };
     let coordinator = Arc::new(Coordinator::new(
         hub.coordinator_pool()?,

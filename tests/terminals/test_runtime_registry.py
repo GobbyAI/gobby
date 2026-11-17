@@ -13,25 +13,11 @@ from tests.terminals.fakes import FakeRuntime
 pytestmark = pytest.mark.unit
 
 
-def test_registry_composition_and_tmux_resolution() -> None:
-    tmux = FakeRuntime(backend="tmux")
-    registry = TerminalRuntimeRegistry()
-    registry.register(tmux)
-
-    assert registry.resolve("tmux") is tmux
-    with pytest.raises(UnregisteredBackendError, match="native") as exc_info:
-        registry.resolve("native")
-    assert exc_info.value.backend == "native"
-
-
-def test_registry_resolves_both_backends() -> None:
-    tmux = FakeRuntime(backend="tmux")
+def test_registry_composition_and_native_resolution() -> None:
     native = FakeRuntime(backend="native")
     registry = TerminalRuntimeRegistry()
-    registry.register(tmux)
     registry.register(native)
 
-    assert registry.resolve("tmux") is tmux
     assert registry.resolve("native") is native
     with pytest.raises(UnregisteredBackendError, match="mystery") as exc_info:
         registry.resolve("mystery")

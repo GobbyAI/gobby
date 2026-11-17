@@ -102,7 +102,7 @@ class LifecycleRuntime(FakeRuntime):
     # Overrides row-derived liveness while set; a terminate clears it.
     alive: bool | None = None
     live_error: BaseException | None = None
-    # Raised by every snapshot while set (a vanished pane, a tmux timeout).
+    # Raised by every snapshot while set (a vanished pane or a native host timeout).
     snapshot_error: BaseException | None = None
     snapshot_calls: list[int] = field(default_factory=list)
     # A sticky runtime records the kill but leaves the terminal live.
@@ -151,7 +151,7 @@ class LifecycleRuntime(FakeRuntime):
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         if self.sticky:
-            name = terminal.session_name or terminal.spawn_key
+            name = terminal.spawn_key
             if name is not None:
                 self.killed.append(name)
             return
@@ -179,7 +179,7 @@ def _fake_terminal_services(
     )
 
 
-def _runtime_of(monitor: AgentLifecycleMonitor, backend: str = "tmux") -> LifecycleRuntime:
+def _runtime_of(monitor: AgentLifecycleMonitor, backend: str = "native") -> LifecycleRuntime:
     return cast(LifecycleRuntime, monitor._terminal_services.registry.resolve(backend))
 
 
@@ -203,7 +203,7 @@ def _native_host_for(monitor: AgentLifecycleMonitor, run: AgentRun) -> tuple[str
 def _pane_text(
     monitor: AgentLifecycleMonitor,
     text: str | BaseException | list[str | BaseException] | None,
-    backend: str = "tmux",
+    backend: str = "native",
 ) -> Iterator[LifecycleRuntime]:
     """Scope what the monitor's snapshots return (or raise) to a block.
 
@@ -384,33 +384,10 @@ def test_terminal_fixture_migration_preserves_assertions(
     )
     agent_run_manager.start(started.id)
     pending = make_pending_terminal(never_started, db=agent_run_manager.db)
-    live = make_live_terminal(started, db=agent_run_manager.db, session_name="gobby-started")
+    live = make_live_terminal(started, db=agent_run_manager.db)
     assert pending.state == "pending"
     assert live.state == "live"
-    from gobby.storage.terminals import TerminalManager, tmux_locator_key
-
     manager = TerminalManager(agent_run_manager.db)
-    reuse = manager.upsert_external(
-        machine_id=started.machine_id,
-        project_id=live.project_id,
-        backend="tmux",
-        locator={
-            "socket_path": "/private/tmp/tmux-501/default",
-            "server_pid": 1658,
-            "server_start_time": 1784599999,
-            "pane_id": "%1",
-        },
-        locator_key=tmux_locator_key(
-            socket_path="/private/tmp/tmux-501/default",
-            server_pid=1658,
-            server_start_time=1784599999,
-            pane_id="%1",
-        ),
-        session_name="gobby-started",
-        window_id="@1",
-        title="reused-pid",
-    )
-    assert reuse.id != live.id
     agent_run_manager.complete(started.id, result="ok")
     after = manager.get(live.id)
     assert after is not None
@@ -535,7 +512,7 @@ async def test_stuck_enter_refusal_does_not_abort_other_runs(
         run_id=_rid("accepted-second"),
     )
     agent_run_manager.start(second.id)
-    make_live_terminal(second, db=temp_db, session_name="second", pane_id="%2")
+    make_live_terminal(second, db=temp_db)
     with patch.object(monitor, "_get_active_terminal_runs", return_value=[first, second]):
         assert await monitor.check_autonomous_stuck_agents() == 2
         assert runtime.write_targets == [first.terminal_id, second.terminal_id]
@@ -1036,7 +1013,7 @@ def _make_terminal_run(
     requested_reasoning_effort: str | None = None,
     task_id: str | None = None,
     provider: str = "claude",
-    backend: str = "tmux",
+    backend: str = "native",
 ) -> AgentRun:
     """Helper to create a running terminal-mode agent in the DB."""
     run = agent_run_manager.create(
@@ -1066,7 +1043,6 @@ def _make_terminal_run(
         stored_run,
         backend,
         db=agent_run_manager.db,
-        session_name=terminal_id,
     )
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None
@@ -1605,7 +1581,7 @@ def _make_dispatched_stage_run(
     agent_run_manager.update_runtime(run.id)
     _live_run = agent_run_manager.get(run.id)
     assert _live_run is not None
-    make_live_terminal(_live_run, db=agent_run_manager.db, session_name=terminal_id)
+    make_live_terminal(_live_run, db=agent_run_manager.db)
 
     stored_run = agent_run_manager.get(run.id)
     assert stored_run is not None
@@ -3340,7 +3316,7 @@ class TestCheckExpiredAgents:
         agent_run_manager.update_runtime(run.id)
         _live_run = agent_run_manager.get(run.id)
         assert _live_run is not None
-        make_live_terminal(_live_run, db=agent_run_manager.db, session_name="gobby-expired")
+        make_live_terminal(_live_run, db=agent_run_manager.db)
 
         # Backdate started_at to simulate expiration
         now = datetime.now(UTC)
@@ -3592,7 +3568,7 @@ class TestCheckExpiredAgents:
         agent_run_manager.update_runtime(run.id)
         _live_run = agent_run_manager.get(run.id)
         assert _live_run is not None
-        make_live_terminal(_live_run, db=agent_run_manager.db, session_name="gobby-expire-child")
+        make_live_terminal(_live_run, db=agent_run_manager.db)
 
         past = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
         temp_db.execute(
@@ -3663,7 +3639,7 @@ class TestCheckExpiredAgents:
         assert expired_session.status == "expired"
 
     @pytest.mark.asyncio
-    async def test_terminal_completed_run_closes_lingering_tmux_after_daemon_outage(
+    async def test_terminal_completed_run_closes_lingering_terminal_after_daemon_outage(
         self,
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
@@ -3671,7 +3647,7 @@ class TestCheckExpiredAgents:
         temp_db: HubDatabase,
         session_manager: SessionManager,
     ) -> None:
-        """Recovery closes tmux left behind after a successful end_agent_run outage."""
+        """Recovery closes the terminal left behind after a successful end_agent_run outage."""
         child_session = session_manager.register(
             external_id="child-sess-completed-lingering-tmux",
             machine_id="21000000-0000-4000-8000-000000000001",
@@ -3695,9 +3671,7 @@ class TestCheckExpiredAgents:
         )
         _live_run = agent_run_manager.get(run.id)
         assert _live_run is not None
-        make_live_terminal(
-            _live_run, db=agent_run_manager.db, session_name="gobby-terminal-lingering-tmux"
-        )
+        make_live_terminal(_live_run, db=agent_run_manager.db)
 
         completed_at = datetime.now(UTC).isoformat()
         temp_db.execute(
@@ -3712,7 +3686,7 @@ class TestCheckExpiredAgents:
         expired = await monitor.expire_terminal_run_sessions()
 
         assert expired == 1
-        assert _runtime_of(monitor).killed == ["gobby-terminal-lingering-tmux"]
+        assert _runtime_of(monitor).killed_ids == {_live_run.terminal_id}
         updated = agent_run_manager.get(run.id)
         assert updated is not None
         assert updated.status == "success"
@@ -3989,7 +3963,7 @@ class TestCheckExpiredAgents:
         agent_run_manager.update_runtime(run.id)
         _live_run = agent_run_manager.get(run.id)
         assert _live_run is not None
-        make_live_terminal(_live_run, db=agent_run_manager.db, session_name="gobby-exp-wt")
+        make_live_terminal(_live_run, db=agent_run_manager.db)
 
         # Backdate started_at
         past = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
@@ -4044,7 +4018,7 @@ class TestCheckExpiredAgents:
         )
         _live_run = agent_run_manager.get(run.id)
         assert _live_run is not None
-        make_live_terminal(_live_run, db=agent_run_manager.db, session_name="gobby-exp-cl")
+        make_live_terminal(_live_run, db=agent_run_manager.db)
 
         # Backdate started_at
         past = (datetime.now(UTC) - timedelta(seconds=600)).isoformat()
@@ -5203,7 +5177,7 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
     agent_run_manager.update_runtime(run.id)
     _live_run = agent_run_manager.get(run.id)
     assert _live_run is not None
-    make_live_terminal(_live_run, db=agent_run_manager.db, session_name="gobby-bounded-db")
+    make_live_terminal(_live_run, db=agent_run_manager.db)
 
     monitor = AgentLifecycleMonitor(
         detection_registry=DETECTION_REGISTRY,

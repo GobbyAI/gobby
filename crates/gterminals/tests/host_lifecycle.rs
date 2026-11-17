@@ -413,7 +413,7 @@ impl OwnedHubSchema {
                  ('10000000-0000-4000-8000-000000000001', '00000000-0000-0000-0000-000000000001', 'epoch-E', 'live', 'native'),
                  ('10000000-0000-4000-8000-000000000001', '00000000-0000-0000-0000-000000000002', 'epoch-E', 'orphaned', 'native'),
                      ('M2', '00000000-0000-0000-0000-000000000001', 'other-epoch', 'live', 'native'),
-                     ('M2', '00000000-0000-0000-0000-000000000001', NULL, 'live', 'tmux');"
+             ('M2', '00000000-0000-0000-0000-000000000001', NULL, 'live', 'unmanaged');"
             ))?;
             let epochs = include_str!("../../gcore/assets/schema/migrations/468_terminal_host_epochs.sql");
             admin.batch_execute(&epochs.replace("public.", &format!("{schema}.")))?;

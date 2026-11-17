@@ -102,7 +102,7 @@ def _registered_send_keys(
     target: _Seat = OPERATOR,
     self_target: bool = False,
     context_only: bool = False,
-    backend: Literal["tmux", "native"] = "native",
+    backend: Literal["native"] = "native",
     tool_name: str = "send_keys",
 ) -> tuple[Callable[..., Any], FakeRuntime, MemoryTerminalStore, WriteCoordinator, str]:
     sessions = SessionManager(temp_db)
@@ -110,16 +110,13 @@ def _registered_send_keys(
     target_id = caller_id if self_target else _seat_session(sessions, project_id, target)
     terminal = make_memory_terminal(backend=backend)
     terminal.session_id = None if context_only else target_id
-    if backend == "tmux":
-        terminal.ownership = "external"
     if context_only:
         terminal.project_id = project_id
     store = MemoryTerminalStore(terminal)
     runtime = FakeRuntime(backend=backend)
-    other = FakeRuntime(backend="native" if backend == "tmux" else "tmux")
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
-        runtime_registry(runtime, other),
+        runtime_registry(runtime),
         lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
     # Refs resolve to the seated rows, so admission reads each seat's real definition.
@@ -239,14 +236,13 @@ async def test_send_keys_uses_daemon_origin_and_idempotency(
 
 
 @pytest.mark.asyncio
-async def test_send_keys_reaches_an_external_tmux_pane(
+async def test_send_keys_reaches_an_owned_native_pane(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     send, runtime, store, coordinator, _target = _registered_send_keys(
-        temp_db, sample_project["id"], backend="tmux"
+        temp_db, sample_project["id"], backend="native"
     )
     terminal = next(iter(store.rows.values()))
-    native = coordinator.runtime_for(make_memory_terminal(backend="native"))
     await coordinator.lease_registry.attach(terminal.id, attachment_id="operator", viewer="web")
     await coordinator.lease_registry.take_control(terminal.id, "operator")
 
@@ -262,7 +258,6 @@ async def test_send_keys_reaches_an_external_tmux_pane(
 
     assert result == {"success": True, "idempotency_key": "external-1"}
     assert runtime.write_log == [("text", "hello")]
-    assert cast(FakeRuntime, native).write_log == []
 
 
 @pytest.mark.asyncio

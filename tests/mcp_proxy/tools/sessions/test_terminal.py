@@ -229,7 +229,7 @@ class TestRegisterTerminalTools:
         session_manager = MagicMock()
         session_manager.get.return_value = session
         session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
-        pane = MagicMock(backend="tmux", target="%12")
+        pane = MagicMock(backend="native", target="%12")
         pane.snapshot = AsyncMock(return_value="ready")
         state = HandoffAttemptState(
             session_id="session-1",
@@ -310,7 +310,7 @@ class TestRegisterTerminalTools:
         session_manager = MagicMock()
         session_manager.get.return_value = session
         session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
-        pane = MagicMock(backend="tmux", target="%12")
+        pane = MagicMock(backend="native", target="%12")
         pane.snapshot = AsyncMock(return_value="ready")
         attempt_id = "a" * 32
 
@@ -385,7 +385,7 @@ class TestRegisterTerminalTools:
         session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
-        pane = MagicMock(backend="tmux", target="%12")
+        pane = MagicMock(backend="native", target="%12")
         pane.snapshot = AsyncMock(return_value="ready")
 
         with patch(
@@ -926,7 +926,7 @@ class TestSetHandoffFeedback:
         feedback = registry.get_tool("feedback")
         set_handoff = registry.get_tool("set_handoff")
         assert feedback is not None and set_handoff is not None
-        pane = MagicMock(backend="tmux", target="%12")
+        pane = MagicMock(backend="native", target="%12")
         pane.snapshot = AsyncMock(return_value="ready")
         with (
             session_context_for_test(session_id),
@@ -1023,7 +1023,7 @@ class TestSetHandoffFeedback:
         manager, session_id = _persistent_session(temp_db, tmp_path)
         set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
         assert set_handoff is not None
-        pane = MagicMock(backend="tmux", target="%12")
+        pane = MagicMock(backend="native", target="%12")
         pane.snapshot = AsyncMock(return_value="ready")
         with (
             session_context_for_test(session_id),
@@ -1332,7 +1332,7 @@ def test_set_handoff_retry_reuses_the_in_flight_compact_attempt(
     manager, session_id = _persistent_session(temp_db, tmp_path)
     set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
     assert set_handoff is not None
-    pane = MagicMock(backend="tmux", target="%12")
+    pane = MagicMock(backend="native", target="%12")
     pane.snapshot = AsyncMock(return_value="ready")
     variables = SessionVariableManager(temp_db)
     event_loop = MagicMock()
@@ -1433,7 +1433,7 @@ def _failed_compact_attempt(
     manager, session_id = _persistent_session(temp_db, tmp_path)
     set_handoff = _feedback_registry(temp_db, manager).get_tool("set_handoff")
     assert set_handoff is not None
-    pane = MagicMock(backend="tmux", target="%12")
+    pane = MagicMock(backend="native", target="%12")
     pane.snapshot = AsyncMock(return_value="ready")
     variables = SessionVariableManager(temp_db)
     with (
@@ -1503,7 +1503,7 @@ def test_settled_unconfirmed_compact_admits_work_and_one_fresh_set_handoff(
     old_attempt = str(gate["attempt_id"])
     set_handoff = _feedback_registry(temp_db, SessionManager(temp_db)).get_tool("set_handoff")
     assert set_handoff is not None
-    pane = MagicMock(backend="tmux", target="%12")
+    pane = MagicMock(backend="native", target="%12")
     pane.snapshot = AsyncMock(return_value="ready")
 
     def stage() -> dict[str, Any]:

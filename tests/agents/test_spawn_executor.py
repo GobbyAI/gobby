@@ -673,7 +673,7 @@ class TestExecuteSpawn:
 
     @pytest.mark.asyncio
     async def test_run_pid_is_child_pid(self) -> None:
-        from tests.terminals.fakes import _FAKE_PANE_PID, _FAKE_SERVER_PID
+        from tests.terminals.fakes import _FAKE_PANE_PID
 
         run_manager = MagicMock()
         request = SpawnRequest(
@@ -701,7 +701,6 @@ class TestExecuteSpawn:
             result = await execute_spawn(request)
         assert result.success is True
         assert result.pid == _FAKE_PANE_PID
-        assert result.pid != _FAKE_SERVER_PID
         run_manager.update_runtime.assert_called()
         assert run_manager.update_runtime.call_args.kwargs["pid"] == _FAKE_PANE_PID
 
@@ -2224,7 +2223,7 @@ class TestExecuteSpawnErrorPaths:
         row = _manager_of(request).get(result.terminal_id)
         assert row is not None
         assert row.spawn_key == result.terminal_id
-        assert row.session_name is None
+        assert row.backend == "native"
         assert result.success is True
         assert result.pid == 12345
 
@@ -3464,8 +3463,6 @@ async def test_lost_cas_converges_when_reconciler_already_promoted(
         assert isinstance(locator, dict)
         current.locator = dict(locator)
         current.locator_key = str(kwargs["locator_key"])
-        session_name = kwargs.get("session_name")
-        current.session_name = session_name if isinstance(session_name, str) else None
         return None
 
     monkeypatch.setattr(manager, "promote_to_live", already_live)

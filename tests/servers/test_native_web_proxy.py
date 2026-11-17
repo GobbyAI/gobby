@@ -283,7 +283,6 @@ def _promote_native(manager: TerminalManager, project_id: str) -> Terminal:
         locator={"host_terminal_id": host_id},
         locator_key=native_locator_key(epoch, host_id),
         host_epoch=epoch,
-        session_name="native-sess",
     )
     assert promoted is not None
     return promoted

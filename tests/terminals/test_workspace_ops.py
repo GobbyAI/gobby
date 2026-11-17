@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import itertools
 import threading
 import uuid
 from collections.abc import Awaitable, Callable, Iterator
@@ -43,7 +42,6 @@ from gobby.storage.terminals import (
     Terminal,
     TerminalManager,
     native_locator_key,
-    tmux_locator_key,
 )
 from gobby.storage.workspaces import (
     LayoutChange,
@@ -80,14 +78,13 @@ LOCAL_MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000001"
 REMOTE_MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000002"
 OPERATOR = "operator"
 ERROR_CODES = {"not_found", "invalid_ref", "invalid_op", "terminal_failed", "busy", "forbidden"}
-_TMUX_PANE_NUMBERS = itertools.count(1)
 
 
 @dataclass
 class _HostRuntime(FakeRuntime):
     """Native fake whose host epoch follows each spawn, so live locator keys stay unique."""
 
-    backend: Literal["tmux", "native"] = "native"
+    backend: Literal["native"] = "native"
     spawning: asyncio.Event = field(default_factory=asyncio.Event)
     # The supervisor's typed fail-closed reason, as HostManagerControl reports it.
     refusal: HostUnavailableReason | None = None
@@ -108,7 +105,6 @@ class _Harness:
     terminals: TerminalManager
     sessions: SessionManager
     native: _HostRuntime
-    tmux: FakeRuntime
     events: list[WorkspaceEvent]
     project_id: str
     checkout: str
@@ -142,26 +138,25 @@ def _local_machine_identity() -> Iterator[None]:
 def harness(temp_db: HubDatabase, sample_project: dict[str, Any]) -> _Harness:
     LocalMachineManager(temp_db).upsert_seen(LOCAL_MACHINE_ID, TEST_USER_ID, hostname="local")
     project_id = str(sample_project["id"])
-    native, tmux = _HostRuntime(), FakeRuntime(backend="tmux")
+    native = _HostRuntime()
     built = _Harness(
         db=temp_db,
         workspaces=WorkspaceManager(temp_db),
         terminals=TerminalManager(temp_db),
         sessions=SessionManager(temp_db),
         native=native,
-        tmux=tmux,
         events=[],
         project_id=project_id,
         checkout=require_root(temp_db, project_id, LOCAL_MACHINE_ID),
     )
-    built.ops = built.build_ops(runtime_registry(tmux, native))
+    built.ops = built.build_ops(runtime_registry(native))
     return built
 
 
 def _live_terminal(
     terminals: TerminalManager,
     project_id: str,
-    backend: Literal["tmux", "native"],
+    backend: Literal["native"],
     *,
     session_id: str | None = None,
 ) -> Terminal:
@@ -175,33 +170,13 @@ def _live_terminal(
         machine_id=LOCAL_MACHINE_ID,
         session_id=session_id,
     )
-    if backend == "native":
-        host_terminal_id = str(uuid.uuid4())
-        live = terminals.promote_to_live(
-            pending.id,
-            locator={"host_terminal_id": host_terminal_id},
-            locator_key=native_locator_key("adopted", host_terminal_id),
-            host_epoch="adopted",
-        )
-    else:
-        pane_id = f"%{next(_TMUX_PANE_NUMBERS)}"
-        locator: dict[str, object] = {
-            "socket_path": "/private/tmp/tmux-501/workspace-ops",
-            "server_pid": 1658,
-            "server_start_time": 1784592177,
-            "pane_id": pane_id,
-        }
-        live = terminals.promote_to_live(
-            pending.id,
-            locator=locator,
-            locator_key=tmux_locator_key(
-                socket_path="/private/tmp/tmux-501/workspace-ops",
-                server_pid=1658,
-                server_start_time=1784592177,
-                pane_id=pane_id,
-            ),
-            session_name=pending.spawn_key,
-        )
+    host_terminal_id = str(uuid.uuid4())
+    live = terminals.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": host_terminal_id},
+        locator_key=native_locator_key("adopted", host_terminal_id),
+        host_epoch="adopted",
+    )
     assert live is not None
     return live
 
@@ -247,8 +222,7 @@ async def test_split_spawns_with_pane_identity_env_and_rolls_back(harness: _Harn
     workspace = await h.ops.workspace_create(OPERATOR)
     first = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
 
-    # The registry also serves tmux (the configured default backend); pane spawns
-    # still resolve the native runtime explicitly.
+    # Pane spawns resolve the native runtime explicitly.
     split = await h.ops.pane_split(OPERATOR, first.id, "horizontal")
     pane, tab = split.panes[0], split.tabs[0]
     node = h.workspaces.resolve_node()
@@ -266,7 +240,6 @@ async def test_split_spawns_with_pane_identity_env_and_rolls_back(harness: _Harn
     assert pane.terminal_id == str(request.terminal_id) and pane.owns_terminal
     terminal = h.terminals.get(str(request.terminal_id))
     assert terminal is not None and (terminal.backend, terminal.state) == ("native", "live")
-    assert h.tmux.create_calls == 0
     assert layout_pane_ids(tab.layout) == [first.id, pane.id]
 
     # The pane row exists before the spawn runs; the sweep spares it and every
@@ -295,11 +268,10 @@ async def test_split_spawns_with_pane_identity_env_and_rolls_back(harness: _Harn
         "gobby.terminals.workspace_ops.spawn_web_terminal", side_effect=RuntimeError("host gone")
     ):
         await _raises("terminal_failed", h.ops.pane_split(OPERATOR, first.id, "horizontal"))
-    unavailable = h.build_ops(runtime_registry(h.tmux))
+    unavailable = h.build_ops(runtime_registry())
     await _raises("terminal_failed", unavailable.pane_split(OPERATOR, first.id, "horizontal"))
     assert {row.id: row.layout for row in h.workspaces.list_tabs(workspace.id)} == layouts
     assert {row.id for row in h.workspaces.list_panes(workspace.id)} == panes
-    assert h.tmux.create_calls == 0
     assert h.events[-1]["kind"] == "pane.removed"
 
     # A cascade that removes the pane mid-spawn kills the minted terminal.
@@ -473,7 +445,7 @@ async def test_spawned_shell_is_killed_when_pane_binding_raises(harness: _Harnes
 async def test_adopt_close_and_move_semantics(harness: _Harness) -> None:
     h = harness
     workspace = await h.ops.workspace_create(OPERATOR)
-    agent = _live_terminal(h.terminals, h.project_id, "tmux")
+    agent = _live_terminal(h.terminals, h.project_id, "native")
     external = _live_terminal(h.terminals, h.project_id, "native")
 
     adopted_tab = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id, terminal_id=agent.id)
@@ -484,7 +456,7 @@ async def test_adopt_close_and_move_semantics(harness: _Harness) -> None:
     external_pane = adopted_split.panes[0]
     assert (agent_pane.terminal_id, agent_pane.owns_terminal) == (agent.id, False)
     assert (external_pane.terminal_id, external_pane.owns_terminal) == (external.id, False)
-    assert (h.native.create_calls, h.tmux.create_calls) == (0, 0)
+    assert h.native.create_calls == 0
 
     held_by_agent_pane = await _raises(
         "busy", h.ops.tab_create(OPERATOR, workspace.id, h.project_id, terminal_id=agent.id)
@@ -497,18 +469,17 @@ async def test_adopt_close_and_move_semantics(harness: _Harness) -> None:
     assert [row.id for row in h.workspaces.list_tabs(workspace.id)] == [tab.id]
     assert len(h.workspaces.list_panes(workspace.id)) == 2
 
-    # The adopted tmux terminal is read and written through the tmux runtime.
-    h.tmux.snapshot_text = "agent ready"
+    # The adopted terminal is read and written through the native runtime.
+    h.native.snapshot_text = "agent ready"
     assert (await h.ops.pane_read(OPERATOR, agent_pane.id, lines=20)).text == "agent ready"
-    h.tmux.snapshot_effects = ["booting", "agent ready"]
+    h.native.snapshot_effects = ["booting", "agent ready"]
     waited = await h.ops.pane_wait_for_output(
         OPERATOR, agent_pane.id, r"ready", timeout_seconds=5, poll_interval_seconds=0.1
     )
     assert (waited.matched, waited.reason) == (True, "matched")
     sent = await h.ops.pane_send_keys(OPERATOR, agent_pane.id, "hello\n", idempotency_key="k-1")
     assert (sent.idempotency_key, sent.indeterminate) == ("k-1", False)
-    assert h.tmux.write_log == [("text", "hello\n")]
-    assert h.native.write_log == []
+    assert h.native.write_log == [("text", "hello\n")]
 
     # pane.move across tabs collapses the source split and takes the lowest free ref.
     owned = (await h.ops.pane_split(OPERATOR, external_pane.id, "horizontal")).panes[0]
@@ -585,7 +556,7 @@ async def test_actor_scope_guards_kill_spawn_and_adopt(harness: _Harness) -> Non
     workspace = await h.ops.workspace_create(OPERATOR)
     spawned = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)
     tab, pane = spawned.tabs[0], spawned.panes[0]
-    agent = _live_terminal(h.terminals, h.project_id, "tmux", session_id=lead.id)
+    agent = _live_terminal(h.terminals, h.project_id, "native", session_id=lead.id)
     spawns = h.native.create_calls
 
     for actor in ("nobody", f"session:{outsider.id}", f"session:{autonomous.id}"):
@@ -617,7 +588,7 @@ async def test_actor_scope_guards_kill_spawn_and_adopt(harness: _Harness) -> Non
     adopted = (
         await h.ops.tab_create(tree_actor, workspace.id, h.project_id, terminal_id=agent.id)
     ).panes[0]
-    h.tmux.snapshot_text = "lead view"
+    h.native.snapshot_text = "lead view"
     assert (await h.ops.pane_read(tree_actor, adopted.id)).text == "lead view"
     await _raises("forbidden", h.ops.pane_split(tree_actor, adopted.id, "horizontal"))
 
@@ -828,7 +799,7 @@ async def test_close_ops_kill_owned_terminals_and_release_adopted_ones(
     h = harness
     workspace = await h.ops.workspace_create(OPERATOR)
     external = _live_terminal(h.terminals, h.project_id, "native")
-    agent = _live_terminal(h.terminals, h.project_id, "tmux")
+    agent = _live_terminal(h.terminals, h.project_id, "native")
 
     closing = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)
     first = closing.panes[0]
@@ -854,7 +825,6 @@ async def test_close_ops_kill_owned_terminals_and_release_adopted_ones(
         released = h.terminals.get(adopted.id)
         assert released is not None and released.state == "live"
     assert all(host_epoch != "adopted" for _host, host_epoch in h.native.terminated_host_ids)
-    assert h.tmux.killed_ids == set()
 
     # A kill that fails after the rows are gone orphans the terminal, so it stays
     # listed and killable instead of live behind no pane.
@@ -1128,7 +1098,7 @@ async def test_personal_workspace_shell_uses_operator_launch_directory(
 async def test_adopt_race_on_the_unique_index_raises_busy(harness: _Harness) -> None:
     h = harness
     workspace = await h.ops.workspace_create(OPERATOR)
-    agent = _live_terminal(h.terminals, h.project_id, "tmux")
+    agent = _live_terminal(h.terminals, h.project_id, "native")
     held = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id, terminal_id=agent.id)
     holder_tab, holder = held.tabs[0], held.panes[0]
     layouts = {row.id: row.layout for row in h.workspaces.list_tabs(workspace.id)}
@@ -2179,7 +2149,6 @@ async def test_role_bound_pane_is_persistent_and_bare_pane_is_run(harness: _Harn
         assert pane.terminal_id is not None
         terminal = h.terminals.get(pane.terminal_id)
         assert terminal is not None and terminal.backend == "native"
-    assert h.tmux.create_calls == 0
 
     from gobby.terminals.lifetime import lifetime_for_role
 
@@ -2215,6 +2184,5 @@ async def test_role_bound_pane_fails_closed_without_host(harness: _Harness) -> N
     # The refused spawn minted nothing and the inserted pane rolled back.
     assert h.db.fetchall("SELECT id FROM terminals") == terminals
     assert h.native.create_calls == spawned
-    assert h.tmux.create_calls == 0
     assert {row.id: row.layout for row in h.workspaces.list_tabs(workspace.id)} == layouts
     assert {row.id for row in h.workspaces.list_panes(workspace.id)} == panes

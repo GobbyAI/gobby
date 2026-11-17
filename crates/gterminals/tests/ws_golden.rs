@@ -442,8 +442,6 @@ fn terminal(
         agent_run_id: None,
         locator: None,
         locator_key: None,
-        session_name: None,
-        window_id: None,
         title: Some(title.to_owned()),
         host_epoch: None,
         rows: Some(24),
@@ -477,11 +475,7 @@ fn page_rows() -> Vec<Terminal> {
             } else {
                 timestamp(BASE_SECONDS + i, BASE_MICROS)
             };
-            let backend = if i % 2 == 1 {
-                Backend::Tmux
-            } else {
-                Backend::Native
-            };
+            let backend = Backend::Native;
             terminal(
                 &format!("{i:08x}-0000-4000-8000-000000000000"),
                 backend,
@@ -559,14 +553,7 @@ fn inventory_pagination_matches_python() {
     );
     for (kept, row) in kept.iter().zip(&rows) {
         assert_eq!(kept["terminal_id"], json!(row.id.to_string()));
-        assert_eq!(
-            kept["backend"],
-            json!(if row.backend == Backend::Tmux {
-                "tmux"
-            } else {
-                "native"
-            })
-        );
+        assert_eq!(kept["backend"], json!("native"));
     }
     let at_three = page(None)
         .encode_within(PYTHON_THREE_ROW_CEILING)
@@ -703,7 +690,7 @@ const PYTHON_UPDATED: [&str; 6] = [
 const PYTHON_TRUNCATION_CEILING: usize = 1700;
 const PYTHON_TRUNCATION_COUNT: usize = 3;
 /// The smallest ceiling at which Python keeps 3 rows (2 rows one byte below).
-const PYTHON_THREE_ROW_CEILING: usize = 1642;
+const PYTHON_THREE_ROW_CEILING: usize = 1644;
 /// The smallest ceiling at which Python emits any row.
 const PYTHON_FIRST_FIT: usize = 657;
 

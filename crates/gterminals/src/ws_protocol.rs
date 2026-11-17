@@ -516,11 +516,9 @@ fn is_falsy(value: &Value) -> bool {
 pub fn inventory_item(row: &Terminal, lease_holder: Option<Value>) -> Map<String, Value> {
     let backend = match row.backend {
         Backend::Native => "native",
-        Backend::Tmux => "tmux",
     };
     let ownership = match row.ownership {
         Ownership::Gobby => "gobby",
-        Ownership::External => "external",
     };
     let dims = match (row.rows, row.cols) {
         (Some(rows), Some(cols)) => json!({"rows": rows, "cols": cols}),

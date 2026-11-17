@@ -236,7 +236,7 @@ async def _probe_target(attempt: InDoubtAttempt) -> Terminal:
     row = await read_row(attempt)
     if row is None:
         raise LookupError(f"terminal {attempt.terminal_id} has no row to probe")
-    return replace(row, session_name=attempt.spawn_key)
+    return row
 
 
 async def _kill_with_proof(attempt: InDoubtAttempt, prepared: PreparedSpawn) -> bool:
@@ -275,7 +275,7 @@ async def _kill_with_proof(attempt: InDoubtAttempt, prepared: PreparedSpawn) -> 
 def _kill_target(attempt: InDoubtAttempt, row: Terminal, prepared: PreparedSpawn) -> Terminal:
     identity = prepared_identity(attempt.backend, prepared)
     if identity is None:
-        return replace(row, session_name=attempt.spawn_key)
+        return row
     process = dict(row.process or {})
     process.update(identity.process or {})
     return replace(

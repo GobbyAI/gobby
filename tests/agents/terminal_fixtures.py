@@ -10,12 +10,9 @@ from gobby.storage.terminals import (
     Terminal,
     TerminalManager,
     native_locator_key,
-    tmux_locator_key,
 )
 from gobby.terminals.composer_ledger import ComposerLedger
 from gobby.utils.machine_id import require_machine_id
-
-_SOCKET = "/private/tmp/tmux-501/default"
 
 # The ledger a live spawn records into, as native commit_spawn does; tests/agents binds it.
 spawn_ledger: ComposerLedger | None = None
@@ -23,7 +20,7 @@ spawn_ledger: ComposerLedger | None = None
 
 def make_pending_terminal(
     run: AgentRun,
-    backend: str = "tmux",
+    backend: str = "native",
     *,
     db: HubDatabase | None = None,
     spawn_key: str | None = None,
@@ -35,7 +32,7 @@ def make_pending_terminal(
     terminal_id = str(uuid.uuid4())
     key = spawn_key
     if key is None:
-        key = terminal_id if backend == "native" else f"gobby-{terminal_id}"
+        key = terminal_id
     pending = manager.create_pending(
         terminal_id=terminal_id,
         project_id=_project_id_for_run(db, run),
@@ -56,13 +53,10 @@ def make_pending_terminal(
 
 def make_live_terminal(
     run: AgentRun,
-    backend: str = "tmux",
+    backend: str = "native",
     *,
     db: HubDatabase | None = None,
-    session_name: str | None = None,
-    window_id: str = "@1",
     title: str | None = None,
-    pane_id: str = "%1",
     host_epoch: str | None = None,
     spawn_key: str | None = None,
 ) -> Terminal:
@@ -75,36 +69,15 @@ def make_live_terminal(
         raise TypeError("make_live_terminal requires db=")
     pending = make_pending_terminal(run, backend, db=db, spawn_key=spawn_key)
     manager = TerminalManager(db)
-    if backend == "native":
-        epoch = host_epoch or str(uuid.uuid4())
-        host_terminal_id = str(uuid.uuid4())
-        live = manager.promote_to_live(
-            pending.id,
-            locator={"host_terminal_id": host_terminal_id},
-            locator_key=native_locator_key(epoch, host_terminal_id),
-            host_epoch=epoch,
-            title=title,
-        )
-    else:
-        locator = {
-            "socket_path": _SOCKET,
-            "server_pid": 1658,
-            "server_start_time": 1784592177,
-            "pane_id": pane_id,
-        }
-        live = manager.promote_to_live(
-            pending.id,
-            locator=locator,
-            locator_key=tmux_locator_key(
-                socket_path=_SOCKET,
-                server_pid=1658,
-                server_start_time=1784592177,
-                pane_id=pane_id,
-            ),
-            session_name=session_name or pending.spawn_key,
-            window_id=window_id,
-            title=title,
-        )
+    epoch = host_epoch or str(uuid.uuid4())
+    host_terminal_id = str(uuid.uuid4())
+    live = manager.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": host_terminal_id},
+        locator_key=native_locator_key(epoch, host_terminal_id),
+        host_epoch=epoch,
+        title=title,
+    )
     assert live is not None
     if spawn_ledger is not None:
         spawn_ledger.record_spawn(live.id, "")

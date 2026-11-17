@@ -19,8 +19,8 @@ use crate::write::{
     WriteFailure,
 };
 
-/// `TMUX_TEXT_ENTER_DELAY_SECONDS` (`agents/tmux/text_injection.py`): the
-/// pause between a submitted text and its Enter.
+/// `TEXT_ENTER_DELAY_SECONDS` (`src/gobby/terminals/native_runtime.py`): the
+/// pause between submitted text and its Enter.
 const ENTER_DELAY: Duration = Duration::from_secs(1);
 
 /// Ledger refusals after which `ControlClient` must be discarded.

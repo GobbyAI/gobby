@@ -340,7 +340,7 @@ async def test_final_preflight_suppresses_session_that_becomes_protected(
 async def test_non_uuid_wake_identity_reports_no_terminal(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A legacy display name cannot authorize writes to a managed terminal."""
+    """A malformed terminal ID cannot authorize writes to a managed terminal."""
     row = replace(
         make_memory_terminal(terminal_id=REPRO_TERMINAL_ID, backend="native"),
         session_id=REPRO_SESSION_ID,
@@ -361,9 +361,8 @@ async def test_non_uuid_wake_identity_reports_no_terminal(
         lambda: (store, coordinator),
     )
     monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", no_sleep)
-    assert row.session_name is not None
     with pytest.raises(RuntimeError, match="no terminal for wake identity"):
-        await _send_terminal_session_wake(row.session_name, CONTINUE_WAKE_MESSAGE, submit=True)
+        await _send_terminal_session_wake("invalid-terminal-id", CONTINUE_WAKE_MESSAGE, submit=True)
     assert runtime.write_log == []
 
 

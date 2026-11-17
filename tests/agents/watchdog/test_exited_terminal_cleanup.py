@@ -31,7 +31,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["native", "tmux"])
+@pytest.mark.parametrize("backend", ["native"])
 @pytest.mark.parametrize("registry_lost", [False, True])
 async def test_exit_before_first_turn_releases_slot_and_delivers_parent_wait(
     temp_db: HubDatabase,
@@ -39,7 +39,7 @@ async def test_exit_before_first_turn_releases_slot_and_delivers_parent_wait(
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    backend: Literal["native", "tmux"],
+    backend: Literal["native"],
     registry_lost: bool,
 ) -> None:
     patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)

@@ -17,14 +17,12 @@ from gobby.storage.terminals import (
     AttachLocator,
     HostEpochMismatchError,
     TerminalManager,
-    tmux_locator_key,
 )
 from gobby.terminals import TerminalRuntime, TerminalRuntimeRegistry
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.write_coordinator import WriteCoordinator
 from tests.servers.terminal_fakes import MockWebSocket
 from tests.servers.test_terminal_ws_lease import _live_row, _send, _ws_server
-from tests.storage.test_terminals import _create_pending
 
 pytestmark = pytest.mark.unit
 
@@ -509,37 +507,6 @@ async def test_attach_fences_unavailable_rows_before_acquiring_a_lease(
     assert reply["reason"]
     assert "attachment_id" not in reply
     assert leases._attachments == {}
-    assert runtime.resolved == 0
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["pending", "live"])
-async def test_attach_to_a_backend_without_a_runtime_releases_its_lease(
-    state: str, temp_db: HubDatabase, sample_project: dict[str, Any]
-) -> None:
-    """A tmux row attaches like any live row; only a missing runtime refuses it."""
-    manager = TerminalManager(temp_db)
-    pending = _create_pending(manager, sample_project["id"], backend="tmux")
-    if state == "live":
-        socket_path = "/tmp/hand-started-tmux.sock"
-        promoted = manager.promote_to_live(
-            pending.id,
-            locator={"socket_path": socket_path, "pane_id": "%1"},
-            locator_key=tmux_locator_key(
-                socket_path=socket_path,
-                server_pid=100,
-                server_start_time=200,
-                pane_id="%1",
-            ),
-            session_name="hand-started",
-        )
-        assert promoted is not None
-    reply, leases, runtime = await _attach_reply(manager, pending.id)
-
-    assert reply["success"] is False
-    assert reply["code"] == "runtime_unavailable"
-    assert reply["reason"]
-    assert leases.get(reply["attachment_id"]) is None
     assert runtime.resolved == 0
 
 

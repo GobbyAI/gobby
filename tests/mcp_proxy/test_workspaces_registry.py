@@ -90,7 +90,7 @@ TOOLS = {
 class _NativeRuntime(FakeRuntime):
     """Native fake whose host epoch follows each spawn, so live locator keys stay unique."""
 
-    backend: Literal["tmux", "native"] = "native"
+    backend: Literal["native"] = "native"
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
         self.host_epoch = str(request.terminal_id)
@@ -127,7 +127,7 @@ async def stack(temp_db: HubDatabase, sample_project: dict[str, Any]) -> AsyncIt
     server.session_manager = sessions
     terminals = TerminalManager(temp_db)
     native = _NativeRuntime()
-    registry = runtime_registry(FakeRuntime(backend="tmux"), native)
+    registry = runtime_registry(FakeRuntime(backend="native"), native)
     leases = TerminalLeaseRegistry(daemon_epoch="workspaces-registry-epoch")
     workspaces = WorkspaceManager(temp_db)
     server.configure_terminals(

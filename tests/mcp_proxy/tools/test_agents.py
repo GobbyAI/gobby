@@ -2284,15 +2284,15 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
     """
 
     @pytest.mark.asyncio
-    async def test_legacy_terminal_returns_unsupported_without_completing(self) -> None:
+    async def test_missing_native_runtime_refuses_completion(self) -> None:
         from gobby.mcp_proxy.tools.agents import _complete_self_terminated_run
         from gobby.terminals.runtime import UnregisteredBackendError
 
         run = MagicMock(id="run-legacy", child_session_id=None, terminal_id="terminal-legacy")
         run.status = "running"
         runner = MagicMock()
-        runner.terminal_runtime_registry.resolve.side_effect = UnregisteredBackendError("tmux")
-        terminal = MagicMock(id=run.terminal_id, backend="tmux", state="live", machine_id=None)
+        runner.terminal_runtime_registry.resolve.side_effect = UnregisteredBackendError("native")
+        terminal = MagicMock(id=run.terminal_id, backend="native", state="live", machine_id=None)
 
         with (
             patch(
@@ -2326,11 +2326,11 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
         assert result == {
             "success": False,
             "run_id": run.id,
-            "error": "unsupported terminal backend: tmux",
+            "error": "unsupported terminal backend: native",
             "error_code": "unsupported_terminal_backend",
         }
         assert run.status == "running"
-        runner.terminal_runtime_registry.resolve.assert_called_once_with("tmux")
+        runner.terminal_runtime_registry.resolve.assert_called_once_with("native")
         terminate.assert_not_awaited()
         complete.assert_not_awaited()
 

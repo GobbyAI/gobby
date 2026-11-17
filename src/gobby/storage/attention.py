@@ -161,7 +161,6 @@ class AttentionRosterTerminal:
     state: str
     machine_id: str
     host_epoch: str | None
-    session_name: str | None
     locator: Mapping[str, object] | None
 
 
@@ -204,11 +203,6 @@ class AttentionRosterRow:
                 host_epoch=(
                     str(row["terminal_host_epoch"])
                     if row.get("terminal_host_epoch") is not None
-                    else None
-                ),
-                session_name=(
-                    str(row["terminal_session_name"])
-                    if row.get("terminal_session_name") is not None
                     else None
                 ),
                 locator=_json_object(row.get("terminal_locator")),
@@ -349,7 +343,6 @@ class AttentionStateManager:
                 terminal.state AS terminal_state,
                 terminal.machine_id::text AS terminal_machine_id,
                 terminal.host_epoch AS terminal_host_epoch,
-                terminal.session_name AS terminal_session_name,
                 terminal.locator::text AS terminal_locator,
                 task.title AS task_title,
                 (claimed.id IS NOT NULL) AS task_claim_held,
@@ -404,7 +397,6 @@ class AttentionStateManager:
                 terminal.state AS terminal_state,
                 terminal.machine_id::text AS terminal_machine_id,
                 terminal.host_epoch AS terminal_host_epoch,
-                terminal.session_name AS terminal_session_name,
                 terminal.locator::text AS terminal_locator,
                 claimed.title AS task_title,
                 (claimed.id IS NOT NULL) AS task_claim_held,

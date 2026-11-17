@@ -1,4 +1,4 @@
-"""``terminal_kill`` destroys orphaned rows and detached external tmux rows (#22067)."""
+"""``terminal_kill`` destroys orphaned and detached owned rows (#22067)."""
 
 from __future__ import annotations
 

@@ -186,7 +186,7 @@ def test_wiring_registers_only_the_native_runtime(monkeypatch: pytest.MonkeyPatc
     registry = runner.terminal_runtime_registry
     assert registry.resolve("native") is native
     with pytest.raises(UnregisteredBackendError):
-        registry.resolve("tmux")
+        registry.resolve("unregistered")
 
 
 def _wire_terminals(monkeypatch: pytest.MonkeyPatch, *, front_door: bool) -> MagicMock:

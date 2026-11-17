@@ -141,7 +141,7 @@ fn inventory_entries(inventory: &Inventory) -> Result<BTreeMap<Uuid, HostEntry>,
             .get("terminal_id")
             .and_then(Value::as_str)
             .ok_or_else(|| ReconcileError::Inventory("missing terminal identity".into()))?;
-        // Tmux observer identities are locator keys, not native child UUIDs.
+        // Non-UUID inventory identities are not native children.
         let Ok(id) = Uuid::parse_str(raw_id) else {
             continue;
         };

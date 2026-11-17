@@ -23,9 +23,8 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_kill_terminal_marks_external_row_exited_synchronously() -> None:
-    terminal = make_memory_terminal(session_name="external-shell")
-    terminal.ownership = "external"
+async def test_kill_terminal_marks_owned_row_exited_synchronously() -> None:
+    terminal = make_memory_terminal()
     terminals = MemoryTerminalStore(terminal)
     runtime = FakeRuntime()
 
@@ -33,14 +32,13 @@ async def test_kill_terminal_marks_external_row_exited_synchronously() -> None:
 
     assert exited is terminal
     assert terminal.state == "exited"
-    assert runtime.killed == ["external-shell"]
+    assert runtime.killed_ids == {terminal.id}
 
 
 @pytest.mark.asyncio
 async def test_terminate_terminal_resolves_root_session_reference() -> None:
     root_session_id = "root-session"
-    terminal = make_memory_terminal(session_name="root-shell")
-    terminal.ownership = "external"
+    terminal = make_memory_terminal()
     terminal.project_id = "project-1"
     terminal.session_id = root_session_id
     terminals = MemoryTerminalStore(terminal)
@@ -60,7 +58,7 @@ async def test_terminate_terminal_resolves_root_session_reference() -> None:
 
     assert exited is terminal
     assert terminal.state == "exited"
-    assert runtime.killed == ["root-shell"]
+    assert runtime.killed_ids == {terminal.id}
     assert sessions.resolve_session_reference.call_args_list == [
         call(caller.id),
         call(root_session_id, caller.project_id),
@@ -70,8 +68,7 @@ async def test_terminate_terminal_resolves_root_session_reference() -> None:
 @pytest.mark.asyncio
 async def test_terminate_terminal_refuses_target_outside_actor_scope() -> None:
     root_session_id = "root-session"
-    terminal = make_memory_terminal(session_name="other-project-shell")
-    terminal.ownership = "external"
+    terminal = make_memory_terminal()
     terminal.project_id = "project-2"
     terminal.session_id = root_session_id
     terminals = MemoryTerminalStore(terminal)
@@ -98,7 +95,7 @@ async def test_terminate_terminal_refuses_target_outside_actor_scope() -> None:
 
 @pytest.mark.asyncio
 async def test_kill_terminal_settles_a_pending_row_through_its_attempt() -> None:
-    terminal = make_memory_terminal(session_name="pending-shell")
+    terminal = make_memory_terminal()
     terminal.state = "pending"
     terminals = MemoryTerminalStore(terminal)
     runtime = FakeRuntime()
@@ -109,4 +106,4 @@ async def test_kill_terminal_settles_a_pending_row_through_its_attempt() -> None
     assert exited is not None
     assert exited.state == "exited"
     assert terminals.rows[terminal.id].state == "exited"
-    assert runtime.killed == ["pending-shell"]
+    assert runtime.killed_ids == {terminal.id}

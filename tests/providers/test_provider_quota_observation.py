@@ -156,7 +156,7 @@ def _terminal(*, session_id: str) -> Terminal:
     # synthetic: a tmux terminal row with the ownership fields the generation hashes.
     return Terminal(
         id="term-1",
-        backend="tmux",
+        backend="native",
         ownership="gobby",
         state="running",
         machine_id="machine-1",

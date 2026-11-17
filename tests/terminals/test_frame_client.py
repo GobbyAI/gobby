@@ -211,35 +211,6 @@ def test_bincode_varint_encodes_values_above_127() -> None:
     assert b"\x80\x01" not in small
 
 
-@pytest.mark.asyncio
-async def test_tmux_attach_requires_generation() -> None:
-    incoming = asyncio.StreamReader()
-    outgoing = asyncio.StreamReader()
-
-    class _Writer:
-        def write(self, data: bytes) -> None:
-            outgoing.feed_data(data)
-
-        async def drain(self) -> None:
-            return None
-
-        def close(self) -> None:
-            return None
-
-        async def wait_closed(self) -> None:
-            return None
-
-    client = FrameClient(incoming, _Writer())
-    locator = AttachLocator(
-        backend="tmux",
-        frame_host_epoch="epoch-1",
-        socket_path="/tmp/tmux.sock",
-        pane_id="%0",
-    )
-    with pytest.raises(FrameProtocolError, match="generation"):
-        await client.attach_terminal(locator)
-
-
 def test_frame_client_has_no_write_method() -> None:
     source = inspect.getsource(FrameClient)
     assert "def write(" not in source

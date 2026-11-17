@@ -2067,7 +2067,7 @@ class TestCancelAgentRun:
         TerminalManager(temp_db).create_pending(
             terminal_id=terminal_id,
             project_id=sample_project["id"],
-            backend="tmux",
+            backend="native",
             ownership="gobby",
             spawn_key=f"gobby-{terminal_id}",
             machine_id=machine_id,
@@ -2104,7 +2104,7 @@ class TestCancelAgentRun:
         TerminalManager(temp_db).create_pending(
             terminal_id=terminal_id,
             project_id=sample_project["id"],
-            backend="tmux",
+            backend="native",
             ownership="gobby",
             spawn_key=f"gobby-{terminal_id}",
             machine_id=machine_id,

@@ -201,7 +201,7 @@ async def test_in_doubt_registry_claims_defers_and_releases() -> None:
 
 @pytest.mark.asyncio
 async def test_kill_terminal_refuses_held_ids() -> None:
-    terminal = make_memory_terminal(session_name="held-shell")
+    terminal = make_memory_terminal()
     terminals = MemoryTerminalStore(terminal)
     runtime = FakeRuntime()
     registry = runtime_registry(runtime)
@@ -219,13 +219,13 @@ async def test_kill_terminal_refuses_held_ids() -> None:
 
     assert exited is terminal
     assert terminal.state == "exited"
-    assert runtime.killed == ["held-shell"]
+    assert runtime.killed_ids == {terminal.id}
 
 
 @pytest.mark.asyncio
 async def test_kill_terminal_requires_proven_kill(monkeypatch: pytest.MonkeyPatch) -> None:
     # A terminate that leaves the session present is not a kill.
-    terminal_row = make_memory_terminal(backend="native", session_name="sticky-shell")
+    terminal_row = make_memory_terminal(backend="native")
     sticky = _StickyRuntime(backend="native")
     with pytest.raises(TerminalKillUnprovenError):
         await kill_terminal(

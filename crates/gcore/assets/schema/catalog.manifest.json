@@ -5053,10 +5053,6 @@
       "definition": "uuid|uuid|YES||NEVER"
     },
     {
-      "name": "terminals.session_name",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
       "name": "terminals.spawn_key",
       "definition": "text|text|YES||NEVER"
     },
@@ -5075,10 +5071,6 @@
     {
       "name": "terminals.updated_at",
       "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "terminals.window_id",
-      "definition": "text|text|YES||NEVER"
     },
     {
       "name": "token_event_retention_totals.cache_creation_tokens",
@@ -7504,7 +7496,7 @@
     },
     {
       "name": "terminals.terminals_backend_check",
-      "definition": "CHECK (backend = ANY (ARRAY['tmux'::text, 'native'::text]))"
+      "definition": "CHECK (backend = 'native'::text)"
     },
     {
       "name": "terminals.terminals_external_always_has_locator",
@@ -7536,7 +7528,7 @@
     },
     {
       "name": "terminals.terminals_ownership_check",
-      "definition": "CHECK (ownership = ANY (ARRAY['gobby'::text, 'external'::text]))"
+      "definition": "CHECK (ownership = 'gobby'::text)"
     },
     {
       "name": "terminals.terminals_pending_has_no_identity",

@@ -17,7 +17,7 @@ from gobby.hub.node_client import NodeCommandError
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
-from gobby.storage.terminals import TerminalManager, tmux_locator_key
+from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.postgres import TEST_USER_ID
 
@@ -26,10 +26,8 @@ pytestmark = pytest.mark.unit
 OTHER_USER_ID = "20000000-0000-4000-8000-000000000002"
 # Far above any live PID: a local-path probe finds nothing and signals nothing.
 NO_SUCH_PID = 2147483646
-TMUX_SOCKET = "/tmp/tmux-node/default"
-TMUX_SERVER_PID = 1234
-TMUX_SERVER_START = 1700000000
-TMUX_PANE = "%3"
+HOST_EPOCH = "remote-host-epoch"
+HOST_TERMINAL_ID = "remote-host-terminal"
 _STAMP = datetime(2026, 1, 1, tzinfo=UTC)
 
 
@@ -47,25 +45,16 @@ def live_terminal(temp_db: HubDatabase, sample_project: dict[str, Any], remote_m
     manager.create_pending(
         terminal_id=terminal_id,
         project_id=sample_project["id"],
-        backend="tmux",
+        backend="native",
         ownership="gobby",
         spawn_key=f"gobby-{terminal_id}",
         machine_id=remote_machine,
     )
     manager.promote_to_live(
         terminal_id,
-        locator={
-            "socket_path": TMUX_SOCKET,
-            "server_pid": TMUX_SERVER_PID,
-            "server_start_time": TMUX_SERVER_START,
-            "pane_id": TMUX_PANE,
-        },
-        locator_key=tmux_locator_key(
-            socket_path=TMUX_SOCKET,
-            server_pid=TMUX_SERVER_PID,
-            server_start_time=TMUX_SERVER_START,
-            pane_id=TMUX_PANE,
-        ),
+        locator={"host_terminal_id": HOST_TERMINAL_ID},
+        locator_key=native_locator_key(HOST_EPOCH, HOST_TERMINAL_ID),
+        host_epoch=HOST_EPOCH,
     )
     return terminal_id
 

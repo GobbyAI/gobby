@@ -177,8 +177,6 @@ pub fn terminal() -> Terminal {
         agent_run_id: Some(Uuid::new_v4()),
         locator: None,
         locator_key: None,
-        session_name: Some("agent-pane".into()),
-        window_id: Some("@4".into()),
         title: Some("Repository reconciliation".into()),
         host_epoch: None,
         rows: Some(40),

@@ -40,7 +40,7 @@ async def test_tab_opening_seat_keeps_its_definition_pane_title(
     reserver = AgentPaneReserver(
         workspaces=workspaces,
         terminals=TerminalManager(db),
-        registry=runtime_registry(FakeRuntime(backend="tmux"), FakeRuntime(backend="native")),
+        registry=runtime_registry(FakeRuntime(backend="native"), FakeRuntime(backend="native")),
         sessions=session_manager,
         publish=AsyncMock(),
     )

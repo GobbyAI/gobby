@@ -95,12 +95,6 @@ async fn sizing_and_scroll_are_attachment_scoped() -> anyhow::Result<()> {
         registry.snapshot(web_only).await.sizing_owner,
         Some(second.id)
     );
-    let tmux_req = requester();
-    let tmux = registry
-        .attach(Uuid::new_v4(), tmux_req, Viewer::Web, Backend::Tmux)
-        .await?;
-    // A tmux web attachment is never sized without a holder.
-    assert!(!registry.resize(tmux, tmux_req, 20, 60).await?.applied);
     Ok(())
 }
 
@@ -561,7 +555,7 @@ async fn attachment_validation_and_numeric_bounds_are_atomic() -> anyhow::Result
 
 #[tokio::test]
 async fn last_viewer_finalize_releases_sizing_without_prior_owner() -> anyhow::Result<()> {
-    for backend in [Backend::Native, Backend::Tmux] {
+    for backend in [Backend::Native] {
         let (registry, _events) = Registry::new(16);
         let terminal = Uuid::new_v4();
         let first_req = requester();

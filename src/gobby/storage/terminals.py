@@ -7,13 +7,43 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any
 from uuid import UUID, uuid4
 
 from psycopg.types.json import Jsonb
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
+from gobby.storage.terminal_locators import (
+    FRAMES_SOCKET_NAME as FRAMES_SOCKET_NAME,
+)
+from gobby.storage.terminal_locators import (
+    AttachLocator as AttachLocator,
+)
+from gobby.storage.terminal_locators import (
+    HostEpochMismatchError as HostEpochMismatchError,
+)
+from gobby.storage.terminal_locators import (
+    MachineOwnershipMismatchError as MachineOwnershipMismatchError,
+)
+from gobby.storage.terminal_locators import (
+    TerminalLocatorRecord as TerminalLocatorRecord,
+)
+from gobby.storage.terminal_locators import (
+    TerminalNotReadyError as TerminalNotReadyError,
+)
+from gobby.storage.terminal_locators import (
+    _native_locator as _native_locator,
+)
+from gobby.storage.terminal_locators import (
+    attach_locator_for_terminal as attach_locator_for_terminal,
+)
+from gobby.storage.terminal_locators import (
+    native_attach_locator as native_attach_locator,
+)
+from gobby.storage.terminal_locators import (
+    native_locator_key as native_locator_key,
+)
 from gobby.storage.terminal_reap_queries import TerminalReapQueryMixin
 from gobby.storage.terminal_settlement import (
     ALLOWED_EDGES as ALLOWED_EDGES,
@@ -43,7 +73,6 @@ from gobby.utils.datetime import normalize_datetime_model
 from gobby.utils.machine_id import require_machine_id
 
 TITLE_MAX_BYTES = 1024
-FRAMES_SOCKET_NAME = "gterm-frames.sock"
 TERMINAL_STATES = ("pending", "live", "exited", "orphaned")
 
 
@@ -52,48 +81,6 @@ class ProjectOwnershipConflictError(RuntimeError):
 
     def __init__(self) -> None:
         super().__init__("Active locator is owned by another project")
-
-
-class HostEpochMismatchError(RuntimeError):
-    """Raised when a native attach's live host epoch does not match the row."""
-
-
-class TerminalNotReadyError(RuntimeError):
-    """Raised when a native spawn has not persisted its attach identity yet."""
-
-
-class MachineOwnershipMismatchError(RuntimeError):
-    """Raised when a terminal row belongs to another machine."""
-
-    def __init__(self) -> None:
-        super().__init__("machine_ownership_mismatch")
-
-
-def tmux_locator_key(
-    *,
-    socket_path: str,
-    server_pid: int,
-    server_start_time: int,
-    pane_id: str,
-) -> str:
-    """Canonical tmux identity: socket + server generation + pane id."""
-    return f"tmux:{socket_path}:{server_pid}:{server_start_time}:{pane_id}"
-
-
-def native_locator_key(host_epoch: str, host_terminal_id: str) -> str:
-    """Canonical native identity: host epoch + host terminal id."""
-    return f"native:{host_epoch}:{host_terminal_id}"
-
-
-def parse_tmux_generation(raw: str) -> dict[str, object]:
-    """Parse one display-message expansion of socket, pid, start_time, pane id."""
-    socket_path, pid, start_time, pane_id = raw.split("|", 3)
-    return {
-        "socket_path": socket_path,
-        "server_pid": int(pid),
-        "server_start_time": int(start_time),
-        "pane_id": pane_id,
-    }
 
 
 def truncate_title(title: str | None) -> str | None:
@@ -137,51 +124,6 @@ def _as_mapping(value: object) -> dict[str, Any] | None:
     raise TypeError(f"expected mapping, got {type(value)!r}")
 
 
-@dataclass(frozen=True)
-class AttachLocator:
-    """Request-time attach handle; native socket path is computed, never stored."""
-
-    backend: Literal["tmux", "native"]
-    frame_host_epoch: str
-    host_socket: str | None = None
-    host_terminal_id: str | None = None
-    socket_path: str | None = None
-    pane_id: str | None = None
-    server_pid: int | None = None
-    server_start_time: int | None = None
-
-    def is_valid_for_direct(self, backend: str) -> bool:
-        if self.backend != backend or not all(
-            isinstance(value, str) and bool(value)
-            for value in (self.frame_host_epoch, self.host_socket, self.host_terminal_id)
-        ):
-            return False
-        pane = (self.socket_path, self.pane_id, self.server_pid, self.server_start_time)
-        if backend == "native":
-            return all(value is None for value in pane)
-        return (
-            backend == "tmux"
-            and all(isinstance(value, str) and bool(value) for value in pane[:2])
-            and all(isinstance(value, int) and not isinstance(value, bool) for value in pane[2:])
-        )
-
-    def direct_block(self) -> dict[str, object]:
-        pane: dict[str, object] | None = None
-        if self.backend == "tmux":
-            pane = {
-                "socket_path": self.socket_path,
-                "pane_id": self.pane_id,
-                "server_pid": self.server_pid,
-                "server_start_time": self.server_start_time,
-            }
-        return {
-            "host_epoch": self.frame_host_epoch,
-            "frame_socket_path": self.host_socket,
-            "host_terminal_id": self.host_terminal_id,
-            "pane": pane,
-        }
-
-
 @normalize_datetime_model(
     required=("created_at", "updated_at", "attempt_started_at"),
     optional=("liveness_at", "automatic_write_quarantined_at"),
@@ -204,8 +146,6 @@ class Terminal:
     spawn_key: str | None = None
     locator: dict[str, Any] | None = None
     locator_key: str | None = None
-    session_name: str | None = None
-    window_id: str | None = None
     title: str | None = None
     host_epoch: str | None = None
     automatic_write_quarantined_at: datetime | None = None
@@ -236,8 +176,6 @@ class Terminal:
             spawn_key=_as_optional_str(row["spawn_key"]),
             locator=_as_mapping(row["locator"]),
             locator_key=_as_optional_str(row["locator_key"]),
-            session_name=_as_optional_str(row["session_name"]),
-            window_id=_as_optional_str(row["window_id"]),
             title=_as_optional_str(row["title"]),
             host_epoch=_as_optional_str(row["host_epoch"]),
             automatic_write_quarantined_at=row["automatic_write_quarantined_at"],
@@ -251,85 +189,6 @@ class Terminal:
             agent_run_id=_as_optional_str(row["agent_run_id"]),
             liveness_at=row["liveness_at"],
         )
-
-
-class TerminalLocatorRecord(Protocol):
-    """Terminal fields required to build an attach locator."""
-
-    @property
-    def backend(self) -> str: ...
-
-    @property
-    def machine_id(self) -> str: ...
-
-    @property
-    def host_epoch(self) -> str | None: ...
-
-    @property
-    def locator(self) -> Mapping[str, object] | None: ...
-
-
-def native_attach_locator(
-    row: TerminalLocatorRecord,
-    *,
-    live_host_epoch: str,
-    host_socket: str | None,
-) -> AttachLocator:
-    """Build a native attach locator after validating the live host identity."""
-    if not row.host_epoch:
-        raise TerminalNotReadyError("Terminal spawn has not persisted its host epoch")
-    if row.host_epoch != live_host_epoch:
-        raise HostEpochMismatchError("Live host epoch does not match the terminal row")
-    host_terminal_id = None
-    if row.locator is not None:
-        host_terminal_id = str(row.locator["host_terminal_id"])
-    return AttachLocator(
-        backend="native",
-        frame_host_epoch=str(row.host_epoch),
-        host_socket=host_socket,
-        host_terminal_id=host_terminal_id,
-    )
-
-
-def attach_locator_for_terminal(
-    row: TerminalLocatorRecord,
-    *,
-    live_host_epoch: str,
-    socket_dir: Path | str,
-) -> AttachLocator:
-    """Compute an attach handle from an already-loaded terminal row."""
-    if row.machine_id != require_machine_id():
-        raise MachineOwnershipMismatchError
-    stored = row.locator or {}
-    host_socket = str(Path(socket_dir) / FRAMES_SOCKET_NAME)
-    if row.backend == "native":
-        return native_attach_locator(
-            row,
-            live_host_epoch=live_host_epoch,
-            host_socket=host_socket,
-        )
-    pid = stored.get("server_pid")
-    start = stored.get("server_start_time")
-    return AttachLocator(
-        backend="tmux",
-        frame_host_epoch=live_host_epoch,
-        host_socket=host_socket,
-        socket_path=None if stored.get("socket_path") is None else str(stored.get("socket_path")),
-        pane_id=None if stored.get("pane_id") is None else str(stored.get("pane_id")),
-        server_pid=pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
-        server_start_time=(
-            start if isinstance(start, int) and not isinstance(start, bool) else None
-        ),
-    )
-
-
-def _native_locator(locator: Mapping[str, object]) -> dict[str, str]:
-    if "host_socket" in locator:
-        raise ValueError("native locator must not include host_socket")
-    extra = set(locator) - {"host_terminal_id"}
-    if extra:
-        raise ValueError("native locator may only contain host_terminal_id")
-    return {"host_terminal_id": str(locator["host_terminal_id"])}
 
 
 def mint_terminal_id() -> str:
@@ -421,17 +280,13 @@ class TerminalManager(TerminalReapQueryMixin, TerminalSettlementMixin):
         locator: Mapping[str, object],
         locator_key: str,
         host_epoch: str | None = None,
-        session_name: str | None = None,
-        window_id: str | None = None,
         title: str | None = None,
     ) -> Terminal | None:
         """CAS pending → live while filling physical identity in one statement."""
         row = self.get(terminal_id)
         if row is None:
             return None
-        stored_locator: dict[str, object] = (
-            dict(_native_locator(locator).items()) if row.backend == "native" else dict(locator)
-        )
+        stored_locator: dict[str, object] = dict(_native_locator(locator).items())
         return self._cas(
             terminal_id,
             expected="pending",
@@ -440,16 +295,12 @@ class TerminalManager(TerminalReapQueryMixin, TerminalSettlementMixin):
                 , locator = %s
                 , locator_key = %s
                 , host_epoch = %s
-                , session_name = COALESCE(%s, session_name)
-                , window_id = COALESCE(%s, window_id)
                 , title = COALESCE(%s, title)
             """,
             extra_params=(
                 Jsonb(dict(stored_locator)),
                 locator_key,
                 host_epoch,
-                session_name,
-                window_id,
                 truncate_title(title),
             ),
         )
@@ -459,84 +310,6 @@ class TerminalManager(TerminalReapQueryMixin, TerminalSettlementMixin):
     ) -> Terminal | None:
         """Invoke the private CAS with an arbitrary edge for allowlist tests."""
         return self._cas(terminal_id, expected=expected, new_state=new_state)
-
-    def upsert_external(
-        self,
-        *,
-        machine_id: str | None = None,
-        project_id: str,
-        backend: str,
-        locator: Mapping[str, object],
-        locator_key: str,
-        session_name: str | None = None,
-        window_id: str | None = None,
-        title: str | None = None,
-        host_epoch: str | None = None,
-        session_id: str | None = None,
-    ) -> Terminal:
-        """Idempotent discovery insert/update for an already-running pane."""
-        resolved_machine = machine_id or require_machine_id()
-        stored_locator: dict[str, object] = (
-            dict(_native_locator(locator).items()) if backend == "native" else dict(locator)
-        )
-        terminal_id = str(uuid4())
-        row = self.db.fetchone(
-            f"""
-            INSERT INTO terminals (
-                id, backend, ownership, state, spawn_key, machine_id, project_id,
-                locator, locator_key, session_name, window_id, title, host_epoch,
-                session_id, liveness_at
-            ) VALUES (
-                %s, %s, 'external', 'live', NULL, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, now()
-            )
-            ON CONFLICT (locator_key) WHERE locator_key IS NOT NULL
-                AND state = ANY (ARRAY['pending'::text, 'live'::text])
-            DO UPDATE SET
-                session_name = EXCLUDED.session_name,
-                window_id = EXCLUDED.window_id,
-                title = EXCLUDED.title,
-                session_id = COALESCE(EXCLUDED.session_id, terminals.session_id),
-                liveness_at = now(),
-                updated_at = now()
-            WHERE terminals.project_id = EXCLUDED.project_id
-            RETURNING {TERMINAL_COLUMNS}
-            """,
-            (
-                terminal_id,
-                backend,
-                str(UUID(resolved_machine)),
-                str(UUID(project_id)),
-                Jsonb(dict(stored_locator)),
-                locator_key,
-                session_name,
-                window_id,
-                truncate_title(title),
-                host_epoch,
-                None if session_id is None else str(UUID(session_id)),
-            ),
-        )
-        if row is not None:
-            return Terminal.from_row(row)
-        occupying = self.db.fetchone(
-            """
-            SELECT project_id FROM terminals
-            WHERE locator_key = %s AND state IN ('pending', 'live')
-            """,
-            (locator_key,),
-        )
-        if occupying is not None and str(occupying["project_id"]) != str(UUID(project_id)):
-            raise ProjectOwnershipConflictError()
-        raised = self.db.fetchone(
-            f"""
-            SELECT {TERMINAL_COLUMNS} FROM terminals
-            WHERE locator_key = %s AND state IN ('pending', 'live')
-            """,
-            (locator_key,),
-        )
-        if raised is None:
-            raise RuntimeError("upsert_external conflict without occupying row")
-        return Terminal.from_row(raised)
 
     def list_by_project(self, project_id: str) -> list[Terminal]:
         """List terminals owned by a project."""
@@ -627,20 +400,6 @@ class TerminalManager(TerminalReapQueryMixin, TerminalSettlementMixin):
             (host_epoch,),
         )
         return {_as_str(row["machine_id"]) for row in rows}
-
-    def get_live_by_session_name(self, session_name: str) -> Terminal | None:
-        """Newest live or pending terminal with this session or spawn name."""
-        row = self.db.fetchone(
-            f"""
-            SELECT {TERMINAL_COLUMNS} FROM terminals
-            WHERE state IN ('pending', 'live')
-              AND (session_name = %s OR spawn_key = %s)
-            ORDER BY updated_at DESC
-            LIMIT 1
-            """,
-            (session_name, session_name),
-        )
-        return None if row is None else Terminal.from_row(row)
 
     def get_live_for_session(self, session_id: str) -> Terminal | None:
         """Newest pending or live terminal linked to a session."""
@@ -811,24 +570,6 @@ class TerminalManager(TerminalReapQueryMixin, TerminalSettlementMixin):
             live_host_epoch=live_host_epoch,
             socket_dir=socket_dir,
         )
-
-    def revalidate_tmux_generation(
-        self,
-        terminal_id: str,
-        live_locator: Mapping[str, object],
-    ) -> Terminal | None:
-        """Bind only when pid+start_time still match; otherwise mark_exited."""
-        row = self.get(terminal_id)
-        if row is None or row.locator is None:
-            return None
-        stored_pid = row.locator.get("server_pid")
-        stored_start = row.locator.get("server_start_time")
-        if stored_pid != live_locator.get("server_pid") or stored_start != live_locator.get(
-            "server_start_time"
-        ):
-            self.mark_exited(terminal_id)
-            return None
-        return row
 
     def set_dims(self, terminal_id: str, rows: int, cols: int) -> Terminal | None:
         """Record the PTY geometry the runtime was last told to apply."""

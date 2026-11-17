@@ -119,7 +119,7 @@ def node(monkeypatch: pytest.MonkeyPatch) -> _Node:
     return fake
 
 
-def _terminal(machine_id: str, backend: Literal["tmux", "native"] = "native") -> Terminal:
+def _terminal(machine_id: str, backend: Literal["native"] = "native") -> Terminal:
     return replace(
         make_memory_terminal(backend=backend, machine_id=machine_id),
         agent_run_id=str(uuid4()),
@@ -195,7 +195,7 @@ class _Harness:
         self.runs = _Runs(*(_run(terminal) for terminal in terminals))
         # The remote runtime resolves the run it kills through the hub's run table.
         monkeypatch.setattr(remote_runtime, "LocalAgentRunManager", lambda _db: self.runs)
-        self.local = FakeRuntime(backend="tmux")
+        self.local = FakeRuntime(backend="native")
         registry = runtime_registry(self.local)
         services = TerminalServices(
             manager=store,
@@ -379,7 +379,7 @@ async def test_local_idle_unchanged(
     composer_ledger: ComposerLedger,
 ) -> None:
     local_machine = require_machine_id()
-    terminal = _terminal(local_machine, backend="tmux")
+    terminal = _terminal(local_machine, backend="native")
     harness = _Harness(temp_db, monkeypatch, terminal)
     composer_ledger.record_spawn(terminal.id, "")
     harness.local.snapshot_text = LOCAL_IDLE_PANE

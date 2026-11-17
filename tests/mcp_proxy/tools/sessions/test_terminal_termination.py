@@ -46,10 +46,9 @@ def _terminate_tool(
     return tool, runtime
 
 
-def test_terminate_terminal_kills_external_root_session_terminal() -> None:
+def test_terminate_terminal_kills_owned_root_session_terminal() -> None:
     root_session_id = "root-session"
-    terminal = make_memory_terminal(session_name="root-shell")
-    terminal.ownership = "external"
+    terminal = make_memory_terminal()
     terminal.project_id = "project-1"
     terminal.session_id = root_session_id
     caller = SimpleNamespace(id="caller", project_id="project-1", agent_run_id=None)
@@ -68,16 +67,15 @@ def test_terminate_terminal_kills_external_root_session_terminal() -> None:
         result = asyncio.run(tool(reference=root_session_id))
 
     assert result == {"success": True, "terminal_id": terminal.id, "state": "exited"}
-    assert runtime.killed == ["root-shell"]
+    assert runtime.killed_ids == {terminal.id}
     assert sessions.resolve_session_reference.call_args_list == [
         call(caller.id),
         call(root_session_id, caller.project_id),
     ]
 
 
-def test_terminate_terminal_kills_external_terminal_by_terminal_id() -> None:
-    terminal = make_memory_terminal(session_name="external-shell")
-    terminal.ownership = "external"
+def test_terminate_terminal_kills_owned_terminal_by_terminal_id() -> None:
+    terminal = make_memory_terminal()
     terminal.project_id = "project-1"
     terminal.session_id = "root-session"
     caller = SimpleNamespace(id="caller", project_id="project-1", agent_run_id=None)
@@ -95,14 +93,13 @@ def test_terminate_terminal_kills_external_terminal_by_terminal_id() -> None:
         result = asyncio.run(tool(reference=terminal.id))
 
     assert result == {"success": True, "terminal_id": terminal.id, "state": "exited"}
-    assert runtime.killed == ["external-shell"]
+    assert runtime.killed_ids == {terminal.id}
     sessions.resolve_session_reference.assert_called_once_with(caller.id)
 
 
-def test_terminate_terminal_refuses_external_terminal_outside_caller_scope() -> None:
+def test_terminate_terminal_refuses_owned_terminal_outside_caller_scope() -> None:
     root_session_id = "root-session"
-    terminal = make_memory_terminal(session_name="foreign-shell")
-    terminal.ownership = "external"
+    terminal = make_memory_terminal()
     terminal.project_id = "project-2"
     terminal.session_id = root_session_id
     caller = SimpleNamespace(id="caller", project_id="project-1", agent_run_id=None)
@@ -128,8 +125,7 @@ def test_terminate_terminal_refuses_external_terminal_outside_caller_scope() -> 
 
 
 def test_terminate_terminal_refuses_unseeded_request_context() -> None:
-    terminal = make_memory_terminal(session_name="external-shell")
-    terminal.ownership = "external"
+    terminal = make_memory_terminal()
     sessions = MagicMock()
     tool, runtime = _terminate_tool(terminal, sessions)
 
@@ -142,8 +138,7 @@ def test_terminate_terminal_refuses_unseeded_request_context() -> None:
 
 
 def test_terminate_terminal_refuses_managed_agent_principal() -> None:
-    terminal = make_memory_terminal(session_name="external-shell")
-    terminal.ownership = "external"
+    terminal = make_memory_terminal()
     sessions = MagicMock()
     tool, runtime = _terminate_tool(terminal, sessions)
 
