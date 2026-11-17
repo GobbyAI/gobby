@@ -8,10 +8,10 @@ import {
   useState,
 } from "react";
 
-import type { TmuxTarget } from "../../../hooks/terminalRosterSnapshot";
+import type { TerminalTarget } from "../../../hooks/terminalRosterSnapshot";
 import type { SettledWrite } from "../../../hooks/terminalWriteSettlement";
 import { useSessionAttention } from "../../../hooks/useSessionAttention";
-import { useTmuxSessions } from "../../../hooks/useTmuxSessions";
+import { useTerminalSessions } from "../../../hooks/useTerminalSessions";
 import { useCoarsePointer, useIsMobile } from "../../../hooks/useIsMobile";
 import type { GobbySession } from "../../../types/sessions";
 import { cn } from "../../../lib/utils";
@@ -27,7 +27,7 @@ import { TerminalSessionList } from "./TerminalSessionList";
 import {
   findByGobbySessionId,
   type JoinedTerminalSession,
-  joinTmuxSessions,
+  joinTerminalSessions,
   sessionKey,
 } from "./terminalSessions";
 import { TerminalView, type TerminalViewHandle } from "./TerminalView";
@@ -95,7 +95,7 @@ function describeWriteStatus(
   return "The terminal refused the last keystroke.";
 }
 
-function targetKey(target: TmuxTarget | null): string | null {
+function targetKey(target: TerminalTarget | null): string | null {
   return target ? target.terminal_id : null;
 }
 
@@ -243,7 +243,7 @@ export function TerminalTab({
   onExpandedChange,
 }: TerminalTabProps) {
   const {
-    sessions: tmuxSessions,
+    sessions: terminalSessions,
     connected,
     sessionsLoaded,
     attachedTarget,
@@ -274,7 +274,7 @@ export function TerminalTab({
     onAttachHistory,
     setScrollOffset,
     onScrollOffsetApplied,
-  } = useTmuxSessions(projectId);
+  } = useTerminalSessions(projectId);
   const [selectedKey, setSelectedKey] = useState<string | null>(
     loadStoredTerminalTargetKey,
   );
@@ -305,8 +305,14 @@ export function TerminalTab({
 
   const { rosterBySession } = useSessionAttention();
   const joinedSessions = useMemo(
-    () => joinTmuxSessions(tmuxSessions, sessions, projectId, rosterBySession),
-    [projectId, rosterBySession, sessions, tmuxSessions],
+    () =>
+      joinTerminalSessions(
+        terminalSessions,
+        sessions,
+        projectId,
+        rosterBySession,
+      ),
+    [projectId, rosterBySession, sessions, terminalSessions],
   );
   const visibleSessions = useMemo(
     () =>
@@ -321,17 +327,15 @@ export function TerminalTab({
   }, []);
   const selected =
     joinedSessions.find(
-      (session) => sessionKey(session.tmux) === selectedKey,
+      (session) => sessionKey(session.terminal) === selectedKey,
     ) ?? null;
   const attachedKey = targetKey(attachedTarget);
-  // Only gterm keeps scrollback the client can ask for. A tmux pane scrolls by
-  // the mouse reports the renderer already sends to its attach client, and a
-  // scroll-offset message for one would be answered against the wrong plane.
-  // The keys have to match as well as the backend: mid-switch the selection is
-  // already the new terminal while the attachment is still the old one, and an
-  // offset sent then would address a tmux attachment.
+  // gterm owns scrollback. Mid-switch the selection can already name the new
+  // terminal while the attachment still names the old one, so require both
+  // identities to match before sending a scroll-offset request.
   const scroll = useTerminalScrollOffset({
-    native: selected?.tmux.backend === "native" && attachedKey === selectedKey,
+    native:
+      selected?.terminal.backend === "native" && attachedKey === selectedKey,
     streamingId,
     setScrollOffset,
     onScrollOffsetApplied,
@@ -399,12 +403,12 @@ export function TerminalTab({
   );
 
   useEffect(() => {
-    if (selected !== null) storeTerminalTarget(selected.tmux);
+    if (selected !== null) storeTerminalTarget(selected.terminal);
   }, [selected]);
 
   const terminateSession = useCallback(
     (session: JoinedTerminalSession) => {
-      killSession(session.tmux.terminal_id);
+      killSession(session.terminal.terminal_id);
     },
     [killSession],
   );
@@ -414,7 +418,9 @@ export function TerminalTab({
     const createdKey = createdSession.terminal_id;
     if (
       consumedCreatedKeyRef.current === createdKey ||
-      !joinedSessions.some((session) => sessionKey(session.tmux) === createdKey)
+      !joinedSessions.some(
+        (session) => sessionKey(session.terminal) === createdKey,
+      )
     ) {
       return;
     }
@@ -435,14 +441,14 @@ export function TerminalTab({
       consumedFocusIdRef.current = focusSessionId;
       const focused = findByGobbySessionId(joinedSessions, focusSessionId);
       if (focused) {
-        chooseSession(sessionKey(focused.tmux));
+        chooseSession(sessionKey(focused.terminal));
         setFocusNotice(null);
       } else {
         setFocusNotice("No live terminal for this session");
         const fallback =
           visibleSessions.find((session) => !session.dead) ??
           visibleSessions[0];
-        if (fallback) chooseSession(sessionKey(fallback.tmux));
+        if (fallback) chooseSession(sessionKey(fallback.terminal));
       }
       onFocusHandled?.();
     }, 0);
@@ -465,7 +471,7 @@ export function TerminalTab({
   useEffect(() => {
     if (!sessionsLoaded || endedKey !== null) return;
     const availableKeys = new Set(
-      joinedSessions.map((session) => sessionKey(session.tmux)),
+      joinedSessions.map((session) => sessionKey(session.terminal)),
     );
     const lastAttachedKey = lastAttachedKeyRef.current;
     const vanishedKey =
@@ -497,7 +503,7 @@ export function TerminalTab({
       visibleSessions.find((session) => !session.dead) ?? visibleSessions[0];
     const timer = window.setTimeout(() => {
       allowInitialSelectionRef.current = false;
-      setSelectedKey(sessionKey(fallback.tmux));
+      setSelectedKey(sessionKey(fallback.terminal));
     }, 0);
     return () => window.clearTimeout(timer);
   }, [endedKey, focusSessionId, visibleSessions, selectedKey, sessionsLoaded]);
@@ -510,13 +516,13 @@ export function TerminalTab({
       attachError !== null ||
       endedKey !== null ||
       selected === null ||
-      sessionKey(selected.tmux) !== selectedKey ||
+      sessionKey(selected.terminal) !== selectedKey ||
       attachedKey === selectedKey
     ) {
       return;
     }
     const availableKeys = new Set(
-      joinedSessions.map((session) => sessionKey(session.tmux)),
+      joinedSessions.map((session) => sessionKey(session.terminal)),
     );
     const lastAttachedKey = lastAttachedKeyRef.current;
     if (
@@ -528,7 +534,7 @@ export function TerminalTab({
     if (streamingId !== null) {
       detachSession();
     } else {
-      attachSession(selected.tmux.terminal_id, selected.tmux.socket);
+      attachSession(selected.terminal.terminal_id, selected.terminal.socket);
     }
   }, [
     attachError,
@@ -563,8 +569,8 @@ export function TerminalTab({
       const reportedSize =
         rows > 0 && cols > 0 ? { rows, cols } : viewRef.current?.getSize();
       // This resize is the activation signal: it carries the first real
-      // geometry, and the daemon builds the tmux client, captures history, and
-      // repaints off the back of it. A client-driven refresh here would only
+      // geometry, and the daemon requests host history and a repaint from it.
+      // A client-driven refresh here would only
       // race the repaint the server already owns.
       if (reportedSize) {
         resizeTerminal(reportedSize.rows, reportedSize.cols);
@@ -704,7 +710,7 @@ export function TerminalTab({
     return (
       <StatePanel
         title="Loading terminal sessions…"
-        body="Waiting for the daemon’s first tmux session list."
+        body="Waiting for the daemon’s first terminal session list."
         busy
       />
     );
@@ -714,7 +720,7 @@ export function TerminalTab({
     return (
       <StatePanel
         title="Terminal session ended"
-        body="The selected socket and tmux session disappeared. Dismiss this notice to choose another live session."
+        body="The selected terminal disappeared. Dismiss this notice to choose another live terminal."
         action={
           <Button
             variant="secondary"

@@ -1,10 +1,8 @@
 /**
  * Bounds one attachment's restored scrollback before it reaches the renderer.
  *
- * The daemon already caps what it captures (`tmux_attach_history_lines`,
- * `tmux_attach_history_max_bytes`), but those are the host's caps, not this
- * client's: a native backend, a different host config, or a future capture path
- * can each hand the browser more than it can afford to paint. This is the
+ * The daemon caps captured history with `terminals.attach_history_lines`, but
+ * the browser also needs its own byte and line limits before painting. This is the
  * renderer's own ceiling, and it is absolute — a single line carrying no
  * newline is trimmed too, or the byte ceiling is only a suggestion.
  *

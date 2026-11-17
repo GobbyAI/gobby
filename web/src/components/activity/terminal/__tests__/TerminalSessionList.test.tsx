@@ -2,19 +2,21 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { TmuxSession } from "../../../../hooks/terminalRosterSnapshot";
+import type { TerminalSession } from "../../../../hooks/terminalRosterSnapshot";
 import { TerminalSessionList } from "../TerminalSessionList";
 import {
-  joinTmuxSessions,
+  joinTerminalSessions,
   type JoinedTerminalSession,
 } from "../terminalSessions";
 
-function makeTmux(overrides: Partial<TmuxSession> = {}): TmuxSession {
+function makeTerminal(
+  overrides: Partial<TerminalSession> = {},
+): TerminalSession {
   const name = overrides.name ?? "shell";
   const socket = overrides.socket ?? "default";
   return {
     terminal_id: overrides.terminal_id ?? `${socket}:${name}`,
-    backend: "tmux",
+    backend: "native",
     ownership: socket === "gobby" ? "gobby" : "external",
     state: "live",
     title: name,
@@ -40,14 +42,14 @@ function makeJoined(
   overrides: Partial<JoinedTerminalSession> = {},
 ): JoinedTerminalSession {
   return {
-    tmux: makeTmux(),
+    terminal: makeTerminal(),
     gobby: null,
     label: "shell",
     refLabel: null,
     tickerText: "shell",
     provider: null,
     paneRef: "default:shell",
-    backendLabel: "tmux",
+    backendLabel: "gterm",
     dead: false,
     agentManaged: false,
     external: true,
@@ -61,7 +63,7 @@ describe("TerminalSessionList kebab menu", () => {
     const onTerminate = vi.fn();
     const onChange = vi.fn();
     const gobbyManaged = makeJoined({
-      tmux: makeTmux({ name: "worker", socket: "gobby" }),
+      terminal: makeTerminal({ name: "worker", socket: "gobby" }),
       label: "worker",
       paneRef: "gobby:worker",
       external: false,
@@ -93,7 +95,7 @@ describe("TerminalSessionList kebab menu", () => {
       <TerminalSessionList
         sessions={[
           makeJoined({
-            tmux: makeTmux({ name: "agent-run", agent_managed: true }),
+            terminal: makeTerminal({ name: "agent-run", agent_managed: true }),
             label: "agent-run",
             agentManaged: true,
             external: false,
@@ -122,7 +124,7 @@ describe("TerminalSessionList kebab menu", () => {
       <TerminalSessionList
         sessions={[
           makeJoined({
-            tmux: makeTmux({ name: "agent-12" }),
+            terminal: makeTerminal({ name: "agent-12" }),
             label,
             refLabel: "#12",
             tickerText: longTitle,
@@ -143,7 +145,7 @@ describe("TerminalSessionList kebab menu", () => {
     const ticker = row.querySelector(".ticker");
     expect(ticker).toHaveClass("min-w-0", "flex-1");
     expect(ticker).toHaveTextContent(longTitle);
-    // The raw tmux pane name is the terminal's identity, not the row's.
+    // The raw terminal pane name is the terminal's identity, not the row's.
     expect(within(row).queryByText("agent-12")).toBeNull();
     // Chip and kebab share the row's last element so flex layout pins both
     // right with one gap between them.
@@ -151,7 +153,7 @@ describe("TerminalSessionList kebab menu", () => {
     expect(trailing).toContainElement(
       screen.getByRole("button", { name: `Open actions for ${label}` }),
     );
-    expect(trailing).toContainElement(within(row).getByText("tmux"));
+    expect(trailing).toContainElement(within(row).getByText("gterm"));
   });
 
   it("keeps row selection independent of the kebab", async () => {
@@ -172,15 +174,15 @@ describe("TerminalSessionList kebab menu", () => {
 });
 
 describe("TerminalSessionList backend chips", () => {
-  it("names the backend on every row as tmux or gterm", () => {
+  it("names the native host on every row", () => {
     render(
       <TerminalSessionList
         sessions={[
-          makeJoined({ label: "shell", backendLabel: "tmux" }),
+          makeJoined({ label: "shell", backendLabel: "gterm" }),
           makeJoined({
-            tmux: makeTmux({ name: "native-1", backend: "native" }),
+            terminal: makeTerminal({ name: "native-1", backend: "native" }),
             label: "native-1",
-            paneRef: "tmux:native-1",
+            paneRef: "terminal:native-1",
             backendLabel: "gterm",
           }),
         ]}
@@ -190,19 +192,19 @@ describe("TerminalSessionList backend chips", () => {
       />,
     );
     const rows = screen.getAllByRole("listitem");
-    expect(within(rows[0]).getByText("tmux")).toBeInTheDocument();
+    expect(within(rows[0]).getByText("gterm")).toBeInTheDocument();
     expect(within(rows[1]).getByText("gterm")).toBeInTheDocument();
   });
 
   it("rendersBackendForEverySession", () => {
     const stored = [
-      makeTmux({ name: "hand-started", backend: "tmux" }),
-      makeTmux({ name: "agent", backend: "native" }),
-      makeTmux({ name: "pane", backend: "native" }),
+      makeTerminal({ name: "hand-started", backend: "native" }),
+      makeTerminal({ name: "agent", backend: "native" }),
+      makeTerminal({ name: "pane", backend: "native" }),
     ];
     render(
       <TerminalSessionList
-        sessions={joinTmuxSessions(stored, [])}
+        sessions={joinTerminalSessions(stored, [])}
         value={null}
         onChange={vi.fn()}
         onTerminate={vi.fn()}
@@ -210,7 +212,7 @@ describe("TerminalSessionList backend chips", () => {
     );
     const chips = screen
       .getAllByRole("listitem")
-      .map((row) => within(row).getByText(/^(tmux|gterm)$/).textContent);
-    expect(chips).toEqual(["tmux", "gterm", "gterm"]);
+      .map((row) => within(row).getByText("gterm").textContent);
+    expect(chips).toEqual(["gterm", "gterm", "gterm"]);
   });
 });

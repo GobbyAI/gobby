@@ -12,7 +12,7 @@ import { test, expect } from "@playwright/test";
  * the PREVIOUS message instead of the current one.
  *
  * Strategy: We override the WebSocket constructor so all /ws connections
- * (chat, terminal, tmux) share a mocked transport. We broadcast server
+ * (chat and terminal) share a mocked transport. We broadcast server
  * messages to ALL connected mocks so the chat handler receives them.
  */
 

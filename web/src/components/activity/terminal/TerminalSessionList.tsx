@@ -80,7 +80,7 @@ function ExternalTerminalGlyph() {
       role="img"
       aria-label="External terminal"
     >
-      <title>A tmux session on this machine that Gobby didn't create</title>
+      <title>A terminal session on this machine that Gobby didn't create</title>
       <rect x="2" y="3" width="20" height="15" rx="2" />
       <path d="m7 8 3 3-3 3" />
       <path d="M13 14h4" />
@@ -110,7 +110,7 @@ function SessionRowContent({ session }: { session: JoinedTerminalSession }) {
         <ExternalTerminalGlyph />
       ) : null}
       {/* Status, provider and ref stay put; only the derived detail tickers when
-          the row is too narrow for it. The raw tmux pane name never renders
+          the row is too narrow for it. The raw terminal pane name never renders
           here — it is the terminal's identity, not the session's. */}
       {session.refLabel ? (
         <span className="activity-row-meta font-mono">{session.refLabel}</span>
@@ -159,7 +159,7 @@ export function TerminalSessionList({
   return (
     <div className="flex flex-col" role="list" aria-label="Terminal sessions">
       {sessions.map((session) => {
-        const key = sessionKey(session.tmux);
+        const key = sessionKey(session.terminal);
         const selected = key === value;
         const menuItems: QuickMenuItem[] = [
           {

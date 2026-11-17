@@ -23,7 +23,7 @@ import { useNativeScrollGestures } from "./scrollOffset";
 const RESIZE_DEBOUNCE_MS = 200;
 
 // Neutral because either bound may have cut: the configured line window
-// (tmux.attach_history_lines) or the byte backstop. Plain text, never faint
+// (terminals.attach_history_lines) or the byte backstop. Plain text, never faint
 // SGR — dim escapes leave contrast unproven and land below AA in light mode.
 const HISTORY_TRUNCATED_LABEL = "earlier output not shown";
 const HISTORY_UNAVAILABLE_LABEL = "history unavailable";
@@ -99,9 +99,8 @@ export interface TerminalViewProps {
   onTakeControl?: () => void;
   /**
    * Rows a native (gterm) attachment's window sits back from the live edge, or
-   * `null` when the daemon owns no scrollback for this pane. `null` is the
-   * tmux path and the unattached pane: the wheel stays with the renderer,
-   * which turns it into the mouse reports tmux already answers.
+   * `null` while no native history window is attached. In that state the
+   * renderer handles wheel input using the application's mouse mode.
    */
   scrollOffsetRows?: number | null;
   /** Wheel, touch pan or page key, in rows; positive moves into history. */
@@ -676,7 +675,7 @@ export const TerminalView = forwardRef<TerminalViewHandle, TerminalViewProps>(
           const marker = label ? `${composeMarker(label, cols)}\r\n` : "";
           // The screen pad is what makes the fix work at all: after the last
           // history line the cursor sits on the bottom row with a full
-          // screenful of history still visible, and tmux's redraw erases the
+          // screenful of history still visible, and the host's redraw erases the
           // display with ED 2, which does not scroll those rows into
           // scrollback. Padding by `rows` scrolls all of it into scrollback and
           // hands the repaint a blank screen.

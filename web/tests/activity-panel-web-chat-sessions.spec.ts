@@ -291,7 +291,9 @@ test("activity panel shows non-current web chats with a web badge", async ({
   await expect(page.locator(".activity-panel-content")).not.toContainText(
     "Current Web Chat",
   );
-  await expect(page.locator(".activity-panel-content")).toContainText("tmux");
+  await expect(page.locator(".activity-panel-content")).toContainText(
+    "terminal",
+  );
   await expect(page.locator(".activity-panel-content")).toContainText("web");
   await expect(page.locator(".activity-panel-content")).toContainText("SB");
 });

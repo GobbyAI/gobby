@@ -8,7 +8,7 @@
  * derives identity from list position, so a reordered roster is the same roster.
  */
 
-export interface TmuxSession {
+export interface TerminalSession {
   terminal_id: string;
   backend: string;
   ownership: string;
@@ -30,11 +30,11 @@ export interface TmuxSession {
   attached_bridge: string | null;
 }
 
-export interface TmuxTarget {
+export interface TerminalTarget {
   terminal_id: string;
 }
 
-export interface CreatedTmuxSession {
+export interface CreatedTerminalSession {
   terminal_id: string;
 }
 
@@ -47,7 +47,7 @@ export interface RosterPage {
   walk: RosterWalk;
   /** A fresh listing replaces the table so vanished terminals drop out. */
   replace: boolean;
-  rows: TmuxSession[];
+  rows: TerminalSession[];
   /** The cursor to request next, or null when this walk is done here. */
   nextCursor: string | null;
   /** The page carried no cursor at all, so the roster is complete. */
@@ -55,12 +55,12 @@ export interface RosterPage {
 }
 
 export function asSession(
-  row: Partial<TmuxSession> & { terminal_id?: string },
-): TmuxSession {
+  row: Partial<TerminalSession> & { terminal_id?: string },
+): TerminalSession {
   const terminalId = row.terminal_id ?? "";
   return {
     terminal_id: terminalId,
-    backend: row.backend ?? "tmux",
+    backend: row.backend ?? "native",
     ownership: row.ownership ?? "gobby",
     state: row.state ?? "live",
     title: row.title ?? row.name ?? null,
@@ -68,7 +68,7 @@ export function asSession(
     agent_run_id: row.agent_run_id ?? null,
     dims: row.dims ?? null,
     name: row.name ?? row.title ?? terminalId,
-    socket: row.socket ?? row.backend ?? "tmux",
+    socket: row.socket ?? row.backend ?? "native",
     pane_pid: row.pane_pid ?? null,
     pane_dead: row.pane_dead ?? false,
     pane_title: row.pane_title ?? row.title ?? null,
@@ -106,7 +106,7 @@ export function applyRosterPage(
   ) {
     return null;
   }
-  const rows = ((message.items as TmuxSession[] | undefined) ?? []).map(
+  const rows = ((message.items as TerminalSession[] | undefined) ?? []).map(
     asSession,
   );
   const cursor = message.next_cursor;
@@ -126,9 +126,9 @@ export function applyRosterPage(
 
 /** Continuation pages append rows the table does not already carry. */
 export function mergeRosterRows(
-  current: readonly TmuxSession[],
-  page: readonly TmuxSession[],
-): TmuxSession[] {
+  current: readonly TerminalSession[],
+  page: readonly TerminalSession[],
+): TerminalSession[] {
   const seen = new Set(current.map((row) => row.terminal_id));
   const merged = [...current];
   for (const row of page) {

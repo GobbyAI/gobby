@@ -7,10 +7,8 @@
  * is to ask the daemon to re-render from an offset — `terminal_set_scroll_offset`,
  * answered by `terminal_scroll_offset_applied`.
  *
- * Tmux attachments are the other half of the contract: their wheel becomes SGR
- * mouse reports written to the tmux attach client, so they must never send a
- * scroll-offset message. `useTerminalScrollOffset` reports `rows: null` for
- * them, which is what tells the pane to leave the wheel alone.
+ * Without an attached native history window, `useTerminalScrollOffset` reports
+ * `rows: null`, leaving wheel input to the renderer's application mouse mode.
  */
 import {
   useCallback,
@@ -78,8 +76,7 @@ function createRowAccumulator(): (rows: number) => number {
 export interface TerminalScrollOffset {
   /**
    * Rows back from the live edge, or `null` when the daemon owns no scrollback
-   * for this attachment — no native attachment, or a tmux one, which scrolls
-   * through its own mouse reports.
+   * for this attachment because no native history window is attached.
    */
   rows: number | null;
   /** Wheel, touch pan and page keys, in rows; positive moves into history. */

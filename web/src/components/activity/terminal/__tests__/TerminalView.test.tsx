@@ -872,7 +872,7 @@ describe("lifecycle destroy", () => {
 });
 
 describe("native scroll offset", () => {
-  it("turns wheel deltas into rows for a native pane and leaves a tmux pane alone", async () => {
+  it("turns wheel deltas into native history rows and leaves an unattached pane alone", async () => {
     const rectSpy = measuredRows(16);
     try {
       const onScrollRows = vi.fn();
@@ -916,8 +916,8 @@ describe("native scroll offset", () => {
       });
       expect(onScrollRows).toHaveBeenLastCalledWith(-2);
 
-      // A tmux attachment keeps the renderer's own wheel handling, which turns
-      // it into the SGR mouse reports the attach client already answers.
+      // Without a native history window, the renderer handles application
+      // mouse input itself.
       onScrollRows.mockClear();
       rerender(
         <TerminalView
@@ -926,17 +926,17 @@ describe("native scroll offset", () => {
           onScrollRows={onScrollRows}
         />,
       );
-      const tmuxWheel = new WheelEvent("wheel", {
+      const terminalWheel = new WheelEvent("wheel", {
         deltaY: -48,
         deltaMode: 0,
         cancelable: true,
         bubbles: true,
       });
       act(() => {
-        mount.dispatchEvent(tmuxWheel);
+        mount.dispatchEvent(terminalWheel);
       });
       expect(onScrollRows).not.toHaveBeenCalled();
-      expect(tmuxWheel.defaultPrevented).toBe(false);
+      expect(terminalWheel.defaultPrevented).toBe(false);
       expect(mount.style.touchAction).toBe("pan-y pinch-zoom");
     } finally {
       rectSpy.mockRestore();
@@ -1123,8 +1123,8 @@ describe("native scroll offset", () => {
     expect(onScrollRows).toHaveBeenLastCalledWith(-56);
     expect(onProtocolResponse).not.toHaveBeenCalled();
 
-    // Unshifted page keys stay application input, and a tmux pane never sees
-    // the scroll path at all.
+    // Unshifted page keys stay application input. Without native history,
+    // the renderer never sends host scroll requests.
     onScrollRows.mockClear();
     await user.keyboard("{PageUp}");
     expect(onScrollRows).not.toHaveBeenCalled();

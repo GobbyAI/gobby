@@ -1065,7 +1065,7 @@ describe("App wiring", () => {
       source: "codex",
       seq_num: 202,
       session_type: "terminal",
-      terminal_context: { tmux_pane: "%44" },
+      terminal_context: { gobby_terminal_id: "%44" },
     };
 
     vi.mocked(useChat).mockReturnValue({

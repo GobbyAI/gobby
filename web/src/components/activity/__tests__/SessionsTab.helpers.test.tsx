@@ -17,7 +17,7 @@ function makeEntry(
     inputTokens: 0,
     outputTokens: 0,
     totalTokens: 0,
-    hasTmux: false,
+    hasTerminal: false,
     sandboxEnabled: false,
     isLocal: false,
     ...overrides,
@@ -44,12 +44,12 @@ function chipLabels(entry: WatchingSessionEntry): (string | null)[] {
 }
 
 describe("renderBadges kind chip", () => {
-  it("renders an ACP chip in place of the web/tmux chip for ACP rows", () => {
+  it("renders an ACP chip in place of the web/terminal chip for ACP rows", () => {
     const labels = chipLabels(makeEntry({ acp: acpBlock() }));
 
     expect(labels[0]).toBe("ACP");
     expect(labels).not.toContain("web");
-    expect(labels).not.toContain("tmux");
+    expect(labels).not.toContain("terminal");
   });
 
   it("delegates to the web chip when no acp block is present", () => {
@@ -59,10 +59,10 @@ describe("renderBadges kind chip", () => {
     expect(labels).not.toContain("ACP");
   });
 
-  it("delegates to the tmux chip for terminal sessions", () => {
+  it("labels managed terminal sessions", () => {
     const labels = chipLabels(makeEntry({ sessionType: "terminal" }));
 
-    expect(labels[0]).toBe("tmux");
+    expect(labels[0]).toBe("terminal");
   });
 
   it("renders every kind and mode chip through the identity Chip treatment", () => {

@@ -1,19 +1,19 @@
 import { vi } from "vitest";
 
-import type { TmuxSession } from "../../../../hooks/terminalRosterSnapshot";
+import type { TerminalSession } from "../../../../hooks/terminalRosterSnapshot";
 import { EMPTY_WRITE_SETTLEMENT } from "../../../../hooks/terminalWriteSettlement";
-import type { useTmuxSessions } from "../../../../hooks/useTmuxSessions";
+import type { useTerminalSessions } from "../../../../hooks/useTerminalSessions";
 
-export type HookResult = ReturnType<typeof useTmuxSessions>;
+export type HookResult = ReturnType<typeof useTerminalSessions>;
 
-export function makeTmuxSession(
-  overrides: Partial<TmuxSession> = {},
-): TmuxSession {
+export function makeTerminalSession(
+  overrides: Partial<TerminalSession> = {},
+): TerminalSession {
   const name = overrides.name ?? "shell";
   const socket = overrides.socket ?? "default";
   return {
     terminal_id: overrides.terminal_id ?? `${socket}:${name}`,
-    backend: "tmux",
+    backend: "native",
     ownership: socket === "gobby" ? "gobby" : "external",
     state: "live",
     title: name,

@@ -141,9 +141,9 @@ CLI-Specific Session ID (external_id): <EXTERNAL_SESSION_ID>
 parent_session_id: <PARENT_SESSION_ID>
 machine_id: <MACHINE_ID>
 project_id: <PROJECT_ID>
-terminal: tmux
+terminal: terminal
 parent_pid: 10188
-tmux pane: %1
+terminal pane: %1
 ## Instructions
 LIFECYCLE MODEL:
 - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.

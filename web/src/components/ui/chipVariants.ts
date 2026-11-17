@@ -38,7 +38,7 @@ export const chipVariants = cva(
 
 export type ChipTone = NonNullable<VariantProps<typeof chipVariants>["tone"]>;
 
-// Session identity chips (WEB/TMUX/ACP/auto/SB/LOCAL) — mono bordered pills
+// Session identity chips (WEB/TERMINAL/ACP/auto/SB/LOCAL) — mono bordered pills
 // composed onto tone="accent". Dark keeps the accent "on" fill (byte-frozen
 // to IMG_3754); light reads identity metadata as neutral because accent is
 // reserved for applied filters/constraints there.

@@ -1,5 +1,5 @@
 /**
- * Terminal scrollback restore on the shipped tmux path.
+ * Terminal scrollback restore on the shipped terminal path.
  *
  * The daemon acknowledges `terminal_attach` as a reservation and does the real
  * work on the first `terminal_resize`: build the bridge at the client's geometry,
@@ -13,7 +13,7 @@
  */
 import { expect, test, type Page } from "@playwright/test";
 
-interface TmuxSessionFixture {
+interface TerminalSessionFixture {
   terminal_id: string;
   name: string;
   socket: string;
@@ -48,7 +48,7 @@ interface SocketOptions {
 const SESSION_NAME = "history-session";
 const STREAM_ID = "stream-history-session";
 
-const MOCK_SESSIONS: TmuxSessionFixture[] = [
+const MOCK_SESSIONS: TerminalSessionFixture[] = [
   {
     terminal_id: "terminal-history-session",
     name: SESSION_NAME,
@@ -171,7 +171,7 @@ async function starveGhosttyWasm(page: Page): Promise<void> {
 async function installTerminalSocket(
   page: Page,
   options: SocketOptions = {},
-): Promise<void> {
+): Promise<{ ticks: () => number; sent: Record<string, unknown>[] }> {
   const {
     truncated = false,
     unavailable = false,
@@ -185,6 +185,8 @@ async function installTerminalSocket(
   let attachCount = 0;
   let dropped = false;
   const attachIndexById = new Map<string, number>();
+  const sent: Record<string, unknown>[] = [];
+  let ticks = 0;
 
   const windowFor = (attachIndex: number): string => {
     if (unavailable) return "";
@@ -198,6 +200,7 @@ async function installTerminalSocket(
 
   await page.routeWebSocket("**/ws", (ws) => {
     let ticker: ReturnType<typeof setInterval> | null = null;
+    let offset = 0;
     ws.onClose(() => {
       if (ticker !== null) clearInterval(ticker);
       ticker = null;
@@ -207,6 +210,30 @@ async function installTerminalSocket(
       try {
         message = JSON.parse(String(raw)) as Record<string, unknown>;
       } catch {
+        return;
+      }
+      sent.push(message);
+
+      if (message.type === "terminal_set_scroll_offset") {
+        offset = Math.min(historyLines, Number(message.rows_from_live_edge));
+        ws.send(
+          JSON.stringify({
+            type: "terminal_scroll_offset_applied",
+            attachment_id: message.attachment_id,
+            applied_rows: offset,
+            max_rows: historyLines,
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            type: "terminal_output",
+            attachment_id: message.attachment_id,
+            data:
+              offset > 0
+                ? `\x1b[2J\x1b[Hhistory-offset-${offset}\r\n`
+                : `\x1b[2J\x1b[H${LIVE_OUTPUT}`,
+          }),
+        );
         return;
       }
 
@@ -301,6 +328,10 @@ async function installTerminalSocket(
         let tick = 0;
         ticker = setInterval(() => {
           tick += 1;
+          ticks += 1;
+          // A native host keeps the selected history window pinned while
+          // its PTY continues producing output beyond the live edge.
+          if (offset > 0) return;
           ws.send(
             JSON.stringify({
               type: "terminal_output",
@@ -326,6 +357,7 @@ async function installTerminalSocket(
       }
     });
   });
+  return { ticks: () => ticks, sent };
 }
 
 async function openTerminalTab(page: Page): Promise<void> {
@@ -400,36 +432,9 @@ async function historyLineNumbers(page: Page): Promise<number[]> {
   );
 }
 
-/** Highest `tick-N` the fixture has streamed so far, 0 before any. */
-async function latestTick(page: Page): Promise<number> {
-  return scrollContainer(page).evaluate((element) =>
-    Array.from(element.querySelectorAll(".term-row")).reduce((highest, row) => {
-      const match = /^tick-(\d+)$/u.exec((row.textContent ?? "").trim());
-      return match === null ? highest : Math.max(highest, Number(match[1]));
-    }, 0),
-  );
-}
-
-/** Row texts intersecting the scroll viewport right now. */
-async function visibleScrollbackTexts(page: Page): Promise<string[]> {
-  return scrollContainer(page).evaluate((element) => {
-    const view = element.getBoundingClientRect();
-    return Array.from(element.querySelectorAll(".term-scrollback-row"))
-      .filter((row) => {
-        const rect = row.getBoundingClientRect();
-        return rect.bottom > view.top && rect.top < view.bottom;
-      })
-      .map((row) => (row.textContent ?? "").trim())
-      .filter((text) => text.length > 0);
-  });
-}
-
 /**
- * Scroll the pane up with a real input gesture rather than assigning
- * scrollTop. The distinction matters: `.wterm` is a native overflow container,
- * so an assignment proves only that the property is writable, while a wheel
- * goes through the compositor the way a touch drag does and fails the same way
- * a CSS-scaled or overflow-locked container would.
+ * Exercise the pane's wheel handler so the host receives a history offset.
+ * Assigning the renderer's local scrollTop bypasses native history selection.
  */
 async function scrollUpByInput(page: Page, distance: number): Promise<void> {
   const box = await scrollContainer(page).boundingBox();
@@ -455,7 +460,7 @@ for (const tier of TIERS) {
       page,
     }) => {
       await installApiMocks(page, "dark");
-      await installTerminalSocket(page);
+      const socket = await installTerminalSocket(page);
       await openTerminalTab(page);
 
       const terminal = page.getByTestId("terminal-view");
@@ -474,37 +479,33 @@ for (const tier of TIERS) {
       }));
       expect(overflow.scrollHeight).toBeGreaterThan(overflow.clientHeight);
 
-      // Park the viewport in history while the stream keeps producing rows.
-      const parked = await container.evaluate((element) => {
-        element.scrollTop = 0;
-        return {
-          scrollTop: element.scrollTop,
-          scrollHeight: element.scrollHeight,
-        };
-      });
-
-      // Wait for real growth, so the assertion below has something to prove.
-      await expect
-        .poll(() => container.evaluate((element) => element.scrollHeight), {
-          timeout: 20_000,
-        })
-        .toBeGreaterThan(parked.scrollHeight + 100);
-
-      // Output arriving while scrolled up must not snap the viewport.
-      const afterOutput = await container.evaluate((element) => ({
-        scrollTop: element.scrollTop,
-        maxScroll: element.scrollHeight - element.clientHeight,
-      }));
-      expect(afterOutput.scrollTop).toBeLessThan(afterOutput.maxScroll - 200);
-      expect(afterOutput.scrollTop).toBe(parked.scrollTop);
+      // Native history is selected at the host rather than by moving the
+      // renderer's local scrollTop. Exercise the real wheel request/reply.
+      await scrollUpByInput(page, 600);
+      await expect(terminal).toContainText("history-offset-");
+      const offsetRequest = socket.sent.find(
+        (frame) => frame.type === "terminal_set_scroll_offset",
+      );
+      expect(offsetRequest?.attachment_id).toBe(STREAM_ID);
+      expect(Number(offsetRequest?.rows_from_live_edge)).toBeGreaterThan(0);
+      const parked = await terminal.innerText();
+      const tickBefore = socket.ticks();
+      await expect.poll(socket.ticks).toBeGreaterThan(tickBefore + 2);
+      expect(await terminal.innerText()).toBe(parked);
 
       const jump = page.getByRole("button", {
-        name: "Jump to newest terminal output",
+        name: "Jump to live",
       });
       await expect(jump).toBeVisible();
       await jump.click();
 
       await expect(jump).toBeHidden();
+      await expect(terminal).toContainText("live-line-3");
+      expect(
+        socket.sent
+          .filter((frame) => frame.type === "terminal_set_scroll_offset")
+          .at(-1)?.rows_from_live_edge,
+      ).toBe(0);
       const resumed = await container.evaluate((element) => ({
         scrollTop: element.scrollTop,
         scrollHeight: element.scrollHeight,
@@ -518,17 +519,16 @@ for (const tier of TIERS) {
   });
 }
 
-test("bounds history per attachment across tiers", async ({ page }) => {
-  // 500 lines over the client's own ceiling, and the daemon reports no
-  // truncation of its own — so anything cut here was cut by this client.
-  await installApiMocks(page, "dark");
-  await installTerminalSocket(page, { historyLines: 2_500 });
+for (const tier of TIERS) {
+  test(`bounds history per attachment at ${tier.label}`, async ({ page }) => {
+    // 500 lines over the client's own ceiling, and the daemon reports no
+    // truncation of its own — so anything cut here was cut by this client.
+    await installApiMocks(page, "dark");
+    const socket = await installTerminalSocket(page, { historyLines: 2_500 });
 
-  for (const tier of TIERS) {
     await page.setViewportSize({ width: tier.width, height: tier.height });
     await openTerminalTab(page);
 
-    const container = scrollContainer(page);
     await expect(page.getByTestId("terminal-view")).toContainText(
       "live-line-3",
       { timeout: 20_000 },
@@ -554,38 +554,19 @@ test("bounds history per attachment across tiers", async ({ page }) => {
     // "renders the truncation marker above restored history", on a window the
     // renderer keeps whole.
 
-    if (!MOBILE_TIER_LABELS.has(tier.label)) continue;
+    if (!MOBILE_TIER_LABELS.has(tier.label)) return;
 
     // Mobile tiers: history above the initial viewport has to be reachable by
     // dragging the pane, and live output must not yank the view back down.
-    const before = await visibleScrollbackTexts(page);
-    const settledTop = await container.evaluate((element) => element.scrollTop);
     await scrollUpByInput(page, 4_000);
-
-    await expect
-      .poll(() => container.evaluate((element) => element.scrollTop), {
-        timeout: 10_000,
-      })
-      .toBeLessThan(settledTop);
-    const after = await visibleScrollbackTexts(page);
-    expect(after.some((text) => !before.includes(text))).toBe(true);
-
-    // Growth is not the signal at this size: the renderer is already at its
-    // scrollback capacity, so every new row evicts one and scrollHeight sits
-    // still. Advancing ticks are the signal that output is arriving, and the
-    // claim is that it arrives without dragging the viewport to the bottom.
-    const tickBefore = await latestTick(page);
-    await expect
-      .poll(() => latestTick(page), { timeout: 20_000 })
-      .toBeGreaterThan(tickBefore);
-
-    const streaming = await container.evaluate((element) => ({
-      scrollTop: element.scrollTop,
-      maxScroll: element.scrollHeight - element.clientHeight,
-    }));
-    expect(streaming.scrollTop).toBeLessThan(streaming.maxScroll - 200);
-  }
-});
+    const terminal = page.getByTestId("terminal-view");
+    await expect(terminal).toContainText("history-offset-");
+    const parked = await terminal.innerText();
+    const tickBefore = socket.ticks();
+    await expect.poll(socket.ticks).toBeGreaterThan(tickBefore + 2);
+    expect(await terminal.innerText()).toBe(parked);
+  });
+}
 
 test("replacement attachment resets history without remount", async ({
   page,

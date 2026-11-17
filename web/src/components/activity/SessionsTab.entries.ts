@@ -166,7 +166,7 @@ export function useWatchingSessionEntries({
               totalTokens:
                 (matchedSession.usage_input_tokens ?? 0) +
                 (matchedSession.usage_output_tokens ?? 0),
-              hasTmux: Boolean(matchedSession.terminal_context),
+              hasTerminal: Boolean(matchedSession.terminal_context),
               sandboxEnabled: matchedSession.sandbox_enabled ?? false,
               isLocal: sessionIsLocal || agentIsLocal,
               acp: matchedSession.acp ?? null,
@@ -195,7 +195,7 @@ export function useWatchingSessionEntries({
         totalTokens:
           (session.usage_input_tokens ?? 0) +
           (session.usage_output_tokens ?? 0),
-        hasTmux: Boolean(session.terminal_context),
+        hasTerminal: Boolean(session.terminal_context),
         sandboxEnabled: session.sandbox_enabled ?? false,
         isLocal: resolveLocalFlag(
           session.is_local,

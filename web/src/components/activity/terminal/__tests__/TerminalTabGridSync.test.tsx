@@ -73,7 +73,7 @@ function mountTab(terminalIds: readonly string[]): MockWebSocketInstance {
       request_id: "init",
       items: terminalIds.map((terminalId) => ({
         terminal_id: terminalId,
-        backend: "tmux",
+        backend: "native",
         ownership: "gobby",
         state: "live",
         title: terminalId,

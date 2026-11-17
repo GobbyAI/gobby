@@ -1,4 +1,4 @@
-import { terminalFocusMessage } from "./tmuxSessionMessages";
+import { terminalFocusMessage } from "./terminalSessionMessages";
 
 /**
  * Reports web pane focus to the daemon so operator comms wakes hold while the

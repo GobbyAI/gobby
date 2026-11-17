@@ -38,7 +38,7 @@ function makeSession(overrides: Partial<GobbySession> = {}): GobbySession {
     agent_run_id: null,
     parent_session_id: null,
     session_type: "terminal",
-    terminal_context: { tmux_pane: "%1" },
+    terminal_context: { gobby_terminal_id: "%1" },
     sandbox_enabled: false,
     ...overrides,
   };
@@ -69,7 +69,7 @@ describe("SessionsTab Phase 1 chip contract", () => {
 
     await waitFor(() => expect(screen.getByText("#201")).toBeInTheDocument());
 
-    expect(screen.getByText("tmux")).toHaveClass(
+    expect(screen.getByText("terminal")).toHaveClass(
       "rounded-full",
       "uppercase",
       "font-mono",

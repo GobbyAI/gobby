@@ -56,7 +56,7 @@ export function SessionsContextMenu({
       onSelect: () => openContextModal(entry),
     },
   ];
-  if (entry.hasTmux) {
+  if (entry.hasTerminal) {
     items.push({
       label: "Open Terminal",
       onSelect: () => showActivityTab("terminal", entry.id),

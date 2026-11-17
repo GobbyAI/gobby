@@ -21,8 +21,11 @@ import {
   TERMINAL_WS_FRAGMENT_MAX_SOCKET_REASSEMBLY_BYTES,
   TERMINAL_WS_SAFE_INTEGER_MAX,
 } from "../terminalWsFragments";
-import { terminalFocusMessage } from "../tmuxSessionMessages";
-import { TMUX_REQUEST_TIMEOUT_MS, useTmuxSessions } from "../useTmuxSessions";
+import { terminalFocusMessage } from "../terminalSessionMessages";
+import {
+  TERMINAL_REQUEST_TIMEOUT_MS,
+  useTerminalSessions,
+} from "../useTerminalSessions";
 import { TerminalTab } from "../../components/activity/terminal/TerminalTab";
 import type {
   TerminalViewHandle,
@@ -162,7 +165,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("useTmuxSessions", () => {
+describe("useTerminalSessions", () => {
   it("replays every canonical terminal WS fixture from the manifest", () => {
     const manifest = readGoldenManifest();
     expect(Object.keys(manifest)).toEqual(["fixtures"]);
@@ -174,7 +177,7 @@ describe("useTmuxSessions", () => {
         .sort(),
     ).toEqual([...manifest.fixtures].sort());
 
-    const mount = renderHook(() => useTmuxSessions());
+    const mount = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     const replayed = manifest.fixtures.map(readGoldenMessage);
@@ -212,7 +215,7 @@ describe("useTmuxSessions", () => {
   it("scopes every listing to the project picker and relists when it changes", () => {
     const mount = renderHook(
       ({ projectId }: { projectId: string | null }) =>
-        useTmuxSessions(projectId),
+        useTerminalSessions(projectId),
       { initialProps: { projectId: "proj-a" as string | null } },
     );
     const ws = mockWs.instances[0];
@@ -248,7 +251,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("a refresh replaces the list so vanished terminals drop out", () => {
-    const mount = renderHook(() => useTmuxSessions());
+    const mount = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     act(() => {
@@ -283,7 +286,7 @@ describe("useTmuxSessions", () => {
   it("reconnect generation guard", () => {
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(StrictMode, null, children);
-    const liveMount = renderHook(() => useTmuxSessions(), { wrapper });
+    const liveMount = renderHook(() => useTerminalSessions(), { wrapper });
     const [retired, live] = mockWs.instances;
     const retiredOnClose = retired.onclose;
 
@@ -348,7 +351,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("does not reconnect when the hook rerenders at rest", () => {
-    const { rerender } = renderHook(() => useTmuxSessions());
+    const { rerender } = renderHook(() => useTerminalSessions());
     expect(mockWs.instances).toHaveLength(1);
     rerender();
     rerender();
@@ -356,7 +359,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("backs off reconnects when the socket never stays open", () => {
-    renderHook(() => useTmuxSessions());
+    renderHook(() => useTerminalSessions());
     act(() => mockWs.instances[0].simulateClose());
     act(() => vi.advanceTimersByTime(1_999));
     expect(mockWs.instances).toHaveLength(1);
@@ -371,7 +374,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("does not tight-loop reconnects while the socket stays down", () => {
-    renderHook(() => useTmuxSessions());
+    renderHook(() => useTerminalSessions());
     const closeLatest = () => {
       const socket = mockWs.instances[mockWs.instances.length - 1];
       if (socket && socket.readyState !== WebSocket.CLOSED) {
@@ -389,7 +392,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("keeps backing off when the server accepts then immediately closes", () => {
-    renderHook(() => useTmuxSessions());
+    renderHook(() => useTerminalSessions());
     // Accept-then-close (the /ws 4401 contract): the socket opens but dies
     // before the stable-open window, so the open must not reset backoff.
     open(mockWs.instances[0]);
@@ -406,7 +409,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("resets backoff only after the socket stays open", () => {
-    renderHook(() => useTmuxSessions());
+    renderHook(() => useTerminalSessions());
     act(() => mockWs.instances[0].simulateClose());
     act(() => vi.advanceTimersByTime(2_000));
     act(() => mockWs.instances[1].simulateClose());
@@ -423,7 +426,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("treats a failed attach as failed even when it carries the lease id", () => {
-    const mount = renderHook(() => useTmuxSessions());
+    const mount = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
 
@@ -465,7 +468,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("clears loading when the final list page repeats its cursor", () => {
-    const mount = renderHook(() => useTmuxSessions());
+    const mount = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     act(() => {
@@ -495,7 +498,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("does not re-request the same list cursor", () => {
-    const mount = renderHook(() => useTmuxSessions());
+    const mount = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     act(() => {
@@ -531,7 +534,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("a refresh mid-pagination ignores the superseded walk's pages", () => {
-    const mount = renderHook(() => useTmuxSessions());
+    const mount = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     act(() => {
@@ -608,7 +611,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("socket qualified identity", () => {
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     ws.send.mockClear();
@@ -704,7 +707,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("opens a bridge for every attachment, not just the first", () => {
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     ws.send.mockClear();
@@ -777,7 +780,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("wire payloads", () => {
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
 
     act(() => {
@@ -844,7 +847,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("attach declares the web viewer", () => {
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     ws.send.mockClear();
@@ -860,7 +863,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("attach error handling", () => {
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     ws.send.mockClear();
@@ -920,7 +923,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("duplicate send suppression", () => {
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     ws.send.mockClear();
@@ -955,7 +958,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("names the picker's project on create and omits it machine-wide", () => {
-    const scoped = renderHook(() => useTmuxSessions("proj-1"));
+    const scoped = renderHook(() => useTerminalSessions("proj-1"));
     const scopedWs = mockWs.instances[0];
     open(scopedWs);
     scopedWs.send.mockClear();
@@ -965,7 +968,7 @@ describe("useTmuxSessions", () => {
     });
     scoped.unmount();
 
-    const machineWide = renderHook(() => useTmuxSessions());
+    const machineWide = renderHook(() => useTerminalSessions());
     const wideWs = mockWs.instances[1];
     open(wideWs);
     wideWs.send.mockClear();
@@ -977,7 +980,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("correlates create results and suppresses duplicate create sends", () => {
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     ws.send.mockClear();
@@ -1025,7 +1028,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("routes a correlated create error through terminal request state", () => {
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     ws.send.mockClear();
@@ -1048,13 +1051,13 @@ describe("useTmuxSessions", () => {
   });
 
   it("times out correlated attach, detach, and create requests", () => {
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     ws.send.mockClear();
 
     act(() => result.current.attachSession("worker", "default"));
-    act(() => vi.advanceTimersByTime(TMUX_REQUEST_TIMEOUT_MS));
+    act(() => vi.advanceTimersByTime(TERMINAL_REQUEST_TIMEOUT_MS));
     expect(result.current.requestPending).toBe(false);
     expect(result.current.isLoading).toBe(false);
     expect(result.current.attachError).toBe("Attach request timed out.");
@@ -1071,7 +1074,7 @@ describe("useTmuxSessions", () => {
       "stream-timeout",
     );
     act(() => result.current.detachSession());
-    act(() => vi.advanceTimersByTime(TMUX_REQUEST_TIMEOUT_MS));
+    act(() => vi.advanceTimersByTime(TERMINAL_REQUEST_TIMEOUT_MS));
     expect(result.current.requestPending).toBe(false);
     expect(result.current.isLoading).toBe(false);
     expect(result.current.attachError).toBe("Detach request timed out.");
@@ -1081,7 +1084,7 @@ describe("useTmuxSessions", () => {
       result.current.clearAttachError();
       result.current.createSession();
     });
-    act(() => vi.advanceTimersByTime(TMUX_REQUEST_TIMEOUT_MS));
+    act(() => vi.advanceTimersByTime(TERMINAL_REQUEST_TIMEOUT_MS));
     expect(result.current.requestPending).toBe(false);
     expect(result.current.isLoading).toBe(false);
     expect(result.current.attachError).toBe("Create request timed out.");
@@ -1089,7 +1092,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("keeps loading active when list and kill results arrive during a request", () => {
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
 
@@ -1119,7 +1122,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("close clears pending request", () => {
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const first = mockWs.instances[0];
     open(first);
 
@@ -1216,7 +1219,7 @@ describe("useTmuxSessions", () => {
     unmount();
   });
   it("routes attach history to the registered consumer", () => {
-    const mount = renderHook(() => useTmuxSessions());
+    const mount = renderHook(() => useTerminalSessions());
     const [ws] = mockWs.instances;
     open(ws);
 
@@ -1266,7 +1269,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("warns and ignores attach history without an attachment id", () => {
-    const mount = renderHook(() => useTmuxSessions());
+    const mount = renderHook(() => useTerminalSessions());
     const [ws] = mockWs.instances;
     open(ws);
 
@@ -1297,7 +1300,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("routes terminal_output by attachment_id and ignores a terminal-row-only frame", () => {
-    const mount = renderHook(() => useTmuxSessions());
+    const mount = renderHook(() => useTerminalSessions());
     const [ws] = mockWs.instances;
     open(ws);
 
@@ -1330,16 +1333,16 @@ describe("useTmuxSessions", () => {
   });
 
   it("reassembles terminal fragments through onOutput and ignores foreign attachments", () => {
-    const { result } = renderHook(() => useTmuxSessions());
+    const { result } = renderHook(() => useTerminalSessions());
     const [ws] = mockWs.instances;
     open(ws);
 
-    act(() => result.current.attachSession("term-1", "tmux"));
+    act(() => result.current.attachSession("term-1", "terminal"));
     respondToAttach(
       ws,
       requestId(ws, "terminal_attach"),
       "term-1",
-      "tmux",
+      "terminal",
       "att-1",
     );
 
@@ -1400,7 +1403,7 @@ describe("useTmuxSessions", () => {
   });
 
   it("test_terminal_list_follows_pages", () => {
-    const { result } = renderHook(() => useTmuxSessions());
+    const { result } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     act(() => {
@@ -1409,7 +1412,7 @@ describe("useTmuxSessions", () => {
         request_id: "init",
         items: Array.from({ length: 100 }, (_, index) => ({
           terminal_id: `t-${index.toString().padStart(3, "0")}`,
-          backend: "tmux",
+          backend: "native",
           ownership: "gobby",
           state: "live",
           title: `row-${index}`,
@@ -1431,7 +1434,7 @@ describe("useTmuxSessions", () => {
         items: [
           {
             terminal_id: "t-100",
-            backend: "tmux",
+            backend: "native",
             ownership: "gobby",
             state: "live",
             title: "row-100",
@@ -1457,7 +1460,7 @@ describe("useTmuxSessions", () => {
     terminalViewMounts.count = 0;
     const listRow = (terminalId: string) => ({
       terminal_id: terminalId,
-      backend: "tmux",
+      backend: "native",
       ownership: "gobby",
       state: "live",
       title: terminalId,
@@ -1486,7 +1489,13 @@ describe("useTmuxSessions", () => {
     const attach = lastOf(sentMessages(ws, "terminal_attach"));
     const attachedId = attach?.terminal_id as string;
     expect(attachedId).toBe("t-a");
-    respondToAttach(ws, attach?.request_id as string, "t-a", "tmux", "att-a");
+    respondToAttach(
+      ws,
+      attach?.request_id as string,
+      "t-a",
+      "terminal",
+      "att-a",
+    );
     // The pane is keyed on the attachment, so landing one replaces the
     // placeholder mount — that is the activation contract, not roster churn.
     const attached = terminalViewMounts.count;
@@ -1507,15 +1516,15 @@ describe("useTmuxSessions", () => {
     // jsdom reports no document focus without a focused element; a pane blur
     // releases only while the document has focus (ruling 4).
     const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
-    act(() => result.current.attachSession("term-1", "tmux"));
+    act(() => result.current.attachSession("term-1", "terminal"));
     respondToAttach(
       ws,
       requestId(ws, "terminal_attach"),
       "term-1",
-      "tmux",
+      "terminal",
       "att-1",
     );
     // Every attach is observe-only; take-control is the sole grant path.
@@ -1586,15 +1595,15 @@ describe("useTmuxSessions", () => {
 
   it("reportsFocusAfterTheTakeAndKeepsTheLeaseOnWindowBlur", () => {
     const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
-    act(() => result.current.attachSession("term-1", "tmux"));
+    act(() => result.current.attachSession("term-1", "terminal"));
     respondToAttach(
       ws,
       requestId(ws, "terminal_attach"),
       "term-1",
-      "tmux",
+      "terminal",
       "att-1",
     );
 
@@ -1625,15 +1634,15 @@ describe("useTmuxSessions", () => {
 
   it("refuses extra input and clears the pending slot on every failure path", () => {
     const hasFocus = vi.spyOn(document, "hasFocus").mockReturnValue(true);
-    const { result, unmount } = renderHook(() => useTmuxSessions());
+    const { result, unmount } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
-    act(() => result.current.attachSession("term-1", "tmux"));
+    act(() => result.current.attachSession("term-1", "terminal"));
     respondToAttach(
       ws,
       requestId(ws, "terminal_attach"),
       "term-1",
-      "tmux",
+      "terminal",
       "att-1",
     );
 
@@ -1671,7 +1680,7 @@ describe("useTmuxSessions", () => {
     expect(result.current.hasControl).toBe(false);
 
     hold("c");
-    act(() => vi.advanceTimersByTime(TMUX_REQUEST_TIMEOUT_MS));
+    act(() => vi.advanceTimersByTime(TERMINAL_REQUEST_TIMEOUT_MS));
     expect(result.current.pendingWrite).toBeNull();
     expect(result.current.writeRefusal).toBe("Control request timed out.");
     // The timeout cleared the request, so a result that arrives after it
@@ -1721,14 +1730,14 @@ describe("useTmuxSessions", () => {
   });
 
   it("test_write_seq_refusals_clear_inflight_and_do_not_resend", () => {
-    const { result } = renderHook(() => useTmuxSessions());
+    const { result } = renderHook(() => useTerminalSessions());
     const ws = mockWs.instances[0];
     open(ws);
     act(() => {
-      result.current.attachSession("term-1", "tmux");
+      result.current.attachSession("term-1", "terminal");
     });
     const attachId = requestId(ws, "terminal_attach");
-    respondToAttach(ws, attachId, "term-1", "tmux", "att-1");
+    respondToAttach(ws, attachId, "term-1", "terminal", "att-1");
     grantControl(ws, result.current.takeControl, "att-1");
     const before = sentMessages(ws, "terminal_input").length;
     act(() => {

@@ -1385,7 +1385,7 @@ describe("useChat viewed session state", () => {
     ["codex", "gpt-5.4"],
     ["grok", "grok-build"],
   ])(
-    "keeps live %s tmux sessions attachable even when the session row is awaiting_handoff",
+    "keeps live %s terminal sessions attachable even when the session row is awaiting_handoff",
     async (source, model) => {
       await loadModule();
       mockFetch.mockJsonResponse(
@@ -1400,7 +1400,6 @@ describe("useChat viewed session state", () => {
           seq_num: 2310,
           source,
           status: "awaiting_handoff",
-          can_proxy_attach: true,
           model,
           external_id: `${source}-ext-view`,
           chat_mode: "accept_edits",
@@ -1411,7 +1410,7 @@ describe("useChat viewed session state", () => {
           usage_cache_read_tokens: 0,
           usage_cache_creation_tokens: 0,
           session_type: "terminal",
-          terminal_context: { tmux_pane: "%18" },
+          terminal_context: { gobby_terminal_id: "terminal-live-handoff" },
         },
       });
 
@@ -1424,6 +1423,8 @@ describe("useChat viewed session state", () => {
         await Promise.resolve();
         await Promise.resolve();
       });
+
+      expect(result.current.viewingSessionMeta?.canProxyAttach).toBe(true);
 
       act(() => {
         result.current.attachToViewed?.();

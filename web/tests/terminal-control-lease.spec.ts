@@ -17,7 +17,7 @@
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-interface TmuxSessionFixture {
+interface TerminalSessionFixture {
   terminal_id: string;
   name: string;
   socket: string;
@@ -48,7 +48,7 @@ const OTHER_HOLDER = "attachment-another-session";
 const DAEMON_EPOCH = "00000000-0000-4000-8000-000000000000";
 const INDETERMINATE_REASON = "indeterminate_backend";
 
-const MOCK_SESSIONS: TmuxSessionFixture[] = [
+const MOCK_SESSIONS: TerminalSessionFixture[] = [
   {
     terminal_id: TERMINAL_ID,
     name: SESSION_NAME,
@@ -272,6 +272,16 @@ async function installTerminalSocket(page: Page): Promise<TerminalSocket> {
         return;
       }
 
+      if (message.type === "terminal_set_scroll_offset") {
+        send({
+          type: "terminal_scroll_offset_applied",
+          attachment_id: message.attachment_id,
+          applied_rows: Math.min(400, Number(message.rows_from_live_edge)),
+          max_rows: 400,
+        });
+        return;
+      }
+
       // Release is idempotent and always answers `released`.
       if (message.type === "terminal_release_control") {
         send({
@@ -410,17 +420,9 @@ async function pasteInto(page: Page, text: string): Promise<void> {
  * undone — so the user's answer, scrolling again, is the honest one here.
  */
 async function parkInHistory(page: Page): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        await scrollContainer(page).evaluate((element) => {
-          element.scrollTop = 0;
-        });
-        return page.getByTestId("terminal-jump-to-bottom").count();
-      },
-      { timeout: 20_000 },
-    )
-    .toBeGreaterThan(0);
+  await scrollContainer(page).hover();
+  await page.mouse.wheel(0, -600);
+  await expect(page.getByTestId("terminal-jump-to-live")).toBeVisible();
 }
 
 function boxShadow(control: Locator): Promise<string> {
@@ -466,17 +468,6 @@ async function assertInvisibleTouchFloor(control: Locator): Promise<void> {
     minHeight: "44px",
   });
   expect(measured.visibleHeight).toBeLessThan(44);
-}
-
-/**
- * The floating jump control is not dense: under a coarse pointer its own box is
- * promoted to the floor, which is right for a free-standing round action.
- */
-async function assertPromotedTouchFloor(control: Locator): Promise<void> {
-  const box = await control.boundingBox();
-  expect(box).not.toBeNull();
-  expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
-  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
 }
 
 /**
@@ -615,7 +606,7 @@ for (const tier of TIERS) {
 
       const notice = page.getByTestId("terminal-read-only");
       const takeBack = page.getByTestId("terminal-take-control");
-      const jump = page.getByTestId("terminal-jump-to-bottom");
+      const jump = page.getByTestId("terminal-jump-to-live");
       const retry = status.getByRole("button", { name: "Retry", exact: true });
       const discard = status.getByRole("button", {
         name: "Discard",
@@ -634,10 +625,7 @@ for (const tier of TIERS) {
         "Couldn’t confirm the last keystroke reached the terminal.",
       );
       await expect(status.locator("code")).toHaveText(INDETERMINATE_REASON);
-      await expect(jump).toHaveAttribute(
-        "aria-label",
-        "Jump to newest terminal output",
-      );
+      await expect(jump).toHaveAccessibleName("Jump to live");
 
       const resting = {
         takeBack: await boxShadow(takeBack),
@@ -663,7 +651,7 @@ for (const tier of TIERS) {
         await assertInvisibleTouchFloor(takeBack);
         await assertInvisibleTouchFloor(retry);
         await assertInvisibleTouchFloor(discard);
-        await assertPromotedTouchFloor(jump);
+        await assertInvisibleTouchFloor(jump);
       }
 
       // Operable, not merely focusable. The holder is still refusing plain

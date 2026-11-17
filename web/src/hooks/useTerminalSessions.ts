@@ -11,10 +11,10 @@ import {
   applyRosterPage,
   mergeRosterRows,
   rosterPageRequestId,
-  type CreatedTmuxSession,
+  type CreatedTerminalSession,
   type RosterWalk,
-  type TmuxSession,
-  type TmuxTarget,
+  type TerminalSession,
+  type TerminalTarget,
 } from "./terminalRosterSnapshot";
 import type { WriteSettlementState } from "./terminalWriteSettlement";
 import {
@@ -38,13 +38,13 @@ import {
   terminalResizeMessage,
   terminalSetScrollOffsetMessage,
   terminalSetViewportMessage,
-} from "./tmuxSessionMessages";
+} from "./terminalSessionMessages";
 import { readFocusHoldSeconds } from "./useSettings";
 
-export const TMUX_REQUEST_TIMEOUT_MS = 10_000;
-export const TMUX_RECONNECT_BASE_MS = 2_000;
-export const TMUX_RECONNECT_MAX_MS = 30_000;
-export const TMUX_STABLE_OPEN_MS = 1_000;
+export const TERMINAL_REQUEST_TIMEOUT_MS = 10_000;
+export const TERMINAL_RECONNECT_BASE_MS = 2_000;
+export const TERMINAL_RECONNECT_MAX_MS = 30_000;
+export const TERMINAL_STABLE_OPEN_MS = 1_000;
 /**
  * How often accumulated fragment buffers are swept. Well under the reassembly
  * timeout so a stalled message is dropped near its deadline rather than a
@@ -52,17 +52,17 @@ export const TMUX_STABLE_OPEN_MS = 1_000;
  */
 export const TERMINAL_FRAGMENT_TICK_MS = 1_000;
 
-interface TmuxSessionsResult {
-  sessions: TmuxSession[];
+interface TerminalSessionsResult {
+  sessions: TerminalSession[];
   connected: boolean;
   sessionsLoaded: boolean;
-  attachedTarget: TmuxTarget | null;
+  attachedTarget: TerminalTarget | null;
   streamingId: string | null;
   isLoading: boolean;
   sessionEnded: boolean;
   requestPending: boolean;
   attachError: string | null;
-  createdSession: CreatedTmuxSession | null;
+  createdSession: CreatedTerminalSession | null;
   attachSession: (sessionName: string, socket: string) => void;
   detachSession: () => void;
   clearAttachError: () => void;
@@ -96,8 +96,7 @@ interface TmuxSessionsResult {
   resizeTerminal: (rows: number, cols: number) => void;
   /**
    * Move a native attachment's rendered window back from the live edge. The
-   * daemon owns the scrollback, so this is the only way to scroll one; a tmux
-   * attachment scrolls through its own mouse reports and must never send it.
+   * host owns the scrollback; the browser requests the rendered history window.
    */
   setScrollOffset: (rowsFromLiveEdge: number, maxRows: number) => void;
   onOutput: (callback: (runId: string, data: string) => void) => void;
@@ -107,20 +106,22 @@ interface TmuxSessionsResult {
   ) => void;
 }
 
-export function useTmuxSessions(
+export function useTerminalSessions(
   projectId: string | null = null,
-): TmuxSessionsResult {
-  const [sessions, setSessions] = useState<TmuxSession[]>([]);
+): TerminalSessionsResult {
+  const [sessions, setSessions] = useState<TerminalSession[]>([]);
   const [connected, setConnected] = useState(false);
   const [sessionsLoaded, setSessionsLoaded] = useState(false);
-  const [attachedTarget, setAttachedTarget] = useState<TmuxTarget | null>(null);
+  const [attachedTarget, setAttachedTarget] = useState<TerminalTarget | null>(
+    null,
+  );
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [sessionEnded, setSessionEnded] = useState(false);
   const [requestPending, setRequestPending] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [createdSession, setCreatedSession] =
-    useState<CreatedTmuxSession | null>(null);
+    useState<CreatedTerminalSession | null>(null);
   const [lease, setLease] = useState<ControlLeaseSnapshot>(EMPTY_CONTROL_LEASE);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -130,7 +131,7 @@ export function useTmuxSessions(
   // continuation pages); a superseded walk's pages must not merge rows or
   // steer the cursor, or a refresh started mid-pagination under-fetches.
   const listWalkRef = useRef<RosterWalk | null>(null);
-  const attachedTargetRef = useRef<TmuxTarget | null>(null);
+  const attachedTargetRef = useRef<TerminalTarget | null>(null);
   const streamingIdRef = useRef<string | null>(null);
   const connectionGenerationRef = useRef(0);
   const requestCounterRef = useRef(0);
@@ -151,7 +152,7 @@ export function useTmuxSessions(
       attachmentId: () => streamingIdRef.current,
       terminalId: () => attachedTargetRef.current?.terminal_id,
       connectionGeneration: () => connectionGenerationRef.current,
-      requestTimeoutMs: TMUX_REQUEST_TIMEOUT_MS,
+      requestTimeoutMs: TERMINAL_REQUEST_TIMEOUT_MS,
       onChange: setLease,
     }),
   );
@@ -167,7 +168,7 @@ export function useTmuxSessions(
   const [pendingRequest] = useState(() =>
     createPendingRequestSlot({
       generation: () => connectionGenerationRef.current,
-      timeoutMs: TMUX_REQUEST_TIMEOUT_MS,
+      timeoutMs: TERMINAL_REQUEST_TIMEOUT_MS,
       onChange: (pending) => {
         setRequestPending(pending);
         setIsLoading(pending);
@@ -180,7 +181,7 @@ export function useTmuxSessions(
   const [sink] = useState(createTerminalOutputSink);
 
   const updateAttachment = useCallback(
-    (target: TmuxTarget | null, streamId: string | null) => {
+    (target: TerminalTarget | null, streamId: string | null) => {
       attachedTargetRef.current = target;
       streamingIdRef.current = streamId;
       setAttachedTarget(target);
@@ -263,7 +264,7 @@ export function useTmuxSessions(
   );
 
   const beginAttachRequest = useCallback(
-    (target: TmuxTarget): boolean => {
+    (target: TerminalTarget): boolean => {
       const ws = wsRef.current;
       if (pendingRequest.current() || !ws || ws.readyState !== WebSocket.OPEN)
         return false;
@@ -286,7 +287,7 @@ export function useTmuxSessions(
   );
 
   const beginDetachRequest = useCallback(
-    (nextTarget: TmuxTarget | null): boolean => {
+    (nextTarget: TerminalTarget | null): boolean => {
       const ws = wsRef.current;
       const currentStreamingId = streamingIdRef.current;
       if (
@@ -505,7 +506,7 @@ export function useTmuxSessions(
         stableOpenTimeoutRef.current = null;
         if (!isCurrentConnection()) return;
         reconnectAttemptsRef.current = 0;
-      }, TMUX_STABLE_OPEN_MS);
+      }, TERMINAL_STABLE_OPEN_MS);
       setConnected(true);
       ws.send(
         JSON.stringify({
@@ -541,8 +542,8 @@ export function useTmuxSessions(
       const attempt = reconnectAttemptsRef.current;
       reconnectAttemptsRef.current = attempt + 1;
       const delay = Math.min(
-        TMUX_RECONNECT_BASE_MS * 2 ** attempt,
-        TMUX_RECONNECT_MAX_MS,
+        TERMINAL_RECONNECT_BASE_MS * 2 ** attempt,
+        TERMINAL_RECONNECT_MAX_MS,
       );
       reconnectTimeoutRef.current = window.setTimeout(() => {
         if (!isCurrentConnection()) return;
@@ -553,7 +554,7 @@ export function useTmuxSessions(
 
     ws.onerror = (error) => {
       if (!isCurrentConnection()) return;
-      console.error("Tmux WebSocket error:", error);
+      console.error("Terminal WebSocket error:", error);
     };
 
     ws.onmessage = (event) => {
@@ -562,7 +563,7 @@ export function useTmuxSessions(
       try {
         data = JSON.parse(event.data);
       } catch (e) {
-        console.error("Failed to parse tmux message:", e);
+        console.error("Failed to parse terminal message:", e);
         return;
       }
       // A handler that throws is a bug in this client, not a bad frame; name

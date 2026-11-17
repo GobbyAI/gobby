@@ -68,7 +68,7 @@ function getSessionKindBadge(
     return "WEB";
   }
   if (sessionType === "terminal") {
-    return "TMUX";
+    return "TERMINAL";
   }
 
   return null;

@@ -50,9 +50,9 @@ describe("Chip", () => {
   });
 
   it("applies uppercase presentation only when requested", () => {
-    render(<Chip uppercase>tmux</Chip>);
+    render(<Chip uppercase>terminal</Chip>);
 
-    expect(screen.getByText("tmux")).toHaveClass("uppercase");
+    expect(screen.getByText("terminal")).toHaveClass("uppercase");
   });
 
   it("renders through the child element with asChild", () => {

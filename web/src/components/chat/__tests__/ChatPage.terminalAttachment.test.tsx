@@ -304,7 +304,7 @@ describe("ChatPage – terminal attachment", () => {
     expect(toggleFromChatSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps Attach available for live handoff tmux sessions across providers", async () => {
+  it("keeps Attach available for live handoff terminal sessions across providers", async () => {
     await act(async () => {
       render(
         <ChatPage

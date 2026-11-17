@@ -5,17 +5,17 @@ import { afterEach, expect, it, vi } from "vitest";
 import { TerminalTab } from "../TerminalTab";
 import {
   makeHookState,
-  makeTmuxSession,
+  makeTerminalSession,
   type HookResult,
 } from "./terminalTabFixtures";
 
-const mockUseTmuxSessions = vi.hoisted(() => vi.fn<() => HookResult>());
+const mockUseTerminalSessions = vi.hoisted(() => vi.fn<() => HookResult>());
 const renderer = vi.hoisted(() => ({
   resize: vi.fn<(cols: number, rows: number) => void>(),
 }));
 
-vi.mock("../../../../hooks/useTmuxSessions", () => ({
-  useTmuxSessions: mockUseTmuxSessions,
+vi.mock("../../../../hooks/useTerminalSessions", () => ({
+  useTerminalSessions: mockUseTerminalSessions,
 }));
 
 vi.mock("../../../../lib/ghosttyCore", () => ({
@@ -120,10 +120,10 @@ afterEach(() => {
 it("refits the terminal rows to the visual viewport while the keyboard is raised", async () => {
   const user = userEvent.setup();
   window.localStorage.setItem("gobby:terminal:session-scope", "all");
-  mockUseTmuxSessions.mockReturnValue(
+  mockUseTerminalSessions.mockReturnValue(
     makeHookState({
       sessionsLoaded: true,
-      sessions: [makeTmuxSession({ name: "interactive" })],
+      sessions: [makeTerminalSession({ name: "interactive" })],
       attachedTarget: { terminal_id: "default:interactive" },
       streamingId: "stream-input",
     }),

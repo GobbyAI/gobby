@@ -32,7 +32,7 @@ export interface WatchingSessionEntry {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
-  hasTmux: boolean;
+  hasTerminal: boolean;
   sandboxEnabled: boolean;
   isLocal: boolean;
   blockedCount?: number;
@@ -113,11 +113,11 @@ function getSessionTypeBadge(sessionType: string | undefined): Badge {
   if (sessionType === "web_chat") {
     return { label: "web" };
   }
-  return { label: "tmux" };
+  return { label: "terminal" };
 }
 
-// The session's canonical kind. ACP rows replace the web/tmux chip with an
-// "ACP" chip so ACP reads as a first-class kind alongside WEB and TMUX.
+// The session's canonical kind. ACP rows replace the web/terminal chip with an
+// "ACP" chip so ACP reads as a first-class kind alongside WEB and TERMINAL.
 function getKindBadge(entry: WatchingSessionEntry): Badge {
   if (entry.acp) {
     return { label: "ACP" };
@@ -141,7 +141,7 @@ function getLocalBadge(entry: WatchingSessionEntry): Badge | null {
 }
 
 export function renderBadges(entry: WatchingSessionEntry) {
-  // The kind chip (web/tmux/ACP) leads, outside the alphabetical sort, so the
+  // The kind chip (web/terminal/ACP) leads, outside the alphabetical sort, so the
   // session's identity stays in a stable first position. Mode chips follow,
   // sorted, since their presence varies per row.
   const kindBadge = getKindBadge(entry);

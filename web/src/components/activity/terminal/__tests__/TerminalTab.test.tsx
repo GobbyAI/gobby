@@ -13,15 +13,15 @@ import type { TerminalViewHandle, TerminalViewProps } from "../TerminalView";
 import { TerminalTab } from "../TerminalTab";
 import {
   makeHookState,
-  makeTmuxSession,
+  makeTerminalSession,
   type HookResult,
 } from "./terminalTabFixtures";
 
-const mockUseTmuxSessions = vi.hoisted(() => vi.fn<() => HookResult>());
+const mockUseTerminalSessions = vi.hoisted(() => vi.fn<() => HookResult>());
 const terminalViewState = vi.hoisted(() => ({ mounts: 0 }));
 
-vi.mock("../../../../hooks/useTmuxSessions", () => ({
-  useTmuxSessions: mockUseTmuxSessions,
+vi.mock("../../../../hooks/useTerminalSessions", () => ({
+  useTerminalSessions: mockUseTerminalSessions,
 }));
 
 vi.mock("../TerminalSessionList", () => ({
@@ -44,8 +44,8 @@ vi.mock("../TerminalSessionList", () => ({
       >
         {sessions.map((session) => (
           <option
-            key={session.tmux.terminal_id}
-            value={session.tmux.terminal_id}
+            key={session.terminal.terminal_id}
+            value={session.terminal.terminal_id}
             data-external={session.external}
           >
             {session.label}
@@ -54,7 +54,7 @@ vi.mock("../TerminalSessionList", () => ({
       </select>
       {sessions.map((session) => (
         <button
-          key={`terminate-${session.tmux.terminal_id}`}
+          key={`terminate-${session.terminal.terminal_id}`}
           type="button"
           onClick={() => onTerminate(session)}
         >
@@ -175,7 +175,7 @@ let scrollListener: ((applied: TerminalScrollApplied) => void) | null;
 beforeEach(() => {
   window.sessionStorage.clear();
   window.localStorage.clear();
-  // Most fixtures are bare tmux panes; show every session unless a test
+  // Most fixtures are bare terminal panes; show every session unless a test
   // exercises the agents-only default explicitly.
   window.localStorage.setItem("gobby:terminal:session-scope", "all");
   outputListener = null;
@@ -193,8 +193,8 @@ beforeEach(() => {
       scrollListener = listener;
     }),
   });
-  mockUseTmuxSessions.mockReset();
-  mockUseTmuxSessions.mockImplementation(() => hookState);
+  mockUseTerminalSessions.mockReset();
+  mockUseTerminalSessions.mockImplementation(() => hookState);
 });
 
 describe("attach lifecycle", () => {
@@ -202,8 +202,8 @@ describe("attach lifecycle", () => {
     hookState = makeHookState({
       sessionsLoaded: true,
       sessions: [
-        makeTmuxSession({ name: "dead-shell", pane_dead: true }),
-        makeTmuxSession({ name: "agent", socket: "gobby" }),
+        makeTerminalSession({ name: "dead-shell", pane_dead: true }),
+        makeTerminalSession({ name: "agent", socket: "gobby" }),
       ],
     });
 
@@ -226,8 +226,8 @@ describe("attach lifecycle", () => {
     // the terminals-row identity, not the legacy socket-qualified key.
     const rowId = "22222222-3333-4444-8555-666666666666";
     const sessions = [
-      makeTmuxSession({ name: "one", socket: "default" }),
-      makeTmuxSession({ name: "two", socket: "gobby", terminal_id: rowId }),
+      makeTerminalSession({ name: "one", socket: "default" }),
+      makeTerminalSession({ name: "two", socket: "gobby", terminal_id: rowId }),
     ];
     hookState = makeHookState({ sessionsLoaded: true, sessions });
     const firstRender = render(<TerminalTab />);
@@ -268,7 +268,7 @@ describe("attach lifecycle", () => {
   it("selects the first row when every pane is dead and hides the keys bar", async () => {
     hookState = makeHookState({
       sessionsLoaded: true,
-      sessions: [makeTmuxSession({ name: "finished", pane_dead: true })],
+      sessions: [makeTerminalSession({ name: "finished", pane_dead: true })],
     });
 
     render(<TerminalTab />);
@@ -288,8 +288,8 @@ describe("attach lifecycle", () => {
 
   it("detaches before switching targets and filters globally broadcast output", async () => {
     const user = userEvent.setup();
-    const first = makeTmuxSession({ name: "one" });
-    const second = makeTmuxSession({ name: "two", socket: "gobby" });
+    const first = makeTerminalSession({ name: "one" });
+    const second = makeTerminalSession({ name: "two", socket: "gobby" });
     hookState = makeHookState({
       sessionsLoaded: true,
       sessions: [first, second],
@@ -342,10 +342,10 @@ describe("attach lifecycle", () => {
   });
 
   it("applies attach history before the first streamed output and drops stale windows", async () => {
-    const tmux = makeTmuxSession({ name: "one" });
+    const terminal = makeTerminalSession({ name: "one" });
     hookState = makeHookState({
       sessionsLoaded: true,
-      sessions: [tmux],
+      sessions: [terminal],
       attachedTarget: { terminal_id: "default:one" },
       streamingId: "run-one",
       onOutput: vi.fn((listener) => {
@@ -397,13 +397,13 @@ describe("attach lifecycle", () => {
       id: "focus-me",
       agent_run_id: "agent-run-7",
     });
-    const tmux = makeTmuxSession({
+    const terminal = makeTerminalSession({
       name: "agent-pane",
       socket: "gobby",
       agent_run_id: "agent-run-7",
       agent_managed: true,
     });
-    hookState = makeHookState({ sessions: [tmux], sessionsLoaded: false });
+    hookState = makeHookState({ sessions: [terminal], sessionsLoaded: false });
     const rendered = render(
       <TerminalTab
         sessions={[gobbySession]}
@@ -479,7 +479,7 @@ describe("attach lifecycle", () => {
       ...hookState,
       requestPending: false,
       createdSession: { terminal_id: "default:web-new" },
-      sessions: [makeTmuxSession({ name: "web-new", socket: "default" })],
+      sessions: [makeTerminalSession({ name: "web-new", socket: "default" })],
     };
     rendered.rerender(<TerminalTab />);
 
@@ -499,7 +499,7 @@ describe("attach lifecycle", () => {
     const onFocusHandled = vi.fn();
     hookState = makeHookState({
       sessionsLoaded: true,
-      sessions: [makeTmuxSession({ name: "fallback" })],
+      sessions: [makeTerminalSession({ name: "fallback" })],
     });
 
     render(
@@ -522,14 +522,14 @@ describe("attach lifecycle", () => {
 describe("ready handshake repaint", () => {
   it("keeps one renderer across replacements and retires the scrim on history", async () => {
     const user = userEvent.setup();
-    const tmux = makeTmuxSession({ name: "wide" });
+    const terminal = makeTerminalSession({ name: "wide" });
     const mountId = () =>
       screen
         .getByRole("log", { name: "Terminal output (read-only)" })
         .getAttribute("data-mount-id");
     hookState = makeHookState({
       sessionsLoaded: true,
-      sessions: [tmux],
+      sessions: [terminal],
       onAttachHistory: vi.fn((listener) => {
         historyListener = listener;
       }),
@@ -591,10 +591,10 @@ describe("ready handshake repaint", () => {
 
   it("requires fresh readiness when a reconnect reuses a stream id", async () => {
     const user = userEvent.setup();
-    const tmux = makeTmuxSession({ name: "reused" });
+    const terminal = makeTerminalSession({ name: "reused" });
     hookState = makeHookState({
       sessionsLoaded: true,
-      sessions: [tmux],
+      sessions: [terminal],
       attachedTarget: { terminal_id: "default:reused" },
       streamingId: "same-stream",
     });
@@ -632,10 +632,10 @@ describe("ready handshake repaint", () => {
 });
 
 describe("terminate action", () => {
-  it("kills the row's tmux session via the list terminate action", async () => {
+  it("kills the row's terminal session via the list terminate action", async () => {
     const user = userEvent.setup();
-    const tmux = makeTmuxSession({ name: "doomed", socket: "gobby" });
-    hookState = makeHookState({ sessionsLoaded: true, sessions: [tmux] });
+    const terminal = makeTerminalSession({ name: "doomed", socket: "gobby" });
+    hookState = makeHookState({ sessionsLoaded: true, sessions: [terminal] });
     render(<TerminalTab />);
 
     await user.click(
@@ -649,10 +649,10 @@ describe("terminate action", () => {
 describe("direct input", () => {
   it("forwards renderer input and quick-keys composer input without a gate", async () => {
     const user = userEvent.setup();
-    const tmux = makeTmuxSession({ name: "interactive" });
+    const terminal = makeTerminalSession({ name: "interactive" });
     hookState = makeHookState({
       sessionsLoaded: true,
-      sessions: [tmux],
+      sessions: [terminal],
       attachedTarget: { terminal_id: "default:interactive" },
       streamingId: "stream-input",
     });
@@ -673,7 +673,7 @@ describe("attach error and reconnect gating", () => {
   it("suppresses attach sends until the pending request clears", async () => {
     hookState = makeHookState({
       sessionsLoaded: true,
-      sessions: [makeTmuxSession({ name: "pending" })],
+      sessions: [makeTerminalSession({ name: "pending" })],
       requestPending: true,
     });
     const rendered = render(<TerminalTab />);
@@ -697,7 +697,7 @@ describe("attach error and reconnect gating", () => {
     const user = userEvent.setup();
     hookState = makeHookState({
       sessionsLoaded: true,
-      sessions: [makeTmuxSession({ name: "retry-me" })],
+      sessions: [makeTerminalSession({ name: "retry-me" })],
       attachError: "Permission denied",
     });
     const rendered = render(<TerminalTab />);
@@ -723,11 +723,14 @@ describe("attach error and reconnect gating", () => {
 
   it("uses the socket-qualified last attachment to detect a vanished reconnect target", async () => {
     const user = userEvent.setup();
-    const defaultShared = makeTmuxSession({
+    const defaultShared = makeTerminalSession({
       name: "shared",
       socket: "default",
     });
-    const gobbyShared = makeTmuxSession({ name: "shared", socket: "gobby" });
+    const gobbyShared = makeTerminalSession({
+      name: "shared",
+      socket: "gobby",
+    });
     hookState = makeHookState({
       sessionsLoaded: true,
       sessions: [defaultShared, gobbyShared],
@@ -785,7 +788,7 @@ describe("attach error and reconnect gating", () => {
   });
 
   it("retries once when a mid-attach target survives reconnect", async () => {
-    const target = makeTmuxSession({ name: "survivor" });
+    const target = makeTerminalSession({ name: "survivor" });
     hookState = makeHookState({ sessionsLoaded: true, sessions: [target] });
     const rendered = render(<TerminalTab />);
     await waitFor(() =>
@@ -808,7 +811,7 @@ describe("attach error and reconnect gating", () => {
   });
 
   it("ends when a mid-attach target is absent from the first reconnect list", async () => {
-    const target = makeTmuxSession({ name: "lost" });
+    const target = makeTerminalSession({ name: "lost" });
     hookState = makeHookState({ sessionsLoaded: true, sessions: [target] });
     const rendered = render(<TerminalTab />);
     await waitFor(() =>
@@ -826,7 +829,7 @@ describe("attach error and reconnect gating", () => {
       ...hookState,
       connected: true,
       sessionsLoaded: true,
-      sessions: [makeTmuxSession({ name: "replacement" })],
+      sessions: [makeTerminalSession({ name: "replacement" })],
     };
     rendered.rerender(<TerminalTab />);
 
@@ -845,7 +848,7 @@ describe("sticky Ctrl", () => {
     const user = userEvent.setup();
     hookState = makeHookState({
       sessionsLoaded: true,
-      sessions: [makeTmuxSession({ name: "interactive" })],
+      sessions: [makeTerminalSession({ name: "interactive" })],
       attachedTarget: { terminal_id: "default:interactive" },
       streamingId: "stream-input",
     });
@@ -873,8 +876,11 @@ describe("session scope", () => {
     hookState = makeHookState({
       sessionsLoaded: true,
       sessions: [
-        makeTmuxSession({ name: "tail" }),
-        makeTmuxSession({ name: "agent", gobby_session_id: "agent-session" }),
+        makeTerminalSession({ name: "tail" }),
+        makeTerminalSession({
+          name: "agent",
+          gobby_session_id: "agent-session",
+        }),
       ],
     });
     const first = render(<TerminalTab sessions={[agentSession]} />);
@@ -891,7 +897,7 @@ describe("session scope", () => {
     // so the second mount does not open on the "session ended" notice.
     hookState = makeHookState({
       sessionsLoaded: true,
-      sessions: [makeTmuxSession({ name: "tail" })],
+      sessions: [makeTerminalSession({ name: "tail" })],
     });
     window.localStorage.clear();
     window.sessionStorage.clear();
@@ -916,7 +922,7 @@ describe("session scope", () => {
     try {
       hookState = makeHookState({
         sessionsLoaded: true,
-        sessions: [makeTmuxSession({ name: "shell" })],
+        sessions: [makeTerminalSession({ name: "shell" })],
       });
       render(<TerminalTab />);
       expect(screen.getByLabelText("Terminal min cols")).toHaveTextContent("1");
@@ -932,7 +938,7 @@ describe("typing mode", () => {
   function interactiveHookState(): HookResult {
     return makeHookState({
       sessionsLoaded: true,
-      sessions: [makeTmuxSession({ name: "interactive" })],
+      sessions: [makeTerminalSession({ name: "interactive" })],
       attachedTarget: { terminal_id: "default:interactive" },
       streamingId: "stream-input",
     });
@@ -1114,7 +1120,9 @@ describe("native scroll offset", () => {
     hookState = makeHookState({
       ...hookState,
       sessionsLoaded: true,
-      sessions: [makeTmuxSession({ name: "gterm-shell", backend: "native" })],
+      sessions: [
+        makeTerminalSession({ name: "gterm-shell", backend: "native" }),
+      ],
       attachedTarget: { terminal_id: "default:gterm-shell" },
       streamingId: "stream-native",
     });
@@ -1296,42 +1304,19 @@ describe("native scroll offset", () => {
     expect(vi.mocked(hookState.setScrollOffset).mock.calls).toHaveLength(sent);
   });
 
-  it("leaves a tmux attachment on its own mouse-report path", async () => {
-    const user = userEvent.setup();
-    hookState = makeHookState({
-      ...hookState,
-      sessionsLoaded: true,
-      sessions: [makeTmuxSession({ name: "tmux-shell" })],
-      attachedTarget: { terminal_id: "default:tmux-shell" },
-      streamingId: "stream-tmux",
-    });
-    render(<TerminalTab />);
-    await user.click(screen.getByRole("button", { name: "Renderer ready" }));
-
-    // No offset for the pane means the renderer keeps the wheel and turns it
-    // into the SGR reports the tmux attach client already answers.
-    expect(screen.getByLabelText("Terminal scroll offset")).toHaveTextContent(
-      "none",
-    );
-    await user.click(screen.getByRole("button", { name: "Wheel back" }));
-    await user.click(screen.getByRole("button", { name: "Typed c" }));
-    expect(hookState.setScrollOffset).not.toHaveBeenCalled();
-    expect(hookState.sendInput).toHaveBeenCalledWith("c");
-  });
-
   it("holds the offset back until the attachment catches up with the selection", async () => {
     const user = userEvent.setup();
-    // The selection has moved to the gterm pane; the attachment is still the
-    // tmux one it is replacing. An offset sent now would address tmux.
+    // Selection moved to a new native pane while the old one is attached.
+    // Wait for the new attachment before sending its history offset.
     hookState = makeHookState({
       ...hookState,
       sessionsLoaded: true,
       sessions: [
-        makeTmuxSession({ name: "gterm-shell", backend: "native" }),
-        makeTmuxSession({ name: "tmux-shell" }),
+        makeTerminalSession({ name: "gterm-shell", backend: "native" }),
+        makeTerminalSession({ name: "terminal-shell" }),
       ],
-      attachedTarget: { terminal_id: "default:tmux-shell" },
-      streamingId: "stream-tmux",
+      attachedTarget: { terminal_id: "default:terminal-shell" },
+      streamingId: "stream-terminal",
     });
     const rendered = render(<TerminalTab />);
     await user.selectOptions(

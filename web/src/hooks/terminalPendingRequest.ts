@@ -1,17 +1,17 @@
-import type { TmuxTarget } from "./terminalRosterSnapshot";
+import type { TerminalTarget } from "./terminalRosterSnapshot";
 
 export type PendingRequest =
   | {
       kind: "attach";
       requestId: string;
       generation: number;
-      target: TmuxTarget;
+      target: TerminalTarget;
     }
   | {
       kind: "detach";
       requestId: string;
       generation: number;
-      nextTarget: TmuxTarget | null;
+      nextTarget: TerminalTarget | null;
     }
   | {
       kind: "create";

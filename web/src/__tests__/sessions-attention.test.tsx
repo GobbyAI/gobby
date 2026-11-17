@@ -59,7 +59,7 @@ vi.mock("../components/activity/SessionsTab.entries", () => ({
       inputTokens: 0,
       outputTokens: 0,
       totalTokens: 0,
-      hasTmux: false,
+      hasTerminal: false,
       sandboxEnabled: false,
       isLocal: false,
     },

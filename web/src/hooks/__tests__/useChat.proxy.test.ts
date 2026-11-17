@@ -276,7 +276,7 @@ describe("useChat proxy session messaging", () => {
         type: "send_to_cli_session_result",
         session_id: "sess-proxy",
         delivered: true,
-        delivery_method: "tmux",
+        delivery_method: "hook_piggyback",
         message_id: "db-msg-1",
         client_message_id: sentMsg.client_message_id,
       });

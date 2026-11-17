@@ -1,4 +1,4 @@
-import type { TmuxSession } from "../../../hooks/terminalRosterSnapshot";
+import type { TerminalSession } from "../../../hooks/terminalRosterSnapshot";
 import {
   getSessionLabelLines,
   getSessionRefLabel,
@@ -7,7 +7,7 @@ import {
 import type { GobbySession } from "../../../types/sessions";
 
 export interface JoinedTerminalSession {
-  tmux: TmuxSession;
+  terminal: TerminalSession;
   gobby: GobbySession | null;
   /** Derived head: the ref, plus `: definition` when the roster knows one. */
   label: string;
@@ -17,8 +17,8 @@ export interface JoinedTerminalSession {
   tickerText: string;
   provider: string | null;
   paneRef: string;
-  /** Terminal backend as the product names it: `tmux` or `gterm`. */
-  backendLabel: "tmux" | "gterm";
+  /** Native terminal host label. */
+  backendLabel: "gterm";
   dead: boolean;
   agentManaged: boolean;
   external: boolean;
@@ -30,10 +30,10 @@ const PROVIDER_COMMANDS = new Set(["claude", "codex", "droid", "grok", "agy"]);
 
 // Commands that mean "nothing interesting is running" — an idle shell titles
 // the pane by its cwd instead.
-const SHELL_COMMANDS = new Set(["zsh", "bash", "sh", "fish", "tmux", "login"]);
+const SHELL_COMMANDS = new Set(["zsh", "bash", "sh", "fish", "login"]);
 
-export function sessionKey(tmuxSession: TmuxSession): string {
-  return tmuxSession.terminal_id;
+export function sessionKey(terminalSession: TerminalSession): string {
+  return terminalSession.terminal_id;
 }
 
 function paneDirectory(panePath: string | null): string | null {
@@ -44,14 +44,14 @@ function paneDirectory(panePath: string | null): string | null {
 }
 
 // Title priority: Gobby session ref+title, then agent run name, then the
-// running app, then cwd basename, then the raw tmux session name.
+// running app, then cwd basename, then the raw terminal session name.
 type DisplayParts = Pick<
   JoinedTerminalSession,
   "label" | "refLabel" | "tickerText"
 >;
 
 function displayParts(
-  tmuxSession: TmuxSession,
+  terminalSession: TerminalSession,
   gobbySession: GobbySession | null,
   currentProjectId: string | null,
   rosterBySession: ReadonlyMap<string, SessionRosterLabel>,
@@ -69,42 +69,42 @@ function displayParts(
       tickerText: [definition, detail].filter(Boolean).join(" · "),
     };
   }
-  const label = externalLabel(tmuxSession);
+  const label = externalLabel(terminalSession);
   return { label, refLabel: null, tickerText: label };
 }
 
-function externalLabel(tmuxSession: TmuxSession): string {
-  if (tmuxSession.agent_managed) {
-    return tmuxSession.name;
+function externalLabel(terminalSession: TerminalSession): string {
+  if (terminalSession.agent_managed) {
+    return terminalSession.name;
   }
-  const rawCommand = tmuxSession.pane_command;
+  const rawCommand = terminalSession.pane_command;
   if (
     rawCommand &&
     !SHELL_COMMANDS.has(rawCommand.toLowerCase().replace(/^-/, ""))
   ) {
     return rawCommand;
   }
-  return paneDirectory(tmuxSession.pane_path) ?? tmuxSession.name;
+  return paneDirectory(terminalSession.pane_path) ?? terminalSession.name;
 }
 
 function providerFor(
-  tmuxSession: TmuxSession,
+  terminalSession: TerminalSession,
   gobbySession: GobbySession | null,
 ): string | null {
   const source = gobbySession?.source?.toLowerCase();
   if (source && PROVIDER_COMMANDS.has(source)) return source;
-  const command = tmuxSession.pane_command?.toLowerCase().replace(/^-/, "");
+  const command = terminalSession.pane_command?.toLowerCase().replace(/^-/, "");
   if (command && PROVIDER_COMMANDS.has(command)) return command;
   return null;
 }
 
 /**
- * Join tmux panes to their Gobby sessions. `currentProjectId` trims that
+ * Join terminal panes to their Gobby sessions. `currentProjectId` trims that
  * project's name off session refs (`gobby#12` → `#12`) because the panel is
  * already scoped to it; refs from other projects keep their name.
  */
-export function joinTmuxSessions(
-  tmuxSessions: TmuxSession[],
+export function joinTerminalSessions(
+  terminalSessions: TerminalSession[],
   gobbySessions: GobbySession[] | undefined,
   currentProjectId: string | null = null,
   rosterBySession: ReadonlyMap<string, SessionRosterLabel> = new Map(),
@@ -119,28 +119,35 @@ export function joinTmuxSessions(
     }
   }
 
-  return tmuxSessions.map((tmux) => {
+  return terminalSessions.map((terminal) => {
     let gobby: GobbySession | null = null;
-    if (tmux.session_id !== null) {
-      gobby = byId.get(tmux.session_id) ?? null;
+    if (terminal.session_id !== null) {
+      gobby = byId.get(terminal.session_id) ?? null;
     }
-    if (gobby === null && tmux.agent_run_id !== null) {
-      gobby = byAgentRunId.get(tmux.agent_run_id) ?? null;
+    if (gobby === null && terminal.agent_run_id !== null) {
+      gobby = byAgentRunId.get(terminal.agent_run_id) ?? null;
     }
 
-    const parts = displayParts(tmux, gobby, currentProjectId, rosterBySession);
+    const parts = displayParts(
+      terminal,
+      gobby,
+      currentProjectId,
+      rosterBySession,
+    );
     return {
-      tmux,
+      terminal,
       gobby,
       label: parts.label,
       refLabel: parts.refLabel,
       tickerText: parts.tickerText,
-      provider: providerFor(tmux, gobby),
-      paneRef: tmux.name,
-      backendLabel: tmux.backend === "native" ? "gterm" : "tmux",
+      provider: providerFor(terminal, gobby),
+      paneRef: terminal.name,
+      backendLabel: "gterm",
       dead:
-        tmux.pane_dead || tmux.state === "exited" || tmux.state === "orphaned",
-      agentManaged: tmux.ownership === "gobby" && gobby !== null,
+        terminal.pane_dead ||
+        terminal.state === "exited" ||
+        terminal.state === "orphaned",
+      agentManaged: terminal.ownership === "gobby" && gobby !== null,
       external: gobby === null,
     };
   });

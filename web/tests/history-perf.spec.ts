@@ -1,4 +1,4 @@
-// Pinned measurement behind ATTACH_HISTORY_LINES (src/gobby/agents/tmux/history.py).
+// Pinned measurement behind ATTACH_HISTORY_LINES (src/gobby/config/terminals.py).
 // The bound is a renderer budget, so it can only be justified by rendering: this
 // times a full window from the history frame landing to a settled scrollback, at
 // a 4x CPU throttle, one warm-up plus five samples, median, on both the Ghostty

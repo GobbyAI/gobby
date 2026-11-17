@@ -781,7 +781,7 @@ test.describe("Web Chat Restore And Plan Mode", () => {
               chat_mode: null,
               parent_session_id: null,
               session_type: "terminal",
-              terminal_context: { tmux_session: "stale" },
+              terminal_context: { gobby_terminal_id: "stale" },
             },
           }),
         });

@@ -7,21 +7,8 @@ export function hasTerminalLiveness(terminalContext: TerminalContext): boolean {
     return false;
   }
 
-  const tmuxPane = terminalContext.tmux_pane;
-  if (typeof tmuxPane === "string" && tmuxPane.length > 0) {
-    return true;
-  }
-
-  const parentPid = terminalContext.parent_pid;
-  if (typeof parentPid === "number") {
-    return Number.isFinite(parentPid) && parentPid > 0;
-  }
-  if (typeof parentPid === "string") {
-    const parsed = Number.parseInt(parentPid, 10);
-    return Number.isFinite(parsed) && parsed > 0;
-  }
-
-  return false;
+  const terminalId = terminalContext.gobby_terminal_id;
+  return typeof terminalId === "string" && terminalId.length > 0;
 }
 
 export function canProxyAttachSessionRecord(

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import type { TmuxSession } from "../../../../hooks/terminalRosterSnapshot";
+import type { TerminalSession } from "../../../../hooks/terminalRosterSnapshot";
 import type { SessionRosterLabel } from "../../../../lib/sessionLabel";
 import type { GobbySession } from "../../../../types/sessions";
 import {
   findByGobbySessionId,
-  joinTmuxSessions,
+  joinTerminalSessions,
   sessionKey,
 } from "../terminalSessions";
 
@@ -38,12 +38,14 @@ function makeGobbySession(overrides: Partial<GobbySession> = {}): GobbySession {
   };
 }
 
-function makeTmuxSession(overrides: Partial<TmuxSession> = {}): TmuxSession {
+function makeTerminalSession(
+  overrides: Partial<TerminalSession> = {},
+): TerminalSession {
   const name = overrides.name ?? "shell";
   const socket = overrides.socket ?? "default";
   return {
     terminal_id: overrides.terminal_id ?? `${socket}:${name}`,
-    backend: overrides.backend ?? "tmux",
+    backend: overrides.backend ?? "native",
     ownership:
       overrides.ownership ?? (socket === "gobby" ? "gobby" : "external"),
     state: overrides.state ?? "live",
@@ -67,7 +69,7 @@ function makeTmuxSession(overrides: Partial<TmuxSession> = {}): TmuxSession {
 }
 
 describe("terminal session helpers", () => {
-  it("joins tmux and gobby sessions", () => {
+  it("joins terminal and gobby sessions", () => {
     const userSession = makeGobbySession({
       id: "user-session",
       seq_num: 7,
@@ -79,14 +81,14 @@ describe("terminal session helpers", () => {
       ref: "gobby#8",
       agent_run_id: "run-8",
     });
-    const tmux = [
-      makeTmuxSession({
+    const terminal = [
+      makeTerminalSession({
         name: "user-shell",
         gobby_session_id: userSession.id,
         agent_managed: true,
       }),
-      makeTmuxSession({ name: "external-shell", pane_dead: true }),
-      makeTmuxSession({
+      makeTerminalSession({ name: "external-shell", pane_dead: true }),
+      makeTerminalSession({
         name: "agent-shell",
         socket: "gobby",
         gobby_session_id: "wrong-session",
@@ -94,45 +96,45 @@ describe("terminal session helpers", () => {
       }),
     ];
 
-    const joined = joinTmuxSessions(tmux, [userSession, agentSession]);
+    const joined = joinTerminalSessions(terminal, [userSession, agentSession]);
 
-    expect(sessionKey(tmux[0])).toBe("default:user-shell");
+    expect(sessionKey(terminal[0])).toBe("default:user-shell");
     expect(joined).toEqual([
       {
-        tmux: tmux[0],
+        terminal: terminal[0],
         gobby: userSession,
         label: "other-project#7",
         refLabel: "other-project#7",
         tickerText: "",
         provider: "codex",
         paneRef: "user-shell",
-        backendLabel: "tmux",
+        backendLabel: "gterm",
         dead: false,
         agentManaged: false,
         external: false,
       },
       {
-        tmux: tmux[1],
+        terminal: terminal[1],
         gobby: null,
         label: "external-shell",
         refLabel: null,
         tickerText: "external-shell",
         provider: null,
         paneRef: "external-shell",
-        backendLabel: "tmux",
+        backendLabel: "gterm",
         dead: true,
         agentManaged: false,
         external: true,
       },
       {
-        tmux: tmux[2],
+        terminal: terminal[2],
         gobby: agentSession,
         label: "gobby#8",
         refLabel: "gobby#8",
         tickerText: "",
         provider: "codex",
         paneRef: "agent-shell",
-        backendLabel: "tmux",
+        backendLabel: "gterm",
         dead: false,
         agentManaged: true,
         external: false,
@@ -140,7 +142,9 @@ describe("terminal session helpers", () => {
     ]);
     expect(findByGobbySessionId(joined, agentSession.id)).toBe(joined[2]);
     expect(findByGobbySessionId(joined, "missing")).toBeNull();
-    expect(joinTmuxSessions([tmux[1]], undefined)[0].external).toBe(true);
+    expect(joinTerminalSessions([terminal[1]], undefined)[0].external).toBe(
+      true,
+    );
   });
 
   it("trims the current project's name off refs and keeps other projects' names", () => {
@@ -169,11 +173,11 @@ describe("terminal session helpers", () => {
         },
       ],
     ]);
-    const joined = joinTmuxSessions(
+    const joined = joinTerminalSessions(
       [
-        makeTmuxSession({ name: "own", gobby_session_id: "own" }),
-        makeTmuxSession({ name: "foreign", gobby_session_id: "foreign" }),
-        makeTmuxSession({ name: "prov", gobby_session_id: "provisional" }),
+        makeTerminalSession({ name: "own", gobby_session_id: "own" }),
+        makeTerminalSession({ name: "foreign", gobby_session_id: "foreign" }),
+        makeTerminalSession({ name: "prov", gobby_session_id: "provisional" }),
       ],
       [own, foreign, provisional],
       "project-1",
@@ -202,22 +206,22 @@ describe("terminal session helpers", () => {
       seq_num: 11,
       agent_run_id: "run-11",
     });
-    const tmux = [
-      makeTmuxSession({
+    const terminal = [
+      makeTerminalSession({
         name: "same-name",
         socket: "default",
         gobby_session_id: userSession.id,
         agent_run_id: agentSession.agent_run_id,
         agent_managed: true,
       }),
-      makeTmuxSession({
+      makeTerminalSession({
         name: "same-name",
         socket: "gobby",
         gobby_session_id: null,
         session_id: null,
         agent_run_id: agentSession.agent_run_id,
       }),
-      makeTmuxSession({
+      makeTerminalSession({
         name: "pane-id-collision",
         socket: "default",
         gobby_session_id: null,
@@ -227,9 +231,9 @@ describe("terminal session helpers", () => {
       }),
     ];
 
-    const joined = joinTmuxSessions(tmux, [userSession, agentSession]);
+    const joined = joinTerminalSessions(terminal, [userSession, agentSession]);
 
-    expect(joined.map(({ tmux: row }) => sessionKey(row))).toEqual([
+    expect(joined.map(({ terminal: row }) => sessionKey(row))).toEqual([
       "default:same-name",
       "gobby:same-name",
       "default:pane-id-collision",
@@ -242,22 +246,26 @@ describe("terminal session helpers", () => {
     expect(findByGobbySessionId(joined, agentSession.id)).toBe(joined[1]);
   });
 
-  it("titles unmanaged panes by running app, then cwd, then tmux name", () => {
-    const tmux = [
-      makeTmuxSession({
+  it("titles unmanaged panes by running app, then cwd, then terminal name", () => {
+    const terminal = [
+      makeTerminalSession({
         name: "0",
         pane_command: "vim",
         pane_path: "/Users/dev/notes",
       }),
-      makeTmuxSession({
+      makeTerminalSession({
         name: "1",
         pane_command: "zsh",
         pane_path: "/Users/dev/projects/gobby",
       }),
-      makeTmuxSession({ name: "2", pane_command: "-bash", pane_path: null }),
+      makeTerminalSession({
+        name: "2",
+        pane_command: "-bash",
+        pane_path: null,
+      }),
     ];
 
-    const joined = joinTmuxSessions(tmux, []);
+    const joined = joinTerminalSessions(terminal, []);
 
     expect(joined[0].label).toBe("vim");
     expect(joined[1].label).toBe("gobby");
@@ -266,14 +274,18 @@ describe("terminal session helpers", () => {
   });
 
   it("derives the provider icon from the pane command for unmanaged panes", () => {
-    const joined = joinTmuxSessions(
+    const joined = joinTerminalSessions(
       [
-        makeTmuxSession({
+        makeTerminalSession({
           name: "0",
           pane_command: "claude",
           pane_path: "/tmp",
         }),
-        makeTmuxSession({ name: "1", pane_command: "htop", pane_path: "/tmp" }),
+        makeTerminalSession({
+          name: "1",
+          pane_command: "htop",
+          pane_path: "/tmp",
+        }),
       ],
       [],
     );
@@ -283,10 +295,10 @@ describe("terminal session helpers", () => {
     expect(joined[1].provider).toBeNull();
   });
 
-  it("titles agent-managed panes without a joined session by tmux name", () => {
-    const joined = joinTmuxSessions(
+  it("titles agent-managed panes without a joined session by terminal name", () => {
+    const joined = joinTerminalSessions(
       [
-        makeTmuxSession({
+        makeTerminalSession({
           name: "gobby-agent-refactor",
           socket: "gobby",
           agent_managed: true,

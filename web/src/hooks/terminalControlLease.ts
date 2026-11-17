@@ -26,7 +26,7 @@ import {
   terminalReleaseControlMessage,
   terminalTakeControlMessage,
   terminalWriteMessage,
-} from "./tmuxSessionMessages";
+} from "./terminalSessionMessages";
 
 /** The single keystroke or paste held while a take-control request is out. */
 export interface PendingWrite {

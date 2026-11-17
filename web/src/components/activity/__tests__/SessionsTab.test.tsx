@@ -116,12 +116,12 @@ const terminalHook = {
   onScrollOffsetApplied: vi.fn(),
 };
 
-vi.mock("../../../hooks/useTmuxSessions", () => ({
-  useTmuxSessions: () => ({
+vi.mock("../../../hooks/useTerminalSessions", () => ({
+  useTerminalSessions: () => ({
     sessions: [
       {
         terminal_id: "default:paused-pane",
-        backend: "tmux",
+        backend: "native",
         ownership: "external",
         state: "live",
         session_id: "paused-1",
@@ -305,7 +305,7 @@ function makeSession(overrides: Partial<GobbySession>): GobbySession {
     agent_run_id: null,
     parent_session_id: null,
     session_type: "terminal",
-    terminal_context: { tmux_pane: "%44" },
+    terminal_context: { gobby_terminal_id: "%44" },
     sandbox_enabled: false,
     sandbox_policy_hash: null,
     ...overrides,
@@ -411,7 +411,7 @@ const RUNNING_AGENT_SESSION = makeSession({
   seq_num: 206,
   agent_run_id: "run-running-1",
   updated_at: "2026-04-08T12:19:00Z",
-  terminal_context: { tmux_pane: "%46" },
+  terminal_context: { gobby_terminal_id: "%46" },
 });
 
 const PENDING_AGENT_SESSION = makeSession({
@@ -422,7 +422,7 @@ const PENDING_AGENT_SESSION = makeSession({
   seq_num: 207,
   agent_run_id: "run-pending-1",
   updated_at: "2026-04-08T12:20:00Z",
-  terminal_context: { tmux_pane: "%47" },
+  terminal_context: { gobby_terminal_id: "%47" },
 });
 
 const COMPLETED_AGENT_SESSION = makeSession({
@@ -433,7 +433,7 @@ const COMPLETED_AGENT_SESSION = makeSession({
   seq_num: 208,
   agent_run_id: "run-success-1",
   updated_at: "2026-04-08T12:21:00Z",
-  terminal_context: { tmux_pane: "%48" },
+  terminal_context: { gobby_terminal_id: "%48" },
 });
 
 const ERRORED_AGENT_SESSION = makeSession({
@@ -444,7 +444,7 @@ const ERRORED_AGENT_SESSION = makeSession({
   seq_num: 209,
   agent_run_id: "run-error-1",
   updated_at: "2026-04-08T12:22:00Z",
-  terminal_context: { tmux_pane: "%49" },
+  terminal_context: { gobby_terminal_id: "%49" },
 });
 
 const CANCELLED_AGENT_SESSION = makeSession({
@@ -455,7 +455,7 @@ const CANCELLED_AGENT_SESSION = makeSession({
   seq_num: 210,
   agent_run_id: "run-cancelled-1",
   updated_at: "2026-04-08T12:23:00Z",
-  terminal_context: { tmux_pane: "%50" },
+  terminal_context: { gobby_terminal_id: "%50" },
 });
 
 const PIPELINE_SESSION = makeSession({

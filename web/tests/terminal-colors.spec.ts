@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-interface TmuxSessionFixture {
+interface TerminalSessionFixture {
   terminal_id: string;
   name: string;
   socket: string;
@@ -29,7 +29,7 @@ const ANSI_OUTPUT =
     "Default foreground text for comparison",
   ].join("\r\n") + "\r\n";
 
-const MOCK_SESSIONS: TmuxSessionFixture[] = [
+const MOCK_SESSIONS: TerminalSessionFixture[] = [
   {
     terminal_id: "terminal-test-session",
     name: "test-session",
@@ -231,6 +231,31 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
         return;
       }
 
+      if (message.type === "terminal_take_control") {
+        ws.send(
+          JSON.stringify({
+            type: "terminal_control_result",
+            attachment_id: message.attachment_id,
+            granted: true,
+            lease_generation: 1,
+          }),
+        );
+        return;
+      }
+
+      if (message.type === "terminal_input") {
+        ws.send(
+          JSON.stringify({
+            type: "terminal_write_outcome",
+            attachment_id: message.attachment_id,
+            terminal_id: message.terminal_id,
+            client_write_seq: message.client_write_seq,
+            outcome: "delivered",
+          }),
+        );
+        return;
+      }
+
       if (message.type === "terminal_resize") {
         const streamingId = String(message.attachment_id);
         const terminalId = MOCK_SESSIONS.find(
@@ -239,6 +264,15 @@ async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
         if (!terminalId) return;
         if (!outputSent.has(streamingId)) {
           outputSent.add(streamingId);
+          ws.send(
+            JSON.stringify({
+              type: "terminal_attach_history",
+              attachment_id: streamingId,
+              text: "",
+              truncated: false,
+              unavailable: false,
+            }),
+          );
           ws.send(
             JSON.stringify({
               type: "terminal_output",

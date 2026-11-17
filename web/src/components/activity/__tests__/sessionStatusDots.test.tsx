@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { GobbySession } from "../../../types/sessions";
 import { SessionsEntryList } from "../SessionsTabList";
 import { TerminalSessionList } from "../terminal/TerminalSessionList";
-import { joinTmuxSessions } from "../terminal/terminalSessions";
+import { joinTerminalSessions } from "../terminal/terminalSessions";
 
 function makeSession(status: string, index: number): GobbySession {
   return {
@@ -51,7 +51,7 @@ function renderRows(
           inputTokens: 0,
           outputTokens: 0,
           totalTokens: 0,
-          hasTmux: true,
+          hasTerminal: true,
           sandboxEnabled: false,
           isLocal: true,
         }))}
@@ -68,10 +68,10 @@ function renderRows(
   }
   render(
     <TerminalSessionList
-      sessions={joinTmuxSessions(
+      sessions={joinTerminalSessions(
         sessions.map((session) => ({
           terminal_id: `terminal-${session.id}`,
-          backend: "tmux",
+          backend: "native",
           ownership: "gobby",
           state: "live",
           title: null,

@@ -27,7 +27,7 @@ describe("AgentStatusBar", () => {
     );
 
     expect(screen.getByText("Watching live")).toBeInTheDocument();
-    expect(screen.getByText("TMUX")).toBeInTheDocument();
+    expect(screen.getByText("TERMINAL")).toBeInTheDocument();
     expect(screen.queryByText("#77")).toBeNull();
     expect(screen.queryByText("Observed Session")).toBeNull();
     expect(screen.queryByText("gpt-5.4")).toBeNull();
@@ -102,7 +102,7 @@ describe("AgentStatusBar", () => {
     );
 
     expect(screen.getByText("Watching live")).toBeInTheDocument();
-    expect(screen.queryByText("TMUX")).toBeNull();
+    expect(screen.queryByText("TERMINAL")).toBeNull();
     expect(screen.queryByText("WEB")).toBeNull();
   });
 

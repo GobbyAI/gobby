@@ -19,18 +19,18 @@ describe("toolCallStatus", () => {
     expect(
       isSuccessfulToolCall({
         success: true,
-        result: { success: false, error: "tmux send-keys failed" },
+        result: { success: false, error: "send-keys failed" },
       }),
     ).toBe(false);
     expect(
       getToolCallError(
         {
           success: true,
-          result: { success: false, error: "tmux send-keys failed" },
+          result: { success: false, error: "send-keys failed" },
         },
         "Operation failed",
       ),
-    ).toBe("tmux send-keys failed");
+    ).toBe("send-keys failed");
   });
 
   it("falls back to the provided message when the tool response is opaque", () => {

@@ -7,7 +7,7 @@ const ENTRY = {
   id: "target-session",
   type: "cli" as const,
   label: "Target session",
-  hasTmux: false,
+  hasTerminal: false,
 };
 
 describe("SessionInteractionModal", () => {
