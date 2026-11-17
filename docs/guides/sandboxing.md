@@ -88,13 +88,13 @@ in #22103.
 Two explicit backends are supported:
 
 - `srt` wraps the complete provider command in one host-native process-tree
-  sandbox before tmux or a web-chat child starts. It is the default for both
+  sandbox before a native terminal or a web-chat child starts. It is the default for both
   `agent_sandbox` and `web_chat_sandbox`.
 - `provider-native` renders the provider's own sandbox flags. It remains an
   explicit rollout/debug override for managed agents or web chat.
 
 Backend selection never falls back. If SRT installation, policy validation, or
-preflight fails, the agent run fails before tmux creation. If a provider has no
+preflight fails, the agent run fails before terminal creation. If a provider has no
 provider-native renderer, selecting `provider-native` also fails closed.
 
 Operators who cannot run SRT can explicitly roll managed agents back to the
@@ -432,7 +432,7 @@ sandbox, without violation monitoring. The monitor cannot recover their lineage
 after reparenting; the closed shared socket refuses new subscriptions.
 
 Gobby constructs the complete Claude, Codex, Grok, Droid, or Antigravity command first,
-preflights SRT, and then wraps that argv exactly once before tmux creation.
+preflights SRT, and then wraps that argv exactly once before native terminal creation.
 Provider-native OS sandbox flags are omitted in SRT mode, while provider approval
 policies, tool permissions, MCP/browser/computer-use controls, authentication,
 worktree/clone isolation, resource limits, and hooks remain independent.
@@ -446,10 +446,10 @@ for delivery failure. Turn-level `Stop` is never critical. The authoritative
 registry is `crates/ghook/src/cli_config.rs`.
 
 The Gobby runner inherits stdin/stdout/stderr and forwards `SIGINT`, `SIGTERM`,
-`SIGHUP`, and `SIGWINCH` to the provider process. Tmux remains responsible for
+`SIGHUP`, and `SIGWINCH` to the provider process. The native terminal runtime owns
 detach/reattach, pane capture, resize delivery, provider/PID verification, and
 process-group cleanup. The SRT policy explicitly enables pseudo-terminal
-operations so host-native confinement does not block the active tmux PTY.
+operations so host-native confinement does not block the active PTY.
 Each launch also gets a mode-`0700` private temporary directory under its
 sandbox run directory. Gobby passes it to every provider child as `TMPDIR`, so
 anything the provider spawns (the `uv`-launched MCP bridge, for one) takes its

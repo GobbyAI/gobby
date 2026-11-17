@@ -13,7 +13,7 @@
 |---|---|---|
 | **Session** | #1810 | #1809 |
 | **Model** | Claude Opus 4.6 | Claude Opus 4.6 |
-| **Tmux Pane** | %91 | %90 |
+| **Recorded Pane ID** | %91 | %90 |
 | **Role** | Reviewer (2nd move) | Designer (1st move) |
 | **Result** | **WINNER** | Conceded (pardoned) |
 

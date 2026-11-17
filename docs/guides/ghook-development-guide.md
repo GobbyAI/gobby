@@ -76,7 +76,7 @@ inbox and HTTP transport:
 | `envelope.rs` | `Envelope` struct + `SCHEMA_VERSION = 1`. Serializes to the inbox JSON shape. |
 | `planned_shutdown.rs` | Planned shutdown markers: failed-POST suppression for Stop and pre-compact, and the restart check for spawned `post-tool-batch`. |
 | `transport.rs` | Inbox path resolution, atomic write, enqueue, POST + cleanup, quarantine for malformed stdin. |
-| `terminal_context.rs` | Captures parent PID, TTY, `TERM_PROGRAM`, and `GOBBY_*` env vars for lifecycle hooks, plus tmux pane/socket when valid. Injects under `input_data.terminal_context`. |
+| `terminal_context.rs` | Captures parent PID, TTY, `TERM_PROGRAM`, and `GOBBY_*` env vars for lifecycle hooks. Injects under `input_data.terminal_context`. |
 | `diagnose.rs` | `--diagnose` mode — pure introspection, no I/O side effects. Returns `DiagnoseOutput` matching `schemas/diagnose-output.v2.schema.json`. |
 | `detach.rs` | Unix `setsid(2)` / Windows `FreeConsole()` — best-effort detach from controlling TTY and process group. |
 
@@ -97,7 +97,7 @@ pub struct Envelope {
     pub enqueued_at: String,            // RFC 3339 UTC
     pub critical: bool,
     pub hook_type: String,              // host-CLI-specific
-    pub input_data: Value,              // stdin plus machine identity and optional tmux terminal_context
+    pub input_data: Value,              // stdin plus machine identity and optional terminal_context
     pub source: String,                 // "claude" / "codex" / "droid" / "grok" / "agy" / passthrough
     pub headers: BTreeMap<String, String>,
 }
@@ -157,8 +157,8 @@ pub struct DiagnoseOutput {
 ```
 
 The `terminal_context_preview` field is the actual context that *would* be
-injected for an enabled lifecycle hook. Invalid or missing tmux state appears
-as null tmux fields, so operators can inspect what the daemon will receive
+injected for an enabled lifecycle hook. Operators can inspect the process and
+native terminal identity that the daemon will receive
 without sending a real hook.
 
 `install_method` and `install_source_url` are sourced from the install-provenance sidecar described below. Both fields are `null` when no sidecar is present.
@@ -300,9 +300,8 @@ The drain never replays quarantined envelopes — they surface via `gobby status
 Captures the caller's process context for normalized `SessionStart`,
 `UserPromptSubmit`, `BeforeAgent`, `PreInvocation`, `SessionEnd`, `Stop`,
 `StopCancelled`, `AfterAgent`, `PostInvocation`, `SubagentStart`,
-`SubagentStop`, and `SubagentEnd` aliases. Tool hooks remain unenriched. `TMUX`
-must be set and `TMUX_PANE` must match `^%\d+$` for the tmux-specific fields;
-the pane value is passed through verbatim.
+`SubagentStop`, and `SubagentEnd` aliases. Tool hooks receive only minimal sender
+context: `parent_pid` and `gobby_agent_run_id`, preserving PID and run routing.
 
 The daemon receives terminal context from two producers: ghook's
 `build_context` on lifecycle hooks, and the MCP stdio proxy's
@@ -315,13 +314,9 @@ Producer column says which side emits each key.
 |-------|----------|--------|-------|
 | `parent_pid` | ghook, proxy | `libc::getppid()` (Unix) / null (Windows); `os.getppid()` | The host CLI's PID — daemon uses this to reconcile spawned-terminal agents. |
 | `tty` | ghook, proxy | `libc::ttyname(0)`; `TTY` env var | Controlling terminal device path. |
-| `tmux_pane` | ghook, proxy | `TMUX_PANE` env var, **ghook only if `TMUX` is set and the pane matches `^%\d+$`** | Sharp edge from dispatcher `:205` — `TMUX_PANE` is inherited by children spawned into *other* terminals (e.g. Ghostty), so emitting it without checking `TMUX` would point `kill_agent` at the parent's pane. A context carrying `tmux_pane` binds to its tmux row, never to an outer native terminal. |
-| `tmux_socket_path` | ghook, proxy | First comma-separated segment of `TMUX` | Mirror of `gobby.sessions.tmux_context.parse_tmux_socket_path`. |
-| `tmux_window_id`, `tmux_session` | ghook, proxy | `tmux display-message` for the pane; proxy also reads `TMUX_SESSION` | Null when tmux cannot be queried. |
-| `tmux_server_pid`, `tmux_server_start_time` | proxy | `query_tmux_generation` | Distinguishes a restarted tmux server that reuses a socket path. |
 | `term_program` | ghook, proxy | `TERM_PROGRAM` env var | |
 | `term_session_id` | proxy | `TERM_SESSION_ID` env var | |
-| `gobby_terminal_id` | ghook, proxy | `GOBBY_TERMINAL_ID` env var | Exported into every native pane Gobby spawns. `SESSION_START` binds a `terminal` session to that row unless the context also has `tmux_pane`. |
+| `gobby_terminal_id` | ghook, proxy | `GOBBY_TERMINAL_ID` env var | Exported into every native pane Gobby spawns. `SESSION_START` binds a `terminal` session to that row. |
 | `gobby_pane_ref` | ghook, proxy | `GOBBY_PANE_REF` env var | Workspace pane ref such as `0:0:1:2`, set on workspace pane spawns beside `GOBBY_TERMINAL_ID`; refs and the pane environment are described in the gclient user guide's [Workspaces](gclient-user-guide.md#workspaces) section and the rows in [gterm-protocols.md](../contracts/gterm-protocols.md#workspace-messages). |
 | `gobby_session_id`, `gobby_parent_session_id`, `gobby_agent_run_id`, `gobby_project_id`, `gobby_workflow_name` | ghook | Eponymous env vars | Set by the Gobby daemon when it spawns the host CLI; let us correlate hooks back to the spawning context. |
 | `gobby_acp_child` | ghook | `GOBBY_ACP_CHILD` env var | Lets `SESSION_START` drop registrations from daemon-spawned ACP subprocesses. |
@@ -333,8 +328,8 @@ Producer column says which side emits each key.
 
 An existing object-shaped `terminal_context` is merged. Provider fields are
 preserved, captured fields fill gaps, and `gobby_agent_run_id` always comes
-from ghook's process environment. Missing or invalid tmux data produces null
-tmux fields while the remaining process and Gobby context is still captured.
+from ghook's process environment. Process context is still captured when no
+native terminal identity is available.
 
 ## Detach Semantics
 
@@ -365,8 +360,8 @@ Each module has `#[cfg(test)] mod tests` with comprehensive coverage:
   missing or empty.
 - **cli_config.rs**: per-CLI critical-hook membership and case-insensitive lookup;
   unknown CLIs remain unrecognized for diagnose and are rejected by live dispatch.
-- **terminal_context.rs**: lifecycle alias normalization, tool-hook exclusion,
-  tmux socket-path parsing and pane validation, provider-context merging,
+- **terminal_context.rs**: lifecycle alias normalization, minimal tool-hook sender context,
+  native terminal identity capture, provider-context merging,
   non-object no-op behavior, and complete captured key coverage.
 
 ### Schema Validation in Tests
@@ -427,7 +422,7 @@ contract together in focused tests.
 
 Update the provider contract and `CliConfig` when adding a hook. Criticality
 comes from `critical_hooks`; terminal-context enrichment additionally requires
-a supported lifecycle hook, and tmux fields require valid tmux environment.
+a supported lifecycle hook.
 Provider response mapping and authentication still need contract tests.
 
 ## Diagnostic commands

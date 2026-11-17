@@ -173,7 +173,7 @@ Claude Code's `/fast` is the one in-session speed toggle, and it belongs to the
 user. `gobby-sessions:send_keys` refuses any payload whose first token is
 `/fast` with `send_keys_speed_command_forbidden`; `/faster` and the like still
 deliver. Two limits are worth stating rather than papering over: an agent can
-still reach a pane through `Bash` (`tmux send-keys`), and payload matching is
+still reach a pane through raw terminal-control commands in `Bash`, and payload matching is
 defeatable by splitting keystrokes across calls. This closes the obvious path
 and the one an agent would actually take; the general problem belongs to the
 agent-hardening work landing before 0.5.0.

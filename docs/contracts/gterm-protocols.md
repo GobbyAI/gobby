@@ -1,6 +1,7 @@
 # gterm Protocols
 
-Version 1 of the Gobby terminal host protocols. Changing a wire shape
+Frame protocol version 2 and control protocol version 1 of the Gobby terminal host
+protocols. Changing a wire shape
 regenerates `crates/gterminal/tests/fixtures/wire_golden/` in the same change.
 
 ## Sockets
@@ -9,7 +10,7 @@ The host binds two Unix sockets in `~/.gobby` (mode `0600`):
 
 | Socket | Speaks | Credential | Can write a PTY |
 | --- | --- | --- | --- |
-| `gterm-frames.sock` | length-prefixed bincode | startup bootstrap `api_key` | yes, on a stream with a bound attachment |
+| `gterm-frames.sock` | length-prefixed bincode | startup bootstrap `api_key` | yes, after `AttachTerminal` |
 | `gterm-control.sock` | newline-delimited JSON, spoken by the daemon | `~/.gobby/gterm-control.token` | yes |
 
 The API key is the frame stream's only credential, and it is what lets a
@@ -27,22 +28,22 @@ keep receiving frames. An empty or unreadable bootstrap key fails closed.
 
 Client → host:
 
-- `Hello { version, encoding, local_token, cols, rows, tmux_identity? }`
-- `AttachTerminal { host_terminal_id, reservation_id?, locator? }`
+- `Hello { version, encoding, local_token, cols, rows }`
+- `AttachTerminal { host_terminal_id, reservation_id? }`
 - `SetViewport { rows, cols }` — attachment-local render size, never `TIOCSWINSZ`
 - `SetScrollOffset { rows_from_live_edge }` — attachment-local scroll, never PTY input
 - `BindAttachment { attachment_id }` — the daemon attachment id this stream
   types as, which `input_activity` reports
-- `Input { data }` — bytes for the PTY, on a stream with a bound attachment
-- `Paste { text }` — bracketed by the host, on a stream with a bound attachment
+- `Input { data }` — bytes for the PTY after `AttachTerminal`
+- `Paste { text }` — bracketed by the host after `AttachTerminal`
 - `ReadText { start_rows_from_live_edge, start_col, end_rows_from_live_edge,
   end_col }` — plain text from a native pane's retained screen
 - `SetTerminalTheme { theme }` — the client's foreground, background and sparse
   palette, which the host uses for the child's OSC 10/11 answers and mode-2031
   reports; the control `spawn` takes the same `terminal_theme` object.
-  Only on a host advertising `terminal_theme`. A declaration comes from the stream
-  bound to its attachment, and the slot's theme is the newest declared theme among
-  the slot's attachments. A spawn starts with its own `terminal_theme`, else the
+  Only on a host advertising `terminal_theme`. Any authenticated stream may
+  declare a theme without `BindAttachment`; the newest declaration for the pane
+  wins. A spawn starts with its own `terminal_theme`, else the
   current theme of the live native pane its optional `theme_from` names (the
   daemon names the spawning session's pane), else unset, leaving OSC 10/11
   unanswered. An unknown, external or unthemed `theme_from` pane counts as unset
@@ -51,7 +52,7 @@ Client → host:
 Host → client:
 
 - `Welcome { host_epoch }`
-- `Attached { created, host_terminal_id }`
+- `Attached { created, host_terminal_id, host_attachment_id }`
 - `Frame(FrameData)` / `Terminal(TerminalFrame)` / `Graphics` / `AttachHistory`
 - `ScrollOffsetApplied { applied_rows, max_rows }`
 - `InputRefused { code }`
@@ -59,16 +60,13 @@ Host → client:
 - `TerminalExited` / `Error`
 
 `reservation_id` is required only for a daemon internal observer bind. User
-and tmux attaches omit it and never present a reservation. The daemon opens one
+attaches omit it and never present a reservation. The daemon opens one
 frames stream per observer bind and drains it: a later `AttachTerminal` on the
 same stream replaces that stream's attachment, and the host closes the stream
-when its terminal is removed or the reader lags out. Tmux attaches carry
-the pane `locator` (socket, server pid, start time, pane id). `Hello.tmux_identity`
-is the client's own pane, used to refuse recursive self-view. `FrameData.modes`
+when its terminal is removed or the reader lags out. `FrameData.modes`
 carries cursor, mouse, keypad, copy-mode, and kitty keyboard protocol flags so
-a mode change with no cell change still produces a frame. Typed refusals include
-`self_view`, `capacity`,
-`copy_mode`, and `stale`. Legacy herdr `Input` / `Resize` tags are rejected as
+a mode change with no cell change still produces a frame.
+Legacy herdr `Input` / `Resize` tags are rejected as
 `unknown_message` and never mutate a terminal: the live input verbs are appended
 after them, so a hand-built fork-point payload cannot alias one.
 
@@ -76,8 +74,8 @@ after them, so a hand-built fork-point payload cannot alias one.
 row), independent of the configured scrollback viewport cap. The host orders the
 two points, reads through Ghostty's plain-text formatter, and returns at most 1
 MiB from the head with `truncated: true` when the result is larger. It returns an
-`Error` on the same open stream: `attach_required` before an attach, `not_native`
-for a tmux attachment, `terminal_gone` after the pane disappears, or
+`Error` on the same open stream: `attach_required` before an attach,
+`terminal_gone` after the pane disappears, or
 `read_failed` when the emulator cannot read the retained screen.
 
 ### Input
@@ -95,7 +93,6 @@ it, so a refused key leaves output flowing:
 | Code | Meaning |
 | --- | --- |
 | `attach_required` | the stream has not attached a terminal yet |
-| `not_native` | the slot is a tmux pane, which types through its own renderer |
 | `request_too_large` | over `MAX_WRITE_BYTES` (1 MiB) |
 | `pty_busy` | the PTY write channel is full |
 | `terminal_gone` | the attachment or its terminal is gone |
@@ -190,25 +187,23 @@ unavailable. Golden messages live in `tests/fixtures/terminal_ws_golden/`.
 | `terminal_attach_result` | Daemon → client | Correlates `request_id`; success carries `terminal_id`, `attachment_id`, `backend`, `rows`, `cols`, `frame_delivery`, `lease_generation`, `direct`, and `host_capabilities` — what the host accepts beyond the base protocol on that route: the host's full list for direct delivery, `terminal_theme` alone for a proxied native pane whose host has it, else empty. Failure carries `success: false` and a typed `code`. |
 | `terminal_frame` | Daemon → client | Semantic proxy envelope: `terminal_id`, `attachment_id`, `encoding: "bincode-b64"`, and `payload` containing a base64-encoded bincode host message. Decode with the host wire codec; it is not ANSI text. |
 | `terminal_output` | Daemon → client | ANSI/text proxy envelope: `terminal_id`, `attachment_id`, and `data`. Browsers use the default `terminal_ansi` encoding. |
-| `terminal_list` | Client ↔ daemon | A request supplies `request_id` and optional filters/cursor: `project_id`, `limit`, and `states` (a list drawn from `pending`, `live`, `exited`, `orphaned`; default `pending` + `live`; anything else is a `terminal_error` with code `invalid_states`). A response carries `items`, `next_cursor`, and `snapshot: {daemon_epoch, seq}` (nullable in the wire shape). Each item carries `state`, `ownership`, `backend`, and `updated_at`; a row the tmux sweep matched also carries `name`, `socket`, `attached_clients` (`#{session_attached}`), and the `pane_*` fields. The first page's snapshot pins the lifecycle watermark for roster reconciliation. |
+| `terminal_list` | Client ↔ daemon | A request supplies `request_id` and optional filters/cursor: `project_id`, `limit`, and `states` (a list drawn from `pending`, `live`, `exited`, `orphaned`; default `pending` + `live`; anything else is a `terminal_error` with code `invalid_states`). A response carries `items`, `next_cursor`, and `snapshot: {daemon_epoch, seq}` (nullable in the wire shape). Each item carries `state`, `ownership`, `backend`, and `updated_at`. The first page's snapshot pins the lifecycle watermark for roster reconciliation. |
 | `terminal_event`, `terminal_lease_lost`, `terminal_attachment_finalized` | Daemon → client | Lifecycle messages carry `daemon_epoch` and `seq`. Apply events newer than the pinned snapshot in the same epoch; reconcile on an epoch change. |
-| `terminal_set_scroll_offset` | Client → daemon | `terminal_id`, `attachment_id`, `rows_from_live_edge`, and `max_rows` — the client's own ceiling belief, where 0 means "not known yet" and the daemon applies what was asked. Native only: the daemon clamps, forwards `SetScrollOffset` to the host, and gterm re-renders frames from the offset. A tmux attachment scrolls through the mouse reports its renderer already writes to the attach client, and must not send this. Both `gclient` and the web terminal drive it: `crates/gclient/src/app/live_loop/control.rs` and `web/src/components/activity/terminal/scrollOffset.ts`. |
+| `terminal_set_scroll_offset` | Client → daemon | `terminal_id`, `attachment_id`, `rows_from_live_edge`, and `max_rows` — the client's own ceiling belief, where 0 means "not known yet" and the daemon applies what was asked. The daemon clamps, forwards `SetScrollOffset` to the host, and gterm re-renders frames from the offset. Both `gclient` and the web terminal drive it: `crates/gclient/src/app/live_loop/control.rs` and `web/src/components/activity/terminal/scrollOffset.ts`. |
 | `terminal_set_theme` | Client → daemon | `terminal_id`, `attachment_id`, and `theme` (`{foreground, background, palette}` as `ThemeDeclaration` JSON). Proxied native attachments only, after the attach result advertised `terminal_theme`. The daemon checks the socket owns the attachment, binds its host stream to that attachment, and sends `SetTerminalTheme`. Refusals are `terminal_error` with `theme_not_relayed` or `invalid_terminal_theme`. `gclient` sends it from `crates/gclient/src/app/theme_sync.rs`. |
 | `terminal_take_control`, `terminal_release_control` | Client → daemon | `terminal_id` and `attachment_id`; a take also accepts `takeover` to displace the current holder. |
 | `terminal_focus` | Client → daemon | `terminal_id`, `attachment_id`, and `focused` (a boolean). No reply. A viewer state report, sent by `gclient` and the web terminal, that the daemon records on the attachment and clears on release, finalize, and takeover. Any live focused attachment counts for operator focus protection, including a direct native attachment without a writer lease. A stale attachment is ignored. |
-| `terminal_control_result` | Daemon → client | `attachment_id`, `granted`, `reason`, and `lease_generation`. A gclient attach using proxy delivery, or a tmux attach using direct delivery, sends a non-takeover `terminal_take_control` right after attaching. Daemon-routed writes require this lease. A direct native pane never takes and types over the frame socket. |
+| `terminal_control_result` | Daemon → client | `attachment_id`, `granted`, `reason`, and `lease_generation`. Daemon-routed writes require a writer lease. Native gclient input uses its direct host stream and takes no writer lease. |
 | `terminal_scroll_offset_applied` | Daemon → client | `terminal_id`, `attachment_id`, `applied_rows`, and `max_rows`. A proxied attachment sees it twice — the daemon's own clamp against the proposed ceiling, then the host's, relayed, which owns the real scrollback depth. Clients mirror the offset optimistically and reconcile to `applied_rows`, clamping later requests to `max_rows`. |
 
 For direct delivery, `terminal_attach_result.direct` contains
-`{host_epoch, frame_socket_path, host_terminal_id, pane}`. A native terminal has
-`pane: null`; a tmux terminal has
-`pane: {socket_path, pane_id, server_pid, server_start_time}`. The client connects
+`{host_epoch, frame_socket_path, host_terminal_id}`. The client connects
 to `frame_socket_path`, performs the host handshake, and verifies the host epoch
 before attaching. Proxy delivery returns `direct: null`.
 
 A direct native attachment types on its own frame stream with no daemon round
 trip per key and no lease. The writer lease still governs web and proxied
-attachments, tmux panes, PTY resize, and every automatic write, which go through
+attachments, PTY resize, and every automatic write, which go through
 the daemon's lease checks as before.
 
 The `terminal_list.snapshot` watermark is the daemon's published lifecycle
@@ -298,7 +293,8 @@ keystroke. `pty_busy` is the host's half of the same rule.
 
 ## Versioning
 
-`PROTOCOL_VERSION` is 1. A mismatch is a typed refusal; there is no silent
+`PROTOCOL_VERSION` is 2 for the frame protocol; the control protocol stays at version 1.
+A mismatch is a typed refusal; there is no silent
 fallback. Corpus regeneration: encode each listed message with the current
 encoder, write `tests/fixtures/wire_golden/*`, and keep the round-trip test
 green in the same commit.

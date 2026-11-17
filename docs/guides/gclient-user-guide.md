@@ -55,7 +55,7 @@ Logs go to `~/.gobby/logs/gclient.log`.
  3 |│  pane (focused)              ││  pane                            │
  4 |│                              ││                                  │
  5 |│                              ││                                  │
- 6 |└────────────── tmux · 0:0:1:1 ┘└───────────────────────── 0:0:1:2 ┘
+ 6 |└───────────────────── 0:0:1:1 ┘└───────────────────────── 0:0:1:2 ┘
  7 |                                              prefix ctrl+b
 
     The sidebar starts pinned beside the tabs and panes. Unpin it to use
@@ -311,11 +311,8 @@ bold in the accent, and a seat that needs you reads in the warning hue. The
 task title stays on the Agents row.
 Over-long pane titles share the Agents ticker. The bottom-left corner is
 empty. The bottom-right corner reads the sandbox lock on an SRT pane, then
-`tmux` for a tmux pane, then its address, joined by ` · `: `0:0:1:2` for a
-workspace pane, `tmux · 0:0:1:1` for a tmux pane the workspace holds,
-`tmux · %16` for a tmux pane it does not (its own tmux id), or the backend
-alone (`gclient`, `tmux`) until the address is known (see
-[Attach and control](#attach-and-control)). A red closed lock
+its workspace address, such as `0:0:1:2`. Until the address is known it shows
+`gclient` (see [Attach and control](#attach-and-control)). A red closed lock
 (`` U+F023, in the destructive hue) leads the address only when Gobby
 launched the pane under its SRT sandbox, meaning the agent run records the
 sandbox as enforced or the managed session's launch contract enabled it.
@@ -341,7 +338,7 @@ on the alternate screen and pins your latest prompt to the top row of its
 pane while the response scrolls beneath it. In a Gobby pane that prompt is
 often the daemon's wake text (`Message from Gobby daemon: New activity
 available.`), so it can look stuck under the pane header. That row is Codex's
-own drawing: the same bytes replayed into plain tmux, gterm, and gclient give
+own drawing: the same bytes replayed into gterm and gclient give
 identical screens, and Claude Code, Codex run with `--no-alt-screen`, and a
 shell all scroll their first row normally. gclient shows the pane as Codex
 drew it and leaves Codex's launch settings unchanged.
@@ -387,18 +384,16 @@ If a terminal has neither a name you gave it nor a foreground command, its
 short terminal address alone identifies it rather than a long UUID.
 
 Where two terminals share a name — most panes on a machine are running a shell
-— the address is what tells them apart: the pane's workspace ref (`0:0:0:1`),
-or the tmux pane id of an external tmux pane, which you can type straight into
-tmux. The address sits at the right edge of a Terminals row and leads the
+— the pane's workspace ref (`0:0:0:1`) is what tells them apart.
+The address sits at the right edge of a Terminals row and leads the
 navigator's detail.
 A session's provider
 (`claude`, `codex`, `droid`) is a token beside the address rather than the
 terminal's name.
 
 The daemon also reports a `title` for each terminal, which you will see as
-secondary text on a bare terminal row. It is not used as a name: tmux fills it
-from the window name, the pane title or the session name, so it is `zsh` for
-one pane and `75`, `[tmux]` or a whole session banner for the next.
+secondary text on a bare terminal row. That title is separate from the
+workspace pane name and may reflect the shell or application running there.
 
 ## Workspaces
 
@@ -447,13 +442,9 @@ the WebSocket workspace messages in
 
 A Ghostty tab, or any terminal window you opened yourself, runs a plain shell the
 daemon knows nothing about, and it cannot be adopted into a workspace later. Work
-the daemon should track starts in one of three places:
+the daemon should track starts in a native pane:
 
 - A `gclient` pane: open a tab or a split and run the command there.
-- A tmux session you start by hand on the default socket. The daemon lists it as
-  an external terminal, and `gclient` opens it in a pane with ownership
-  `external`, so `close_pane`, closing the tab, and `close terminal` on its
-  sidebar row all detach it rather than kill it.
 - A provider session resumed inside a `gclient` pane, for example
   `claude --resume <id>`. The session start binds it to the pane's terminal
   through `GOBBY_TERMINAL_ID`, it appears on the sidebar roster with backend
@@ -462,15 +453,21 @@ the daemon should track starts in one of three places:
 
 ## The prefix key
 
-Most chords start with a prefix, exactly like tmux. Press the prefix, release it,
-then press the second key.
+Most bindings use a two-key chord: press the prefix, release it, then press the
+second key.
 
 | Situation | Prefix |
 | --- | --- |
 | Running in a plain terminal | `ctrl+b` |
 
+Interactive `gclient` refuses to start when `GOBBY_PANE_ID` is nonempty:
+`gclient cannot run as a child of another gclient process`. Command mode,
+`--help`, and `--version` still work inside a pane. Open independent client
+windows from independent terminals.
+
 The status line always names the active prefix (`prefix ctrl+b` by default).
-Override the default with a `prefix = "..."` line in the keymap file
+If an outer terminal multiplexer already takes `ctrl+b`, override the default
+with a `prefix = "..."` line in the keymap file
 (see [Customising the keymap](#customising-the-keymap)).
 
 Pressing the prefix twice sends a literal prefix chord to the focused terminal.
@@ -579,14 +576,12 @@ shell in it, the daemon-owned tab takes its place and survives reattachment.
 Splitting a tab of bare terminals moves its current pane layout into the daemon
 workspace. Those existing terminals stay adopted; the new shell is owned.
 
-**Closing kills gobby's terminals, not yours.** `close_pane`, `close_terminal`,
-and `close tab` ask the daemon to kill a terminal gobby started. The terminal is
-not backgrounded and does not reappear in the sidebar. A tmux session you started
-yourself (the sidebar lists it because the daemon found it, ownership
-`external`) is detached, not killed: `close_pane`, `close tab`, and
-`close terminal` each take the pane out of the tab, and the session stays in the
-sidebar to reopen later. `close_pane` and `close tab` detach an adopted terminal
-the same way. Closing a tab kills every gobby-owned pane in it. With `Confirm close` on (the default),
+**Pane and tab close preserve adopted terminals.** `close_pane` and `close tab`
+ask the daemon to kill a terminal Gobby started. The terminal is not backgrounded
+and does not reappear in the sidebar. They detach an adopted native terminal
+without killing it. Explicit `close_terminal` kills the selected native terminal
+regardless of adoption. Closing a tab
+kills every gobby-owned pane in it. With `Confirm close` on (the default),
 closing a tab first opens a dialog that names the tab and counts its panes; `y`
 or `enter` confirms, `n` or `esc` cancels. If the daemon refuses a kill, that
 pane stays, and so does its tab.
@@ -607,10 +602,8 @@ workspace and survive detach and reattach.
 Every pane you open is *attached*: it receives frames and takes your typing.
 A native pane is writable at once: typing goes straight to its terminal, with no
 permission, no take-control step, and no grant from the daemon. Several gclient
-windows can type into the same native pane at once. A tmux pane, or a pane
-proxied through the daemon, takes one writer at a time: gclient claims that
-writer slot when it attaches, and a browser or another client takes it over
-explicitly.
+windows can type into the same native pane at once. Daemon-proxied viewers
+use the daemon's writer lease; native gclient input uses its direct host stream.
 
 | Pane title ends | Meaning |
 | --- | --- |
@@ -632,7 +625,7 @@ frames arrive on, whether or not the daemon is up. Nothing waits on the daemon
 between the key and the PTY, so a busy or slow daemon no longer stalls the
 window, and the daemon never gates that input.
 
-Tmux panes and remote panes type through the daemon. A native pane whose direct
+Remote proxy viewers type through the daemon. A native gclient pane whose direct
 connection fell back to `proxy` does not send keys through the daemon. It holds
 them: they wait for the pane's direct connection, then go out on its host stream.
 A key typed there asks for that connection at once rather than at its next
@@ -718,7 +711,7 @@ key leaves copy mode and goes to the terminal. Outside copy mode the same gestur
 works in the focused pane whenever its application is not tracking the mouse;
 `shift+drag` forces it even when the application is. Double-click selects a word,
 triple-click a line, each copying immediately. Direct native attachments read the
-off-screen range from gterm; proxy attachments and tmux panes copy the visible
+off-screen range from gterm; proxy attachments copy the visible
 frame or attach history available to the client.
 
 **Resize mode (`prefix+r`).** `h` / `j` / `k` / `l` or the arrow keys move the
@@ -897,9 +890,8 @@ close.
 `Send right-clicks to pane` flips a per-pane flag so the pane's application gets
 right-clicks; the `Right-click passthrough` setting does the same for every pane
 while its modifier is held. `Close terminal` acts on the row you right-clicked
-rather than on the focused pane, and on an external terminal (a tmux pane
-`gclient` never created) it detaches and drops the pane instead of
-killing it. `Close` on a project card kills every terminal in the
+rather than on the focused pane and asks the daemon to kill that native terminal,
+including an adopted terminal. `Close` on a project card kills every terminal in the
 project's tabs (after a confirm-close dialog) but leaves the project registered.
 `Delete worktree checkout…` kills the worktree's terminals and removes the
 checkout through the daemon. `Destroy orphaned terminals…` opens the dialog
@@ -996,16 +988,12 @@ through its input, and `prefix+shift+q` remains the way to quit.
 
 ### Orphaned terminals
 
-Two kinds of terminal row outlive their usefulness, and the client can destroy
-both from one place:
+A native terminal row can outlive its host, and the client can destroy it:
 
-- A native terminal whose host epoch is gone (the daemon marks the row
-  `orphaned`). Its agent row shows the `✕` glyph in the sidebar, as any row with
-  no live agents does, and its context menu offers
-  `Destroy orphaned terminal` in place of `Close terminal`.
-- A tmux session on the default or gobby socket with no attached client, for
-  example one you started by hand and detached from. Gobby-owned agent sessions
-  are always detached and are never listed.
+When the host epoch is gone, the daemon marks the row `orphaned`. Its agent
+row shows the `✕` glyph in the sidebar, as any row with no live agents does,
+and its context menu offers `Destroy orphaned terminal` in place of
+`Close terminal`.
 
 Choose **File › Destroy orphaned terminals…** or the same item on the empty
 chrome context menu. The client fetches the current candidates from the daemon
