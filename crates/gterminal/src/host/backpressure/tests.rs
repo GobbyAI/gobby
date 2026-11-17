@@ -21,7 +21,7 @@ use crate::host::state::{insert_native_slot, Attachment, HostState};
 use crate::host::{control, frames};
 use crate::protocol::{
     CellData, FrameData, PaneModes, RenderEncoding, ServerMessage, TerminalFrame,
-    DELTA_QUEUE_BYTES, MAX_DELTA_QUEUE_BYTES, MAX_FRAME_SIZE, PROTOCOL_VERSION,
+    DELTA_QUEUE_BYTES, MAX_DELTA_QUEUE_BYTES, MAX_FRAME_SIZE,
 };
 
 const CONTROL_TOKEN: &str = "test-control-token";
@@ -83,7 +83,7 @@ impl ControlPeer {
             "id": "hello",
             "method": "hello",
             "control_token": CONTROL_TOKEN,
-            "protocol_version": PROTOCOL_VERSION,
+            "protocol_version": control::PROTOCOL_VERSION,
         }))
         .await;
         let ack = peer

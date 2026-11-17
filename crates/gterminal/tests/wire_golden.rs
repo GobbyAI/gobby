@@ -2,9 +2,8 @@
 
 use gobby_terminal::protocol::{
     encode_control_json, write_message, CellData, ClientMessage, CursorState, FrameData,
-    PaneLocator, RenderEncoding, ServerMessage, SnapshotMode, TerminalFrame, TmuxClientIdentity,
-    MAX_CELLS, MAX_COLS, MAX_FRAME_SIZE, MAX_ROWS, MIN_COLS, MIN_ROWS, PROTOCOL_VERSION,
-    WORST_CELL_BYTES,
+    RenderEncoding, ServerMessage, SnapshotMode, TerminalFrame, MAX_CELLS, MAX_COLS,
+    MAX_FRAME_SIZE, MAX_ROWS, MIN_COLS, MIN_ROWS, PROTOCOL_VERSION, WORST_CELL_BYTES,
 };
 use gobby_terminal::terminal_theme::{RgbColor, ThemeDeclaration};
 use std::fs;
@@ -47,12 +46,6 @@ fn hello() -> ClientMessage {
         local_token: "local-token".into(),
         cols: 80,
         rows: 24,
-        tmux_identity: Some(TmuxClientIdentity {
-            socket_path: "/tmp/tmux-sock".into(),
-            server_pid: 9,
-            server_start_time: 1,
-            pane_id: "%0".into(),
-        }),
     }
 }
 
@@ -70,12 +63,6 @@ fn golden_corpus_bytes_and_fragmented_reads() {
         &ClientMessage::AttachTerminal {
             host_terminal_id: "ht-1".into(),
             reservation_id: None,
-            locator: Some(PaneLocator {
-                socket_path: "/tmp/tmux-sock".into(),
-                server_pid: 9,
-                server_start_time: 1,
-                pane_id: "%0".into(),
-            }),
         },
     );
     write_bin(
@@ -83,7 +70,6 @@ fn golden_corpus_bytes_and_fragmented_reads() {
         &ClientMessage::AttachTerminal {
             host_terminal_id: "ht-1".into(),
             reservation_id: Some("rsv-1".into()),
-            locator: None,
         },
     );
     write_bin(
@@ -367,27 +353,6 @@ fn golden_corpus_covers_pane_attach() {
         },
     );
     write_bin(
-        "error_self_view.bin",
-        &ServerMessage::Error {
-            code: "self_view".into(),
-            message: None,
-        },
-    );
-    write_bin(
-        "error_copy_mode.bin",
-        &ServerMessage::Error {
-            code: "copy_mode".into(),
-            message: None,
-        },
-    );
-    write_bin(
-        "error_stale.bin",
-        &ServerMessage::Error {
-            code: "stale".into(),
-            message: None,
-        },
-    );
-    write_bin(
         "error_capacity.bin",
         &ServerMessage::Error {
             code: "capacity".into(),
@@ -400,9 +365,6 @@ fn golden_corpus_covers_pane_attach() {
         "attach_terminal_reserved.bin",
         "attach_terminal_created.bin",
         "attach_history.bin",
-        "error_self_view.bin",
-        "error_copy_mode.bin",
-        "error_stale.bin",
         "error_capacity.bin",
     ] {
         let bytes = fs::read(dir().join(name)).unwrap();

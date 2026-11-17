@@ -79,7 +79,6 @@ class HostListRow:
     observation_state: str = "live"
     observation_reason: str | None = None
     observation_generation: int = 1
-    tmux_history_bytes: int = 0
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any]) -> HostListRow:
@@ -104,7 +103,6 @@ class HostListRow:
                 str(reason) if (reason := raw.get("observation_reason")) is not None else None
             ),
             observation_generation=int(raw.get("observation_generation") or 1),
-            tmux_history_bytes=int(raw.get("tmux_history_bytes") or 0),
         )
 
 

@@ -3,7 +3,7 @@
 //! The host drops a native slot when its child exits, and the slot holds the
 //! only copy of what the child printed. A caller that learns of the exit a
 //! poll late would otherwise read nothing, so the host keeps each retired
-//! terminal's last text for a short window, like tmux's remain-on-exit.
+//! terminal's last text for a short window, with retained output after exit.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};

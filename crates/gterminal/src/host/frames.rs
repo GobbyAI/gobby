@@ -10,12 +10,11 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufR
 use tokio::net::UnixStream;
 
 use super::backpressure::FrameMailbox;
-use super::embed::{self, AttachOutcome};
 use super::state::HostState;
 use super::write::NativeInput;
 use crate::protocol::{
     check_client_version, read_message, validate_dimensions, write_message, ClientMessage,
-    FramingError, ServerMessage, TmuxClientIdentity, VersionCheck, MAX_FRAME_SIZE, MAX_WRITE_BYTES,
+    FramingError, ServerMessage, VersionCheck, MAX_FRAME_SIZE, MAX_WRITE_BYTES,
 };
 
 const PEER_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -64,7 +63,6 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
         local_token,
         cols,
         rows,
-        tmux_identity,
     } = hello
     else {
         let _ = write_frame(
@@ -114,7 +112,6 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
         return;
     }
     let encoding = enc;
-    let client_identity: Option<TmuxClientIdentity> = tmux_identity;
     let mut viewport = (rows, cols);
     if write_frame(
         &mut writer,
@@ -156,33 +153,24 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     ClientMessage::AttachTerminal {
                         host_terminal_id,
                         reservation_id,
-                        locator,
                     } => {
-                        match embed::attach_frame(
-                            &state,
+                        match state.attach(
                             &host_terminal_id,
                             reservation_id,
-                            locator,
-                            client_identity.clone(),
-                            encoding,
+                                encoding,
                             viewport.0,
                             viewport.1,
                         )
                         .await
                         {
-                            Ok(AttachOutcome {
-                                attachment_id: id,
-                                host_terminal_id: assigned,
-                                created,
-                                rx,
-                            }) => {
+                            Ok((id, rx)) => {
                                 attachment_id = Some(id);
                                 out_rx = Some(rx);
                                 let _ = write_frame(
                                     &mut writer,
                                     &ServerMessage::Attached {
-                                        created,
-                                        host_terminal_id: assigned,
+                                        created: false,
+                                        host_terminal_id,
                                         host_attachment_id: id,
                                     },
                                 )
@@ -302,7 +290,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     }
                     ClientMessage::Detach => {
                         if let Some(id) = attachment_id.take() {
-                            embed::detach_frame(&state, id).await;
+                            state.detach(id).await;
                         }
                         out_rx = None;
                     }
@@ -349,7 +337,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
         }
     }
     if let Some(id) = attachment_id {
-        embed::detach_frame(&state, id).await;
+        state.detach(id).await;
     }
     if let Err(error) = writer.shutdown().await {
         tracing::debug!(%error, "frame connection write shutdown failed");

@@ -166,7 +166,7 @@ fn carried_pane(
         dropped_bytes: 1,
         total_bytes: 11,
         truncated: false,
-        locator: None,
+
         reported_cwd: None,
         reservation_id: format!("res-{index}"),
         reserve_key: format!("key-{index}"),
@@ -328,7 +328,7 @@ async fn stage_rebuilds_generation_attempt_and_registry() {
         dropped_bytes: 1,
         total_bytes: 11,
         truncated: false,
-        locator: None,
+
         reported_cwd: None,
         reservation_id: "res-17".into(),
         reserve_key: "key-17".into(),

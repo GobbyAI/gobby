@@ -124,15 +124,17 @@ impl HostState {
                     _ => err("not_found"),
                 };
             };
-            let Some(slot) = inner.terminals.get(identity) else {
+            if !inner.terminals.contains_key(identity) {
                 return err("not_found");
-            };
-            if slot.locator.is_some() {
-                return err("not_native");
             }
+
             #[cfg(feature = "vt-engine")]
             {
-                let Some(child) = slot.child.as_ref() else {
+                let Some(child) = inner
+                    .terminals
+                    .get(identity)
+                    .and_then(|slot| slot.child.as_ref())
+                else {
                     return snapshot_reply(mode, truncate_snapshot("", max_lines, max_bytes));
                 };
                 terminal = child.runtime.terminal_handle();

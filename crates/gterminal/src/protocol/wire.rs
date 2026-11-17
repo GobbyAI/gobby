@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------------------
 
 /// Current protocol version. Bumped when wire format changes incompatibly.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Maximum allowed frame payload size (2 MB). Frames larger than this are
 /// rejected to prevent denial-of-service via oversized length prefixes.
@@ -31,7 +31,7 @@ pub const MIN_COLS: u16 = 1;
 pub const MAX_ROWS: u16 = 1024;
 pub const MAX_COLS: u16 = 1024;
 
-/// OSC / tmux title cap (UTF-8 bytes) on a code-point boundary.
+/// OSC title cap (UTF-8 bytes) on a code-point boundary.
 pub const TITLE_MAX_BYTES: usize = 1024;
 
 /// Raw UTF-8 cap for control `write` / `paste` payloads.
@@ -100,27 +100,12 @@ pub const MAX_MAX_ATTACHMENTS_PER_TERMINAL: u32 = 8;
 pub const DEFAULT_MAX_ATTACHMENTS_TOTAL: u32 = 128;
 pub const MIN_MAX_ATTACHMENTS_TOTAL: u32 = 4;
 pub const MAX_MAX_ATTACHMENTS_TOTAL: u32 = 128;
-pub const DEFAULT_MAX_ATTACHED_TERMINALS: u32 = 64;
-pub const MIN_MAX_ATTACHED_TERMINALS: u32 = 1;
-pub const MAX_MAX_ATTACHED_TERMINALS: u32 = 64;
 pub const DEFAULT_NATIVE_SCROLLBACK_MAX_LINES: u32 = 10_000;
 pub const MIN_NATIVE_SCROLLBACK_MAX_LINES: u32 = 500;
 pub const MAX_NATIVE_SCROLLBACK_MAX_LINES: u32 = 50_000;
 pub const DEFAULT_NATIVE_SCROLLBACK_MAX_BYTES: u32 = 8 * 1024 * 1024;
 pub const MIN_NATIVE_SCROLLBACK_MAX_BYTES: u32 = 256 * 1024;
 pub const MAX_NATIVE_SCROLLBACK_MAX_BYTES: u32 = 32 * 1024 * 1024;
-pub const DEFAULT_TMUX_ATTACH_HISTORY_LINES: u32 = 500;
-pub const MIN_TMUX_ATTACH_HISTORY_LINES: u32 = 1;
-pub const MAX_TMUX_ATTACH_HISTORY_LINES: u32 = 2_000;
-pub const DEFAULT_TMUX_ATTACH_HISTORY_MAX_BYTES: u32 = 256 * 1024;
-pub const MIN_TMUX_ATTACH_HISTORY_MAX_BYTES: u32 = 1024;
-pub const MAX_TMUX_ATTACH_HISTORY_MAX_BYTES: u32 = 256 * 1024;
-pub const DEFAULT_TMUX_POLL_INTERVAL_MS: u32 = 150;
-pub const MIN_TMUX_POLL_INTERVAL_MS: u32 = 50;
-pub const MAX_TMUX_POLL_INTERVAL_MS: u32 = 5_000;
-pub const DEFAULT_TMUX_POLL_BACKOFF_CEILING_MS: u32 = 5_000;
-pub const MIN_TMUX_POLL_BACKOFF_CEILING_MS: u32 = 150;
-pub const MAX_TMUX_POLL_BACKOFF_CEILING_MS: u32 = 30_000;
 
 /// Maximum allowed server-to-client frame payload when Kitty graphics are enabled.
 /// Normal traffic keeps `MAX_FRAME_SIZE`; this larger cap is only for explicit

@@ -1,4 +1,4 @@
-"""Python frame client vs the 3.2 golden corpus (plan 4.1.8)."""
+"""Python frame client against the Rust wire golden corpus."""
 
 from __future__ import annotations
 
@@ -21,6 +21,22 @@ from gobby.terminals.host_client import HostEpochChangedError, HostNotAdoptedErr
 
 pytestmark = pytest.mark.unit
 
+
+def test_hello_v2_round_trips() -> None:
+    hello = {
+        "type": "hello",
+        "version": 2,
+        "encoding": "semantic_frame",
+        "local_token": "local-token",
+        "cols": 80,
+        "rows": 24,
+    }
+    # Version 2 ends at the dimensions, with no optional identity byte.
+    expected = b"\x11\x00\x00\x00\x00\x02\x00\x0blocal-token\x50\x18"
+    assert encode_frame(hello) == expected
+    assert decode_frame(expected) == hello
+
+
 GOLDEN = (
     Path(__file__).resolve().parents[2]
     / "crates"
@@ -38,17 +54,11 @@ def _golden(name: str) -> bytes:
 def test_frame_client_matches_golden_corpus() -> None:
     hello = {
         "type": "hello",
-        "version": 1,
+        "version": 2,
         "encoding": "semantic_frame",
         "local_token": "local-token",
         "cols": 80,
         "rows": 24,
-        "tmux_identity": {
-            "socket_path": "/tmp/tmux-sock",
-            "server_pid": 9,
-            "server_start_time": 1,
-            "pane_id": "%0",
-        },
     }
     assert encode_frame(hello) == _golden("hello.bin")
     welcome = decode_frame(_golden("welcome.bin"))
@@ -59,19 +69,12 @@ def test_frame_client_matches_golden_corpus() -> None:
         "type": "attach_terminal",
         "host_terminal_id": "ht-1",
         "reservation_id": None,
-        "locator": {
-            "socket_path": "/tmp/tmux-sock",
-            "server_pid": 9,
-            "server_start_time": 1,
-            "pane_id": "%0",
-        },
     }
     assert encode_frame(unreserved) == _golden("attach_terminal.bin")
     reserved = {
         "type": "attach_terminal",
         "host_terminal_id": "ht-1",
         "reservation_id": "rsv-1",
-        "locator": None,
     }
     assert encode_frame(reserved) == _golden("attach_terminal_reserved.bin")
     assert encode_frame({"type": "set_viewport", "rows": 24, "cols": 80}) == _golden(
@@ -181,34 +184,29 @@ async def test_frame_client_epoch_attach_and_queue() -> None:
 
 def test_bincode_varint_encodes_values_above_127() -> None:
     payload = {
-        "type": "attach_terminal",
-        "host_terminal_id": "ht-1",
-        "reservation_id": None,
-        "locator": {
-            "socket_path": "/tmp/tmux-sock",
-            "server_pid": 18789,
-            "server_start_time": 1787291792,
-            "pane_id": "%0",
-        },
+        "type": "hello",
+        "version": 2,
+        "encoding": "semantic_frame",
+        "local_token": "t" * 70000,
+        "cols": 300,
+        "rows": 24,
     }
-    decoded = decode_frame(encode_frame(payload))
-    assert decoded["locator"]["server_pid"] == 18789
-    assert decoded["locator"]["server_start_time"] == 1787291792
+    encoded = encode_frame(payload)
+    assert decode_frame(encoded) == payload
+    assert encoded[7:12] == b"\xfc\x70\x11\x01\x00"
+    assert encoded.endswith(b"\xfb\x2c\x01\x18")
     # Bincode-2 single-byte varints go up to 250; protobuf uleb128 would split at 128.
     small = encode_frame(
         {
-            "type": "attach_terminal",
-            "host_terminal_id": "ht-1",
-            "reservation_id": None,
-            "locator": {
-                "socket_path": "/tmp/tmux-sock",
-                "server_pid": 64,
-                "server_start_time": 1,
-                "pane_id": "%0",
-            },
+            "type": "hello",
+            "version": 2,
+            "encoding": "semantic_frame",
+            "local_token": "token",
+            "cols": 128,
+            "rows": 24,
         }
     )
-    assert b"\x80\x01" not in small
+    assert small.endswith(b"\x80\x18")
 
 
 def test_frame_client_has_no_write_method() -> None:
@@ -255,7 +253,7 @@ async def test_default_handshake_reads_bootstrap_key_fresh(
             encode_frame(
                 {
                     "type": "hello",
-                    "version": 1,
+                    "version": 2,
                     "encoding": "semantic_frame",
                     "local_token": expected,
                     "cols": 80,
@@ -282,14 +280,14 @@ async def test_handshake_failure_names_the_host_error_code() -> None:
             return None
 
     incoming = asyncio.StreamReader()
-    incoming.feed_data(_golden("error_stale.bin"))
+    incoming.feed_data(_golden("error_capacity.bin"))
     client = FrameClient(incoming, cast(Any, _Writer()))
     locator = AttachLocator(backend="native", frame_host_epoch="epoch-1", host_terminal_id="ht-1")
 
     with pytest.raises(FrameProtocolError) as failure:
         await client.handshake(locator, local_token="token")
 
-    assert "stale" in str(failure.value)
+    assert "capacity" in str(failure.value)
 
 
 class _RecordingWriter:

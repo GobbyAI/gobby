@@ -1,7 +1,7 @@
 use gobby_terminal::protocol::{
     read_message, read_message_async, write_message, write_message_async, CellData, ClientMessage,
-    CursorState, FrameData, FramingError, PaneLocator, PaneModes, RenderEncoding, ServerMessage,
-    TerminalFrame, TmuxClientIdentity, MAX_FRAME_SIZE, PROTOCOL_VERSION,
+    CursorState, FrameData, FramingError, PaneModes, RenderEncoding, ServerMessage, TerminalFrame,
+    MAX_FRAME_SIZE, PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt::Debug;
@@ -101,12 +101,6 @@ fn client_messages() -> Vec<ClientMessage> {
             local_token: "token".into(),
             cols: 80,
             rows: 24,
-            tmux_identity: Some(TmuxClientIdentity {
-                socket_path: "/tmp/tmux".into(),
-                server_pid: 7,
-                server_start_time: 9,
-                pane_id: "%1".into(),
-            }),
         },
         ClientMessage::LegacyInput { data: vec![1, 2] },
         ClientMessage::LegacyClipboard {
@@ -123,12 +117,6 @@ fn client_messages() -> Vec<ClientMessage> {
         ClientMessage::AttachTerminal {
             host_terminal_id: "host-1".into(),
             reservation_id: None,
-            locator: Some(PaneLocator {
-                socket_path: "/tmp/tmux".into(),
-                server_pid: 7,
-                server_start_time: 9,
-                pane_id: "%1".into(),
-            }),
         },
         ClientMessage::SetViewport {
             rows: 42,

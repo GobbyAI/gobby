@@ -146,7 +146,6 @@ async fn cut_direct_source(epoch: &str) -> PaneFrameSource {
         frame_host_epoch: epoch.into(),
         host_terminal_id: "terminal-1".into(),
         frame_socket_path: String::new(),
-        pane: None,
     };
     let mut source = UnixSocketFrameSource::connect_stream(client, &locator, "token", 80, 24)
         .await

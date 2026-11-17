@@ -228,12 +228,11 @@ impl RealHost {
         write_message_async(
             &mut stream,
             &ClientMessage::Hello {
-                version: 1,
+                version: 2,
                 encoding: gobby_terminal::protocol::RenderEncoding::SemanticFrame,
                 local_token: "local-token".into(),
                 cols: 80,
                 rows: 24,
-                tmux_identity: None,
             },
         )
         .await
@@ -249,7 +248,6 @@ impl RealHost {
             &ClientMessage::AttachTerminal {
                 host_terminal_id: self.panes[0].host_id.clone(),
                 reservation_id: None,
-                locator: None,
             },
         )
         .await

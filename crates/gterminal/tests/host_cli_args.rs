@@ -50,12 +50,7 @@ fn host_help_prints_usage_and_exits_zero() {
     assert_eq!(output.status.code(), Some(0), "`--help` must exit 0");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("usage: gterm host"), "stdout: {stdout}");
-    for flag in [
-        "--socket-dir",
-        "--max-attached-terminals",
-        "--tmux-attach-history-lines",
-        "--help",
-    ] {
+    for flag in ["--socket-dir", "--help"] {
         assert!(stdout.contains(flag), "usage omits {flag}: {stdout}");
     }
     assert_no_host_state(dir.path());
@@ -105,9 +100,30 @@ fn host_rejects_unknown_argument() {
 }
 
 #[test]
+fn host_rejects_retired_observer_flags() {
+    for flag in [
+        "--max-attached-terminals",
+        "--tmux-attach-history-lines",
+        "--tmux-attach-history-max-bytes",
+        "--tmux-poll-interval-ms",
+        "--tmux-poll-backoff-ceiling-ms",
+    ] {
+        let dir = temp_dir("gterm-retired-flag");
+        let output = run_host(dir.path(), &[flag, "64"]);
+        assert_eq!(output.status.code(), Some(2), "{flag}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains(&format!("unknown argument `{flag}`")),
+            "{stderr}"
+        );
+        assert_no_host_state(dir.path());
+    }
+}
+
+#[test]
 fn host_rejects_flag_without_its_value() {
     let dir = temp_dir("gterm-novalue");
-    let output = run_host(dir.path(), &["--tmux-poll-interval-ms"]);
+    let output = run_host(dir.path(), &["--lag-timeout-ms"]);
 
     assert_eq!(
         output.status.code(),
@@ -115,10 +131,7 @@ fn host_rejects_flag_without_its_value() {
         "a valueless flag must exit 2"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("--tmux-poll-interval-ms"),
-        "stderr: {stderr}"
-    );
+    assert!(stderr.contains("--lag-timeout-ms"), "stderr: {stderr}");
     assert!(stderr.contains("usage: gterm host"), "stderr: {stderr}");
     assert_no_host_state(dir.path());
 }

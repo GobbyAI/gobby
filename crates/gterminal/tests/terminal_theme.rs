@@ -195,7 +195,6 @@ impl Host {
                 local_token: LOCAL.into(),
                 cols: 100,
                 rows: 24,
-                tmux_identity: None,
             },
         );
         assert!(matches!(
@@ -207,7 +206,6 @@ impl Host {
             &ClientMessage::AttachTerminal {
                 host_terminal_id: host_terminal_id.into(),
                 reservation_id: None,
-                locator: None,
             },
         );
         loop {
@@ -462,7 +460,6 @@ fn declaring_before_attach_is_refused() {
             local_token: LOCAL.into(),
             cols: 80,
             rows: 24,
-            tmux_identity: None,
         },
     );
     assert!(matches!(

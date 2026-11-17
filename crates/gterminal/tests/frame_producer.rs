@@ -102,7 +102,6 @@ fn broadcast_task_exits_on_closed_channel() {
             local_token: "local-token".into(),
             cols: 80,
             rows: 24,
-            tmux_identity: None,
         },
     );
     assert!(matches!(
@@ -114,7 +113,6 @@ fn broadcast_task_exits_on_closed_channel() {
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.clone(),
             reservation_id: None,
-            locator: None,
         },
     );
     assert!(matches!(
@@ -293,7 +291,6 @@ fn attach_observer(
             local_token: "local-token".into(),
             cols,
             rows,
-            tmux_identity: None,
         },
     );
     assert!(matches!(
@@ -305,7 +302,6 @@ fn attach_observer(
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.to_string(),
             reservation_id: None,
-            locator: None,
         },
     );
     match recv_frame(&mut stream) {
@@ -330,7 +326,6 @@ fn try_attach_observer(
             local_token: "local-token".into(),
             cols,
             rows,
-            tmux_identity: None,
         },
     );
     assert!(matches!(
@@ -342,7 +337,6 @@ fn try_attach_observer(
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.to_string(),
             reservation_id: None,
-            locator: None,
         },
     );
     match recv_frame(&mut stream) {

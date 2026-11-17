@@ -123,9 +123,7 @@ impl HostState {
                 .get(&attachment.host_terminal_id)
                 .ok_or("terminal_gone")?;
             let slot = inner.terminals.get(identity).ok_or("terminal_gone")?;
-            if slot.locator.is_some() {
-                return Err("not_native");
-            }
+
             let (effect, submit) = input.classify_mode(false);
             let activity = InputActivity {
                 terminal_id: slot.identity.terminal_id.clone(),
@@ -158,9 +156,7 @@ impl HostState {
                     .get(&attachment.host_terminal_id)
                     .ok_or("terminal_gone")?;
                 let slot = inner.terminals.get(identity).ok_or("terminal_gone")?;
-                if slot.locator.is_some() {
-                    return Err("not_native");
-                }
+
                 let child = slot.child.as_ref().ok_or("terminal_gone")?;
                 (
                     InputActivity {
@@ -408,7 +404,7 @@ impl NativeInput {
 }
 
 /// Resolves a native slot by host id: `not_found` for unknown ids and
-/// `not_native` for tmux panes.
+/// Refuses when the terminal is gone.
 fn native_slot_mut<'a>(
     inner: &'a mut Inner,
     host_terminal_id: &str,
@@ -419,9 +415,7 @@ fn native_slot_mut<'a>(
         .cloned()
         .ok_or("not_found")?;
     let slot = inner.terminals.get_mut(&identity).ok_or("not_found")?;
-    if slot.locator.is_some() {
-        return Err("not_native");
-    }
+
     Ok(slot)
 }
 

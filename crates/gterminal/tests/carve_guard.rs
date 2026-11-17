@@ -115,11 +115,7 @@ fn no_agent_concepts_in_terminal_core() {
         hits.join("\n")
     );
 
-    let wire = fs::read_to_string(src.join("protocol/wire.rs")).expect("wire.rs");
-    assert!(
-        wire.contains("pub const PROTOCOL_VERSION: u32 = 1;"),
-        "protocol::wire::PROTOCOL_VERSION must be 1"
-    );
+    assert_eq!(gobby_terminal::protocol::PROTOCOL_VERSION, 2);
     assert!(
         !src.join("pane/agent_detection.rs").exists(),
         "pane/agent_detection.rs must not be imported"

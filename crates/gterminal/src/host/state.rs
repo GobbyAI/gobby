@@ -38,6 +38,7 @@ pub(crate) enum CommitState {
 
 #[derive(Clone, Debug)]
 pub(crate) enum ObserverBind {
+    #[cfg(feature = "vt-engine")]
     None,
     #[cfg(feature = "vt-engine")]
     Reserved {
@@ -101,13 +102,9 @@ pub(crate) struct TerminalSlot {
     #[cfg(feature = "vt-engine")]
     pub(crate) truncated: bool,
     pub(crate) user_attachments: HashSet<u64>,
-    pub(crate) locator: Option<crate::protocol::PaneLocator>,
-    pub(crate) tmux_history_bytes: u64,
-    pub(crate) history: Option<crate::protocol::ServerMessage>,
-    pub(crate) last_frame: Option<crate::protocol::FrameData>,
+
     #[cfg(feature = "vt-engine")]
     pub(crate) observer_generation: u64,
-    pub(crate) consecutive_failures: u32,
 }
 
 pub struct Attachment {
@@ -144,6 +141,7 @@ pub struct Attachment {
 pub(crate) struct Inner {
     pub(crate) terminals: HashMap<Identity, TerminalSlot>,
     pub(crate) by_host_id: HashMap<String, Identity>,
+    #[cfg(feature = "vt-engine")]
     pub(crate) next_host_id: u64,
     pub(crate) reservations: HashMap<String, Reservation>,
     pub(crate) attachments: HashMap<u64, Attachment>,
@@ -164,6 +162,8 @@ impl Inner {
         next_attachment: u64,
         reservations: HashMap<String, Reservation>,
     ) -> Self {
+        #[cfg(not(feature = "vt-engine"))]
+        let _ = next_host_id;
         let by_host_id = terminals
             .values()
             .map(|slot| (slot.host_terminal_id.clone(), slot.identity.clone()))
@@ -171,6 +171,7 @@ impl Inner {
         Self {
             terminals,
             by_host_id,
+            #[cfg(feature = "vt-engine")]
             next_host_id,
             reservations,
             attachments: HashMap::new(),
@@ -211,7 +212,6 @@ pub struct HostState {
     pub(crate) inner: Mutex<Inner>,
     #[cfg(feature = "vt-engine")]
     pub(crate) frame_build: Mutex<HashSet<u64>>,
-    pub(crate) polls: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
 }
 
 impl HostState {
@@ -244,7 +244,7 @@ impl HostState {
             attempts: Default::default(),
             mutation_gate: Default::default(),
             events,
-            polls: Mutex::new(HashMap::new()),
+
             inner: Mutex::new(inner),
             #[cfg(feature = "vt-engine")]
             frame_build: Mutex::new(HashSet::new()),
@@ -278,7 +278,7 @@ impl HostState {
             attempts: Default::default(),
             mutation_gate: Default::default(),
             events: carried.events,
-            polls: Mutex::new(HashMap::new()),
+
             inner: Mutex::new(carried.inner),
             frame_build: Mutex::new(HashSet::new()),
         })
@@ -519,12 +519,8 @@ impl HostState {
                 total_bytes: 0,
                 truncated: false,
                 user_attachments: HashSet::new(),
-                locator: None,
-                tmux_history_bytes: 0,
-                history: None,
-                last_frame: None,
+
                 observer_generation: 0,
-                consecutive_failures: 0,
             };
             inner
                 .by_host_id
@@ -792,9 +788,7 @@ impl HostState {
             .host_terminal_id;
         let identity = inner.by_host_id.get(host_id).ok_or("terminal_gone")?;
         let slot = inner.terminals.get(identity).ok_or("terminal_gone")?;
-        if slot.locator.is_some() {
-            return Err("not_native");
-        }
+
         #[cfg(feature = "vt-engine")]
         {
             let terminal = slot
@@ -831,6 +825,7 @@ impl HostState {
         #[cfg(not(feature = "vt-engine"))]
         {
             let _ = (
+                slot,
                 start_rows_from_live_edge,
                 start_col,
                 end_rows_from_live_edge,
@@ -887,13 +882,9 @@ pub(crate) async fn insert_native_slot(
         #[cfg(feature = "vt-engine")]
         truncated: false,
         user_attachments: HashSet::new(),
-        locator: None,
-        tmux_history_bytes: 0,
-        history: None,
-        last_frame: None,
+
         #[cfg(feature = "vt-engine")]
         observer_generation: 1,
-        consecutive_failures: 0,
     };
     let mut inner = state.inner.lock().await;
     inner

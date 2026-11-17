@@ -164,7 +164,7 @@ fn retained_text_search_is_literal_and_unicode_case_aware() {
 }
 
 #[test]
-fn retained_text_word_motions_use_tmux_separators_across_rows() {
+fn retained_text_word_motions_use_terminal_separators_across_rows() {
     let buffer = RetainedTextBuffer::new(
         6,
         vec![

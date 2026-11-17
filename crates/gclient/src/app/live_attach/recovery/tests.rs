@@ -31,7 +31,6 @@ async fn direct_attach_with_host() -> (
         frame_host_epoch: "epoch-1".into(),
         host_terminal_id: "terminal-1".into(),
         frame_socket_path: String::new(),
-        pane: None,
     };
     let (client, mut host) = UnixStream::pair().expect("socket pair");
     let host_task = tokio::spawn(async move {

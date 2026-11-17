@@ -26,7 +26,6 @@ fn hello_frame(cols: u16, rows: u16) -> ClientMessage {
         local_token: LOCAL.into(),
         cols,
         rows,
-        tmux_identity: None,
     }
 }
 
@@ -185,7 +184,6 @@ fn rotated_key_applies_to_next_hello() {
         &ClientMessage::AttachTerminal {
             host_terminal_id,
             reservation_id: None,
-            locator: None,
         },
     );
     assert!(matches!(
@@ -202,7 +200,6 @@ fn rotated_key_applies_to_next_hello() {
                 local_token: key.into(),
                 cols: 80,
                 rows: 24,
-                tmux_identity: None,
             },
         );
         read_msg(&mut stream)
@@ -255,7 +252,6 @@ fn hello_rejects_bad_version_and_token() {
             local_token: "wrong".into(),
             cols: 80,
             rows: 24,
-            tmux_identity: None,
         },
     );
     match read_msg(&mut bad_token) {
@@ -272,7 +268,6 @@ fn hello_rejects_bad_version_and_token() {
             local_token: LOCAL.into(),
             cols: 80,
             rows: 24,
-            tmux_identity: None,
         },
     );
     match read_msg(&mut bad_ver) {
@@ -307,7 +302,6 @@ fn attach_viewport_and_observer_sizing() {
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.clone(),
             reservation_id: None,
-            locator: None,
         },
     );
     write_msg(&mut a, &ClientMessage::SetViewport { rows: 20, cols: 40 });
@@ -320,7 +314,6 @@ fn attach_viewport_and_observer_sizing() {
         &ClientMessage::AttachTerminal {
             host_terminal_id,
             reservation_id: None,
-            locator: None,
         },
     );
     write_msg(&mut b, &ClientMessage::SetViewport { rows: 10, cols: 20 });
@@ -375,7 +368,6 @@ fn attached_input_writes_with_no_grant_and_unattached_input_is_refused() {
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.clone(),
             reservation_id: None,
-            locator: None,
         },
     );
     match read_reply(&mut frames) {
@@ -459,7 +451,6 @@ fn dimension_bounds_rejected_before_allocation() {
             local_token: LOCAL.into(),
             cols: 0,
             rows: 24,
-            tmux_identity: None,
         },
     );
     match read_msg(&mut frames) {
@@ -506,7 +497,6 @@ fn set_scroll_offset_is_attachment_local() {
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.clone(),
             reservation_id: None,
-            locator: None,
         },
     );
     match read_msg(&mut a) {
@@ -574,7 +564,6 @@ fn read_text_spans_native_scrollback_and_requires_an_attachment() {
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.clone(),
             reservation_id: None,
-            locator: None,
         },
     );
     assert!(matches!(
@@ -700,7 +689,6 @@ fn attached_reports_distinct_host_owned_stream_identifiers() {
             &ClientMessage::AttachTerminal {
                 host_terminal_id: terminal.clone(),
                 reservation_id: None,
-                locator: None,
             },
         );
         let reply = read_reply(&mut frames);

@@ -20,7 +20,7 @@ use gobby_client::ui::settings::{
 use gobby_client::ui::Chrome;
 use gobby_client::{FrameDelivery, Workspace};
 use gobby_core::project::PERSONAL_PROJECT_ID;
-use gobby_terminal::protocol::PROTOCOL_VERSION;
+use gobby_terminal::host::CONTROL_PROTOCOL_VERSION as PROTOCOL_VERSION;
 use mock_daemon::MockDaemon;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
@@ -923,6 +923,8 @@ fn unreachable_daemon_launches_with_a_notice_and_waits() {
 
 #[test]
 fn test_reports_degraded_host_state() {
+    assert_eq!(gobby_terminal::protocol::PROTOCOL_VERSION, 2);
+    assert_eq!(PROTOCOL_VERSION, 1);
     let root = tempfile::tempdir().expect("temp token home");
     std::fs::write(root.path().join("bootstrap.yaml"), "api_key: host-token\n")
         .expect("write host API key");

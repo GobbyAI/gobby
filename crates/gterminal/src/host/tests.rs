@@ -183,7 +183,7 @@ fn socket_path_byte_limit_has_actionable_diagnostics() {
 #[cfg(all(unix, feature = "vt-engine"))]
 #[tokio::test]
 async fn frame_attach_allocators_refuse_while_the_upgrade_gate_is_held() {
-    use crate::protocol::{PaneLocator, RenderEncoding};
+    use crate::protocol::RenderEncoding;
     let (state, _, _, _) = frame_grant_fixture().await;
     // The upgrade holds the write gate from admission through exec or rollback.
     // Every attachment allocator must refuse while it is held, so a late
@@ -197,27 +197,6 @@ async fn frame_attach_allocators_refuse_while_the_upgrade_gate_is_held() {
             .attach("native", None, RenderEncoding::TerminalAnsi, 24, 80)
             .await
             .err(),
-        Some("host_upgrading")
-    );
-    let locator = PaneLocator {
-        socket_path: "/tmp/gobby-gate.sock".into(),
-        server_pid: 1,
-        server_start_time: 1,
-        pane_id: "%1".into(),
-    };
-    assert_eq!(
-        super::embed::attach_frame(
-            &state,
-            "native",
-            None,
-            Some(locator),
-            None,
-            RenderEncoding::TerminalAnsi,
-            24,
-            80,
-        )
-        .await
-        .err(),
         Some("host_upgrading")
     );
     assert_eq!(

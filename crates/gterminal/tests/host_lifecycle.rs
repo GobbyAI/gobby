@@ -1137,7 +1137,6 @@ fn host_survives_daemon_disconnect_and_readopts() {
             local_token: LOCAL.into(),
             cols: 80,
             rows: 24,
-            tmux_identity: None,
         },
     )
     .expect("encode hello");
@@ -1146,7 +1145,6 @@ fn host_survives_daemon_disconnect_and_readopts() {
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.clone(),
             reservation_id: None,
-            locator: None,
         },
     )
     .expect("encode attach");
@@ -1255,7 +1253,6 @@ fn host_survives_daemon_disconnect_and_readopts() {
             local_token: LOCAL.into(),
             cols: 80,
             rows: 24,
-            tmux_identity: None,
         },
     )
     .expect("encode late hello");
@@ -1264,7 +1261,6 @@ fn host_survives_daemon_disconnect_and_readopts() {
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.clone(),
             reservation_id: None,
-            locator: None,
         },
     )
     .expect("encode late attach");

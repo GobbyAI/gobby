@@ -5,33 +5,12 @@ pub mod grid;
 use crate::app::run_live_loop;
 use crate::app::startup_stages::{ConnectionView, StartupStages};
 use crate::daemon::LiveDaemon;
-use crate::frame_source::AttachLocator;
 use crate::theme::Theme;
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 use crate::Workspace;
-use gobby_terminal::protocol::{ClientMessage, RenderEncoding, PROTOCOL_VERSION};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
-
-/// Handshake + user attach used by the live workspace and by Unix frame connect.
-pub fn observe_tmux_pane(locator: &AttachLocator) -> (ClientMessage, ClientMessage) {
-    let tmux_identity = crate::tmux_identity::current();
-    let hello = ClientMessage::Hello {
-        version: PROTOCOL_VERSION,
-        encoding: RenderEncoding::SemanticFrame,
-        local_token: String::new(),
-        cols: 80,
-        rows: 24,
-        tmux_identity,
-    };
-    let attach = ClientMessage::AttachTerminal {
-        host_terminal_id: locator.host_terminal_id.clone(),
-        reservation_id: None,
-        locator: locator.pane.clone(),
-    };
-    (hello, attach)
-}
 
 pub fn run() -> anyhow::Result<()> {
     crate::startup::run()

@@ -8,8 +8,7 @@ command = ["cargo", "build", "-p", "gobby-terminal", "--features", "vt-engine", 
 [[profile.default.scripts]]
 filter = '''package(gobby-client) & binary(suite) & (
     test(=frame_source_live::direct_frames_verify_epoch_and_render) |
-    test(=frame_source_live::direct_input_echoes_without_a_grant) |
-    test(=frame_source_live::tmux_pane_attaches_through_host_observer)
+    test(=frame_source_live::direct_input_echoes_without_a_grant)
 )'''
 setup = 'gclient-test-gterm'
 
@@ -87,7 +86,7 @@ test-group = 'serial-db'
 # upgrade tests exercise the product's fixed 15s budget, including rollback.
 # Include every host-prefixed module: they reuse the built executable and must
 # not overlap nested Cargo builders that can replace that image.
-filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | (binary(suite) & (test(/^frame_producer::/) | test(/^host_/) | test(/^control_protocol::/) | test(/^frame_protocol::/) | test(/^embed::/) | test(/^batch_paste::/) | test(/^terminal_theme::/) | test(/^build_env::/) | test(/^link_artifacts::/))))'
+filter = 'package(gobby-terminal) & (test(/pty::|pane::runtime/) | (binary(suite) & (test(/^frame_producer::/) | test(/^host_/) | test(/^control_protocol::/) | test(/^frame_protocol::/) | test(/^batch_paste::/) | test(/^terminal_theme::/) | test(/^build_env::/) | test(/^link_artifacts::/))))'
 test-group = 'gterm-pty'
 
 [[profile.default.overrides]]

@@ -95,10 +95,7 @@ pub(super) fn slot_theme_work(inner: &Inner, host_terminal_id: &str) -> Option<T
 
 fn native_slot<'a>(inner: &'a Inner, host_terminal_id: &str) -> Option<&'a TerminalSlot> {
     let identity = inner.by_host_id.get(host_terminal_id)?;
-    inner
-        .terminals
-        .get(identity)
-        .filter(|slot| slot.locator.is_none())
+    inner.terminals.get(identity)
 }
 
 /// The ground a live native pane answers OSC 10/11 with, as a declaration a

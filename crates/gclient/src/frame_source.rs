@@ -40,7 +40,6 @@ pub struct AttachLocator {
     pub frame_host_epoch: String,
     pub host_terminal_id: String,
     pub frame_socket_path: String,
-    pub pane: Option<gobby_terminal::protocol::PaneLocator>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,7 +194,10 @@ impl ScriptedFrameSource {
                 actual: self.welcome_epoch.clone(),
             });
         }
-        self.sent.push(crate::views::observe_tmux_pane(locator).1);
+        self.sent.push(ClientMessage::AttachTerminal {
+            host_terminal_id: locator.host_terminal_id.clone(),
+            reservation_id: None,
+        });
         Ok(self.welcome_epoch.clone())
     }
 
@@ -499,7 +501,6 @@ impl UnixSocketFrameSource {
             local_token: local_token.into(),
             cols,
             rows,
-            tmux_identity: crate::tmux_identity::current(),
         };
         timeout(CONNECT_TIMEOUT, write_message_async(&mut stream, &hello))
             .await
@@ -524,7 +525,10 @@ impl UnixSocketFrameSource {
                 actual,
             });
         }
-        let attach = crate::views::observe_tmux_pane(locator).1;
+        let attach = ClientMessage::AttachTerminal {
+            host_terminal_id: locator.host_terminal_id.clone(),
+            reservation_id: None,
+        };
         timeout(CONNECT_TIMEOUT, write_message_async(&mut stream, &attach))
             .await
             .map_err(|_| FrameError::Io("frame attach timed out".into()))??;
@@ -545,13 +549,11 @@ impl UnixSocketFrameSource {
                 // A native attach names the terminal it attached, so an
                 // `Attached` naming a different terminal is not the same
                 // terminal and is not a restore (#23076, §2.3 keeps the same
-                // terminal and epoch). A pane locator names the pane and only
-                // carries a label beside it, so there is nothing to compare.
+                // terminal and epoch).
                 ServerMessage::Attached {
                     ref host_terminal_id,
                     ..
-                } if locator.pane.is_none()
-                    && !host_terminal_id.is_empty()
+                } if !host_terminal_id.is_empty()
                     && !locator.host_terminal_id.is_empty()
                     && host_terminal_id != &locator.host_terminal_id =>
                 {

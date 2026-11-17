@@ -25,10 +25,6 @@ mod carve_guard;
 mod control_protocol;
 
 #[cfg(feature = "vt-engine")]
-#[path = "embed.rs"]
-mod embed;
-
-#[cfg(feature = "vt-engine")]
 #[path = "frame_producer.rs"]
 mod frame_producer;
 

@@ -15,7 +15,7 @@ use serde_json::Value;
 use super::events::HostEvents;
 use super::state::Inner;
 use crate::pane::{ChildExit, PaneCoreHandover};
-use crate::protocol::{ObservationState, PaneLocator};
+use crate::protocol::ObservationState;
 
 pub(crate) mod fallback;
 pub(crate) mod restore;
@@ -98,7 +98,7 @@ pub struct CarriedPane {
     pub dropped_bytes: u64,
     pub total_bytes: u64,
     pub truncated: bool,
-    pub locator: Option<PaneLocator>,
+
     pub reported_cwd: Option<PathBuf>,
     pub reservation_id: String,
     pub reserve_key: String,

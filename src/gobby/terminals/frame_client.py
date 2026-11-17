@@ -12,7 +12,7 @@ from gobby.terminals.dimensions import MAX_FRAME_SIZE
 from gobby.terminals.host_client import HostEpochChangedError, HostNotAdoptedError
 from gobby.utils.local_token import read_local_api_token
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 DELTA_QUEUE_ENTRIES = 64
 DELTA_QUEUE_BYTES = MAX_FRAME_SIZE
 
@@ -141,15 +141,6 @@ class _Reader:
         return value != 0
 
 
-def _encode_identity(identity: dict[str, Any]) -> bytes:
-    return (
-        _string(str(identity["socket_path"]))
-        + _ivarint(int(identity["server_pid"]))
-        + _ivarint(int(identity["server_start_time"]))
-        + _string(str(identity["pane_id"]))
-    )
-
-
 def _encode_hello(payload: dict[str, Any]) -> bytes:
     encoding = payload.get("encoding", "semantic_frame")
     encoding_tag = 0 if encoding in {"semantic_frame", "SemanticFrame", 0} else 1
@@ -160,7 +151,6 @@ def _encode_hello(payload: dict[str, Any]) -> bytes:
         + _string(str(payload["local_token"]))
         + _uvarint(int(payload["cols"]))
         + _uvarint(int(payload["rows"]))
-        + _option(payload.get("tmux_identity"), _encode_identity)
     )
     if int(payload.get("version", PROTOCOL_VERSION)) != PROTOCOL_VERSION:
         raise FrameProtocolError("unsupported protocol version")
@@ -172,7 +162,6 @@ def _encode_attach(payload: dict[str, Any]) -> bytes:
         b"\x05"
         + _string(str(payload["host_terminal_id"]))
         + _option(payload.get("reservation_id"), _string)
-        + _option(payload.get("locator"), _encode_identity)
     )
 
 
@@ -378,15 +367,6 @@ def _decode_client(reader: _Reader) -> dict[str, Any]:
         token = reader.string()
         cols = reader.uvarint()
         rows = reader.uvarint()
-        ident_tag = reader.uvarint()
-        identity = None
-        if ident_tag == 1:
-            identity = {
-                "socket_path": reader.string(),
-                "server_pid": reader.ivarint(),
-                "server_start_time": reader.ivarint(),
-                "pane_id": reader.string(),
-            }
         return {
             "type": "hello",
             "version": version,
@@ -394,7 +374,6 @@ def _decode_client(reader: _Reader) -> dict[str, Any]:
             "local_token": token,
             "cols": cols,
             "rows": rows,
-            "tmux_identity": identity,
         }
     if tag == 4:
         return {"type": "detach"}
@@ -402,20 +381,10 @@ def _decode_client(reader: _Reader) -> dict[str, Any]:
         host_terminal_id = reader.string()
         res_tag = reader.uvarint()
         reservation_id = None if res_tag == 0 else reader.string()
-        loc_tag = reader.uvarint()
-        locator = None
-        if loc_tag == 1:
-            locator = {
-                "socket_path": reader.string(),
-                "server_pid": reader.ivarint(),
-                "server_start_time": reader.ivarint(),
-                "pane_id": reader.string(),
-            }
         return {
             "type": "attach_terminal",
             "host_terminal_id": host_terminal_id,
             "reservation_id": reservation_id,
-            "locator": locator,
         }
     if tag == 6:
         return {"type": "set_viewport", "rows": reader.uvarint(), "cols": reader.uvarint()}
@@ -569,7 +538,6 @@ class FrameClient:
                 "local_token": token,
                 "cols": cols,
                 "rows": rows,
-                "tmux_identity": None,
             }
         )
         welcome = await self.read_message()
@@ -591,7 +559,6 @@ class FrameClient:
             "type": "attach_terminal",
             "host_terminal_id": locator.host_terminal_id or "",
             "reservation_id": reservation_id,
-            "locator": None,
         }
         await self._send(payload)
         self.attached = True

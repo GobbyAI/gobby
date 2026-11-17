@@ -459,7 +459,7 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
             dropped_bytes: 0,
             total_bytes: 0,
             truncated: false,
-            locator: None,
+
             reported_cwd: None,
             reservation_id: reservation_id.clone(),
             reserve_key: terminal_id.clone(),

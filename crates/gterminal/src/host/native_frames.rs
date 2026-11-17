@@ -203,9 +203,7 @@ impl HostState {
                 else {
                     continue;
                 };
-                if slot.locator.is_some() {
-                    continue;
-                }
+
                 let Some(child) = slot.child.as_ref() else {
                     continue;
                 };

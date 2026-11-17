@@ -16,7 +16,7 @@ mod activity;
 mod backpressure;
 mod config;
 mod control;
-mod embed;
+pub use control::PROTOCOL_VERSION as CONTROL_PROTOCOL_VERSION;
 mod events;
 mod exit_tails;
 mod frames;
@@ -30,7 +30,6 @@ mod ledger;
 #[cfg(feature = "vt-engine")]
 mod native_frames;
 mod native_ops;
-pub mod poll;
 #[cfg(all(unix, feature = "vt-engine"))]
 pub(crate) mod sigterm;
 mod snapshot;
@@ -44,9 +43,6 @@ mod upgrade;
 mod write;
 
 pub use backpressure::{FrameMailbox, PushResult};
-pub use poll::{
-    classify_poll, parse_poll_batch, truncate_attach_history, PollClass, POLL_FIELD_COUNT,
-};
 
 use config::HostConfig;
 use state::HostState;
@@ -446,28 +442,11 @@ impl HostArgs {
                 "--max-attachments-total" => {
                     host_config.max_attachments_total = parse_u32(value_for(&arg, &mut args)?)
                 }
-                "--max-attached-terminals" => {
-                    host_config.max_attached_terminals = parse_u32(value_for(&arg, &mut args)?)
-                }
                 "--native-scrollback-max-lines" => {
                     host_config.native_scrollback_max_lines = parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--native-scrollback-max-bytes" => {
                     host_config.native_scrollback_max_bytes = parse_u32(value_for(&arg, &mut args)?)
-                }
-                "--tmux-attach-history-lines" => {
-                    host_config.tmux_attach_history_lines = parse_u32(value_for(&arg, &mut args)?)
-                }
-                "--tmux-attach-history-max-bytes" => {
-                    host_config.tmux_attach_history_max_bytes =
-                        parse_u32(value_for(&arg, &mut args)?)
-                }
-                "--tmux-poll-interval-ms" => {
-                    host_config.tmux_poll_interval_ms = parse_u32(value_for(&arg, &mut args)?)
-                }
-                "--tmux-poll-backoff-ceiling-ms" => {
-                    host_config.tmux_poll_backoff_ceiling_ms =
-                        parse_u32(value_for(&arg, &mut args)?)
                 }
                 "--delta-queue-bytes" => {
                     host_config.delta_queue_bytes = parse_u32(value_for(&arg, &mut args)?)
@@ -522,13 +501,8 @@ Options:
       --socket-dir PATH                  control/frames sockets, token, and pidfile directory
       --max-attachments-per-terminal N   attachment ceiling for one terminal
       --max-attachments-total N          attachment ceiling for the host
-      --max-attached-terminals N         attached terminal ceiling for the host
       --native-scrollback-max-lines N    native scrollback line ceiling
       --native-scrollback-max-bytes N    native scrollback byte ceiling
-      --tmux-attach-history-lines N      tmux attach history lines per observer
-      --tmux-attach-history-max-bytes N  tmux attach history byte ceiling
-      --tmux-poll-interval-ms N          tmux poll interval in milliseconds
-      --tmux-poll-backoff-ceiling-ms N   tmux poll backoff ceiling in milliseconds
       --delta-queue-bytes N              frame delta queue byte ceiling
       --lag-timeout-ms N                 frame lag timeout in milliseconds
       --control-deadline-ms N            control delivery deadline in milliseconds

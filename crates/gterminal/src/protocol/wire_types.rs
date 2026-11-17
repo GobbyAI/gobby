@@ -115,40 +115,6 @@ pub enum ClientKeySource {
     },
 }
 
-/// Client-reported tmux identity used to refuse recursive self-view.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct TmuxClientIdentity {
-    pub socket_path: String,
-    pub server_pid: i32,
-    pub server_start_time: i64,
-    pub pane_id: String,
-}
-
-/// Physical tmux pane identity carried on user `AttachTerminal`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct PaneLocator {
-    pub socket_path: String,
-    pub server_pid: i32,
-    pub server_start_time: i64,
-    pub pane_id: String,
-}
-
-impl PaneLocator {
-    pub fn locator_key(&self) -> String {
-        format!(
-            "tmux:{}:{}:{}:{}",
-            self.socket_path, self.server_pid, self.server_start_time, self.pane_id
-        )
-    }
-
-    pub fn matches_identity(&self, identity: &TmuxClientIdentity) -> bool {
-        self.socket_path == identity.socket_path
-            && self.server_pid == identity.server_pid
-            && self.server_start_time == identity.server_start_time
-            && self.pane_id == identity.pane_id
-    }
-}
-
 /// Per-pane mode flags that can change with no cell mutation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PaneModes {
@@ -187,7 +153,7 @@ pub enum MouseTracking {
 }
 
 impl PaneModes {
-    /// Highest tracking level the app enabled; tmux reports all lower flags too.
+    /// Highest tracking level the application enabled.
     pub fn mouse_tracking(&self) -> MouseTracking {
         if self.mouse_all {
             MouseTracking::AnyMotion
@@ -220,8 +186,6 @@ pub enum ClientMessage {
         local_token: String,
         cols: u16,
         rows: u16,
-        #[serde(default)]
-        tmux_identity: Option<TmuxClientIdentity>,
     },
     /// Legacy fork-point Input (tag 1). Rejected as unknown; never a write path.
     LegacyInput {
@@ -244,8 +208,6 @@ pub enum ClientMessage {
         host_terminal_id: String,
         #[serde(default)]
         reservation_id: Option<String>,
-        #[serde(default)]
-        locator: Option<PaneLocator>,
     },
     /// Attachment-local render size. Never reaches TIOCSWINSZ.
     SetViewport {
@@ -386,7 +348,7 @@ pub struct FrameData {
     pub hyperlinks: Vec<String>,
     /// Kitty graphics protocol bytes to apply after the text frame.
     pub graphics: Vec<u8>,
-    /// Pane mode and cursor appearance flags from a tmux poll or native emulator.
+    /// Pane mode and cursor appearance flags from the native emulator.
     #[serde(default)]
     pub modes: PaneModes,
 }
@@ -548,7 +510,7 @@ pub enum ServerMessage {
         host_attachment_id: u64,
     },
     /// Typed refusal of `BindAttachment`, `Input` or `Paste`; the stream stays
-    /// open. Codes: `attach_required`, `attachment_already_bound`, `not_native`,
+    /// open. Codes: `attach_required`, `attachment_already_bound`,
     /// `request_too_large`, `pty_busy`, `terminal_gone`.
     InputRefused {
         code: String,

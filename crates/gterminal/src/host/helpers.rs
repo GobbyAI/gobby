@@ -1,15 +1,21 @@
 //! Shared host helpers kept out of `state.rs` for the line ceiling.
 
 use std::path::PathBuf;
+#[cfg(any(test, not(feature = "vt-engine")))]
 use std::time::Instant;
 
 use serde_json::{json, Map, Value};
 
+#[cfg(any(test, not(feature = "vt-engine")))]
 use super::backpressure::PushResult;
-use super::state::{Attachment, CommitState, Inner, ObserverBind};
-use crate::protocol::{
-    FrameData, ObservationReason, ObservationState, ServerMessage, TerminalFrame, TITLE_MAX_BYTES,
-};
+#[cfg(any(test, not(feature = "vt-engine")))]
+use super::state::Attachment;
+use super::state::{CommitState, Inner, ObserverBind};
+#[cfg(feature = "vt-engine")]
+use crate::protocol::TITLE_MAX_BYTES;
+#[cfg(any(test, not(feature = "vt-engine")))]
+use crate::protocol::{FrameData, ServerMessage, TerminalFrame};
+use crate::protocol::{ObservationReason, ObservationState};
 
 pub(crate) fn list_rows(inner: &Inner) -> Vec<Value> {
     inner
@@ -17,6 +23,7 @@ pub(crate) fn list_rows(inner: &Inner) -> Vec<Value> {
         .values()
         .map(|slot| {
             let (observer_bind, reservation_id, reserve_generation) = match &slot.observer_bind {
+                #[cfg(feature = "vt-engine")]
                 ObserverBind::None => ("none", None, None),
                 #[cfg(feature = "vt-engine")]
                 ObserverBind::Reserved {
@@ -57,18 +64,17 @@ pub(crate) fn list_rows(inner: &Inner) -> Vec<Value> {
                 },
                 "observation_reason": slot.observation_reason.map(ObservationReason::as_str),
                 "observation_generation": slot.observation_generation,
-                "tmux_history_bytes": slot.tmux_history_bytes,
+
             })
         })
         .collect()
 }
 
 pub(crate) fn native_entitlements(inner: &Inner) -> u32 {
-    inner
-        .terminals
-        .values()
-        .filter(|slot| !matches!(slot.observer_bind, ObserverBind::None))
-        .count() as u32
+    let terminals = inner.terminals.values();
+    #[cfg(feature = "vt-engine")]
+    let terminals = terminals.filter(|slot| !matches!(slot.observer_bind, ObserverBind::None));
+    terminals.count() as u32
         + inner
             .reservations
             .values()
@@ -126,6 +132,7 @@ pub(crate) fn err(code: &str) -> Value {
     json!({"ok": false, "error": code})
 }
 
+#[cfg(feature = "vt-engine")]
 pub fn truncate_title(text: &str) -> String {
     let mut bytes = 0usize;
     let mut end = 0usize;
@@ -170,6 +177,7 @@ pub(crate) fn push_semantic_frame(att: &mut Attachment, frame: FrameData, cap: u
 /// nothing. A delta that will not fit is replaced by one keyframe: queuing that
 /// keyframe commits it as the encoder baseline, which resyncs the attachment,
 /// so later frames are deltas against it instead of repeated full repaints.
+#[cfg(any(test, not(feature = "vt-engine")))]
 pub(crate) fn push_terminal_ansi(
     att: &mut Attachment,
     frame: &FrameData,
@@ -216,6 +224,7 @@ pub(crate) fn push_terminal_ansi(
 /// Queue one full repaint in place of everything the attachment still owes its
 /// peer. A queued keyframe is the resync: it becomes the encoder baseline, so
 /// the attachment is only left desynced when the mailbox refuses it.
+#[cfg(any(test, not(feature = "vt-engine")))]
 fn queue_replacement_keyframe(att: &mut Attachment, frame: &FrameData, seq: u64, cap: usize) {
     let mut keyframe = att.encoder.encode(frame, true);
     let keyframe_bytes = std::mem::take(&mut keyframe.bytes);

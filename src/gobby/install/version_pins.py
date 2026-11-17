@@ -6,9 +6,9 @@ MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     # Floors track shipped helper versions.
     "ghook": "0.9.87",
     "gcode": "1.9.125",
-    "gdaemon": "0.4.171",
-    "gterm": "0.1.35",
-    "gclient": "0.1.142",
+    "gdaemon": "0.4.172",
+    "gterm": "0.1.36",
+    "gclient": "0.1.143",
     "gmcp": "0.1.51",
 }
 

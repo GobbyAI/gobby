@@ -5,7 +5,7 @@ use crate::prefs::{load_prefs, prefs_path, PREFS_FILE};
 use crate::teardown::{CrosstermBackend, ModeBackend, TerminalGuard};
 use crate::ui::keymap::{default_override_path, default_prefix, Keymap};
 use crate::ui::settings::ClientPrefs;
-use gobby_terminal::protocol::PROTOCOL_VERSION;
+use gobby_terminal::host::CONTROL_PROTOCOL_VERSION;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -499,10 +499,9 @@ pub fn prepare_at(
     // other probe failure still ends the launch before raw mode.
     let (host, host_notice) = match health.fetch_health(&env.daemon_url) {
         Ok(host) => {
-            if !host
-                .as_ref()
-                .is_some_and(|host| host.running && host.protocol_version == Some(PROTOCOL_VERSION))
-            {
+            if !host.as_ref().is_some_and(|host| {
+                host.running && host.protocol_version == Some(CONTROL_PROTOCOL_VERSION)
+            }) {
                 return Err(degraded_host(host.as_ref()));
             }
             let notice = host.as_ref().and_then(host_notice);
@@ -602,7 +601,7 @@ fn degraded_host(host: Option<&GtermHostState>) -> StartupError {
             .and_then(|host| host.protocol_version)
             .map(|version| version.to_string())
             .unwrap_or_else(|| "none".to_string()),
-        expected_protocol_version: PROTOCOL_VERSION,
+        expected_protocol_version: CONTROL_PROTOCOL_VERSION,
         restart_count: host.map_or(0, |host| host.restart_count),
         backoff_seconds: host.map_or(0.0, |host| host.backoff_seconds),
         last_error: host

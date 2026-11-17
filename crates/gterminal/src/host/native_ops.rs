@@ -128,27 +128,6 @@ fn commit_failure_json(outcome: CommitResult) -> Value {
     }
 }
 
-fn targets_tmux(inner: &super::state::Inner, extra: &Map<String, Value>) -> bool {
-    if let Some(host_id) = extra.get("host_terminal_id").and_then(Value::as_str) {
-        if inner
-            .by_host_id
-            .get(host_id)
-            .and_then(|identity| inner.terminals.get(identity))
-            .is_some_and(|slot| slot.locator.is_some())
-        {
-            return true;
-        }
-    }
-    if let Some(terminal_id) = extra.get("terminal_id").and_then(Value::as_str) {
-        return inner.terminals.values().any(|slot| {
-            slot.locator.is_some()
-                && (slot.identity.terminal_id == terminal_id
-                    || slot.host_terminal_id == terminal_id)
-        });
-    }
-    false
-}
-
 fn remove_slot_attachments(inner: &mut super::state::Inner, slot: &TerminalSlot) {
     for attachment_id in &slot.user_attachments {
         if let Some(att) = inner.attachments.remove(attachment_id) {
@@ -185,8 +164,7 @@ fn remove_terminal_slot(
 /// including a group retained past its leader after an unproven kill.
 #[cfg(feature = "vt-engine")]
 fn native_slot_alive(slot: &TerminalSlot) -> bool {
-    slot.locator.is_none()
-        && slot.pgid > 0
+    slot.pgid > 0
         && (slot
             .child
             .as_ref()
@@ -301,9 +279,7 @@ impl HostState {
             return err("invalid_request");
         }
         let mut inner = self.inner.lock().await;
-        if targets_tmux(&inner, extra) {
-            return err("not_native");
-        }
+
         if let Some(existing) = inner.reservations.values().find(|res| {
             res.conn_id == conn_id && res.terminal_id == terminal_id && res.key == reserve_key
         }) {
@@ -351,9 +327,7 @@ impl HostState {
             .and_then(Value::as_str)
             .unwrap_or("");
         let mut inner = self.inner.lock().await;
-        if targets_tmux(&inner, extra) {
-            return err("not_native");
-        }
+
         if let Some(res) = inner.reservations.get(reservation_id) {
             if res.prepared || (res.key != reserve_key && !reserve_key.is_empty()) {
                 return json!({"ok": true, "released": false});
@@ -543,9 +517,7 @@ impl HostState {
             let Some(slot) = inner.terminals.get_mut(&identity) else {
                 return json!({"ok": true, "killed": false});
             };
-            if slot.locator.is_some() {
-                return err("not_native");
-            }
+
             if slot.killing {
                 return err("kill_in_progress");
             }
@@ -601,14 +573,16 @@ impl HostState {
         let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
             return err("not_found");
         };
-        let Some(slot) = inner.terminals.get_mut(&identity) else {
+        if !inner.terminals.contains_key(&identity) {
             return err("not_found");
-        };
-        if slot.locator.is_some() {
-            return err("not_native");
         }
+
         #[cfg(feature = "vt-engine")]
-        if let Some(child) = slot.child.as_ref() {
+        if let Some(child) = inner
+            .terminals
+            .get(&identity)
+            .and_then(|slot| slot.child.as_ref())
+        {
             let terminal = child.runtime.terminal_handle();
             let (revision, work) = child.runtime.native_resize_work(dims.0, dims.1);
             drop(inner);
@@ -800,13 +774,6 @@ impl HostState {
             let Some(identity) = inner.by_host_id.get(&host_id).cloned() else {
                 continue;
             };
-            if inner
-                .terminals
-                .get(&identity)
-                .is_some_and(|slot| slot.locator.is_some())
-            {
-                continue;
-            }
             let (frame, seq, built_generation) = {
                 let _ = (scroll, reusable_generation);
                 (

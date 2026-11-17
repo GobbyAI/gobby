@@ -17,7 +17,7 @@ use gobby_client::Workspace;
 use gobby_terminal::layout::{self, TileLayout};
 use gobby_terminal::protocol::{
     read_message_async, write_message, write_message_async, CellData, ClientMessage, FrameData,
-    PaneLocator, PaneModes, ServerMessage, MAX_FRAME_SIZE,
+    PaneModes, ServerMessage, MAX_FRAME_SIZE,
 };
 use ratatui::backend::TestBackend;
 use ratatui::layout::{Direction, Rect};
@@ -157,7 +157,6 @@ fn frame_attach_refuses_epoch_mismatch_before_attach() {
         frame_host_epoch: "stale-epoch".into(),
         host_terminal_id: "ht-1".into(),
         frame_socket_path: "/tmp/gterm-frames.sock".into(),
-        pane: None,
     };
     let err = frames.connect(&locator, 80, 24).unwrap_err();
     assert!(matches!(err, FrameError::HostEpochChanged { .. }));
@@ -165,19 +164,10 @@ fn frame_attach_refuses_epoch_mismatch_before_attach() {
     let mut buf = Vec::new();
     write_message(
         &mut buf,
-        &gobby_client::views::observe_tmux_pane(&AttachLocator {
-            backend: "tmux".into(),
-            frame_host_epoch: "epoch".into(),
+        &ClientMessage::AttachTerminal {
             host_terminal_id: "ht-1".into(),
-            frame_socket_path: "/tmp/gterm-frames.sock".into(),
-            pane: Some(PaneLocator {
-                socket_path: "/tmp/tmux-sock".into(),
-                pane_id: "%0".into(),
-                server_pid: 9,
-                server_start_time: 1,
-            }),
-        })
-        .1,
+            reservation_id: None,
+        },
     )
     .unwrap();
     let golden = fs::read(
@@ -186,23 +176,6 @@ fn frame_attach_refuses_epoch_mismatch_before_attach() {
     )
     .expect("unreserved golden");
     assert_eq!(buf, golden, "user attach omits reservation_id");
-
-    let mut tmux = ScriptedFrameSource::new(Transport::Direct);
-    tmux.set_welcome_epoch("adopted-live");
-    let stale = AttachLocator {
-        backend: "tmux".into(),
-        frame_host_epoch: "recycled".into(),
-        host_terminal_id: "ht-1".into(),
-        frame_socket_path: "/tmp/gterm-frames.sock".into(),
-        pane: Some(PaneLocator {
-            socket_path: "/tmp/tmux-sock".into(),
-            pane_id: "%1".into(),
-            server_pid: 9,
-            server_start_time: 1,
-        }),
-    };
-    assert!(tmux.connect(&stale, 80, 24).is_err());
-    assert!(!tmux.sent_attach());
 }
 
 #[tokio::test]
@@ -243,7 +216,6 @@ async fn direct_frame_eof_detaches_before_reattach() {
             frame_host_epoch: "epoch-a".into(),
             host_terminal_id: "term-a".into(),
             frame_socket_path: "socket-pair".into(),
-            pane: None,
         },
         "local-token",
         80,
@@ -390,7 +362,6 @@ async fn direct_and_proxy_panes_run_together() {
             frame_host_epoch: "direct-epoch".into(),
             host_terminal_id: "terminal-direct".into(),
             frame_socket_path: "socket-pair".into(),
-            pane: None,
         },
         "local-token",
         80,
@@ -491,7 +462,7 @@ fn coordinate_symbol(x: u16, y: u16) -> String {
 /// left of every line; a real 200x50 tmux pane rendered as an empty body.
 /// Restoring that source centering moves the origin cell and fails this test.
 #[tokio::test]
-async fn an_oversized_tmux_frame_renders_from_its_origin() {
+async fn an_oversized_native_frame_renders_from_its_origin() {
     const FRAME_WIDTH: u16 = 200;
     const FRAME_HEIGHT: u16 = 50;
 
@@ -510,7 +481,7 @@ async fn an_oversized_tmux_frame_renders_from_its_origin() {
 
     let mut ws = Workspace::scripted();
     let pane = ws
-        .open_terminal("term-tmux-oversized", "tmux", "epoch-tmux")
+        .open_terminal("term-native-oversized", "tmux", "epoch-native")
         .expect("open tmux terminal");
     let mut source = ScriptedFrameSource::new(Transport::Direct);
     source.queue(ServerMessage::Frame(FrameData {

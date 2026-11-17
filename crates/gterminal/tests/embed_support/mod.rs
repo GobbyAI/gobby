@@ -3,14 +3,13 @@
 #![allow(dead_code)]
 
 use gobby_terminal::protocol::{
-    read_message, write_message, ClientMessage, PaneLocator, RenderEncoding, ServerMessage,
-    TmuxClientIdentity, MAX_FRAME_SIZE, PROTOCOL_VERSION,
+    read_message, write_message, ClientMessage, RenderEncoding, ServerMessage, MAX_FRAME_SIZE,
+    PROTOCOL_VERSION,
 };
 use serde_json::Value;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
@@ -20,130 +19,6 @@ pub const CONTROL_SOCKET: &str = "gterm-control.sock";
 pub const FRAMES_SOCKET: &str = "gterm-frames.sock";
 pub const LOCAL: &str = "local-token";
 static REQUEST_ID: AtomicU64 = AtomicU64::new(1);
-
-pub struct TmuxPane {
-    pub dir: tempfile::TempDir,
-    pub socket: PathBuf,
-    pub pane_id: String,
-    pub server_pid: i32,
-    pub start_time: i64,
-    pub session: String,
-}
-
-impl Drop for TmuxPane {
-    fn drop(&mut self) {
-        let _ = Command::new("tmux")
-            .args(["-S", &self.socket.to_string_lossy(), "kill-server"])
-            .status();
-    }
-}
-
-impl TmuxPane {
-    pub fn locator(&self) -> PaneLocator {
-        PaneLocator {
-            socket_path: self.socket.to_string_lossy().into_owned(),
-            server_pid: self.server_pid,
-            server_start_time: self.start_time,
-            pane_id: self.pane_id.clone(),
-        }
-    }
-
-    pub fn identity(&self) -> TmuxClientIdentity {
-        TmuxClientIdentity {
-            socket_path: self.socket.to_string_lossy().into_owned(),
-            server_pid: self.server_pid,
-            server_start_time: self.start_time,
-            pane_id: self.pane_id.clone(),
-        }
-    }
-
-    pub fn tmux(&self, args: &[&str]) -> String {
-        let output = Command::new("tmux")
-            .arg("-S")
-            .arg(&self.socket)
-            .args(args)
-            .output()
-            .expect("tmux");
-        String::from_utf8_lossy(&output.stdout).trim().to_string()
-    }
-
-    pub fn send_hex(&self, bytes: &[u8]) {
-        let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
-        let mut args = vec!["send-keys", "-t", self.pane_id.as_str(), "-H"];
-        let hex_ref: Vec<&str> = hex.iter().map(String::as_str).collect();
-        args.extend(hex_ref);
-        let _ = Command::new("tmux")
-            .arg("-S")
-            .arg(&self.socket)
-            .args(&args)
-            .status();
-    }
-
-    pub fn snapshot(&self) -> String {
-        self.tmux(&[
-            "display-message",
-            "-p",
-            "-t",
-            &self.pane_id,
-            "#{session_name} #{window_id} #{pane_id} #{window_width} #{window_height} #{pane_width} #{pane_height} #{pane_pipe} #{pane_active} #{window_active}",
-        ])
-    }
-}
-
-pub fn start_tmux() -> TmuxPane {
-    start_tmux_sized(80, 24)
-}
-
-pub fn start_tmux_sized(cols: u16, rows: u16) -> TmuxPane {
-    let dir = super::host_support::temp_socket_dir();
-    let socket = dir.path().join("tmux.sock");
-    let session = format!("gobby-{}", std::process::id());
-    let status = Command::new("tmux")
-        .arg("-S")
-        .arg(&socket)
-        .args([
-            "-f",
-            "/dev/null",
-            "new-session",
-            "-d",
-            "-s",
-            &session,
-            "-x",
-            &cols.to_string(),
-            "-y",
-            &rows.to_string(),
-            "--",
-            "/bin/sh",
-        ])
-        .status()
-        .expect("spawn tmux");
-    assert!(status.success(), "tmux new-session failed");
-    let pane_id = tmux_out(&socket, &["display-message", "-p", "#{pane_id}"]);
-    let server_pid: i32 = tmux_out(&socket, &["display-message", "-p", "#{pid}"])
-        .parse()
-        .expect("pid");
-    let start_time: i64 = tmux_out(&socket, &["display-message", "-p", "#{start_time}"])
-        .parse()
-        .expect("start_time");
-    TmuxPane {
-        dir,
-        socket,
-        pane_id,
-        server_pid,
-        start_time,
-        session,
-    }
-}
-
-fn tmux_out(socket: &Path, args: &[&str]) -> String {
-    let output = Command::new("tmux")
-        .arg("-S")
-        .arg(socket)
-        .args(args)
-        .output()
-        .expect("tmux");
-    String::from_utf8_lossy(&output.stdout).trim().to_string()
-}
 
 pub fn spawn_host(extra: &[&str]) -> HostProc {
     spawn_host_with_env_removed(extra, &[])
@@ -182,14 +57,13 @@ pub fn wait_socket(path: &Path) {
     super::host_support::wait_socket(path);
 }
 
-pub fn hello_msg(identity: Option<TmuxClientIdentity>) -> ClientMessage {
+pub fn hello_msg() -> ClientMessage {
     ClientMessage::Hello {
         version: PROTOCOL_VERSION,
         encoding: RenderEncoding::SemanticFrame,
         local_token: LOCAL.into(),
         cols: 80,
         rows: 24,
-        tmux_identity: identity,
     }
 }
 
@@ -209,25 +83,13 @@ pub fn read_msg(stream: &mut UnixStream) -> ServerMessage {
     read_msg_timeout(stream, Duration::from_secs(5)).expect("frame message")
 }
 
-pub fn connect_frames(host: &HostProc, identity: Option<TmuxClientIdentity>) -> UnixStream {
+pub fn connect_frames(host: &HostProc) -> UnixStream {
     let mut stream = UnixStream::connect(host.socket_dir().join(FRAMES_SOCKET)).unwrap();
-    write_msg(&mut stream, &hello_msg(identity));
+    write_msg(&mut stream, &hello_msg());
     match read_msg(&mut stream) {
         ServerMessage::Welcome { .. } => stream,
         other => panic!("expected welcome, got {other:?}"),
     }
-}
-
-pub fn attach(stream: &mut UnixStream, locator: PaneLocator) -> ServerMessage {
-    write_msg(
-        stream,
-        &ClientMessage::AttachTerminal {
-            host_terminal_id: String::new(),
-            reservation_id: None,
-            locator: Some(locator),
-        },
-    );
-    read_msg(stream)
 }
 
 pub fn control(host: &HostProc) -> UnixStream {

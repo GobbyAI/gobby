@@ -14,8 +14,7 @@ use gobby_terminals::control::{
 };
 use gobby_terminals::frames::{
     self, CellData, ClientMessage, CursorState, DeltaQueue, FrameClient, FrameData, FrameError,
-    PaneLocator, PaneModes, RenderEncoding, RgbColor, ServerMessage, TerminalFrame,
-    ThemeDeclaration, TmuxClientIdentity,
+    PaneModes, RenderEncoding, RgbColor, ServerMessage, TerminalFrame, ThemeDeclaration,
 };
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader, DuplexStream, duplex};
@@ -483,15 +482,6 @@ async fn event_epoch_and_cursor_are_fail_closed() -> Result<()> {
     Ok(())
 }
 
-fn identity() -> TmuxClientIdentity {
-    TmuxClientIdentity {
-        socket_path: "/tmp/tmux-sock".into(),
-        server_pid: 9,
-        server_start_time: 1,
-        pane_id: "%0".into(),
-    }
-}
-
 fn client_frames() -> Vec<(&'static str, ClientMessage)> {
     let rgb = |r, g, b| RgbColor { r, g, b };
     vec![
@@ -503,7 +493,6 @@ fn client_frames() -> Vec<(&'static str, ClientMessage)> {
                 local_token: "local-token".into(),
                 cols: 80,
                 rows: 24,
-                tmux_identity: Some(identity()),
             },
         ),
         (
@@ -511,12 +500,6 @@ fn client_frames() -> Vec<(&'static str, ClientMessage)> {
             ClientMessage::AttachTerminal {
                 host_terminal_id: "ht-1".into(),
                 reservation_id: None,
-                locator: Some(PaneLocator {
-                    socket_path: "/tmp/tmux-sock".into(),
-                    server_pid: 9,
-                    server_start_time: 1,
-                    pane_id: "%0".into(),
-                }),
             },
         ),
         (
@@ -524,7 +507,6 @@ fn client_frames() -> Vec<(&'static str, ClientMessage)> {
             ClientMessage::AttachTerminal {
                 host_terminal_id: "ht-1".into(),
                 reservation_id: Some("rsv-1".into()),
-                locator: None,
             },
         ),
         (
@@ -687,9 +669,6 @@ fn server_frames() -> Vec<(&'static str, ServerMessage)> {
             },
         ),
         ("error_frame.bin", error("lag")),
-        ("error_self_view.bin", error("self_view")),
-        ("error_copy_mode.bin", error("copy_mode")),
-        ("error_stale.bin", error("stale")),
         ("error_capacity.bin", error("capacity")),
     ]
 }
@@ -838,7 +817,6 @@ async fn frame_bytes_match_gterm() -> Result<()> {
             RenderEncoding::SemanticFrame,
             80,
             24,
-            Some(identity()),
         )
         .await?;
     let output = client.recv().await?;
@@ -882,7 +860,6 @@ async fn frame_bytes_match_gterm() -> Result<()> {
             RenderEncoding::SemanticFrame,
             80,
             24,
-            None,
         )
         .await
         .expect_err("epoch-2 welcome");

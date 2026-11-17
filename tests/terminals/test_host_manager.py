@@ -1442,7 +1442,7 @@ async def test_adoption_reconciliation_matrix(
 
 
 @pytest.mark.asyncio
-async def test_reconcile_skips_tmux_observer_slots(
+async def test_reconcile_adopts_every_listed_slot(
     short_socket_dir: Path,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -1452,10 +1452,11 @@ async def test_reconcile_skips_tmux_observer_slots(
     terminals = TerminalManager(temp_db)
     epoch = str(uuid.uuid4())
     live = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-live")
-    observer = FakeListRow(
-        terminal_id="tmux:/tmp/gobby:86901:1000:%140",
-        spawn_key="tmux:/tmp/gobby:86901:1000:%140",
-        host_terminal_id="ht-tmux",
+    other = _live(terminals, sample_project["id"], epoch, host_terminal_id="ht-other")
+    second = FakeListRow(
+        terminal_id=other.id,
+        spawn_key=other.spawn_key or other.id,
+        host_terminal_id="ht-other",
         commit_state="committed",
     )
     client = FakeControlClient(
@@ -1468,7 +1469,7 @@ async def test_reconcile_skips_tmux_observer_slots(
                 commit_state="committed",
                 host_terminal_id="ht-live",
             ),
-            observer,
+            second,
         ],
     )
     write_pidfile(short_socket_dir, 8001)
@@ -1478,7 +1479,8 @@ async def test_reconcile_skips_tmux_observer_slots(
     assert host.running is True
     assert host.last_error is None
     assert _loaded(terminals, live.id).state == "live"
-    assert "ht-tmux" not in client.kill_calls
+    assert _loaded(terminals, other.id).state == "live"
+    assert client.kill_calls == []
 
 
 @pytest.mark.asyncio

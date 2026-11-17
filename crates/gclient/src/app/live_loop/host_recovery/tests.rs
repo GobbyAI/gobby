@@ -67,7 +67,6 @@ async fn restored_source_with_host(
         frame_host_epoch: epoch.into(),
         host_terminal_id: "terminal-1".into(),
         frame_socket_path: frame_socket.into(),
-        pane: None,
     };
     let source = UnixSocketFrameSource::connect_stream(client, &locator, "token", 80, 24)
         .await

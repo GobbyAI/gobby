@@ -177,88 +177,6 @@ fn oversize_control_line_is_refused_before_parse() {
     let _ = wait_exit(&mut child, Duration::from_secs(5));
 }
 
-#[test]
-fn native_verbs_refuse_tmux_terminals() {
-    let pane = embed_support::start_tmux();
-    let host = embed_support::spawn_host(&[]);
-    let mut frames = embed_support::connect_frames(&host, None);
-    let attached = embed_support::attach(&mut frames, pane.locator());
-    let host_terminal_id = match attached {
-        gobby_terminal::protocol::ServerMessage::Attached {
-            host_terminal_id, ..
-        } => host_terminal_id,
-        other => panic!("expected attached, got {other:?}"),
-    };
-    let pane_before = pane.snapshot();
-    let mut control = embed_support::control(&host);
-    let requests = [
-        json!({
-            "method": "kill",
-            "operation_seq": 1,
-            "host_terminal_id": host_terminal_id,
-            "grace_ms": 0,
-        }),
-        json!({
-            "method": "write",
-            "operation_seq": 2,
-            "host_terminal_id": host_terminal_id,
-            "kind": "text",
-            "encoding": "utf8-b64",
-            "data": "eA==",
-        }),
-        json!({
-            "method": "write",
-            "operation_seq": 3,
-            "host_terminal_id": host_terminal_id,
-            "kind": "paste",
-            "encoding": "utf8-b64",
-            "data": "eA==",
-        }),
-        json!({
-            "method": "resize",
-            "operation_seq": 4,
-            "host_terminal_id": host_terminal_id,
-            "rows": 12,
-            "cols": 40,
-        }),
-        json!({
-            "method": "snapshot",
-            "host_terminal_id": host_terminal_id,
-            "max_bytes": 128,
-            "max_lines": 8,
-        }),
-        json!({
-            "method": "reserve_observer",
-            "terminal_id": host_terminal_id,
-            "reserve_key": "tmux-must-not-reserve",
-        }),
-        json!({
-            "method": "release_observer",
-            "host_terminal_id": host_terminal_id,
-            "reservation_id": "tmux-must-not-release",
-            "reserve_key": "tmux-must-not-release",
-        }),
-    ];
-    for request in requests {
-        embed_support::send_json(&mut control, &request);
-        let reply = embed_support::recv_json(&mut control);
-        assert_eq!(
-            reply["error"], "not_native",
-            "request={request} reply={reply}"
-        );
-    }
-
-    embed_support::send_json(&mut control, &json!({"method": "ping"}));
-    assert_eq!(embed_support::recv_json(&mut control)["ok"], true);
-    embed_support::send_json(&mut control, &json!({"method": "list"}));
-    let listed = embed_support::recv_json(&mut control);
-    assert!(listed["terminals"].as_array().is_some_and(|rows| {
-        rows.iter()
-            .any(|row| row["host_terminal_id"] == host_terminal_id)
-    }));
-    assert_eq!(pane.snapshot(), pane_before);
-}
-
 fn authed(
     dir: &std::path::Path,
     token: &str,
@@ -648,41 +566,6 @@ fn commit_wait_does_not_block_other_requests() {
 }
 
 #[test]
-fn tmux_pane_death_emits_no_control_event() {
-    use gobby_terminal::protocol::ServerMessage;
-
-    let pane = embed_support::start_tmux();
-    let host = embed_support::spawn_host(&[]);
-    let mut control = embed_support::control(&host);
-    embed_support::send_json(
-        &mut control,
-        &json!({"method": "subscribe_events", "id": "tmux-events"}),
-    );
-    assert_eq!(embed_support::recv_json(&mut control)["ok"], true);
-    let mut frames = embed_support::connect_frames(&host, None);
-    let _ = embed_support::attach(&mut frames, pane.locator());
-
-    pane.tmux(&["kill-server"]);
-    let frame_exit = (0..20).any(|_| {
-        matches!(
-            embed_support::read_msg_timeout(&mut frames, Duration::from_millis(150)),
-            Some(ServerMessage::TerminalExited { .. })
-        )
-    });
-    assert!(frame_exit, "tmux death did not reach the frame stream");
-
-    control
-        .set_read_timeout(Some(Duration::from_millis(150)))
-        .unwrap();
-    let mut byte = [0_u8; 1];
-    let error = control.read(&mut byte).unwrap_err();
-    assert!(matches!(
-        error.kind(),
-        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-    ));
-}
-
-#[test]
 fn control_surface_round_trip() {
     let dir = temp_socket_dir();
     let token = "control-token-surface";
@@ -895,7 +778,6 @@ fn attach_input_frames(
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.into(),
             reservation_id: None,
-            locator: None,
         },
     );
     match frame_reply(&mut frames) {
@@ -1807,7 +1689,6 @@ fn snapshot_text_mode_answers_plainly_when_history_holds_only_styling() {
 /// four slots reserved for host health, `list`, and lifecycle work.
 const NATIVE_LIST_CEILING: usize = 124;
 /// Distinct tmux panes the host will observe at once (`max_attached_terminals`).
-const TMUX_LIST_CEILING: usize = 64;
 /// `TITLE_MAX_BYTES`: the widest title the host registry will store.
 const LIST_TITLE_BYTES: usize = 1024;
 /// The pane OSC layer keeps at most 256 code points of an OSC 0/2 payload, so a
@@ -1820,7 +1701,6 @@ const WIDEST_OBSERVATION_REASON: &str = "geometry_exceeds_max_cells";
 /// blit encode per tick, so the population is titled in bounded groups.
 const NATIVE_BIND_GROUP: usize = 8;
 /// Slow the tmux poll so 64 observers do not fork a `tmux` batch every 50 ms.
-const LIST_POLL_INTERVAL_MS: &str = "2000";
 /// Populating and titling 188 rows outlasts the shared five-second helper.
 const LIST_SETTLE_TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -1832,21 +1712,17 @@ const LIST_SETTLE_TIMEOUT: Duration = Duration::from_secs(120);
 /// population of this one scenario, never a number of tests.
 #[test]
 fn list_envelope_fits_under_line_cap() {
-    let host = embed_support::spawn_host(&["--tmux-poll-interval-ms", LIST_POLL_INTERVAL_MS]);
-    // Four-byte characters for the OSC path, JSON-escaping ones for tmux: each
-    // is the widest encoded row its source can produce at `TITLE_MAX_BYTES`.
+    let host = embed_support::spawn_host(&[]);
+    // Four-byte characters fill the native title byte ceiling.
     let native_title = "\u{1F600}".repeat(NATIVE_TITLE_CHARS);
-    let tmux_title = "\"".repeat(LIST_TITLE_BYTES);
     assert_eq!(native_title.len(), LIST_TITLE_BYTES);
-    assert_eq!(tmux_title.len(), LIST_TITLE_BYTES);
     let mut control = embed_support::control(&host);
 
     admit_native_population(&host, &mut control, &native_title);
-    let panes = admit_tmux_population(&host, &tmux_title);
 
     embed_support::wait_until_host(host.socket_dir(), LIST_SETTLE_TIMEOUT, || {
         let rows = list_rows(&host);
-        rows.len() == NATIVE_LIST_CEILING + TMUX_LIST_CEILING
+        rows.len() == NATIVE_LIST_CEILING
             && rows
                 .iter()
                 .all(|row| title_bytes(row) == Some(LIST_TITLE_BYTES))
@@ -1857,7 +1733,7 @@ fn list_envelope_fits_under_line_cap() {
     let rows = envelope["terminals"].as_array().expect("list rows");
     assert_eq!(
         rows.len(),
-        NATIVE_LIST_CEILING + TMUX_LIST_CEILING,
+        NATIVE_LIST_CEILING,
         "list must hold the whole admissible population"
     );
     for row in rows {
@@ -1892,7 +1768,7 @@ fn list_envelope_fits_under_line_cap() {
         line.len() + widest_reason
     );
 
-    // The 189th admission. Both halves are saturated, so each one refuses.
+    // The next native reservation exceeds the admission ceiling.
     embed_support::send_json(
         &mut control,
         &json!({
@@ -1904,32 +1780,10 @@ fn list_envelope_fits_under_line_cap() {
     let refused = embed_support::recv_json(&mut control);
     assert_eq!(refused["ok"], false, "{refused}");
     assert_eq!(refused["error"], "capacity", "{refused}");
-
-    let mut extra = panes.pane.locator();
-    extra.pane_id = new_tmux_pane(&panes.pane, &tmux_title);
-    let mut frames = connect_ansi_frames(&host);
-    embed_support::write_msg(
-        &mut frames,
-        &gobby_terminal::protocol::ClientMessage::AttachTerminal {
-            host_terminal_id: String::new(),
-            reservation_id: None,
-            locator: Some(extra),
-        },
-    );
-    match embed_support::read_msg(&mut frames) {
-        gobby_terminal::protocol::ServerMessage::Error { code, .. } => {
-            assert_eq!(code, "capacity", "a 65th tmux observer must be refused");
-        }
-        other => panic!("a 65th tmux observer was admitted: {other:?}"),
-    }
 }
 
 /// The tmux half of the scenario, kept alive for the whole measurement: closing
 /// a tmux observer reaps its registry row, so the streams outlive the assertions.
-struct TmuxPopulation {
-    pane: embed_support::TmuxPane,
-    _drain: FrameDrain,
-}
 
 /// Fill the native entitlement ceiling with committed, titled terminals.
 ///
@@ -2019,40 +1873,6 @@ fn admit_native_population(
     }
 }
 
-/// Fill the tmux observation ceiling with titled panes on one tmux server.
-fn admit_tmux_population(host: &host_support::HostProc, title: &str) -> TmuxPopulation {
-    let population = TmuxPopulation {
-        pane: embed_support::start_tmux_sized(120, 40),
-        _drain: FrameDrain::start(),
-    };
-    let pane = &population.pane;
-    pane.tmux(&["select-pane", "-t", &pane.pane_id, "-T", title]);
-    let mut locators = vec![pane.locator()];
-    for _ in 1..TMUX_LIST_CEILING {
-        let mut locator = pane.locator();
-        locator.pane_id = new_tmux_pane(pane, title);
-        locators.push(locator);
-    }
-
-    for (index, locator) in locators.into_iter().enumerate() {
-        let mut stream = connect_ansi_frames(host);
-        embed_support::write_msg(
-            &mut stream,
-            &gobby_terminal::protocol::ClientMessage::AttachTerminal {
-                host_terminal_id: String::new(),
-                reservation_id: None,
-                locator: Some(locator),
-            },
-        );
-        match embed_support::read_msg(&mut stream) {
-            gobby_terminal::protocol::ServerMessage::Attached { .. } => {}
-            other => panic!("tmux attach {index} failed: {other:?}"),
-        }
-        population._drain.adopt(stream);
-    }
-    population
-}
-
 /// Bind one native terminal's reservation to a frame observer.
 fn attach_native_frames(
     host: &host_support::HostProc,
@@ -2066,29 +1886,12 @@ fn attach_native_frames(
         &gobby_terminal::protocol::ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.to_string(),
             reservation_id: Some(reservation_id),
-            locator: None,
         },
     );
     match embed_support::read_msg(&mut stream) {
         gobby_terminal::protocol::ServerMessage::Attached { .. } => stream,
         other => panic!("native attach {index} failed: {other:?}"),
     }
-}
-
-/// Open one more titled pane on an existing tmux server.
-fn new_tmux_pane(pane: &embed_support::TmuxPane, title: &str) -> String {
-    let pane_id = pane.tmux(&[
-        "new-window",
-        "-d",
-        "-P",
-        "-F",
-        "#{pane_id}",
-        "--",
-        "/bin/sh",
-    ]);
-    assert!(!pane_id.is_empty(), "tmux new-window returned no pane id");
-    pane.tmux(&["select-pane", "-t", &pane_id, "-T", title]);
-    pane_id
 }
 
 /// Attach frames as an ANSI-encoding peer, the cheapest encoding for observers
@@ -2109,7 +1912,6 @@ fn connect_ansi_frames(host: &host_support::HostProc) -> std::os::unix::net::Uni
             local_token: embed_support::LOCAL.into(),
             cols: 120,
             rows: 40,
-            tmux_identity: None,
         },
     );
     match embed_support::read_msg(&mut stream) {

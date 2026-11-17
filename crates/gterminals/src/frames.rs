@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 pub const MAX_FRAME_SIZE: usize = 2 * 1024 * 1024;
 pub const MAX_WRITE_BYTES: usize = 1024 * 1024;
 pub const DELTA_QUEUE_ENTRIES: usize = 64;
@@ -20,22 +20,6 @@ pub const DELTA_QUEUE_BYTES: usize = MAX_FRAME_SIZE;
 pub enum RenderEncoding {
     SemanticFrame,
     TerminalAnsi,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct TmuxClientIdentity {
-    pub socket_path: String,
-    pub server_pid: i32,
-    pub server_start_time: i64,
-    pub pane_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct PaneLocator {
-    pub socket_path: String,
-    pub server_pid: i32,
-    pub server_start_time: i64,
-    pub pane_id: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -90,8 +74,6 @@ pub enum ClientMessage {
         local_token: String,
         cols: u16,
         rows: u16,
-        #[serde(default)]
-        tmux_identity: Option<TmuxClientIdentity>,
     },
     LegacyInput {
         data: Vec<u8>,
@@ -111,8 +93,6 @@ pub enum ClientMessage {
         host_terminal_id: String,
         #[serde(default)]
         reservation_id: Option<String>,
-        #[serde(default)]
-        locator: Option<PaneLocator>,
     },
     SetViewport {
         rows: u16,
@@ -373,7 +353,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FrameClient<S> {
         encoding: RenderEncoding,
         cols: u16,
         rows: u16,
-        tmux_identity: Option<TmuxClientIdentity>,
     ) -> Result<(), FrameError> {
         self.send(&ClientMessage::Hello {
             version: PROTOCOL_VERSION,
@@ -381,7 +360,6 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FrameClient<S> {
             local_token: local_token.to_owned(),
             cols,
             rows,
-            tmux_identity,
         })
         .await?;
         match self.recv().await? {

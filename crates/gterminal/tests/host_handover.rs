@@ -385,7 +385,6 @@ fn attach_with_id(
             local_token: "local-token".into(),
             cols: 80,
             rows: 24,
-            tmux_identity: None,
         },
     );
     assert!(matches!(
@@ -397,7 +396,6 @@ fn attach_with_id(
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.into(),
             reservation_id: reservation_id.map(Into::into),
-            locator: None,
         },
     );
     let mut attachment_id = None;
@@ -1264,7 +1262,6 @@ fn assert_late_frame_attach_is_refused(socket_dir: &Path, host_terminal_id: &str
             local_token: "local-token".into(),
             cols: 80,
             rows: 24,
-            tmux_identity: None,
         },
     );
     assert!(matches!(
@@ -1276,7 +1273,6 @@ fn assert_late_frame_attach_is_refused(socket_dir: &Path, host_terminal_id: &str
         &ClientMessage::AttachTerminal {
             host_terminal_id: host_terminal_id.into(),
             reservation_id: None,
-            locator: None,
         },
     );
     // Read the reply directly: a refused attach answers at once, where a gated

@@ -620,54 +620,7 @@ fn direct_reply_locator(reply: &Value) -> Result<AttachLocator, FrameError> {
             .map(str::to_string)
             .ok_or_else(|| FrameError::Protocol(format!("direct locator omitted {name}")))
     };
-    let pane = direct
-        .get("pane")
-        .filter(|value| !value.is_null())
-        .map(
-            |value| -> Result<gobby_terminal::protocol::PaneLocator, FrameError> {
-                let pane = value.as_object().ok_or_else(|| {
-                    FrameError::Protocol("direct pane locator is not an object".into())
-                })?;
-                let pane_string = |name: &str| {
-                    pane.get(name)
-                        .and_then(Value::as_str)
-                        .filter(|value| !value.is_empty())
-                        .map(str::to_string)
-                        .ok_or_else(|| {
-                            FrameError::Protocol(format!("direct pane locator omitted {name}"))
-                        })
-                };
-                let server_pid = pane
-                    .get("server_pid")
-                    .and_then(Value::as_i64)
-                    .and_then(|value| i32::try_from(value).ok())
-                    .ok_or_else(|| {
-                        FrameError::Protocol("direct pane locator omitted server_pid".into())
-                    })?;
-                let server_start_time = pane
-                    .get("server_start_time")
-                    .and_then(Value::as_i64)
-                    .ok_or_else(|| {
-                        FrameError::Protocol("direct pane locator omitted server_start_time".into())
-                    })?;
-                Ok(gobby_terminal::protocol::PaneLocator {
-                    socket_path: pane_string("socket_path")?,
-                    pane_id: pane_string("pane_id")?,
-                    server_pid,
-                    server_start_time,
-                })
-            },
-        )
-        .transpose()?;
-    // Same split as `row_has_direct_locator`: a pane locator carries the
-    // identity on its own, and the frame host discards `host_terminal_id` the
-    // moment one is present. It stays required when there is no pane, because
-    // then it is the only thing naming the terminal.
-    let host_terminal_id = if pane.is_some() {
-        string("host_terminal_id").unwrap_or_default()
-    } else {
-        string("host_terminal_id")?
-    };
+    let host_terminal_id = string("host_terminal_id")?;
     Ok(AttachLocator {
         backend: reply
             .get("backend")
@@ -677,7 +630,6 @@ fn direct_reply_locator(reply: &Value) -> Result<AttachLocator, FrameError> {
         frame_host_epoch: string("host_epoch")?,
         host_terminal_id,
         frame_socket_path: string("frame_socket_path")?,
-        pane,
     })
 }
 

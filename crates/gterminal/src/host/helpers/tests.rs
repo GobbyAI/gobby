@@ -93,7 +93,7 @@ fn semantic_frame_tracks_content_and_resyncs_after_overflow() {
 #[test]
 fn first_push_is_a_full_paint_with_real_cell_colors() {
     let (mut att, mailbox) = attachment();
-    // Packed 24-bit colours, as `host::poll::apply_sgr` stores tmux SGR 38;2 / 48;2.
+    // Packed 24-bit colours, as `the terminal SGR parser` stores terminal SGR 38;2 / 48;2.
     let red = 0x02_00_00_00 | 0xff_00_00;
     let navy = 0x02_00_00_00 | 0x00_40_80;
     let bold = 1;

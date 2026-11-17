@@ -290,12 +290,8 @@ fn stage_pane(
         total_bytes: pane.total_bytes,
         truncated: pane.truncated,
         user_attachments: HashSet::new(),
-        locator: pane.locator,
-        tmux_history_bytes: 0,
-        history: None,
-        last_frame: None,
+
         observer_generation: pane.observer_generation,
-        consecutive_failures: 0,
     };
     Ok((slot, reservation, pane.exit))
 }

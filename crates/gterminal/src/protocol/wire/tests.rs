@@ -9,7 +9,6 @@ fn hello_msg(cols: u16, rows: u16) -> ClientMessage {
         local_token: "local-token".into(),
         cols,
         rows,
-        tmux_identity: None,
     }
 }
 
