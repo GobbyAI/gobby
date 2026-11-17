@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- Remove tmux support. Native gterm-hosted terminals are the only terminal kind;
+  external multiplexer sessions are unmanaged. Terminal settings move under
+  `terminals`; migrations 502–503 retire old terminal rows, fields, and configuration. The
+  frame protocol moves to version 2 (control stays at version 1), and the web
+  terminal badge reads `TERMINAL`.
 - Remove the dead Ink setup wizard, the `gobby setup` command, and the
   `@gobby/setup` bundle. Use `gobby install` for first-run setup.
 - Remove the service-only `gobby install --falkordb` option. Default, `--all`,

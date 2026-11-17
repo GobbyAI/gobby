@@ -607,6 +607,12 @@ separate planning effort before implementation.
     17: the S2.7 and S2.11 node halves (#24148, #24150) move to Stage 4. Port
     order reference: `.gobby/plans/research/rust-port-order-v2-2026-10-31.md`.
 
+27. **Native-only terminals** (2026-11-17). Native gterm-hosted terminals are the only terminal kind.
+    Supersedes decision 20: there is no terminal-backend fallback, and external
+    multiplexer sessions are unmanaged. Interactive `gclient` refuses a nonempty
+    `GOBBY_PANE_ID` to prevent nesting; command mode, help, and version remain usable
+    inside a pane. Independent client windows remain supported.
+
 ## References
 
 Completed plans:

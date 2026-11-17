@@ -85,8 +85,8 @@ how the system behaves so you can work with it instead of being surprised by it.
    when gcode cannot serve the checkout.
 10. No backward compatibility with shipped releases; during the port, rows that Rust
     writes stay readable by Python while it exists and by each cutover's pinned
-    generation, and schema steps after the tmux purge stay expand-only until
-    CP-FINAL-CUT (D19, D22, D129).
+    generation, and schema steps after the terminal-backend purge (#25486) stay
+    expand-only until CP-FINAL-CUT (D19, D22, D129).
 11. Agent depth limit of 5 — no deeper recursive agent chains.
 12. Cross-session messaging goes through `gobby-agents:send_message`. Reserve
     `gobby-sessions:send_keys` for terminal control. Waits are event-driven: use

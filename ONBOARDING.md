@@ -63,7 +63,6 @@ Top MCP Servers:
 1. Check prerequisites:
    - Docker Desktop or another running Docker daemon
    - Python 3.13 or newer
-   - `tmux` on macOS/Linux
    - `uv` when installing from this source checkout
    - At least one supported coding CLI, such as Claude Code, Codex, Droid,
      Grok, or AGY

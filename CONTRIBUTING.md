@@ -261,7 +261,7 @@ src/gobby/
 ├── servers/               # HTTP and WebSocket servers
 │   ├── http.py           # FastAPI HTTP server
 │   ├── routes/           # HTTP API routes (tasks, sessions, agents, etc.)
-│   └── websocket/        # WebSocket server (broadcast, chat, voice, tmux)
+│   └── websocket/        # WebSocket server (broadcast, chat, voice)
 │
 ├── mcp_proxy/            # MCP proxy layer
 │   ├── server.py         # FastMCP server implementation

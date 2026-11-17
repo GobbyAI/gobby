@@ -14,7 +14,7 @@ index metadata are discovery aids; executable source is authoritative.
 - Active-daemon lease with heartbeat, standby promotion, stale-owner recovery, PID ownership, and
   graceful restart and shutdown.
 - Startup recovery for agents, MCP connections, cron jobs, pipelines, memory projections,
-  code-index projections, tmux sessions, hook inboxes, and external issue sync.
+  code-index projections, native terminals, hook inboxes, and external issue sync.
 - Optional subsystem degradation is surfaced through health and status while core runtime remains
   operational.
 
@@ -67,7 +67,7 @@ Sources: [`crates/ghook/src/args.rs`](crates/ghook/src/args.rs),
 ## Session tracking and transcripts
 
 - Durable project- and machine-scoped sessions with UUIDs and human `#N` references.
-- Tracks provider external IDs, branch, terminal and tmux identity, web-chat state, parent/child
+- Tracks provider external IDs, branch, native terminal identity, web-chat state, parent/child
   lineage, agent run, workflow state, task activity, edit history, sandbox policy, approved tools,
   and model.
 - Tracks cumulative input, output, and cache tokens; context-window occupancy; turn, message, and
@@ -434,7 +434,7 @@ Sources: [`src/gobby/llm/`](src/gobby/llm/),
   prompts, UI settings, and tool-approval policies.
 - Separate bootstrap, runtime, project verification, build-profile, and MCP-server configuration
   surfaces.
-- Installers configure services, hooks, MCP clients, tmux, PostgreSQL, Qdrant, FalkorDB, gcode,
+- Installers configure services, hooks, MCP clients, PostgreSQL, Qdrant, FalkorDB, gcode,
   gdaemon, ghook, and supported coding assistants.
 - Operator CLI covers daemon, service, auth, secrets, datastores, projects, sessions, tasks,
   builds, agents, workspaces, memory, workflows, rules, pipelines, integrations, testing, backup,
