@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.24
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.24-x10b-stop-continue.txt); Stop decision=continue on every Stop: DONE-1…DONE-16 across 11 Stop hooks (executionNum 0–10), then forced end
+# source: pane capture -S -200 of agy-gate0 (1.1.24-x10b-stop-continue.txt); Stop decision=continue on every Stop: DONE-1…DONE-16 across 11 Stop hooks (executionNum 0–10), then forced end
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
 
 

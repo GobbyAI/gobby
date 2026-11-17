@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.23
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (08-artifact-review.txt); approval menu
+# source: pane capture -S -200 of agy-gate0 (08-artifact-review.txt); approval menu
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>
 ▸ Thought for 14s
   The user asks to run `ls -la` in the directory. We need to use run_command tool....

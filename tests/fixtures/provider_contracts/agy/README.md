@@ -1,11 +1,11 @@
 # AGY Provider Contract Captures (Gate 0, plan `agy-full-integration` §1.1)
 
 Captured 2026-08-22 by task #19563 in **both** print mode (`agy -p … --output-format
-stream-json`) and interactive terminal mode (raw tmux, plan §1.1 mechanics). Three runs:
+stream-json`) and interactive terminal mode (raw terminal control, plan §1.1 mechanics). Three runs:
 the full both-mode probe (03:17–04:30 local), the **daemon-receipt run** (05:40–05:50
 local) that re-ran the three fixed prompts per mode with the real `ghook` delivering
 every hook event to the daemon, and the **pass-3 interactive run** (06:36–07:20 local,
-11:36–12:20Z) that answered every live-turn record a second time in a tmux pane —
+11:36–12:20Z) that answered every live-turn record a second time in a terminal pane —
 including all 1.1.24 response-field variants with `gate0-capture` returning the
 configured responses.
 
@@ -18,8 +18,8 @@ pin or downgrade path, so the probed floor is 1.1.18. Record **1.1.25** is a Gat
 addendum observed on installed AGY **1.1.22** (`evidence/1.1.25-command-confine.txt`).
 
 **Probe environment.** The agent session ran under an SRT sandbox whose proxy forbids
-Google domains, so every AGY invocation was executed in an outside tmux pane
-(`tmux new-session … ; tmux send-keys …`), which is also the plan's terminal-mode
+Google domains, so every AGY invocation was executed in an outside terminal pane
+(`<PANE_CTL> new-session … ; <PANE_CTL> send-keys …`), which is also the plan's terminal-mode
 mechanism. The Gemini weekly bucket hit 0 % mid-run (`Individual quota reached`), so
 later turns — including the whole receipt run and the pass-3 run — used
 `--model gpt-oss-120b-medium` (separate bucket); records note the model where it
@@ -31,7 +31,7 @@ matters.
 | --- | --- | --- |
 | `hook-payloads.jsonl` | 1.1.1, 1.1.3, 1.1.4, 1.1.5, 1.1.9, 1.1.10, 1.1.13, 1.1.17, 1.1.24 | 284 live camelCase payloads with `mode` (`print` / `interactive`), hook cwd, env, the capture hook's answer and exit code; the 49 receipt-run lines carry `envelope_id`, which joins them to `daemon-receipts.jsonl`; the 208 `"pass": 3` lines are the 150 pass-3 interactive/print turns (every 1.1.24 interactive variant carries the configured `response`) plus 58 first-run print-mode 1.1.24 lines (`force_continue` ×47, `Stop continue` ×10, `injectSteps` messages ×1) added so both modes carry every variant |
 | `daemon-receipts.jsonl` | 1.1.5, 1.1.17 | 49 daemon-side receipts, one per `ghook` delivery of the receipt run: `mode`, `event`, `tool_class` (`built-in` / `shell` / `mcp`), the daemon's HTTP status + response body, the daemon's processed-envelope marker (`~/.gobby/hooks/inbox/processed/<sha256(envelope_id)>.json`), and the matching `~/.gobby/logs/hooks.log` line |
-| `pane-captures/<record>-interactive[-<label>].txt` | every `both` record below | scrubbed `tmux capture-pane -p -S -200` output, one file per cited terminal-mode observation; three header lines then the pane body |
+| `pane-captures/<record>-interactive[-<label>].txt` | every `both` record below | scrubbed `pane capture -S -200` output, one file per cited terminal-mode observation; three header lines then the pane body |
 | `evidence/<record>-<mode>-<label>.txt` | every record below | the literal command(s) (`$ …`) and the complete scrubbed stdout / stderr / exit code (or the probe script's report) the record's verdict rests on; lines over 4 KiB carry `<TRUNCATED n bytes>` |
 | `transcript-manifest.json` | 1.1.2, 1.1.10, 1.1.22 | transcript layout, literal `transcriptPath`, record census (print and interactive), zero/nonzero-exit shell records, truncation evidence |
 | `stream-json-samples.jsonl` | 1.1.1, 1.1.6, 1.1.8, 1.1.13, 1.1.18, 1.1.20 | scrubbed NDJSON records (init, resumed turn, text_delta, tool ACTIVE/DONE/ERROR, failure results, stream-input errors, synthetic malformed line) |
@@ -55,17 +55,17 @@ Deleted: `agy_models_v1.0.10.txt`, `model-cache-summary.json` (superseded by
    directory`), shell (`run: ls -la`), MCP (`call the gobby list_mcp_servers tool and
    report the result`), plus the targeted probes per record below. 566 hook
    invocations captured in the first run, 150 in the pass-3 run.
-3. Interactive: `tmux new-session -d -s agy-gate0 -x 200 -y 50 -c <WORKSPACE> "agy
+3. Interactive: `<PANE_CTL> new-session -d -s agy-gate0 -x 200 -y 50 -c <WORKSPACE> "agy
    --sandbox=false --dangerously-skip-permissions --model gpt-oss-120b-medium
    --add-dir <WORKSPACE>"`; prompt glyph `>` on its own line between two horizontal
-   rules, status line `? for shortcuts … <model label>`; prompts sent with `tmux
-   send-keys -t agy-gate0 -l '<prompt>'; tmux send-keys -t agy-gate0 Enter`, the pane
+   rules, status line `? for shortcuts … <model label>`; prompts sent with `<PANE_CTL>
+   send-keys -t agy-gate0 -l '<prompt>'; <PANE_CTL> send-keys -t agy-gate0 Enter`, the pane
    captured after the capture hook's `Stop` file appeared (or, for multi-Stop turns,
    after 30 s without a new hook file while the idle status line showed). Second
    sessions without the two flags (native permission prompt, 1.1.24 no-skip variants),
    with `--print-timeout 8s` (1.1.13), with `--conversation <id>` (1.1.1), and under
-   `HOME=$(mktemp -d)` (1.1.15). `tmux set-option remain-on-exit on` keeps the dead
-   pane readable for the exit captures. `tmux kill-session` and orphan check at the end.
+   `HOME=$(mktemp -d)` (1.1.15). `<PANE_CTL> set-option remain-on-exit on` keeps the dead
+   pane readable for the exit captures. `<PANE_CTL> kill-session` and orphan check at the end.
 4. **Daemon-receipt run.** `gate0-capture.sh` additionally pipes the same stdin into
    the real hook binary, `GOBBY_PROJECT_ID=<PROJECT_ID> GOBBY_DAEMON_URL=http://127.0.0.1:60899
    ~/.gobby/bin/ghook --gobby-owned --cli=agy --type=<Event>`, where `:60899` is a
@@ -85,8 +85,8 @@ Deleted: `agy_models_v1.0.10.txt`, `model-cache-summary.json` (superseded by
 5. Remove `gate0-capture`; `/hooks` after shows only `gobby` (5 actions); `hooks.json`
    is byte-equivalent to the pre-probe backup (`cmp` exit 0, all three runs;
    `evidence/1.1.21-print-hooks.txt`).
-6. Scrub: `$HOME`→`~`, conversation ids→`<CONVERSATION_ID>`, workspace→`<WORKSPACE>`,
-   probe scratch→`<PROBE_SCRATCH>`, isolated HOME→`<ISOLATED_HOME>`, app-data paths
+6. Scrub: pane-control program→`<PANE_CTL>`, `$HOME`→`~`, conversation ids→`<CONVERSATION_ID>`,
+   workspace→`<WORKSPACE>`, probe scratch→`<PROBE_SCRATCH>`, isolated HOME→`<ISOLATED_HOME>`, app-data paths
    other than `brain/<id>/…`→`<AGY_APP_DATA>/…`, `~/.gemini/config/projects/<uuid>.json`
    →`<PROJECT_UUID>`, the local user name→`<USER>`, project id→`<PROJECT_ID>`, AGY
    error ids→`<ERROR_ID>`, emails/tokens/OAuth `client_id`/`code_challenge`/`state`→
@@ -202,7 +202,7 @@ for the common flag set `--output-format stream-json --sandbox=false
 --dangerously-skip-permissions --print-timeout 4m --add-dir <WORKSPACE>`; the
 `evidence/` file spells every command out in full. Quoted lines are complete lines
 of the cited file. Interactive evidence is the cited `pane-captures/` file; the
-pass-3 session prompts were sent with `tmux send-keys -t agy-gate0 -l '<prompt>'` +
+pass-3 session prompts were sent with `<PANE_CTL> send-keys -t agy-gate0 -l '<prompt>'` +
 `Enter`.
 
 ### 1.1.1 — resume (`--conversation`)
@@ -227,7 +227,7 @@ Same `conversation_id` as the `run: ls -la` turn, `num_turns` 1→2; the second 
 resumes the SIGINT-cancelled conversation of 1.1.8. Delta: 5 s of wall clock reported
 as `duration_seconds` 213 — measured from conversation creation.
 
-Interactive (`pane-captures/1.1.1-interactive-resume.txt`): `tmux new-session -d -s
+Interactive (`pane-captures/1.1.1-interactive-resume.txt`): `<PANE_CTL> new-session -d -s
 agy-gate0 … "agy --sandbox=false --dangerously-skip-permissions --model
 gpt-oss-120b-medium --add-dir <WORKSPACE> --conversation <CONVERSATION_ID>"` on the
 print-mode `run: ls -la` conversation (`evidence/1.1.10-print-zero-exit.txt`). The pane
@@ -478,9 +478,9 @@ Interactive (`pane-captures/1.1.8-interactive-ctrl-c.txt`,
 ○ Bash(sleep 40; echo done-after-sleep) (ctrl+o to expand)
   ⎿  Interrupted · What should Antigravity CLI do instead?
   ● [05:48:19] sleep 40; echo done-after-sleep running
-$ tmux send-keys -t agy-gate0 C-c; sleep 2; tmux capture-pane -p -S -200 -t agy-gate0        # at idle
+$ <PANE_CTL> send-keys -t agy-gate0 C-c; sleep 2; <PANE_CTL> capture-pane -p -S -200 -t agy-gate0        # at idle
 press ctrl+c again to exit                                                                                                                                                         GPT-OSS 120B (Medium)
-$ tmux send-keys -t agy-gate0 C-c; sleep 3; tmux capture-pane -p -S -200 -t agy-gate0; tmux list-panes -t agy-gate0 -F 'dead=#{pane_dead} status=#{pane_dead_status}'
+$ <PANE_CTL> send-keys -t agy-gate0 C-c; sleep 3; <PANE_CTL> capture-pane -p -S -200 -t agy-gate0; <PANE_CTL> list-panes -t agy-gate0 -F 'dead=#{pane_dead} status=#{pane_dead_status}'
 Resume with -c (or command below):
 agy --conversation=<CONVERSATION_ID>
 Pane is dead (status 0, Sat Aug 22 06:39:16 2026)
@@ -753,21 +753,21 @@ and the turn completed (hook captures for label `1.1.13 interactive --print-time
 `after-allow`):
 
 ```
-$ tmux send-keys -t agy-gate0 BTab          # shift+tab, three times
+$ <PANE_CTL> send-keys -t agy-gate0 BTab          # shift+tab, three times
 esc to cancel                                                                                                                                                       accept-edits · GPT-OSS 120B (Medium)
 esc to cancel                                                                                                                                                               plan · GPT-OSS 120B (Medium)
 esc to cancel                                                                                                                                                                      GPT-OSS 120B (Medium)
 > /plan create a file plan1.txt containing the word hi
 ● Create(~/.gemini/antigravity-cli/brain/<CONVERSATION_ID>/plan_create_plan1_txt.md) (ctrl+o to expand)
   Artifact: plan_create_plan1_txt.md
-$ tmux send-keys -t agy-gate0 C-r           # or /artifact
+$ <PANE_CTL> send-keys -t agy-gate0 C-r           # or /artifact
 Action required (1 left)
 › □ new plan_create_plan1_txt.md   open  approve reject
 Keyboard: ↑/↓ Navigate  y/n Approve/reject  shift+a Approve all  p Preview  ctrl+g open in editor  esc Done
-$ tmux send-keys -t agy-gate0 y
+$ <PANE_CTL> send-keys -t agy-gate0 y
   ⎿  Review submitted
 > [Approved] plan_create_plan1_txt.md
-$ tmux send-keys -t agy-gate0 '?'
+$ <PANE_CTL> send-keys -t agy-gate0 '?'
 shift+tab  Cycle mode · ctrl+r  Review artifact · ctrl+o  Toggle trajectory view · esc Close
 > run: echo permtest                        # session without --dangerously-skip-permissions
 Requesting permission for:
@@ -824,15 +824,15 @@ Interactive (`pane-captures/1.1.15-interactive-isolated-home.txt`,
 `1.1.15-interactive-empty-home.txt`):
 
 ```
-$ H=$(mktemp -d); tmux new-session -d -s agy-unauth -x 200 -y 50 -c <WORKSPACE> "HOME=$H agy --model gpt-oss-120b-medium; echo \"agy exited rc=\$?\"; sleep 600"
+$ H=$(mktemp -d); <PANE_CTL> new-session -d -s agy-unauth -x 200 -y 50 -c <WORKSPACE> "HOME=$H agy --model gpt-oss-120b-medium; echo \"agy exited rc=\$?\"; sleep 600"
  Welcome to the Antigravity CLI. You are currently not signed in.
  Select login method:
  > 1. Google OAuth
    2. Use a Google Cloud project
  [Use arrow keys to navigate, Enter to select]
-$ tmux send-keys -t agy-unauth C-c          # nothing selected; real Keychain and ~/.gemini untouched
+$ <PANE_CTL> send-keys -t agy-unauth C-c          # nothing selected; real Keychain and ~/.gemini untouched
 press ctrl+c again to exit
-$ tmux new-session -d -s agy-unauth -x 200 -y 50 -c <WORKSPACE> "HOME= agy --model gpt-oss-120b-medium; echo \"agy exited rc=\$?\"; sleep 600"
+$ <PANE_CTL> new-session -d -s agy-unauth -x 200 -y 50 -c <WORKSPACE> "HOME= agy --model gpt-oss-120b-medium; echo \"agy exited rc=\$?\"; sleep 600"
 Failed to start: $HOME is not defined: $HOME is not defined
 agy exited rc=1
 ```
@@ -869,13 +869,13 @@ and `1.1.24-interactive-force-continue.txt`.
 
 ### 1.1.17 — interactive dispatch
 
-Receipt run, one tmux session (`pane-captures/1.1.17-interactive.txt`,
+Receipt run, one terminal session (`pane-captures/1.1.17-interactive.txt`,
 `1.1.5-interactive-*.txt`):
 
 ```
-$ tmux new-session -d -s agy-gate0 -x 200 -y 50 -c <WORKSPACE> "agy --sandbox=false --dangerously-skip-permissions --model gpt-oss-120b-medium --add-dir <WORKSPACE>"
-$ tmux send-keys -t agy-gate0 -l 'list the files in this directory'; tmux send-keys -t agy-gate0 Enter      # then 'run: ls -la', then the MCP prompt
-$ tmux capture-pane -p -S -200 -t agy-gate0
+$ <PANE_CTL> new-session -d -s agy-gate0 -x 200 -y 50 -c <WORKSPACE> "agy --sandbox=false --dangerously-skip-permissions --model gpt-oss-120b-medium --add-dir <WORKSPACE>"
+$ <PANE_CTL> send-keys -t agy-gate0 -l 'list the files in this directory'; <PANE_CTL> send-keys -t agy-gate0 Enter      # then 'run: ls -la', then the MCP prompt
+$ <PANE_CTL> capture-pane -p -S -200 -t agy-gate0
 $ python3 -c "import json; rows=[r for r in map(json.loads, open('hook-payloads.jsonl')) if r['record'].startswith('1.1.5 daemon-receipt run (shell')]; keys=lambda m: {(r['event'], tuple(sorted(r['payload']))) for r in rows if r['mode']==m}; print(keys('print')==keys('interactive'), sorted(e for e,_ in keys('interactive')))"
 True ['PostInvocation', 'PostToolUse', 'PreInvocation', 'PreToolUse', 'Stop']
 ```
@@ -1182,7 +1182,7 @@ Do you want to proceed?
   2. Yes, and always allow in this conversation for commands that start with 'echo'
   3. Yes, and always allow for commands that start with 'echo' (Persist to settings.json)
   4. No
-$ tmux send-keys -t agy-gate0 4             # (1.1.24-interactive-permoverride-after-no.txt)
+$ <PANE_CTL> send-keys -t agy-gate0 4             # (1.1.24-interactive-permoverride-after-no.txt)
   ⎿  User declined the tool call
 ```
 

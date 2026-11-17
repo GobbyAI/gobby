@@ -4,7 +4,7 @@
   "capture_status": "live_proven",
   "cli_version": "0.219.0",
   "captured_at": "2026-09-16",
-  "capture_notes": "Extract of a spawn_agent droid exec run (glm-5.3-flash, tmux, sandboxed). Kept: session_start, the prompt, the first tool-calling turn, the Skill PreToolUse hook record, both tool results, the final answer, and the turn outcome. Dropped: system-reminder context records, other hook records, thinking blocks, reasoning fields, and a later rule-driven follow-up turn. The router menu is cut to its first three entries identically in the hook stdout and the tool result, and the final answer to its first paragraph. Identifiers, owner, organization, host, and paths are sanitized. settings is a key subset of the <session>.settings.json sidecar; the daemon recorded context_used_tokens=21213 for this live session.",
+  "capture_notes": "Extract of a spawn_agent droid exec run (glm-5.3-flash, terminal pane, sandboxed). Kept: session_start, the prompt, the first tool-calling turn, the Skill PreToolUse hook record, both tool results, the final answer, and the turn outcome. Dropped: system-reminder context records, other hook records, thinking blocks, reasoning fields, and a later rule-driven follow-up turn. The router menu is cut to its first three entries identically in the hook stdout and the tool result, and the final answer to its first paragraph. Identifiers, owner, organization, host, and paths are sanitized. settings is a key subset of the <session>.settings.json sidecar; the daemon recorded context_used_tokens=21213 for this live session.",
   "records": [
     {
       "type": "session_start",

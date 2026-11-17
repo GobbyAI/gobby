@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.24
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.24-x8-inject-tool.txt); PreInvocation injectSteps.toolCall: `Agent execution terminated due to error.` + Error ID
+# source: pane capture -S -200 of agy-gate0 (1.1.24-x8-inject-tool.txt); PreInvocation injectSteps.toolCall: `Agent execution terminated due to error.` + Error ID
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
 
 ────────────────────────────────────────────────────────────

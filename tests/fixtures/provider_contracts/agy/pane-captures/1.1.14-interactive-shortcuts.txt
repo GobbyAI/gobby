@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.14
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (04-shortcuts.txt); `?` shortcut overlay
+# source: pane capture -S -200 of agy-gate0 (04-shortcuts.txt); `?` shortcut overlay
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>
 
 ● gobby/list_mcp_servers(MCP server discovery) (ctrl+o to expand)

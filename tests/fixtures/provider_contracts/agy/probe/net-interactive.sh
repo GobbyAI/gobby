@@ -1,6 +1,6 @@
 #!/bin/bash
 # net-interactive.sh [SECONDS]: sample the network connections, open files, and child
-# processes of the interactive agy launched by the `agy-gate0` tmux session (plan §1.1
+# processes of the interactive agy launched by the `agy-gate0` terminal session (plan §1.1
 # terminal-mode mechanics) for SECONDS (default 120) while a `run: echo netprobe` turn
 # runs, then reverse-resolve the remote IPs, list ~/.gemini files newer than a marker,
 # and count URL hosts in the CLI log. Record 1.1.9 (interactive half).

@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.10
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.10-nonzero.txt); `run: sh -c 'echo boom >&2; exit 7'`: Bash step DONE, model reports exit code 7 from free text
+# source: pane capture -S -200 of agy-gate0 (1.1.10-nonzero.txt); `run: sh -c 'echo boom >&2; exit 7'`: Bash step DONE, model reports exit code 7 from free text
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
 
 

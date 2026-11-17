@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.24
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.24-x12-exit2.txt); PreToolUse exit 2 with legal stdout: tool blocked
+# source: pane capture -S -200 of agy-gate0 (1.1.24-x12-exit2.txt); PreToolUse exit 2 with legal stdout: tool blocked
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
 
 ⣾  We need to run echo denied-probe. Use run_command....

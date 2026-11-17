@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.1
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.1-resume.txt); launched `agy … --conversation <CONVERSATION_ID>` on the print-mode `run: ls -la` conversation; prior turn rendered, resume question answered
+# source: pane capture -S -200 of agy-gate0 (1.1.1-resume.txt); launched `agy … --conversation <CONVERSATION_ID>` on the print-mode `run: ls -la` conversation; prior turn rendered, resume question answered
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
 
 

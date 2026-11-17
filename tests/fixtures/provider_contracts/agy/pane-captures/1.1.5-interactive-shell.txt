@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.5
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (02-shell.txt); turn 1: run: ls -la
+# source: pane capture -S -200 of agy-gate0 (02-shell.txt); turn 1: run: ls -la
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>
 
       ▄▀▀▄        Antigravity CLI 1.1.18

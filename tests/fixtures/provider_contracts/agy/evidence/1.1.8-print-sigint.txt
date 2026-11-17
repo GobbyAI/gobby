@@ -9,13 +9,13 @@ sleep procs:
 20615 19658 S    sleep 1
 20182 20181 S    sleep 40
 process tree (agy/antigravity-cli):
-16103     1 Ss   tmux -L gobby -f /dev/null new-session -d -s gobby-1787386103-eb96c60a -n gobby-1787386103-eb96c60a -x 200 -y 50 -c ~/Projects/gobby 
+16103     1 Ss   <PANE_CTL> -L gobby -f /dev/null new-session -d -s gobby-1787386103-eb96c60a -n gobby-1787386103-eb96c60a -x 200 -y 50 -c ~/Projects/gobby
 16104 16103 Ss+  /opt/homebrew/Cellar/node/26.7.0/bin/node ~/.gobby/tools/srt/0.0.66/runner.mjs --settings ~/.gobby/runtime/managed-executio
 16140 16104 S+   ~/.local/share/claude/versions/2.1.239 --session-id <CONVERSATION_ID> --effort high --disallowedTools Workflow Tas
 19670 19666 S+   agy -p run: sleep 40; echo finished-after-sleep --output-format stream-json --sandbox=false --dangerously-skip-permissions --add-dir <TRUNCATED_PATH>
 --- sent SIGINT; exit code 1 after 0s
 orphans after 2s:
-16103     1 Ss   tmux -L gobby -f /dev/null new-session -d -s gobby-1787386103-eb96c60a -n gobby-1787386103-eb96c60a -x 200 -y 50 -c ~/Projects/gobby 
+16103     1 Ss   <PANE_CTL> -L gobby -f /dev/null new-session -d -s gobby-1787386103-eb96c60a -n gobby-1787386103-eb96c60a -x 200 -y 50 -c ~/Projects/gobby
 16104 16103 Ss+  /opt/homebrew/Cellar/node/26.7.0/bin/node ~/.gobby/tools/srt/0.0.66/runner.mjs --settings ~/.gobby/runtime/managed-executio
 16140 16104 S+   ~/.local/share/claude/versions/2.1.239 --session-id <CONVERSATION_ID> --effort high --disallowedTools Workflow Tas
 20182 20181 S    sleep 40

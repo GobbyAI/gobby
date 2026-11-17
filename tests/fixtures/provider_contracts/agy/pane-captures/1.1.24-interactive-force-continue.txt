@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.24
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.24-x7-forcecont.txt); PostInvocation terminationBehavior=force_continue (4 answers, then {}): model kept invoking until the override was withdrawn
+# source: pane capture -S -200 of agy-gate0 (1.1.24-x7-forcecont.txt); PostInvocation terminationBehavior=force_continue (4 answers, then {}): model kept invoking until the override was withdrawn
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
 
 

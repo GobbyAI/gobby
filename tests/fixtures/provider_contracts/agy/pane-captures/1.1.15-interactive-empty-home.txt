@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.15
-# source: tmux capture-pane -p -S -200 -t agy-unauth (1.1.15-interactive-empty-home.txt); HOME= (empty) agy: `Failed to start: $HOME is not defined`, exit 1
+# source: pane capture -S -200 of agy-unauth (1.1.15-interactive-empty-home.txt); HOME= (empty) agy: `Failed to start: $HOME is not defined`, exit 1
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
 
 ERROR: logging before google.Init: E0822 07:19:13.609697       1 main.go:606] Failed to redirect output for CLI: resolving log directory: getting home directory: $HOME is not defined

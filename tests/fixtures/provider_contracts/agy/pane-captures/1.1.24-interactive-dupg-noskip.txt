@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.24
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.24-x3-dupg-noskip.txt); PreToolUse deny_unless_prior_grant without the skip flag: no native prompt, every tool call denied, model answers from text
+# source: pane capture -S -200 of agy-gate0 (1.1.24-x3-dupg-noskip.txt); PreToolUse deny_unless_prior_grant without the skip flag: no native prompt, every tool call denied, model answers from text
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
 
 

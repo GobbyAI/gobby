@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.24
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.24-x1-deny.txt); PreToolUse {"decision":"deny"}: Bash step denied, model reports a blocked command; also the 1.1.12 terminal half
+# source: pane capture -S -200 of agy-gate0 (1.1.24-x1-deny.txt); PreToolUse {"decision":"deny"}: Bash step denied, model reports a blocked command; also the 1.1.12 terminal half
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
 
 

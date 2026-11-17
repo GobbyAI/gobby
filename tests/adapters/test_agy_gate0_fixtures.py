@@ -66,7 +66,7 @@ FLAG_SHORTHANDS = (
     ),
 )
 GROUNDING_RE = re.compile(
-    r"(^|[\s;|(/])(agy|antigravity|tmux)\b|<WORKSPACE>|<PROBE_SCRATCH>|~/\.gemini/"
+    r"(^|[\s;|(/])(agy|antigravity)\b|<PANE_CTL>|<WORKSPACE>|<PROBE_SCRATCH>|~/\.gemini/"
 )
 # Prompt positions: `-p` arguments, `send-keys -l` arguments, stream-json stdin lines
 # logged by probe/inputfmt.py, and the interactive pane's `> ` echo of the user line.
@@ -174,7 +174,7 @@ def _pane_body(path: Path) -> list[str]:
     lines = path.read_text(encoding="utf-8").splitlines()
     assert len(lines) >= 3 and all(line.startswith("# ") for line in lines[:3]), path.name
     assert lines[0].startswith("# AGY 1.1.18 interactive pane capture"), path.name
-    assert "tmux capture-pane -p" in lines[1], path.name
+    assert "pane capture -S -200 of " in lines[1], path.name
     return [line for line in lines[3:] if line.strip() and not line.startswith("# ")]
 
 
@@ -316,7 +316,7 @@ def test_record_has_literal_command_and_observed_output(record: str) -> None:
     cited_evidence = set(EVIDENCE_CITE_RE.findall(section))
     for name in cited_evidence:
         assert (EVIDENCE / f"{name}.txt").is_file(), f"{record} cites missing evidence/{name}.txt"
-    # every command is grounded in the probe: an agy/tmux invocation, a committed fixture or
+    # every command is grounded in the probe: an agy/pane-control invocation, a committed fixture or
     # helper path, or a probe-environment path; a heredoc command is grounded by its body
     fixture_names = {str(p.relative_to(AGY_ROOT)) for p in _fixture_files()}
     fixture_names |= {p.name for p in _fixture_files()}

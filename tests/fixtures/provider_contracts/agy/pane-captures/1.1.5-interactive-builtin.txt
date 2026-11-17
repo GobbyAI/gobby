@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.5
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (01-builtin.txt); turn 0: list the files in this directory
+# source: pane capture -S -200 of agy-gate0 (01-builtin.txt); turn 0: list the files in this directory
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>
 
       ▄▀▀▄        Antigravity CLI 1.1.18

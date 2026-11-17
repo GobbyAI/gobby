@@ -4,7 +4,7 @@
   "grok_version": "1.0.30 (04b7ffed98c6)",
   "captured_at": "2026-09-15T17:51:55Z",
   "command": "grok --debug --debug-file <FILE> --always-approve --no-alt-screen --no-plan --disable-web-search --reasoning-effort low --max-turns 8 --output-format json --leader-socket <FILE> --cwd <PROBE_CWD> --prompt-file <FILE>",
-  "tty": "script(1) PTY; no tmux pane",
+  "tty": "script(1) PTY; no terminal pane",
   "parent_session_id": "parent-SESSION",
   "child_session_id": "child-SESSION",
   "observations": {
@@ -18,7 +18,7 @@
     "acp_blocking_events": ["pre_tool_use", "stop", "subagent_stop"],
     "acp_blocking_events_omit_subagent_start": true,
     "gobby_hooks_log_subagent_start_row": false,
-    "inherited_tty_binding": "not applicable in this capture (no tmux pane); interactive tmux bind is in subagent-start-drop-summary.json"
+    "inherited_tty_binding": "not applicable in this capture (no terminal pane); interactive terminal bind is in subagent-start-drop-summary.json"
   },
   "sanitized_lines": [
     "ACP initialize x.ai/hooks.blockingEvents=[\"pre_tool_use\",\"stop\",\"subagent_stop\"]",

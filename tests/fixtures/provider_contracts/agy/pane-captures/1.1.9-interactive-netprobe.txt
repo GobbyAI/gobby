@@ -1,5 +1,5 @@
 # AGY 1.1.18 interactive pane capture — record 1.1.9
-# source: tmux capture-pane -p -S -200 -t agy-gate0 (1.1.9-netprobe.txt); `run: echo netprobe` while lsof sampled the agy process tree (evidence/1.1.9-interactive-net.txt)
+# source: pane capture -S -200 of agy-gate0 (1.1.9-netprobe.txt); `run: echo netprobe` while lsof sampled the agy process tree (evidence/1.1.9-interactive-net.txt)
 # scrubbed: $HOME→~, user→<USER>, email→<REDACTED>, workspace→<WORKSPACE>, ids→<CONVERSATION_ID>, scratch→<PROBE_SCRATCH>
 
 
