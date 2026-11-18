@@ -12,7 +12,8 @@ import shutil
 import subprocess
 import tarfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -21,8 +22,10 @@ import pytest
 from gobby.install import bin_freshness_promotion as promotion
 from gobby.install.bin_generations import (
     GENERATIONS_DIR,
+    Generation,
     burn_version,
     list_generations,
+    promotion_guard,
     read_state,
     set_hold,
 )
@@ -33,7 +36,7 @@ from gobby.install.bin_release_identity import (
     current_hold_token,
     promotion_hold_token,
 )
-from gobby.install.bin_set_coherence import promote_workspace_binary_set
+from gobby.install.bin_set_coherence import BinarySetCoherenceError, promote_workspace_binary_set
 
 pytestmark = pytest.mark.unit
 
@@ -573,3 +576,29 @@ def test_set_under_the_hold_token_retains_one_generation_and_records_the_source_
     assert {name: installed[name]["source_commit"] for name in SET_MEMBERS} == dict.fromkeys(
         SET_MEMBERS, head
     )
+
+
+def test_set_burn_landing_after_the_preflight_refuses_before_any_member_is_replaced(
+    workspace: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bin_dir = tmp_path / "bin"
+    original = _install_set(workspace, bin_dir, tmp_path)
+    _bump_set(workspace)
+
+    @contextmanager
+    def burn_then_guard(
+        store_dir: Path, members: Iterable[str], *, now: datetime | None = None
+    ) -> Iterator[Generation | None]:
+        # The burn lands between the set's preflight and its guard, as a concurrent burn would.
+        burn_version(store_dir, MEMBER, "1.0.1", now=NOW)
+        with promotion_guard(store_dir, members, now=now) as captured:
+            yield captured
+
+    monkeypatch.setattr("gobby.install.bin_set_coherence.promotion_guard", burn_then_guard)
+
+    with pytest.raises(BinarySetCoherenceError, match=r"(?<!un)promoted: none.*gdaemon[^;]*burned"):
+        promote_workspace_binary_set(
+            _candidates(tmp_path, "1.0.1"), bin_dir=bin_dir, workspace_root=workspace
+        )
+
+    assert _installed_set(bin_dir) == original

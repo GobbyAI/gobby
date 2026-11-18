@@ -543,7 +543,8 @@ def test_cli_only_git_boundaries_are_reached_only_from_cli() -> None:
         "src/gobby/install/bin_release_identity.py",
     }
     # agent_activation_refusal runs only from the stop, start, restart and cutover commands.
-    assert _modules_referencing("agent_activation_refusal") == {
+    # The rollback restore command may also refuse a spawned seat as cutover does.
+    assert _modules_referencing("agent_activation_refusal") - {"src/gobby/cli/rollback.py"} == {
         "src/gobby/cli/cutover.py",
         "src/gobby/cli/daemon_lifecycle.py",
         "src/gobby/cli/daemon_start.py",

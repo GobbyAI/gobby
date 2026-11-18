@@ -28,7 +28,7 @@ from gobby.cli import (
 from gobby.cli.cutover import CutoverOutcome
 from gobby.install import bin_freshness_promotion, bin_set_coherence
 from gobby.install.bin_generations import GenerationStoreError, retain_outgoing
-from gobby.install.bin_release_identity import release_identity_path
+from gobby.install.bin_release_identity import current_hold_token, release_identity_path
 from gobby.runner_pid_file import ProbeState
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.utils.native_bin import IDENTITY_STAMP_NAME
@@ -921,6 +921,40 @@ def test_cli_reports_daemon_start_exit_code(
 
     assert result.exit_code == 1
     assert "daemon start failed (exit 7)" in result.output
+
+
+def test_cli_presents_the_hold_token_to_the_promotion_it_runs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[str | None] = []
+
+    def run_cutover(*_args: object, **_kwargs: object) -> CutoverOutcome:
+        seen.append(current_hold_token())
+        return CutoverOutcome()
+
+    result = _invoke_cli(
+        tmp_path, monkeypatch, run_cutover, extra_args=("--hold-token", "cutover-tok-1")
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen == ["cutover-tok-1"]
+    assert current_hold_token() is None
+
+
+def test_cli_presents_no_hold_token_when_the_option_is_not_given(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    seen: list[str | None] = []
+
+    def run_cutover(*_args: object, **_kwargs: object) -> CutoverOutcome:
+        seen.append(current_hold_token())
+        return CutoverOutcome()
+
+    result = _invoke_cli(tmp_path, monkeypatch, run_cutover)
+
+    assert result.exit_code == 0, result.output
+    assert seen == [None]
+    assert current_hold_token() is None
 
 
 def test_cutover_has_no_private_replacement_or_rollback_machinery() -> None:

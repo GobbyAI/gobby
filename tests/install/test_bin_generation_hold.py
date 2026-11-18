@@ -894,3 +894,63 @@ def test_without_a_hold_the_same_promotions_prune_to_the_keep_rule(tmp_path: Pat
     _promote_gterm_repeatedly(bin_dir)
 
     assert [generation.seq for generation in list_generations(bin_dir)] == [1, 3, 4, 5]
+
+
+# Expired holds: once a hold expires, the next capture keeps only what the keep rule keeps.
+
+
+def test_capture_after_the_hold_expires_drops_the_range_the_hold_kept(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    _seed(bin_dir, "gdaemon", b"gdaemon-0")
+    _seed(bin_dir, "gterm", b"gterm-0")
+    _set_hold(bin_dir, now=NOW, hours=1)
+    _promote_gterm_repeatedly(bin_dir)
+
+    _set_binary(bin_dir, "gterm", b"gterm-5")
+    _capture(bin_dir, ["gterm"], minute=120)
+
+    # Seq 1 stays through the installed gdaemon bytes; seq 4 to 6 are the newest three gterm.
+    assert [generation.seq for generation in list_generations(bin_dir)] == [1, 4, 5, 6]
+
+
+@pytest.mark.parametrize("kind", ["missing", "malformed"])
+def test_a_hold_with_an_unreadable_expiry_keeps_its_range_across_captures(
+    tmp_path: Path, kind: str
+) -> None:
+    bin_dir = tmp_path / "bin"
+    _seed(bin_dir, "gdaemon", b"gdaemon-0")
+    _seed(bin_dir, "gterm", b"gterm-0")
+    _capture(bin_dir, ["gdaemon", "gterm"], minute=0)
+    _update_state(bin_dir, hold=_hold_with_unreadable_expiry(kind))
+
+    _promote_gterm_repeatedly(bin_dir)
+
+    assert [generation.seq for generation in list_generations(bin_dir)] == [1, 2, 3, 4, 5]
+
+
+# A stored hold that is not an object is unreadable state: status refuses, clearing still works.
+
+
+@pytest.mark.parametrize(
+    "hold",
+    [["task-1"], "task-1", 7],
+    ids=["list", "text", "number"],
+)
+def test_hold_status_refuses_a_stored_hold_that_is_not_an_object(
+    tmp_path: Path, hold: object
+) -> None:
+    bin_dir = tmp_path / "bin"
+    _update_state(bin_dir, hold=hold)
+
+    with pytest.raises(GenerationStoreError, match="generation hold is not an object"):
+        bin_generations.hold_status(bin_dir, now=NOW)
+
+
+def test_clear_hold_clears_a_stored_hold_that_is_not_an_object(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    _update_state(bin_dir, hold=["task-1"])
+
+    cleared = bin_generations.clear_hold(bin_dir)
+
+    assert cleared is True
+    assert read_state(bin_dir)["hold"] is None

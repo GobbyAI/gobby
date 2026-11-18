@@ -29,6 +29,7 @@ from gobby.cli.install_setup import MANAGED_NATIVE_BINARY_NAMES
 from gobby.cli.install_setup_impeccable import ImpeccableRemovalResult
 from gobby.cli.install_setup_rtk import RtkCleanupReport, RtkInstallStatus
 from gobby.config.bootstrap import DEFAULT_DAEMON_BIND_HOST, BootstrapConfig
+from gobby.install.bin_release_identity import current_hold_token
 from gobby.storage.auth import hash_token
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
@@ -679,6 +680,74 @@ def _managed_tool_removal() -> Iterator[dict[str, MagicMock]]:
         patch("gobby.cli.uninstall._teardown_ui_exposure", mocks["teardown_ui"]),
     ):
         yield mocks
+
+
+class TestInstallHoldToken:
+    """An install presents its hold token while its body runs, and none afterwards."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        return CliRunner()
+
+    def test_install_presents_the_hold_token_while_it_runs(
+        self, runner: CliRunner, temp_dir: Path
+    ) -> None:
+        seen: list[str | None] = []
+
+        def installer(*_args: object, **_kwargs: object) -> dict[str, object]:
+            seen.append(current_hold_token())
+            return {
+                "success": True,
+                "hooks_installed": [],
+                "files_installed": ["/home/user/.gobby/hooks/validate_settings.py"],
+                "workflows_installed": [],
+                "commands_installed": [],
+                "plugins_installed": [],
+                "config_updated": True,
+                "mcp_configured": True,
+            }
+
+        with (
+            patch.dict("gobby.cli.install_components._CLI_INSTALLERS", {"codex": installer}),
+            patch("gobby.cli.install.require_installed"),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+        ):
+            result = runner.invoke(
+                cli, ["install", "codex", "--no-interactive", "--hold-token", "install-tok-1"]
+            )
+
+        assert result.exit_code == 0, result.output
+        assert seen == ["install-tok-1"]
+        assert current_hold_token() is None
+
+    def test_install_presents_no_hold_token_when_the_option_is_not_given(
+        self, runner: CliRunner, temp_dir: Path
+    ) -> None:
+        seen: list[str | None] = []
+
+        def installer(*_args: object, **_kwargs: object) -> dict[str, object]:
+            seen.append(current_hold_token())
+            return {
+                "success": True,
+                "hooks_installed": [],
+                "files_installed": ["/home/user/.gobby/hooks/validate_settings.py"],
+                "workflows_installed": [],
+                "commands_installed": [],
+                "plugins_installed": [],
+                "config_updated": True,
+                "mcp_configured": True,
+            }
+
+        with (
+            patch.dict("gobby.cli.install_components._CLI_INSTALLERS", {"codex": installer}),
+            patch("gobby.cli.install.require_installed"),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+        ):
+            result = runner.invoke(cli, ["install", "codex", "--no-interactive"])
+
+        assert result.exit_code == 0, result.output
+        assert seen == [None]
+        assert current_hold_token() is None
 
 
 class TestUninstallCommand:

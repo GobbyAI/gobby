@@ -385,3 +385,65 @@ async def test_unreadable_freeze_is_cleared_by_another_session(
     assert result["success"] is True
     assert result["freeze"]["task_id"] is None
     assert read_freeze(freeze_world.common_dir).on is False
+
+
+@pytest.mark.asyncio
+async def test_claim_holder_re_set_without_a_task_id_keeps_the_binding(
+    freeze_world: _FreezeWorld,
+) -> None:
+    _bind_freeze(freeze_world)
+
+    result = await _set_freeze(
+        freeze_world, freeze_world.holder, {"on": True, "reason": "new reason"}
+    )
+
+    stored = read_freeze(freeze_world.common_dir)
+    assert result["success"] is True
+    assert result["freeze"]["task_id"] == freeze_world.task.id
+    assert (stored.on, stored.reason, stored.task_id) == (
+        True,
+        "new reason",
+        freeze_world.task.id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_claim_holder_re_set_with_another_claimed_task_rebinds_the_freeze(
+    freeze_world: _FreezeWorld,
+) -> None:
+    _bind_freeze(freeze_world)
+    second = LocalTaskManager(freeze_world.db).create_task(
+        freeze_world.task.project_id,
+        "Second candidate",
+        created_in_session_id=freeze_world.holder,
+        claimed_by_session_id=freeze_world.holder,
+        validation_criteria="Land the second candidate.",
+    )
+
+    result = await _set_freeze(
+        freeze_world,
+        freeze_world.holder,
+        {"on": True, "reason": "moved hold", "task_id": second.id},
+    )
+
+    stored = read_freeze(freeze_world.common_dir)
+    assert result["success"] is True
+    assert (stored.reason, stored.task_id) == ("moved hold", second.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("on", "reason"),
+    [(True, "other hold"), (False, "shipped")],
+    ids=["set", "clear"],
+)
+async def test_bound_freeze_refusal_names_the_rollback_hold_clear_exit(
+    freeze_world: _FreezeWorld, on: bool, reason: str
+) -> None:
+    _bind_freeze(freeze_world)
+
+    result = await _set_freeze(freeze_world, freeze_world.other, {"on": on, "reason": reason})
+
+    assert result["success"] is False
+    assert result["error_code"] == "landing_freeze_bound"
+    assert "gobby rollback hold clear" in result["error"]

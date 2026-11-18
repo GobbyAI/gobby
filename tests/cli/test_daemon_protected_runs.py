@@ -11,6 +11,7 @@ import httpx
 import pytest
 from click.testing import CliRunner
 
+from gobby.cli import _daemon_protected_runs as protected_runs
 from gobby.cli import cli
 from gobby.cli._daemon_protected_runs import (
     PROTECTED_RUN_MAX_WAIT_SECONDS,
@@ -18,6 +19,7 @@ from gobby.cli._daemon_protected_runs import (
     clear_protected_runs,
     describe_protected_run,
     fetch_protected_runs,
+    fetch_signed_protected_runs,
 )
 
 pytestmark = pytest.mark.unit
@@ -56,10 +58,6 @@ class _Steps:
         (self.errors if error else self.messages).append(msg)
 
 
-def _raise_connect_error() -> MagicMock:
-    raise httpx.ConnectError("refused")
-
-
 def _response(status_code: int, payload: object = None, *, bad_json: bool = False) -> MagicMock:
     response = MagicMock()
     response.status_code = status_code
@@ -83,21 +81,98 @@ def test_fetch_protected_runs_authenticates_and_returns_the_daemons_run_rows() -
     assert sent_headers["Authorization"] == "Bearer test-local-cli-token"
 
 
-@pytest.mark.parametrize(
-    "outcome",
-    [
-        pytest.param(_raise_connect_error, id="unreachable"),
-        pytest.param(lambda: _response(503, {"detail": "runner unavailable"}), id="starting"),
-        pytest.param(lambda: _response(200, bad_json=True), id="bad-json"),
-        pytest.param(lambda: _response(200, {"status": "ok"}), id="no-runs-key"),
-        pytest.param(lambda: _response(200, ["not", "a", "dict"]), id="wrong-shape"),
-    ],
-)
-def test_fetch_protected_runs_treats_an_unanswerable_daemon_as_no_lease(
+def _unknown_answer_error() -> type[Exception]:
+    """The unknown-answer exception, looked up when a test runs so this module still imports."""
+    unknown: type[Exception] = vars(protected_runs)["ProtectedRunsUnknown"]
+    return unknown
+
+
+UNUSABLE_ANSWERS = [
+    pytest.param(lambda: _response(503, {"detail": "runner unavailable"}), id="starting"),
+    pytest.param(lambda: _response(401, {"detail": "unauthorized"}), id="unauthorized"),
+    pytest.param(lambda: _response(200, bad_json=True), id="bad-json"),
+    pytest.param(lambda: _response(200, {"status": "ok"}), id="no-runs-key"),
+    pytest.param(lambda: _response(200, ["not", "a", "dict"]), id="wrong-shape"),
+    pytest.param(lambda: _response(200, {"runs": "not-a-list"}), id="runs-not-a-list"),
+]
+SIGNED_HEADERS = {"X-Gobby-Signature": "fixture-signature"}
+
+
+def test_fetch_protected_runs_treats_an_unreachable_daemon_as_no_lease() -> None:
+    with patch(
+        "gobby.cli._daemon_protected_runs.httpx.get",
+        side_effect=httpx.ConnectError("refused"),
+    ):
+        assert fetch_protected_runs(60887) == []
+
+
+@pytest.mark.parametrize("outcome", UNUSABLE_ANSWERS)
+def test_fetch_protected_runs_raises_unknown_when_the_daemon_answers_unusably(
     outcome: Callable[[], MagicMock],
 ) -> None:
-    with patch("gobby.cli._daemon_protected_runs.httpx.get", side_effect=lambda *a, **k: outcome()):
+    with (
+        patch("gobby.cli._daemon_protected_runs.httpx.get", side_effect=lambda *a, **k: outcome()),
+        pytest.raises(_unknown_answer_error()),
+    ):
+        fetch_protected_runs(60887)
+
+
+def test_fetch_protected_runs_reports_a_known_empty_answer_as_no_runs() -> None:
+    with patch(
+        "gobby.cli._daemon_protected_runs.httpx.get",
+        return_value=_response(200, {"runs": []}),
+    ):
         assert fetch_protected_runs(60887) == []
+
+
+def test_fetch_signed_protected_runs_sends_the_signed_request_and_returns_the_runs() -> None:
+    with (
+        patch(
+            "gobby.cli._daemon_protected_runs.signed_daemon_headers",
+            return_value=dict(SIGNED_HEADERS),
+        ),
+        patch(
+            "gobby.cli._daemon_protected_runs.httpx.get",
+            return_value=_response(200, {"runs": [RUN]}),
+        ) as get,
+    ):
+        assert fetch_signed_protected_runs(60887) == [RUN]
+
+    get.assert_called_once_with(ENDPOINT, headers=SIGNED_HEADERS, timeout=3.0)
+
+
+def test_fetch_signed_protected_runs_treats_an_unreachable_daemon_as_no_lease() -> None:
+    with (
+        patch(
+            "gobby.cli._daemon_protected_runs.signed_daemon_headers",
+            return_value=dict(SIGNED_HEADERS),
+        ),
+        patch(
+            "gobby.cli._daemon_protected_runs.httpx.get",
+            side_effect=httpx.ConnectError("refused"),
+        ),
+    ):
+        assert fetch_signed_protected_runs(60887) == []
+
+
+def test_fetch_signed_protected_runs_reports_no_runs_when_the_seat_cannot_sign() -> None:
+    with patch("gobby.cli._daemon_protected_runs.signed_daemon_headers", return_value=None):
+        assert fetch_signed_protected_runs(60887) == []
+
+
+@pytest.mark.parametrize("outcome", UNUSABLE_ANSWERS)
+def test_fetch_signed_protected_runs_raises_unknown_when_the_daemon_answers_unusably(
+    outcome: Callable[[], MagicMock],
+) -> None:
+    with (
+        patch(
+            "gobby.cli._daemon_protected_runs.signed_daemon_headers",
+            return_value=dict(SIGNED_HEADERS),
+        ),
+        patch("gobby.cli._daemon_protected_runs.httpx.get", side_effect=lambda *a, **k: outcome()),
+        pytest.raises(_unknown_answer_error()),
+    ):
+        fetch_signed_protected_runs(60887)
 
 
 def test_describe_protected_run_names_the_job_and_both_durations() -> None:
@@ -223,6 +298,39 @@ def test_clear_protected_runs_wait_gives_up_past_a_shorter_own_timeout() -> None
         "Refusing to stop the daemon after waiting 45s; "
         "re-run with --wait later or --force to interrupt it now"
     )
+
+
+def _fetch_unknown(_http_port: int) -> list[dict[str, Any]]:
+    raise _unknown_answer_error()("the daemon answered 503")
+
+
+def test_clear_protected_runs_reports_an_unknown_answer_and_refuses_without_force() -> None:
+    steps = _Steps()
+
+    proceed = clear_protected_runs(1, force=False, wait=False, step=steps, fetch=_fetch_unknown)
+
+    assert proceed is False
+    assert any("unknown" in message for message in steps.errors)
+
+
+def test_clear_protected_runs_unknown_answer_with_wait_refuses_without_sleeping() -> None:
+    steps = _Steps()
+
+    with patch("gobby.cli._daemon_protected_runs.time.sleep") as sleep:
+        proceed = clear_protected_runs(1, force=False, wait=True, step=steps, fetch=_fetch_unknown)
+
+    assert proceed is False
+    sleep.assert_not_called()
+    assert any("unknown" in message for message in steps.errors)
+
+
+def test_clear_protected_runs_unknown_answer_with_force_proceeds_and_says_so() -> None:
+    steps = _Steps()
+
+    proceed = clear_protected_runs(1, force=True, wait=False, step=steps, fetch=_fetch_unknown)
+
+    assert proceed is True
+    assert any("without knowing" in message for message in steps.messages + steps.errors)
 
 
 @patch("gobby.cli.daemon_lifecycle._services_stop")

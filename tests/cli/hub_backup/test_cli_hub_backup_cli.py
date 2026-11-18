@@ -14,9 +14,12 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
+from unittest.mock import Mock
 
 import click
 import pytest
@@ -24,6 +27,7 @@ from click.testing import CliRunner, Result
 
 from gobby.cli import cli as root_cli
 from gobby.cli import daemon_preflight
+from gobby.cli._daemon_protected_runs import clear_protected_runs as real_clear_protected_runs
 from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.hub_backup import cli as hub_cli
 from gobby.cli.hub_backup._manifest import (
@@ -44,10 +48,12 @@ from gobby.cli.hub_backup._stores import (
 )
 from gobby.cli.hub_backup._verify import RoleExpectation
 from gobby.cli.hub_backup.files_home import FILES_ARCHIVE_RELPATH
+from gobby.cli.hub_backup.rehearsal import RehearsalProfile
 from gobby.cli.installers.container_restart import FALKORDB_CONTAINER
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
 from gobby.config.logging import RULE_ALLOW_AUDIT_LOG_FILENAME
+from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.storage import schema_divergence
 from gobby.storage.config_repository import UnknownKeyPolicy, UnknownStoredConfigKeyError
 from gobby.sync import integrity as bundled_integrity
@@ -78,6 +84,12 @@ QDRANT_DIGEST = "c" * 64
 FALKORDB_GRAPHS = ["gobby_kg"]
 FALKORDB_INVENTORY = {"gobby_kg": {"nodes": 44, "edges": 31}}
 VOLUME_INVENTORY = {"members": 9, "sha256": "d" * 64}
+PROTECTED_RUN: dict[str, Any] = {
+    "run_id": "run-1",
+    "job_name": "fixture-cron-run",
+    "elapsed_seconds": 60.0,
+    "remaining_seconds": 600.0,
+}
 
 SOURCE_ROLES: list[dict[str, object]] = [
     {"rolname": "gobby", "rolsuper": False, "rolcanlogin": True},
@@ -160,6 +172,12 @@ class _Harness:
         self.fail_at: str | None = None
         self.services_stop_result: bool = True
         self.services_start_outcome: str = "success"
+        self.clear_result: bool = True
+        self.handoff_block: str | None = None
+        # Stop admissions are recorded apart from `calls`, which pins the store steps only.
+        self.admission_events: list[str] = []
+        self.clear_seen: dict[str, object] | None = None
+        self.handoff_seen: dict[str, object] | None = None
 
         self.gobby_home_seen: Path | None = None
         self.managed_url_seen: str | None = None
@@ -168,6 +186,7 @@ class _Harness:
         self.qdrant_snapshot_settings: tuple[str | None, str | None] | None = None
         self.qdrant_verify_settings: tuple[str | None, str | None] | None = None
         self.shutdown_source_seen: str | None = None
+        self.shutdown_intent_seen: str | None = None
         self.stop_quiet_seen: bool | None = None
         self.postgres_paths_seen: tuple[Path, Path] | None = None
         self.probes_seen: dict[str, int] | None = None
@@ -245,6 +264,7 @@ class _Harness:
     ) -> bool:
         self._step("stop_daemon")
         self.shutdown_source_seen = shutdown_source
+        self.shutdown_intent_seen = shutdown_intent
         self.stop_quiet_seen = quiet
         return True
 
@@ -420,6 +440,29 @@ class _Harness:
         del archive
         return _verified("files-home-scratch"), {"members": 3}
 
+    # -- stop admissions --------------------------------------------------
+
+    def clear_protected_runs(self, http_port: int, **kwargs: object) -> bool:
+        self.admission_events.append("clear_protected_runs")
+        self.clear_seen = {
+            "port": http_port,
+            "force": kwargs.get("force"),
+            "wait": kwargs.get("wait"),
+        }
+        return self.clear_result
+
+    def fetch_protected_runs(self, http_port: int) -> list[dict[str, Any]]:
+        del http_port
+        return []
+
+    @contextmanager
+    def protect_pending_handoffs(self, _runtime: object, **kwargs: object) -> Iterator[None]:
+        self.admission_events.append("protect_pending_handoffs")
+        self.handoff_seen = dict(kwargs)
+        if self.handoff_block is not None:
+            raise HandoffShutdownBlocked(self.handoff_block)
+        yield
+
     # -- wiring ------------------------------------------------------------
 
     def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -454,6 +497,14 @@ class _Harness:
         }
         for name, replacement in replacements.items():
             monkeypatch.setattr(hub_cli, name, replacement)
+        # Passing admissions by default: the stop path refuses only when a test says so.
+        admissions: dict[str, object] = {
+            "clear_protected_runs": self.clear_protected_runs,
+            "fetch_protected_runs": self.fetch_protected_runs,
+            "protect_pending_handoffs": self.protect_pending_handoffs,
+        }
+        for name, replacement in admissions.items():
+            monkeypatch.setattr(hub_cli, name, replacement, raising=False)
 
 
 @pytest.fixture
@@ -1162,3 +1213,147 @@ def test_backup_proceeds_over_clean_bundled_content(
 
     assert "stop_daemon" in harness.calls
     assert "start_daemon" in harness.calls
+
+
+# ---------------------------------------------------------------------------
+# Stop admissions: the protected-run gate and the handoff guard before the stop
+# ---------------------------------------------------------------------------
+
+
+def _staging_dirs(tmp_path: Path, backup_root: Path) -> list[Path]:
+    return sorted(tmp_path.glob(f".{backup_root.name}.*.tmp"))
+
+
+def _protected_run_seam(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run the real protected-run gate against one active run that the daemon reports."""
+    monkeypatch.setattr(hub_cli, "clear_protected_runs", real_clear_protected_runs)
+    monkeypatch.setattr(hub_cli, "fetch_protected_runs", lambda _port: [dict(PROTECTED_RUN)])
+
+
+def test_the_protected_run_gate_is_asked_about_the_running_daemon_port(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path
+) -> None:
+    _run_ok(runtime, tmp_path / "backup")
+
+    assert harness.clear_seen is not None
+    assert harness.clear_seen["port"] == runtime.read_only_operational_config().daemon_port
+
+
+def test_wait_is_passed_to_the_protected_run_gate_without_force(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path
+) -> None:
+    _run_ok(runtime, tmp_path / "backup", "--wait")
+
+    assert harness.clear_seen is not None
+    assert harness.clear_seen["wait"] is True
+    assert harness.clear_seen["force"] is False
+
+
+def test_wait_is_passed_to_the_handoff_guard(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path
+) -> None:
+    _run_ok(runtime, tmp_path / "backup", "--wait")
+
+    assert harness.handoff_seen is not None
+    assert harness.handoff_seen.get("wait") is True
+
+
+def test_a_protected_run_refuses_the_backup_before_the_stop_or_any_write(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _protected_run_seam(monkeypatch)
+    backup_root = tmp_path / "backup"
+
+    result = _invoke(runtime, "--output", str(backup_root))
+
+    assert result.exit_code != 0
+    assert "Refusing to back up: " in result.output
+    assert "The running daemon was left alone." in result.output
+    assert "stop_daemon" not in harness.calls
+    assert "start_daemon" not in harness.calls
+    assert not backup_root.exists()
+    assert _staging_dirs(tmp_path, backup_root) == []
+
+
+def test_force_interrupts_a_protected_run_as_gobby_stop_force_does(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _protected_run_seam(monkeypatch)
+
+    _run_ok(runtime, tmp_path / "backup", "--force")
+
+    assert "stop_daemon" in harness.calls
+
+
+def test_an_unresolved_handoff_refuses_the_backup_before_the_stop_or_any_write(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path
+) -> None:
+    harness.handoff_block = "a session handoff is still in flight"
+    backup_root = tmp_path / "backup"
+
+    result = _invoke(runtime, "--output", str(backup_root))
+
+    assert result.exit_code != 0
+    assert "Refusing to back up: " in result.output
+    assert "The running daemon was left alone." in result.output
+    assert "stop_daemon" not in harness.calls
+    assert not backup_root.exists()
+    assert _staging_dirs(tmp_path, backup_root) == []
+
+
+def test_wait_and_force_together_are_a_usage_error_that_stops_and_writes_nothing(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path
+) -> None:
+    backup_root = tmp_path / "backup"
+
+    result = _invoke(runtime, "--output", str(backup_root), "--wait", "--force")
+
+    assert result.exit_code == 2
+    assert "--force and --wait are mutually exclusive" in result.output
+    assert harness.admission_events == []
+    assert "stop_daemon" not in harness.calls
+    assert not backup_root.exists()
+    assert _staging_dirs(tmp_path, backup_root) == []
+
+
+def test_the_backup_stop_writes_restart_intent(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path
+) -> None:
+    _run_ok(runtime, tmp_path / "backup")
+
+    assert harness.shutdown_intent_seen == "restart"
+
+
+def test_a_rehearsal_target_takes_no_admission_and_no_stop(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rehearsal = cast(
+        RehearsalProfile,
+        Mock(spec=RehearsalProfile, volumes=HUB_VOLUMES, qdrant_url=QDRANT_URL),
+    )
+    target = hub_cli.HubBackupTarget(
+        containers=hub_cli.REQUIRED_CONTAINERS,
+        falkordb_container=FALKORDB_CONTAINER,
+        volumes=HUB_VOLUMES,
+        rehearsal=rehearsal,
+    )
+    monkeypatch.setattr(hub_cli, "_hub_backup_target", lambda _database_url: target)
+    monkeypatch.setattr(hub_cli, "control_rehearsal_services", Mock())
+    harness.clear_result = False
+
+    _run_ok(runtime, tmp_path / "rehearsal-backup")
+
+    assert harness.admission_events == []
+    assert "stop_daemon" not in harness.calls
+
+
+def test_no_running_daemon_takes_no_admission(
+    harness: _Harness, runtime: CliRuntime, tmp_path: Path
+) -> None:
+    harness.daemon_running = False
+    harness.clear_result = False
+    harness.handoff_block = "a session handoff is still in flight"
+
+    _run_ok(runtime, tmp_path / "backup")
+
+    assert harness.admission_events == []
