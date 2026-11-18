@@ -43,6 +43,7 @@ const SEQ_DECOY: u64 = 21605;
 /// One task in the stub daemon. Children of the epic carry `parent` = the epic's id.
 #[derive(Clone)]
 struct Task {
+    id: String,
     seq: u64,
     title: String,
     description: String,
@@ -72,6 +73,7 @@ fn id_of(seq: u64) -> String {
 
 fn epic() -> Task {
     Task {
+        id: id_of(EPIC_SEQ),
         seq: EPIC_SEQ,
         title: "Gobby 1.0 port".to_owned(),
         description: "Epic fixture.".to_owned(),
@@ -83,6 +85,7 @@ fn epic() -> Task {
 /// A child of the epic, open, with the given description.
 fn child(seq: u64, title: &str, description: &str) -> Task {
     Task {
+        id: id_of(seq),
         seq,
         title: title.to_owned(),
         description: description.to_owned(),
@@ -124,7 +127,7 @@ fn state_json(task: &Task) -> Value {
 fn full_json(task: &Task) -> Value {
     json!({
         "ref": format!("#{}", task.seq),
-        "id": id_of(task.seq),
+        "id": task.id,
         "seq_num": task.seq,
         "project_id": PROJECT_ID,
         "title": task.title,
@@ -145,7 +148,7 @@ fn full_json(task: &Task) -> Value {
 fn brief_json(task: &Task) -> Value {
     json!({
         "ref": format!("#{}", task.seq),
-        "id": id_of(task.seq),
+        "id": task.id,
         "seq_num": task.seq,
         "title": task.title,
         "state": state_json(task),
@@ -186,6 +189,11 @@ impl Stub {
             url: format!("http://127.0.0.1:{port}"),
             requests,
         }
+    }
+
+    /// Every request target the stub has received, in arrival order.
+    fn targets(&self) -> Vec<String> {
+        self.requests.lock().expect("request log").clone()
     }
 
     /// How many `GET /api/tasks` calls asked for children of some parent.
@@ -287,7 +295,7 @@ fn find<'a>(tasks: &'a [Task], reference: &str) -> Option<&'a Task> {
             let seq: u64 = number.parse().ok()?;
             tasks.iter().find(|task| task.seq == seq)
         }
-        None => tasks.iter().find(|task| id_of(task.seq) == reference),
+        None => tasks.iter().find(|task| task.id == reference),
     }
 }
 
@@ -389,6 +397,51 @@ fn pct_decode(text: &str) -> String {
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// A stub that answers every request with a 302 to `location` plus the same request target, so a
+/// client that follows it lands on the same path. Each request target it receives is logged.
+fn serve_redirect(location: String) -> Stub {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind redirecting daemon");
+    let port = listener.local_addr().expect("redirect address").port();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&requests);
+    thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let location = location.clone();
+            let log = Arc::clone(&log);
+            thread::spawn(move || redirect(stream, &location, &log));
+        }
+    });
+    Stub {
+        url: format!("http://127.0.0.1:{port}"),
+        requests,
+    }
+}
+
+/// Reads one request, logs its target, and answers with a 302 to `location` plus that target.
+fn redirect(stream: TcpStream, location: &str, log: &Mutex<Vec<String>>) {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
+    let Ok(read_half) = stream.try_clone() else {
+        return;
+    };
+    let mut reader = BufReader::new(read_half);
+    let mut request_line = String::new();
+    if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
+        return;
+    }
+    let target = request_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("/")
+        .to_owned();
+    log.lock().expect("request log").push(target.clone());
+    let response = format!(
+        "HTTP/1.1 302 Found\r\nLocation: {location}{target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    let mut stream = stream;
+    let _ = stream.write_all(response.as_bytes());
+    let _ = stream.flush();
 }
 
 /// A loopback port nothing listens on: bind, note the port, then close the listener.
@@ -1036,4 +1089,72 @@ fn child_listing_exactly_at_the_1000_request_ceiling_passes() {
         "one row per page over 1,000 children takes 1,000 requests\n{}",
         detail(&run)
     );
+}
+
+/// Contract: a daemon that answers with a redirect is not followed. The run exits 2 and names the
+/// 302 status, and the redirect target receives no request, so the bearer never reaches it.
+#[test]
+fn redirect_from_daemon_is_refused_with_exit_2_and_not_followed() {
+    let repo = Repo::new();
+    commit_map(&repo, &["FX-ALPHA"]);
+    let alpha = repo.commit("land alpha");
+    repo.commit("later work");
+    let target = Stub::serve(vec![
+        epic(),
+        target_task(),
+        chunk_task(SEQ_ALPHA, "FX-ALPHA", "Alpha chunk").closed_as("done", Some(alpha.as_str())),
+    ]);
+    let daemon = serve_redirect(target.url.clone());
+    let run = start(&repo, &daemon.url, "FX-TARGET");
+    assert_exit(&run, 2);
+    assert!(
+        run.stderr.contains("302"),
+        "stderr should name the 302 status\n{}",
+        detail(&run)
+    );
+    assert_no_launch_base(&run);
+    assert!(
+        target.targets().is_empty(),
+        "the redirect target must receive no request, saw {:?}",
+        target.targets()
+    );
+}
+
+/// Contract: task ids and the parent id are percent-encoded where they sit in a URL path or query,
+/// so `&`, `/`, `?`, `#` and a space reach the daemon as the id they name.
+#[test]
+fn daemon_ids_are_percent_encoded_in_request_paths() {
+    const EPIC_ID: &str = "ep&ic/1?x#y z";
+    const TARGET_ID: &str = "tg&t/1?x#y z";
+    const ALPHA_ID: &str = "al&pha/1?x#y z";
+    let repo = Repo::new();
+    commit_map(&repo, &["FX-ALPHA"]);
+    let alpha = repo.commit("land alpha");
+    repo.commit("later work");
+    let head = repo.git(&["rev-parse", "0.9.0"]);
+    let mut epic_task = epic();
+    epic_task.id = EPIC_ID.to_owned();
+    let mut target_child = target_task();
+    target_child.id = TARGET_ID.to_owned();
+    target_child.parent = Some(EPIC_ID.to_owned());
+    let mut alpha_child =
+        chunk_task(SEQ_ALPHA, "FX-ALPHA", "Alpha chunk").closed_as("done", Some(alpha.as_str()));
+    alpha_child.id = ALPHA_ID.to_owned();
+    alpha_child.parent = Some(EPIC_ID.to_owned());
+    let stub = Stub::serve(vec![epic_task, target_child, alpha_child]);
+    let run = start(&repo, &stub.url, "FX-TARGET");
+    assert_exit(&run, 0);
+    assert_launch_base(&run, &head);
+    let seen = stub.targets();
+    for wanted in [
+        "/api/tasks/%2321542",
+        "/api/tasks?parent_task_id=ep%26ic%2F1%3Fx%23y%20z&limit=1000&offset=0",
+        "/api/tasks/tg%26t%2F1%3Fx%23y%20z",
+        "/api/tasks/al%26pha%2F1%3Fx%23y%20z",
+    ] {
+        assert!(
+            seen.iter().any(|target| target == wanted),
+            "the daemon should receive `{wanted}`, saw {seen:?}"
+        );
+    }
 }

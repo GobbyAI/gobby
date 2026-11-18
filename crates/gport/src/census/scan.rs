@@ -1,5 +1,6 @@
 //! Source walking and the identifier scan shared by the census sections.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use walkdir::{DirEntry, WalkDir};
@@ -144,19 +145,21 @@ pub fn packages(files: &[TextFile]) -> Vec<String> {
 pub struct Token<'a> {
     pub ident: &'a str,
     pub qualifier: Option<&'a str>,
-    /// True when the identifier is an assignment target: the name of a plain assignment,
-    /// `name = value` (also a chained one, `name = other = value`), of an annotated one,
-    /// `name: T = value`, whose dotted name starts its line, or one name of a tuple target list,
-    /// `name, other = value`. A call, a method reference, a read, a comparison, a keyword argument
-    /// or an augmented assignment is not.
+    /// True when the identifier is code: outside every string literal and comment.
+    pub code: bool,
+    /// True when the identifier is the last name of an assignment target, as `Source` reads
+    /// targets: a name or a dotted name in a plain (`x = v`), chained (`a = x = v`) or annotated
+    /// (`x: T = v`) statement, or in a tuple, list or parenthesised target list. A call, a subscript,
+    /// a lambda parameter, a keyword argument, a read or a comparison is not one.
     pub assigned: bool,
 }
 
-/// Every identifier in `text`, in order. A run of word characters that starts with a digit is not
-/// an identifier.
+/// Every identifier in `text`, in order, including those in strings and comments, which have
+/// `code` false. A run of word characters that starts with a digit is not an identifier.
 pub fn tokens(text: &str) -> Vec<Token<'_>> {
     let source = Source::new(text.as_bytes());
     let bytes = source.bytes;
+    let targets = source.assignment_targets();
     let mut found = Vec::new();
     let mut previous: Option<(&str, usize)> = None;
     let mut at = 0;
@@ -180,11 +183,11 @@ pub fn tokens(text: &str) -> Vec<Token<'_>> {
             }
             _ => None,
         };
-        let assigned = source.is_target(start, at);
         found.push(Token {
             ident,
             qualifier,
-            assigned,
+            code: source.kind_at(start) == Kind::Code,
+            assigned: targets.contains(&start),
         });
         previous = Some((ident, at));
     }
@@ -301,77 +304,238 @@ impl<'a> Source<'a> {
         self.depth.get(at).copied().unwrap_or(0)
     }
 
-    /// Whether the identifier at `start..end` is an assignment target. It must be code outside
-    /// every bracket, so a keyword argument, `f(name=value)`, and a dict key, `{name: value}`, are
-    /// not one. A plain target, `name = value`, must not be followed by `=` of `==`, or by `}` as in
-    /// the debug form of an f-string. An annotated target, `name: T = value`, must begin its line,
-    /// so `if key in self._cache:` and `batch[self._cache:]` are not one.
-    fn is_target(&self, start: usize, end: usize) -> bool {
-        if self.kind_at(start) != Kind::Code {
-            return false;
+    /// The start of the last name of every assignment target in code. Each statement runs from its
+    /// start to a line break outside brackets, or to a `;` at bracket depth 0. Within it, each single
+    /// `=` at depth 0 ends a segment. A segment is read as a target list, and a later segment only
+    /// while every earlier one was one, so the first segment that is not, such as the `lambda x` of
+    /// `return a, lambda x=1: x`, ends the reading.
+    fn assignment_targets(&self) -> HashSet<usize> {
+        let mut targets = HashSet::new();
+        let mut from = 0;
+        while from < self.bytes.len() {
+            let to = self.statement_end(from);
+            self.statement_targets(from, to, &mut targets);
+            from = to + 1;
         }
-        let base = self.depth_at(start);
-        if base > 0 {
-            return false;
-        }
-        let after = skip_blanks(self.bytes, end);
-        match self.bytes.get(after) {
-            Some(b'=') => !matches!(self.bytes.get(after + 1), Some(b'=' | b'}')),
-            Some(b',') => self.assigns_after(after + 1, base, true),
-            Some(b':') => {
-                begins_line(self.bytes, start) && self.assigns_after(after + 1, base, false)
-            }
-            _ => false,
+        targets
+    }
+
+    /// The index of the byte that ends the statement that starts at `from`, or the text's length.
+    fn statement_end(&self, from: usize) -> usize {
+        (from..self.bytes.len())
+            .find(|&at| {
+                self.kind_at(at) == Kind::Code
+                    && self.depth_at(at) <= 0
+                    && match self.bytes[at] {
+                        b';' => true,
+                        b'\n' => {
+                            !(at > 0
+                                && self.kind_at(at - 1) == Kind::Code
+                                && self.bytes[at - 1] == b'\\')
+                        }
+                        _ => false,
+                    }
+            })
+            .unwrap_or(self.bytes.len())
+    }
+
+    /// Adds the targets of the statement `from..to` to `targets`, segment by segment.
+    fn statement_targets(&self, from: usize, to: usize, targets: &mut HashSet<usize>) {
+        let mut segment = from;
+        for at in (from..to).filter(|&at| self.is_plain_equals(at)) {
+            let names = if segment == from {
+                self.leading_target(from, at)
+            } else {
+                self.target_list(segment, at, 0)
+            };
+            let Some(names) = names else {
+                break;
+            };
+            targets.extend(names);
+            segment = at + 1;
         }
     }
 
-    /// Whether the statement that continues at `from` assigns to a target at bracket depth `base`.
-    /// The first `=` at that depth decides it: a single one is an assignment. At that depth a
-    /// comment, a line break, a `;` or a closing bracket ends the search without one. A tuple
-    /// target list (`tuple`) also ends it at the first byte that cannot sit in a target list, and
-    /// an annotation ends it at a `,` or a `:`. Strings and brackets are skipped over, so an
-    /// annotation that spans lines is read through.
-    fn assigns_after(&self, from: usize, base: i32, tuple: bool) -> bool {
-        let mut at = from;
-        while let Some(&byte) = self.bytes.get(at) {
-            let top = self.depth_at(at) <= base;
-            match self.kind_at(at) {
-                Kind::Text if top && tuple => return false,
-                Kind::Comment if top => return false,
-                Kind::Code if top => {
-                    if byte == b'\\' && self.bytes.get(at + 1) == Some(&b'\n') {
-                        at += 2;
-                        continue;
-                    }
-                    match byte {
-                        b'=' => return self.is_single_equals(at),
-                        b'\n' | b';' | b':' | b')' | b']' | b'}' => return false,
-                        b',' if !tuple => return false,
-                        _ if tuple && !is_target_byte(byte) => return false,
-                        _ => {}
-                    }
+    /// The targets before a statement's first `=`. An annotation, `name: T`, targets its name alone,
+    /// and a compound header such as `if x:` or `else:` leaves its body, after the colon, to be read.
+    fn leading_target(&self, from: usize, equals: usize) -> Option<Vec<usize>> {
+        let colon = (from..equals).find(|&at| self.is_top_byte(at, b':'));
+        let annotated = colon.and_then(|colon| {
+            let (a, b) = self.trimmed(from, colon)?;
+            let last = self.name_chain(a, b)?;
+            (!is_compound_keyword(&self.bytes[a..b])).then_some(vec![last])
+        });
+        annotated.or_else(|| self.target_list(colon.map_or(from, |colon| colon + 1), equals, 0))
+    }
+
+    /// The last name of each element of the target list `from..to` at bracket depth `level`, or
+    /// `None` when an element is not a target. Elements split at the commas of that depth, and an
+    /// empty one, such as the one after a trailing comma, is skipped.
+    fn target_list(&self, from: usize, to: usize, level: i32) -> Option<Vec<usize>> {
+        let mut names = Vec::new();
+        let mut element = from;
+        for at in from..=to {
+            let ends = at == to
+                || (self.kind_at(at) == Kind::Code
+                    && self.bytes[at] == b','
+                    && self.depth_at(at) == level);
+            if ends {
+                if !self.target_element(element, at, level, &mut names) {
+                    return None;
                 }
-                _ => {}
+                element = at + 1;
+            }
+        }
+        Some(names)
+    }
+
+    /// Whether `from..to` is one element of a target list, and if so pushes its last name onto
+    /// `names`. An element is a name chain, optionally starred, a parenthesised or bracketed target
+    /// list, or a subscript, call or attribute chain with no blank or colon at its own level. A
+    /// `lambda` never starts one.
+    fn target_element(&self, from: usize, to: usize, level: i32, names: &mut Vec<usize>) -> bool {
+        let Some((mut a, b)) = self.trimmed(from, to) else {
+            return true;
+        };
+        if self.bytes[a] == b'*' {
+            let Some((next, _)) = self.trimmed(a + 1, b) else {
+                return false;
+            };
+            a = next;
+        }
+        if starts_with_word(&self.bytes[a..b], b"lambda") {
+            return false;
+        }
+        if self.is_wrapped(a, b, level) {
+            let Some(inner) = self.target_list(a + 1, b - 1, level + 1) else {
+                return false;
+            };
+            names.extend(inner);
+            true
+        } else if let Some(last) = self.name_chain(a, b) {
+            names.push(last);
+            true
+        } else {
+            self.is_opaque(a, b, level)
+        }
+    }
+
+    /// Whether `a..b` is a parenthesised or bracketed group around its whole element: the opener and
+    /// closer sit at depth `level`, and everything between them is nested deeper.
+    fn is_wrapped(&self, a: usize, b: usize, level: i32) -> bool {
+        let close = b - 1;
+        self.kind_at(a) == Kind::Code
+            && matches!(self.bytes[a], b'(' | b'[')
+            && self.kind_at(close) == Kind::Code
+            && matches!(self.bytes[close], b')' | b']')
+            && self.depth_at(close) == level + 1
+            && (a + 1..close).all(|at| self.depth_at(at) > level)
+    }
+
+    /// Whether `a..b` is a subscript, call or attribute chain such as `rows[i]`: nothing at its own
+    /// level is a blank, a colon or a string, so it is not a lambda or a keyword form.
+    fn is_opaque(&self, a: usize, b: usize, level: i32) -> bool {
+        (a..b).all(|at| {
+            self.depth_at(at) > level
+                || (self.kind_at(at) == Kind::Code && !self.is_blank(at) && self.bytes[at] != b':')
+        })
+    }
+
+    /// The start of the last name of the dotted name chain that fills `from..to`, as `_a_cache` or
+    /// `self._a_cache` does.
+    fn name_chain(&self, from: usize, to: usize) -> Option<usize> {
+        let mut at = from;
+        loop {
+            let start = at;
+            let begins = start < to
+                && self.kind_at(start) == Kind::Code
+                && (self.bytes[start].is_ascii_alphabetic() || self.bytes[start] == b'_');
+            if !begins {
+                return None;
+            }
+            while at < to && is_word(self.bytes[at]) {
+                at += 1;
+            }
+            if at == to {
+                return Some(start);
+            }
+            if self.bytes[at] != b'.' {
+                return None;
             }
             at += 1;
         }
-        false
     }
 
-    /// Whether the `=` at `at` is a plain one: not the first byte of `==`, and not the last byte of
-    /// `!=`, `<=`, `>=` or `:=`.
+    /// Whether `at` is blank inside a target: a space, tab, carriage return or line break in code, a
+    /// backslash that continues the line, or any byte of a comment.
+    fn is_blank(&self, at: usize) -> bool {
+        match self.kind_at(at) {
+            Kind::Comment => true,
+            Kind::Text => false,
+            Kind::Code => {
+                let byte = self.bytes[at];
+                matches!(byte, b' ' | b'\t' | b'\r' | b'\n')
+                    || (byte == b'\\' && self.bytes.get(at + 1) == Some(&b'\n'))
+            }
+        }
+    }
+
+    /// The bounds of `from..to` without blanks at either end, or `None` when none is left.
+    fn trimmed(&self, from: usize, to: usize) -> Option<(usize, usize)> {
+        let start = (from..to).find(|&at| !self.is_blank(at)).unwrap_or(to);
+        let end = (start..to)
+            .rev()
+            .find(|&at| !self.is_blank(at))
+            .map_or(start, |at| at + 1);
+        (start < end).then_some((start, end))
+    }
+
+    /// Whether the byte at `at` is `byte` in code, at bracket depth 0.
+    fn is_top_byte(&self, at: usize, byte: u8) -> bool {
+        self.kind_at(at) == Kind::Code && self.depth_at(at) <= 0 && self.bytes[at] == byte
+    }
+
+    /// Whether the `=` at `at` is a plain assignment's: at depth 0 in code, and not a plain `=`
+    /// inside `==`, `!=`, `<=`, `>=`, `:=` or an augmented assignment such as `+=`.
+    fn is_plain_equals(&self, at: usize) -> bool {
+        self.is_top_byte(at, b'=') && self.is_single_equals(at)
+    }
+
+    /// Whether the `=` at `at` is a single one: not the first byte of `==`, and not the last byte of
+    /// `!=`, `<=`, `>=`, `:=` or an augmented assignment such as `+=`.
     fn is_single_equals(&self, at: usize) -> bool {
         let before = at.checked_sub(1).and_then(|prev| self.bytes.get(prev));
         let doubled = self.bytes.get(at + 1) == Some(&b'=');
-        let compared = matches!(before, Some(b'=' | b'!' | b'<' | b'>' | b':'));
+        let compared = matches!(
+            before,
+            Some(
+                b'=' | b'!'
+                    | b'<'
+                    | b'>'
+                    | b':'
+                    | b'+'
+                    | b'-'
+                    | b'*'
+                    | b'/'
+                    | b'%'
+                    | b'&'
+                    | b'|'
+                    | b'^'
+                    | b'@'
+            )
+        );
         !doubled && !compared
     }
 }
 
-/// Whether a byte can sit in a tuple target list at the top level: a name, a dot, a comma, a star,
-/// a blank or an opening bracket.
-fn is_target_byte(byte: u8) -> bool {
-    is_word(byte) || matches!(byte, b'.' | b',' | b'*' | b' ' | b'\t' | b'(' | b'[' | b'{')
+/// Whether `text` begins with the word `word`, with no identifier byte after it.
+fn starts_with_word(text: &[u8], word: &[u8]) -> bool {
+    text.starts_with(word) && !text.get(word.len()).is_some_and(|&byte| is_word(byte))
+}
+
+/// Whether `text` is a compound statement keyword that takes no expression before its colon.
+fn is_compound_keyword(text: &[u8]) -> bool {
+    matches!(text, b"else" | b"try" | b"finally")
 }
 
 /// The index of the line break that ends the comment that starts at `at`, or the end of the text.
@@ -417,19 +581,6 @@ fn skip_blanks(bytes: &[u8], mut at: usize) -> usize {
         at += 1;
     }
     at
-}
-
-/// Whether the dotted name, whose last identifier starts at `start`, begins its line.
-fn begins_line(bytes: &[u8], start: usize) -> bool {
-    let mut begin = start;
-    while begin > 0
-        && bytes
-            .get(begin - 1)
-            .is_some_and(|&b| is_word(b) || b == b'.')
-    {
-        begin -= 1;
-    }
-    only_blanks_before(bytes, begin)
 }
 
 /// Whether only spaces and tabs sit between the start of `at`'s line and `at`.
@@ -539,6 +690,56 @@ mod tests {
                     class B:\n    @ cache\n    def b(self):\n        s = '''\n@not_one\n'''\n\
                     \x20       return (\n@not_two)\n";
         assert_eq!(decorators(text), ["cachetools.func.ttl_cache", "cache"]);
+    }
+
+    #[test]
+    fn bracketed_target_lists_mark_each_name_in_them() {
+        assert_eq!(
+            targets("(self._a_cache, self._b_cache) = {}, {}\n"),
+            ["_a_cache", "_b_cache"]
+        );
+        assert_eq!(
+            targets("[self._a_cache, self._b_cache] = {}, {}\n"),
+            ["_a_cache", "_b_cache"]
+        );
+    }
+
+    #[test]
+    fn subscripts_and_call_argument_tuples_are_not_target_names() {
+        assert_eq!(targets("x[self._a_cache] = 1\n"), Vec::<&str>::new());
+        assert_eq!(
+            targets("rows[self._a_cache], self._b_cache = 1, 2\n"),
+            ["_b_cache"]
+        );
+        assert_eq!(
+            targets("offload((self._a_cache, self._b_cache), key)\n"),
+            Vec::<&str>::new()
+        );
+    }
+
+    #[test]
+    fn lambda_parameters_are_not_target_names() {
+        assert_eq!(
+            targets("return self._a_cache, lambda x=1: x\n"),
+            Vec::<&str>::new()
+        );
+        assert_eq!(targets("g = lambda x_cache, y=1: 0\n"), ["g"]);
+        assert_eq!(targets("g = lambda y=1, x_cache=2: 0\n"), ["g"]);
+    }
+
+    #[test]
+    fn bare_names_are_targets_when_they_begin_a_statement() {
+        assert_eq!(targets("x_cache: dict[str, int] = {}\n"), ["x_cache"]);
+        assert_eq!(targets("x_cache: dict[str, int]\n"), Vec::<&str>::new());
+        assert_eq!(
+            targets("a_cache, b_cache, c_cache = 1, 2, 3\n"),
+            ["a_cache", "b_cache", "c_cache"]
+        );
+        assert_eq!(targets("a = b_cache = {}\n"), ["a", "b_cache"]);
+        assert_eq!(targets("y: x_cache = 1\n"), ["y"]);
+        assert_eq!(targets("x = 1; y_cache = 2\n"), ["x", "y_cache"]);
+        assert_eq!(targets("if y: z_cache = 1\n"), ["z_cache"]);
+        assert_eq!(targets("else: w_cache = 1\n"), ["w_cache"]);
     }
 
     #[test]

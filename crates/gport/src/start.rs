@@ -294,8 +294,10 @@ fn check(
 }
 
 /// The daemon over HTTP. Every request is a GET, with the local bearer when one is readable.
+/// Redirects are not followed, so the bearer never leaves the endpoint it was sent to.
 struct Daemon {
     base: String,
+    agent: ureq::Agent,
 }
 
 impl Daemon {
@@ -305,13 +307,14 @@ impl Daemon {
         reject_remote_endpoint(&base)?;
         Ok(Self {
             base: base.trim_end_matches('/').to_owned(),
+            agent: ureq::AgentBuilder::new().redirects(0).build(),
         })
     }
 
     /// GET `path` and parse its JSON body. `Ok(None)` is a 404. Any other failure is an error.
     fn get(&self, path: &str) -> anyhow::Result<Option<Value>> {
         let url = format!("{}{path}", self.base);
-        let request = apply_bearer_header(ureq::get(&url).timeout(REQUEST_TIMEOUT));
+        let request = apply_bearer_header(self.agent.get(&url).timeout(REQUEST_TIMEOUT));
         let response = match request.call() {
             Ok(response) => response,
             Err(ureq::Error::Status(404, _)) => return Ok(None),
@@ -322,6 +325,13 @@ impl Daemon {
                 bail!("cannot reach the daemon at {}: {error}", self.base)
             }
         };
+        // A redirect is not followed, so its 3xx answer arrives as a response and is refused here.
+        let status = response.status();
+        if (300..400).contains(&status) {
+            bail!(
+                "the daemon answered GET {path} with status {status}, a redirect that gport does not follow"
+            );
+        }
         let body = response
             .into_string()
             .with_context(|| format!("cannot read the body of GET {path}"))?;
@@ -331,14 +341,32 @@ impl Daemon {
     }
 }
 
+/// Percent-encodes `text` for a URL path segment or a query value. Every byte outside the unreserved
+/// set (ASCII letters, digits, `-`, `.`, `_` and `~`) becomes `%XX`, so no id can end a path segment
+/// or open a query or a fragment.
+fn encode(text: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push('%');
+            out.push(char::from(HEX[usize::from(byte >> 4)]));
+            out.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+    }
+    out
+}
+
 fn parse_task(value: Value) -> anyhow::Result<Task> {
     serde_json::from_value(value).context("a task record from the daemon did not parse")
 }
 
 impl TaskSource for Daemon {
     fn task_by_ref(&self, reference: &str) -> anyhow::Result<Option<Task>> {
-        // `#` opens a URL fragment, so the reference travels as %23.
-        let path = format!("/api/tasks/{}", reference.replace('#', "%23"));
+        // The reference is percent-encoded, so `#` travels as %23 and never opens a URL fragment.
+        let path = format!("/api/tasks/{}", encode(reference));
         self.get(&path)?.map(parse_task).transpose()
     }
 
@@ -350,7 +378,8 @@ impl TaskSource for Daemon {
         let mut pages: usize = 0;
         loop {
             let path = format!(
-                "/api/tasks?parent_task_id={parent_id}&limit={CHILD_PAGE_LIMIT}&offset={read}"
+                "/api/tasks?parent_task_id={}&limit={CHILD_PAGE_LIMIT}&offset={read}",
+                encode(parent_id)
             );
             let page = self
                 .get(&path)?
@@ -396,7 +425,7 @@ impl TaskSource for Daemon {
     }
 
     fn task(&self, id: &str) -> anyhow::Result<Task> {
-        let path = format!("/api/tasks/{id}");
+        let path = format!("/api/tasks/{}", encode(id));
         let value = self
             .get(&path)?
             .with_context(|| format!("task {id} is not on the daemon"))?;

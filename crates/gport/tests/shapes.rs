@@ -93,6 +93,14 @@ fn closed_url() -> String {
     format!("http://127.0.0.1:{port}")
 }
 
+/// How a stub answers each request.
+enum Reply {
+    /// A 200 JSON response holding `body`.
+    Body(&'static str),
+    /// A 302 whose `Location` is this base URL followed by the request target.
+    RedirectTo(String),
+}
+
 /// What the stub saw: every accepted connection, and each request line that arrived.
 #[derive(Debug)]
 struct Seen {
@@ -110,6 +118,15 @@ struct Stub {
 
 impl Stub {
     fn start(body: &'static str) -> Self {
+        Self::spawn(Reply::Body(body))
+    }
+
+    /// A stub that answers every request with a 302 to `base` plus the same request target.
+    fn redirect_to(base: String) -> Self {
+        Self::spawn(Reply::RedirectTo(base))
+    }
+
+    fn spawn(reply: Reply) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub");
         listener.set_nonblocking(true).expect("nonblocking stub");
         let url = format!("http://{}", listener.local_addr().expect("stub address"));
@@ -127,7 +144,7 @@ impl Stub {
                 match listener.accept() {
                     Ok((stream, _)) => {
                         connections.fetch_add(1, Ordering::SeqCst);
-                        serve(stream, body, &requests);
+                        serve(stream, &reply, &requests);
                     }
                     Err(_) => thread::sleep(Duration::from_millis(10)),
                 }
@@ -147,7 +164,7 @@ impl Stub {
 }
 
 /// Reads one request, records its request line, and writes `body` as a 200 JSON response.
-fn serve(stream: TcpStream, body: &str, requests: &Mutex<Vec<String>>) {
+fn serve(stream: TcpStream, reply: &Reply, requests: &Mutex<Vec<String>>) {
     stream.set_nonblocking(false).expect("blocking connection");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
@@ -166,15 +183,25 @@ fn serve(stream: TcpStream, body: &str, requests: &Mutex<Vec<String>>) {
             Ok(_) => {}
         }
     }
+    let target = request_line
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("/")
+        .to_owned();
     requests
         .lock()
         .expect("requests")
         .push(request_line.trim_end().to_owned());
     let mut stream = reader.into_inner();
-    let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
+    let response = match reply {
+        Reply::Body(body) => format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ),
+        Reply::RedirectTo(base) => format!(
+            "HTTP/1.1 302 Found\r\nLocation: {base}{target}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        ),
+    };
     let _ = stream.write_all(response.as_bytes());
 }
 
@@ -1064,4 +1091,63 @@ fn symlinks_below_each_root_are_counted_per_root_in_skipped_sources() {
             run.stdout
         );
     }
+}
+
+/// Contract: a daemon that answers with a redirect is not followed. The run exits 2 and names the
+/// 302 status, and the redirect target receives no request.
+#[test]
+fn daemon_redirect_is_refused_with_exit_2_and_not_followed() {
+    let sandbox = Sandbox::new();
+    let (claude, _codex) = write_fixture(&sandbox);
+    let target = Stub::start(METRICS_BODY);
+    let daemon = Stub::redirect_to(target.url.clone());
+    let run = sandbox.run(&shapes_args(&[claude], &[]), &daemon.url);
+    daemon.finish();
+    let seen = target.finish();
+    assert_eq!(
+        run.code, 2,
+        "a redirect from the daemon fails the run; stderr: {}",
+        run.stderr
+    );
+    assert!(
+        run.stderr.contains("302"),
+        "stderr should name the 302 status:\n{}",
+        run.stderr
+    );
+    assert_eq!(
+        seen.connections, 0,
+        "the redirect target must not be contacted: {seen:?}"
+    );
+}
+
+/// Contract: a daemon metrics entry with no string name or no numeric call_count is not counted. The
+/// skipped sources list says how many were dropped, and no part of the entry is printed.
+#[test]
+fn malformed_daemon_metrics_are_counted_in_skipped_sources() {
+    const BODY: &str = r#"{"success":true,"tools":{"metricsrv":[{"name":"probe_tool","call_count":42},{"name":"SECRET-BAD-NAME"},{"name":7,"call_count":1}],"broken":"SECRET-SERVER"}}"#;
+    let sandbox = Sandbox::new();
+    let empty = sandbox.join("empty-root");
+    std::fs::create_dir_all(&empty).expect("empty transcript root");
+    let stub = Stub::start(BODY);
+    let run = sandbox.run(&shapes_args(&[empty], &[]), &stub.url);
+    stub.finish();
+    assert_eq!(run.code, 0, "exit code; stderr: {}", run.stderr);
+    let skipped = skipped_section(&run.stdout)
+        .unwrap_or_else(|| panic!("no `Skipped sources` heading; stdout:\n{}", run.stdout));
+    assert!(
+        skipped.contains("3 malformed entries"),
+        "the three malformed entries should be counted:\n{skipped}"
+    );
+    assert!(
+        !run.stdout.contains("SECRET") && !run.stderr.contains("SECRET"),
+        "no part of a malformed entry may be printed:\n{}\n{}",
+        run.stdout,
+        run.stderr
+    );
+    let label = "metricsrv:probe_tool";
+    let text = tool_text(&run.stdout, label, &[label]);
+    assert!(
+        has_count(text, 42),
+        "the well-formed entry must still count:\n{text}"
+    );
 }

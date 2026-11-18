@@ -477,6 +477,7 @@ fn selectors_python_refuses_are_bad_lines() {
         r"(?<=a*)x",
         r"(?<=a?)x",
         r"\1",
+        r"[\s-a]",
         r"a{2,1}",
         r"a**",
         r"a{1}{2}",
@@ -563,6 +564,73 @@ fn selector_that_fails_to_run_fails_the_ledger_run() {
     let temp = synthetic(&[key.as_str()], &[("alpha", &[r"^MCP x:(a+)+(?!z)!"])]);
     let run = run_ledger(temp.path(), &[]);
     expect_error(&run, "selector of alpha failed on");
+}
+
+/// An ignore-case selector against a non-ASCII key fails the run, as a selector that fails to run
+/// does, and names the chunk. The key is the dotless i, which Python's `(?i)i` matches.
+#[test]
+fn ignore_case_selector_on_a_non_ascii_key_fails_the_ledger_run() {
+    let key = "MCP x:\u{131}";
+    let temp = synthetic(&[key], &[("alpha", &[r"(?i)^MCP x:i$"])]);
+    let run = run_ledger(temp.path(), &[]);
+    expect_error(&run, "selector of alpha failed on");
+}
+
+/// A case-sensitive group, `(?-i:...)`, keeps Python's meaning on a non-ASCII key: the run owns
+/// `a`, leaves the dotless i unowned, and does not fail on it. Verdicts from `python3.13 -I`:
+/// `(?-i:a)` matches `a` and not `ı`.
+#[test]
+fn case_sensitive_group_on_a_non_ascii_key_keeps_python_meaning() {
+    assert_eq!(
+        owners_under(r"(?-i:a)", &["a", "\u{131}"]),
+        "a\talpha\n\u{131}\t\n"
+    );
+}
+
+/// `\w` reads U+00B2 as a word character, as Python does, and fancy-regex does not. So the run
+/// fails on that key with exit 2, and the error names the chunk, the selector, the key and the
+/// reason. Verdict from `python3.13 -I`: `^MCP x:\w$` matches `MCP x:²`.
+#[test]
+fn word_class_selector_on_a_non_ascii_key_fails_the_ledger_run() {
+    let key = "MCP x:\u{b2}";
+    let temp = synthetic(&[key], &[("alpha", &[r"^MCP x:\w$"])]);
+    let run = run_ledger(temp.path(), &[]);
+    expect_error(&run, "selector of alpha failed on MCP x:\u{b2}");
+    assert!(
+        run.stderr.contains("'^MCP x:\\\\w$'")
+            && run
+                .stderr
+                .contains("read a non-ASCII key differently from Python"),
+        "stderr does not name the selector and the reason\nstderr:\n{}",
+        run.stderr
+    );
+}
+
+/// On ASCII keys a word-class selector is unaffected: `^MCP x:\w+$` owns `MCP x:abc` and not
+/// `MCP x:a-b`, as `re.search` reads them (`python3.13 -I`).
+#[test]
+fn word_class_selector_on_ascii_keys_keeps_python_meaning() {
+    assert_eq!(
+        owners_under(r"^MCP x:\w+$", &["MCP x:abc", "MCP x:a-b"]),
+        "MCP x:a-b\t\nMCP x:abc\talpha\n"
+    );
+}
+
+/// `\B` is a BAD line. Python finds no `\B` in the empty key, which fancy-regex would match, so
+/// the selector is refused rather than run with another meaning (`python3.13 -I`).
+#[test]
+fn non_word_boundary_selectors_are_bad_lines() {
+    for selector in [r"\B", r"a\B", r"^\B$"] {
+        expect_bad_selector(selector);
+    }
+}
+
+/// A comment group is a BAD line: Python reads `a*(?#c)?` and `a{2}(?#c)?` as a multiple repeat.
+#[test]
+fn comment_group_selectors_are_bad_lines() {
+    for selector in [r"a*(?#c)?", r"a{2}(?#c)?"] {
+        expect_bad_selector(selector);
+    }
 }
 
 /// A backreference is refused in every form: `\1` and `(?P=name)`, a reference to a group still

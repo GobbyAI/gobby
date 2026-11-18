@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde_json::json;
 
-use super::{Brief, Task, TaskSource, Tree, check, locate};
+use super::{Brief, Task, TaskSource, Tree, check, encode, locate};
 use crate::PORT_EPIC;
 use crate::map::Map;
 
@@ -200,4 +200,11 @@ fn dependency_missing_from_map_is_an_input_error() {
     )
     .expect_err("a dependency outside the map is a malformed map, not a refusal");
     assert!(error.to_string().contains("FX-NOPE"), "{error}");
+}
+
+#[test]
+fn encode_keeps_the_unreserved_bytes_and_escapes_every_other_byte() {
+    assert_eq!(encode("Az09-._~"), "Az09-._~");
+    assert_eq!(encode("a&b/c?d#e f"), "a%26b%2Fc%3Fd%23e%20f");
+    assert_eq!(encode("\u{e9}"), "%C3%A9");
 }

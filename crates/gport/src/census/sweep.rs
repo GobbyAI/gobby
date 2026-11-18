@@ -56,7 +56,7 @@ pub fn section(python: &[&TextFile], frozen: Result<&str, &str>) -> String {
             } else {
                 modules.join(", ")
             };
-            vec![format!("`{key}`"), cell]
+            vec![code_span(key), cell]
         })
         .collect();
     format!(
@@ -67,6 +67,27 @@ pub fn section(python: &[&TextFile], frozen: Result<&str, &str>) -> String {
             &rows
         )
     )
+}
+
+/// `text` as a Markdown code span. The fence is one backtick longer than the longest run of
+/// backticks in `text`, and a space pads each side when `text` starts or ends with a backtick, so the
+/// span closes where it should.
+fn code_span(text: &str) -> String {
+    let fence = "`".repeat(longest_backtick_run(text) + 1);
+    let pad = if text.starts_with('`') || text.ends_with('`') {
+        " "
+    } else {
+        ""
+    };
+    format!("{fence}{pad}{text}{pad}{fence}")
+}
+
+/// The length of the longest run of consecutive backticks in `text`.
+fn longest_backtick_run(text: &str) -> usize {
+    text.split(|c: char| c != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or(0)
 }
 
 /// Whether a string literal names `tool`, alone or qualified by a server as `server:tool`.
@@ -101,4 +122,22 @@ fn string_literals(line: &str) -> Vec<&str> {
         at = end + 1;
     }
     literals
+}
+
+#[cfg(test)]
+mod tests {
+    use super::code_span;
+
+    #[test]
+    fn code_span_fences_one_backtick_past_the_longest_run_inside() {
+        assert_eq!(code_span("MCP a:b"), "`MCP a:b`");
+        assert_eq!(code_span("MCP a`b"), "``MCP a`b``");
+        assert_eq!(code_span("a``b"), "```a``b```");
+    }
+
+    #[test]
+    fn code_span_pads_a_text_that_starts_or_ends_with_a_backtick() {
+        assert_eq!(code_span("a`"), "`` a` ``");
+        assert_eq!(code_span("`a"), "`` `a ``");
+    }
 }

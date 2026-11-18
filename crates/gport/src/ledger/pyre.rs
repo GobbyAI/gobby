@@ -17,7 +17,16 @@
 //! - the verbose flag `x` in any inline-flag form: `(?x)`, `(?ix)`, `(?x:...)` and `(?-x:...)`.
 //!   Python ignores the whitespace in verbose mode, and fancy-regex does not.
 //! - the ignore-case flag `i` with a non-ASCII character in the selector, written as a character
-//!   or as a code point such as `ı`.
+//!   or as a code point such as `ı`. A selector that turns the flag on also fails on a non-ASCII
+//!   key; `rows` makes that check at match time, from `Translated::ascii_only`.
+//! - `\B`. Python finds no `\B` in the empty key, and fancy-regex matches one there.
+//! - any comment group, `(?#...)`. Python drops it where it sits, so `a*(?#c)?` is a multiple
+//!   repeat and `a(?#c)*` repeats the `a`. gport refuses every comment group rather than follow it.
+//!
+//! `\w`, `\W` and `\b` are passed through, since they match Python's on ASCII keys. On a non-ASCII
+//! key they can differ (U+00B2, U+0301, U+0345 and U+203F), so a selector with one sets
+//! `Translated::ascii_only`, and `rows` refuses it on a non-ASCII key. Inside a set `\b` is a
+//! backspace and sets nothing.
 
 /// Whitespace as Python's `\s` reads it: the Rust class plus U+001C to U+001F.
 const SPACE: &str = r"[\s\x{1c}-\x{1f}]";
@@ -25,8 +34,16 @@ const NOT_SPACE: &str = r"[^\s\x{1c}-\x{1f}]";
 /// The same members, for use inside an enclosing set.
 const SET_SPACE: &str = r"\s\x{1c}-\x{1f}";
 
+/// A translated selector: the fancy-regex text, and whether its meaning is only guaranteed on ASCII
+/// keys. That is so when the ignore-case flag is turned on anywhere in it, or it has `\w`, `\W` or
+/// `\b`. `rows` refuses a non-ASCII key for such a selector at match time.
+pub(crate) struct Translated {
+    pub(crate) pattern: String,
+    pub(crate) ascii_only: bool,
+}
+
 /// The fancy-regex form of the Python pattern `selector`, or the reason it is refused.
-pub(crate) fn translate(selector: &str) -> Result<String, String> {
+pub(crate) fn translate(selector: &str) -> Result<Translated, String> {
     let text: Vec<char> = selector.chars().collect();
     let mut scanner = Scanner {
         text: &text,
@@ -35,6 +52,7 @@ pub(crate) fn translate(selector: &str) -> Result<String, String> {
         prev: Prev::Empty,
         frames: Vec::new(),
         ignore_case: false,
+        ascii_only: false,
     };
     while let Some(c) = scanner.peek() {
         match c {
@@ -74,7 +92,10 @@ pub(crate) fn translate(selector: &str) -> Result<String, String> {
     if scanner.ignore_case && (!selector.is_ascii() || names_non_ascii(&scanner.out)) {
         return Err("the ignore-case flag with a non-ASCII character is refused".to_owned());
     }
-    Ok(scanner.out)
+    Ok(Translated {
+        pattern: scanner.out,
+        ascii_only: scanner.ascii_only,
+    })
 }
 
 /// Whether the fancy-regex text names a non-ASCII character: a raw character, or a `\x{..}` code
@@ -102,6 +123,12 @@ enum Prev {
     Lazy,
 }
 
+/// One member of a set: a single code point, or a class such as `\s` with its fancy-regex text.
+enum Member {
+    Literal(u32),
+    Class(String),
+}
+
 /// An open group: whether it is a look-behind, whether a quantifier or alternation has made its
 /// text variable in width, and where it opens.
 struct Frame {
@@ -111,7 +138,10 @@ struct Frame {
 }
 
 /// The Python pattern being read, with the fancy-regex text written so far. `ignore_case` records
-/// that an inline flag group turned `i` on or off, which `translate` checks at the end.
+/// that an inline flag group turns `i` on, which `translate` checks against a non-ASCII selector.
+/// `ascii_only` records that the meaning is only guaranteed on ASCII keys: ignore-case is on, or
+/// the pattern has `\w`, `\W` or `\b`. The two differ because a non-ASCII selector is fine with a
+/// word escape, but not with the ignore-case flag.
 struct Scanner<'a> {
     text: &'a [char],
     at: usize,
@@ -119,6 +149,7 @@ struct Scanner<'a> {
     prev: Prev,
     frames: Vec<Frame>,
     ignore_case: bool,
+    ascii_only: bool,
 }
 
 impl Scanner<'_> {
@@ -183,7 +214,20 @@ impl Scanner<'_> {
             return Err(format!("bad escape (end of pattern) at position {start}"));
         };
         match c {
-            'A' | 'b' | 'B' | 'd' | 'D' | 'w' | 'W' => self.out.push_str(&format!("\\{c}")),
+            // Python finds no `\B` in the empty key, where fancy-regex matches one, so `\B` is
+            // refused.
+            'B' => {
+                return Err(format!(
+                    "\\B at position {start} is refused: fancy-regex matches it on an empty key, \
+                     where Python does not"
+                ));
+            }
+            'A' | 'd' | 'D' => self.out.push_str(&format!("\\{c}")),
+            // A word escape reads some non-ASCII keys differently from Python.
+            'b' | 'w' | 'W' => {
+                self.ascii_only = true;
+                self.out.push_str(&format!("\\{c}"));
+            }
             'Z' => self.out.push_str(r"\z"),
             's' => self.out.push_str(SPACE),
             'S' => self.out.push_str(NOT_SPACE),
@@ -192,10 +236,13 @@ impl Scanner<'_> {
                 self.out.push_str(&code_point(value));
             }
             '1'..='9' => self.group_or_octal(c, start)?,
-            _ => self.literal_escape(c, start, false)?,
+            _ => {
+                let value = self.literal_escape(c, start, false)?;
+                self.out.push_str(&code_point(value));
+            }
         }
         self.prev = match c {
-            'A' | 'b' | 'B' | 'Z' => Prev::Empty,
+            'A' | 'b' | 'Z' => Prev::Empty,
             _ => Prev::Atom,
         };
         Ok(())
@@ -283,8 +330,8 @@ impl Scanner<'_> {
 
     /// The escapes that stand for one character: `\a \f \n \r \t \v`, `\x`, `\u`, `\U`, a
     /// punctuation or non-ASCII character, and `\b` inside a set (backspace). Any other ASCII
-    /// letter is a bad escape, as Python reports it.
-    fn literal_escape(&mut self, c: char, start: usize, in_set: bool) -> Result<(), String> {
+    /// letter is a bad escape, as Python reports it. Returns the code point the escape stands for.
+    fn literal_escape(&mut self, c: char, start: usize, in_set: bool) -> Result<u32, String> {
         let value = match c {
             'a' => 0x07,
             'f' => 0x0c,
@@ -302,8 +349,7 @@ impl Scanner<'_> {
             }
             _ => c as u32,
         };
-        self.out.push_str(&code_point(value));
-        Ok(())
+        Ok(value)
     }
 
     /// The value of `\x`, `\u` or `\U`: exactly `count` hex digits.
@@ -328,7 +374,9 @@ impl Scanner<'_> {
 
     /// A set, from the `[` at `self.at` to its `]`. Python reads a nested `[` and the set operators
     /// `&&`, `||`, `~~` and `--` as plain characters; fancy-regex reads them as set syntax, so they
-    /// are refused. A `]` first in the set (after an optional `^`) is a member.
+    /// are refused. Members read as Python's set parser reads them: a `]` first in the set (after an
+    /// optional `^`) is a member, a dash after a member starts a range, and a dash before `]` is a
+    /// literal. A range runs between two literals, so a class at either end is a bad range.
     fn set(&mut self) -> Result<(), String> {
         let start = self.at;
         self.at += 1;
@@ -337,60 +385,103 @@ impl Scanner<'_> {
             self.at += 1;
             self.out.push('^');
         }
-        if self.peek() == Some(']') {
-            self.at += 1;
-            self.code(']');
-        }
+        let mut first = true;
         loop {
             let at = self.at;
             let Some(c) = self.bump() else {
                 return Err(format!("unterminated character set at position {start}"));
             };
-            match c {
-                ']' => {
+            if c == ']' && !first {
+                self.out.push(']');
+                self.prev = Prev::Atom;
+                return Ok(());
+            }
+            first = false;
+            let low = self.set_member(c, at)?;
+            if self.peek() != Some('-') {
+                self.push_member(&low);
+                continue;
+            }
+            let dash = self.at;
+            self.at += 1;
+            match self.peek() {
+                None => return Err(format!("unterminated character set at position {start}")),
+                Some(']') => {
+                    self.at += 1;
+                    self.push_member(&low);
+                    self.code('-');
                     self.out.push(']');
                     self.prev = Prev::Atom;
                     return Ok(());
                 }
-                '[' => return Err(format!("nested set at position {at}")),
-                '\\' => self.set_escape(at)?,
-                '&' | '|' | '~' if self.peek() == Some(c) => {
-                    return Err(format!("set operator {c}{c} at position {at}"));
-                }
-                '-' if self.peek() == Some('-') => {
-                    return Err(format!("set difference -- at position {at}"));
-                }
-                '&' | '|' | '~' => self.code(c),
-                _ => self.out.push(c),
+                Some('-') => return Err(format!("set difference -- at position {dash}")),
+                Some(_) => {}
             }
+            let high_at = self.at;
+            let Some(high_char) = self.bump() else {
+                return Err(format!("unterminated character set at position {start}"));
+            };
+            let high = self.set_member(high_char, high_at)?;
+            match (&low, &high) {
+                (Member::Literal(lo), Member::Literal(hi)) if lo <= hi => {
+                    self.out
+                        .push_str(&format!("{}-{}", code_point(*lo), code_point(*hi)));
+                }
+                _ => {
+                    let range: String = self.text[at..self.at].iter().collect();
+                    return Err(format!("bad character range {range} at position {at}"));
+                }
+            }
+        }
+    }
+
+    /// One set member whose first character `c` is read at `at`: a literal, a class or an escape.
+    fn set_member(&mut self, c: char, at: usize) -> Result<Member, String> {
+        match c {
+            '\\' => self.set_escape(at),
+            '[' => Err(format!("nested set at position {at}")),
+            '&' | '|' | '~' if self.peek() == Some(c) => {
+                Err(format!("set operator {c}{c} at position {at}"))
+            }
+            '-' if self.peek() == Some('-') => Err(format!("set difference -- at position {at}")),
+            _ => Ok(Member::Literal(c as u32)),
+        }
+    }
+
+    /// Write one set member: a literal as its code point, a class as its fancy-regex text.
+    fn push_member(&mut self, member: &Member) {
+        match member {
+            Member::Literal(value) => self.out.push_str(&code_point(*value)),
+            Member::Class(text) => self.out.push_str(text),
         }
     }
 
     /// An escape inside a set. The backslash, at `start`, is already read.
-    fn set_escape(&mut self, start: usize) -> Result<(), String> {
+    fn set_escape(&mut self, start: usize) -> Result<Member, String> {
         let Some(c) = self.bump() else {
             return Err(format!("bad escape (end of pattern) at position {start}"));
         };
-        match c {
-            'd' | 'D' | 'w' | 'W' => self.out.push_str(&format!("\\{c}")),
-            's' => self.out.push_str(SET_SPACE),
-            'S' => return Err(format!("\\S inside a set at position {start}")),
-            '0'..='7' => {
-                let value = self.octal_value(c, start)?;
-                self.out.push_str(&code_point(value));
+        Ok(match c {
+            // A word class reads some non-ASCII keys differently from Python. `\b` in a set is
+            // backspace, handled as a literal below, so it sets nothing.
+            'w' | 'W' => {
+                self.ascii_only = true;
+                Member::Class(format!("\\{c}"))
             }
+            'd' | 'D' => Member::Class(format!("\\{c}")),
+            's' => Member::Class(SET_SPACE.to_owned()),
+            'S' => return Err(format!("\\S inside a set at position {start}")),
+            '0'..='7' => Member::Literal(self.octal_value(c, start)?),
             '8' | '9' => return Err(format!("bad escape \\{c} at position {start}")),
-            _ => self.literal_escape(c, start, true)?,
-        }
-        Ok(())
+            _ => Member::Literal(self.literal_escape(c, start, true)?),
+        })
     }
 
-    /// A group from the `(` at `self.at`. Python's `(?:`, `(?=`, `(?!`, look-behinds, `(?#...)`
-    /// comments and inline flags are rewritten. A named group, `(?P<name>` or `(?P=name)`, is
-    /// refused, and so is every other `(?` form, including the ones only fancy-regex has.
+    /// A group from the `(` at `self.at`. Python's `(?:`, `(?=`, `(?!`, look-behinds and inline
+    /// flags are rewritten. A comment group, `(?#...)`, a named group, `(?P<name>` or `(?P=name)`,
+    /// and every other `(?` form, including the ones only fancy-regex has, is refused.
     fn group(&mut self) -> Result<(), String> {
         let start = self.at;
-        let before = self.prev;
         self.at += 1;
         self.prev = Prev::Empty;
         if self.peek() != Some('?') {
@@ -418,11 +509,7 @@ impl Scanner<'_> {
                 }
             },
             'P' => self.named(start)?,
-            '#' => {
-                // A comment runs to the first `)` and is dropped; it leaves the previous token.
-                self.until(')', start)?;
-                self.prev = before;
-            }
+            '#' => return Err(format!("comment group at position {start} is refused")),
             _ if is_flag(c) || c == '-' => self.flags(c, start)?,
             _ => return Err(unknown_extension(&format!("?{c}"), start)),
         }
@@ -450,7 +537,8 @@ impl Scanner<'_> {
     /// it and then a `:`, so a global `(?on)` takes no `-`. A flag may not be turned on and off in
     /// one group. `a` and `L` change meanings fancy-regex does not share, so they are refused; the
     /// default `u` is dropped when turned on and refused when turned off. `x` is refused in either
-    /// form, and `i` is recorded for the non-ASCII check in `translate`.
+    /// form. An `i` the group turns on is recorded for the non-ASCII checks. One it turns off is
+    /// not recorded.
     fn flags(&mut self, first: char, start: usize) -> Result<(), String> {
         let mut on = String::new();
         let mut off = String::new();
@@ -487,8 +575,11 @@ impl Scanner<'_> {
         if on.contains('x') || off.contains('x') {
             return Err(format!("verbose flag x is refused at position {start}"));
         }
-        if on.contains('i') || off.contains('i') {
+        // Only an `i` the group turns on changes the match. One it turns off keeps the
+        // case-sensitive meaning Python gives, so it sets neither flag.
+        if on.contains('i') {
             self.ignore_case = true;
+            self.ascii_only = true;
         }
         match current {
             Some(':') => {
@@ -515,18 +606,6 @@ impl Scanner<'_> {
             _ => return Err(format!("missing -, : or ) at position {start}")),
         }
         Ok(())
-    }
-
-    /// The text up to `end`, consumed with it.
-    fn until(&mut self, end: char, start: usize) -> Result<String, String> {
-        let mut text = String::new();
-        loop {
-            match self.bump() {
-                Some(c) if c == end => return Ok(text),
-                Some(c) => text.push(c),
-                None => return Err(format!("missing {end} at position {start}")),
-            }
-        }
     }
 
     /// A `{` from `self.at`: a quantifier when Python reads one, otherwise a literal brace.
@@ -620,3 +699,7 @@ fn parse_count(digits: &str, start: usize) -> Result<u32, String> {
 fn unknown_extension(extension: &str, start: usize) -> String {
     format!("unknown extension {extension} at position {start}")
 }
+
+#[cfg(test)]
+#[path = "pyre/tests.rs"]
+mod tests;

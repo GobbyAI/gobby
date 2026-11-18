@@ -1169,6 +1169,44 @@ fn cache_passed_as_a_method_reference_is_not_a_cache_definition() {
 }
 
 #[test]
+/// Contract: an invalidation call named only in a comment or a docstring is not a call, so a module
+/// that defines a cache and mentions `cache_clear(` or `invalidate` only there says 'none found'.
+fn invalidation_named_only_in_comments_and_docstrings_is_none_found() {
+    let body = probe_caches(&[
+        "from functools import lru_cache",
+        "",
+        "",
+        "@lru_cache(maxsize=None)",
+        "def lookup(key: str) -> str:",
+        "    \"\"\"Kept until cache_clear() or invalidate_key() runs.\"\"\"",
+        "    # the writers call invalidate_key() and cache_clear() themselves",
+        "    return key",
+    ]);
+    let row = entry(&body, "probe.py");
+    assert!(
+        row.contains("lru_cache") && row.contains("none found"),
+        "a cache with no code invalidation call should say 'none found':\n{body}"
+    );
+}
+
+#[test]
+/// Contract: an invalidation call named only inside a string is not a call, so a cache module whose
+/// string holds `cache_clear()` and `invalidate` says 'none found'.
+fn invalidation_named_only_in_a_string_is_none_found() {
+    let body = probe_caches(&[
+        "class Probe:",
+        "    def __init__(self) -> None:",
+        "        self._hits_cache = {}",
+        "        self.label = \"cache_clear() then invalidate\"",
+    ]);
+    let row = entry(&body, "probe.py");
+    assert!(
+        row.contains("attribute _hits_cache") && row.contains("none found"),
+        "a string that names an invalidation call is not a call:\n{body}"
+    );
+}
+
+#[test]
 /// Contract: a cache whose only use is a .clear() call is not a cache definition.
 fn cache_cleared_by_a_call_is_not_a_cache_definition() {
     assert_use_is_not_a_cache_definition("        self._drop_cache.clear()", "_drop_cache");
@@ -1512,5 +1550,294 @@ fn tool_sweep_ledger_key_with_an_escaped_pipe_is_shown_with_one_escape() {
         body.lines()
             .any(|line| line == "| `MCP gobby-x:a\\|b` | alpha/names.py |"),
         "the key should keep one escape and list the module that holds its name:\n{body}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+/// Contract: a ledger key with a backtick is shown in a code span whose fence is one backtick longer
+/// than the longest run inside it, so the key stays whole in the sweep.
+fn tool_sweep_ledger_key_with_a_backtick_is_shown_as_a_code_span() {
+    let (base, root, generations) = fixture();
+    write_lines(
+        &root.join("docs/port/ledger.md"),
+        &[
+            "# Parity ledger (census fixture)",
+            "",
+            "| Key | Status | Note |",
+            "| --- | --- | --- |",
+            "| `MCP gobby-x:a`b` | proxied | fixture |",
+        ],
+    );
+    write_lines(
+        &root.join("src/gobby/alpha/names.py"),
+        &["NAME = \"gobby-x:a`b\""],
+    );
+    let text = expect_report(census(
+        base.path(),
+        &root,
+        &generations,
+        &["--no-python"],
+        &[],
+    ));
+    let body = section(&text, 5);
+    assert!(
+        body.lines()
+            .any(|line| line == "| ``MCP gobby-x:a`b`` | alpha/names.py |"),
+        "the key should sit in a two-backtick code span and list the module:\n{body}"
+    );
+}
+
+#[test]
+#[cfg(unix)]
+/// Contract: a ledger key that ends in a backtick is padded inside its code span, so the closing
+/// fence is not read as part of the key.
+fn tool_sweep_ledger_key_ending_in_a_backtick_is_padded_in_its_code_span() {
+    let (base, root, generations) = fixture();
+    write_lines(
+        &root.join("docs/port/ledger.md"),
+        &[
+            "# Parity ledger (census fixture)",
+            "",
+            "| Key | Status | Note |",
+            "| --- | --- | --- |",
+            "| `MCP gobby-x:a`` | proxied | fixture |",
+        ],
+    );
+    write_lines(
+        &root.join("src/gobby/alpha/names.py"),
+        &["NAME = \"gobby-x:a`\""],
+    );
+    let text = expect_report(census(
+        base.path(),
+        &root,
+        &generations,
+        &["--no-python"],
+        &[],
+    ));
+    let body = section(&text, 5);
+    assert!(
+        body.lines()
+            .any(|line| line == "| `` MCP gobby-x:a` `` | alpha/names.py |"),
+        "the key ending in a backtick should be padded in a two-backtick code span:\n{body}"
+    );
+}
+
+#[test]
+/// Contract: a bare name ending in _cache, annotated with a value in a class body as a dataclass
+/// field is, defines a cache. In `_project_infra_cache: dict[str, object] = field(...)` the name is
+/// listed.
+fn bare_annotated_class_field_with_a_value_defines_a_cache() {
+    let body = probe_caches(&[
+        "@dataclass",
+        "class Infra:",
+        "    _project_infra_cache: dict[str, object] = field(default_factory=dict)",
+    ]);
+    let row = entry(&body, "probe.py");
+    assert!(
+        row.contains("name _project_infra_cache"),
+        "a bare annotated class field with a value should define a cache:\n{body}"
+    );
+}
+
+#[test]
+/// Contract: in `fetch_models_cache: FetchModelsCache = _fetch_models_cache` the annotated name
+/// defines a cache and the name on the right is a read, so only the field is listed.
+fn bare_field_assigned_from_another_cache_name_defines_only_the_field() {
+    let body = probe_caches(&[
+        "class Collector:",
+        "    fetch_models_cache: FetchModelsCache = _fetch_models_cache",
+    ]);
+    let row = entry(&body, "probe.py");
+    assert!(
+        row.contains("name fetch_models_cache"),
+        "the annotated field should define a cache:\n{body}"
+    );
+    assert!(
+        !row.contains("name _fetch_models_cache"),
+        "the name on the right of the assignment is a read:\n{body}"
+    );
+}
+
+#[test]
+/// Contract: bare names ending in _cache that begin a statement define caches: a plain assignment,
+/// a chained one, and every name of a tuple target list, including a middle name that does not
+/// begin its line.
+fn bare_plain_chained_and_tuple_assignments_define_caches() {
+    let body = probe_caches(&[
+        "_rules_cache = {}",
+        "_hits_cache = _misses_cache = {}",
+        "_x_cache, _y_cache, _z_cache = {}, {}, {}",
+    ]);
+    let row = entry(&body, "probe.py");
+    for name in [
+        "_rules_cache",
+        "_hits_cache",
+        "_misses_cache",
+        "_x_cache",
+        "_y_cache",
+        "_z_cache",
+    ] {
+        assert!(
+            row.contains(&format!("name {name}")),
+            "`{name}` is assigned at module level, so it should define a cache:\n{body}"
+        );
+    }
+}
+
+#[test]
+/// Contract: a bare cache name that is a parameter, a keyword argument, a lambda parameter or a
+/// lambda default is not a cache definition, so a module holding only those is not listed.
+fn bare_cache_names_as_parameters_arguments_and_lambda_parameters_are_not_definitions() {
+    let body = probe_caches(&[
+        "def load(key: str, rules_cache: dict | None = None) -> str:",
+        "    return offload(key, cache=rules_cache, retries_cache=2)",
+        "",
+        "lookup = lambda rules_cache, depth=1: rules_cache",
+        "scale = lambda hits_cache=1: hits_cache",
+    ]);
+    assert!(
+        entry(&body, "probe.py").is_empty(),
+        "bare cache names in parameters, arguments and lambdas are not definitions:\n{body}"
+    );
+}
+
+#[test]
+/// Contract: a bare cache name in a for-loop target, a walrus, a comparison or an annotation with no
+/// value is not a cache definition.
+fn bare_cache_names_in_loops_walrus_comparisons_and_bare_annotations_are_not_definitions() {
+    let body = probe_caches(&[
+        "def scan(items: list[str]) -> None:",
+        "    for item_cache in items:",
+        "        if (hit_cache := item_cache) and hit_cache == item_cache:",
+        "            print(hit_cache)",
+        "    legacy_cache: dict[str, int]",
+        "    if seen_cache != None:",
+        "        print(seen_cache)",
+    ]);
+    assert!(
+        entry(&body, "probe.py").is_empty(),
+        "bare cache names in loops, walrus, comparisons and bare annotations are not definitions:\n{body}"
+    );
+}
+
+#[test]
+/// Contract: a name returned beside a lambda with a default is a use. The `=` of `x=1` belongs to
+/// the lambda, so the attribute before it is not a target.
+fn cache_returned_beside_a_lambda_default_is_not_a_cache_definition() {
+    assert_use_is_not_a_cache_definition("        return self._a_cache, lambda x=1: x", "_a_cache");
+}
+
+#[test]
+/// Contract: a bare name returned beside a lambda with a default is not a cache definition.
+fn bare_cache_returned_beside_a_lambda_default_is_not_a_cache_definition() {
+    let body = probe_caches(&[
+        "def run(key: str) -> object:",
+        "    return _a_cache, lambda x=1: x",
+    ]);
+    assert!(
+        entry(&body, "probe.py").is_empty(),
+        "a bare name returned beside a lambda default is a use:\n{body}"
+    );
+}
+
+#[test]
+/// Contract: a parenthesised target list defines each cache name in it, as in
+/// `(self._pa_cache, self._pb_cache) = {}, {}`.
+fn parenthesised_target_list_defines_each_cache() {
+    let body = probe_caches(&[
+        "class Pair:",
+        "    def __init__(self) -> None:",
+        "        (self._pa_cache, self._pb_cache) = {}, {}",
+    ]);
+    let row = entry(&body, "probe.py");
+    assert!(
+        row.contains("attribute _pa_cache"),
+        "the first name of a parenthesised target list should define a cache:\n{body}"
+    );
+    assert!(
+        row.contains("attribute _pb_cache"),
+        "the second name of a parenthesised target list should define a cache:\n{body}"
+    );
+}
+
+#[test]
+/// Contract: a bracketed target list defines each cache name in it, as in
+/// `[self._pa_cache, self._pb_cache] = {}, {}`.
+fn bracketed_target_list_defines_each_cache() {
+    let body = probe_caches(&[
+        "class Pair:",
+        "    def __init__(self) -> None:",
+        "        [self._pa_cache, self._pb_cache] = {}, {}",
+    ]);
+    let row = entry(&body, "probe.py");
+    assert!(
+        row.contains("attribute _pa_cache"),
+        "the first name of a bracketed target list should define a cache:\n{body}"
+    );
+    assert!(
+        row.contains("attribute _pb_cache"),
+        "the second name of a bracketed target list should define a cache:\n{body}"
+    );
+}
+
+#[test]
+/// Contract: a cache name inside a subscript of a target list is a use, not a definition, while the
+/// other name of that list still is one: only `_b_cache` is listed for
+/// `rows[self._a_cache], self._b_cache = 1, 2`.
+fn cache_inside_a_subscript_of_a_target_list_is_not_a_definition() {
+    let body = probe_caches(&[
+        "class Probe:",
+        "    def __init__(self) -> None:",
+        "        self._hits_cache = {}",
+        "",
+        "    def run(self, rows: list, key: str) -> None:",
+        "        rows[self._a_cache], self._b_cache = 1, 2",
+    ]);
+    let row = entry(&body, "probe.py");
+    assert!(
+        !row.contains("attribute _a_cache"),
+        "a subscript inside a target list is a use:\n{body}"
+    );
+    assert!(
+        row.contains("attribute _b_cache"),
+        "the other name of the target list still defines a cache:\n{body}"
+    );
+}
+
+#[test]
+/// Contract: a cache name inside a call's argument tuple, or inside a tuple compared with ==, is a
+/// use, not a cache definition.
+fn cache_in_a_call_argument_tuple_or_comparison_is_not_a_cache_definition() {
+    assert_use_is_not_a_cache_definition(
+        "        offload((self._a_cache, self._b_cache), key)",
+        "_a_cache",
+    );
+    assert_use_is_not_a_cache_definition(
+        "        offload((self._a_cache, self._b_cache), key)",
+        "_b_cache",
+    );
+    assert_use_is_not_a_cache_definition(
+        "        return (self._a_cache, self._b_cache) == key",
+        "_a_cache",
+    );
+}
+
+#[test]
+/// Contract: lru_cache, TTLCache, functools.cache and @cache count only in code. A comment or a
+/// docstring that names them defines no cache, so a module holding only those words is not listed.
+fn cache_names_in_comments_and_docstrings_are_not_definitions() {
+    let body = probe_caches(&[
+        "\"\"\"Notes on the old memo table.",
+        "",
+        "It used lru_cache, TTLCache, functools.cache and @cache before the rewrite.",
+        "\"\"\"",
+        "",
+        "# TTLCache(maxsize=4) and lru_cache(maxsize=None) were dropped.",
+        "NOTE = 'functools.cache and @cache were dropped'",
+    ]);
+    assert!(
+        entry(&body, "probe.py").is_empty(),
+        "names in a comment or a docstring are not cache definitions:\n{body}"
     );
 }

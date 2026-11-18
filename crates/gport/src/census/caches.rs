@@ -6,7 +6,6 @@ use super::scan::{TextFile, decorators, tokens};
 use super::table;
 
 const HEADING: &str = "## 4. Caches";
-const INVALIDATION: [&str; 3] = ["cache_clear(", "invalidate", "NOTIFY"];
 
 pub fn section(python: &[&TextFile]) -> String {
     let mut rows = Vec::new();
@@ -15,10 +14,7 @@ pub fn section(python: &[&TextFile]) -> String {
         if kinds.is_empty() {
             continue;
         }
-        let calls: Vec<&str> = INVALIDATION
-            .into_iter()
-            .filter(|call| file.text.contains(*call))
-            .collect();
+        let calls = invalidation_calls(&file.text);
         let calls = if calls.is_empty() {
             "none found".to_owned()
         } else {
@@ -31,10 +27,18 @@ pub fn section(python: &[&TextFile]) -> String {
         return format!("{HEADING}\n\nNo module under src/gobby defines a cache.\n");
     }
     format!(
-        "{HEADING}\n\nModules under src/gobby that define a cache (lru_cache, functools.cache, \
-         TTLCache, an attribute assigned under a name ending in _cache, or a decorator whose last \
-         name part is cache or ends in _cache), with the invalidation calls found in the same \
-         module.\n\n{}",
+        "{HEADING}\n\nModules under src/gobby that define a cache: `lru_cache`, `functools.cache` or \
+         `TTLCache` in code; a decorator whose last name part is `cache` or ends in `_cache`; or a \
+         name whose last part ends in `_cache` and is assigned a value, as `x_cache = v`, \
+         `a = x_cache = v`, `x_cache: T = v`, or one name of a tuple, list or parenthesised target \
+         list. An attribute such as `self._x_cache` is labelled `attribute`, and a bare name `name`. \
+         A bare name counts only where it starts a statement: after indentation, after a `;`, or \
+         after a compound header's colon. An annotation with no value, a parameter, a keyword \
+         argument, a lambda parameter, a for-loop target, a walrus, a comparison or a name in a \
+         comment or string is not a definition. Each module is listed with the invalidation calls \
+         found in the same module: `cache_clear(` for a code name ending in `cache_clear`, and \
+         `invalidate` for a code name containing it, where a comment or string does not count; \
+         `NOTIFY` for that word anywhere in the module text.\n\n{}",
         table(
             &["Module", "Cache definitions", "Invalidation calls"],
             &rows
@@ -42,15 +46,43 @@ pub fn section(python: &[&TextFile]) -> String {
     )
 }
 
-/// The cache definitions in one module, as labels, sorted. A dotted name ending in `_cache` counts
-/// only as an assignment target (`self._cache = {}`, `self._cache: dict = {}`, or one name of
-/// `self._a_cache, self._b_cache = {}, {}`). A call such as `self.get_cache()`, a method reference,
-/// a read, a `.clear()`, a comparison, an augmented assignment, a keyword argument or a membership
-/// test is a use, not a definition. A decorator whose name ends in `cache` or `_cache` counts called
-/// or not.
+/// The invalidation calls in one module, in report order. `cache_clear(` is found for a code name
+/// that ends in `cache_clear`, and `invalidate` for a code name that contains it, so a comment or a
+/// string that names one does not count. `NOTIFY` is matched in the raw text, because it is SQL in a
+/// string and the token scan cannot tell a string from a comment.
+fn invalidation_calls(text: &str) -> Vec<&'static str> {
+    let code: Vec<&str> = tokens(text)
+        .into_iter()
+        .filter(|token| token.code)
+        .map(|token| token.ident)
+        .collect();
+    let mut calls = Vec::new();
+    if code.iter().any(|ident| ident.ends_with("cache_clear")) {
+        calls.push("cache_clear(");
+    }
+    if code.iter().any(|ident| ident.contains("invalidate")) {
+        calls.push("invalidate");
+    }
+    if text.contains("NOTIFY") {
+        calls.push("NOTIFY");
+    }
+    calls
+}
+
+/// The cache definitions in one module, as labels, sorted. A name ending in `_cache` is a definition
+/// when it is the last name of an assignment target in code: `x_cache = v`, `a = x_cache = v`,
+/// `x_cache: T = v`, or one name of a tuple, list or parenthesised target list, dotted or bare. A
+/// bare name is one only where its statement starts. A call such as `self.get_cache()`, a method
+/// reference, a read, a `.clear()`, a comparison, an augmented assignment, a keyword argument, a
+/// lambda parameter, a for-loop target, a walrus or an annotation with no value is a use, not a
+/// definition. A decorator whose name ends in `cache` or `_cache` counts called or not. Names in a
+/// comment or a string count for nothing.
 fn cache_kinds(text: &str) -> BTreeSet<String> {
     let mut kinds = BTreeSet::new();
     for token in tokens(text) {
+        if !token.code {
+            continue;
+        }
         match (token.ident, token.qualifier) {
             ("lru_cache", _) => {
                 kinds.insert("lru_cache".to_owned());
@@ -60,6 +92,9 @@ fn cache_kinds(text: &str) -> BTreeSet<String> {
             }
             ("TTLCache", _) => {
                 kinds.insert("TTLCache".to_owned());
+            }
+            (name, None) if name.ends_with("_cache") && token.assigned => {
+                kinds.insert(format!("name {name}"));
             }
             (name, Some(_)) if name.ends_with("_cache") && token.assigned => {
                 kinds.insert(format!("attribute {name}"));

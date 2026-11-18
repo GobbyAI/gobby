@@ -4,7 +4,8 @@
 //! `<server>:<tool>`, and each tool lists the sorted union of its argument keys. Argument values
 //! are decoded only to find keys and are never printed. The daemon's per-tool metrics add a second
 //! count per tool. A source that is missing, unreadable or unreachable is listed under
-//! `Skipped sources`; it never fails the run.
+//! `Skipped sources`; it never fails the run. The one exception is a redirect from the daemon: it
+//! is not followed, so the run fails with exit 2.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
@@ -76,10 +77,22 @@ pub fn run(options: Options, out: &mut dyn Write) -> anyhow::Result<bool> {
     if options.no_daemon {
         skipped.push(format!("{metrics}: skipped by --no-daemon"));
     } else {
-        match daemon_metrics() {
-            Ok(calls) => {
-                for (label, count) in calls {
+        match daemon_metrics()? {
+            Ok(fetched) => {
+                for (label, count) in fetched.calls {
                     tallies.entry(label).or_default().daemon_calls = Some(count);
+                }
+                if fetched.malformed > 0 {
+                    let noun = if fetched.malformed == 1 {
+                        "entry"
+                    } else {
+                        "entries"
+                    };
+                    skipped.push(format!(
+                        "{metrics}: {} malformed {noun} not counted; each needs a string name \
+                         and a numeric call_count",
+                        fetched.malformed
+                    ));
                 }
             }
             Err(reason) => skipped.push(format!("{metrics}: {reason}")),
@@ -243,41 +256,66 @@ fn argument_keys(arguments: Option<&Value>) -> Vec<String> {
 }
 
 /// The metrics request for a daemon base. A remote endpoint is refused before the bearer header
-/// is attached, so no request that carries it is built for one.
+/// is attached, so no request that carries it is built for one. Redirects are not followed, so the
+/// bearer never leaves the endpoint it was sent to.
 fn metrics_request(base: &str) -> Result<ureq::Request, String> {
     reject_remote_endpoint(base).map_err(|error| error.to_string())?;
     let url = format!("{base}{METRICS_ROUTE}?include_metrics=true");
+    let agent = ureq::AgentBuilder::new().redirects(0).build();
     Ok(gobby_core::local_token::apply_bearer_header(
-        ureq::get(&url).timeout(DAEMON_TIMEOUT),
+        agent.get(&url).timeout(DAEMON_TIMEOUT),
     ))
 }
 
-/// Fetches the daemon's per-tool call counts. An `Err` names why the route is skipped.
-fn daemon_metrics() -> Result<BTreeMap<String, u64>, String> {
-    let base =
-        gobby_core::daemon_url::daemon_url().map_err(|_| "daemon URL unavailable".to_owned())?;
-    let request = metrics_request(&base)?;
+/// Fetches the daemon's per-tool call counts. The outer `Err` fails the run: a redirect is not
+/// followed, so it is refused. The inner `Err` names why the route is skipped.
+fn daemon_metrics() -> anyhow::Result<Result<DaemonMetrics, String>> {
+    let base = match gobby_core::daemon_url::daemon_url() {
+        Ok(base) => base,
+        Err(_) => return Ok(Err("daemon URL unavailable".to_owned())),
+    };
+    let request = match metrics_request(&base) {
+        Ok(request) => request,
+        Err(reason) => return Ok(Err(reason)),
+    };
     let response = match request.call() {
         Ok(response) => response,
-        Err(ureq::Error::Status(code, _)) => return Err(format!("HTTP status {code}")),
-        Err(_) => return Err("unreachable".to_owned()),
+        Err(ureq::Error::Status(code, _)) => return Ok(Err(format!("HTTP status {code}"))),
+        Err(_) => return Ok(Err("unreachable".to_owned())),
     };
-    let body: Value = response
-        .into_json()
-        .map_err(|_| "unreadable response".to_owned())?;
-    parse_metrics(&body).ok_or_else(|| "unreadable response".to_owned())
+    let status = response.status();
+    if (300..400).contains(&status) {
+        anyhow::bail!(
+            "the daemon answered GET {METRICS_ROUTE} with status {status}, a redirect that gport \
+             does not follow"
+        );
+    }
+    let Ok(body) = response.into_json::<Value>() else {
+        return Ok(Err("unreadable response".to_owned()));
+    };
+    Ok(parse_metrics(&body).ok_or_else(|| "unreadable response".to_owned()))
+}
+
+/// The daemon's per-tool call counts, and how many of its entries were dropped as malformed.
+#[derive(Debug, Default)]
+struct DaemonMetrics {
+    calls: BTreeMap<String, u64>,
+    malformed: usize,
 }
 
 /// Reads `{"tools": {<server>: [{"name": .., "call_count": ..}, ..]}}` into `<server>:<name>`
-/// counts. A `success` of false, or no `tools` object, makes the whole answer unreadable.
-fn parse_metrics(body: &Value) -> Option<BTreeMap<String, u64>> {
+/// counts. A `success` of false, or no `tools` object, makes the whole answer unreadable. An entry
+/// with no string name or no numeric call_count, and a server whose value is not a list, is counted
+/// as malformed and left out.
+fn parse_metrics(body: &Value) -> Option<DaemonMetrics> {
     if body.get("success").and_then(Value::as_bool) == Some(false) {
         return None;
     }
     let servers = body.get("tools")?.as_object()?;
-    let mut calls = BTreeMap::new();
+    let mut metrics = DaemonMetrics::default();
     for (server, entries) in servers {
         let Some(entries) = entries.as_array() else {
+            metrics.malformed = metrics.malformed.saturating_add(1);
             continue;
         };
         for entry in entries {
@@ -285,14 +323,15 @@ fn parse_metrics(body: &Value) -> Option<BTreeMap<String, u64>> {
                 entry.get("name").and_then(Value::as_str),
                 entry.get("call_count").and_then(Value::as_u64),
             ) else {
+                metrics.malformed = metrics.malformed.saturating_add(1);
                 continue;
             };
             let label = tool_label(format!("{server}:{name}"));
-            let total: &mut u64 = calls.entry(label).or_default();
+            let total: &mut u64 = metrics.calls.entry(label).or_default();
             *total = total.saturating_add(count);
         }
     }
-    Some(calls)
+    Some(metrics)
 }
 
 /// Shape of a printed word: a letter or `_`, then up to 63 more bytes, each a letter, a digit, `_`
@@ -422,7 +461,9 @@ fn write_skipped(out: &mut dyn Write, skipped: &[String]) -> anyhow::Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use super::metrics_request;
+    use serde_json::json;
+
+    use super::{metrics_request, parse_metrics};
 
     /// The reason a skipped metrics route carries for a remote endpoint.
     const REFUSAL: &str = "remote daemon endpoint refused";
@@ -438,5 +479,22 @@ mod tests {
     #[test]
     fn malformed_endpoint_builds_no_metrics_request() {
         assert!(metrics_request("not a url").is_err());
+    }
+
+    #[test]
+    fn parse_metrics_counts_malformed_entries_and_keeps_the_rest() {
+        let body = json!({"success": true, "tools": {
+            "srv": [
+                {"name": "good", "call_count": 2},
+                {"name": "no_count"},
+                {"name": 7, "call_count": 1},
+                "not an object"
+            ],
+            "bad": "not a list"
+        }});
+        let metrics = parse_metrics(&body).expect("a readable answer");
+        assert_eq!(metrics.calls.get("srv:good"), Some(&2));
+        assert_eq!(metrics.calls.len(), 1);
+        assert_eq!(metrics.malformed, 4);
     }
 }
