@@ -982,6 +982,34 @@ def test_run_cutover_refusal_leaves_the_daemon_running(
     stop.assert_not_called()
 
 
+def test_run_cutover_refuses_before_the_stop_when_the_outgoing_set_cannot_be_retained(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "generations").write_text("not a directory")
+    artifacts = _artifacts(root, _identity(420))
+    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: _set_only(artifacts))
+    stop = Mock(return_value=False)
+    promotion = Mock(side_effect=AssertionError("promotion must not run"))
+    monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promotion)
+
+    with pytest.raises(cutover_module.CutoverError) as exc_info:
+        cutover_module.run_cutover(
+            root,
+            bin_dir,
+            stop_daemon=stop,
+            start_daemon=pytest.fail,
+            start_refusal=lambda _candidate: None,
+        )
+
+    assert "refusing to promote: generation retention unavailable: " in str(exc_info.value)
+    stop.assert_not_called()
+    assert sorted(path.name for path in bin_dir.iterdir()) == ["generations"]
+
+
 def test_cli_refuses_dirty_schema_inputs_and_names_them(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
