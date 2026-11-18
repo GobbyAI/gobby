@@ -54,6 +54,18 @@ def test_metadata_resolution_refuses_case_collisions_without_creating_local_file
 def test_migration_preserves_git_files_and_replays_interrupted_anchor_move(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    import threading
+
+    from gobby.agents import workspace_backups
+
+    caller = threading.current_thread()
+    initialize = workspace_backups._init_git_dir
+
+    def initialize_on_worker(project_name: str) -> None:
+        assert threading.current_thread() is not caller
+        initialize(project_name)
+
+    monkeypatch.setattr(workspace_backups, "_init_git_dir", initialize_on_worker)
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
     pane = _pane(temp_db, tmp_path, monkeypatch, "workspace-migration")
     root = workspaces_root()
