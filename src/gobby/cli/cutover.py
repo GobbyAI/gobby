@@ -9,12 +9,17 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import click
 
 from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli._daemon_handoffs import protect_pending_handoffs
-from gobby.cli._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
+from gobby.cli._daemon_protected_runs import (
+    ProtectedRunsUnknown,
+    clear_protected_runs,
+    fetch_protected_runs,
+)
 from gobby.cli.daemon_lifecycle import START_AFTER_OWN_STOP, _do_stop
 from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.daemon_start import start
@@ -274,9 +279,22 @@ def _stop_admission_refusal(
     """
     runtime = get_cli_runtime(ctx)
     port = runtime.read_only_operational_config().daemon_port
-    if not clear_protected_runs(
-        port, force=False, wait=wait, step=_report, fetch=fetch_protected_runs
-    ):
+    unknown: list[ProtectedRunsUnknown] = []
+
+    def fetch(http_port: int) -> list[dict[str, Any]]:
+        try:
+            return fetch_protected_runs(http_port)
+        except ProtectedRunsUnknown as exc:
+            unknown.append(exc)
+            raise
+
+    if not clear_protected_runs(port, force=False, wait=wait, step=_report, fetch=fetch):
+        if unknown:
+            # --wait cannot help here: nothing says a run is active, or that one will end.
+            return (
+                f"the daemon's protected-run answer is unknown ({unknown[-1]}); "
+                "stop it with `gobby stop --force`, then re-run"
+            )
         return "a restart-protected cron run is active; re-run with --wait"
     try:
         with protect_pending_handoffs(
