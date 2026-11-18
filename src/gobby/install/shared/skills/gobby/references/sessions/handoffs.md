@@ -18,10 +18,17 @@ Keep three stores separate. Write each seat's content only to the store it belon
   state, next steps and pending replies owed, recent decisions and problems relevant
   to the next few hours, and a pointer to `standing-directives.md`, never a copy of it.
 - `standing-directives.md`: a persistent seat's scratchpad in its agent workspace
-  session folder, durable until each directive is done or withdrawn. It holds operator
+  folder (the stable current folder for persistent definitions), durable until each
+  directive is done or withdrawn. It holds operator
   directives with triggers (after X lands, launch Y), holds and their release
   conditions, and operator standing rules specific to this seat. Each entry carries its
   date, source, trigger, status (waiting, fired or done) and done time.
+
+A default session that hands off more than once on the same work keeps operator
+rulings and standing rules it would otherwise carry forward in a Markdown file in
+its agent workspace folder, and lists that path in `references`. Do not restate
+AGENTS.md or project policy in a handoff. Preserve normal spaces and readable prose;
+never fit a handoff by joining numbers to words.
 - Memory: shared by all agents and durable. It holds project facts, observed runtime
   behavior, preferences that apply to every seat, and decision rationale written for
   future sessions to match. It never holds one seat's instructions, task progress or
@@ -153,6 +160,6 @@ failed recovery marker.
 
 Guide: [Creating and reading handoffs](../../../../../../../../docs/guides/sessions.md#creating-and-reading-handoffs).
 
-_Version: 2.0.0_
+_Version: 2.1.0_
 
 _Last verified: 2026-11-17_

@@ -11,7 +11,6 @@ from __future__ import annotations
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
-from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
 SYNTHETIC_RETRY_LIMIT_RULE = "fixture-retry-limit"
 SYNTHETIC_ESCALATION_PREFIX = "Escalated after repeated denials"
@@ -48,21 +47,3 @@ def install_retry_limit_rule(db: HubDatabase) -> None:
         enabled=True,
         priority=0,
     )
-
-
-def arm_bundled_retry_limit_rules(db: HubDatabase) -> list[str]:
-    """Sync the bundled templates and leave only the retry-limit rules enabled.
-
-    Returns the names of the armed rules so contract tests can assert on them.
-    """
-    sync_bundled_rules(db, get_bundled_rules_path())
-    armed: list[str] = []
-    for row in RuleDefinitionManager(db).list_all():
-        is_retry_limit = RuleDefinitionBody.model_validate(row.definition_json).retry_limit
-        db.execute(
-            "UPDATE rule_definitions SET enabled = %s WHERE id = %s",
-            (is_retry_limit, row.id),
-        )
-        if is_retry_limit:
-            armed.append(row.name)
-    return armed

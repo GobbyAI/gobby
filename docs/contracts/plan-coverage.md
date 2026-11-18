@@ -476,7 +476,7 @@ oversized content. Provider permissions also apply to working-context files. Kee
 in the agent workspace folder, not the checkout; committed plan artifacts stay under
 `.gobby/plans/`.
 
-The planner calls `set_handoff(clear_session=false)` and the resumed session
+The planner calls `set_handoff()` and the resumed session
 consumes it with argumentless `get_handoff`. This staging state is not a second
 plan format and has not passed deterministic validation. Do not create a
 scratch store, draft-storage tool, autosave path, planning task, or indirect

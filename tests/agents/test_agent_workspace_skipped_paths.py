@@ -18,7 +18,7 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def workspace_with_skips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, Path]:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
-    project_id = "11111111-1111-4111-8111-111111111111"
+    project_id = "fixture-skipped-project"
     anchor = agent_workspaces.ensure_workspace(project_id)
     folder = anchor / "fixture-worker/session-1"
     folder.mkdir(parents=True)
@@ -93,7 +93,7 @@ async def test_newline_skipped_path_stays_out_and_unrelated_notes_back_up(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
-    project_id = "33333333-3333-4333-8333-333333333333"
+    project_id = "fixture-newline-project"
     anchor = agent_workspaces.ensure_workspace(project_id)
     folder = anchor / "fixture-worker/session-1"
     folder.mkdir(parents=True)
@@ -133,7 +133,7 @@ async def test_skipped_path_parent_replaced_by_file_does_not_block_backups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
-    project_id = "44444444-4444-4444-8444-444444444444"
+    project_id = "fixture-parent-project"
     anchor = agent_workspaces.ensure_workspace(project_id)
     parent_path = "fixture-worker/session-1/evidence"
     folder = anchor / parent_path

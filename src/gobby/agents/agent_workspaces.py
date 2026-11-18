@@ -1,11 +1,12 @@
 """Per-project agent workspaces: one daemon-committed Git repository under Gobby home.
 
-Layout (addendum Decision 27, P9): ``<gobby_home>/agents_workspaces/<project_id>/`` is the
-work tree, ``<gobby_home>/agents_workspaces/<project_id>.git/`` its daemon-only Git directory.
+Layout (addendum Decision 27, P9): ``<gobby_home>/agents_workspaces/<project_name>/`` is the
+work tree, ``<gobby_home>/agents_workspaces/<project_name>.git/`` its daemon-only Git directory.
 Persistent definitions write ``<definition>/current/`` with prior owners archived under
-``<definition>/history/session-<seq>/``. Other non-default definitions write
+``<definition>/history/session-<seq>/``. Ephemeral definitions, including default, write
 ``<definition>/session-<seq>/``; an epic team shares ``epics/epic-<seq>/``.
-The default definition uses provider-native scratch space and has no agent workspace.
+Default and ephemeral definitions use independent session folders. Persistence is a
+stored definition policy, independent of how long the agent process runs.
 
 The daemon is the only committer. The nightly cron at 03:30 local time is the only backup
 trigger; lifecycle events (handoff, compaction, session start or end, team teardown) never
@@ -52,24 +53,28 @@ def workspaces_root() -> Path:
     return get_gobby_home() / "agents_workspaces"
 
 
-def workspace_anchor(project_id: str) -> Path:
+def workspace_anchor(project_name: str) -> Path:
     """The project's workspace work tree."""
-    return workspaces_root() / project_id
+    from gobby.agents.workspace_projects import validate_workspace_project_name
+
+    return workspaces_root() / validate_workspace_project_name(project_name)
 
 
-def workspace_git_dir(project_id: str) -> Path:
+def workspace_git_dir(project_name: str) -> Path:
     """The daemon-only Git directory for the project's workspace."""
-    return workspaces_root() / f"{project_id}.git"
+    return workspace_anchor(project_name).with_name(f"{project_name}.git")
 
 
-def session_workspace_dir(project_id: str, definition: str | None, session_seq: int) -> Path:
+def session_workspace_dir(project_name: str, definition: str | None, session_seq: int) -> Path:
     """The folder a session writes: ``<definition>/session-<seq>/`` under the anchor."""
-    return workspace_anchor(project_id) / (definition or "default") / f"session-{session_seq}"
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", definition or "default"):
+        raise ValueError("Invalid workspace definition path")
+    return workspace_anchor(project_name) / (definition or "default") / f"session-{session_seq}"
 
 
-def epic_workspace_dir(project_id: str, epic_seq: int) -> Path:
+def epic_workspace_dir(project_name: str, epic_seq: int) -> Path:
     """The shared folder of an epic team: ``epics/epic-<seq>/`` under the anchor."""
-    return workspace_anchor(project_id) / "epics" / f"epic-{epic_seq}"
+    return workspace_anchor(project_name) / "epics" / f"epic-{epic_seq}"
 
 
 def agent_workspace_write_dirs(variables: Mapping[str, Any]) -> list[str]:
@@ -124,7 +129,9 @@ def _predecessor_folder_readable(
     """Shared sequence/live-holder check, after resolving persistence authority."""
     path = Path(os.path.normpath(folder))
     try:
-        relative = path.relative_to(workspace_anchor(project_id))
+        from gobby.agents.workspace_projects import workspace_project_name
+
+        relative = path.relative_to(workspace_anchor(workspace_project_name(db, project_id)))
     except ValueError:
         return False
     if len(relative.parts) != 2 or relative.parts[0] != definition:
@@ -172,7 +179,9 @@ def _epic_folder(db: HubDatabase, binding: TeamBinding) -> Path | None:
     epic = LocalTaskManager(db).get_task(binding.task_id)
     if epic is None or epic.seq_num is None:
         return None
-    return epic_workspace_dir(binding.project_id, epic.seq_num)
+    from gobby.agents.workspace_projects import workspace_project_name
+
+    return epic_workspace_dir(workspace_project_name(db, binding.project_id), epic.seq_num)
 
 
 def _seat_epic_folder(db: HubDatabase, session_id: str) -> Path | None:
@@ -258,39 +267,18 @@ def spawn_workspace_write_paths(
     location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
     if location is None or location["project_id"] is None or location["seq_num"] is None:
         return []
-    bound = (
-        SessionVariableManager(db)
-        .get_variable_subset(session_id, [WORKSPACE_DIR_VARIABLE])
-        .get(WORKSPACE_DIR_VARIABLE)
-    )
-    folders: list[Path] = []
-    if definition and definition != "default":
-        from gobby.storage.definitions import AgentDefinitionManager
+    from gobby.agents.workspace_bindings import definition_workspace_changes
+    from gobby.storage.definitions import AgentDefinitionManager
 
-        row = AgentDefinitionManager(db).get_by_name(definition, location["project_id"])
-        persistent = row is not None and row.definition_json.get("persistent_workspace") is True
-        if persistent:
-            from gobby.agents.persistent_workspaces import bind_persistent_workspace
-
-            with db.transaction():
-                folder = bind_persistent_workspace(
-                    db, session_id, location["project_id"], definition, location["seq_num"]
-                )
-                SessionVariableManager(db).merge_variables(
-                    session_id,
-                    {
-                        WORKSPACE_DIR_VARIABLE: str(folder),
-                        WORKSPACE_PERSISTENT_VARIABLE: True,
-                        WORKSPACE_DEFINITION_VARIABLE: definition,
-                    },
-                )
-        else:
-            folder = (
-                Path(bound)
-                if isinstance(bound, str) and bound
-                else session_workspace_dir(location["project_id"], definition, location["seq_num"])
-            )
-        folders.append(folder)
+    definition = definition or "default"
+    row = AgentDefinitionManager(db).get_by_name(definition, location["project_id"])
+    persistent = row is not None and row.definition_json.get("persistent_workspace") is True
+    with db.transaction():
+        changes = definition_workspace_changes(db, session_id, definition, persistent=persistent)
+        SessionVariableManager(db).merge_variables(session_id, changes)
+    folder = changes[WORKSPACE_DIR_VARIABLE]
+    folders = [Path(folder)] if isinstance(folder, str) else []
+    if definition != "default":
         epic = _seat_epic_folder(db, session_id)
         if epic is not None:
             folders.append(epic)
@@ -315,19 +303,17 @@ def grant_seat_workspace_paths(
     """
     from gobby.storage.definitions import AgentDefinitionManager
 
+    definition = definition or "default"
     granted = spawn_workspace_write_paths(db, session_id, definition)
     # Workspace scope holds only folders under the root. A registered checkout is a write
     # grant alone, because restrict_workspace_paths judges scope paths against the root.
     folders = [path for path in granted if Path(path).is_relative_to(workspaces_root())]
     reads = list(folders)
     location = db.execute(_SESSION_LOCATION_SQL, (session_id,)).fetchone()
-    if (
-        definition
-        and definition != "default"
-        and location is not None
-        and location["project_id"] is not None
-    ):
-        anchor = workspace_anchor(location["project_id"])
+    if definition and location is not None and location["project_id"] is not None:
+        from gobby.agents.workspace_projects import workspace_project_name
+
+        anchor = workspace_anchor(workspace_project_name(db, location["project_id"]))
         reads.append(str(anchor / "README.md"))
         row = (
             AgentDefinitionManager(db).get_by_name(definition, location["project_id"])

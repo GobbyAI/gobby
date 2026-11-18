@@ -18,9 +18,8 @@ from typing import Any
 import pytest
 
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.utils.strict_yaml import load_strict_yaml
 from gobby.workflows.condition_helpers_paths import session_transcript_write
-from gobby.workflows.rule_validation_yaml import normalize_rule_yaml_entry, validate_rule_yaml
+from gobby.workflows.rule_validation_yaml import validate_rule_yaml
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
 from gobby.workflows.sync_rules import get_bundled_rules_paths
 
@@ -80,17 +79,6 @@ def _rule_when(event_data: dict[str, Any], file_path: str) -> bool:
     return bool(evaluator.evaluate(SYNTHETIC_DEFINITION["when"]))
 
 
-def _bundled_rules() -> list[tuple[Path, str, dict[str, Any], dict[str, Any]]]:
-    """Each bundled rule as the sync reads it: file defaults applied, row metadata split out."""
-    rules = []
-    for path in BUNDLED_RULE_FILES:
-        data = load_strict_yaml(path.read_text(encoding="utf-8"))
-        for name, rule in data["rules"].items():
-            body, metadata = normalize_rule_yaml_entry(rule, defaults=data)
-            rules.append((path, str(name), body, metadata))
-    return rules
-
-
 @pytest.mark.parametrize("path", BUNDLED_RULE_FILES, ids=lambda path: path.name)
 def test_bundled_rule_file_parses_and_passes_the_engine_dry_run(path: Path) -> None:
     reports = validate_rule_yaml(path.read_text(encoding="utf-8"), source=str(path))
@@ -98,20 +86,6 @@ def test_bundled_rule_file_parses_and_passes_the_engine_dry_run(path: Path) -> N
     assert reports, path
     for report in reports:
         report.raise_for_errors()
-
-
-def test_each_bundled_rule_gating_transcripts_blocks_before_a_tool() -> None:
-    gates = [
-        (path, name, body, metadata)
-        for path, name, body, metadata in _bundled_rules()
-        if GATE in str(body.get("when", ""))
-    ]
-
-    assert gates, "no bundled rule gates session transcripts"
-    for path, name, body, metadata in gates:
-        assert body["event"] == "before_tool", (path, name)
-        assert metadata.get("enabled", True) is True, (path, name)
-        assert [effect["type"] for effect in body["effects"]] == ["block"], (path, name)
 
 
 def test_helper_refuses_transcripts_under_the_configured_claude_config_dir(

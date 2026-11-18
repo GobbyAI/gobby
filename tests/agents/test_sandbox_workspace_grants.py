@@ -36,6 +36,7 @@ from gobby.agents.spawn_executor_providers import _prepare_provider_sandbox
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.agents.srt_settings import render_srt_settings
+from gobby.agents.workspace_projects import workspace_project_name
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.agents import LocalAgentRunManager
@@ -65,7 +66,7 @@ def _associated_checkout(
     world: TeamWorld, definition: str
 ) -> tuple[SpawnRequest, PreparedSpawn, Worktree]:
     db = world.case.db
-    project = world.case.project_id
+    project = workspace_project_name(world.case.db, world.case.project_id)
     developer = world.case.session("fixture-worker")
     folder = session_workspace_dir(project, "default", _seq(db, developer))
     folder.mkdir(parents=True)
@@ -73,7 +74,11 @@ def _associated_checkout(
     worktree = folder / f"task-{task.seq_num}"
     world.case.git("worktree", "add", "-b", "shared-candidate", str(worktree))
     registered = LocalWorktreeManager(db).create(
-        project, "shared-candidate", str(worktree), task_id=task.id, agent_session_id=developer
+        world.case.project_id,
+        "shared-candidate",
+        str(worktree),
+        task_id=task.id,
+        agent_session_id=developer,
     )
     seat = world.case.session(definition)
     metadata: dict[str, Any] = {}
@@ -103,7 +108,9 @@ async def _workspace_decision(
     seat = request.session_id
     assert seat is not None
     own = session_workspace_dir(
-        world.case.project_id, request.agent_name, _seq(world.case.db, seat)
+        workspace_project_name(world.case.db, world.case.project_id),
+        request.agent_name,
+        _seq(world.case.db, seat),
     )
     variables = {"_agent_type": request.agent_name, WORKSPACE_DIR_VARIABLE: str(own)}
     data: dict[str, Any] = {"tool_name": tool_name, "cwd": request.cwd, "tool_input": tool_input}
@@ -141,7 +148,11 @@ async def test_associated_seat_can_launch_in_developer_task_worktree(
     assert not _covered(filesystem["allowRead"], worktree.parent)
     assert not _covered(filesystem["allowWrite"], worktree.parent)
     seat = context.session_id
-    own = session_workspace_dir(world.case.project_id, definition, _seq(world.case.db, seat))
+    own = session_workspace_dir(
+        workspace_project_name(world.case.db, world.case.project_id),
+        definition,
+        _seq(world.case.db, seat),
+    )
     _assert_only_own_folders(filesystem, paths, {own, worktree})
     assert registered.worktree_path in config.extra_write_paths
 
@@ -419,7 +430,7 @@ async def test_spawn_and_resume_grant_exactly_the_seats_own_folder(
     world: TeamWorld, tmp_path: Path, definition: str | None
 ) -> None:
     db = world.case.db
-    project = world.case.project_id
+    project = workspace_project_name(world.case.db, world.case.project_id)
     # A predecessor of the same definition holds the previous number and keeps its folder.
     predecessor = world.case.session(definition or "plain")
     _bind(db, predecessor, session_workspace_dir(project, definition, _seq(db, predecessor)))
@@ -444,8 +455,8 @@ async def test_spawn_and_resume_grant_exactly_the_seats_own_folder(
     config, filesystem, paths = await _spawn(request, context)
 
     assert own.parent.name == (definition or "default")
-    expected = {own} if definition is not None else set()
-    assert _covered(filesystem["allowWrite"], own) is (definition is not None)
+    expected = {own}
+    assert _covered(filesystem["allowWrite"], own)
     _assert_only_own_folders(filesystem, paths, expected)
     for folder in foreign:
         assert not _covered(filesystem["allowWrite"], folder), folder
@@ -464,7 +475,7 @@ async def test_spawn_and_resume_grant_exactly_the_seats_own_folder(
 @pytest.mark.asyncio
 async def test_epic_team_seat_also_gets_its_epic_folder(world: TeamWorld, tmp_path: Path) -> None:
     db = world.case.db
-    project = world.case.project_id
+    project = workspace_project_name(world.case.db, world.case.project_id)
     epic = _epic(world, "Shared epic notes")
     team = await seated_team(world, epic, world.child(epic))
     developer = team.seats[2]
@@ -501,7 +512,7 @@ async def test_resume_grants_an_old_snapshot_its_own_and_live_epic_folders(
 ) -> None:
     """A relaunched seat whose snapshot predates the grants still writes its own folders."""
     db = world.case.db
-    project = world.case.project_id
+    project = workspace_project_name(world.case.db, world.case.project_id)
     epic = _epic(world, "Resumed epic notes")
     team = await seated_team(world, epic, world.child(epic))
     seat = team.seats[2]

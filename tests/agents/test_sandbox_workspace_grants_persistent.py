@@ -13,6 +13,7 @@ from gobby.agents.agent_workspaces import session_workspace_dir
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.srt_settings import render_srt_settings
 from gobby.agents.workspace_bindings import bind_session_workspace
+from gobby.agents.workspace_projects import workspace_project_name
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -62,7 +63,7 @@ async def test_resume_of_a_new_owner_grants_its_stable_folder(
 ) -> None:
     """A resumed persistent owner receives only its stable live folder as a write grant."""
     db = world.case.db
-    project = world.case.project_id
+    project = workspace_project_name(world.case.db, world.case.project_id)
     AgentDefinitionManager(db).upsert_with_steps(
         ARCHIVIST,
         {

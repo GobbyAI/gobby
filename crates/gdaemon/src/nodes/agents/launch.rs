@@ -275,6 +275,7 @@ fn policy_inputs(
     let mut env = context.ambient.clone();
     env.extend(context.cache_env.clone());
     Ok(PolicyInputs {
+        project_name: payload.project_name.clone(),
         provider: payload.provider.clone(),
         sandbox: payload.sandbox.clone(),
         source_root: PathBuf::from(&payload.source_root),

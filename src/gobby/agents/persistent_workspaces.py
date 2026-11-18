@@ -75,9 +75,12 @@ def bind_persistent_workspace(
 
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", definition):
         raise WorkspaceOwnershipError("Invalid workspace definition path")
-    folder = workspace_anchor(project_id) / definition
+    from gobby.agents.workspace_projects import workspace_project_name
+
+    project_name = workspace_project_name(db, project_id)
+    folder = workspace_anchor(project_name) / definition
     current = folder / "current"
-    metadata = workspace_git_dir(project_id) / "workspace-owners" / f"{definition}.json"
+    metadata = workspace_git_dir(project_name) / "workspace-owners" / f"{definition}.json"
     with db.transaction() as connection:
         connection.execute(
             "SELECT pg_advisory_xact_lock(hashtext(%s))",

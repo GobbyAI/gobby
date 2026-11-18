@@ -17,6 +17,7 @@ from gobby.agents.agent_workspaces import (
 )
 from gobby.agents.team_admission_records import TeamBinding
 from gobby.agents.team_teardown import TEARDOWN_GRACE
+from gobby.agents.workspace_projects import workspace_project_name
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.mcp_proxy.tools import agent_cancellation
 from gobby.storage.agents import LocalAgentRunManager
@@ -108,7 +109,13 @@ async def _epic_team(world: TeamWorld, title: str) -> tuple[Team, Task, str]:
 
 def _epic_dir(world: TeamWorld, epic: Task) -> Path:
     home = Path(os.environ["GOBBY_HOME"])
-    return home / "agents_workspaces" / world.case.project_id / "epics" / f"epic-{epic.seq_num}"
+    return (
+        home
+        / "agents_workspaces"
+        / workspace_project_name(world.case.db, world.case.project_id)
+        / "epics"
+        / f"epic-{epic.seq_num}"
+    )
 
 
 def _variables(db: HubDatabase, session_id: str) -> dict[str, Any]:

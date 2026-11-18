@@ -127,6 +127,7 @@ fn inputs_with_build_root(gobby_home: &Path, build_root: &Path, workspace: &Path
         },
         source_root: workspace.to_owned(),
         project_id: "project-one".into(),
+        project_name: "fixture-project".into(),
         session_id: "session-one".into(),
         workspace: workspace.to_owned(),
         home: gobby_home.join("home"),

@@ -36,6 +36,8 @@ use std::{
 /// `env`, never the process environment.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PolicyInputs {
+    /// Registered project name supplied by the trusted hub, independent of its UUID.
+    pub project_name: String,
     pub provider: String,
     pub sandbox: Sandbox,
     pub source_root: PathBuf,

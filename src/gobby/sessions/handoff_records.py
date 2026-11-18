@@ -126,6 +126,8 @@ def build_handoff_payload(
             "relevant validation, and brief friction observations from this epoch. "
             "If necessary live working detail still cannot fit, create or update a Markdown "
             "session-notes file in your agent workspace and add its path to references. "
+            "Move operator rulings and standing rules carried between epochs to that file. "
+            "Do not shorten by deleting spaces or joining numbers to words. "
             "Do not move cumulative history into that file. Shorten the inline handoff and retry."
         )
     return HandoffPayload(

@@ -82,7 +82,7 @@ def _activate(
 
 
 def _clear_into(pane: _StagedClear, external_id: str) -> str:
-    """Activate a fresh default session without carrying a handoff or workspace."""
+    """Activate a fresh default session without carrying a handoff or prior workspace."""
     successor_id = pane.register(external_id)
     resolution = SessionStartResolution(
         session=None,
@@ -101,7 +101,13 @@ def _folder(home: Path, pane: _StagedClear, definition: str, session_id: str) ->
         if row is not None and row.definition_json.get("persistent_workspace")
         else f"session-{session.seq_num}"
     )
-    return home / "agents_workspaces" / pane.project_id / definition / leaf
+    project = pane.sessions.db.fetchone(
+        "SELECT name FROM projects WHERE id = %s", (pane.project_id,)
+    )
+    assert project is not None
+    project_name = project["name"]
+    assert isinstance(project_name, str)
+    return home / "agents_workspaces" / project_name / definition / leaf
 
 
 def _workspace(db: HubDatabase, session_id: str) -> tuple[Path | None, Any]:
@@ -131,20 +137,20 @@ async def test_session_folder_binding(
         _activate(pane, seat, source)
         assert _workspace(temp_db, seat)[0] == folder, source
 
-    # A seat without a definition keeps scratch space provider-native.
+    # A seat without a definition receives its own default scratch folder.
     plain = pane.register("plain-ext")
     _activate(pane, plain, "startup")
     assert SessionVariableManager(temp_db).get_variables(plain).get("_agent_type") == "default"
-    assert _workspace(temp_db, plain)[0] is None
-    assert not (home / "agents_workspaces" / pane.project_id / "default").exists()
+    assert _workspace(temp_db, plain)[0] == _folder(home, pane, "default", plain)
 
-    # A manual /clear without a handoff marker also has no agent workspace.
+    # A manual /clear starts an independent default workspace.
     manual = pane.register("manual-clear-ext")
     _activate(pane, manual, "clear")
     manual_type = SessionVariableManager(temp_db).get_variables(manual).get("_agent_type")
     manual_folder = _workspace(temp_db, manual)[0]
     assert manual_type == "default"
-    assert manual_folder is None
+    assert manual_folder == _folder(home, pane, "default", manual)
+    assert manual_folder != _workspace(temp_db, plain)[0]
 
 
 @pytest.mark.asyncio
@@ -193,8 +199,8 @@ async def test_clear_unbinds_workspace_regardless_of_persistence(
 
     folder, flag = _workspace(temp_db, successor)
     assert flag is False
-    assert folder is None
-    assert spawn_workspace_write_paths(temp_db, successor, "default") == []
+    assert folder == _folder(home, pane, "default", successor)
+    assert spawn_workspace_write_paths(temp_db, successor, "default") == [str(folder)]
     assert lineage is not None and lineage.is_dir()
 
 

@@ -150,6 +150,7 @@ def _case(
             "sandbox": sandbox if sandbox is not None else _sandbox(),
             "source_root": source_root,
             "project_id": _PROJECT_ID,
+            "project_name": "node-srt-project",
             "session_id": _SESSION_ID,
             "definition": definition,
             "session_seq": session_seq,
@@ -175,7 +176,7 @@ def _case(
 def _case_templates() -> list[dict[str, Any]]:
     cases = [_case(f"{provider}-srt-empty", provider) for provider in _PROVIDERS]
     cases.append(
-        _case("codex-default-workspace-exempt", "codex", definition="default", session_seq=7)
+        _case("codex-default-session-workspace", "codex", definition="default", session_seq=7)
     )
     cases.append(
         _case(
@@ -383,9 +384,9 @@ def _pin_account_home(monkeypatch: pytest.MonkeyPatch, layout: dict[str, str]) -
 def _workspace_write_paths(inputs: dict[str, Any]) -> list[str]:
     """The seat's own and epic folders the spawn grants, from the case's sequence inputs."""
     session_seq = inputs["session_seq"]
-    if session_seq is None or inputs["definition"] in (None, "", "default"):
+    if session_seq is None or inputs["definition"] in (None, ""):
         return []
-    project_id = str(inputs["project_id"])
+    project_id = str(inputs["project_name"])
     folder = (
         workspace_anchor(project_id) / inputs["definition"] / "current"
         if inputs.get("persistent_workspace", False)
@@ -421,7 +422,7 @@ def _run_chain(inputs: dict[str, Any]) -> tuple[str, dict[str, str]]:
     workspace_paths = _workspace_write_paths(inputs)
     reads = list(workspace_paths)
     if workspace_paths:
-        reads.append(str(workspace_anchor(str(inputs["project_id"])) / "README.md"))
+        reads.append(str(workspace_anchor(str(inputs["project_name"])) / "README.md"))
         if inputs.get("read_all_agent_workspaces", False):
             reads = [str(workspaces_root())]
         else:

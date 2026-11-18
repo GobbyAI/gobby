@@ -1,6 +1,8 @@
 # Node commands
 
-Version 3 of the hub-node command contract. The golden messages live in
+Version 5 of the hub-node command contract. Spawn and resume carry the trusted
+registered `project_name` separately from the internal `project_id`; agent workspace
+directories use the name. A missing or unsafe name refuses launch. The golden messages live in
 `crates/gdaemon/tests/fixtures/node_commands/corpus.json`. The Rust types in
 `crates/gdaemon/src/node_commands.rs` and the Python models in
 `src/gobby/hub/node_commands.py` parse every message and re-encode it to the
@@ -25,19 +27,19 @@ request rather than fail in the parser.
 Hub to node:
 
 ```json
-{"type":"command","v":4,"request_id":"<uuid>","command":"<name>","payload":{}}
+{"type":"command","v":5,"request_id":"<uuid>","command":"<name>","payload":{}}
 ```
 
 Node to hub, success:
 
 ```json
-{"type":"reply","v":4,"request_id":"<uuid>","ok":true,"result":{}}
+{"type":"reply","v":5,"request_id":"<uuid>","ok":true,"result":{}}
 ```
 
 Node to hub, or gdaemon when it must answer for the node:
 
 ```json
-{"type":"reply","v":4,"request_id":"<uuid>","ok":false,"error":{"code":"<code>","message":"<text>","stage":"none"}}
+{"type":"reply","v":5,"request_id":"<uuid>","ok":false,"error":{"code":"<code>","message":"<text>","stage":"none"}}
 ```
 
 A command frame's fields are `type` (`"command"`), `v`, `request_id`,
@@ -148,6 +150,7 @@ Payload, in order:
 
 | Field | JSON |
 | --- | --- |
+| `project_name` | registered project name; one safe directory component |
 | `run_id`, `session_id` | string |
 | `parent_session_id` | string or null |
 | `project_id`, `terminal_id` | string |

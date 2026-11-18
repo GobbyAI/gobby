@@ -32,7 +32,7 @@ from tests.agents.conftest import AGENT_TEST_MACHINE_ID
 
 pytestmark = pytest.mark.unit
 
-PROJECT = "11111111-1111-4111-8111-111111111111"
+PROJECT = "fixture-workspace-project"
 ONE_MIB = 1 << 20
 
 
@@ -210,7 +210,8 @@ async def test_timer_bootstraps_the_first_workspace(
     )
     folder = bind_session_workspace(temp_db, session.id)
     assert folder is not None
-    assert not workspace_git_dir(project_id).exists()
+    project_name = sample_project["name"]
+    assert not (workspace_git_dir(project_name) / "HEAD").exists()
     (folder / "notes.md").write_text("first finding\n")
 
     storage = CronJobStorage(temp_db)
@@ -224,9 +225,9 @@ async def test_timer_bootstraps_the_first_workspace(
     ]
     assert await handler(job) == "agent workspaces: 1 committed, 0 failed"
 
-    relative = folder.relative_to(workspace_anchor(project_id)).as_posix()
-    assert {"README.md", f"{relative}/notes.md"} <= _tracked(project_id)
-    assert _subjects(project_id) == ["agents-ws: timer fixture-workspace-writer"]
+    relative = folder.relative_to(workspace_anchor(project_name)).as_posix()
+    assert {"README.md", f"{relative}/notes.md"} <= _tracked(project_name)
+    assert _subjects(project_name) == ["agents-ws: timer fixture-workspace-writer"]
 
 
 @pytest.mark.parametrize("state", ["running", "disabled", "parked"])

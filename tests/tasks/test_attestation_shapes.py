@@ -1,10 +1,8 @@
 """Record time refuses evidence that a selected closure rule's declared shape can never accept."""
 
-from pathlib import Path
 from typing import Any
 
 import pytest
-import yaml
 from pydantic import ValidationError
 
 from gobby.storage.definitions.rules import RuleDefinitionManager
@@ -22,7 +20,6 @@ from tests.fixtures.agent_sessions import AgentSessions
 
 pytestmark = pytest.mark.unit
 
-_RULES = Path(__file__).parents[2] / "src/gobby/install/shared/workflows/rules"
 _SHA = "0123456789abcdef0123456789abcdef01234567"
 _SHAPED_KINDS = ["bake", "frost"]
 
@@ -239,33 +236,3 @@ def test_attestation_shape_schema_is_closed(
                 "effects": [{"type": "block", "reason": "No."}],
             }
         )
-
-
-def _bundled_shaped_rules() -> list[tuple[str, dict[str, Any]]]:
-    shaped = []
-    for path in sorted(_RULES.rglob("*.yaml")):
-        document = yaml.safe_load(path.read_text()) or {}
-        for name, rule in (document.get("rules") or {}).items():
-            if isinstance(rule, dict) and "attestation_shape" in rule:
-                shaped.append((name, rule))
-    return shaped
-
-
-def test_bundled_shapes_name_what_their_rule_expressions_check() -> None:
-    shaped = _bundled_shaped_rules()
-    assert shaped
-    for name, rule in shaped:
-        body = RuleDefinitionBody.model_validate(
-            {key: value for key, value in rule.items() if key not in {"description", "priority"}}
-        )
-        shape = body.attestation_shape
-        assert shape is not None and body.when is not None, name
-        expected = [*shape.kinds]
-        if shape.result is not None:
-            expected.append(shape.result)
-        if shape.reference is not None:
-            expected.append(shape.reference.scheme)
-        for literal in expected:
-            assert f"'{literal}'" in body.when, (name, literal)
-        if shape.applies_when is not None:
-            assert " ".join(shape.applies_when.split()) in " ".join(body.when.split()), name

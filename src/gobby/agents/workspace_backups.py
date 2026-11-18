@@ -52,7 +52,7 @@ _README = """# Agent workspaces
 Daemon-written. Persistent definitions write `<definition>/current/`. On takeover, the
 previous owner's files move to `<definition>/history/session-<seq>/`; history is read-only
 recovery material. Other non-default definitions use `<definition>/session-<seq>/`, and
-teams share `epics/epic-<seq>/`. Default sessions use provider-native scratch space.
+teams share `epics/epic-<seq>/`. Default sessions use `default/session-<seq>/`.
 Only the nightly daemon backup commits this tree. Ownership journals live in the sibling
 daemon-only Git directory and are excluded from the backed-up tree. Agents do not run
 Git here, and retention deletes nothing.
@@ -116,10 +116,10 @@ def _git_env(*, author: bool = False) -> dict[str, str]:
     return env
 
 
-def _init_git_dir(project_id: str) -> None:
+def _init_git_dir(project_name: str) -> None:
     """Create the daemon Git directory around the work tree; no ``.git`` lands in the tree."""
-    gitdir = workspace_git_dir(project_id)
-    anchor = workspace_anchor(project_id)
+    gitdir = workspace_git_dir(project_name)
+    anchor = workspace_anchor(project_name)
     for args in (
         ("init", "--quiet", "-b", "main"),
         ("config", "core.bare", "false"),
@@ -140,33 +140,35 @@ def _init_git_dir(project_id: str) -> None:
             raise WorkspaceGitError(f"git {args[0]} failed: {result.stderr.strip()}")
 
 
-def ensure_workspace(project_id: str) -> Path:
+def ensure_workspace(project_name: str) -> Path:
     """Create the work tree, its Git directory and the daemon README if missing."""
-    anchor = workspace_anchor(project_id)
+    anchor = workspace_anchor(project_name)
     anchor.mkdir(parents=True, exist_ok=True)
-    if not (workspace_git_dir(project_id) / "HEAD").is_file():
-        _init_git_dir(project_id)
+    if not (workspace_git_dir(project_name) / "HEAD").is_file():
+        _init_git_dir(project_name)
     readme = anchor / "README.md"
-    if not readme.exists():
+    if readme.is_symlink():
+        raise WorkspaceGitError("Workspace README must not be a symbolic link")
+    if not readme.exists() or readme.read_text() != _README:
         readme.write_text(_README)
     return anchor
 
 
 async def _git(
-    project_id: str,
+    project_name: str,
     *args: str,
     timeout: float = WORKSPACE_GIT_TIMEOUT_SECONDS,
     env: Mapping[str, str] | None = None,
     literal_pathspecs: bool = True,
 ) -> GitOk:
-    anchor = workspace_anchor(project_id)
-    index_lock = workspace_git_dir(project_id) / "index.lock"
+    anchor = workspace_anchor(project_name)
+    index_lock = workspace_git_dir(project_name) / "index.lock"
     had_index_lock = index_lock.exists()
     result = await daemon_git.run(
         [
             "--no-optional-locks",
             "--literal-pathspecs" if literal_pathspecs else "--no-literal-pathspecs",
-            f"--git-dir={workspace_git_dir(project_id)}",
+            f"--git-dir={workspace_git_dir(project_name)}",
             f"--work-tree={anchor}",
             *args,
         ],
@@ -176,22 +178,22 @@ async def _git(
     )
     if isinstance(result, GitOk):
         return result
-    failure = f"git {args[0]} failed for {project_id}: {result}"
+    failure = f"git {args[0]} failed for {project_name}: {result}"
     if isinstance(result, GitTimeout) and args[0] in {"add", "commit", "rm"} and not had_index_lock:
         # The timed-out Git worker has killed its process group. Only consider a
         # lock created during our write, and preserve it if any holder remains.
         try:
-            _recover_index_lock(project_id, minimum_age=0)
+            _recover_index_lock(project_name, minimum_age=0)
         except WorkspaceGitError as exc:
             raise WorkspaceGitError(f"{failure}; index.lock cleanup failed: {exc}") from exc
     raise WorkspaceGitError(failure)
 
 
 def _recover_index_lock(
-    project_id: str, *, minimum_age: float = _INDEX_LOCK_MIN_AGE_SECONDS
+    project_name: str, *, minimum_age: float = _INDEX_LOCK_MIN_AGE_SECONDS
 ) -> bool:
     """Remove an old, unheld lock; uncertainty always preserves the lock."""
-    lock = workspace_git_dir(project_id) / "index.lock"
+    lock = workspace_git_dir(project_name) / "index.lock"
     try:
         before = lock.lstat()
     except FileNotFoundError:
@@ -228,7 +230,7 @@ def _recover_index_lock(
         lock.unlink()
     except FileNotFoundError:
         return True
-    logger.warning("Recovered unheld agent workspace index.lock for %s", project_id)
+    logger.warning("Recovered unheld agent workspace index.lock for %s", project_name)
     return True
 
 
@@ -259,7 +261,7 @@ def _still_skipped(full: Path) -> bool:
         return False
 
 
-def _sync_exclusions(project_id: str, skipped: Sequence[str] = ()) -> tuple[int, list[str]]:
+def _sync_exclusions(project_name: str, skipped: Sequence[str] = ()) -> tuple[int, list[str]]:
     """Return newly skipped count and exact status exclusions after syncing Git ignores.
 
     Git status hides each recorded untracked path, so a skipped path is listed and logged
@@ -267,8 +269,8 @@ def _sync_exclusions(project_id: str, skipped: Sequence[str] = ()) -> tuple[int,
     Nonprintable names live in escaped JSON comments and use literal status pathspecs,
     since line-based ignore rules cannot represent them exactly.
     """
-    anchor = workspace_anchor(project_id)
-    exclude = workspace_git_dir(project_id) / "info" / "exclude"
+    anchor = workspace_anchor(project_name)
+    exclude = workspace_git_dir(project_name) / "info" / "exclude"
     begin, end = "# BEGIN GOBBY WORKSPACE EXCLUDES", "# END GOBBY WORKSPACE EXCLUDES"
     text = exclude.read_text() if exclude.exists() else ""
     prefix, found, remainder = text.partition(f"{begin}\n")
@@ -298,13 +300,13 @@ def _sync_exclusions(project_id: str, skipped: Sequence[str] = ()) -> tuple[int,
     return len(recorded - previous), sorted(path for path in recorded if not path.isprintable())
 
 
-async def _prepare_exclusions(project_id: str) -> list[str]:
+async def _prepare_exclusions(project_name: str) -> list[str]:
     """Hide generated and still-skipped paths from Git status; retire old tracked copies."""
-    _, status_exclusions = _sync_exclusions(project_id)
-    tracked = await _git(project_id, "ls-files", "-z")
+    _, status_exclusions = _sync_exclusions(project_name)
+    tracked = await _git(project_name, "ls-files", "-z")
     retired = [path for path in tracked.stdout.split("\0") if path and _excluded_path(path)]
     for chunk in _chunks(retired):
-        await _git(project_id, "rm", "--cached", "--force", "--ignore-unmatch", "--", *chunk)
+        await _git(project_name, "rm", "--cached", "--force", "--ignore-unmatch", "--", *chunk)
     return status_exclusions
 
 
@@ -327,11 +329,11 @@ def _chunks(paths: Sequence[str]) -> Iterator[Sequence[str]]:
         yield paths[start : start + WORKSPACE_PATHSPEC_CHUNK]
 
 
-async def _commit_locked(project_id: str, trigger: str) -> str | None:
-    anchor = workspace_anchor(project_id)
-    status_exclusions = await _prepare_exclusions(project_id)
+async def _commit_locked(project_name: str, trigger: str) -> str | None:
+    anchor = workspace_anchor(project_name)
+    status_exclusions = await _prepare_exclusions(project_name)
     status = await _git(
-        project_id,
+        project_name,
         "status",
         "--porcelain",
         "-z",
@@ -346,21 +348,21 @@ async def _commit_locked(project_id: str, trigger: str) -> str | None:
         return None
     entries = parse_porcelain_v1_z(status.stdout)
     eligible, skipped = _eligible_paths(anchor, [entry.path for entry in entries])
-    added, _ = _sync_exclusions(project_id, skipped)
+    added, _ = _sync_exclusions(project_name, skipped)
     if added:
         logger.info(
-            "agent workspace skipped %d new symlinks or oversized files for %s", added, project_id
+            "agent workspace skipped %d new symlinks or oversized files for %s", added, project_name
         )
     for chunk in _chunks(eligible):
-        await _git(project_id, "add", "-A", "--", *chunk)
-    staged = await _git(project_id, "diff", "--cached", "--name-only", "-z")
+        await _git(project_name, "add", "-A", "--", *chunk)
+    staged = await _git(project_name, "diff", "--cached", "--name-only", "-z")
     changed = [path for path in staged.stdout.split("\0") if path]
     if not changed:
         return None
     folders = sorted({path.split("/", 1)[0] for path in changed if "/" in path})
     subject = " ".join([f"agents-ws: {trigger}", *folders])
     await _git(
-        project_id,
+        project_name,
         "commit",
         "--no-gpg-sign",
         "--quiet",
@@ -368,44 +370,44 @@ async def _commit_locked(project_id: str, trigger: str) -> str | None:
         subject,
         env=_git_env(author=True),
     )
-    head = await _git(project_id, "rev-parse", "HEAD")
+    head = await _git(project_name, "rev-parse", "HEAD")
     return head.stdout.strip()
 
 
-async def commit_workspace(project_id: str, trigger: str) -> str | None:
+async def commit_workspace(project_name: str, trigger: str) -> str | None:
     """Commit the eligible dirty paths of a project's workspace; ``None`` when nothing changed."""
-    future = _BACKUP_EXECUTOR.submit(_commit_worker, project_id, trigger)
+    future = _BACKUP_EXECUTOR.submit(_commit_worker, project_name, trigger)
     return await asyncio.wrap_future(future)
 
 
-def _commit_worker(project_id: str, trigger: str) -> str | None:
+def _commit_worker(project_name: str, trigger: str) -> str | None:
     """One process-wide worker owns all backup I/O and parsing, across caller loops."""
-    if time.monotonic() < _BLOCKED_UNTIL.get(project_id, 0):
+    if time.monotonic() < _BLOCKED_UNTIL.get(project_name, 0):
         return None
     try:
-        ensure_workspace(project_id)
-        if not _recover_index_lock(project_id):
-            _BLOCKED_UNTIL[project_id] = time.monotonic() + _LOCK_BACKOFF_SECONDS
+        ensure_workspace(project_name)
+        if not _recover_index_lock(project_name):
+            _BLOCKED_UNTIL[project_name] = time.monotonic() + _LOCK_BACKOFF_SECONDS
             return None
-        return asyncio.run(_commit_locked(project_id, trigger))
+        return asyncio.run(_commit_locked(project_name, trigger))
     except WorkspaceGitError:
-        _BLOCKED_UNTIL[project_id] = time.monotonic() + _LOCK_BACKOFF_SECONDS
+        _BLOCKED_UNTIL[project_name] = time.monotonic() + _LOCK_BACKOFF_SECONDS
         raise
 
 
-async def _maybe_gc(project_id: str) -> None:
-    await asyncio.wrap_future(_BACKUP_EXECUTOR.submit(_gc_worker, project_id))
+async def _maybe_gc(project_name: str) -> None:
+    await asyncio.wrap_future(_BACKUP_EXECUTOR.submit(_gc_worker, project_name))
 
 
-def _gc_worker(project_id: str) -> None:
-    stamp = workspace_git_dir(project_id) / _GC_STAMP
+def _gc_worker(project_name: str) -> None:
+    stamp = workspace_git_dir(project_name) / _GC_STAMP
     if stamp.exists() and time.time() - stamp.stat().st_mtime < WORKSPACE_GC_INTERVAL_SECONDS:
         return
-    asyncio.run(_git(project_id, "gc", "--auto", "--quiet", timeout=WORKSPACE_GC_TIMEOUT_SECONDS))
+    asyncio.run(_git(project_name, "gc", "--auto", "--quiet", timeout=WORKSPACE_GC_TIMEOUT_SECONDS))
     stamp.touch()
 
 
-def _workspace_project_ids() -> list[str]:
+def _workspace_project_names() -> list[str]:
     """Every project with a workspace anchor or Git directory, including unbootstrapped ones.
 
     A session's first write creates its anchor folder before any Git directory exists.
@@ -419,15 +421,15 @@ async def run_workspace_cron(_job: CronJob) -> str:
     """Commit every project's workspace and run its weekly ``git gc --auto``."""
     committed = 0
     failed = 0
-    for project_id in await asyncio.to_thread(_workspace_project_ids):
+    for project_name in await asyncio.to_thread(_workspace_project_names):
         try:
-            if await commit_workspace(project_id, WORKSPACE_CRON_TRIGGER):
+            if await commit_workspace(project_name, WORKSPACE_CRON_TRIGGER):
                 committed += 1
-            await _maybe_gc(project_id)
+            await _maybe_gc(project_name)
         except Exception as exc:
             failed += 1
             await asyncio.to_thread(
-                logger.warning, "Agent workspace cron failed for %s: %s", project_id, exc
+                logger.warning, "Agent workspace cron failed for %s: %s", project_name, exc
             )
     return f"agent workspaces: {committed} committed, {failed} failed"
 

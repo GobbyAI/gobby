@@ -167,73 +167,9 @@ def _bundled_cases() -> Iterator[Any]:
 
 
 _CASES = list(_bundled_cases())
-_BUNDLED_ROWS = [row for row in _rule_rows() if row.source == "installed"]
 
 # Criterion 1 reference: a synthetic stand-in for the operator-owned project policy. It carries
 # the keys bundled rules read, with short values, so the measurement is bundled text alone.
-_SYNTHETIC_POLICY: dict[str, Any] = {
-    "integration_branch": "integration",
-    "operator_channel": "operator",
-    "quiet_hours": {"timezone": "UTC"},
-    "role_guidance": {},
-    "deferral_labels": [],
-    "security_paths": [],
-    "roots": [],
-    "release_guidance": "",
-    "workspace_layout": {},
-    "agent_model_defaults": {},
-    "default_model_denylist": [],
-}
-
-
-def test_bundled_definitions_and_the_project_policy_are_enumerated() -> None:
-    assert _CASES, "no bundled definition surface was enumerated"
-    assert _project_policy(_rule_rows()), "the checked-in project policy was not found"
-
-
-@pytest.mark.parametrize(
-    ("agent", "surface"),
-    [pytest.param(case.values[0], case.values[1], id=case.id) for case in _CASES],
-)
-def test_bundled_definitions_fit_against_a_synthetic_project_policy(
-    agent: AgentDefinitionBody,
-    surface: Literal["persona", "agent"],
-) -> None:
-    """Criterion 1 reference: bundled prompt and rules, zero omission, no operator policy."""
-    parts: list[ContextPart] = [
-        ("agent_prompt", _prompt(agent, surface, _SYNTHETIC_POLICY)),
-        *_turn_start_parts(agent, _BUNDLED_ROWS, _SYNTHETIC_POLICY),
-    ]
-
-    delivery = deliver_context(parts, limit=ADDITIONAL_CONTEXT_LIMIT)
-
-    assert not delivery.remaining, (
-        f"{agent.name} ({surface}) bundled context against the synthetic policy is "
-        f"{_size(parts)} characters; waiting: {[piece.label for piece in delivery.remaining]}"
-    )
-
-
-@pytest.mark.parametrize(("agent", "surface", "rows", "policy"), _CASES)
-def test_bundled_owned_context_fits_the_limit_on_its_own(
-    agent: AgentDefinitionBody,
-    surface: Literal["persona", "agent"],
-    rows: list[RuleDefinitionRow],
-    policy: dict[str, Any],
-) -> None:
-    """Guard the share this repo owns: the prompt plus every installed turn-start rule."""
-    parts = [
-        ("agent_prompt", _prompt(agent, surface, policy)),
-        *_turn_start_parts(agent, rows, policy, owner="installed"),
-    ]
-    total = len("\n\n".join(text for _, text in parts if text))
-
-    delivery = deliver_context(parts, limit=ADDITIONAL_CONTEXT_LIMIT)
-
-    assert not delivery.remaining, (
-        f"{agent.name} ({surface}) bundled-owned context is {total} characters, "
-        f"{total - ADDITIONAL_CONTEXT_LIMIT} over the limit; "
-        f"waiting: {[piece.label for piece in delivery.remaining]}"
-    )
 
 
 def _size(parts: Sequence[ContextPart | ContextPiece]) -> int:

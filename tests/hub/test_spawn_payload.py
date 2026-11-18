@@ -129,6 +129,11 @@ def _build(
     code_index_mode: str | None = "managed",
     terminals: TerminalConfig | None = None,
 ) -> SpawnPayload:
+    from gobby.storage.projects import LocalProjectManager
+
+    projects = LocalProjectManager(db)
+    if projects.get(_PROJECT_ID) is None:
+        projects.create("fixture-spawn-project", project_id=_PROJECT_ID)
     return build_spawn_payload(
         db,
         run=run,
@@ -217,6 +222,7 @@ def _seed_workspaces(db: HubDatabase, project_id: str, rows: list[dict[str, Any]
 
 @pytest.fixture(autouse=True)
 def _credential_authorities(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "hub-home"))
     monkeypatch.setattr(local_token, "account_home", lambda: tmp_path / "hub-account")
     monkeypatch.setattr(local_token, "_daemon_bootstrap", tmp_path / "bound-hub/startup.yaml")
 
@@ -440,6 +446,7 @@ def test_launch_fields_and_workspace(temp_db: HubDatabase) -> None:
     assert payload.session_id == run.child_session_id
     assert payload.parent_session_id == run.parent_session_id
     assert payload.project_id == _PROJECT_ID
+    assert payload.project_name == "fixture-spawn-project"
     assert payload.terminal_id == _TERMINAL_ID
     assert (payload.agent_depth, payload.max_agent_depth) == (1, 5)
     assert payload.source_root == _SOURCE_ROOT
