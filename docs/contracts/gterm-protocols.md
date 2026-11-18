@@ -120,7 +120,7 @@ and gclient does not ask the host for typing rights in any state.
 ```json
 {"event": "input_activity", "terminal_id": "t", "host_terminal_id": "ht-1",
  "attachment_id": "att-1", "kind": "input", "bytes": 1, "interrupt": null,
- "submit": false, "effect": "edit"}
+ "submit": false, "effect": "edit", "edits": [{"op": "insert", "count": 1}]}
 ```
 
 One event per accepted `Input` or `Paste`, with no coalescing. `kind` is
@@ -134,6 +134,20 @@ then receives the text as keystrokes. The composer ledger uses `submit` to tell
 a submitted composer from a draft. The daemon feeds the event to the turn
 observer as a delivered mediated input and lifts the automatic-write
 quarantine, which is the proof it gets that operator input was accepted.
+
+`edits` is an ordered list of non-sensitive operation/count pairs: `insert`
+counts printable ASCII characters, `backspace` counts DEL bytes, and `submit`
+marks an unmodified Enter (count 1). PTY enqueue and event publication share
+the same ordering boundary, including input from concurrent attachments.
+No typed text is included. Unsupported controls, Unicode, IME input, paste,
+and summaries over 128 operations produce `null`; missing or malformed
+summaries convey no edit history. Consumers infer full erasure only from a
+confirmed-empty anchor, and preserve edits after Enter when its provider
+acknowledgement arrives. Daemon-mediated writes remain uncertain until
+delivery is confirmed; independently received input paths cannot cancel each
+other's edits without an ordering receipt. Old dirty saved entries stay
+uncertain until a confirmed submit or explicit release. Activate the native
+producer before the consumer.
 
 `effect` describes the composer effect without exposing the input payload:
 

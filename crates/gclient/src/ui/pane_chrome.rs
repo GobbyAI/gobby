@@ -98,7 +98,38 @@ pub fn pane_corners<W: WorkspaceView>(
         // A pane no roster row names is a bare terminal: nothing is assigned, so it is blank.
         agent.map_or(RowState::Blank, |agent| agent.state)
     };
-    let identity = agent
+    let identity = pane_identity(ws, chrome, pane);
+    let (glyph, _) = state_dot(state, &chrome.palette);
+    let (title, tone) = if focused {
+        (
+            format!("{glyph} {identity} · Focused"),
+            MetadataTone::Focused,
+        )
+    } else if state == RowState::Attention {
+        (format!("{glyph} {identity}"), MetadataTone::Attention)
+    } else {
+        (format!("{glyph} {identity}"), MetadataTone::Ordinary)
+    };
+    let sandbox = agent.map_or(SandboxState::Unrestricted, |agent| agent.sandbox);
+    let address = own_address(ws, pane).unwrap_or_else(|| pane.backend.label().to_owned());
+    PaneCorners {
+        title,
+        address,
+        sandbox,
+        sandbox_mark: sandbox_mark(sandbox, chrome.prefs.nerd_glyphs),
+        tone,
+    }
+}
+
+/// The editable name, shared by the header and rename dialog, without state chrome.
+pub fn pane_identity<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: &Pane) -> String {
+    if let Some(label) = pane.label.as_deref().filter(|label| !label.is_empty()) {
+        return label.to_owned();
+    }
+    ws.sidebar()
+        .agents
+        .iter()
+        .find(|agent| agent.terminal_id == pane.terminal_id)
         .filter(|agent| agent.agent_definition_name.is_some() || !agent.provider.trim().is_empty())
         .map_or_else(
             || pane.display_name().to_owned(),
@@ -112,28 +143,7 @@ pub fn pane_corners<W: WorkspaceView>(
                     format!("{reference}: {definition}")
                 }
             },
-        );
-    let (glyph, _) = state_dot(state, &chrome.palette);
-    let (title, tone) = if focused {
-        (
-            format!("{glyph} {identity} · Focused"),
-            MetadataTone::Focused,
         )
-    } else if state == RowState::Attention {
-        (format!("{glyph} {identity}"), MetadataTone::Attention)
-    } else {
-        (format!("{glyph} {identity}"), MetadataTone::Ordinary)
-    };
-    // A pane with no agent row (a bare shell) has no SRT launch record.
-    let sandbox = agent.map_or(SandboxState::Unrestricted, |agent| agent.sandbox);
-    let address = own_address(ws, pane).unwrap_or_else(|| pane.backend.label().to_owned());
-    PaneCorners {
-        title,
-        address,
-        sandbox,
-        sandbox_mark: sandbox_mark(sandbox, chrome.prefs.nerd_glyphs),
-        tone,
-    }
 }
 
 /// Whether the pane's terminal exited, by its own state or its agent row's.

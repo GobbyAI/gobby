@@ -74,6 +74,7 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
     ws.apply_workspace_snapshot(snapshot);
     let mut chrome = Chrome::dark();
     let pane_id = ws.pane_for_terminal("term-alpha").unwrap();
+    ws.pane_mut(pane_id).label = None;
 
     // The session ref, not the task: the task title lives on the Agents row.
     let focused = pane_corners(&ws, &chrome, ws.pane(pane_id), true);
@@ -123,9 +124,26 @@ fn a_seat_without_a_definition_reads_default() {
     }));
     ws.reconcile_subscribe_first().unwrap();
     let pane = ws.open_terminal("term-orphan", "native", "epoch").unwrap();
+    ws.pane_mut(pane).label = None;
     assert_eq!(
         pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
         "  default · Focused"
+    );
+}
+
+#[test]
+fn renamed_agent_pane_shows_its_custom_name_and_clearing_restores_identity() {
+    let (mut ws, pane) = definition_seat(None);
+    let chrome = Chrome::dark();
+    ws.pane_mut(pane).label = Some("Port work".into());
+    assert_eq!(
+        pane_corners(&ws, &chrome, ws.pane(pane), false).title,
+        "  Port work"
+    );
+    ws.pane_mut(pane).label = None;
+    assert_eq!(
+        pane_corners(&ws, &chrome, ws.pane(pane), false).title,
+        "  #14069: default"
     );
 }
 
@@ -178,7 +196,21 @@ fn definition_seat(definition: Option<&str>) -> (Workspace, PaneId) {
     ws.select_project("proj-alpha");
     ws.reconcile_subscribe_first().unwrap();
     let pane = ws.open_terminal("term-seat", "native", "epoch").unwrap();
+    ws.pane_mut(pane).label = None;
     (ws, pane)
+}
+
+#[test]
+fn rename_identity_uses_the_visible_session_instead_of_the_terminal_command() {
+    let (mut ws, pane) = definition_seat(None);
+    let chrome = Chrome::dark();
+    ws.pane_mut(pane).command = Some("Claude Code v9.9.9".into());
+    assert_eq!(
+        pane_identity(&ws, &chrome, ws.pane(pane)),
+        "#14069: default"
+    );
+    ws.pane_mut(pane).label = Some("Port work".into());
+    assert_eq!(pane_identity(&ws, &chrome, ws.pane(pane)), "Port work");
 }
 
 #[test]
@@ -237,6 +269,7 @@ fn a_seat_that_needs_you_reads_in_the_attention_tone() {
     }));
     ws.reconcile_subscribe_first().unwrap();
     let pane = ws.open_terminal("term-asking", "native", "epoch").unwrap();
+    ws.pane_mut(pane).label = None;
     let chrome = Chrome::dark();
     let unfocused = pane_corners(&ws, &chrome, ws.pane(pane), false);
     assert_eq!(

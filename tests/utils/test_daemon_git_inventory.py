@@ -352,6 +352,9 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     # commands pass; the daemon's bin freshness loop promotes release archives
     # with workspace_root=None (test_cli_only_git_boundaries_are_reached_only_from_cli).
     ("src/gobby/install/bin_release_identity.py", "workspace_source_identity"),
+    # Reached only from promote_workspace_binary_set with a workspace_root, and that
+    # entry point has only Click callers (test_cli_only_git_boundaries_are_reached_only_from_cli).
+    ("src/gobby/install/bin_set_coherence.py", "_head_commit"),
     # Version generation and receipt verification run through worker-thread
     # landing admission and synchronous closure entry points.
     ("src/gobby/install/bin_release_identity.py", "_revision_manifests.read"),

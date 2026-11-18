@@ -17,6 +17,7 @@ mod backpressure;
 mod config;
 mod control;
 pub use control::PROTOCOL_VERSION as CONTROL_PROTOCOL_VERSION;
+mod edits;
 mod events;
 mod exit_tails;
 mod frames;

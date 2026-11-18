@@ -337,6 +337,20 @@ async def test_confirmed_empty_composer_after_a_draft_delivers_the_wake(
 
 
 @pytest.mark.asyncio
+async def test_type_and_erase_allows_the_next_wake(
+    seat: Seat, composer_ledger: ComposerLedger
+) -> None:
+    composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
+    composer_ledger.observe_write(
+        TERMINAL_ID, origin="operator", kind="input", payload="draft-probe"
+    )
+    composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="\x7f" * 11)
+    result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
+    assert result["delivered"] is True
+    seat.pane_sender.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_released_composer_delivers_the_wake_and_retires_the_item(
     seat: Seat, composer_ledger: ComposerLedger
 ) -> None:

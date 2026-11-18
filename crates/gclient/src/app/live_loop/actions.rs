@@ -350,7 +350,11 @@ pub(super) async fn handle_live_action(
                 } else {
                     RenameKind::Terminal
                 };
-                let title = workspace.pane(pane_id).display_name().to_owned();
+                let title = crate::ui::pane_chrome::pane_identity(
+                    workspace,
+                    chrome,
+                    workspace.pane(pane_id),
+                );
                 open_live_rename(chrome, kind, title);
             }
         }

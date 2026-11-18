@@ -22,6 +22,7 @@ from gobby.cli.runtime import get_cli_runtime
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_daemon_refusal
 from gobby.install.bin_freshness_github import SourceUnavailableError, platform_target
 from gobby.install.bin_freshness_promotion import preflight_binary_promotions
+from gobby.install.bin_generations import retention_refusal
 from gobby.install.bin_release_identity import BinaryReleaseVersionError, workspace_source_identity
 from gobby.install.bin_set_coherence import (
     REBUILD_REMEDY,
@@ -346,6 +347,8 @@ def run_cutover(
     except BinaryReleaseVersionError as exc:
         raise CutoverError(f"refusing to promote: {exc}") from exc
     if refusal := start_refusal(artifacts["gdaemon"]):
+        raise CutoverError(f"refusing to promote: {refusal}")
+    if refusal := retention_refusal(bin_dir):
         raise CutoverError(f"refusing to promote: {refusal}")
     _prove_catalog_freshness(root, artifacts["gdaemon"])
     _require_unchanged_sources(root, {**sources, **companion_sources})

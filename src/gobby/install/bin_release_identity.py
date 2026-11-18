@@ -13,7 +13,7 @@ import tempfile
 import tomllib
 from collections.abc import Callable, Collection
 from dataclasses import asdict, dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from gobby.install.version_probe import probe_native_bin_version
@@ -137,6 +137,38 @@ def _closure(read: Manifests, crate: str) -> set[str]:
     return found
 
 
+def _embedded_entry(crate: str, entry: object) -> PurePosixPath:
+    """One workspace-relative path a crate declares as an extra release input."""
+    if not isinstance(entry, str) or not entry or entry.startswith("/") or ".." in entry.split("/"):
+        raise BinaryReleaseVersionError(
+            f"{crate}: embedded entry {entry!r} must be a non-empty relative path without '..'"
+        )
+    return PurePosixPath(entry)
+
+
+def _embedded_inputs(read: Manifests, crates: Collection[str]) -> list[PurePosixPath]:
+    """Paths that crates in a closure declare under [package.metadata.gobby]."""
+    entries: list[PurePosixPath] = []
+    for crate in sorted(crates):
+        metadata = _manifest(read, f"{crate}/Cargo.toml").get("package", {}).get("metadata", {})
+        gobby = metadata.get("gobby", {})
+        if not isinstance(gobby, dict):
+            raise BinaryReleaseVersionError(f"{crate}: gobby metadata must be a table")
+        declared = gobby.get("embedded")
+        if declared is None:
+            continue
+        if not isinstance(declared, list):
+            raise BinaryReleaseVersionError(f"{crate}: embedded must be a list of paths")
+        entries.extend(_embedded_entry(crate, entry) for entry in declared)
+    return entries
+
+
+def _within(relative: str, entries: Collection[PurePosixPath]) -> bool:
+    """Whether a repository-relative path equals or lies under one of the entries."""
+    parts = PurePosixPath(relative).parts
+    return any(parts[: len(entry.parts)] == entry.parts for entry in entries)
+
+
 def _locked_dependencies(read: Manifests, crates: Collection[str]) -> bytes:
     """Hash only reachable lock entries, so unrelated crate bumps do not cascade."""
     lock = read("Cargo.lock")
@@ -164,6 +196,7 @@ def workspace_source_identity(root: Path, name: str) -> str:
     root = root.resolve()
     read = _disk_manifests(root)
     crates = _closure(read, f"crates/{RELEASE_CRATES[name]}")
+    embedded = _embedded_inputs(read, crates)
     digest = hashlib.sha256()
     files: set[Path] = set()
     try:
@@ -180,6 +213,7 @@ def workspace_source_identity(root: Path, name: str) -> str:
                 "Cargo.toml",
                 "rust-toolchain.toml",
                 ".cargo/config.toml",
+                *(f":(literal){entry}" for entry in embedded),
             ],
             cwd=root,
             check=True,
@@ -194,8 +228,13 @@ def workspace_source_identity(root: Path, name: str) -> str:
         if not filename:
             continue
         path = root / os.fsdecode(filename)
-        if path.is_file() and _is_source_path(path.relative_to(root).as_posix()):
+        relative = path.relative_to(root).as_posix()
+        if path.is_file() and (_is_source_path(relative) or _within(relative, embedded)):
             files.add(path)
+    tracked = [path.relative_to(root).as_posix() for path in files]
+    for entry in embedded:
+        if not any(_within(relative, [entry]) for relative in tracked):
+            raise BinaryReleaseVersionError(f"embedded path {entry} names no file in the checkout")
     for path in sorted(files):
         digest.update(path.relative_to(root).as_posix().encode() + b"\0")
         with path.open("rb") as source:
@@ -335,6 +374,9 @@ def _touches_closure(
         after, crates
     ):
         return True
+    embedded = _embedded_inputs(before, crates)
+    if any(_within(path, embedded) for path in changed):
+        return True
     return any(
         path.startswith(f"{crate}/") and _is_source_path(path)
         for path in changed
@@ -348,10 +390,7 @@ def affected_binaries(repo: Path, base: str, target: str, changed: Collection[st
     Closures come from the base manifests: any target edit that reaches a new crate edits a
     manifest already in the base closure, so the changed paths still reach the binary.
     """
-    if not any(
-        path in _ROOT_INPUTS or path == "Cargo.lock" or path.startswith("crates/")
-        for path in changed
-    ):
+    if not changed:
         return []
     before = _revision_manifests(repo, base)
     after = _revision_manifests(repo, target)

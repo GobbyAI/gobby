@@ -27,6 +27,7 @@ from gobby.cli import (
 )
 from gobby.cli.cutover import CutoverOutcome
 from gobby.install import bin_freshness_promotion, bin_set_coherence
+from gobby.install.bin_generations import GenerationStoreError, retain_outgoing
 from gobby.install.bin_release_identity import release_identity_path
 from gobby.runner_pid_file import ProbeState
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
@@ -691,6 +692,31 @@ def test_cutover_promotes_only_stale_companions_after_the_set_goes_live(
         assert (bin_dir / name).stat().st_ino == inode
 
 
+def test_companion_retention_failure_is_reported_and_later_promotions_continue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, bin_dir, artifacts, _companions_built = _live_companion_workspace(
+        tmp_path, monkeypatch, []
+    )
+    _write_stub(bin_dir / "gterm", {"stale": True}, "0.0.1")
+
+    def busy_for_gterm(directory: Path, members: list[str]) -> object:
+        if members == ["gterm"]:
+            raise GenerationStoreError("generation store is busy")
+        return retain_outgoing(directory, members)
+
+    monkeypatch.setattr("gobby.install.bin_freshness_promotion.retain_outgoing", busy_for_gterm)
+    restarted: list[bytes] = []
+
+    outcome = _run_live_cutover(root, bin_dir, restarted)
+
+    assert outcome == CutoverOutcome(
+        promoted=("gmcp",), failures={"gterm": "generation store is busy"}
+    )
+    assert restarted == [artifacts["gdaemon"].read_bytes()]
+    assert (bin_dir / "gclient").is_file()
+
+
 @pytest.mark.parametrize("name", ["gmcp", "gterm"])
 def test_changed_companion_source_refuses_before_the_daemon_stops(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
@@ -980,6 +1006,34 @@ def test_run_cutover_refusal_leaves_the_daemon_running(
         )
 
     stop.assert_not_called()
+
+
+def test_run_cutover_refuses_before_the_stop_when_the_outgoing_set_cannot_be_retained(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "generations").write_text("not a directory")
+    artifacts = _artifacts(root, _identity(420))
+    monkeypatch.setattr(cutover_module, "_build_artifacts", lambda _root: _set_only(artifacts))
+    stop = Mock(return_value=False)
+    promotion = Mock(side_effect=AssertionError("promotion must not run"))
+    monkeypatch.setattr(cutover_module, "promote_workspace_binary_set", promotion)
+
+    with pytest.raises(cutover_module.CutoverError) as exc_info:
+        cutover_module.run_cutover(
+            root,
+            bin_dir,
+            stop_daemon=stop,
+            start_daemon=pytest.fail,
+            start_refusal=lambda _candidate: None,
+        )
+
+    assert "refusing to promote: generation retention unavailable: " in str(exc_info.value)
+    stop.assert_not_called()
+    assert sorted(path.name for path in bin_dir.iterdir()) == ["generations"]
 
 
 def test_cli_refuses_dirty_schema_inputs_and_names_them(

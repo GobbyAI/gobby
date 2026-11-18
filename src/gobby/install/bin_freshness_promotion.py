@@ -17,6 +17,12 @@ from typing import IO
 
 from gobby.install.bin_freshness_github import SourceUnavailableError
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
+from gobby.install.bin_generations import (
+    MANAGED_BINARIES,
+    GenerationStoreError,
+    record_promotion,
+    retain_outgoing,
+)
 from gobby.install.bin_release_identity import (
     RELEASE_CRATES,
     BinaryReleaseIdentity,
@@ -169,11 +175,26 @@ def _stage_and_promote(
             identity = check_binary_release(
                 name, staged_binary, bin_dir=bin_dir, workspace_root=None
             )
+        managed = name in MANAGED_BINARIES
+        if managed:
+            retain_outgoing(bin_dir, [name])
         os.replace(staged_binary, bin_dir / binary_name)
         if identity is not None:
             write_release_identity(bin_dir, name, identity)
+        if managed:
+            _record_promotion(bin_dir, name)
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+def _record_promotion(bin_dir: Path, name: str) -> None:
+    """Note a promotion whose binary is already in place; a failure here must not undo it."""
+    try:
+        record_promotion(bin_dir, [name])
+    except GenerationStoreError:
+        logger.warning(
+            "%s was promoted but its installed record was not written", name, exc_info=True
+        )
 
 
 def _extract_binary(

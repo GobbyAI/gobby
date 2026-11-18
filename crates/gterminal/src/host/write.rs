@@ -111,6 +111,10 @@ impl HostState {
         let kind = input.kind();
         let bytes = input.len();
         let interrupt = input.interrupt();
+        let edits = match &input {
+            NativeInput::Bytes(bytes) => super::edits::summarize(bytes),
+            NativeInput::Paste(_) => None,
+        };
         #[cfg(not(feature = "vt-engine"))]
         {
             let inner = self.inner.lock().await;
@@ -126,6 +130,7 @@ impl HostState {
 
             let (effect, submit) = input.classify_mode(false);
             let activity = InputActivity {
+                edits,
                 terminal_id: slot.identity.terminal_id.clone(),
                 host_terminal_id: slot.host_terminal_id.clone(),
                 attachment_id: attachment.client_attachment_id.clone().unwrap_or_default(),
@@ -135,9 +140,10 @@ impl HostState {
                 submit,
                 effect,
             };
-            deliver_native(slot, input)?;
+            self.events
+                .emit_input_activity(activity, || deliver_native(slot, input))
+                .await?;
             drop(inner);
-            self.events.emit_input_activity(activity).await;
             Ok(())
         }
         #[cfg(feature = "vt-engine")]
@@ -145,8 +151,10 @@ impl HostState {
             if bytes > MAX_WRITE_BYTES {
                 return Err("request_too_large");
             }
+            // The PTY enqueue and its event share the host lock: concurrent attachments
+            // must publish the same order the child receives, including across panes.
+            let inner = self.inner.lock().await;
             let (mut activity, writer, bracketed) = {
-                let inner = self.inner.lock().await;
                 let attachment = inner
                     .attachments
                     .get(&attachment_id)
@@ -160,6 +168,7 @@ impl HostState {
                 let child = slot.child.as_ref().ok_or("terminal_gone")?;
                 (
                     InputActivity {
+                        edits,
                         terminal_id: slot.identity.terminal_id.clone(),
                         host_terminal_id: slot.host_terminal_id.clone(),
                         attachment_id: attachment.client_attachment_id.clone().unwrap_or_default(),
@@ -183,11 +192,15 @@ impl HostState {
                 }
                 NativeInput::Paste(text) => bytes::Bytes::from(text),
             };
-            writer.try_send(payload).map_err(|error| match error {
-                tokio::sync::mpsc::error::TrySendError::Full(_) => "pty_busy",
-                tokio::sync::mpsc::error::TrySendError::Closed(_) => "terminal_gone",
-            })?;
-            self.events.emit_input_activity(activity).await;
+            self.events
+                .emit_input_activity(activity, || {
+                    writer.try_send(payload).map_err(|error| match error {
+                        tokio::sync::mpsc::error::TrySendError::Full(_) => "pty_busy",
+                        tokio::sync::mpsc::error::TrySendError::Closed(_) => "terminal_gone",
+                    })
+                })
+                .await?;
+            drop(inner);
             Ok(())
         }
     }

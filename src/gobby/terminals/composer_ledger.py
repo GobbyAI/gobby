@@ -24,7 +24,7 @@ import tempfile
 import threading
 from collections.abc import Mapping
 from contextlib import suppress
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 from gobby.agents.idle_detector import ComposerRead
 from gobby.paths import get_gobby_home
 from gobby.terminals.composer import COMPOSER_CLEAR_KEYS, composer_clear_sequence
+from gobby.terminals.composer_edits import ComposerEdit, reduce_edit, summarize_write
 from gobby.terminals.host_events import HostEvent, InputActivityEvent
 from gobby.terminals.runtime import NamedKey
 from gobby.utils.datetime import to_aware_utc, utc_now
@@ -165,6 +166,22 @@ class _Entry:
     interrupt_prior_human_seq: int | None = None
     interrupt_at: float | None = None
     flagged_at: float | None = None
+    edit_count: int | None = None
+    edit_anchor: int = 0
+    edit_source: str | None = None
+
+
+@dataclass(frozen=True)
+class WriteReceipt:
+    """Provisional accounting, valid only while this terminal's entry is unchanged."""
+
+    terminal_id: str
+    entry: _Entry
+    expected: _Entry
+    human_seq: int
+    edit_count: int | None
+    edit_anchor: int
+    edit_source: str | None
 
 
 class ComposerLedger:
@@ -249,6 +266,8 @@ class ComposerLedger:
                     submit=event.submit,
                     interrupt=event.interrupt is not None,
                     typed=event.effect == "edit",
+                    edits=event.edits,
+                    summarized=event.edit_summary_present,
                 )
 
     def observe_write(
@@ -259,11 +278,12 @@ class ComposerLedger:
         kind: WriteKind,
         payload: str,
         submit: bool = False,
-    ) -> None:
+        confirmed: bool = True,
+    ) -> WriteReceipt | None:
         with self._lock:
             entry = self._entries.get(terminal_id)
             if entry is None:
-                return
+                return None
             if origin in _HUMAN_ORIGINS:
                 text = _INPUT_CONTROLS.sub("", payload)
                 is_submit = (
@@ -288,9 +308,26 @@ class ComposerLedger:
                         submit=is_submit,
                         interrupt=is_interrupt,
                         typed=_types_text(kind, payload, text),
+                        edits=summarize_write(kind, payload, submit=submit),
+                        summarized=True,
+                        source="operator",
                     )
-                return
+                    if not confirmed:
+                        human_seq, count = entry.human_seq, entry.edit_count
+                        entry.human_seq = self._next()
+                        entry.edit_count = None
+                        return WriteReceipt(
+                            terminal_id,
+                            entry,
+                            replace(entry),
+                            human_seq,
+                            count,
+                            entry.edit_anchor,
+                            entry.edit_source,
+                        )
+                return None
             seq = self._next()
+            entry.edit_count = None
             if kind == "key":
                 if payload == "enter":
                     entry.flagged_seq = seq
@@ -302,13 +339,27 @@ class ComposerLedger:
                 else:
                     # An interrupt may restore the prompt; another key may edit it.
                     entry.pending_seq, entry.pending_text = seq, None
-                return
+                return None
             prior = entry.pending_text if entry.pending_seq > entry.clean_seq else ""
             known = prior is not None and kind != "input"
             entry.pending_seq = seq
             entry.pending_text = f"{prior}{payload}" if known else None
             if submit or (kind == "input" and "\r" in payload):
                 entry.flagged_seq = seq
+        return None
+
+    def confirm_write(self, receipt: WriteReceipt | None) -> None:
+        """Accept reversible accounting only for delivered, uninterrupted writes."""
+        if receipt is None:
+            return
+        with self._lock:
+            entry = self._entries.get(receipt.terminal_id)
+            if entry is receipt.entry and entry == receipt.expected:
+                entry.human_seq = receipt.human_seq
+                entry.edit_count = receipt.edit_count
+                entry.edit_anchor = receipt.edit_anchor
+                entry.edit_source = receipt.edit_source
+                self._next()
 
     def record_drain(self, terminal_id: str) -> None:
         """The caller drained every character of the held daemon text it read."""
@@ -450,6 +501,7 @@ class ComposerLedger:
             entry = self._entries.get(terminal_id)
             if entry is not None:
                 entry.unsafe, entry.unsafe_seq = reason, self._next()
+                entry.edit_count = None
 
     def resume_host(self, epoch: str, seq: int, *, since: int | None, gap: bool) -> None:
         """Re-anchor on a host subscription at ``(epoch, seq)`` that replays after ``since``.
@@ -489,7 +541,18 @@ class ComposerLedger:
         ledger._seq = int(state["seq"])
         host = state["host"]
         ledger._host = None if host is None else (str(host[0]), int(host[1]))
-        ledger._entries = {str(key): _Entry(**value) for key, value in state["terminals"].items()}
+        # Editing history is process-local. In particular, never infer history for old
+        # dirty entries. A confirmed-empty read can establish a fresh anchor on input.
+        ledger._entries = {
+            str(key): _Entry(
+                **{
+                    k: v
+                    for k, v in value.items()
+                    if k not in {"edit_count", "edit_anchor", "edit_source"}
+                }
+            )
+            for key, value in state["terminals"].items()
+        }
         return ledger
 
     def _next(self) -> int:
@@ -498,7 +561,46 @@ class ComposerLedger:
         self._input_changed.notify_all()
         return self._seq
 
-    def _human(self, entry: _Entry, *, submit: bool | None, interrupt: bool, typed: bool) -> None:
+    def _human(
+        self,
+        entry: _Entry,
+        *,
+        submit: bool | None,
+        interrupt: bool,
+        typed: bool,
+        edits: tuple[ComposerEdit, ...] | None = None,
+        summarized: bool = False,
+        source: str = "host",
+    ) -> None:
+        if _read(entry).state == "empty":
+            entry.edit_count, entry.edit_anchor = 0, entry.clean_seq
+        elif entry.edit_source != source:
+            # Host events and daemon writes have different receipt paths. Until they
+            # share a PTY ordering receipt, never cancel edits across those paths.
+            entry.edit_count = None
+        entry.edit_source = source
+        if edits is None or interrupt or entry.wait_clean:
+            entry.edit_count = None
+            self._human_activity(entry, submit=submit, interrupt=interrupt, typed=typed)
+            if summarized and submit and not entry.wait_clean:
+                # A summary that cannot locate Enter cannot prove that nothing followed
+                # it in the same PTY chunk. A later confirmed submit can settle this.
+                self._human_activity(entry, submit=False, interrupt=False, typed=True)
+            return
+        for edit in edits:
+            self._human_activity(
+                entry, submit=edit.op == "submit", interrupt=False, typed=edit.op == "insert"
+            )
+            if edit.op == "submit":
+                entry.edit_anchor = entry.flagged_seq
+                entry.unflagged_seq = 0
+            entry.edit_count = reduce_edit(entry.edit_count, edit)
+            if entry.edit_count == 0:
+                entry.human_seq = entry.edit_anchor
+
+    def _human_activity(
+        self, entry: _Entry, *, submit: bool | None, interrupt: bool, typed: bool
+    ) -> None:
         seq = self._next()
         if typed:
             entry.typed_seq = seq
@@ -522,6 +624,7 @@ class ComposerLedger:
         seq = self._next()
         for entry in self._entries.values():
             entry.unsafe, entry.unsafe_seq = reason, seq
+            entry.edit_count = None
 
 
 def _close_wait(entry: _Entry, outcome: WaitOutcome) -> bool:
