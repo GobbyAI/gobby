@@ -13,4 +13,6 @@ paths = [
   '''^crates/gterminal/vendor/(?:libghostty-vt|portable-pty|patches)/''',
   # Synthetic cross-language seal vector: generated test data, not a credential.
   '''^crates/gruntime/tests/fixtures/secret_seal_vector\.json$''',
+  # SHA-256 digests of the frozen v2 contract corpus files, keyed by file name.
+  '''^tests/contracts/http/v2_digests\.json$''',
 ]
