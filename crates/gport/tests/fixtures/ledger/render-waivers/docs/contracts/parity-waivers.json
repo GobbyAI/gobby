@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "waivers": [
+    {"id": "gobby.notes.waived-second", "surface": "MCP notes:waived", "behaviour": "Second | waiver text.", "decision": "#12", "replacement": "Second Rust replacement."},
+    {"id": "gobby.notes.waived-first", "surface": "MCP notes:waived", "behaviour": "First waiver with a \\ slash.", "decision": ".gobby/plans/notes-plan.md#waivers", "replacement": "First Rust replacement."},
+    {"id": "gobby.notes.special-behaviour", "surface": "MCP notes:special", "behaviour": "Behaviour text.", "decision": "#13", "replacement": "Replacement text."}
+  ]
+}

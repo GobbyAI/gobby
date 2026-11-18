@@ -2613,6 +2613,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "gobby-port"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "fancy-regex",
+ "gobby-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ureq",
+ "walkdir",
+]
+
+[[package]]
 name = "gobby-runtime"
 version = "0.5.2"
 dependencies = [

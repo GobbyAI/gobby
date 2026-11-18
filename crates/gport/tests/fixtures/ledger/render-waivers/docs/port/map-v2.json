@@ -1,0 +1,6 @@
+{
+  "chunks": [
+    {"id": "notes-alpha", "ledger_selectors": ["^MCP notes:(plain|special|waived)$"]},
+    {"id": "notes-beta", "ledger_selectors": ["^MCP notes:more$"]}
+  ]
+}

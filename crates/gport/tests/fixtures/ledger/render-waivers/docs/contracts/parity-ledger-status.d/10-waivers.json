@@ -1,0 +1,6 @@
+{
+  "MCP notes:more": "proxied",
+  "MCP notes:plain": "proxied",
+  "MCP notes:special": {"status": "delegated", "note": "Rust status note"},
+  "MCP notes:waived": {"status": "proxied", "note": "Rust work"}
+}
