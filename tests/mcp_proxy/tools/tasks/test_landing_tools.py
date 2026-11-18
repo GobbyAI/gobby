@@ -77,7 +77,8 @@ async def _set_freeze(
     world: _FreezeWorld, session_id: str, arguments: dict[str, Any]
 ) -> dict[str, Any]:
     with session_context_for_test(session_id):
-        return await world.registry.call("set_landing_freeze", arguments)
+        outcome: dict[str, Any] = await world.registry.call("set_landing_freeze", arguments)
+        return outcome
 
 
 def _task_ref(world: _FreezeWorld, form: str) -> str:
