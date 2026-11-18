@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
+
+from gobby.install import bin_freshness_promotion as promotion
+from gobby.install import bin_release_identity as release
 from gobby.install.bin_generations import (
     GENERATIONS_DIR,
     KEEP_GENERATIONS,
@@ -29,10 +32,6 @@ from gobby.install.bin_generations import (
     retain_outgoing,
     retention_refusal,
 )
-
-from gobby.install import bin_freshness_promotion as promotion
-from gobby.install import bin_generations
-from gobby.install import bin_release_identity as release
 from gobby.install.bin_set_coherence import (
     WorkspacePromotionMetadata,
     promote_workspace_binary_set,
@@ -572,7 +571,7 @@ def test_retention_refusal_when_free_space_is_below_binaries_plus_margin(
     def fake_disk_usage(_path: object) -> _Usage:
         return _Usage(total=1 << 40, used=1 << 39, free=16 * MIB)
 
-    monkeypatch.setattr(bin_generations.shutil, "disk_usage", fake_disk_usage)
+    monkeypatch.setattr("gobby.install.bin_generations.shutil.disk_usage", fake_disk_usage)
 
     reason = retention_refusal(bin_dir)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -17,6 +18,12 @@ from pathlib import Path
 from gobby.install import bin_freshness_promotion
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import managed_bin_specs
+from gobby.install.bin_generations import (
+    MANAGED_BINARIES,
+    GenerationStoreError,
+    record_promotion,
+    retain_outgoing,
+)
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.storage.schema_identity_pin import (
     SchemaIdentityError,
@@ -25,6 +32,8 @@ from gobby.storage.schema_identity_pin import (
 )
 from gobby.utils import spawn
 from gobby.utils.native_bin import IDENTITY_STAMP_NAME, SET_MEMBERS, native_bin_name
+
+logger = logging.getLogger(__name__)
 
 REBUILD_REMEDY = "rebuild and install all three together"
 _PROBE_TIMEOUT_SECONDS = 10
@@ -131,6 +140,7 @@ def promote_workspace_binary_set(
                 workspace_root=workspace_root,
                 source_identities=source_identities,
             )
+            retain_outgoing(bin_dir, MANAGED_BINARIES)
             for member in ordered:
                 bin_freshness_promotion.stage_and_promote_binary_file(
                     candidates[member],
@@ -151,6 +161,35 @@ def promote_workspace_binary_set(
             f"promoted: {_member_list(promoted)}; "
             f"unpromoted: {_member_list(unpromoted)}; cause: {exc}"
         ) from exc
+    _record_promotion(bin_dir, promoted, workspace_root)
+
+
+def _record_promotion(bin_dir: Path, promoted: list[str], workspace_root: Path | None) -> None:
+    """Note the promoted set with its source commit; a failure here must not undo it."""
+    try:
+        record_promotion(bin_dir, promoted, source_commit=_head_commit(workspace_root))
+    except GenerationStoreError:
+        logger.warning(
+            "binary set was promoted but its installed record was not written", exc_info=True
+        )
+
+
+def _head_commit(workspace_root: Path | None) -> str | None:
+    """The commit the workspace has checked out; None without a workspace or a commit."""
+    if workspace_root is None:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "HEAD"],
+            cwd=workspace_root,
+            capture_output=True,
+            text=True,
+            timeout=_PROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() if result.returncode == 0 else None
 
 
 def _codesign_workspace_binary(binary: Path) -> None:
