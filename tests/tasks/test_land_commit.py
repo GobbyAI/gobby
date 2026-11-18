@@ -1404,3 +1404,65 @@ async def test_freeze_bound_to_a_task_no_session_holds_refuses_every_landing(
     assert refused["landed"] is False
     assert refused["blockers"] == ["landing_frozen"]
     assert case.git("rev-parse", "trunk") == case.base
+
+
+async def test_bound_freeze_leaves_already_landed_replay_reporting_landed(
+    case: LandingCase,
+) -> None:
+    """Characterization, passes now: a freeze bound to another task does not refuse replay.
+
+    The freeze still refuses a fresh landing for the same caller, so it is in effect.
+    """
+    sha = case.candidate("lane", {"docs/bound_replay.md": "replay under freeze"})
+    task = case.reviewed(sha)
+    first = await case.land(task, sha)
+    assert first["landed"] is True, first
+    assert case.git("rev-parse", "trunk") == sha
+    unrelated = LocalTaskManager(case.db).create_task(
+        case.project_id,
+        "Unrelated freeze binding",
+        created_in_session_id=case.creator,
+        validation_criteria="Hold the freeze on this unrelated task.",
+    )
+    assert LocalTaskManager(case.db).get_task(unrelated.id).claimed_by_session_id is None
+    write_freeze(
+        case.repo / ".git",
+        on=True,
+        reason="release hold",
+        session_id=case.creator,
+        task_id=unrelated.id,
+    )
+    lander = _granted_lander(case)
+    fresh_sha = case.candidate("fresh", {"docs/fresh_under_freeze.md": "fresh"})
+    fresh_task = case.reviewed(fresh_sha, "Fresh under freeze")
+    fresh = await case.land(fresh_task, fresh_sha, caller=lander)
+    assert fresh["landed"] is False
+    assert "landing_frozen" in fresh["blockers"], fresh
+    tip = case.git("rev-parse", "trunk")
+
+    replay = await case.land(task, sha, caller=lander)
+
+    assert replay["landed"] is True, replay
+    assert replay["already_landed"] is True
+    assert replay["receipt_id"] == first["receipt_id"]
+    landings = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
+    assert len(landings) == 1
+    assert case.git("rev-parse", "trunk") == tip
+
+
+def test_land_commit_description_says_freeze_refuses_new_landings_only(
+    case: LandingCase,
+) -> None:
+    """Red until the registered land_commit description carries the decided sentence."""
+    from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+    from gobby.mcp_proxy.tools.tasks._landing import create_landing_registry
+
+    registry = create_landing_registry(RegistryContext(task_manager=LocalTaskManager(case.db)))
+    schema = registry.get_schema("land_commit")
+    assert schema is not None
+    description = schema["description"]
+
+    assert (
+        "A landing freeze refuses new landings; an already-landed candidate still reports landed."
+        in description
+    ), description

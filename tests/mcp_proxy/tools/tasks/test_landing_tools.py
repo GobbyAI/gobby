@@ -17,6 +17,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.landing_policy import freeze_path, read_freeze, write_freeze
+from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
@@ -447,3 +448,30 @@ async def test_bound_freeze_refusal_names_the_rollback_hold_clear_exit(
     assert result["success"] is False
     assert result["error_code"] == "landing_freeze_bound"
     assert "gobby rollback hold clear" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_claim_holder_addressed_by_number_may_clear_a_bound_freeze(
+    freeze_world: _FreezeWorld,
+) -> None:
+    _bind_freeze(freeze_world)
+    holder = SessionManager(freeze_world.db).get(freeze_world.holder)
+    assert holder is not None and holder.seq_num is not None
+    token = set_project_context(
+        {
+            "id": freeze_world.task.project_id,
+            "name": freeze_world.project_name,
+            "project_path": str(freeze_world.common_dir.parent),
+        }
+    )
+    try:
+        result = await _set_freeze(
+            freeze_world, f"#{holder.seq_num}", {"on": False, "reason": "shipped"}
+        )
+    finally:
+        reset_project_context(token)
+
+    stored = read_freeze(freeze_world.common_dir)
+    assert result["success"] is True, result
+    assert (stored.on, stored.reason) == (False, "shipped")
+    assert stored.set_by_session_id == freeze_world.holder

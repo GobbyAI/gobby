@@ -5,11 +5,13 @@ A refused promotion leaves the installed bytes and the generation directories as
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import json
 import shutil
 import subprocess
+import sys
 import tarfile
 import threading
 from collections.abc import Callable, Iterable, Iterator
@@ -227,7 +229,9 @@ def test_hold_token_is_restored_when_the_body_raises() -> None:
     assert current_hold_token() is None
 
 
-def test_hold_token_is_visible_to_a_thread_started_in_the_body() -> None:
+def test_hold_token_is_not_inherited_by_a_raw_thread_started_in_the_body() -> None:
+    if getattr(sys.flags, "thread_inherit_context", 0):
+        pytest.skip("free-threaded build: raw threads inherit the starter's context")
     seen: list[str | None] = []
 
     def record() -> None:
@@ -238,7 +242,61 @@ def test_hold_token_is_visible_to_a_thread_started_in_the_body() -> None:
         worker.start()
         worker.join()
 
-    assert seen == ["token-a"]
+    assert seen == [None]
+
+
+def test_overlapping_token_contexts_in_two_threads_see_only_their_own_token() -> None:
+    a_entered = threading.Event()
+    b_entered = threading.Event()
+    a_exited = threading.Event()
+    seen: dict[str, str | None] = {}
+
+    def holder_a() -> None:
+        with promotion_hold_token("token-a"):
+            seen["a-inside"] = current_hold_token()
+            a_entered.set()
+            b_entered.wait(timeout=5)
+        a_exited.set()
+
+    def holder_b() -> None:
+        a_entered.wait(timeout=5)
+        with promotion_hold_token("token-b"):
+            seen["b-inside"] = current_hold_token()
+            b_entered.set()
+            a_exited.wait(timeout=5)
+            seen["b-after-a-exit"] = current_hold_token()
+
+    first = threading.Thread(target=holder_a)
+    second = threading.Thread(target=holder_b)
+    first.start()
+    second.start()
+    first.join(timeout=10)
+    second.join(timeout=10)
+
+    assert seen.get("a-inside") == "token-a"
+    assert seen.get("b-inside") == "token-b"
+    assert seen.get("b-after-a-exit") == "token-b"
+    assert current_hold_token() is None
+
+
+def test_hold_token_is_visible_to_asyncio_to_thread_inside_the_body() -> None:
+    async def read_in_worker() -> str | None:
+        return await asyncio.to_thread(current_hold_token)
+
+    with promotion_hold_token("token-a"):
+        seen = asyncio.run(read_in_worker())
+
+    assert seen == "token-a"
+
+
+def test_nested_hold_token_blocks_restore_each_enclosing_value_on_exit() -> None:
+    with promotion_hold_token("outer"):
+        with promotion_hold_token("middle"):
+            with promotion_hold_token(None):
+                assert current_hold_token() is None
+            assert current_hold_token() == "middle"
+        assert current_hold_token() == "outer"
+    assert current_hold_token() is None
 
 
 # The check itself, before any other outcome.
