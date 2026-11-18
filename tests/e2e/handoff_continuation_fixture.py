@@ -49,6 +49,7 @@ from tests.e2e.handoff_continuation_admission import (
 from tests.e2e.handoff_continuation_barrier import HandoffBarrier
 from tests.e2e.handoff_continuation_launch import seat_environment
 from tests.e2e.test_terminal_client_stack import _open_control
+from tests.fixtures.hub_guard import check_test_hub
 
 _GRANT = "PD_AUTHORIZED_ISOLATED_EXECUTION"
 _CHECKOUT = Path(__file__).resolve().parents[2]
@@ -97,7 +98,11 @@ def handoff_daemon_env(
     barrier_socket: Path | None,
     database_url: str | None,
 ) -> dict[str, str]:
-    """Add the handoff proof daemon's variables to env, the worktree override included."""
+    """Add the handoff proof daemon's variables to env, the worktree override only past the guard.
+
+    A refused DATABASE_URL raises HubGuardError before any variable is set.
+    """
+    check_test_hub(database_url, os.environ)
     env.update(
         GOBBY_CONFIG=str(config),
         GOBBY_HOME=str(home),

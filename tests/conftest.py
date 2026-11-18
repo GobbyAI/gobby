@@ -156,15 +156,21 @@ def _checkout_schema_contract_gdaemon() -> Iterator[None]:
 
 @pytest.fixture(autouse=True)
 def _allow_worktree_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Disarm the linked-worktree daemon guard for the suite.
+    """Disarm the linked-worktree daemon guard for the suite, only past the DATABASE_URL guard.
 
     Agents run these tests from linked worktrees; without the override every
-    ``gobby start``/``runner.main`` test would hit the refusal (#21031). Tests
-    of the guard itself pass an explicit ``environ`` or patch the call site.
+    ``gobby start``/``runner.main`` test would hit the refusal (#21031). The override
+    is set only when tests/fixtures/hub_guard.py accepts DATABASE_URL as the isolated
+    test hub, so a run against the live hub gets the refusal instead (ruling H4).
     """
     from gobby.utils.dev import WORKTREE_DAEMON_OVERRIDE_ENV
+    from tests.fixtures.hub_guard import guard_worktree_override
 
-    monkeypatch.setenv(WORKTREE_DAEMON_OVERRIDE_ENV, "1")
+    if guard_worktree_override(dict(os.environ), os.environ.get("DATABASE_URL"), None):
+        monkeypatch.setenv(WORKTREE_DAEMON_OVERRIDE_ENV, "1")
+    else:
+        # An override inherited from the caller's shell must not outlive a refusal.
+        monkeypatch.delenv(WORKTREE_DAEMON_OVERRIDE_ENV, raising=False)
 
 
 @pytest.fixture(autouse=True)

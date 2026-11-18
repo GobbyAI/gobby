@@ -49,6 +49,7 @@ from tests.e2e.conftest import (
     wait_for_daemon_websocket,
 )
 from tests.e2e.test_terminal_client_stack import _open_control
+from tests.fixtures.hub_guard import check_test_hub
 
 _GRANT = "PD_AUTHORIZED_ISOLATED_EXECUTION"
 _CHECKOUT = Path(__file__).resolve().parents[2]
@@ -95,7 +96,11 @@ def composer_daemon_env(
     trace_socket: Path,
     database_url: str | None,
 ) -> dict[str, str]:
-    """Add the composer proof daemon's variables to env, the worktree override included."""
+    """Add the composer proof daemon's variables to env, the worktree override only past the guard.
+
+    A refused DATABASE_URL raises HubGuardError before any variable is set.
+    """
+    check_test_hub(database_url, os.environ)
     env.update(
         GOBBY_CONFIG=str(config),
         GOBBY_HOME=str(home),

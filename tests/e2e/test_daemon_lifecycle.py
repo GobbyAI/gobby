@@ -55,6 +55,7 @@ from tests.e2e.conftest import (
 )
 from tests.e2e.gmcp_client import gmcp_session
 from tests.e2e.lifecycle_processes import LifecycleProcesses, wait_for_retiring_backend
+from tests.fixtures.hub_guard import check_test_hub
 
 pytestmark = pytest.mark.e2e
 
@@ -420,7 +421,11 @@ def _stamped_bin_dir(source_dir: Path, gobby_home: Path) -> Path:
 
 
 def _allow_worktree_daemon(env: dict[str, str], *, database_url: str | None) -> None:
-    """Set the worktree-daemon override for an isolated home (the DATABASE_URL guard gates it)."""
+    """Set the worktree-daemon override for an isolated home, only past the DATABASE_URL guard.
+
+    A refused URL raises HubGuardError, so the test errors instead of launching a daemon.
+    """
+    check_test_hub(database_url, os.environ)
     env["GOBBY_ALLOW_WORKTREE_DAEMON"] = "1"
 
 
