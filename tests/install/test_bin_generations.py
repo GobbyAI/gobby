@@ -10,6 +10,7 @@ import hashlib
 import json
 import stat
 import subprocess
+import threading
 from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -19,6 +20,7 @@ import pytest
 
 from gobby.install import bin_freshness_promotion as promotion
 from gobby.install import bin_release_identity as release
+from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_generations import (
     GENERATIONS_DIR,
     KEEP_GENERATIONS,
@@ -481,7 +483,6 @@ def test_promotion_hold_identity_reaches_the_next_manifest(tmp_path: Path) -> No
     assert installed["session_id"] == "session-1"
     assert installed["task_id"] == "task-1"
 
-    _set_binary(bin_dir, "gdaemon", b"gdaemon-1")
     generation = _capture(bin_dir, ["gdaemon"], minute=1)
 
     member = generation.manifest["members"]["gdaemon"]
@@ -698,3 +699,113 @@ def test_stage_and_promote_unmanaged_name_retains_no_generation(tmp_path: Path) 
 
     assert list_generations(bin_dir) == []
     assert (bin_dir / "othertool").read_bytes() == source.read_bytes()
+
+
+# Review repairs: platform names, contention, validation before the stop, provenance.
+
+
+def _exe(name: str) -> str:
+    return f"{name}.exe"
+
+
+def test_binary_installed_under_its_platform_name_is_retained(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gobby.install.bin_generations.native_bin_name", _exe)
+    bin_dir = tmp_path / "bin"
+    _set_binary(bin_dir, "gcode.exe", b"gcode-0")
+
+    generation = _capture(bin_dir, ["gcode"])
+
+    member = generation.manifest["members"]["gcode"]
+    assert member["sha256"] == _sha(b"gcode-0")
+    assert member["files"] == ["gcode.exe"]
+    assert (generation.path / "gcode.exe").read_bytes() == b"gcode-0"
+    assert retain_outgoing(bin_dir, ["gcode"], now=NOW + timedelta(minutes=1)) is None
+
+
+def test_store_failure_is_an_os_error_for_callers_that_report_io_failures() -> None:
+    assert issubclass(GenerationStoreError, OSError)
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        {"installed": 5},
+        {"next_seq": 0},
+        {"pins": {"generation-x": {}}},
+        {"pins": []},
+        {"hold": {"task_id": "task-1"}},
+    ],
+    ids=["installed", "next-seq", "pin-without-until", "pins", "hold-without-first-seq"],
+)
+def test_state_that_would_fail_a_capture_is_refused_and_leaves_no_generation(
+    tmp_path: Path, state: dict[str, Any]
+) -> None:
+    bin_dir = tmp_path / "bin"
+    _seed(bin_dir, "gdaemon", b"gdaemon-0")
+    _update_state(bin_dir, **state)
+
+    refusal = retention_refusal(bin_dir)
+    assert refusal is not None and refusal.startswith(REFUSAL_PREFIX)
+    with pytest.raises(GenerationStoreError):
+        retain_outgoing(bin_dir, ["gdaemon"], now=NOW)
+    assert list_generations(bin_dir) == []
+
+
+def test_capture_waits_for_a_store_lock_another_promotion_releases(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    _seed(bin_dir, "gdaemon", b"gdaemon-0")
+    held = try_acquire_native_bin_lock("generations", bin_dir=bin_dir)
+    assert held is not None
+    release_timer = threading.Timer(0.3, held.release)
+    release_timer.start()
+    try:
+        generation = retain_outgoing(bin_dir, ["gdaemon"], now=NOW)
+    finally:
+        release_timer.join()
+
+    assert generation is not None
+    assert generation.id == FIRST_ID
+
+
+def test_capture_gives_up_when_the_store_lock_stays_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gobby.install.bin_generations._LOCK_WAIT_SECONDS", 0.2)
+    bin_dir = tmp_path / "bin"
+    _seed(bin_dir, "gdaemon", b"gdaemon-0")
+    held = try_acquire_native_bin_lock("generations", bin_dir=bin_dir)
+    assert held is not None
+    with held, pytest.raises(GenerationStoreError, match="^generation store is busy"):
+        retain_outgoing(bin_dir, ["gdaemon"], now=NOW)
+
+    assert list_generations(bin_dir) == []
+
+
+def test_already_retained_binary_needs_no_store_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gobby.install.bin_generations._LOCK_WAIT_SECONDS", 0.2)
+    bin_dir = tmp_path / "bin"
+    _seed(bin_dir, "gdaemon", b"gdaemon-0")
+    _capture(bin_dir, ["gdaemon"])
+    held = try_acquire_native_bin_lock("generations", bin_dir=bin_dir)
+    assert held is not None
+    with held:
+        assert retain_outgoing(bin_dir, ["gdaemon"], now=NOW + timedelta(minutes=1)) is None
+
+
+def test_promotion_record_is_not_attributed_to_bytes_it_did_not_install(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    _seed(bin_dir, "gdaemon", b"gdaemon-0")
+    record_promotion(bin_dir, ["gdaemon"], source_commit="abc123", now=NOW)
+    assert read_state(bin_dir)["installed"]["gdaemon"]["sha256"] == _sha(b"gdaemon-0")
+
+    _set_binary(bin_dir, "gdaemon", b"gdaemon-unrecorded")
+    generation = _capture(bin_dir, ["gdaemon"], minute=1)
+
+    member = generation.manifest["members"]["gdaemon"]
+    assert member["sha256"] == _sha(b"gdaemon-unrecorded")
+    assert member["promoted_at"] is None
+    assert member["source_commit"] is None

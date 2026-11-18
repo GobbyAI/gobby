@@ -664,3 +664,22 @@ def test_embedded_entry_that_is_absolute_or_has_parent_segment_is_refused(
 
     with pytest.raises(BinaryReleaseVersionError):
         release.workspace_source_identity(workspace, "gdaemon")
+
+
+@pytest.mark.unit
+def test_embedded_metadata_that_is_not_a_table_is_refused(workspace: Path) -> None:
+    manifest = workspace / "crates" / "gdaemon" / "Cargo.toml"
+    manifest.write_text(manifest.read_text() + '\n[package.metadata]\ngobby = "x"\n')
+
+    with pytest.raises(BinaryReleaseVersionError, match="gobby metadata must be a table"):
+        release.workspace_source_identity(workspace, "gdaemon")
+
+
+@pytest.mark.unit
+def test_embedded_entry_that_names_no_file_is_refused(workspace: Path) -> None:
+    (workspace / "templates").mkdir()
+    (workspace / "templates" / "a.yaml").write_text("name: original\n")
+    _declare_embedded(workspace, "gdaemon", ["templates", "moved-away"])
+
+    with pytest.raises(BinaryReleaseVersionError, match="moved-away"):
+        release.workspace_source_identity(workspace, "gdaemon")
