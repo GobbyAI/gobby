@@ -25,6 +25,7 @@ from gobby.cli import (
     install_setup_gmcp,
     install_setup_gterm,
 )
+from gobby.cli._daemon_protected_runs import ProtectedRunsUnknown
 from gobby.cli.cutover import CutoverOutcome
 from gobby.install import bin_freshness_promotion, bin_set_coherence
 from gobby.install.bin_generations import GenerationStoreError, retain_outgoing
@@ -1188,6 +1189,28 @@ def test_cutover_refuses_before_promotion_when_stop_admission_refuses(
     expected = "cron run is active" if blocker == "protected_run" else "Unresolved set_handoff"
     assert expected in result.output
     assert "re-run with --wait" in result.output
+    assert events == []
+
+
+def test_cutover_names_the_forced_stop_when_the_protected_run_answer_is_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    events: list[str] = []
+    real_run_cutover = cutover_module.run_cutover
+    _stub_cutover_pipeline(monkeypatch, tmp_path, events)
+
+    def fetch_protected_runs(_port: int) -> list[dict[str, object]]:
+        raise ProtectedRunsUnknown("HTTP 503")
+
+    monkeypatch.setattr(cutover_module, "fetch_protected_runs", fetch_protected_runs)
+    monkeypatch.setattr(cutover_module, "start", lambda **_kwargs: events.append("restart"))
+    result = _invoke_cli(tmp_path, monkeypatch, real_run_cutover, extra_args=("--wait",))
+
+    assert result.exit_code == 1
+    assert "refusing to promote" in result.output
+    assert "protected-run answer is unknown (HTTP 503)" in result.output
+    assert "gobby stop --force" in result.output
+    assert "a restart-protected cron run is active" not in result.output
     assert events == []
 
 
