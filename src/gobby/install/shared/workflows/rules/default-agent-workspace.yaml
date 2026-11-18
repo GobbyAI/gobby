@@ -1,4 +1,4 @@
-version: "1.0.0"
+version: "1.1.0"
 tags: [default, enforcement, gobby]
 
 # Default seats retain repository permissions and get session-local scratch space.
@@ -41,8 +41,14 @@ rules:
     event: before_tool
     enabled: true
     priority: 15
+    # A session with no bound folder has nowhere to be sent, so it is left alone.
+    # Binding happens at session start. A session that began before this rule was
+    # installed has no folder until its next start; one with no project never has
+    # one; one whose binding failed (logged at session start) has none until a
+    # later start succeeds. All three write temp scratch freely meanwhile.
     when: >
-      event.data.get('canonical_tool_kind') == 'write'
+      variables.get('_agent_workspace_dir')
+      and event.data.get('canonical_tool_kind') == 'write'
       and temp_scratchpad_write(event.data, tool_input)
       and not write_paths_within(event.data, tool_input, temp_write_admitted_dirs(variables))
     effects:

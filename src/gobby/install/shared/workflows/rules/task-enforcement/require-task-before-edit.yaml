@@ -1,4 +1,4 @@
-version: "1.2.0"
+version: "1.2.1"
 tags: [task-enforcement, enforcement, tasks, gobby, default]
 
 rules:
@@ -56,5 +56,6 @@ rules:
           classify, and unknown scope counts as a repository write on purpose. If
           this command only touches your agent workspace folder (named in your Agent
           Workspace section), use the literal path and retry. Temp roots and provider
-          scratchpads skip the claim here but are blocked for every agent by
-          block-temp-scratchpad-writes.
+          scratchpads skip the claim here. The temp scratchpad rules still block them
+          for every non-default agent, and for a default session that has a scratchpad
+          folder bound.
