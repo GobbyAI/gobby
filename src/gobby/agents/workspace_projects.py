@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from uuid import UUID
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -45,6 +44,7 @@ def workspace_project_name(db: HubDatabase, project_id: str) -> str:
     """
     from gobby.agents.agent_workspaces import workspaces_root
     from gobby.agents.persistent_workspaces import _save, _sync_directory
+    from gobby.agents.workspace_backups import _BACKUP_EXECUTOR, _init_git_dir
     from gobby.storage.sessions import LIVE_SESSION_STATUSES
     from gobby.workflows.state_manager import SessionVariableManager
 
@@ -97,11 +97,7 @@ def workspace_project_name(db: HubDatabase, project_id: str) -> str:
         if not marker.exists():
             _save(marker, receipt)
         if (target_git / "HEAD").is_file():
-            subprocess.run(
-                ["git", f"--git-dir={target_git}", "config", "core.worktree", str(target)],
-                check=True,
-                capture_output=True,
-            )
+            _BACKUP_EXECUTOR.submit(_init_git_dir, name).result()
         # Renames survive database rollback; refresh bindings on every replay.
         variables = SessionVariableManager(db)
         rows = connection.execute(
