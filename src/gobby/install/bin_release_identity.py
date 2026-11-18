@@ -151,7 +151,10 @@ def _embedded_inputs(read: Manifests, crates: Collection[str]) -> list[PurePosix
     entries: list[PurePosixPath] = []
     for crate in sorted(crates):
         metadata = _manifest(read, f"{crate}/Cargo.toml").get("package", {}).get("metadata", {})
-        declared = metadata.get("gobby", {}).get("embedded")
+        gobby = metadata.get("gobby", {})
+        if not isinstance(gobby, dict):
+            raise BinaryReleaseVersionError(f"{crate}: gobby metadata must be a table")
+        declared = gobby.get("embedded")
         if declared is None:
             continue
         if not isinstance(declared, list):
@@ -228,6 +231,10 @@ def workspace_source_identity(root: Path, name: str) -> str:
         relative = path.relative_to(root).as_posix()
         if path.is_file() and (_is_source_path(relative) or _within(relative, embedded)):
             files.add(path)
+    tracked = [path.relative_to(root).as_posix() for path in files]
+    for entry in embedded:
+        if not any(_within(relative, [entry]) for relative in tracked):
+            raise BinaryReleaseVersionError(f"embedded path {entry} names no file in the checkout")
     for path in sorted(files):
         digest.update(path.relative_to(root).as_posix().encode() + b"\0")
         with path.open("rb") as source:

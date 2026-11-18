@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import tempfile
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.install.bin_freshness_locks import NativeBinFileLock, try_acquire_native_bin_lock
+from gobby.utils.native_bin import native_bin_name
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +41,15 @@ _EXTRA_FILES = {
     "ghook": (".ghook-compatibility", ".ghook-runtime.json"),
 }
 _HASH_CHUNK = 1024 * 1024
+_LOCK_WAIT_SECONDS = 30.0
+_LOCK_POLL_SECONDS = 0.05
 
 
-class GenerationStoreError(Exception):
-    """The generation store cannot be read, written or locked."""
+class GenerationStoreError(OSError):
+    """The generation store cannot be read, written or locked.
+
+    An OSError, so every caller that already reports a failed promotion write reports this.
+    """
 
 
 @dataclass(frozen=True)
@@ -107,15 +114,21 @@ def retain_outgoing(
         return None
     moment = _utc(now)
     try:
+        # Kept bytes need no write, so a promotion of retained binaries never waits on the lock.
+        if _unchanged(bin_dir, names, list_generations(bin_dir)):
+            return None
         with _lock(bin_dir):
             state = read_state(bin_dir)
             generations = list_generations(bin_dir)
             if _unchanged(bin_dir, names, generations):
                 return None
+            _check_state(bin_dir, state, generations, moment)
             generation = _capture(bin_dir, names, state, generations, moment)
             state["next_seq"] = generation.seq + 1
             _write_state(bin_dir, state)
             _prune(bin_dir, state, moment)
+    except GenerationStoreError:
+        raise
     except OSError as exc:
         raise GenerationStoreError(f"could not retain outgoing binaries: {exc}") from exc
     return generation
@@ -140,14 +153,18 @@ def record_promotion(
             identity = hold if isinstance(hold, dict) else {}
             installed = _section(state, "installed")
             for name in names:
+                binary = _binary(bin_dir, name)
                 installed[name] = {
                     "promoted_at": moment.isoformat(),
                     "source_commit": source_commit,
                     "session_id": identity.get("session_id"),
                     "task_id": identity.get("task_id"),
+                    "sha256": _sha256(binary) if binary.is_file() else None,
                 }
             state["installed"] = installed
             _write_state(bin_dir, state)
+    except GenerationStoreError:
+        raise
     except OSError as exc:
         raise GenerationStoreError(f"could not record promotion: {exc}") from exc
 
@@ -164,11 +181,11 @@ def retention_refusal(bin_dir: Path) -> str | None:
     except OSError as exc:
         return f"{_REFUSAL_PREFIX}{exc}"
     try:
-        read_state(bin_dir)
-    except GenerationStoreError as exc:
+        _check_state(bin_dir, read_state(bin_dir), list_generations(bin_dir), _utc(None))
+        needed = _installed_size(bin_dir) + _FREE_SPACE_MARGIN
+        free = shutil.disk_usage(store).free
+    except OSError as exc:
         return f"{_REFUSAL_PREFIX}{exc}"
-    needed = _installed_size(bin_dir) + _FREE_SPACE_MARGIN
-    free = shutil.disk_usage(store).free
     if free < needed:
         return f"{_REFUSAL_PREFIX}{free} bytes free in {store}, {needed} needed"
     return None
@@ -178,22 +195,43 @@ def _store(bin_dir: Path) -> Path:
     return bin_dir / GENERATIONS_DIR
 
 
+def _binary(bin_dir: Path, name: str) -> Path:
+    """Where a managed member is installed; its file name carries the platform suffix."""
+    return bin_dir / native_bin_name(name)
+
+
 def _utc(now: datetime | None) -> datetime:
     return datetime.now(UTC) if now is None else now.astimezone(UTC)
 
 
 def _lock(bin_dir: Path) -> NativeBinFileLock:
-    lock = try_acquire_native_bin_lock(_LOCK_NAME, bin_dir=bin_dir)
-    if lock is None:
-        raise GenerationStoreError(
-            "generation store is busy; another promotion is retaining generations"
-        )
-    return lock
+    """The store lock, waited for briefly: a capture holds it for well under a second."""
+    deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+    while True:
+        lock = try_acquire_native_bin_lock(_LOCK_NAME, bin_dir=bin_dir)
+        if lock is not None:
+            return lock
+        if time.monotonic() >= deadline:
+            raise GenerationStoreError(
+                "generation store is busy; another promotion is retaining generations"
+            )
+        time.sleep(_LOCK_POLL_SECONDS)
+
+
+def _check_state(
+    bin_dir: Path, state: dict[str, Any], generations: list[Generation], moment: datetime
+) -> None:
+    """Raise for state a capture or its prune would reject, before anything is written."""
+    _next_seq(state, generations)
+    _section(state, "installed")
+    _kept_ids(bin_dir, generations, state, moment)
 
 
 def _installed_managed(bin_dir: Path, members: Iterable[str]) -> list[str]:
     wanted = set(members)
-    return [name for name in MANAGED_BINARIES if name in wanted and (bin_dir / name).is_file()]
+    return [
+        name for name in MANAGED_BINARIES if name in wanted and _binary(bin_dir, name).is_file()
+    ]
 
 
 def _installed_size(bin_dir: Path) -> int:
@@ -207,12 +245,12 @@ def _installed_size(bin_dir: Path) -> int:
 def _member_files(bin_dir: Path, name: str) -> list[str]:
     """Sorted names of the files a member's generation copies, for those that exist."""
     candidates = [
-        name,
+        native_bin_name(name),
         *(f".{name}{suffix}" for suffix in _SIDECAR_SUFFIXES),
         *_EXTRA_FILES.get(name, ()),
     ]
     if name == "gclient":
-        candidates.append(GCLIENT_ALIAS)
+        candidates.append(native_bin_name(GCLIENT_ALIAS))
     return sorted(file_name for file_name in candidates if (bin_dir / file_name).is_file())
 
 
@@ -243,7 +281,7 @@ def _unchanged(bin_dir: Path, names: list[str], generations: list[Generation]) -
     """True when each named binary's installed bytes are the newest retained copy."""
     for name in names:
         recording = _recording(generations, name)
-        if not recording or _recorded_sha(recording[0], name) != _sha256(bin_dir / name):
+        if not recording or _recorded_sha(recording[0], name) != _sha256(_binary(bin_dir, name)):
             return False
     return True
 
@@ -284,8 +322,13 @@ def _capture(
             "schema_identity": _schema_identity(bin_dir),
             "members": members,
         }
-        (staging / _MANIFEST).write_bytes(_json_bytes(manifest))
+        with (staging / _MANIFEST).open("xb") as writer:
+            writer.write(_json_bytes(manifest))
+            writer.flush()
+            os.fsync(writer.fileno())
+        _sync_directory(staging)
         os.rename(staging, final)
+        _sync_directory(store)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
         raise
@@ -298,9 +341,13 @@ def _member_record(bin_dir: Path, name: str, staging: Path, installed: object) -
     for file_name in files:
         _copy_file(bin_dir / file_name, staging / file_name)
     receipt = _read_json_object(bin_dir / f".{name}-release-identity.json")
-    promotion = installed if isinstance(installed, dict) else {}
+    sha256 = _sha256(staging / native_bin_name(name))
+    # A promotion record describes these bytes only when it was written for them.
+    promotion = (
+        installed if isinstance(installed, dict) and installed.get("sha256") == sha256 else {}
+    )
     record: dict[str, Any] = {
-        "sha256": _sha256(staging / name),
+        "sha256": sha256,
         "version": _text_or_none(receipt.get("version")),
         "source_identity": _text_or_none(receipt.get("source_identity")),
         "promoted_at": _text_or_none(promotion.get("promoted_at")),
@@ -310,7 +357,7 @@ def _member_record(bin_dir: Path, name: str, staging: Path, installed: object) -
         "files": files,
     }
     if name == "gclient":
-        record["alias"] = GCLIENT_ALIAS in files
+        record["alias"] = native_bin_name(GCLIENT_ALIAS) in files
     return record
 
 
@@ -321,6 +368,17 @@ def _copy_file(source: Path, destination: Path) -> None:
         writer.flush()
         os.fsync(writer.fileno())
     shutil.copymode(source, destination)
+
+
+def _sync_directory(path: Path) -> None:
+    """Make a directory's entries durable; Windows has no directory handle to sync."""
+    if os.name != "posix":
+        return
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def _schema_identity(bin_dir: Path) -> object:
@@ -396,7 +454,7 @@ def _kept_ids(
         if not isinstance(first_seq, int):
             raise GenerationStoreError("generation hold has no first_seq")
         kept.update(generation.id for generation in generations if generation.seq >= first_seq)
-    gdaemon = bin_dir / "gdaemon"
+    gdaemon = _binary(bin_dir, "gdaemon")
     if gdaemon.is_file():
         installed_sha = _sha256(gdaemon)
         kept.update(
