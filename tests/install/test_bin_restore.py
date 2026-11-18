@@ -592,6 +592,33 @@ def test_run_restore_refuses_when_the_start_check_refuses_and_changes_nothing(
     assert _snapshot(bin_dir) == before
 
 
+def test_run_restore_refuses_a_changed_source_under_the_installed_version_before_the_stop(
+    tmp_path: Path,
+) -> None:
+    from gobby.install.bin_restore import RestoreError
+
+    bin_dir = tmp_path / "bin"
+    _write_stamp(bin_dir)
+    _install(bin_dir, "gdaemon", "1.0.0", marker="old")
+    generation = _retain(bin_dir, ["gdaemon"], 0)
+    payload = _script("gdaemon", "1.0.0", "other")
+    _place(bin_dir, "gdaemon", payload, "1.0.0")
+    receipt = {
+        "artifact_sha256": _sha(payload),
+        "source_identity": "source-other",
+        "version": "1.0.0",
+    }
+    _write(bin_dir / ".gdaemon-release-identity.json", _json_bytes(receipt), 0o600)
+    before = _snapshot(bin_dir)
+    daemon = _Daemon()
+
+    with pytest.raises(RestoreError, match="^refusing to restore: gdaemon: changed or unverified"):
+        _restore(bin_dir, generation, ["gdaemon"], daemon)
+
+    assert "stop" not in daemon.events
+    assert _snapshot(bin_dir) == before
+
+
 def test_run_restore_refuses_when_the_daemon_does_not_stop(tmp_path: Path) -> None:
     from gobby.install.bin_restore import RestoreError
 

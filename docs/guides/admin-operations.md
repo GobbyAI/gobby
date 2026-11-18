@@ -370,6 +370,68 @@ Native terminals survive ordinary daemon restarts; `--terminals` drains them.
 
 For schema disagreement, use the coherent [cutover procedure](release-guide.md#local-install-check).
 
+## Rolling Back A Cutover
+
+Every promotion of a managed binary first keeps the outgoing installed binaries as a
+generation under `~/.gobby/bin/generations/`. A generation is named by its id or its
+sequence number.
+
+```bash
+uv run gobby rollback list [--json]
+uv run gobby rollback pin GENERATION --until TIME [--task REF]
+uv run gobby rollback pin extend GENERATION --until TIME
+uv run gobby rollback unpin GENERATION
+uv run gobby rollback burn GENERATION [--bin NAME]
+uv run gobby rollback restore GENERATION [--bin NAME ...] [--all] [--hold-token TOKEN] [--wait]
+```
+
+`--until` takes an ISO-8601 time (a naive time is local time) or `+<N>m` or `+<N>h`.
+`list` marks each generation as pinned, held, or installed (its gdaemon matches the
+installed gdaemon). A pin keeps its generation past pruning until its `--until` time.
+
+`restore` puts a generation back as the installed binaries. Without options it
+restores gdaemon alone; `--bin` names members and `--all` restores every member the
+generation records. Before anything stops, it checks the retained files, the probed
+versions, any window hold, and, for a partial set, the installed schema identity.
+It then stops the daemon with restart intent, replaces the members through the
+install promotion entry points, verifies each restored version, and starts the
+daemon. Before the stop it applies cutover's stop admissions (protected cron runs and
+unresolved handoffs); `--wait` defers them instead of refusing. If the restore fails
+after the stop, the daemon stays stopped and the error names the members replaced.
+A replaced version that differs from the restored one is burned, and a burned version
+is refused by every later promotion, so the fix ships under a new version. `burn`
+forbids a generation's recorded version of a binary by hand.
+
+A window hold keeps the generations from the earliest one that holds the installed
+bytes onward while it is unexpired, and refuses every managed-binary promotion without
+its token:
+
+```bash
+uv run gobby rollback hold set --task REF --until TIME [--session ID]
+uv run gobby rollback hold extend --hold-token TOKEN --until TIME
+uv run gobby rollback hold status [--json]
+uv run gobby rollback hold clear [--path CHECKOUT]
+```
+
+`hold set` prints `hold token: ...` once and refuses while another hold is unexpired.
+`hold status` never prints the token. `gobby cutover --hold-token TOKEN` and
+`gobby install --hold-token TOKEN` present the token to their promotions.
+
+The landing freeze is turned on or off by the `set_landing_freeze` tool (`on`, `reason`,
+and an optional `task_id`). `task_id` binds an on freeze to a task; the binding needs
+that task's claim and is accepted only with `on=true`. A bound freeze refuses landings
+for everyone except its claim holder, and only that holder may change it. An unbound
+freeze refuses every landing. `hold clear` also clears a freeze that is on and bound to
+a task in the checkout at `--path` (default: the current directory), even when no hold
+is stored. An unbound freeze is left alone.
+
+When the daemon is running, `gobby hub-backup` applies cutover's stop admissions
+(protected cron runs and unresolved handoffs) before it writes anything or stops the
+daemon. `--wait` defers them. `--force` interrupts a protected cron run and bypasses
+unresolved handoffs, as `gobby stop --force` does; `--wait` and `--force` cannot be
+combined. A refusal leaves the running daemon alone and writes nothing. Rehearsal
+targets and runs with no daemon running skip the admissions.
+
 ## Setup And Diagnostics
 
 Useful admin routes:

@@ -555,10 +555,12 @@ def test_cli_only_git_boundaries_are_reached_only_from_cli() -> None:
     assert _modules_referencing("preflight_binary_promotions") == {
         "src/gobby/cli/cutover.py",
         "src/gobby/install/bin_freshness_promotion.py",
+        "src/gobby/install/bin_restore.py",
         "src/gobby/install/bin_set_coherence.py",
     }
     # preflight's callers are workspace entry points reached only from Click commands;
-    # bin_set_coherence's own use sits inside promote_workspace_binary_set.
+    # bin_set_coherence's own use sits inside promote_workspace_binary_set. bin_restore
+    # is reached only from the rollback restore command.
     entry_points = (
         "promote_workspace_binary_set",
         "install_staged_cargo_binary",
@@ -567,7 +569,8 @@ def test_cli_only_git_boundaries_are_reached_only_from_cli() -> None:
     )
     callers = set().union(*(_modules_referencing(name) for name in entry_points))
     assert {module for module in callers if not module.startswith("src/gobby/cli/")} == {
-        "src/gobby/install/bin_set_coherence.py"
+        "src/gobby/install/bin_restore.py",
+        "src/gobby/install/bin_set_coherence.py",
     }
 
 

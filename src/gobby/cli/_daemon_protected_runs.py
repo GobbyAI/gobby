@@ -29,13 +29,18 @@ StepFn = Callable[..., None]
 FetchFn = Callable[[int], list[dict[str, Any]]]
 
 
+class ProtectedRunsUnknown(RuntimeError):
+    """The daemon answered, but not with a protected-run list this process can read."""
+
+
 def fetch_protected_runs(http_port: int) -> list[dict[str, Any]]:
     """Ask the daemon for its active restart-protected cron runs.
 
-    The admin API requires the local CLI token; without it the daemon answers
-    401 and the gate would silently never protect anything. A daemon that
-    cannot answer holds no lease this process could honor, so transport
-    failures and non-200 responses report no runs.
+    The admin API requires the local CLI token. A daemon that cannot be reached
+    holds no lease this process could honor, so transport failures report no
+    runs. A daemon that answers without a readable run list (a 401 without the
+    token, a 503 while starting) leaves the lease unknown and raises
+    ``ProtectedRunsUnknown``.
     """
     try:
         response = httpx.get(
@@ -52,7 +57,9 @@ def fetch_signed_protected_runs(http_port: int) -> list[dict[str, Any]]:
     """A spawned seat's protected-run check: a signed GET, so its bearer never leaves the process.
 
     A seat that cannot sign a request or reach its daemon holds no lease it can honor, so it
-    reports no runs. The daemon's restart route still refuses a protected restart unless forced.
+    reports no runs. An answer without a readable run list raises ``ProtectedRunsUnknown``, as
+    for the operator's probe. The daemon's restart route still refuses a protected restart unless
+    forced.
     """
     headers = signed_daemon_headers(http_port, method="GET", path=PROTECTED_RUNS_PATH)
     if headers is None:
@@ -70,14 +77,16 @@ def fetch_signed_protected_runs(http_port: int) -> list[dict[str, Any]]:
 
 def _runs_from(response: httpx.Response) -> list[dict[str, Any]]:
     if response.status_code != 200:
-        return []
+        raise ProtectedRunsUnknown(
+            f"the daemon answered {response.status_code} to the protected-run probe"
+        )
     try:
         payload = response.json()
-    except ValueError:
-        return []
+    except ValueError as exc:
+        raise ProtectedRunsUnknown("the daemon's protected-run answer was not JSON") from exc
     runs = payload.get("runs") if isinstance(payload, dict) else None
     if not isinstance(runs, list):
-        return []
+        raise ProtectedRunsUnknown("the daemon's protected-run answer held no run list")
     return [run for run in runs if isinstance(run, dict)]
 
 
@@ -102,9 +111,14 @@ def clear_protected_runs(
     ``force`` proceeds after naming what it interrupts; ``wait`` polls until
     every protected run reaches a terminal state, bounded by the runs' own
     remaining timeouts and by ``PROTECTED_RUN_MAX_WAIT_SECONDS``; otherwise an
-    active protected run refuses the stop. Every refusal happens before any stop.
+    active protected run refuses the stop. An unknown answer follows the same
+    rule as ``force``: proceed when forced, refuse otherwise. Every refusal
+    happens before any stop.
     """
-    runs = fetch(http_port)
+    try:
+        runs = fetch(http_port)
+    except ProtectedRunsUnknown as exc:
+        return _unknown_answer(step, exc, force=force)
     if not runs:
         return True
     if force:
@@ -143,14 +157,34 @@ def clear_protected_runs(
             )
             return False
         time.sleep(min(PROTECTED_RUN_POLL_INTERVAL_SECONDS, remaining))
-        runs = fetch(http_port)
+        try:
+            runs = fetch(http_port)
+        except ProtectedRunsUnknown as exc:
+            return _unknown_answer(step, exc, force=force)
     step("Protected cron run(s) finished")
     return True
+
+
+def _unknown_answer(step: StepFn, exc: ProtectedRunsUnknown, *, force: bool) -> bool:
+    """Apply the stop policy when the daemon's protected-run answer cannot be read."""
+    if force:
+        step(
+            f"The daemon's protected-run answer is unknown ({exc}); proceeding without knowing "
+            "whether a cron run is active"
+        )
+        return True
+    step(
+        f"The daemon's protected-run answer is unknown ({exc}); refusing to stop the daemon "
+        "without knowing whether a cron run is active; re-run with --force to proceed anyway",
+        error=True,
+    )
+    return False
 
 
 __all__ = [
     "PROTECTED_RUN_MAX_WAIT_SECONDS",
     "PROTECTED_RUN_POLL_INTERVAL_SECONDS",
+    "ProtectedRunsUnknown",
     "clear_protected_runs",
     "describe_protected_run",
     "fetch_protected_runs",

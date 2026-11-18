@@ -23,6 +23,8 @@ from urllib.parse import urlparse
 
 import click
 
+from gobby.cli._daemon_handoffs import protect_pending_handoffs
+from gobby.cli._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
 from gobby.cli.daemon import _services_start, _services_stop
 from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.hub_backup._integrity import (
@@ -95,11 +97,12 @@ from gobby.cli.postgres_backup import (
     _resolve_database_url,
     restore_postgres_backup,
 )
-from gobby.cli.runtime import get_cli_runtime
+from gobby.cli.runtime import CliRuntime, get_cli_runtime
 from gobby.cli.utils_shutdown import stop_daemon
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.config.logging import resolved_logs_dir
 from gobby.paths import get_gobby_home
+from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.utils.durable_file import durable_replace, exclusive_file_lock
 from gobby.utils.version import get_version
 
@@ -195,13 +198,32 @@ def _hub_backup_target(database_url: str) -> HubBackupTarget:
     is_flag=True,
     help="Print the manifest path and a store summary as JSON.",
 )
+@click.option(
+    "--force",
+    "force",
+    is_flag=True,
+    help=(
+        "Interrupt an active restart-protected cron run and bypass unresolved session handoffs "
+        "(the run resumes after the next start)"
+    ),
+)
+@click.option(
+    "--wait",
+    "wait",
+    is_flag=True,
+    help="Wait for protected cron runs and unresolved session handoffs before backing up",
+)
 @click.pass_context
 def hub_backup(
     ctx: click.Context,
     output: Path | None,
     json_output: bool,
+    force: bool,
+    wait: bool,
 ) -> None:
     """Back up every hub datastore and prove each artifact restores."""
+    if force and wait:
+        raise click.UsageError("--force and --wait are mutually exclusive")
     if ctx.invoked_subcommand is not None:
         return
 
@@ -233,11 +255,16 @@ def hub_backup(
             raise click.ClickException(
                 f"Refusing to back up: {refusal} The running daemon was left alone."
             )
+        _require_stop_admitted(get_cli_runtime(ctx), force=force, wait=wait)
     staging_root = create_staging_directory(backup_root)
     manifest_path = backup_root / MANIFEST_NAME
     try:
         if target.rehearsal is None:
-            stop_daemon(quiet=json_output, shutdown_source="cli_hub_backup")
+            stop_daemon(
+                quiet=json_output,
+                shutdown_source="cli_hub_backup",
+                shutdown_intent="restart" if restart_daemon else "stop",
+            )
         if files_home is not None:
             try:
                 check_output_outside_sources(backup_root, files_home)
@@ -713,6 +740,32 @@ def _volume_archives(
 # ---------------------------------------------------------------------------
 # Daemon lifecycle
 # ---------------------------------------------------------------------------
+
+
+def _admission_report(message: str, *, error: bool = False) -> None:
+    # Progress goes to stderr so a --json run keeps stdout parseable.
+    click.echo(message, err=True)
+
+
+def _require_stop_admitted(runtime: CliRuntime, *, force: bool, wait: bool) -> None:
+    """Apply the stop-time admissions that cutover's stop runs, before anything is written."""
+    # The bootstrap owns the daemon port. Reading it here, not through the stored config,
+    # keeps the admission from adding a stored-config read ahead of the backup's own reads.
+    port = load_bootstrap(runtime.config_file).daemon_port
+    if not clear_protected_runs(
+        port, force=force, wait=wait, step=_admission_report, fetch=fetch_protected_runs
+    ):
+        raise click.ClickException(
+            "Refusing to back up: the stop is blocked by a restart-protected cron run or an "
+            "unknown protected-run answer (see above). The running daemon was left alone."
+        )
+    try:
+        with protect_pending_handoffs(runtime, force=force, wait=wait, report=_admission_report):
+            pass
+    except HandoffShutdownBlocked as exc:
+        raise click.ClickException(
+            f"Refusing to back up: {exc}. The running daemon was left alone."
+        ) from exc
 
 
 def _daemon_is_running() -> bool:

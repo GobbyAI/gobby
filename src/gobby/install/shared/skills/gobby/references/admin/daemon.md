@@ -67,7 +67,17 @@ Use an operator bearer key with `GET /api/admin/lease/status`,
 stale owner; a fresh owner returns 409. The Python lease CLI is retired.
 Local native Windows operation refuses startup; run Gobby inside WSL 2.
 
+Each promotion of a managed binary first keeps the outgoing installed binaries as a
+generation under `~/.gobby/bin/generations/`. `gobby rollback list` shows them. Restoring a generation
+with `gobby rollback restore GENERATION` (gdaemon by default; `--bin` or `--all` for
+more) checks the generation before anything stops, stops the daemon, puts the
+generation back, and starts the daemon again. It refuses under a window hold without its token. A replaced version
+that differs from the restored one is burned and never promoted again, so the fix
+ships under a new version. If the restore fails after the stop, the daemon stays
+stopped and the error names the members replaced.
+
 See [admin operations](../../../../../../../../docs/guides/admin-operations.md)
 and [lifecycle CLI](../../../../../../../../docs/guides/cli-commands.md).
 
-_Version: 1.0.0_
+_Version: 1.1.0_
+_Last verified: 2026-11-17_

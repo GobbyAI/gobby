@@ -22,7 +22,13 @@ from gobby.install.bin_generations import (
     MANAGED_BINARIES,
     GenerationStoreError,
     promotion_guard,
+    promotion_refusal,
     record_promotion,
+)
+from gobby.install.bin_release_identity import (
+    BinaryReleaseIdentity,
+    BinaryReleaseVersionError,
+    current_hold_token,
 )
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.storage.schema_identity_pin import (
@@ -143,6 +149,7 @@ def promote_workspace_binary_set(
                 source_identities=source_identities,
             )
             with promotion_guard(bin_dir, MANAGED_BINARIES):
+                _require_promotable(releases, ordered, bin_dir=bin_dir)
                 for member in ordered:
                     bin_freshness_promotion.stage_and_promote_binary_file(
                         candidates[member],
@@ -164,6 +171,17 @@ def promote_workspace_binary_set(
             f"promoted: {_member_list(promoted)}; "
             f"unpromoted: {_member_list(unpromoted)}; cause: {exc}"
         ) from exc
+
+
+def _require_promotable(
+    releases: Mapping[str, BinaryReleaseIdentity], ordered: list[str], *, bin_dir: Path
+) -> None:
+    """Refuse the set before any member is replaced if a candidate is held or burned."""
+    token = current_hold_token()
+    for member in ordered:
+        refusal = promotion_refusal(bin_dir, member, releases[member].version, token)
+        if refusal is not None:
+            raise BinaryReleaseVersionError(f"{member}: {refusal}")
 
 
 def _record_promotion(bin_dir: Path, promoted: list[str], source_commit: str | None) -> None:

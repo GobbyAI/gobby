@@ -23,6 +23,7 @@ from gobby.cli.install_files_home import (
 from gobby.config.app import UiExposureConfig
 from gobby.config.bootstrap import BootstrapConfigError, DatastoreMode, load_bootstrap
 from gobby.config.bootstrap_io import bootstrap_path
+from gobby.install.bin_release_identity import promotion_hold_token
 from gobby.paths import get_gobby_home
 from gobby.storage.api_keys import ensure_local_api_key
 from gobby.storage.config_store import ConfigStore
@@ -110,7 +111,8 @@ class _InstallCommand(click.Command):
 
     def invoke(self, ctx: click.Context) -> Any:
         try:
-            return super().invoke(ctx)
+            with promotion_hold_token(ctx.params.get("hold_token")):
+                return super().invoke(ctx)
         except click.Abort as exc:
             raise click.ClickException(_INSTALL_INPUT_ERROR) from exc
 
@@ -301,6 +303,12 @@ def _install_components(
     default=None,
     help="Target directory (default: current directory)",
 )
+@click.option(
+    "--hold-token",
+    "hold_token",
+    default=None,
+    help="Token of the generation-store hold that keeps the outgoing set retained.",
+)
 def install(
     components: tuple[str, ...],
     embedding_url: str | None,
@@ -311,6 +319,7 @@ def install(
     container_restarts_flag: bool,
     files_home: Path | None = None,
     working_dir: Path | None = None,
+    hold_token: str | None = None,
 ) -> None:
     """Install Gobby, or reinstall the named COMPONENTS of an existing install.
 

@@ -303,6 +303,15 @@ state inconsistent.
   refused by the shared promotion guard, including cutover preflight before stop.
   Same-source re-promotion is permitted. Component installs use the same guard.
   Load the `rust` skill before editing Rust; conventions live in `crates/CLAUDE.md`.
+- Generations and rollback: a promotion of a managed binary first keeps the outgoing
+  installed binaries as a generation under `~/.gobby/bin/generations/`.
+  A window hold (`gobby rollback hold set`) refuses every managed-binary promotion that
+  lacks its token, which `gobby cutover --hold-token` and `gobby install --hold-token`
+  present, and keeps the window's generations while the hold is unexpired. A restored-over
+  version is burned and refused by every later promotion, so the fix ships under a new
+  version. `gobby rollback` lists, pins, restores and burns generations. Restore goes
+  through the install promotion entry points (`promote_workspace_binary_set` for gcode,
+  gdaemon and ghook; `stage_and_promote_binary_file` for the other members), never a hand copy.
 - Key paths: `~/.gobby/bootstrap.yaml` (ports, bind host, PostgreSQL `database_url`,
   owner-only 0600), `~/.gobby/logs/`, `.gobby/project.json` (project metadata),
   `~/.gobby/backups/<project-uuid>/tasks.jsonl` (machine-local backup, never committed).

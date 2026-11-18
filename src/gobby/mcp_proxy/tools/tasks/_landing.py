@@ -46,11 +46,13 @@ def _change_landing_freeze(
             "error_code": "landing_freeze_bound",
             "task_id": stored.task_id,
             "error": (
-                f"The landing freeze is bound to task {stored.task_id}; "
-                "only its claim holder may change it"
+                f"The landing freeze is bound to task {stored.task_id}; only its claim "
+                "holder may change it. An operator clears it from the checkout with "
+                "`gobby rollback hold clear`"
             ),
         }
-    task_id: str | None = None
+    # A re-set by the holder without task_id keeps the stored binding.
+    task_id: str | None = stored.task_id if on and stored.on and task_ref is None else None
     if task_ref is not None:
         try:
             task = resolve_lifecycle_task(

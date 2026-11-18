@@ -17,6 +17,8 @@ GOBBY_SCHEMA_TEST_DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:6089
                                           # refuses uncommitted schema inputs (--allow-dirty overrides)
                                           # proves `schema plan` plus rollback-only `schema preflight`
                                           # before promoting; nothing is promoted or stopped on refusal
+                                          # under a window hold, `--hold-token TOKEN` presents its token
+                                          # (`gobby install --hold-token TOKEN` takes the same option)
 
 # Lint & format — match repo config; never relax lints to pass
 cargo clippy -p <package>                 # e.g. gobby-code, gobby-core, gobby-daemon, gobby-hooks
@@ -125,3 +127,5 @@ The shared workspace promotion guard records version/source identity
 in `.<binary>-release-identity.json` and refuses same-version changed-source
 promotion. Cutover checks it before daemon stop; separate component installs
 use the same check. Same-source re-promotion is permitted.
+A version that a rollback restore burned is refused by every later promotion, so a
+crate that must ship again needs a version bump before `gobby cutover`.

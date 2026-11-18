@@ -23,7 +23,11 @@ from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_da
 from gobby.install.bin_freshness_github import SourceUnavailableError, platform_target
 from gobby.install.bin_freshness_promotion import preflight_binary_promotions
 from gobby.install.bin_generations import retention_refusal
-from gobby.install.bin_release_identity import BinaryReleaseVersionError, workspace_source_identity
+from gobby.install.bin_release_identity import (
+    BinaryReleaseVersionError,
+    promotion_hold_token,
+    workspace_source_identity,
+)
 from gobby.install.bin_set_coherence import (
     REBUILD_REMEDY,
     BinarySetCoherenceError,
@@ -479,8 +483,16 @@ def _require_unchanged_sources(root: Path, sources: dict[str, str]) -> None:
     is_flag=True,
     help="Wait for protected cron runs and unresolved session handoffs before promoting.",
 )
+@click.option(
+    "--hold-token",
+    "hold_token",
+    default=None,
+    help="Token of the generation-store hold that keeps the outgoing set retained.",
+)
 @click.pass_context
-def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) -> None:
+def cutover(
+    ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool, hold_token: str | None
+) -> None:
     """Build and activate all schema-aware native binaries as one set."""
     from gobby.releases.activation import agent_activation_refusal
 
@@ -512,26 +524,27 @@ def cutover(ctx: click.Context, workspace: Path, allow_dirty: bool, wait: bool) 
                 raise CutoverError(f"daemon start failed (exit {exc.code})") from exc
 
     try:
-        if not allow_dirty and (dirty := _dirty_schema_inputs(root)):
-            raise CutoverError(
-                "refusing to build from uncommitted schema inputs: "
-                + ", ".join(dirty)
-                + "; commit or stash them, or pass --allow-dirty"
-            )
-        expected_identity = read_workspace_pin(root)
-        runtime = get_cli_runtime(ctx)
-        outcome = run_cutover(
-            root,
-            bin_dir,
-            stop_daemon=stop_daemon,
-            start_daemon=start_daemon,
-            start_refusal=lambda candidate: (
-                restart_start_refusal(runtime, candidate, expected_identity=expected_identity)
-                or _stop_admission_refusal(
-                    ctx, wait=wait, logged_stale_markers=logged_stale_markers
+        with promotion_hold_token(hold_token):
+            if not allow_dirty and (dirty := _dirty_schema_inputs(root)):
+                raise CutoverError(
+                    "refusing to build from uncommitted schema inputs: "
+                    + ", ".join(dirty)
+                    + "; commit or stash them, or pass --allow-dirty"
                 )
-            ),
-        )
+            expected_identity = read_workspace_pin(root)
+            runtime = get_cli_runtime(ctx)
+            outcome = run_cutover(
+                root,
+                bin_dir,
+                stop_daemon=stop_daemon,
+                start_daemon=start_daemon,
+                start_refusal=lambda candidate: (
+                    restart_start_refusal(runtime, candidate, expected_identity=expected_identity)
+                    or _stop_admission_refusal(
+                        ctx, wait=wait, logged_stale_markers=logged_stale_markers
+                    )
+                ),
+            )
     except CutoverError as exc:
         raise click.ClickException(str(exc)) from exc
     agreement = "gcode, gdaemon, ghook, schema pin, and daemon agree."

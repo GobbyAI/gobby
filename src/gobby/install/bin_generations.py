@@ -206,7 +206,7 @@ def set_hold(
 ) -> str:
     """Keep the generations a rollback needs until expires_at; returns the token that holds them."""
     moment = _utc(now)
-    _check_expiry(expires_at, moment)
+    _check_expiry(expires_at, moment, "hold expiry")
     token = secrets.token_urlsafe(32)
     with _store_failures("set hold"), _lock(bin_dir):
         held = read_state(bin_dir).get("hold")
@@ -233,7 +233,7 @@ def extend_hold(
 ) -> None:
     """Move the stored hold's expiry; only the holder's token may do so."""
     moment = _utc(now)
-    _check_expiry(expires_at, moment)
+    _check_expiry(expires_at, moment, "hold expiry")
     with _store_failures("extend hold"), _lock(bin_dir):
         state = read_state(bin_dir)
         hold = state.get("hold")
@@ -261,8 +261,10 @@ def clear_hold(bin_dir: Path) -> bool:
 def hold_status(bin_dir: Path, *, now: datetime | None = None) -> dict[str, Any] | None:
     """The stored hold without its token, or None when none is stored."""
     hold = read_state(bin_dir).get("hold")
-    if not isinstance(hold, dict):
+    if hold is None:
         return None
+    if not isinstance(hold, dict):
+        raise GenerationStoreError("generation hold is not an object")
     return {
         "task_id": hold.get("task_id"),
         "session_id": hold.get("session_id"),
@@ -270,6 +272,92 @@ def hold_status(bin_dir: Path, *, now: datetime | None = None) -> dict[str, Any]
         "expires_at": hold.get("expires_at"),
         "first_seq": hold.get("first_seq"),
         "expired": _hold_expired(hold, _utc(now)),
+    }
+
+
+def find_generation(bin_dir: Path, ref: str) -> Generation:
+    """The generation whose id or sequence number is ref."""
+    for generation in list_generations(bin_dir):
+        if ref in (generation.id, str(generation.seq)):
+            return generation
+    raise GenerationStoreError(f"no generation matches {ref!r}")
+
+
+def pin_generation(
+    bin_dir: Path,
+    generation_id: str,
+    *,
+    until: datetime,
+    task_id: str | None = None,
+    session_id: str | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Keep a generation past pruning until a time, whatever later captures retain."""
+    moment = _utc(now)
+    _check_expiry(until, moment, "pin expiry")
+    with _store_failures("pin generation"), _lock(bin_dir):
+        generation = find_generation(bin_dir, generation_id)
+        state = read_state(bin_dir)
+        pins = _section(state, "pins")
+        if generation.id in pins:
+            raise GenerationStoreError(f"generation {generation.id} is already pinned")
+        pins[generation.id] = {
+            "task_id": task_id,
+            "session_id": session_id,
+            "set_at": moment.isoformat(),
+            "until": _utc(until).isoformat(),
+        }
+        state["pins"] = pins
+        _write_state(bin_dir, state)
+
+
+def extend_pin(
+    bin_dir: Path, generation_id: str, *, until: datetime, now: datetime | None = None
+) -> None:
+    """Move a pin's until; its owner and set time stay as they were."""
+    moment = _utc(now)
+    _check_expiry(until, moment, "pin expiry")
+    with _store_failures("extend pin"), _lock(bin_dir):
+        generation = find_generation(bin_dir, generation_id)
+        state = read_state(bin_dir)
+        pin = _section(state, "pins").get(generation.id)
+        if not isinstance(pin, dict):
+            raise GenerationStoreError(f"generation {generation.id} is not pinned")
+        pin["until"] = _utc(until).isoformat()
+        _write_state(bin_dir, state)
+
+
+def unpin_generation(bin_dir: Path, generation_id: str) -> bool:
+    """Remove a generation's pin; True when one was stored."""
+    if not _store(bin_dir).exists():
+        return False
+    with _store_failures("unpin generation"), _lock(bin_dir):
+        state = read_state(bin_dir)
+        pins = _section(state, "pins")
+        if generation_id not in pins:
+            return False
+        del pins[generation_id]
+        state["pins"] = pins
+        _write_state(bin_dir, state)
+        return True
+
+
+def list_pins(bin_dir: Path, *, now: datetime | None = None) -> dict[str, dict[str, Any]]:
+    """The stored pins by generation id, each with whether its until has passed."""
+    if not _store(bin_dir).exists():
+        return {}
+    moment = _utc(now)
+    pins = _section(read_state(bin_dir), "pins")
+    return {
+        generation_id: {
+            "task_id": pin.get("task_id"),
+            "session_id": pin.get("session_id"),
+            "set_at": pin.get("set_at"),
+            "until": pin.get("until"),
+            "expired": _instant(pin.get("until")) <= moment,
+        }
+        for generation_id, pin in pins.items()
+        if isinstance(pin, dict)
     }
 
 
@@ -325,9 +413,9 @@ def promotion_guard(
         yield retain_outgoing(bin_dir, names, now=now)
 
 
-def _check_expiry(expires_at: datetime, moment: datetime) -> None:
+def _check_expiry(expires_at: datetime, moment: datetime, subject: str) -> None:
     if _utc(expires_at) <= moment:
-        raise GenerationStoreError(f"hold expiry {expires_at.isoformat()} is not later than now")
+        raise GenerationStoreError(f"{subject} {expires_at.isoformat()} is not later than now")
 
 
 def _token_matches(hold: dict[str, Any], token: str) -> bool:
@@ -469,13 +557,14 @@ def _installed_size(bin_dir: Path) -> int:
     )
 
 
+def sidecar_names(name: str) -> tuple[str, ...]:
+    """The files beside a member's binary that its generation may copy, by name."""
+    return (*(f".{name}{suffix}" for suffix in _SIDECAR_SUFFIXES), *_EXTRA_FILES.get(name, ()))
+
+
 def _member_files(bin_dir: Path, name: str) -> list[str]:
     """Sorted names of the files a member's generation copies, for those that exist."""
-    candidates = [
-        native_bin_name(name),
-        *(f".{name}{suffix}" for suffix in _SIDECAR_SUFFIXES),
-        *_EXTRA_FILES.get(name, ()),
-    ]
+    candidates = [native_bin_name(name), *sidecar_names(name)]
     if name == "gclient":
         candidates.append(native_bin_name(GCLIENT_ALIAS))
     return sorted(file_name for file_name in candidates if (bin_dir / file_name).is_file())
@@ -546,7 +635,7 @@ def _capture(
             "id": final.name,
             "seq": seq,
             "created_at": moment.isoformat(),
-            "schema_identity": _schema_identity(bin_dir),
+            "schema_identity": installed_schema_identity(bin_dir),
             "members": members,
         }
         with (staging / _MANIFEST).open("xb") as writer:
@@ -608,7 +697,8 @@ def _sync_directory(path: Path) -> None:
         os.close(fd)
 
 
-def _schema_identity(bin_dir: Path) -> object:
+def installed_schema_identity(bin_dir: Path) -> object:
+    """The schema identity stamp the installed set carries, or None when absent or unreadable."""
     try:
         return json.loads((bin_dir / ".gdaemon-schema-identity.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -676,7 +766,7 @@ def _kept_ids(
         if _instant(pin.get("until") if isinstance(pin, dict) else None) > moment:
             kept.add(generation_id)
     hold = state.get("hold")
-    if isinstance(hold, dict):
+    if isinstance(hold, dict) and not _hold_expired(hold, moment):
         first_seq = hold.get("first_seq")
         if not isinstance(first_seq, int):
             raise GenerationStoreError("generation hold has no first_seq")
@@ -740,8 +830,13 @@ __all__ = [
     "burn_version",
     "clear_hold",
     "extend_hold",
+    "extend_pin",
+    "find_generation",
     "hold_status",
+    "installed_schema_identity",
     "list_generations",
+    "list_pins",
+    "pin_generation",
     "promotion_guard",
     "promotion_refusal",
     "read_state",
@@ -749,4 +844,6 @@ __all__ = [
     "retain_outgoing",
     "retention_refusal",
     "set_hold",
+    "sidecar_names",
+    "unpin_generation",
 ]
