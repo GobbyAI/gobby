@@ -24,6 +24,7 @@ fancy-regex = "0.11"
 gobby-core = { path = "../gcore", version = "0.10.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
+toml = "1"
 ureq = { version = "2", features = ["json"] }
 walkdir = "2"
 

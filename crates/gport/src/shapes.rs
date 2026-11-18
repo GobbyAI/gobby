@@ -1,7 +1,28 @@
 //! `gport shapes`: per-tool call counts and argument-key sets, with no values.
+//!
+//! Transcript records are scanned for tool calls. A proxy call is counted under its target
+//! `<server>:<tool>`, and each tool lists the sorted union of its argument keys. Argument values
+//! are decoded only to find keys and are never printed. The daemon's per-tool metrics add a second
+//! count per tool. A source that is missing, unreadable or unreachable is listed under
+//! `Skipped sources`; it never fails the run.
 
-use std::io::Write;
-use std::path::PathBuf;
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::File;
+use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use serde_json::Value;
+use walkdir::WalkDir;
+
+/// The MCP proxy tool. Its calls are counted under their target, never under its own name.
+const PROXY_TOOL: &str = "mcp__gobby__call_tool";
+/// The daemon route that lists tools with their metrics.
+const METRICS_ROUTE: &str = "/api/mcp/tools";
+/// How long the daemon may take before its metrics route is listed as skipped.
+const DAEMON_TIMEOUT: Duration = Duration::from_secs(5);
+/// Column headings of the table.
+const HEADINGS: [&str; 4] = ["Tool", "Transcript", "Daemon", "Argument keys"];
 
 #[derive(Debug, Clone, Default)]
 pub struct Options {
@@ -9,6 +30,315 @@ pub struct Options {
     pub no_daemon: bool,
 }
 
-pub fn run(_options: Options, _out: &mut dyn Write) -> anyhow::Result<bool> {
-    anyhow::bail!("gport shapes is not implemented")
+/// One tool's counts: its transcript calls and the argument keys they used, and the daemon's
+/// count. `None` means that source did not report the tool.
+#[derive(Debug, Default)]
+struct Tally {
+    transcript_calls: Option<u64>,
+    keys: BTreeSet<String>,
+    daemon_calls: Option<u64>,
+}
+
+impl Tally {
+    /// Counts one transcript call and keeps the names of its argument keys, never their values.
+    fn record_call(&mut self, arguments: Option<&Value>) {
+        let calls = self.transcript_calls.get_or_insert(0);
+        *calls = calls.saturating_add(1);
+        self.keys.extend(argument_keys(arguments));
+    }
+}
+
+type Tallies = BTreeMap<String, Tally>;
+
+pub fn run(options: Options, out: &mut dyn Write) -> anyhow::Result<bool> {
+    let mut skipped = Vec::new();
+    let roots = if options.transcripts.is_empty() {
+        default_roots(&mut skipped)
+    } else {
+        options.transcripts
+    };
+    let mut tallies = Tallies::new();
+    for root in &roots {
+        scan_root(root, &mut tallies, &mut skipped);
+    }
+    let metrics = format!("daemon tool metrics (GET {METRICS_ROUTE})");
+    if options.no_daemon {
+        skipped.push(format!("{metrics}: skipped by --no-daemon"));
+    } else {
+        match daemon_metrics() {
+            Ok(calls) => {
+                for (label, count) in calls {
+                    tallies.entry(label).or_default().daemon_calls = Some(count);
+                }
+            }
+            Err(reason) => skipped.push(format!("{metrics}: {reason}")),
+        }
+    }
+    write_table(out, &tallies)?;
+    write_skipped(out, &skipped)?;
+    Ok(true)
+}
+
+/// The transcript roots that `--transcripts` does not name: the Claude Code and Codex stores.
+fn default_roots(skipped: &mut Vec<String>) -> Vec<PathBuf> {
+    match std::env::var_os("HOME") {
+        Some(home) => {
+            let home = PathBuf::from(home);
+            vec![
+                home.join(".claude").join("projects"),
+                home.join(".codex").join("sessions"),
+            ]
+        }
+        None => {
+            skipped.push("default transcript roots: HOME is not set".to_owned());
+            Vec::new()
+        }
+    }
+}
+
+/// Scans one transcript root: a directory (every `.jsonl` file under it) or a single file.
+fn scan_root(root: &Path, tallies: &mut Tallies, skipped: &mut Vec<String>) {
+    let shown = show(&root.display().to_string());
+    match std::fs::metadata(root) {
+        Ok(meta) if meta.is_dir() => {
+            for entry in WalkDir::new(root).follow_links(true).sort_by_file_name() {
+                match entry {
+                    Ok(entry)
+                        if entry.file_type().is_file()
+                            && entry.path().extension().is_some_and(|ext| ext == "jsonl") =>
+                    {
+                        scan_or_skip(entry.path(), tallies, skipped);
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        let path = error.path().map_or_else(
+                            || shown.clone(),
+                            |path| show(&path.display().to_string()),
+                        );
+                        skipped.push(format!("{path}: unreadable"));
+                    }
+                }
+            }
+        }
+        Ok(meta) if meta.is_file() => scan_or_skip(root, tallies, skipped),
+        Ok(_) => skipped.push(format!("{shown}: not a file or directory")),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            skipped.push(format!("{shown}: missing"));
+        }
+        Err(_) => skipped.push(format!("{shown}: unreadable")),
+    }
+}
+
+fn scan_or_skip(path: &Path, tallies: &mut Tallies, skipped: &mut Vec<String>) {
+    // Calls read before a failure stay counted; the file is listed as skipped all the same.
+    if scan_file(path, tallies).is_err() {
+        skipped.push(format!("{}: unreadable", show(&path.display().to_string())));
+    }
+}
+
+/// Reads one JSON-lines file. A line that is not JSON, or holds no tool call, is skipped.
+fn scan_file(path: &Path, tallies: &mut Tallies) -> std::io::Result<()> {
+    let mut reader = BufReader::new(File::open(path)?);
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        if reader.read_until(b'\n', &mut line)? == 0 {
+            return Ok(());
+        }
+        if let Ok(record) = serde_json::from_slice::<Value>(line.trim_ascii()) {
+            observe_record(&record, tallies);
+        }
+    }
+}
+
+/// Counts the tool calls in one record. Claude Code keeps them as `tool_use` blocks in a message;
+/// Codex keeps them as `function_call` payloads whose arguments are a JSON string.
+fn observe_record(record: &Value, tallies: &mut Tallies) {
+    if let Some(payload) = record.get("payload")
+        && payload.get("type").and_then(Value::as_str) == Some("function_call")
+        && let Some(name) = payload.get("name").and_then(Value::as_str)
+    {
+        let decoded = match payload.get("arguments") {
+            Some(Value::String(text)) => serde_json::from_str::<Value>(text).ok(),
+            _ => None,
+        };
+        let input = decoded.as_ref().or_else(|| payload.get("arguments"));
+        observe_call(tallies, name, input);
+    }
+    let Some(blocks) = record.pointer("/message/content").and_then(Value::as_array) else {
+        return;
+    };
+    for block in blocks {
+        if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+            continue;
+        }
+        if let Some(name) = block.get("name").and_then(Value::as_str) {
+            observe_call(tallies, name, block.get("input"));
+        }
+    }
+}
+
+/// Counts one call under its label. A proxy call takes its target as the label and its own
+/// `arguments` (or the `args` alias) as the keys. A proxy call with no target is not counted.
+fn observe_call(tallies: &mut Tallies, name: &str, input: Option<&Value>) {
+    let (label, arguments) = if name == PROXY_TOOL {
+        let Some(label) = input.and_then(proxy_target) else {
+            return;
+        };
+        let arguments = input.and_then(|input| {
+            input
+                .get("arguments")
+                .filter(|value| !value.is_null())
+                .or_else(|| input.get("args"))
+        });
+        (label, arguments)
+    } else {
+        (name.to_owned(), input)
+    };
+    tallies.entry(label).or_default().record_call(arguments);
+}
+
+/// The `<server>:<tool>` label a proxy call names, when both names are present.
+fn proxy_target(input: &Value) -> Option<String> {
+    let server = input.get("server_name")?.as_str()?;
+    let tool = input.get("tool_name")?.as_str()?;
+    (!server.is_empty() && !tool.is_empty()).then(|| format!("{server}:{tool}"))
+}
+
+/// The sorted key names of an arguments object. A JSON object encoded in a string is decoded
+/// first. Anything else has no keys.
+fn argument_keys(arguments: Option<&Value>) -> Vec<String> {
+    let decoded = match arguments {
+        Some(Value::String(text)) => serde_json::from_str::<Value>(text).ok(),
+        _ => None,
+    };
+    match decoded.as_ref().or(arguments) {
+        Some(Value::Object(map)) => map.keys().cloned().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Fetches the daemon's per-tool call counts. An `Err` names why the route is skipped.
+fn daemon_metrics() -> Result<BTreeMap<String, u64>, String> {
+    let base =
+        gobby_core::daemon_url::daemon_url().map_err(|_| "daemon URL unavailable".to_owned())?;
+    let request =
+        ureq::get(&format!("{base}{METRICS_ROUTE}?include_metrics=true")).timeout(DAEMON_TIMEOUT);
+    let response = match gobby_core::local_token::apply_bearer_header(request).call() {
+        Ok(response) => response,
+        Err(ureq::Error::Status(code, _)) => return Err(format!("HTTP status {code}")),
+        Err(_) => return Err("unreachable".to_owned()),
+    };
+    let body: Value = response
+        .into_json()
+        .map_err(|_| "unreadable response".to_owned())?;
+    parse_metrics(&body).ok_or_else(|| "unreadable response".to_owned())
+}
+
+/// Reads `{"tools": {<server>: [{"name": .., "call_count": ..}, ..]}}` into `<server>:<name>`
+/// counts. A `success` of false, or no `tools` object, makes the whole answer unreadable.
+fn parse_metrics(body: &Value) -> Option<BTreeMap<String, u64>> {
+    if body.get("success").and_then(Value::as_bool) == Some(false) {
+        return None;
+    }
+    let servers = body.get("tools")?.as_object()?;
+    let mut calls = BTreeMap::new();
+    for (server, entries) in servers {
+        let Some(entries) = entries.as_array() else {
+            continue;
+        };
+        for entry in entries {
+            let (Some(name), Some(count)) = (
+                entry.get("name").and_then(Value::as_str),
+                entry.get("call_count").and_then(Value::as_u64),
+            ) else {
+                continue;
+            };
+            let total: &mut u64 = calls.entry(format!("{server}:{name}")).or_default();
+            *total = total.saturating_add(count);
+        }
+    }
+    Some(calls)
+}
+
+/// Text as printed. Control characters and quotes are escaped so a name cannot break the layout.
+fn show(text: &str) -> String {
+    text.escape_debug().to_string()
+}
+
+fn count_cell(count: Option<u64>) -> String {
+    count.map_or_else(|| "-".to_owned(), |count| count.to_string())
+}
+
+/// `-` when no transcript call named the tool; `(none)` when its calls carried no arguments.
+fn keys_cell(tally: &Tally) -> String {
+    if tally.transcript_calls.is_none() {
+        "-".to_owned()
+    } else if tally.keys.is_empty() {
+        "(none)".to_owned()
+    } else {
+        tally
+            .keys
+            .iter()
+            .map(|key| show(key))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+fn write_table(out: &mut dyn Write, tallies: &Tallies) -> anyhow::Result<()> {
+    if tallies.is_empty() {
+        writeln!(out, "No tool calls found.")?;
+        return Ok(());
+    }
+    let rows: Vec<[String; 4]> = tallies
+        .iter()
+        .map(|(label, tally)| {
+            [
+                show(label),
+                count_cell(tally.transcript_calls),
+                count_cell(tally.daemon_calls),
+                keys_cell(tally),
+            ]
+        })
+        .collect();
+    let mut widths = [0usize; 3];
+    for (column, width) in widths.iter_mut().enumerate() {
+        *width = rows
+            .iter()
+            .map(|row| row[column].as_str())
+            .chain(std::iter::once(HEADINGS[column]))
+            .map(|cell| cell.chars().count())
+            .max()
+            .unwrap_or(0);
+    }
+    let line = |cells: [&str; 4]| {
+        format!(
+            "{:<w0$}  {:>w1$}  {:>w2$}  {}",
+            cells[0],
+            cells[1],
+            cells[2],
+            cells[3],
+            w0 = widths[0],
+            w1 = widths[1],
+            w2 = widths[2],
+        )
+    };
+    writeln!(out, "{}", line(HEADINGS))?;
+    for row in &rows {
+        writeln!(out, "{}", line(row.each_ref().map(String::as_str)))?;
+    }
+    Ok(())
+}
+
+fn write_skipped(out: &mut dyn Write, skipped: &[String]) -> anyhow::Result<()> {
+    if skipped.is_empty() {
+        return Ok(());
+    }
+    writeln!(out)?;
+    writeln!(out, "Skipped sources")?;
+    for entry in skipped {
+        writeln!(out, "  {entry}")?;
+    }
+    Ok(())
 }
