@@ -419,13 +419,18 @@ def _stamped_bin_dir(source_dir: Path, gobby_home: Path) -> Path:
     return bin_dir
 
 
+def _allow_worktree_daemon(env: dict[str, str], *, database_url: str | None) -> None:
+    """Set the worktree-daemon override for an isolated home (the DATABASE_URL guard gates it)."""
+    env["GOBBY_ALLOW_WORKTREE_DAEMON"] = "1"
+
+
 def _real_cli_env(config_path: Path) -> dict[str, str]:
     """The environment in which the real `gobby start` serves this isolated home."""
     gobby_home = config_path.parent
     env = _daemon_env(config_path)
     # The real CLI may stop this isolated home's pid-file runner and nothing else.
     env["GOBBY_E2E_ISOLATED_HOME"] = str(gobby_home)
-    env["GOBBY_ALLOW_WORKTREE_DAEMON"] = "1"
+    _allow_worktree_daemon(env, database_url=os.environ.get("DATABASE_URL"))
     # Start proves the installed set first, so install the test gdaemon as a
     # stamped one-member set, the shape promotion leaves behind.
     env[NATIVE_BIN_DIR_ENV] = str(_stamped_bin_dir(Path(env[NATIVE_BIN_DIR_ENV]), gobby_home))

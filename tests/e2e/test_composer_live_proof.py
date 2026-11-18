@@ -86,6 +86,31 @@ def e2e_home_dir(e2e_srt_spawn_home: Path) -> Path:
     return e2e_srt_spawn_home
 
 
+def composer_daemon_env(
+    env: dict[str, str],
+    *,
+    home: Path,
+    config: Path,
+    providers: Path,
+    trace_socket: Path,
+    database_url: str | None,
+) -> dict[str, str]:
+    """Add the composer proof daemon's variables to env, the worktree override included."""
+    env.update(
+        GOBBY_CONFIG=str(config),
+        GOBBY_HOME=str(home),
+        CODEX_HOME=str(home / ".codex"),
+        CLAUDE_CONFIG_DIR=str(providers / "claude"),
+        GOBBY_COMPOSER_PROOF_EXECUTION=_GRANT,
+        GOBBY_COMPOSER_PROOF_SOCKET=str(trace_socket),
+        GOBBY_ALLOW_WORKTREE_DAEMON="1",
+    )
+    # File-backed CLI authentication must not inherit even empty API-key overrides.
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+        env.pop(name, None)
+    return env
+
+
 @pytest.fixture
 async def composer_fixture(
     composer_admission: Admission,
@@ -149,18 +174,14 @@ async def composer_fixture(
     )
     env["PYTHONPATH"] = str(_CHECKOUT)
     env = prepare_daemon_env(base_env=env, home_dir=home)
-    env.update(
-        GOBBY_CONFIG=str(config),
-        GOBBY_HOME=str(home),
-        CODEX_HOME=str(home / ".codex"),
-        CLAUDE_CONFIG_DIR=str(providers / "claude"),
-        GOBBY_COMPOSER_PROOF_EXECUTION=_GRANT,
-        GOBBY_COMPOSER_PROOF_SOCKET=str(trace.socket),
-        GOBBY_ALLOW_WORKTREE_DAEMON="1",
+    env = composer_daemon_env(
+        env,
+        home=home,
+        config=config,
+        providers=providers,
+        trace_socket=trace.socket,
+        database_url=os.environ.get("DATABASE_URL"),
     )
-    # File-backed CLI authentication must not inherit even empty API-key overrides.
-    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
-        env.pop(name, None)
     readback: list[dict[str, object]] = []
     log = home / "logs" / "composer-daemon.log"
     errors = home / "logs" / "composer-daemon-error.log"

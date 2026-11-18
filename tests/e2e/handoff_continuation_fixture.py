@@ -87,6 +87,33 @@ def provider_environment(
     return env
 
 
+def handoff_daemon_env(
+    env: dict[str, str],
+    *,
+    home: Path,
+    config: Path,
+    http_port: int,
+    trace_socket: Path,
+    barrier_socket: Path | None,
+    database_url: str | None,
+) -> dict[str, str]:
+    """Add the handoff proof daemon's variables to env, the worktree override included."""
+    env.update(
+        GOBBY_CONFIG=str(config),
+        GOBBY_HOME=str(home),
+        GOBBY_DAEMON_URL=f"http://127.0.0.1:{http_port}",
+        GOBBY_COMPOSER_PROOF_EXECUTION=_GRANT,
+        GOBBY_COMPOSER_PROOF_SOCKET=str(trace_socket),
+        GOBBY_ALLOW_WORKTREE_DAEMON="1",
+    )
+    # File-backed CLI authentication must not inherit even empty API-key overrides.
+    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
+        env.pop(name, None)
+    if barrier_socket is not None:
+        env["GOBBY_HANDOFF_BARRIER_SOCKET"] = str(barrier_socket)
+    return env
+
+
 @pytest.fixture
 async def handoff_fixture(
     handoff_admission: Admission,
@@ -152,19 +179,15 @@ async def handoff_fixture(
     )
     env["PYTHONPATH"] = str(_CHECKOUT)
     env = prepare_daemon_env(base_env=env, home_dir=home)
-    env.update(
-        GOBBY_CONFIG=str(config),
-        GOBBY_HOME=str(home),
-        GOBBY_DAEMON_URL=f"http://127.0.0.1:{http_port}",
-        GOBBY_COMPOSER_PROOF_EXECUTION=_GRANT,
-        GOBBY_COMPOSER_PROOF_SOCKET=str(trace.socket),
-        GOBBY_ALLOW_WORKTREE_DAEMON="1",
+    env = handoff_daemon_env(
+        env,
+        home=home,
+        config=config,
+        http_port=http_port,
+        trace_socket=trace.socket,
+        barrier_socket=barrier.socket if scenario == "restart_hold" else None,
+        database_url=os.environ.get("DATABASE_URL"),
     )
-    # File-backed CLI authentication must not inherit even empty API-key overrides.
-    for name in ("ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"):
-        env.pop(name, None)
-    if scenario == "restart_hold":
-        env["GOBBY_HANDOFF_BARRIER_SOCKET"] = str(barrier.socket)
     readback: list[dict[str, object]] = []
     log = home / "logs" / "daemon.log"
     errors = home / "logs" / "daemon_error.log"

@@ -233,3 +233,196 @@ def test_sweep_keeps_a_database_whose_pid_is_alive() -> None:
         assert _database_exists(url, name)
     finally:
         _drop_database(url, name)
+
+
+# C3: every worktree-daemon override site consults the guard. This block is the C3 red set.
+
+_LIVE_HUB_URL = "postgresql://gobby:gobby@localhost:60891/gobby"
+# Refused by R3 (wrong port), and never the live hub: the live coordinates stay out of
+# the pytest process's environment, even for a test that only exercises a refusal.
+_REFUSED_URL = "postgresql://gobby_test:gobby_test@127.0.0.1:60893/gobby_test"
+_OVERRIDE = "GOBBY_ALLOW_WORKTREE_DAEMON"
+_GUARD_AMBIENT = ("PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE", "GOBBY_HUB_REHEARSAL_PROFILE")
+
+
+@pytest.fixture(autouse=True)
+def _guard_ambient_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep libpq redirects and a rehearsal profile in the process out of the os.environ tests."""
+    for name in _GUARD_AMBIENT:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_guard_worktree_override_refuses_the_live_hub_argument() -> None:
+    from tests.fixtures.hub_guard import guard_worktree_override
+
+    env: dict[str, str] = {}
+    assert guard_worktree_override(env, _LIVE_HUB_URL, None) is False
+    assert _OVERRIDE not in env
+
+
+def test_guard_worktree_override_sets_the_override_for_the_test_hub_argument() -> None:
+    from tests.fixtures.hub_guard import guard_worktree_override
+
+    env: dict[str, str] = {}
+    assert guard_worktree_override(env, _TEST_HUB_URL, None) is True
+    assert env[_OVERRIDE] == "1"
+
+
+def test_guard_worktree_override_never_raises_without_a_url() -> None:
+    from tests.fixtures.hub_guard import guard_worktree_override
+
+    env: dict[str, str] = {}
+    assert guard_worktree_override(env, None, None) is False
+    assert _OVERRIDE not in env
+
+
+def test_autouse_override_refuses_an_unauthorised_hub(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.conftest import _allow_worktree_daemon
+
+    monkeypatch.delenv(_OVERRIDE, raising=False)
+    monkeypatch.setenv("DATABASE_URL", _REFUSED_URL)
+    fixture: Any = _allow_worktree_daemon
+    fixture.__wrapped__(monkeypatch)
+    assert _OVERRIDE not in os.environ
+
+
+def test_autouse_override_clears_an_inherited_override_on_refusal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.conftest import _allow_worktree_daemon
+
+    monkeypatch.setenv(_OVERRIDE, "1")
+    monkeypatch.setenv("DATABASE_URL", _REFUSED_URL)
+    fixture: Any = _allow_worktree_daemon
+    fixture.__wrapped__(monkeypatch)
+    assert _OVERRIDE not in os.environ
+
+
+def test_autouse_override_is_set_for_the_test_hub(monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.conftest import _allow_worktree_daemon
+
+    monkeypatch.delenv(_OVERRIDE, raising=False)
+    monkeypatch.setenv("DATABASE_URL", _TEST_HUB_URL)
+    fixture: Any = _allow_worktree_daemon
+    fixture.__wrapped__(monkeypatch)
+    assert os.environ[_OVERRIDE] == "1"
+
+
+def test_lifecycle_site_refuses_the_live_hub_before_setting_override() -> None:
+    from tests.e2e.test_daemon_lifecycle import _allow_worktree_daemon
+
+    env: dict[str, str] = {}
+    with pytest.raises(HubGuardError) as refusal:
+        _allow_worktree_daemon(env, database_url=_LIVE_HUB_URL)
+    assert refusal.value.rule == "R3"
+    assert _OVERRIDE not in env
+
+
+def test_lifecycle_site_sets_the_override_for_the_test_hub() -> None:
+    from tests.e2e.test_daemon_lifecycle import _allow_worktree_daemon
+
+    env: dict[str, str] = {}
+    _allow_worktree_daemon(env, database_url=_TEST_HUB_URL)
+    assert env[_OVERRIDE] == "1"
+
+
+def test_composer_site_refuses_the_live_hub_and_leaves_env_alone(tmp_path: Path) -> None:
+    from tests.e2e.test_composer_live_proof import composer_daemon_env
+
+    env = {"PATH": "/usr/bin", "ANTHROPIC_API_KEY": "key"}
+    before = dict(env)
+    with pytest.raises(HubGuardError) as refusal:
+        composer_daemon_env(
+            env,
+            home=tmp_path / "home",
+            config=tmp_path / "home" / "config.yaml",
+            providers=tmp_path / "home" / "providers",
+            trace_socket=tmp_path / "trace.sock",
+            database_url=_LIVE_HUB_URL,
+        )
+    assert refusal.value.rule == "R3"
+    assert env == before
+
+
+def test_composer_site_builds_the_full_environment_for_the_test_hub(tmp_path: Path) -> None:
+    from tests.e2e.test_composer_live_proof import composer_daemon_env
+
+    home = tmp_path / "home"
+    providers = home / "providers"
+    config = home / "config.yaml"
+    trace_socket = tmp_path / "trace.sock"
+    env = composer_daemon_env(
+        {
+            "PATH": "/usr/bin",
+            "ANTHROPIC_API_KEY": "a",
+            "OPENAI_API_KEY": "o",
+            "GEMINI_API_KEY": "g",
+        },
+        home=home,
+        config=config,
+        providers=providers,
+        trace_socket=trace_socket,
+        database_url=_TEST_HUB_URL,
+    )
+    assert env == {
+        "PATH": "/usr/bin",
+        "GOBBY_CONFIG": str(config),
+        "GOBBY_HOME": str(home),
+        "CODEX_HOME": str(home / ".codex"),
+        "CLAUDE_CONFIG_DIR": str(providers / "claude"),
+        "GOBBY_COMPOSER_PROOF_EXECUTION": "PD_AUTHORIZED_ISOLATED_EXECUTION",
+        "GOBBY_COMPOSER_PROOF_SOCKET": str(trace_socket),
+        _OVERRIDE: "1",
+    }
+
+
+def test_handoff_site_refuses_the_live_hub_and_leaves_env_alone(tmp_path: Path) -> None:
+    from tests.e2e.handoff_continuation_fixture import handoff_daemon_env
+
+    env = {"PATH": "/usr/bin", "OPENAI_API_KEY": "key"}
+    before = dict(env)
+    with pytest.raises(HubGuardError) as refusal:
+        handoff_daemon_env(
+            env,
+            home=tmp_path / "home",
+            config=tmp_path / "home" / "config.yaml",
+            http_port=4321,
+            trace_socket=tmp_path / "trace.sock",
+            barrier_socket=None,
+            database_url=_LIVE_HUB_URL,
+        )
+    assert refusal.value.rule == "R3"
+    assert env == before
+
+
+@pytest.mark.parametrize("with_barrier", [False, True])
+def test_handoff_site_builds_the_full_environment_for_the_test_hub(
+    tmp_path: Path, with_barrier: bool
+) -> None:
+    from tests.e2e.handoff_continuation_fixture import handoff_daemon_env
+
+    home = tmp_path / "home"
+    config = home / "config.yaml"
+    trace_socket = tmp_path / "trace.sock"
+    barrier_socket = tmp_path / "hold.sock" if with_barrier else None
+    env = handoff_daemon_env(
+        {"PATH": "/usr/bin", "ANTHROPIC_API_KEY": "a", "GEMINI_API_KEY": "g"},
+        home=home,
+        config=config,
+        http_port=4321,
+        trace_socket=trace_socket,
+        barrier_socket=barrier_socket,
+        database_url=_TEST_HUB_URL,
+    )
+    expected = {
+        "PATH": "/usr/bin",
+        "GOBBY_CONFIG": str(config),
+        "GOBBY_HOME": str(home),
+        "GOBBY_DAEMON_URL": "http://127.0.0.1:4321",
+        "GOBBY_COMPOSER_PROOF_EXECUTION": "PD_AUTHORIZED_ISOLATED_EXECUTION",
+        "GOBBY_COMPOSER_PROOF_SOCKET": str(trace_socket),
+        _OVERRIDE: "1",
+    }
+    if barrier_socket is not None:
+        expected["GOBBY_HANDOFF_BARRIER_SOCKET"] = str(barrier_socket)
+    assert env == expected
