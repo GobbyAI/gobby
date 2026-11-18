@@ -1781,16 +1781,23 @@ describe("SessionsTab", () => {
     null,
     { parent_pid: 1234, tty: "/dev/ttys001", term_program: "Ghostty" },
     { gobby_terminal_id: "" },
-  ])("hides Open Terminal without a native terminal ID (%j)", async (terminal_context) => {
-    render(<SessionsTab sessions={[{ ...PAUSED_SESSION, terminal_context }]} />);
+  ])(
+    "hides Open Terminal without a native terminal ID (%j)",
+    async (terminal_context) => {
+      render(
+        <SessionsTab sessions={[{ ...PAUSED_SESSION, terminal_context }]} />,
+      );
 
-    await waitFor(() => {
-      expect(screen.getByText("#202", IN_ROW)).toBeInTheDocument();
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+      await waitFor(() => {
+        expect(screen.getByText("#202", IN_ROW)).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
 
-    expect(screen.queryByRole("menuitem", { name: "Open Terminal" })).toBeNull();
-  });
+      expect(
+        screen.queryByRole("menuitem", { name: "Open Terminal" }),
+      ).toBeNull();
+    },
+  );
 
   it("open terminal focuses session", async () => {
     render(<TerminalFocusHarness />);
