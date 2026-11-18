@@ -288,7 +288,13 @@ def _stop_admission_refusal(
             unknown.append(exc)
             raise
 
-    if not clear_protected_runs(port, force=False, wait=wait, step=_report, fetch=fetch):
+    def step(message: str, **kwargs: Any) -> None:
+        # The stop command's unknown-answer line names its own --force, which the
+        # callers here do not have; the refusal below replaces it.
+        if not unknown:
+            _report(message, **kwargs)
+
+    if not clear_protected_runs(port, force=False, wait=wait, step=step, fetch=fetch):
         if unknown:
             # --wait cannot help here: nothing says a run is active, or that one will end.
             return (

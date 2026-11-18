@@ -396,9 +396,10 @@ versions, any window hold, and, for a partial set, the installed schema identity
 It then stops the daemon with restart intent, replaces the members through the
 install promotion entry points, verifies each restored version, and starts the
 daemon. Before the stop it applies cutover's stop admissions (protected cron runs and
-unresolved handoffs); `--wait` defers them instead of refusing. A daemon that answers
-the protected-run check with an error also refuses, and `--wait` cannot help: stop it
-with `gobby stop --force`, then run the restore again. If the restore fails
+unresolved handoffs); `--wait` defers them instead of refusing. A daemon whose
+answer to the protected-run check cannot be read (an error status or a malformed body)
+also refuses, and `--wait` cannot help: stop it with `gobby stop --force`, which also
+skips the wait for unresolved handoffs, then run the restore again. If the restore fails
 after the stop, the daemon stays stopped and the error names the members replaced.
 A replaced version that differs from the restored one is burned, and a burned version
 is refused by every later promotion, so the fix ships under a new version. `burn`

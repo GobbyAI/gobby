@@ -1211,6 +1211,8 @@ def test_cutover_names_the_forced_stop_when_the_protected_run_answer_is_unknown(
     assert "protected-run answer is unknown (HTTP 503)" in result.output
     assert "gobby stop --force" in result.output
     assert "a restart-protected cron run is active" not in result.output
+    # Cutover has no --force, so the stop command's own remedy must not be printed.
+    assert "re-run with --force" not in result.output
     assert events == []
 
 
