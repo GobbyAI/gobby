@@ -1,0 +1,667 @@
+{
+  "schema_version": 1,
+  "shared_ports": [
+    5432,
+    6333,
+    6334,
+    6379,
+    16379,
+    60887,
+    60888,
+    60889,
+    60890,
+    60891,
+    60892,
+    60987,
+    60988,
+    60990,
+    60991,
+    60992,
+    60993,
+    60994,
+    60995,
+    60996,
+    60997,
+    60998,
+    60999
+  ],
+  "vectors": [
+    {
+      "id": "V01",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@localhost:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "accept",
+      "mode": "test_hub",
+      "rule": ""
+    },
+    {
+      "id": "V02",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "accept",
+      "mode": "test_hub",
+      "rule": ""
+    },
+    {
+      "id": "V03",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@[::1]:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "accept",
+      "mode": "test_hub",
+      "rule": ""
+    },
+    {
+      "id": "V04",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@10.0.0.5:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V05",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1,10.0.0.5:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V06",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892,5432/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V07",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?dbname=gobby",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V08",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?user=postgres",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V09",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?host=10.0.0.5",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V10",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?hostaddr=10.0.0.5",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V11",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?service=x",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V12",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?options=-csearch_path%3Dx",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V13",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?host=%2Ftmp",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V14",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+      "env": {
+        "PGSERVICE": "x"
+      },
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R2"
+    },
+    {
+      "id": "V15",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+      "env": {
+        "PGHOSTADDR": "10.0.0.5"
+      },
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R2"
+    },
+    {
+      "id": "V16",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "accept",
+      "mode": "test_hub",
+      "rule": ""
+    },
+    {
+      "id": "V17",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+      "env": {
+        "GOBBY_TEST_PROTECT": "0"
+      },
+      "profile": null,
+      "expect": "accept",
+      "mode": "test_hub",
+      "rule": ""
+    },
+    {
+      "id": "V18",
+      "op": "check",
+      "url": "postgresql://postgres:postgres@127.0.0.1:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V19",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V20",
+      "op": "check",
+      "url": "postgresql://gobby:gobby@localhost:60891/gobby",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V21",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@localhost:60891/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V22",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60893/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V23",
+      "op": "check",
+      "url": "mysql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V24",
+      "op": "check",
+      "url": null,
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "ARG"
+    },
+    {
+      "id": "V25",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_harness_1_0123456789ab",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V26",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?sslmode=disable",
+      "env": {},
+      "profile": null,
+      "expect": "accept",
+      "mode": "test_hub",
+      "rule": ""
+    },
+    {
+      "id": "V27",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:61500/gobby_test",
+      "env": {},
+      "profile": {
+        "path": "absolute",
+        "mode": "0600",
+        "gobby_home": "<other>",
+        "postgres_host": "127.0.0.1",
+        "postgres_system_identifier": "7000000000000000001",
+        "services_postgres_port": 61500,
+        "content": "json"
+      },
+      "expect": "accept",
+      "mode": "rehearsal",
+      "rule": ""
+    },
+    {
+      "id": "V28",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:61500/gobby_test",
+      "env": {},
+      "profile": {
+        "path": "absolute",
+        "mode": "0644",
+        "gobby_home": "<other>",
+        "postgres_host": "127.0.0.1",
+        "postgres_system_identifier": "7000000000000000001",
+        "services_postgres_port": 61500,
+        "content": "json"
+      },
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R4"
+    },
+    {
+      "id": "V29",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:61500/gobby_test",
+      "env": {},
+      "profile": {
+        "path": "absolute",
+        "mode": "0600",
+        "gobby_home": "<operator_home>",
+        "postgres_host": "127.0.0.1",
+        "postgres_system_identifier": "7000000000000000001",
+        "services_postgres_port": 61500,
+        "content": "json"
+      },
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R4"
+    },
+    {
+      "id": "V30",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60891/gobby_test",
+      "env": {},
+      "profile": {
+        "path": "absolute",
+        "mode": "0600",
+        "gobby_home": "<other>",
+        "postgres_host": "127.0.0.1",
+        "postgres_system_identifier": "7000000000000000001",
+        "services_postgres_port": 60891,
+        "content": "json"
+      },
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R4"
+    },
+    {
+      "id": "V31",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@localhost:61500/gobby_test",
+      "env": {},
+      "profile": {
+        "path": "absolute",
+        "mode": "0600",
+        "gobby_home": "<other>",
+        "postgres_host": "127.0.0.1",
+        "postgres_system_identifier": "7000000000000000001",
+        "services_postgres_port": 61500,
+        "content": "json"
+      },
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R4"
+    },
+    {
+      "id": "V32",
+      "op": "check",
+      "url": "postgresql://gobby:gobby@127.0.0.1:61500/gobby",
+      "env": {},
+      "profile": {
+        "path": "absolute",
+        "mode": "0600",
+        "gobby_home": "<other>",
+        "postgres_host": "127.0.0.1",
+        "postgres_system_identifier": "7000000000000000001",
+        "services_postgres_port": 61500,
+        "content": "json"
+      },
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R4"
+    },
+    {
+      "id": "V33",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:61500/gobby_test",
+      "env": {},
+      "profile": {
+        "path": "symlink",
+        "mode": "0600",
+        "gobby_home": "<other>",
+        "postgres_host": "127.0.0.1",
+        "postgres_system_identifier": "7000000000000000001",
+        "services_postgres_port": 61500,
+        "content": "json"
+      },
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R4"
+    },
+    {
+      "id": "V34",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:61500/gobby_test",
+      "env": {},
+      "profile": {
+        "path": "relative",
+        "mode": "0600",
+        "gobby_home": "<other>",
+        "postgres_host": "127.0.0.1",
+        "postgres_system_identifier": "7000000000000000001",
+        "services_postgres_port": 61500,
+        "content": "json"
+      },
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R4"
+    },
+    {
+      "id": "V35",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:61501/gobby_test",
+      "env": {},
+      "profile": {
+        "path": "absolute",
+        "mode": "0600",
+        "gobby_home": "<other>",
+        "postgres_host": "127.0.0.1",
+        "postgres_system_identifier": "7000000000000000001",
+        "services_postgres_port": 61500,
+        "content": "json"
+      },
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R4"
+    },
+    {
+      "id": "V36",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:61500/gobby_test",
+      "env": {},
+      "profile": {
+        "path": "absolute",
+        "mode": "0600",
+        "gobby_home": "<other>",
+        "postgres_host": "127.0.0.1",
+        "postgres_system_identifier": "7000000000000000001",
+        "services_postgres_port": 61500,
+        "content": "text"
+      },
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R4"
+    },
+    {
+      "id": "V37",
+      "op": "derive",
+      "url": "postgresql://gobby_test:gobby_test@localhost:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "accept",
+      "mode": "test_hub",
+      "rule": "",
+      "pid": 4242,
+      "run_suffix": "0123456789ab",
+      "derived_dbname": "gobby_harness_4242_0123456789ab"
+    },
+    {
+      "id": "V38",
+      "op": "derive",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "ARG",
+      "pid": 0,
+      "run_suffix": "0123456789ab",
+      "derived_dbname": ""
+    },
+    {
+      "id": "V39",
+      "op": "check_derived",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_harness_4242_0123456789ab",
+      "env": {},
+      "profile": null,
+      "expect": "accept",
+      "mode": "test_hub",
+      "rule": "",
+      "expected_dbname": "gobby_harness_4242_0123456789ab",
+      "expected_schema": null
+    },
+    {
+      "id": "V40",
+      "op": "check_derived",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3",
+      "expected_dbname": "gobby_harness_4242_0123456789ab",
+      "expected_schema": null
+    },
+    {
+      "id": "V41",
+      "op": "check_derived",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_harness_4242_0123456789ab?options=-csearch_path%3Dx",
+      "env": {},
+      "profile": null,
+      "expect": "accept",
+      "mode": "test_hub",
+      "rule": "",
+      "expected_dbname": "gobby_harness_4242_0123456789ab",
+      "expected_schema": "x"
+    },
+    {
+      "id": "V42",
+      "op": "check_derived",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_harness_4242_0123456789ab?options=-csearch_path%3Dy",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3",
+      "expected_dbname": "gobby_harness_4242_0123456789ab",
+      "expected_schema": "x"
+    },
+    {
+      "id": "V43",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+      "env": {
+        "PGSERVICEFILE": "/tmp/service.conf"
+      },
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R2"
+    },
+    {
+      "id": "V44",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?port=5432",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V45",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?%68ost=10.0.0.5",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V46",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?servicefile=/tmp/service.conf",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V47",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test#frag",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V48",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?dbname=gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V49",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V50",
+      "op": "check",
+      "url": "postgresql://gobby_test:gobby_test@:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3"
+    },
+    {
+      "id": "V51",
+      "op": "check",
+      "url": "postgres://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "accept",
+      "mode": "test_hub",
+      "rule": ""
+    },
+    {
+      "id": "V52",
+      "op": "derive",
+      "url": "postgresql://gobby_test:gobby_test@localhost:60892/gobby_test",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "ARG",
+      "pid": 4242,
+      "run_suffix": "0123456789AB",
+      "derived_dbname": ""
+    },
+    {
+      "id": "V53",
+      "op": "check_derived",
+      "url": "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_harness_4242_0123456789ab?options=-csearch_path%3Dx&options=-csearch_path%3Dx",
+      "env": {},
+      "profile": null,
+      "expect": "refuse",
+      "mode": "",
+      "rule": "R3",
+      "expected_dbname": "gobby_harness_4242_0123456789ab",
+      "expected_schema": "x"
+    }
+  ]
+}
