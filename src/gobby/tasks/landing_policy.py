@@ -99,6 +99,8 @@ class LandingFreeze:
     reason: str
     set_by_session_id: str | None
     set_at: str | None
+    # The task whose claim holder alone may change or clear the freeze, when bound.
+    task_id: str | None = None
 
 
 _FREEZE_OFF = LandingFreeze(on=False, reason="", set_by_session_id=None, set_at=None)
@@ -130,18 +132,27 @@ def read_freeze(git_common_dir: str | Path) -> LandingFreeze:
     reason = data.get("reason")
     setter = data.get("set_by_session_id")
     set_at = data.get("set_at")
+    task_id = data.get("task_id")
     if (
         not isinstance(on, bool)
         or not isinstance(reason, str)
         or not isinstance(setter, str | None)
         or not isinstance(set_at, str | None)
+        or not isinstance(task_id, str | None)
     ):
         return _FREEZE_UNREADABLE
-    return LandingFreeze(on=on, reason=reason, set_by_session_id=setter, set_at=set_at)
+    return LandingFreeze(
+        on=on, reason=reason, set_by_session_id=setter, set_at=set_at, task_id=task_id
+    )
 
 
 def write_freeze(
-    git_common_dir: str | Path, *, on: bool, reason: str, session_id: str
+    git_common_dir: str | Path,
+    *,
+    on: bool,
+    reason: str,
+    session_id: str,
+    task_id: str | None = None,
 ) -> LandingFreeze:
     """Store the freeze state set or cleared by ``session_id`` and return it."""
     freeze = LandingFreeze(
@@ -149,6 +160,7 @@ def write_freeze(
         reason=reason,
         set_by_session_id=session_id,
         set_at=datetime.now(UTC).isoformat(),
+        task_id=task_id,
     )
     atomic_write_text(freeze_path(git_common_dir), json.dumps(asdict(freeze), indent=2) + "\n")
     return freeze

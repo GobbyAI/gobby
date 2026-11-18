@@ -11,11 +11,13 @@ import subprocess
 import sys
 import tempfile
 import tomllib
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from gobby.install.bin_generations import promotion_refusal
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.utils import spawn
 from gobby.utils.native_bin import native_bin_name
@@ -32,6 +34,26 @@ RELEASE_CRATES = {
 
 class BinaryReleaseVersionError(RuntimeError):
     """A promotion would conceal source changes under an installed version."""
+
+
+_hold_token: str | None = None
+
+
+@contextmanager
+def promotion_hold_token(token: str | None) -> Iterator[None]:
+    """Present a generation-store hold token to every promotion made in the body."""
+    global _hold_token
+    previous = _hold_token
+    _hold_token = token
+    try:
+        yield
+    finally:
+        _hold_token = previous
+
+
+def current_hold_token() -> str | None:
+    """The hold token presented by the innermost enclosing promotion_hold_token body."""
+    return _hold_token
 
 
 @dataclass(frozen=True)
@@ -147,10 +169,16 @@ def _embedded_entry(crate: str, entry: object) -> PurePosixPath:
 
 
 def _embedded_inputs(read: Manifests, crates: Collection[str]) -> list[PurePosixPath]:
-    """Paths that crates in a closure declare under [package.metadata.gobby]."""
+    """Paths that crates in a closure declare under [package.metadata.gobby].
+
+    A crate whose manifest the revision lacks was deleted there and declares nothing.
+    """
     entries: list[PurePosixPath] = []
     for crate in sorted(crates):
-        metadata = _manifest(read, f"{crate}/Cargo.toml").get("package", {}).get("metadata", {})
+        manifest = read(f"{crate}/Cargo.toml")
+        if manifest is None:
+            continue
+        metadata = manifest.get("package", {}).get("metadata", {})
         gobby = metadata.get("gobby", {})
         if not isinstance(gobby, dict):
             raise BinaryReleaseVersionError(f"{crate}: gobby metadata must be a table")
@@ -176,7 +204,11 @@ def _locked_dependencies(read: Manifests, crates: Collection[str]) -> bytes:
         return b""
     packages = lock.get("package", [])
     selected: dict[str, dict[str, Any]] = {}
-    pending = [_manifest(read, f"{crate}/Cargo.toml")["package"]["name"] for crate in crates]
+    pending = [
+        manifest["package"]["name"]
+        for crate in crates
+        if (manifest := read(f"{crate}/Cargo.toml")) is not None
+    ]
     while pending:
         reference = pending.pop()
         parts = reference.split()
@@ -278,10 +310,13 @@ def check_binary_release(
     workspace_root: Path | None,
     source_identity: str | None = None,
 ) -> BinaryReleaseIdentity:
-    """Fail closed before promotion when an installed version conceals new sources."""
+    """Fail closed before promotion on a store hold, a burned version or concealed sources."""
     version = probe_native_bin_version(source)
     if version is None:
         raise BinaryReleaseVersionError(f"{name}: candidate did not report a version; rebuild it")
+    refusal = promotion_refusal(bin_dir, name, version, current_hold_token())
+    if refusal is not None:
+        raise BinaryReleaseVersionError(f"{name}: {refusal}")
     artifact_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
     candidate = BinaryReleaseIdentity(
         version,
@@ -374,7 +409,7 @@ def _touches_closure(
         after, crates
     ):
         return True
-    embedded = _embedded_inputs(before, crates)
+    embedded = _embedded_inputs(after, crates)
     if any(_within(path, embedded) for path in changed):
         return True
     return any(
@@ -389,6 +424,8 @@ def affected_binaries(repo: Path, base: str, target: str, changed: Collection[st
 
     Closures come from the base manifests: any target edit that reaches a new crate edits a
     manifest already in the base closure, so the changed paths still reach the binary.
+    Embedded declarations come from the target, so one this integration adds, changes or
+    repairs applies at its landing.
     """
     if not changed:
         return []

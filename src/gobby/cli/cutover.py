@@ -333,6 +333,9 @@ def run_cutover(
     pass the same release preflight as the set before anything stops, so a changed
     source under an unbumped version refuses the cutover instead of leaving them stale.
     """
+    # First, so an unusable generation store is named as such before the build.
+    if refusal := retention_refusal(bin_dir):
+        raise CutoverError(f"refusing to promote: {refusal}")
     try:
         sources = {name: workspace_source_identity(root, name) for name in _BINARY_NAMES}
         build = _build_artifacts(root)
@@ -348,6 +351,7 @@ def run_cutover(
         raise CutoverError(f"refusing to promote: {exc}") from exc
     if refusal := start_refusal(artifacts["gdaemon"]):
         raise CutoverError(f"refusing to promote: {refusal}")
+    # Again after the build, which spends the disk space a capture needs.
     if refusal := retention_refusal(bin_dir):
         raise CutoverError(f"refusing to promote: {refusal}")
     _prove_catalog_freshness(root, artifacts["gdaemon"])

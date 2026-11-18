@@ -6,13 +6,17 @@ A generation copies the installed binaries and their receipts before a promotion
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import logging
 import os
+import secrets
 import shutil
 import tempfile
+import threading
 import time
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +39,7 @@ _LOCK_NAME = "generations"
 _TIME_FORMAT = "%Y%m%dT%H%M%SZ"
 _FREE_SPACE_MARGIN = 16 * 1024 * 1024
 _REFUSAL_PREFIX = "generation retention unavailable: "
+_PROMOTION_PREFIX = "promotion refused: "
 _SIDECAR_SUFFIXES = ("-release-identity.json", "-version", "-install.json", "-source-sha256")
 _EXTRA_FILES = {
     "gdaemon": (".gdaemon-schema-identity.json",),
@@ -150,7 +155,7 @@ def record_promotion(
         with _lock(bin_dir):
             state = read_state(bin_dir)
             hold = state.get("hold")
-            identity = hold if isinstance(hold, dict) else {}
+            identity = hold if isinstance(hold, dict) and not _hold_expired(hold, moment) else {}
             installed = _section(state, "installed")
             for name in names:
                 binary = _binary(bin_dir, name)
@@ -191,6 +196,188 @@ def retention_refusal(bin_dir: Path) -> str | None:
     return None
 
 
+def set_hold(
+    bin_dir: Path,
+    *,
+    task_id: str,
+    session_id: str,
+    expires_at: datetime,
+    now: datetime | None = None,
+) -> str:
+    """Keep the generations a rollback needs until expires_at; returns the token that holds them."""
+    moment = _utc(now)
+    _check_expiry(expires_at, moment)
+    token = secrets.token_urlsafe(32)
+    with _store_failures("set hold"), _lock(bin_dir):
+        held = read_state(bin_dir).get("hold")
+        if isinstance(held, dict) and not _hold_expired(held, moment):
+            raise GenerationStoreError(
+                f"hold is already set by task {held.get('task_id')} until {held.get('expires_at')}"
+            )
+        retain_outgoing(bin_dir, MANAGED_BINARIES, now=moment)
+        state = read_state(bin_dir)
+        state["hold"] = {
+            "task_id": task_id,
+            "session_id": session_id,
+            "token": token,
+            "set_at": moment.isoformat(),
+            "expires_at": _utc(expires_at).isoformat(),
+            "first_seq": _hold_first_seq(bin_dir, state, list_generations(bin_dir)),
+        }
+        _write_state(bin_dir, state)
+    return token
+
+
+def extend_hold(
+    bin_dir: Path, token: str, *, expires_at: datetime, now: datetime | None = None
+) -> None:
+    """Move the stored hold's expiry; only the holder's token may do so."""
+    moment = _utc(now)
+    _check_expiry(expires_at, moment)
+    with _store_failures("extend hold"), _lock(bin_dir):
+        state = read_state(bin_dir)
+        hold = state.get("hold")
+        if not isinstance(hold, dict):
+            raise GenerationStoreError("no generation hold is set to extend")
+        if not _token_matches(hold, token):
+            raise GenerationStoreError("generation hold token does not match")
+        hold["expires_at"] = _utc(expires_at).isoformat()
+        _write_state(bin_dir, state)
+
+
+def clear_hold(bin_dir: Path) -> bool:
+    """Remove the stored hold; True when one was stored."""
+    if not _store(bin_dir).exists():
+        return False
+    with _store_failures("clear hold"), _lock(bin_dir):
+        state = read_state(bin_dir)
+        if state.get("hold") is None:
+            return False
+        state["hold"] = None
+        _write_state(bin_dir, state)
+        return True
+
+
+def hold_status(bin_dir: Path, *, now: datetime | None = None) -> dict[str, Any] | None:
+    """The stored hold without its token, or None when none is stored."""
+    hold = read_state(bin_dir).get("hold")
+    if not isinstance(hold, dict):
+        return None
+    return {
+        "task_id": hold.get("task_id"),
+        "session_id": hold.get("session_id"),
+        "set_at": hold.get("set_at"),
+        "expires_at": hold.get("expires_at"),
+        "first_seq": hold.get("first_seq"),
+        "expired": _hold_expired(hold, _utc(now)),
+    }
+
+
+def burn_version(
+    bin_dir: Path,
+    name: str,
+    version: str,
+    *,
+    generation: str | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Forbid promoting this version of a managed binary again; the first burn is kept."""
+    if name not in MANAGED_BINARIES:
+        raise GenerationStoreError(f"cannot burn {name!r}: it is not a managed binary")
+    if not version:
+        raise GenerationStoreError(f"cannot burn {name!r}: the version is empty")
+    moment = _utc(now)
+    with _store_failures("burn version"), _lock(bin_dir):
+        state = read_state(bin_dir)
+        burned = _section(state, "burned")
+        versions = _section(burned, name)
+        versions.setdefault(version, {"burned_at": moment.isoformat(), "generation": generation})
+        burned[name] = versions
+        state["burned"] = burned
+        _write_state(bin_dir, state)
+
+
+def promotion_refusal(
+    bin_dir: Path,
+    name: str,
+    version: str | None,
+    hold_token: str | None,
+    *,
+    now: datetime | None = None,
+) -> str | None:
+    """Why promoting name at version is refused, or None; takes no lock and writes nothing."""
+    if name not in MANAGED_BINARIES:
+        return None
+    try:
+        reason = _refusal_reason(bin_dir, name, version, hold_token, _utc(now))
+    except GenerationStoreError as exc:
+        reason = str(exc)
+    return None if reason is None else f"{_PROMOTION_PREFIX}{reason}"
+
+
+@contextmanager
+def promotion_guard(
+    bin_dir: Path, members: Iterable[str], *, now: datetime | None = None
+) -> Iterator[Generation | None]:
+    """Hold the store lock across a promotion, yielding the capture taken on entry."""
+    names = list(members)
+    with _lock(bin_dir):
+        yield retain_outgoing(bin_dir, names, now=now)
+
+
+def _check_expiry(expires_at: datetime, moment: datetime) -> None:
+    if _utc(expires_at) <= moment:
+        raise GenerationStoreError(f"hold expiry {expires_at.isoformat()} is not later than now")
+
+
+def _token_matches(hold: dict[str, Any], token: str) -> bool:
+    stored = hold.get("token")
+    return isinstance(stored, str) and hmac.compare_digest(stored.encode(), token.encode())
+
+
+def _hold_expired(hold: dict[str, Any], moment: datetime) -> bool:
+    """True once the hold's expiry is not later than moment; an unreadable expiry never expires."""
+    expires_at = _parse_instant(hold.get("expires_at"))
+    return expires_at is not None and expires_at <= moment
+
+
+def _hold_first_seq(bin_dir: Path, state: dict[str, Any], generations: list[Generation]) -> int:
+    """The lowest sequence holding the installed bytes of a member, or the next sequence."""
+    seqs: list[int] = []
+    for name in _installed_managed(bin_dir, MANAGED_BINARIES):
+        sha = _sha256(_binary(bin_dir, name))
+        for generation in _recording(generations, name):
+            if _recorded_sha(generation, name) == sha:
+                seqs.append(generation.seq)
+                break
+    return min(seqs) if seqs else _next_seq(state, generations)
+
+
+def _refusal_reason(
+    bin_dir: Path, name: str, version: str | None, hold_token: str | None, moment: datetime
+) -> str | None:
+    state = read_state(bin_dir)
+    burned = _section(_section(state, "burned"), name)
+    if version is not None and version in burned:
+        return (
+            f"{name} {version} is burned; a burned version is never promoted again, "
+            "so bump the patch version"
+        )
+    hold = state.get("hold")
+    if hold is None:
+        return None
+    if not isinstance(hold, dict):
+        raise GenerationStoreError("generation hold is not an object")
+    if _hold_expired(hold, moment):
+        return None
+    if hold_token is not None and _token_matches(hold, hold_token):
+        return None
+    return (
+        f"the generation store is held by task {hold.get('task_id')} in session "
+        f"{hold.get('session_id')} until {hold.get('expires_at')}; pass its hold token"
+    )
+
+
 def _store(bin_dir: Path) -> Path:
     return bin_dir / GENERATIONS_DIR
 
@@ -204,11 +391,40 @@ def _utc(now: datetime | None) -> datetime:
     return datetime.now(UTC) if now is None else now.astimezone(UTC)
 
 
-def _lock(bin_dir: Path) -> NativeBinFileLock:
-    """The store lock, waited for briefly: a capture holds it for well under a second."""
+class _HeldLocks(threading.local):
+    """The store lock directories this thread holds, so its nested calls reuse them."""
+
+    def __init__(self) -> None:
+        self.bin_dirs: set[str] = set()
+
+
+_HELD = _HeldLocks()
+
+
+@contextmanager
+def _lock(bin_dir: Path) -> Iterator[None]:
+    """The store lock, reentrant on the thread that already holds it for this bin_dir."""
+    key = str(bin_dir.resolve())
+    if key in _HELD.bin_dirs:
+        yield
+        return
+    lock = _acquire_lock(bin_dir)
+    _HELD.bin_dirs.add(key)
+    try:
+        yield
+    finally:
+        _HELD.bin_dirs.discard(key)
+        lock.release()
+
+
+def _acquire_lock(bin_dir: Path) -> NativeBinFileLock:
+    """Wait briefly for the store lock: a capture holds it for well under a second."""
     deadline = time.monotonic() + _LOCK_WAIT_SECONDS
     while True:
-        lock = try_acquire_native_bin_lock(_LOCK_NAME, bin_dir=bin_dir)
+        try:
+            lock = try_acquire_native_bin_lock(_LOCK_NAME, bin_dir=bin_dir)
+        except OSError as exc:
+            raise GenerationStoreError(f"generation store cannot be locked: {exc}") from exc
         if lock is not None:
             return lock
         if time.monotonic() >= deadline:
@@ -216,6 +432,17 @@ def _lock(bin_dir: Path) -> NativeBinFileLock:
                 "generation store is busy; another promotion is retaining generations"
             )
         time.sleep(_LOCK_POLL_SECONDS)
+
+
+@contextmanager
+def _store_failures(action: str) -> Iterator[None]:
+    """Report an OSError from a store write as a GenerationStoreError naming the action."""
+    try:
+        yield
+    except GenerationStoreError:
+        raise
+    except OSError as exc:
+        raise GenerationStoreError(f"could not {action}: {exc}") from exc
 
 
 def _check_state(
@@ -466,15 +693,21 @@ def _kept_ids(
 
 
 def _instant(value: object) -> datetime:
-    """An aware UTC time from an ISO-8601 string; a naive one is taken as UTC."""
-    if isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value)
-        except ValueError:
-            pass
-        else:
-            return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
-    raise GenerationStoreError(f"generation state has an invalid time: {value!r}")
+    parsed = _parse_instant(value)
+    if parsed is None:
+        raise GenerationStoreError(f"generation state has an invalid time: {value!r}")
+    return parsed
+
+
+def _parse_instant(value: object) -> datetime | None:
+    """An aware UTC time from an ISO-8601 string; a naive one is taken as UTC, else None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _remove_tree(path: Path) -> None:
@@ -504,9 +737,16 @@ __all__ = [
     "STATE_FILE",
     "Generation",
     "GenerationStoreError",
+    "burn_version",
+    "clear_hold",
+    "extend_hold",
+    "hold_status",
     "list_generations",
+    "promotion_guard",
+    "promotion_refusal",
     "read_state",
     "record_promotion",
     "retain_outgoing",
     "retention_refusal",
+    "set_hold",
 ]

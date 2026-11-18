@@ -20,6 +20,8 @@ from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_generations import (
     MANAGED_BINARIES,
     GenerationStoreError,
+    promotion_guard,
+    promotion_refusal,
     record_promotion,
     retain_outgoing,
 )
@@ -28,6 +30,7 @@ from gobby.install.bin_release_identity import (
     BinaryReleaseIdentity,
     BinaryReleaseVersionError,
     check_binary_release,
+    current_hold_token,
     write_release_identity,
 )
 from gobby.utils import spawn
@@ -175,16 +178,48 @@ def _stage_and_promote(
             identity = check_binary_release(
                 name, staged_binary, bin_dir=bin_dir, workspace_root=None
             )
-        managed = name in MANAGED_BINARIES
-        if managed:
-            retain_outgoing(bin_dir, [name])
-        os.replace(staged_binary, bin_dir / binary_name)
-        if identity is not None:
-            write_release_identity(bin_dir, name, identity)
-        if managed:
-            _record_promotion(bin_dir, name)
+        if name in MANAGED_BINARIES:
+            # The empty guard only holds the store lock across the swap; retention stays an
+            # explicit call here, under that lock, so this module keeps its retention seam.
+            with promotion_guard(bin_dir, []):
+                retain_outgoing(bin_dir, [name])
+                _swap_in(
+                    staged_binary,
+                    bin_dir=bin_dir,
+                    binary_name=binary_name,
+                    name=name,
+                    identity=identity,
+                )
+                _record_promotion(bin_dir, name)
+        else:
+            _swap_in(
+                staged_binary,
+                bin_dir=bin_dir,
+                binary_name=binary_name,
+                name=name,
+                identity=identity,
+            )
     finally:
         shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+def _swap_in(
+    staged_binary: Path,
+    *,
+    bin_dir: Path,
+    binary_name: str,
+    name: str,
+    identity: BinaryReleaseIdentity | None,
+) -> None:
+    """Replace the installed binary unless a hold or burn set since preflight refuses it."""
+    refusal = promotion_refusal(
+        bin_dir, name, identity.version if identity is not None else None, current_hold_token()
+    )
+    if refusal is not None:
+        raise BinaryReleaseVersionError(f"{name}: {refusal}")
+    os.replace(staged_binary, bin_dir / binary_name)
+    if identity is not None:
+        write_release_identity(bin_dir, name, identity)
 
 
 def _record_promotion(bin_dir: Path, name: str) -> None:

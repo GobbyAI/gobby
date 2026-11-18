@@ -62,7 +62,7 @@ from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.agent_models import AgentDefinitionBody
 from gobby.workflows.agent_resolver import session_agent_definition
 
-__all__ = ["LandingResult", "land_candidate", "main_checkout_target"]
+__all__ = ["LandingResult", "holds_task_claim", "land_candidate", "main_checkout_target"]
 
 logger = logging.getLogger(__name__)
 
@@ -413,6 +413,23 @@ def _manages_task(db: HubDatabase, task: Task, caller_session_id: str) -> bool:
     return task_scope_refusal(task, caller.id, definition[0].task_land_scope, db=db) is None
 
 
+def holds_task_claim(db: HubDatabase, task_id: str, session_id: str) -> bool:
+    """Whether ``session_id`` holds the claim on the task; an unresolved task has no holder."""
+    try:
+        task = LocalTaskManager(db).get_task(task_id)
+    except ValueError:
+        return False
+    return task.claimed_by_session_id == session_id
+
+
+def _landing_frozen(db: HubDatabase, common: Path, caller_session_id: str) -> bool:
+    """A freeze refuses everyone but the claim holder of the task it is bound to."""
+    freeze = read_freeze(common)
+    if not freeze.on:
+        return False
+    return freeze.task_id is None or not holds_task_claim(db, freeze.task_id, caller_session_id)
+
+
 async def candidate_scope_paths(
     main: Path,
     tip: str,
@@ -707,8 +724,9 @@ async def land_candidate(
                 if missing_carriers:
                     blockers.append("schema_carriers_missing")
                 activation_class = classify_paths(paths)
-                # A freeze refuses outright; restart-class landings need no extra approval.
-                if (await asyncio.to_thread(read_freeze, common)).on:
+                # A freeze refuses outright unless the caller holds its bound task's claim;
+                # restart-class landings need no extra approval.
+                if await asyncio.to_thread(_landing_frozen, db, common, caller_session_id):
                     blockers.append("landing_frozen")
                 # Only the integration tip counts; unlanded peers never block a landing.
                 if shared:

@@ -21,8 +21,8 @@ from gobby.install.bin_freshness_models import managed_bin_specs
 from gobby.install.bin_generations import (
     MANAGED_BINARIES,
     GenerationStoreError,
+    promotion_guard,
     record_promotion,
-    retain_outgoing,
 )
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.storage.schema_identity_pin import (
@@ -142,20 +142,21 @@ def promote_workspace_binary_set(
                 workspace_root=workspace_root,
                 source_identities=source_identities,
             )
-            retain_outgoing(bin_dir, MANAGED_BINARIES)
-            for member in ordered:
-                bin_freshness_promotion.stage_and_promote_binary_file(
-                    candidates[member],
-                    destination=bin_dir / native_bin_name(member),
-                    prepare_staged=_codesign_workspace_binary,
-                    workspace_root=workspace_root,
-                    identity=releases[member],
-                )
-                promoted.append(member)
-            if complete_set:
-                if metadata is not None:
-                    _write_promotion_metadata(bin_dir, metadata)
-                _write_identity_stamp(bin_dir, identities[SET_MEMBERS[0]])
+            with promotion_guard(bin_dir, MANAGED_BINARIES):
+                for member in ordered:
+                    bin_freshness_promotion.stage_and_promote_binary_file(
+                        candidates[member],
+                        destination=bin_dir / native_bin_name(member),
+                        prepare_staged=_codesign_workspace_binary,
+                        workspace_root=workspace_root,
+                        identity=releases[member],
+                    )
+                    promoted.append(member)
+                if complete_set:
+                    if metadata is not None:
+                        _write_promotion_metadata(bin_dir, metadata)
+                    _write_identity_stamp(bin_dir, identities[SET_MEMBERS[0]])
+                _record_promotion(bin_dir, promoted, source_commit)
     except Exception as exc:
         unpromoted = [member for member in ordered if member not in promoted]
         raise BinarySetCoherenceError(
@@ -163,7 +164,6 @@ def promote_workspace_binary_set(
             f"promoted: {_member_list(promoted)}; "
             f"unpromoted: {_member_list(unpromoted)}; cause: {exc}"
         ) from exc
-    _record_promotion(bin_dir, promoted, source_commit)
 
 
 def _record_promotion(bin_dir: Path, promoted: list[str], source_commit: str | None) -> None:
