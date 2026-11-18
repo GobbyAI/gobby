@@ -2443,6 +2443,7 @@ dependencies = [
  "gix",
  "glob",
  "gobby-core",
+ "gobby-test-support",
  "insta",
  "libc",
  "log",
@@ -2504,6 +2505,7 @@ dependencies = [
  "deadpool-postgres",
  "dirs",
  "fernet",
+ "gobby-test-support",
  "httpdate",
  "ignore",
  "jsonschema",
@@ -2548,6 +2550,7 @@ dependencies = [
  "gobby-core",
  "gobby-runtime",
  "gobby-terminals",
+ "gobby-test-support",
  "hmac 0.12.1",
  "http-body-util",
  "hyper",
@@ -2692,6 +2695,7 @@ dependencies = [
  "bincode",
  "chrono",
  "gobby-core",
+ "gobby-test-support",
  "libc",
  "rustix",
  "serde",
@@ -2701,6 +2705,21 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "gobby-test-support"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "nix 0.29.0",
+ "rand 0.8.6",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "tokio",
+ "tokio-postgres",
+ "ureq",
 ]
 
 [[package]]

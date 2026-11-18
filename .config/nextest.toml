@@ -39,6 +39,7 @@ serial-db = { max-threads = 1 }
 gterm-pty = { max-threads = 1 }
 gdaemon-lease = { max-threads = 1 }
 gdaemon-native-ws = { max-threads = 1 }
+harness-full-daemon = { max-threads = 1 }
 
 [[profile.default.overrides]]
 filter = 'package(gobby-hooks)'
@@ -118,3 +119,9 @@ test-group = 'gterm-pty'
 filter = 'package(gobby-client) & binary(suite) & test(/^frame_source_live::/)'
 test-group = 'gterm-pty'
 slow-timeout = { period = "120s", terminate-after = 3 }
+
+[[profile.default.overrides]]
+# Full-daemon and loopback tests each start gdaemon and a Python worker on their
+# own database. One at a time keeps the shared test hub's tmpfs and ports bounded.
+filter = 'binary(suite) & (test(/^full_daemon::/) | test(/^loopback_network::/))'
+test-group = 'harness-full-daemon'

@@ -23,17 +23,26 @@ mod compare;
 #[path = "front_door.rs"]
 mod front_door;
 
+#[path = "full_daemon.rs"]
+mod full_daemon;
+
 #[path = "heartbeat.rs"]
 mod heartbeat;
 
 #[path = "http_contracts.rs"]
 mod http_contracts;
 
+#[path = "http_replay/mod.rs"]
+mod http_replay;
+
 #[path = "lease.rs"]
 mod lease;
 
 #[path = "lifecycle.rs"]
 mod lifecycle;
+
+#[path = "loopback_network.rs"]
+mod loopback_network;
 
 #[path = "native_ws_transport.rs"]
 mod native_ws_transport;
@@ -73,6 +82,9 @@ mod run_modes;
 
 #[path = "schema_cli.rs"]
 mod schema_cli;
+
+#[path = "waivers.rs"]
+mod waivers;
 
 #[path = "ws_broker.rs"]
 mod ws_broker;

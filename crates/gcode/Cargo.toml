@@ -118,3 +118,4 @@ proptest = "1"
 serial_test = "3"
 syn = { version = "2", features = ["full"] }
 temp-env = "0.3.6"
+gobby-test-support = { path = "../gtest-support" }
