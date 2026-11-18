@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from gobby.terminals.composer_edits import ComposerEdit, decode_edits
 from gobby.terminals.host_protocol import HostListRow
 
 InputKind = Literal["input", "paste"]
@@ -45,6 +46,8 @@ class InputActivityEvent:
     # The chunk holds CR outside bracketed paste; ``None`` from a host without the flag.
     submit: bool | None = None
     effect: InputEffect = "edit"
+    edits: tuple[ComposerEdit, ...] | None = None
+    edit_summary_present: bool = False
 
 
 HostEvent = TerminalExitedEvent | InputActivityEvent
@@ -102,6 +105,8 @@ def decode_host_event(payload: dict[str, Any]) -> HostEvent:
             seq=int(payload["seq"]),
             submit=submit if isinstance(submit := payload.get("submit"), bool) else None,
             effect=_input_effect(payload.get("effect", "edit")),
+            edits=decode_edits(payload.get("edits"), submit=payload.get("submit")),
+            edit_summary_present="edits" in payload,
         )
     raise ValueError(f"unknown host event: {event}")
 

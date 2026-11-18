@@ -8,6 +8,35 @@ fn labels(state: &ContextMenuState) -> Vec<&str> {
 }
 
 #[test]
+fn new_grid_follows_new_tab_and_arrange_only_changes_existing_panes() {
+    let mut ws = Workspace::scripted();
+    let pane = ws.open_terminal("term-alpha", "native", "epoch").unwrap();
+    let mut chrome = Chrome::dark();
+    chrome.open_pane(pane, "alpha");
+    let global = build_menu(&ws, &chrome, ContextMenuKind::Global, (0, 0));
+    assert_eq!(global.items[0].action, MenuAction::Act(Action::NewTerminal));
+    assert_eq!(global.items[1].action, MenuAction::Act(Action::NewTab));
+    assert_eq!(global.items[2].action, MenuAction::OpenNewGrid);
+    assert_eq!(global.items[2].label, "New grid...");
+    let tab = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (0, 0));
+    assert_eq!(tab.items[0].action, MenuAction::Act(Action::NewTab));
+    assert_eq!(tab.items[1].action, MenuAction::OpenNewGrid);
+    assert_eq!(tab.items[1].label, "New grid...");
+    let target = ArrangeTarget {
+        tab: chrome.active_tab().unwrap().id.clone(),
+        pane: Some(pane),
+    };
+    let arrange = build_menu(
+        &ws,
+        &chrome,
+        ContextMenuKind::Submenu(Submenu::Arrange(target.clone())),
+        (0, 0),
+    );
+    assert_eq!(arrange.items.len(), 5);
+    assert!(arrange.items.iter().all(|item| matches!(&item.action, MenuAction::Arrange { target: actual, .. } if actual == &target)));
+}
+
+#[test]
 fn view_menu_exposes_sidebar_controls_without_a_section_tree() {
     let ws = Workspace::scripted();
     let mut chrome = Chrome::dark();
@@ -238,17 +267,23 @@ fn menus_list_items_per_target_and_state() {
     let menu = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (3, 0));
     assert_eq!(
         labels(&menu),
-        ["New tab", "Rename tab", "Arrange ▸", "Close tab"],
+        [
+            "New tab",
+            "New grid...",
+            "Rename tab",
+            "Arrange ▸",
+            "Close tab"
+        ],
         "one tab has nowhere to move and nothing to sort"
     );
     assert_eq!(
-        menu.items[2].action,
+        menu.items[3].action,
         MenuAction::OpenSubmenu(Submenu::Arrange(ArrangeTarget {
             tab: tab_id,
             pane: None,
         }))
     );
-    assert_eq!(menu.items[3].action, MenuAction::Act(Action::CloseTab));
+    assert_eq!(menu.items[4].action, MenuAction::Act(Action::CloseTab));
     let gone = build_menu(&ws, &chrome, ContextMenuKind::Tab(9), (3, 0));
     assert!(
         !labels(&gone).contains(&"Arrange ▸"),
@@ -261,6 +296,7 @@ fn menus_list_items_per_target_and_state() {
         [
             "New terminal",
             "New tab",
+            "New grid...",
             "New project…",
             "Open project…",
             "Settings",
@@ -271,30 +307,30 @@ fn menus_list_items_per_target_and_state() {
             "Quit",
         ]
     );
-    assert_eq!(menu.items[2].action, MenuAction::Act(Action::NewProject));
-    assert_eq!(menu.items[3].action, MenuAction::Act(Action::OpenProject));
-    assert_eq!(menu.items[6].action, MenuAction::Act(Action::ReloadConfig));
-    assert_eq!(menu.items[9].action, MenuAction::Act(Action::Quit));
+    assert_eq!(menu.items[3].action, MenuAction::Act(Action::NewProject));
+    assert_eq!(menu.items[4].action, MenuAction::Act(Action::OpenProject));
+    assert_eq!(menu.items[7].action, MenuAction::Act(Action::ReloadConfig));
+    assert_eq!(menu.items[10].action, MenuAction::Act(Action::Quit));
     assert!(menu.items.iter().all(|item| item.enabled));
 
     // Rows sit one cell inside the popup at the anchor: `destroy orphaned
-    // terminals…` makes it 31 wide, ten items make it 12 tall.
+    // terminals…` makes it 31 wide, eleven items make it 13 tall.
     assert_eq!(
         menu_rect(menu.anchor, &menu.items),
-        Rect::new(40, 12, 31, 12)
+        Rect::new(40, 12, 31, 13)
     );
-    assert_eq!(menu.item_rects.len(), 10);
+    assert_eq!(menu.item_rects.len(), 11);
     assert_eq!(menu.item_rects[0], Rect::new(41, 13, 29, 1));
     assert_eq!(menu_hit(&menu, 41, 13), Some(0));
     assert_eq!(menu_hit(&menu, 57, 15), Some(2));
     assert_eq!(menu_hit(&menu, 40, 13), None, "the border is not a row");
-    assert_eq!(menu_hit(&menu, 45, 22), Some(9), "the last row");
+    assert_eq!(menu_hit(&menu, 45, 23), Some(10), "the last row");
     assert_eq!(
-        menu_hit(&menu, 45, 23),
+        menu_hit(&menu, 45, 24),
         None,
         "the bottom border is not a row"
     );
-    assert_eq!(menu_hit(&menu, 45, 24), None, "below the last row");
+    assert_eq!(menu_hit(&menu, 45, 25), None, "below the last row");
     let short = [item("Zoom", MenuAction::Act(Action::Zoom))];
     assert_eq!(
         menu_rect((0, 0), &short).width,
@@ -353,6 +389,7 @@ fn menu_bar_menus_regroup_items_per_title() {
         [
             "New terminal",
             "New tab",
+            "New grid...",
             "New project…",
             "Open project…",
             "Rename tab",
@@ -366,6 +403,7 @@ fn menu_bar_menus_regroup_items_per_title() {
         [
             MenuAction::Act(Action::NewTerminal),
             MenuAction::Act(Action::NewTab),
+            MenuAction::OpenNewGrid,
             MenuAction::Act(Action::NewProject),
             MenuAction::Act(Action::OpenProject),
             MenuAction::Act(Action::RenameTab),
@@ -479,7 +517,6 @@ fn menu_bar_menus_regroup_items_per_title() {
             "Main horizontal",
             "Main vertical",
             "Tiled",
-            "New grid…",
         ]
     );
     let arrange_to = |layout| MenuAction::Arrange {
@@ -494,7 +531,6 @@ fn menu_bar_menus_regroup_items_per_title() {
             arrange_to(ArrangeLayout::MainHorizontal),
             arrange_to(ArrangeLayout::MainVertical),
             arrange_to(ArrangeLayout::Tiled),
-            MenuAction::OpenNewGrid,
         ]
     );
     let bare = menu(&ws, &Chrome::dark(), MenuBarMenu::Window);

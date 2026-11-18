@@ -32,6 +32,7 @@ pub(crate) struct HostEvents {
 
 /// One accepted `Input`/`Paste` from an attached frame stream.
 pub(crate) struct InputActivity {
+    pub edits: Option<Vec<super::edits::Edit>>,
     pub effect: InputEffect,
     pub terminal_id: String,
     pub host_terminal_id: String,
@@ -145,19 +146,31 @@ impl HostEvents {
     }
 
     /// Reports one accepted frame-stream write without its payload.
-    pub async fn emit_input_activity(&self, activity: InputActivity) {
-        self.emit(json!({
-            "event": "input_activity",
-            "terminal_id": activity.terminal_id,
-            "host_terminal_id": activity.host_terminal_id,
-            "attachment_id": activity.attachment_id,
-            "kind": activity.kind,
-            "bytes": activity.bytes,
-            "interrupt": activity.interrupt,
-            "submit": activity.submit,
-            "effect": activity.effect,
-        }))
-        .await;
+    pub async fn emit_input_activity(
+        &self,
+        activity: InputActivity,
+        enqueue: impl FnOnce() -> Result<(), &'static str>,
+    ) -> Result<(), &'static str> {
+        // Acquire the event slot before delivery. After enqueue there is no await at
+        // which cancellation could discard the only evidence of accepted input.
+        let mut state = self.state.lock().await;
+        enqueue()?;
+        self.emit_locked(
+            &mut state,
+            json!({
+                "event": "input_activity",
+                "terminal_id": activity.terminal_id,
+                "host_terminal_id": activity.host_terminal_id,
+                "attachment_id": activity.attachment_id,
+                "kind": activity.kind,
+                "bytes": activity.bytes,
+                "interrupt": activity.interrupt,
+                "submit": activity.submit,
+                "effect": activity.effect,
+                "edits": activity.edits,
+            }),
+        );
+        Ok(())
     }
 
     #[cfg(any(feature = "vt-engine", test))]
@@ -202,8 +215,13 @@ impl HostEvents {
         }
     }
 
-    async fn emit(&self, mut event: Value) {
+    #[cfg(any(feature = "vt-engine", test))]
+    async fn emit(&self, event: Value) {
         let mut state = self.state.lock().await;
+        self.emit_locked(&mut state, event);
+    }
+
+    fn emit_locked(&self, state: &mut EventState, mut event: Value) {
         state.seq = state.seq.saturating_add(1);
         let seq = state.seq;
         if let Some(object) = event.as_object_mut() {
@@ -254,3 +272,7 @@ fn queue_event(
 fn encoded_len(value: &Value) -> usize {
     value.to_string().len() + 1
 }
+
+#[cfg(test)]
+#[path = "events_tests.rs"]
+mod tests;

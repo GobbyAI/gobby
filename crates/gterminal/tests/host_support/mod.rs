@@ -632,6 +632,13 @@ fn replied(stream: &UnixStream) -> bool {
 
 /// The pane's text through the control `snapshot` verb.
 pub fn pane_text(stream: &mut UnixStream, host_terminal_id: &str) -> String {
+    pane_snapshot(stream, host_terminal_id)["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+pub fn pane_snapshot(stream: &mut UnixStream, host_terminal_id: &str) -> Value {
     let deadline = Instant::now() + COLD_START;
     loop {
         let snap = rpc(
@@ -656,7 +663,7 @@ pub fn pane_text(stream: &mut UnixStream, host_terminal_id: &str) -> String {
             continue;
         }
         assert_eq!(snap["ok"], true, "{snap}");
-        return snap["text"].as_str().unwrap_or_default().to_string();
+        return snap;
     }
 }
 

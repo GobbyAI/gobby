@@ -43,7 +43,6 @@ fn arrange_items(target: &ArrangeTarget) -> Vec<MenuItem> {
         arrange("Main horizontal", ArrangeLayout::MainHorizontal),
         arrange("Main vertical", ArrangeLayout::MainVertical),
         arrange("Tiled", ArrangeLayout::Tiled),
-        item("New grid…", MenuAction::OpenNewGrid),
     ]
 }
 
@@ -170,6 +169,7 @@ pub(super) fn tab_items(chrome: &Chrome, index: usize) -> Vec<MenuItem> {
     let tab = chrome.tabs().tabs.get(index);
     vec![
         item("New tab", MenuAction::Act(Action::NewTab)),
+        item("New grid...", MenuAction::OpenNewGrid),
         item("Rename tab", MenuAction::Act(Action::RenameTab)),
         arrange_row(tab.map(|tab| ArrangeTarget {
             tab: tab.id.clone(),
@@ -474,6 +474,7 @@ pub(super) fn global_items() -> Vec<MenuItem> {
     vec![
         item("New terminal", MenuAction::Act(Action::NewTerminal)),
         item("New tab", MenuAction::Act(Action::NewTab)),
+        item("New grid...", MenuAction::OpenNewGrid),
         item("New project…", MenuAction::Act(Action::NewProject)),
         item("Open project…", MenuAction::Act(Action::OpenProject)),
         item("Settings", MenuAction::Act(Action::Settings)),
