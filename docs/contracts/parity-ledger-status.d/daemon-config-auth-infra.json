@@ -163,6 +163,54 @@
     "status": "proxied",
     "note": "Python `src/gobby/cli/qdrant.py::qdrant_status (line 37)`; blocked on Rust CLI dispatcher for `gobby qdrant status`. Owner: #21568 Remaining route families."
   },
+  "CLI gobby rollback": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::rollback`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
+  "CLI gobby rollback burn": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::_burn`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
+  "CLI gobby rollback hold": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::_hold`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
+  "CLI gobby rollback hold clear": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::_hold_clear`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
+  "CLI gobby rollback hold extend": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::_hold_extend`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
+  "CLI gobby rollback hold set": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::_hold_set`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
+  "CLI gobby rollback hold status": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::_hold_status`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
+  "CLI gobby rollback list": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::_list_command`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
+  "CLI gobby rollback pin": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::_pin`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
+  "CLI gobby rollback pin extend": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::_pin_extend`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
+  "CLI gobby rollback restore": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::_restore`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
+  "CLI gobby rollback unpin": {
+    "status": "proxied",
+    "note": "Python `src/gobby/cli/rollback.py::_unpin`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38)."
+  },
   "CLI gobby schema": {
     "status": "proxied",
     "note": "Python `src/gobby/cli/schema.py::schema (line 10)`; blocked on Rust CLI dispatcher for `gobby schema`. Owner: #21568 Remaining route families."

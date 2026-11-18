@@ -29,7 +29,7 @@ Parity waivers in `docs/contracts/parity-waivers.json` cite a changed behaviour 
 row; the row status is unchanged and the note reads `Waived`. `native-extension` rows are
 additive surfaces with no Python counterpart; their readiness comes from native tests alone.
 
-Public surfaces and evidence gates: 1094. Unclassified: 0.
+Public surfaces and evidence gates: 1106. Unclassified: 0.
 
 | Public surface | Rust status | Notes |
 | --- | --- | --- |
@@ -213,6 +213,18 @@ Public surfaces and evidence gates: 1094. Unclassified: 0.
 | `CLI gobby qdrant install` | proxied | Python `src/gobby/cli/qdrant.py::qdrant_install (line 21)`; blocked on Rust CLI dispatcher for `gobby qdrant install`. Owner: #21568 Remaining route families. |
 | `CLI gobby qdrant status` | proxied | Python `src/gobby/cli/qdrant.py::qdrant_status (line 37)`; blocked on Rust CLI dispatcher for `gobby qdrant status`. Owner: #21568 Remaining route families. |
 | `CLI gobby restart` | proxied | Blocked on #21571 (Operator verbs on the client) and #21568 item 10 (admin, metrics, traces and telemetry): port `gobby restart` from Python callback `src/gobby/cli/daemon_lifecycle.py:412` to Rust daemon lifecycle/health CLI orchestration and output parity. |
+| `CLI gobby rollback` | proxied | Python `src/gobby/cli/rollback.py::rollback`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
+| `CLI gobby rollback burn` | proxied | Python `src/gobby/cli/rollback.py::_burn`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
+| `CLI gobby rollback hold` | proxied | Python `src/gobby/cli/rollback.py::_hold`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
+| `CLI gobby rollback hold clear` | proxied | Python `src/gobby/cli/rollback.py::_hold_clear`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
+| `CLI gobby rollback hold extend` | proxied | Python `src/gobby/cli/rollback.py::_hold_extend`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
+| `CLI gobby rollback hold set` | proxied | Python `src/gobby/cli/rollback.py::_hold_set`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
+| `CLI gobby rollback hold status` | proxied | Python `src/gobby/cli/rollback.py::_hold_status`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
+| `CLI gobby rollback list` | proxied | Python `src/gobby/cli/rollback.py::_list_command`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
+| `CLI gobby rollback pin` | proxied | Python `src/gobby/cli/rollback.py::_pin`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
+| `CLI gobby rollback pin extend` | proxied | Python `src/gobby/cli/rollback.py::_pin_extend`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
+| `CLI gobby rollback restore` | proxied | Python `src/gobby/cli/rollback.py::_restore`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
+| `CLI gobby rollback unpin` | proxied | Python `src/gobby/cli/rollback.py::_unpin`; blocked on V1A, which moves pin and promotion authority with the generation store, window hold and rollback verb to Rust (D15, D38). |
 | `CLI gobby rules` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules` from Python callback `src/gobby/cli/rules.py:157` to Rust services and CLI parity. |
 | `CLI gobby rules audit` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules audit` from Python callback `src/gobby/cli/rules.py:335` to Rust services and CLI parity. |
 | `CLI gobby rules disable` | proxied | Blocked on #21567 Workflows, rules, pipelines, build, and validation: port `gobby rules disable` from Python callback `src/gobby/cli/rules.py:251` to Rust services and CLI parity. |
