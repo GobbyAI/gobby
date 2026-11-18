@@ -8,6 +8,7 @@ use serde_json::Value;
 
 use super::pyfmt::{
     json_counts, json_list, or_empty_stripped, py_repr_opt, py_str, py_str_opt, py_string_repr,
+    py_strip,
 };
 
 const KINDS: [&str; 6] = [
@@ -234,11 +235,8 @@ fn group_by_reference(
             let Some(object) = item.as_object() else {
                 bail!("{file} holds a disposition that is not an object");
             };
-            let reference = object
-                .get("ref")
-                .map_or_else(String::new, py_str)
-                .trim()
-                .to_owned();
+            let raw = object.get("ref").map_or_else(String::new, py_str);
+            let reference = py_strip(&raw).to_owned();
             let position = match index.get(&reference) {
                 Some(position) => *position,
                 None => {

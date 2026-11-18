@@ -5,6 +5,7 @@
 //! A daemon, map or git failure is an `Err`, which `main` maps to exit 2.
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::hash_map::Entry;
 use std::io::Write;
 use std::path::Path;
@@ -20,7 +21,9 @@ use crate::map::{Chunk, Map};
 use crate::{INTEGRATION_BRANCH, MAP_PATH, PORT_EPIC, git};
 
 /// Children per page. The daemon accepts 1 to 1000.
-const CHILD_PAGE_LIMIT: usize = 1000;
+const CHILD_PAGE_LIMIT: u64 = 1000;
+/// The most child listing requests one start makes, whatever the listing's total says.
+const CHILD_PAGE_CEILING: usize = 1000;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub fn run(root: &Path, chunk_id: &str, out: &mut dyn Write) -> anyhow::Result<bool> {
@@ -96,7 +99,8 @@ impl Task {
 trait TaskSource {
     /// The full record of the task named `reference` (`#<seq>`), or `None` when there is none.
     fn task_by_ref(&self, reference: &str) -> anyhow::Result<Option<Task>>;
-    /// Every direct child of the task with id `parent_id`, across all pages, in daemon order.
+    /// Every direct child of the task with id `parent_id`, in daemon order, read page by page
+    /// until the children seen reach the listing's total. A listing that stops short is an error.
     fn children(&self, parent_id: &str) -> anyhow::Result<Vec<Brief>>;
     /// The full record of the task with id `id`.
     fn task(&self, id: &str) -> anyhow::Result<Task>;
@@ -340,14 +344,18 @@ impl TaskSource for Daemon {
 
     fn children(&self, parent_id: &str) -> anyhow::Result<Vec<Brief>> {
         let mut rows: Vec<Brief> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        // The rows the daemon has sent so far, which is the offset of the next page.
+        let mut read: usize = 0;
+        let mut pages: usize = 0;
         loop {
             let path = format!(
-                "/api/tasks?parent_task_id={parent_id}&limit={CHILD_PAGE_LIMIT}&offset={}",
-                rows.len()
+                "/api/tasks?parent_task_id={parent_id}&limit={CHILD_PAGE_LIMIT}&offset={read}"
             );
             let page = self
                 .get(&path)?
                 .with_context(|| format!("the daemon has no route for GET {path}"))?;
+            pages += 1;
             let total = page
                 .get("total")
                 .and_then(Value::as_u64)
@@ -358,15 +366,33 @@ impl TaskSource for Daemon {
                 .context("the child listing has no tasks")?;
             let batch: Vec<Brief> = serde_json::from_value(tasks)
                 .context("child rows from the daemon did not parse")?;
-            if batch.is_empty() {
-                break;
+            read += batch.len();
+            let mut added = 0;
+            for brief in batch {
+                if seen.insert(brief.id.clone()) {
+                    rows.push(brief);
+                    added += 1;
+                }
             }
-            rows.extend(batch);
-            if u64::try_from(rows.len()).unwrap_or(u64::MAX) >= total {
-                break;
+            let received = u64::try_from(rows.len()).unwrap_or(u64::MAX);
+            if received >= total {
+                return Ok(rows);
+            }
+            // A page that adds no unseen child cannot lead to the total, so a daemon that ignores
+            // `offset` or repeats itself fails here instead of returning a partial listing.
+            if added == 0 {
+                bail!(
+                    "the child listing is incomplete: received {received} of {total} children, \
+                     and the last page added none"
+                );
+            }
+            if pages >= CHILD_PAGE_CEILING {
+                bail!(
+                    "the child listing is incomplete: received {received} of {total} children \
+                     within {CHILD_PAGE_CEILING} page requests"
+                );
             }
         }
-        Ok(rows)
     }
 
     fn task(&self, id: &str) -> anyhow::Result<Task> {

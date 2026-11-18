@@ -633,6 +633,69 @@ fn chunk_without_selectors_has_empty_owned_rows() {
 }
 
 #[test]
+/// Contract: a selector that fails at run time is an input error: exit 2, the message names the chunk and the selector, and no record is written.
+fn selector_that_fails_to_run_is_an_input_error_and_writes_nothing() {
+    let fixture = Fixture::new();
+    let key = format!("MCP gobby-tasks:{}?", "a".repeat(40));
+    fixture.write(
+        "docs/port/ledger.md",
+        &format!("{LEDGER}| `{key}` | proxied | Synthetic note five. |\n"),
+    );
+    let mut map = base_map();
+    map["chunks"][1]["ledger_selectors"] = json!(["^MCP gobby-tasks:(a+)+(?!z)!"]);
+    fixture.write_map(&map);
+    let run = fixture.run();
+    expect_code(&run, 2);
+    assert!(
+        run.stderr.contains("BETA") && run.stderr.contains("^MCP gobby-tasks:(a+)+"),
+        "the message does not name BETA and its selector:\nstderr:\n{}",
+        run.stderr
+    );
+    assert!(
+        !fixture.record_path().exists(),
+        "an input error wrote the record"
+    );
+}
+
+#[test]
+/// Contract: a falsy `ledger_selectors` means no selectors, as Python's `or []` reads it. The map
+/// parses, BETA owns no rows, and the record is written with an empty Owned rows list for BETA.
+fn record_falsy_ledger_selectors_parse_and_own_nothing() {
+    for value in [json!(false), json!(0), json!(""), json!({})] {
+        let fixture = Fixture::new();
+        let mut map = base_map();
+        map["chunks"][1]["ledger_selectors"] = value.clone();
+        fixture.write_map(&map);
+        let all = lines(&generate(&fixture));
+        let beta = chunk_block(&all, "BETA", "Beta title");
+        assert_eq!(owned_rows(&beta), Vec::<String>::new(), "{value}");
+    }
+}
+
+#[test]
+/// Contract: a `ledger_selectors` that is truthy but not a list, or a list with an item that is not
+/// a string, is an input error: exit 2, stderr names the chunk, and no record is written.
+fn record_malformed_ledger_selectors_is_an_input_error_naming_the_chunk() {
+    for value in [json!("x"), json!(true), json!(1), json!([1])] {
+        let fixture = Fixture::new();
+        let mut map = base_map();
+        map["chunks"][1]["ledger_selectors"] = value.clone();
+        fixture.write_map(&map);
+        let run = fixture.run();
+        expect_code(&run, 2);
+        assert!(
+            run.stderr.contains("BETA"),
+            "{value}: stderr does not name BETA\nstderr:\n{}",
+            run.stderr
+        );
+        assert!(
+            !fixture.record_path().exists(),
+            "an input error wrote the record"
+        );
+    }
+}
+
+#[test]
 /// Contract: each chunk section holds its debt kept block under "#### Debt not to port".
 fn chunk_sections_hold_their_debt_kept_blocks() {
     let all = lines(&generate(&Fixture::new()));
@@ -888,4 +951,181 @@ fn duplicated_kept_block_is_never_written_twice() {
             "the refusal does not name the duplicated block:\n{report}"
         );
     }
+}
+
+#[test]
+/// Contract: a kept block's body survives a run byte for byte, a carriage return at the end of a line included.
+fn kept_body_keeps_carriage_returns_byte_for_byte() {
+    let fixture = Fixture::new();
+    let generated = generate(&fixture);
+    let edited = insert_after_open(&generated, "registration", "- crlf body line\r");
+    fixture.write_record(&edited);
+    let rerun = generate(&fixture);
+    assert!(
+        rerun.contains("- crlf body line\r\n"),
+        "a kept body line lost its carriage return"
+    );
+    assert_eq!(rerun, edited, "a second run changed a CRLF kept block");
+}
+
+#[test]
+/// Guard: a record written with CRLF line endings still reads its kept blocks, so their text survives a run.
+fn crlf_record_keeps_its_kept_blocks() {
+    let fixture = Fixture::new();
+    let generated = generate(&fixture);
+    let open = open_marker("found:ALPHA");
+    let crlf = generated.replace('\n', "\r\n").replacen(
+        &format!("{open}\r\n"),
+        &format!("{open}\r\n- `crates/x.rs` CRLF-SENTINEL\r\n"),
+        1,
+    );
+    fixture.write_record(&crlf);
+    let rerun = generate(&fixture);
+    assert!(
+        rerun.contains("CRLF-SENTINEL"),
+        "a CRLF record lost its kept text"
+    );
+    assert_eq!(
+        kept_body(&rerun, "found:ALPHA"),
+        ["- `crates/x.rs` CRLF-SENTINEL"]
+    );
+}
+
+#[test]
+/// Contract: a run replaces the record through a rename, so a hard link to the old record keeps the bytes it had.
+fn rerun_replaces_the_record_instead_of_rewriting_it_in_place() {
+    let fixture = Fixture::new();
+    let before = generate(&fixture);
+    let link = fixture.root().join("docs/port/record-before.md");
+    fs::hard_link(fixture.record_path(), &link).expect("hard link to the record");
+    let mut map = base_map();
+    map["summary"] = json!(
+        "SUMMARY-REWRITTEN-SENTINEL synthetic summary. It was brought up to the cut SHA, 0.5.0 at 0256724f1f and carries three chunks."
+    );
+    fixture.write_map(&map);
+    let rewritten = generate(&fixture);
+    assert!(
+        rewritten.contains("SUMMARY-REWRITTEN-SENTINEL"),
+        "the rerun lacks the new summary"
+    );
+    assert_eq!(
+        fs::read_to_string(&link).expect("read the hard link"),
+        before,
+        "the run rewrote the record in place"
+    );
+}
+
+/// The names of the entries directly under docs/port, sorted.
+fn port_entries(fixture: &Fixture) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(fixture.root().join("docs/port"))
+        .expect("docs/port exists")
+        .map(|entry| {
+            entry
+                .expect("directory entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+/// Contract: a run leaves no file beside the record, whether it writes or refuses.
+fn run_leaves_no_file_beside_the_record() {
+    let fixture = Fixture::new();
+    let expected = [
+        "dispositions",
+        "ledger.md",
+        "map-v2.json",
+        "record.md",
+        "rulings.md",
+    ];
+    let before = generate(&fixture);
+    assert_eq!(port_entries(&fixture), expected);
+    fixture.write_record(&format!("{before}<!-- gport:kept stray -->\n"));
+    expect_code(&fixture.run(), 1);
+    assert_eq!(port_entries(&fixture), expected);
+}
+
+/// Run over changed inputs: exit 2, the report names the source and the marker, and the record is unchanged.
+fn assert_marker_refusal(fixture: &Fixture, before: &str, source: &str, marker: &str) {
+    let run = fixture.run();
+    expect_code(&run, 2);
+    let report = format!("{}{}", run.stdout, run.stderr);
+    assert!(
+        report.contains(source),
+        "the refusal does not name {source}:\n{report}"
+    );
+    assert!(
+        report.contains(marker),
+        "the refusal does not name the marker {marker}:\n{report}"
+    );
+    assert_eq!(fixture.record(), before, "a refused run changed the record");
+}
+
+#[test]
+/// Contract: a rulings line shaped like a kept-block marker is an input error that names docs/port/rulings.md, and writes nothing.
+fn marker_shaped_rulings_line_is_an_input_error() {
+    let fixture = Fixture::new();
+    let before = generate(&fixture);
+    let marker = open_marker("memory-rulings");
+    fixture.write(
+        "docs/port/rulings.md",
+        &format!("{RULINGS}\n{marker}\n{}\n", end_marker("memory-rulings")),
+    );
+    assert_marker_refusal(&fixture, &before, "docs/port/rulings.md", &marker);
+}
+
+#[test]
+/// Contract: a map string holding a marker line is an input error that names the map, and writes nothing.
+fn marker_shaped_map_string_is_an_input_error() {
+    let fixture = Fixture::new();
+    let before = generate(&fixture);
+    let marker = open_marker("known-bad");
+    let mut map = base_map();
+    map["summary"] = json!(format!(
+        "SUMMARY-SENTINEL synthetic summary. It was brought up to the cut SHA, 0.5.0 at 0256724f1f.\n{marker}"
+    ));
+    fixture.write_map(&map);
+    assert_marker_refusal(&fixture, &before, "docs/port/map-v2.json", &marker);
+}
+
+#[test]
+/// Contract: a list item holding a marker line on a later line is an input error that names the map.
+fn marker_shaped_list_item_is_an_input_error() {
+    let fixture = Fixture::new();
+    let before = generate(&fixture);
+    let marker = end_marker("seam-contract");
+    let mut map = base_map();
+    map["chunk_protocol"]["steps"][1] = json!(format!("STEP-TWO-SENTINEL synthetic.\n{marker}"));
+    fixture.write_map(&map);
+    assert_marker_refusal(&fixture, &before, "docs/port/map-v2.json", &marker);
+}
+
+#[test]
+/// Contract: a disposition holding a marker line is an input error that names its dispositions file, and writes nothing.
+fn marker_shaped_disposition_is_an_input_error() {
+    let fixture = Fixture::new();
+    let before = generate(&fixture);
+    let marker = open_marker("registration");
+    let disposition = json!({
+        "dispositions": [{
+            "ref": "#90001",
+            "disposition": "chunk",
+            "target": "ALPHA",
+            "rationale": format!("DISP-RAT-ALPHA synthetic rationale.\n{marker}")
+        }]
+    });
+    fixture.write(
+        "docs/port/dispositions/alpha.json",
+        &disposition.to_string(),
+    );
+    assert_marker_refusal(
+        &fixture,
+        &before,
+        "docs/port/dispositions/alpha.json",
+        &marker,
+    );
 }

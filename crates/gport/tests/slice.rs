@@ -3,11 +3,13 @@
 //!
 //! Each test builds a base commit on `0.9.0` (a map, a ledger, a record and the Cargo manifests
 //! the registration rule reads), branches `slice` from it and adds commits. A refusal exits 1 with
-//! `REFUSE` lines on stdout. No test expects exit 2.
+//! `REFUSE` lines on stdout. An input error (no git repository, no `0.9.0` branch, no commit at
+//! HEAD) exits 2 with no `REFUSE` line and names the missing thing on stderr.
 
 use std::net::TcpListener;
 
 use serde_json::{Value, json};
+use tempfile::TempDir;
 
 use crate::support::{Repo, Run, gport, gport_env};
 
@@ -275,6 +277,64 @@ fn short(sha: &str) -> &str {
     &sha[..7]
 }
 
+/// Exit 2, no REFUSE line, and stderr contains one of `needles`.
+fn assert_input_error(run: &Run, needles: &[&str]) {
+    assert_eq!(run.code, 2, "{}", show(run));
+    assert!(
+        refuse_lines(run).is_empty(),
+        "an input error prints no REFUSE line\n{}",
+        show(run)
+    );
+    assert!(
+        needles.iter().any(|needle| run.stderr.contains(needle)),
+        "stderr names none of {needles:?}\n{}",
+        show(run)
+    );
+}
+
+// --- Input errors and the merge base ---
+
+/// Contract: a root that is not a git repository is an input error, exit 2 and not a refusal. The
+/// root is passed with `--root`, so the repository lookup from the working directory cannot cover
+/// for it.
+#[test]
+fn root_that_is_not_a_git_repository_is_an_input_error() {
+    let dir = TempDir::new().expect("temp dir");
+    let root = dir.path().to_str().expect("UTF-8 path");
+    let run = gport(
+        dir.path(),
+        &["--root", root, "check-slice", CHUNK, "--task", "12"],
+    );
+    assert_input_error(&run, &["not a git repository"]);
+}
+
+/// Contract: a missing integration branch is an input error, exit 2, and stderr names `0.9.0`.
+#[test]
+fn missing_integration_branch_is_an_input_error() {
+    let repo = rowless("family", "None.");
+    touch(&repo, 2, "[gobby-#12] feat: slice change");
+    repo.git(&["branch", "-D", "0.9.0"]);
+    assert_input_error(&check(&repo, CHUNK, &["12"]), &["0.9.0"]);
+}
+
+/// Contract: a HEAD with no commit yet is an input error, exit 2, and stderr names HEAD.
+#[test]
+fn unborn_head_is_an_input_error() {
+    let repo = rowless("family", "None.");
+    repo.git(&["checkout", "-q", "--orphan", "empty"]);
+    assert_input_error(&check(&repo, CHUNK, &["12"]), &["HEAD"]);
+}
+
+/// Contract: a branch and HEAD with no common ancestor are a refusal, exit 1 with the
+/// merge-base line. That is the only merge-base case that stays a refusal.
+#[test]
+fn no_single_merge_base_is_a_refusal() {
+    let repo = rowless("family", "None.");
+    repo.git(&["checkout", "-q", "--orphan", "unrelated"]);
+    repo.commit("[gobby-#12] feat: unrelated history");
+    assert_refused(&check(&repo, CHUNK, &["12"]), &["exactly one merge base"]);
+}
+
 // --- Path rules: python_edits, Found Work and the frozen list ---
 
 /// A `.py` path under src/gobby/ on a chunk whose python_edits starts with `python_edits` is
@@ -474,6 +534,75 @@ fn todo_or_specced_row_is_refused() {
         commit_status(&repo, &status(CHUNK, &rows));
         assert_refused(&check(&repo, CHUNK, &["12"]), &[STATUS, "SURF-A-1"]);
     }
+}
+
+/// A base whose CHUNK holds `ledger_selectors` as `value` and owns no rows, so a clean run needs no
+/// status file.
+fn selectors_base(value: Value) -> Repo {
+    let mut a = chunk(CHUNK, "family", "None.", "SURF-A-");
+    a["ledger_selectors"] = value;
+    base(a, &keys(0, 2), Some(record(&[FROZEN], &[])))
+}
+
+/// Contract: a falsy `ledger_selectors` means no selectors, as Python's `or []` reads it. The map
+/// parses, CHUNK owns no rows, and check-slice runs as it does for a rowless chunk.
+#[test]
+fn slice_falsy_ledger_selectors_parse_and_own_nothing() {
+    for value in [json!(false), json!(0), json!(""), json!({})] {
+        let repo = selectors_base(value.clone());
+        touch(&repo, 2, "[gobby-#12] feat: slice change");
+        let run = check(&repo, CHUNK, &["12"]);
+        assert_eq!(run.code, 0, "{value}\n{}", show(&run));
+    }
+}
+
+/// Contract: a `ledger_selectors` that is truthy but not a list, or a list with an item that is not
+/// a string, is an input error: exit 2, no REFUSE line, and stderr names the chunk.
+#[test]
+fn slice_malformed_ledger_selectors_is_an_input_error_naming_the_chunk() {
+    for value in [json!("x"), json!(true), json!(1), json!([1])] {
+        let repo = selectors_base(value.clone());
+        touch(&repo, 2, "[gobby-#12] feat: slice change");
+        assert_input_error(&check(&repo, CHUNK, &["12"]), &[CHUNK]);
+    }
+}
+
+/// A base whose CHUNK selector runs out of backtracking on a long row key, so every run over it
+/// fails at run time.
+fn failing_selector_base() -> Repo {
+    let mut a = chunk(CHUNK, "family", "None.", "SURF-A-");
+    a["ledger_selectors"] = json!(["^SURF-A-(a+)+(?!z)!"]);
+    let mut rows = keys(2, 2);
+    rows.push(format!("SURF-A-{}?", "a".repeat(40)));
+    base(a, &rows, Some(record(&[FROZEN], &[])))
+}
+
+/// Contract: a selector that fails at run time makes check-slice an input error: exit 2, no REFUSE
+/// line, and stderr names the chunk and the selector.
+#[test]
+fn selector_that_fails_to_run_is_an_input_error_for_check_slice() {
+    let repo = failing_selector_base();
+    let run = check(&repo, CHUNK, &["12"]);
+    assert_input_error(&run, &[CHUNK]);
+    assert!(
+        run.stderr.contains("^SURF-A-(a+)+"),
+        "stderr does not name the selector\n{}",
+        show(&run)
+    );
+}
+
+/// Contract: a selector that fails at run time makes check-slice --report an input error: exit 2,
+/// no REFUSE line, and stderr names the chunk and the selector.
+#[test]
+fn selector_that_fails_to_run_is_an_input_error_for_report() {
+    let repo = failing_selector_base();
+    let run = report(&repo, &[CHUNK]);
+    assert_input_error(&run, &[CHUNK]);
+    assert!(
+        run.stderr.contains("^SURF-A-(a+)+"),
+        "stderr does not name the selector\n{}",
+        show(&run)
+    );
 }
 
 // --- Status vocabulary and row ownership ---

@@ -22,8 +22,10 @@ pub fn section(python: &[&TextFile], frozen: Result<&str, &str>) -> String {
     let tools: Vec<(String, String)> = rows::rows(ledger)
         .into_iter()
         .filter_map(|row| {
-            let tool = row.key.strip_prefix("MCP ")?.split_once(':')?.1.to_owned();
-            Some((row.key, tool))
+            // The ledger keeps its `\|` escapes; the names and the cell text need the pipe itself.
+            let key = row.key.replace("\\|", "|");
+            let tool = key.strip_prefix("MCP ")?.split_once(':')?.1.to_owned();
+            Some((key, tool))
         })
         .collect();
 

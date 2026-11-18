@@ -12,7 +12,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use fancy_regex::Regex;
 use serde_json::{Map, Value};
 
-use super::pyfmt::py_string_repr;
+use super::pyfmt::{py_string_repr, py_strip};
 
 const SCHEMA_VERSION: u64 = 1;
 const SHAPE_ERROR: &str =
@@ -124,7 +124,7 @@ fn has_fields(object: &Map<String, Value>) -> bool {
 
 fn text_field(object: &Map<String, Value>, field: &str) -> Result<String> {
     match object.get(field).and_then(Value::as_str) {
-        Some(text) if !text.trim().is_empty() => Ok(text.to_owned()),
+        Some(text) if !py_strip(text).is_empty() => Ok(text.to_owned()),
         _ => bail!("Waiver field {field} must be a non-empty string"),
     }
 }

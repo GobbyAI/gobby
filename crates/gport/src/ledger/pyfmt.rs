@@ -26,9 +26,59 @@ pub fn py_repr_opt(value: Option<&Value>) -> String {
 /// Python's `str(value or "").strip()`: a falsy value becomes the empty string.
 pub fn or_empty_stripped(value: Option<&Value>) -> String {
     match value {
-        Some(value) if !is_falsy(value) => py_str(value).trim().to_owned(),
+        Some(value) if !is_falsy(value) => py_strip(&py_str(value)).to_owned(),
         _ => String::new(),
     }
+}
+
+/// Python's `str.strip()`: trims the characters for which `str.isspace()` is true.
+pub(crate) fn py_strip(text: &str) -> &str {
+    text.trim_matches(is_py_space)
+}
+
+/// Whether Python's `str.isspace()` is true for `c`: Rust's `White_Space` set plus U+001C to
+/// U+001F, which Python counts as whitespace and Rust does not.
+pub(crate) fn is_py_space(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{1c}'..='\u{1f}')
+}
+
+/// Python's `str.splitlines()` on text read with universal newlines: `\n`, `\r`, `\r\n`, and the
+/// other line separators Python recognises. A trailing separator ends the last line; it adds none.
+pub(crate) fn py_splitlines(text: &str) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    let mut chars = text.char_indices().peekable();
+    while let Some((index, c)) = chars.next() {
+        if !is_line_break(c) {
+            continue;
+        }
+        lines.push(&text[start..index]);
+        let mut next = index + c.len_utf8();
+        if c == '\r' && matches!(chars.peek(), Some((_, '\n'))) {
+            chars.next();
+            next += 1;
+        }
+        start = next;
+    }
+    if start < text.len() {
+        lines.push(&text[start..]);
+    }
+    lines
+}
+
+fn is_line_break(c: char) -> bool {
+    matches!(
+        c,
+        '\n' | '\r'
+            | '\u{b}'
+            | '\u{c}'
+            | '\u{1c}'
+            | '\u{1d}'
+            | '\u{1e}'
+            | '\u{85}'
+            | '\u{2028}'
+            | '\u{2029}'
+    )
 }
 
 /// Python's truthiness of a parsed JSON value.

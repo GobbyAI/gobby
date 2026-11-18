@@ -31,8 +31,12 @@ pub fn section(root: &Path, frozen: Result<&str, &str>, no_python: bool) -> Stri
 
 struct Route {
     line: usize,
+    /// The method as the table shows it: `WEBSOCKET` for a websocket route.
     method: String,
     path: String,
+    /// The key a ledger row carries for this route: `HTTP <METHOD> <path>`, or `WS transport <path>`
+    /// for a websocket route, as the parity ledger generator writes them.
+    key: String,
 }
 
 fn routes_text(root: &Path, frozen: Result<&str, &str>) -> String {
@@ -44,13 +48,14 @@ fn routes_text(root: &Path, frozen: Result<&str, &str>) -> String {
     if found.is_empty() {
         return format!("No route decorator was found in {APP_UI}.\n");
     }
+    let known = frozen.ok().map(known_keys);
     let rows: Vec<Vec<String>> = found
         .into_iter()
         .map(|route| {
-            let listed = match frozen {
-                Ok(ledger) if ledger.contains(route.path.as_str()) => "yes",
-                Ok(_) => "no",
-                Err(_) => "unknown",
+            let listed = match &known {
+                Some(keys) if keys.contains(&route.key) => "yes",
+                Some(_) => "no",
+                None => "unknown",
             };
             vec![
                 route.method,
@@ -61,9 +66,19 @@ fn routes_text(root: &Path, frozen: Result<&str, &str>) -> String {
         })
         .collect();
     format!(
-        "Route decorators in {APP_UI}, and whether the frozen ledger names each path.\n\n{}",
+        "Route decorators in {APP_UI}, and whether the frozen ledger has a row with each route's \
+         key.\n\n{}",
         table(&["Method", "Path", "Line", "In frozen ledger"], &rows)
     )
+}
+
+/// The row keys of the frozen ledger, with each `\|` read as `|` so that they compare with the
+/// keys built from source text.
+fn known_keys(ledger: &str) -> HashSet<String> {
+    rows::rows(ledger)
+        .into_iter()
+        .map(|row| row.key.replace("\\|", "|"))
+        .collect()
 }
 
 /// The route decorators of a module, such as `@app.get("/path")` or `@app.websocket("/ws")`.
@@ -81,15 +96,17 @@ fn routes(source: &str) -> Vec<Route> {
             let args = args.trim_start();
             let quote = args.chars().next().filter(|c| *c == '"' || *c == '\'')?;
             let (path, _) = args[1..].split_once(quote)?;
-            let method = if method == "websocket" {
-                "WEBSOCKET".to_owned()
+            let (shown, key) = if method == "websocket" {
+                ("WEBSOCKET".to_owned(), format!("WS transport {path}"))
             } else {
-                method.to_uppercase()
+                let verb = method.to_uppercase();
+                (verb.clone(), format!("HTTP {verb} {path}"))
             };
             Some(Route {
                 line: index + 1,
-                method,
+                method: shown,
                 path: path.to_owned(),
+                key,
             })
         })
         .collect()

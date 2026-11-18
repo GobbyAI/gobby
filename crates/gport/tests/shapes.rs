@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -28,6 +28,10 @@ const SECRET: &str = "SECRET-";
 /// The daemon's tool metrics answer: per-tool `call_count` under each server, as the MCP tools
 /// listing returns it with `include_metrics=true`.
 const METRICS_BODY: &str = r#"{"success":true,"tools":{"metricsrv":[{"name":"probe_tool","call_count":42,"success_rate":1.0,"avg_latency_ms":3.5}]}}"#;
+
+/// A daemon metrics answer whose tool name is not name-shaped. It must count as unnamed.
+const UNNAMED_METRICS_BODY: &str =
+    r#"{"success":true,"tools":{"metricsrv":[{"name":"bad name SECRET-METRIC","call_count":5}]}}"#;
 
 /// A git checkout to run from, plus scratch space for transcripts and empty homes.
 struct Sandbox {
@@ -656,6 +660,408 @@ fn daemon_tool_metrics_counts_appear_in_output() {
         assert!(
             !skipped.to_lowercase().contains("metrics"),
             "a reachable metrics route must not be listed as skipped:\n{skipped}"
+        );
+    }
+}
+
+/// A non-loopback daemon endpoint is refused before any request is built. A request that went out
+/// would wait out the daemon timeout and list `unreachable`, so the refusal line together with the
+/// fast return shows that no request was sent.
+#[test]
+fn remote_daemon_endpoint_is_refused_before_any_request() {
+    let sandbox = Sandbox::new();
+    let empty = sandbox.join("empty-root");
+    std::fs::create_dir_all(&empty).expect("empty transcript root");
+    let started = Instant::now();
+    let run = sandbox.run(&shapes_args(&[empty], &[]), "http://192.0.2.1:9");
+    let elapsed = started.elapsed();
+    assert_eq!(run.code, 0, "exit code; stderr: {}", run.stderr);
+    let skipped = skipped_section(&run.stdout)
+        .unwrap_or_else(|| panic!("no `Skipped sources` heading; stdout:\n{}", run.stdout));
+    assert!(
+        skipped.contains("remote daemon endpoint refused"),
+        "a remote endpoint must be refused and listed as skipped:\n{skipped}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "a refused endpoint must not wait on the network; the run took {elapsed:?}"
+    );
+}
+
+/// Calls behind a symlink below the root are not counted; the root's own calls still are.
+#[cfg(unix)]
+#[test]
+fn symlinks_below_the_root_are_not_followed() {
+    let sandbox = Sandbox::new();
+    let root = sandbox.join("claude-projects");
+    let outside = sandbox.join("outside");
+    write_lines(
+        &root.join("own/session.jsonl"),
+        &[record(&claude_call("root_tool", json!({"kept": 1})))],
+    );
+    write_lines(
+        &outside.join("dir/session.jsonl"),
+        &[record(&claude_call(
+            "linked_dir_tool",
+            json!({"hidden": 1}),
+        ))],
+    );
+    write_lines(
+        &outside.join("file.jsonl"),
+        &[record(&claude_call(
+            "linked_file_tool",
+            json!({"hidden": 1}),
+        ))],
+    );
+    std::os::unix::fs::symlink(outside.join("dir"), root.join("linked-dir"))
+        .expect("link to a directory");
+    std::os::unix::fs::symlink(outside.join("file.jsonl"), root.join("linked-file.jsonl"))
+        .expect("link to a file");
+    let run = sandbox.run(&shapes_args(&[root], &[]), &closed_url());
+    assert_eq!(run.code, 0, "exit code; stderr: {}", run.stderr);
+    assert!(
+        run.stdout.contains("root_tool"),
+        "the root's own calls must count:\n{}",
+        run.stdout
+    );
+    for hidden in ["linked_dir_tool", "linked_file_tool"] {
+        assert!(
+            !run.stdout.contains(hidden),
+            "`{hidden}` sits behind a symlink below the root and must not be counted:\n{}",
+            run.stdout
+        );
+    }
+}
+
+/// The root named through a symlink is still scanned: only links below the root are skipped.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_root_is_still_scanned() {
+    let sandbox = Sandbox::new();
+    let real = sandbox.join("real-projects");
+    write_lines(
+        &real.join("session.jsonl"),
+        &[record(&claude_call("root_link_tool", json!({"kept": 1})))],
+    );
+    let link = sandbox.join("linked-root");
+    std::os::unix::fs::symlink(&real, &link).expect("link to the root");
+    let run = sandbox.run(&shapes_args(&[link], &[]), &closed_url());
+    assert_eq!(run.code, 0, "exit code; stderr: {}", run.stderr);
+    let text = tool_text(&run.stdout, "root_link_tool", &["root_link_tool"]);
+    assert!(
+        has_count(text, 1),
+        "the root named through a symlink must be scanned:\n{text}"
+    );
+    let skipped = skipped_section(&run.stdout).unwrap_or("");
+    assert!(
+        !skipped.contains("symlink"),
+        "the root itself is followed, so no symlink line may be listed:\n{}",
+        run.stdout
+    );
+}
+
+/// Keys that are not key-shaped are counted, never printed. A 64-character key still prints.
+#[test]
+fn argument_keys_that_are_not_identifiers_are_counted_not_printed() {
+    let sandbox = Sandbox::new();
+    let root = sandbox.join("keys-root");
+    let longest = "k".repeat(64);
+    let too_long = "x".repeat(65);
+    let mut input = serde_json::Map::new();
+    input.insert("plainKey".to_owned(), json!(1));
+    input.insert(longest.clone(), json!(2));
+    input.insert("a key with spaces SECRET-DICT".to_owned(), json!(3));
+    input.insert("1starts_with_digit".to_owned(), json!(4));
+    input.insert(too_long.clone(), json!(5));
+    write_lines(
+        &root.join("session.jsonl"),
+        &[record(&claude_call("shape_probe", Value::Object(input)))],
+    );
+    let run = sandbox.run(&shapes_args(&[root], &[]), &closed_url());
+    assert_eq!(run.code, 0, "exit code; stderr: {}", run.stderr);
+    let text = tool_text(&run.stdout, "shape_probe", &["shape_probe"]);
+    let expected = format!("{longest}, plainKey, +3 other keys");
+    assert!(
+        text.contains(&expected),
+        "key-shaped keys print and the rest are counted:\n{text}"
+    );
+    assert!(
+        !run.stdout.contains("SECRET-DICT"),
+        "a content key must not be printed:\n{}",
+        run.stdout
+    );
+    assert!(
+        !run.stdout.contains("starts_with_digit"),
+        "a key that starts with a digit must not be printed:\n{}",
+        run.stdout
+    );
+    assert!(
+        !run.stdout.contains(&too_long),
+        "a key over 64 characters must not be printed:\n{}",
+        run.stdout
+    );
+}
+
+/// Tool labels that are not name-shaped count together under one `(unnamed)` line.
+#[test]
+fn tool_labels_that_are_not_name_shaped_count_under_one_unnamed_line() {
+    let sandbox = Sandbox::new();
+    let root = sandbox.join("labels-root");
+    let lines = [
+        record(&claude_call("bad name SECRET-LABEL", json!({"a": 1}))),
+        record(&claude_call("", json!({}))),
+        record(&proxy_call("docs", "look up SECRET-LABEL-2", json!({}))),
+        record(&claude_call("ok_tool", json!({"x": 1}))),
+    ];
+    write_lines(&root.join("session.jsonl"), &lines);
+    let run = sandbox.run(&shapes_args(&[root], &[]), &closed_url());
+    assert_eq!(run.code, 0, "exit code; stderr: {}", run.stderr);
+    assert!(
+        !run.stdout.contains("SECRET-LABEL"),
+        "a label that is not name-shaped must not be printed:\n{}",
+        run.stdout
+    );
+    let unnamed: Vec<&str> = run
+        .stdout
+        .lines()
+        .filter(|line| line.starts_with("(unnamed)"))
+        .collect();
+    assert_eq!(
+        unnamed.len(),
+        1,
+        "the unnamed labels must share one line:\n{}",
+        run.stdout
+    );
+    let columns: Vec<&str> = unnamed[0].split_whitespace().collect();
+    assert_eq!(
+        columns.get(1).copied(),
+        Some("3"),
+        "three unnamed calls:\n{}",
+        run.stdout
+    );
+    assert!(
+        run.stdout.contains("ok_tool"),
+        "a name-shaped tool must still be listed:\n{}",
+        run.stdout
+    );
+}
+
+/// A daemon tool name that is not name-shaped counts under the same `(unnamed)` line.
+#[test]
+fn daemon_labels_that_are_not_name_shaped_count_under_one_unnamed_line() {
+    let sandbox = Sandbox::new();
+    let empty = sandbox.join("empty-root");
+    std::fs::create_dir_all(&empty).expect("empty transcript root");
+    let stub = Stub::start(UNNAMED_METRICS_BODY);
+    let run = sandbox.run(&shapes_args(&[empty], &[]), &stub.url);
+    stub.finish();
+    assert_eq!(run.code, 0, "exit code; stderr: {}", run.stderr);
+    assert!(
+        !run.stdout.contains("SECRET-METRIC"),
+        "a daemon label that is not name-shaped must not be printed:\n{}",
+        run.stdout
+    );
+    let row = run
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("(unnamed)"))
+        .unwrap_or_else(|| panic!("no `(unnamed)` line; stdout:\n{}", run.stdout));
+    let columns: Vec<&str> = row.split_whitespace().collect();
+    assert_eq!(
+        columns.get(2).copied(),
+        Some("5"),
+        "the daemon's count must land on the unnamed line:\n{row}"
+    );
+}
+
+/// Argument keys that are not key-shaped, because they hold a dot or a hyphen, are counted and
+/// never printed. Only the plain key prints.
+#[test]
+fn argument_keys_with_dots_or_hyphens_are_counted_not_printed() {
+    let sandbox = Sandbox::new();
+    let root = sandbox.join("dotted-keys-root");
+    let mut input = serde_json::Map::new();
+    input.insert("plainKey".to_owned(), json!(1));
+    input.insert("notes-for-alice.txt".to_owned(), json!(2));
+    input.insert("api.internal.example.com".to_owned(), json!(3));
+    input.insert("deadbeef-0000-4000-8000-000000000000".to_owned(), json!(4));
+    write_lines(
+        &root.join("session.jsonl"),
+        &[record(&claude_call("key_probe", Value::Object(input)))],
+    );
+    let run = sandbox.run(&shapes_args(&[root], &["--no-daemon"]), &closed_url());
+    assert_eq!(run.code, 0, "exit code; stderr: {}", run.stderr);
+    let text = tool_text(&run.stdout, "key_probe", &["key_probe"]);
+    assert!(
+        text.contains("plainKey, +3 other keys"),
+        "only the plain key prints and the three others are counted:\n{text}"
+    );
+    for hidden in [
+        "notes-for-alice.txt",
+        "api.internal.example.com",
+        "deadbeef-0000-4000-8000-000000000000",
+    ] {
+        assert!(
+            !run.stdout.contains(hidden),
+            "key `{hidden}` is not key-shaped and must not be printed:\n{}",
+            run.stdout
+        );
+    }
+}
+
+/// A dot is allowed in a tool label part after its first character, as in a dotted tool name, so
+/// dotted labels print under their own names. A label outside that shape still counts under the
+/// shared `(unnamed)` line and is not printed: a space, `@`, `/`, a leading digit or dot, non-ASCII
+/// text, more than one `:`, or a part over 64 bytes.
+#[test]
+fn dotted_tool_labels_count_under_unnamed_and_are_not_printed() {
+    let sandbox = Sandbox::new();
+    let root = sandbox.join("dotted-labels-root");
+    let edge = format!("a{}", "b".repeat(63));
+    let folded = [
+        "a@b.probe".to_owned(),
+        "probe/with.slash".to_owned(),
+        "1st.probe".to_owned(),
+        ".leading.probe".to_owned(),
+        "caf\u{e9}.probe".to_owned(),
+        "a:b:c".to_owned(),
+        format!("a{}", "b".repeat(64)),
+    ];
+    let mut lines = vec![
+        record(&claude_call("tools.dotted_probe", json!({"a": 1}))),
+        record(&proxy_call("some-srv", "dotted.probe", json!({"b": 1}))),
+        record(&claude_call(&edge, json!({"c": 1}))),
+    ];
+    lines.extend(
+        folded
+            .iter()
+            .map(|label| record(&claude_call(label, json!({"d": 1})))),
+    );
+    write_lines(&root.join("session.jsonl"), &lines);
+    let run = sandbox.run(&shapes_args(&[root], &["--no-daemon"]), &closed_url());
+    assert_eq!(run.code, 0, "exit code; stderr: {}", run.stderr);
+    let row = |label: &str| {
+        run.stdout
+            .lines()
+            .find(|line| line.starts_with(label))
+            .unwrap_or_else(|| panic!("no `{label}` line; stdout:\n{}", run.stdout))
+    };
+    for printed in ["tools.dotted_probe", "some-srv:dotted.probe", edge.as_str()] {
+        let columns: Vec<&str> = row(printed).split_whitespace().collect();
+        assert_eq!(
+            columns.get(1).copied(),
+            Some("1"),
+            "dotted label `{printed}` is name-shaped and must print under its own name:\n{}",
+            run.stdout
+        );
+    }
+    for hidden in &folded {
+        assert!(
+            !run.stdout.contains(hidden.as_str()),
+            "label `{hidden}` is outside the name shape and must not be printed:\n{}",
+            run.stdout
+        );
+    }
+    let columns: Vec<&str> = row("(unnamed)").split_whitespace().collect();
+    assert_eq!(
+        columns.get(1).copied(),
+        Some("7"),
+        "the seven labels outside the name shape must count under the unnamed line:\n{}",
+        run.stdout
+    );
+}
+
+/// Guard, green before and after the label rule: a hyphen is allowed inside a label part, so a
+/// hyphenated server name and an `mcp__<server>__<tool>` name still print under their own labels.
+#[test]
+fn hyphenated_server_and_mcp_style_names_still_print() {
+    let sandbox = Sandbox::new();
+    let root = sandbox.join("guard-labels-root");
+    let lines = [
+        record(&proxy_call("some-srv", "some_tool", json!({"k": 1}))),
+        record(&claude_call("mcp__some-server__tool", json!({"k": 1}))),
+    ];
+    write_lines(&root.join("session.jsonl"), &lines);
+    let run = sandbox.run(&shapes_args(&[root], &["--no-daemon"]), &closed_url());
+    assert_eq!(run.code, 0, "exit code; stderr: {}", run.stderr);
+    let labels = ["mcp__some-server__tool", "some-srv:some_tool"];
+    for label in labels {
+        let text = tool_text(&run.stdout, label, &labels);
+        assert!(
+            has_count(text, 1),
+            "`{label}` should print and count 1:\n{text}"
+        );
+    }
+}
+
+/// Symlinks below a root are not followed. Each root that holds some reports its own count on one
+/// `Skipped sources` line; a root with none gets no line. Link targets are never printed.
+#[cfg(unix)]
+#[test]
+fn symlinks_below_each_root_are_counted_per_root_in_skipped_sources() {
+    let sandbox = Sandbox::new();
+    let outside = sandbox.join("outside");
+    write_lines(
+        &outside.join("target/session.jsonl"),
+        &[record(&claude_call("hidden_probe", json!({"x": 1})))],
+    );
+    write_lines(
+        &outside.join("target.jsonl"),
+        &[record(&claude_call("hidden_probe", json!({"x": 1})))],
+    );
+    let alpha = sandbox.join("alpha-root");
+    write_lines(
+        &alpha.join("own/session.jsonl"),
+        &[record(&claude_call("alpha_probe", json!({"x": 1})))],
+    );
+    std::os::unix::fs::symlink(outside.join("target"), alpha.join("linked-dir"))
+        .expect("link to a directory");
+    std::os::unix::fs::symlink(
+        outside.join("target.jsonl"),
+        alpha.join("linked-file.jsonl"),
+    )
+    .expect("link to a file");
+    let beta = sandbox.join("beta-root");
+    write_lines(
+        &beta.join("session.jsonl"),
+        &[record(&claude_call("beta_probe", json!({"x": 1})))],
+    );
+    std::os::unix::fs::symlink(outside.join("target"), beta.join("linked-dir"))
+        .expect("link to a directory");
+    let gamma = sandbox.join("gamma-root");
+    write_lines(
+        &gamma.join("session.jsonl"),
+        &[record(&claude_call("gamma_probe", json!({"x": 1})))],
+    );
+    let roots = [alpha.clone(), beta.clone(), gamma.clone()];
+    let run = sandbox.run(&shapes_args(&roots, &["--no-daemon"]), &closed_url());
+    assert_eq!(run.code, 0, "exit code; stderr: {}", run.stderr);
+    let skipped = skipped_section(&run.stdout)
+        .unwrap_or_else(|| panic!("no `Skipped sources` heading; stdout:\n{}", run.stdout));
+    let alpha_line = format!("{}: 2 symlinks not followed", alpha.display());
+    let beta_line = format!("{}: 1 symlink not followed", beta.display());
+    assert!(
+        skipped.lines().any(|line| line.trim() == alpha_line),
+        "the first root holds two links and needs its own line `{alpha_line}`:\n{skipped}"
+    );
+    assert!(
+        skipped.lines().any(|line| line.trim() == beta_line),
+        "the second root holds one link and needs its own line `{beta_line}`:\n{skipped}"
+    );
+    assert!(
+        !skipped.contains(&gamma.display().to_string()),
+        "a root with no symlinks must get no line:\n{skipped}"
+    );
+    assert!(
+        !run.stdout.contains("hidden_probe"),
+        "calls behind links must not be counted:\n{}",
+        run.stdout
+    );
+    for hidden in ["outside", "linked-"] {
+        assert!(
+            !run.stdout.contains(hidden),
+            "`{hidden}` is a link target or link name and must not be printed:\n{}",
+            run.stdout
         );
     }
 }

@@ -7,13 +7,14 @@
 
 mod coverage;
 mod dispositions;
-mod pyfmt;
+pub(crate) mod pyfmt;
+pub(crate) mod pyre;
 mod render;
 mod statuses;
 mod waivers;
 
 use std::collections::BTreeSet;
-use std::fs;
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
@@ -42,10 +43,8 @@ pub fn run(root: &Path, options: Options, out: &mut dyn Write) -> anyhow::Result
         );
     }
     let frozen = read_text(&root.join(FROZEN_LEDGER_PATH))?;
-    let keys: Vec<String> = rows::rows(&frozen)
-        .iter()
-        .map(|row| row.key.replace("\\|", "|"))
-        .collect();
+    // Ownership matches the keys as written, as scripts/port/check_coverage.py does.
+    let keys: Vec<String> = rows::rows(&frozen).into_iter().map(|row| row.key).collect();
     let map = read_json(&root.join(MAP_PATH))?;
     let chunks = map
         .get("chunks")
@@ -62,7 +61,7 @@ pub fn run(root: &Path, options: Options, out: &mut dyn Write) -> anyhow::Result
         }
         None
     } else {
-        let surfaces: BTreeSet<String> = keys.iter().cloned().collect();
+        let surfaces: BTreeSet<String> = keys.iter().map(|key| rendered_surface(key)).collect();
         // The Python generator loads the waivers before the statuses; keep that order.
         let waiver_map = waivers::load(&root.join(WAIVERS_PATH), &surfaces)?;
         let status_map = statuses::load(&root.join(STATUS_SHARDS_DIR))?;
@@ -97,12 +96,46 @@ pub fn run(root: &Path, options: Options, out: &mut dyn Write) -> anyhow::Result
     Ok(clean)
 }
 
+/// The surface a frozen row key names: the render escapes `|` back to `\|`, so the key's escape is
+/// undone here. Ownership never sees this form.
+fn rendered_surface(key: &str) -> String {
+    key.replace("\\|", "|")
+}
+
+/// Write the contract ledger through a sibling temp file, renamed over `path` once it is synced, so
+/// an interrupted write leaves the existing ledger in place.
 fn write_contract_ledger(path: &Path, text: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("cannot create {}", parent.display()))?;
     }
-    fs::write(path, text).with_context(|| format!("cannot write {}", path.display()))
+    let temp = sibling_temp(path)?;
+    let written = write_synced(&temp, text).and_then(|()| {
+        fs::rename(&temp, path).with_context(|| format!("cannot write {}", path.display()))
+    });
+    if written.is_err() {
+        // Best effort: the failed write is the error to report, not a leftover temp file.
+        let _ = fs::remove_file(&temp);
+    }
+    written
+}
+
+/// A temp path beside `path`, unique to this process.
+fn sibling_temp(path: &Path) -> Result<std::path::PathBuf> {
+    let name = path
+        .file_name()
+        .with_context(|| format!("{} has no file name", path.display()))?;
+    let mut temp_name = name.to_os_string();
+    temp_name.push(format!(".{}.tmp", std::process::id()));
+    Ok(path.with_file_name(temp_name))
+}
+
+fn write_synced(path: &Path, text: &str) -> Result<()> {
+    let mut file =
+        File::create(path).with_context(|| format!("cannot write {}", path.display()))?;
+    file.write_all(text.as_bytes())
+        .and_then(|()| file.sync_all())
+        .with_context(|| format!("cannot write {}", path.display()))
 }
 
 /// Every `*.json` disposition file, sorted by name, parsed.

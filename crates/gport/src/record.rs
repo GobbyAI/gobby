@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use crate::map::Map;
 use crate::rows::{self, Row, Selectors};
-use crate::{DISPOSITIONS_DIR, FROZEN_LEDGER_PATH, RECORD_PATH, RULINGS_PATH};
+use crate::{DISPOSITIONS_DIR, FROZEN_LEDGER_PATH, MAP_PATH, RECORD_PATH, RULINGS_PATH};
 
 #[cfg(test)]
 mod tests;
@@ -82,7 +82,7 @@ pub fn run(root: &Path, out: &mut dyn Write) -> anyhow::Result<bool> {
         }
         return Ok(false);
     }
-    fs::write(&path, text).with_context(|| format!("cannot write {}", path.display()))?;
+    write_atomic(&path, &text)?;
     writeln!(out, "wrote {RECORD_PATH}")?;
     Ok(true)
 }
@@ -127,6 +127,7 @@ struct Inputs {
 impl Inputs {
     fn load(root: &Path) -> anyhow::Result<Self> {
         let map = Map::load(root)?;
+        reject_markers_in(MAP_PATH, &map.raw)?;
         let mut seen = BTreeSet::new();
         for chunk in &map.chunks {
             if !seen.insert(chunk.id.as_str()) {
@@ -134,6 +135,7 @@ impl Inputs {
             }
         }
         let rulings = read_input(root, RULINGS_PATH)?;
+        reject_markers(RULINGS_PATH, &rulings)?;
         let dispositions = load_dispositions(root)?;
         let ledger = read_input(root, FROZEN_LEDGER_PATH)?;
         let selectors = Selectors::compile(&map.chunks);
@@ -143,7 +145,7 @@ impl Inputs {
                 selectors.bad.join("\n")
             );
         }
-        let owned = owned_by_chunk(&selectors, &rows::rows(&ledger));
+        let owned = owned_by_chunk(&selectors, &rows::rows(&ledger))?;
         Ok(Self {
             map,
             rulings,
@@ -181,6 +183,8 @@ fn load_dispositions(root: &Path) -> anyhow::Result<Vec<Disposition>> {
         let bytes = fs::read(file).with_context(|| format!("cannot read {}", file.display()))?;
         let value: Value = serde_json::from_slice(&bytes)
             .with_context(|| format!("{} is not valid JSON", file.display()))?;
+        let source = file.strip_prefix(root).unwrap_or(file.as_path());
+        reject_markers_in(&source.display().to_string(), &value)?;
         for item in
             array_field(&value, "dispositions").with_context(|| format!("in {}", file.display()))?
         {
@@ -195,14 +199,18 @@ fn load_dispositions(root: &Path) -> anyhow::Result<Vec<Disposition>> {
     Ok(all)
 }
 
-/// Each chunk's owned row keys: the keys its selectors own and no other chunk does.
+/// Each chunk's owned row keys: the keys its selectors own and no other chunk does. A selector that
+/// fails to run is an input error.
 ///
 /// Owners are resolved once per row, so the cost is rows times selectors, not
 /// chunks times rows.
-fn owned_by_chunk(selectors: &Selectors, ledger_rows: &[Row]) -> BTreeMap<String, Vec<String>> {
+fn owned_by_chunk(
+    selectors: &Selectors,
+    ledger_rows: &[Row],
+) -> anyhow::Result<BTreeMap<String, Vec<String>>> {
     let mut owned: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for row in ledger_rows {
-        let owners = selectors.owners(&row.key);
+        let owners = selectors.try_owners(&row.key)?;
         if let [owner] = owners.as_slice() {
             owned
                 .entry((*owner).to_owned())
@@ -210,7 +218,7 @@ fn owned_by_chunk(selectors: &Selectors, ledger_rows: &[Row]) -> BTreeMap<String
                 .push(row.key.clone());
         }
     }
-    owned
+    Ok(owned)
 }
 
 /// The record text, and the names of the kept blocks it places.
@@ -432,8 +440,14 @@ enum Marker<'a> {
     End(&'a str),
 }
 
+/// A line without its trailing carriage return, so a CRLF record reads like an LF one.
+fn text_of(line: &str) -> &str {
+    line.strip_suffix('\r').unwrap_or(line)
+}
+
 /// A kept-block marker, which counts only when it is the whole line.
 fn marker(line: &str) -> Option<Marker<'_>> {
+    let line = text_of(line);
     if let Some(name) = line
         .strip_prefix(OPEN_PREFIX)
         .and_then(|rest| rest.strip_suffix(MARKER_SUFFIX))
@@ -445,10 +459,12 @@ fn marker(line: &str) -> Option<Marker<'_>> {
 }
 
 /// Scan every kept block of `text`. Malformed markers are recorded as problems.
+///
+/// Lines split on `\n` alone, so a body keeps any carriage return it carries.
 fn scan_kept(text: &str) -> Scan {
     let mut scan = Scan::default();
     let mut open: Option<KeptBlock> = None;
-    for line in text.lines() {
+    for line in text.split_terminator('\n') {
         match marker(line) {
             None => {
                 if let Some(block) = open.as_mut() {
@@ -493,7 +509,7 @@ fn scan_kept(text: &str) -> Scan {
 fn frozen_paths(body: &[String]) -> Vec<String> {
     let mut paths = Vec::new();
     let mut listing = false;
-    for line in body {
+    for line in body.iter().map(|line| text_of(line)) {
         if line == FROZEN_HEADING {
             listing = true;
         } else if heading_level(line).is_some() {
@@ -557,6 +573,65 @@ fn or_none(text: &str) -> &str {
 fn read_input(root: &Path, relative: &str) -> anyhow::Result<String> {
     let path = root.join(relative);
     fs::read_to_string(&path).with_context(|| format!("cannot read {}", path.display()))
+}
+
+/// Refuse `text` when one of its lines is shaped like a kept-block marker.
+///
+/// A generated record copies such text, and a copied marker would open a second
+/// block of the same name, so the input is an error rather than a rewrite.
+fn reject_markers(source: &str, text: &str) -> anyhow::Result<()> {
+    match text
+        .split_terminator('\n')
+        .find(|line| marker(line).is_some())
+    {
+        Some(line) => bail!(
+            "{source} holds the kept-block marker `{}`, which a generated record cannot carry",
+            text_of(line)
+        ),
+        None => Ok(()),
+    }
+}
+
+/// `reject_markers` applied to every string inside a parsed JSON value.
+fn reject_markers_in(source: &str, value: &Value) -> anyhow::Result<()> {
+    match value {
+        Value::String(text) => reject_markers(source, text),
+        Value::Array(items) => items
+            .iter()
+            .try_for_each(|item| reject_markers_in(source, item)),
+        Value::Object(fields) => fields
+            .values()
+            .try_for_each(|item| reject_markers_in(source, item)),
+        Value::Null | Value::Bool(_) | Value::Number(_) => Ok(()),
+    }
+}
+
+/// Replace `path` with `text` through a sibling temp file and a rename, so an
+/// interrupted write leaves the existing file whole. A failed write removes its
+/// temp file.
+fn write_atomic(path: &Path, text: &str) -> anyhow::Result<()> {
+    let temp = sibling_temp(path);
+    let result = write_synced(&temp, text).and_then(|()| fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result.with_context(|| format!("cannot write {}", path.display()))
+}
+
+/// The temp path beside `path`, unique to this process.
+fn sibling_temp(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default();
+    path.with_file_name(format!(".{name}.{}.tmp", std::process::id()))
+}
+
+/// Create `path` with `text` and flush it to disk.
+fn write_synced(path: &Path, text: &str) -> std::io::Result<()> {
+    let mut file = fs::File::create(path)?;
+    file.write_all(text.as_bytes())?;
+    file.sync_all()
 }
 
 /// The record as it stands, or empty when none has been written yet.

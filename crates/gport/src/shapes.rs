@@ -12,6 +12,7 @@ use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use gobby_core::grant::reject_remote_endpoint;
 use serde_json::Value;
 use walkdir::WalkDir;
 
@@ -23,6 +24,8 @@ const METRICS_ROUTE: &str = "/api/mcp/tools";
 const DAEMON_TIMEOUT: Duration = Duration::from_secs(5);
 /// Column headings of the table.
 const HEADINGS: [&str; 4] = ["Tool", "Transcript", "Daemon", "Argument keys"];
+/// The label that every tool name or daemon label not in name shape counts under.
+const UNNAMED: &str = "(unnamed)";
 
 #[derive(Debug, Clone, Default)]
 pub struct Options {
@@ -31,11 +34,13 @@ pub struct Options {
 }
 
 /// One tool's counts: its transcript calls and the argument keys they used, and the daemon's
-/// count. `None` means that source did not report the tool.
+/// count. `None` means that source did not report the tool. Keys that are not key-shaped go to
+/// `other_keys` only so they can be counted; their text is never printed.
 #[derive(Debug, Default)]
 struct Tally {
     transcript_calls: Option<u64>,
     keys: BTreeSet<String>,
+    other_keys: BTreeSet<String>,
     daemon_calls: Option<u64>,
 }
 
@@ -44,7 +49,13 @@ impl Tally {
     fn record_call(&mut self, arguments: Option<&Value>) {
         let calls = self.transcript_calls.get_or_insert(0);
         *calls = calls.saturating_add(1);
-        self.keys.extend(argument_keys(arguments));
+        for key in argument_keys(arguments) {
+            if is_key(&key) {
+                self.keys.insert(key);
+            } else {
+                self.other_keys.insert(key);
+            }
+        }
     }
 }
 
@@ -101,8 +112,14 @@ fn scan_root(root: &Path, tallies: &mut Tallies, skipped: &mut Vec<String>) {
     let shown = show(&root.display().to_string());
     match std::fs::metadata(root) {
         Ok(meta) if meta.is_dir() => {
-            for entry in WalkDir::new(root).follow_links(true).sort_by_file_name() {
+            // Links below the root are not followed; the root itself always is. Each link below is
+            // counted, and the count is listed once for this root.
+            let mut links = 0usize;
+            for entry in WalkDir::new(root).follow_links(false).sort_by_file_name() {
                 match entry {
+                    Ok(entry) if entry.depth() > 0 && entry.file_type().is_symlink() => {
+                        links = links.saturating_add(1);
+                    }
                     Ok(entry)
                         if entry.file_type().is_file()
                             && entry.path().extension().is_some_and(|ext| ext == "jsonl") =>
@@ -118,6 +135,10 @@ fn scan_root(root: &Path, tallies: &mut Tallies, skipped: &mut Vec<String>) {
                         skipped.push(format!("{path}: unreadable"));
                     }
                 }
+            }
+            if links > 0 {
+                let noun = if links == 1 { "symlink" } else { "symlinks" };
+                skipped.push(format!("{shown}: {links} {noun} not followed"));
             }
         }
         Ok(meta) if meta.is_file() => scan_or_skip(root, tallies, skipped),
@@ -195,7 +216,10 @@ fn observe_call(tallies: &mut Tallies, name: &str, input: Option<&Value>) {
     } else {
         (name.to_owned(), input)
     };
-    tallies.entry(label).or_default().record_call(arguments);
+    tallies
+        .entry(tool_label(label))
+        .or_default()
+        .record_call(arguments);
 }
 
 /// The `<server>:<tool>` label a proxy call names, when both names are present.
@@ -218,13 +242,22 @@ fn argument_keys(arguments: Option<&Value>) -> Vec<String> {
     }
 }
 
+/// The metrics request for a daemon base. A remote endpoint is refused before the bearer header
+/// is attached, so no request that carries it is built for one.
+fn metrics_request(base: &str) -> Result<ureq::Request, String> {
+    reject_remote_endpoint(base).map_err(|error| error.to_string())?;
+    let url = format!("{base}{METRICS_ROUTE}?include_metrics=true");
+    Ok(gobby_core::local_token::apply_bearer_header(
+        ureq::get(&url).timeout(DAEMON_TIMEOUT),
+    ))
+}
+
 /// Fetches the daemon's per-tool call counts. An `Err` names why the route is skipped.
 fn daemon_metrics() -> Result<BTreeMap<String, u64>, String> {
     let base =
         gobby_core::daemon_url::daemon_url().map_err(|_| "daemon URL unavailable".to_owned())?;
-    let request =
-        ureq::get(&format!("{base}{METRICS_ROUTE}?include_metrics=true")).timeout(DAEMON_TIMEOUT);
-    let response = match gobby_core::local_token::apply_bearer_header(request).call() {
+    let request = metrics_request(&base)?;
+    let response = match request.call() {
         Ok(response) => response,
         Err(ureq::Error::Status(code, _)) => return Err(format!("HTTP status {code}")),
         Err(_) => return Err("unreachable".to_owned()),
@@ -254,11 +287,54 @@ fn parse_metrics(body: &Value) -> Option<BTreeMap<String, u64>> {
             ) else {
                 continue;
             };
-            let total: &mut u64 = calls.entry(format!("{server}:{name}")).or_default();
+            let label = tool_label(format!("{server}:{name}"));
+            let total: &mut u64 = calls.entry(label).or_default();
             *total = total.saturating_add(count);
         }
     }
     Some(calls)
+}
+
+/// Shape of a printed word: a letter or `_`, then up to 63 more bytes, each a letter, a digit, `_`
+/// or one of `extra`. Anything else is content, so it is counted, never printed.
+fn has_shape(text: &str, extra: &[u8]) -> bool {
+    let bytes = text.as_bytes();
+    bytes.len() <= 64
+        && bytes
+            .first()
+            .is_some_and(|&first| first.is_ascii_alphabetic() || first == b'_')
+        && bytes
+            .iter()
+            .all(|&byte| byte.is_ascii_alphanumeric() || byte == b'_' || extra.contains(&byte))
+}
+
+/// Key shape for a printed argument key: letters, digits and `_` only, so a dot or a hyphen
+/// means the key is content and is only counted.
+fn is_key(text: &str) -> bool {
+    has_shape(text, b"")
+}
+
+/// Shape of one part of a printed tool label: a hyphen is allowed, as in the server name
+/// `gobby-tasks`, and a dot is allowed after the first character, as in a dotted tool name.
+fn is_name_part(text: &str) -> bool {
+    has_shape(text, b"-.")
+}
+
+/// A label is one name part, or two joined by a single `:` (a proxy call's `<server>:<tool>`).
+fn is_label(label: &str) -> bool {
+    match label.split_once(':') {
+        Some((server, tool)) => is_name_part(server) && is_name_part(tool),
+        None => is_name_part(label),
+    }
+}
+
+/// The label a call counts under: its own name when name-shaped, otherwise the shared unnamed line.
+fn tool_label(label: String) -> String {
+    if is_label(&label) {
+        label
+    } else {
+        UNNAMED.to_owned()
+    }
 }
 
 /// Text as printed. Control characters and quotes are escaped so a name cannot break the layout.
@@ -271,18 +347,19 @@ fn count_cell(count: Option<u64>) -> String {
 }
 
 /// `-` when no transcript call named the tool; `(none)` when its calls carried no arguments.
+/// Key-shaped keys print by name; the other distinct keys print only as a count.
 fn keys_cell(tally: &Tally) -> String {
     if tally.transcript_calls.is_none() {
-        "-".to_owned()
-    } else if tally.keys.is_empty() {
+        return "-".to_owned();
+    }
+    let mut cells: Vec<String> = tally.keys.iter().cloned().collect();
+    if !tally.other_keys.is_empty() {
+        cells.push(format!("+{} other keys", tally.other_keys.len()));
+    }
+    if cells.is_empty() {
         "(none)".to_owned()
     } else {
-        tally
-            .keys
-            .iter()
-            .map(|key| show(key))
-            .collect::<Vec<_>>()
-            .join(", ")
+        cells.join(", ")
     }
 }
 
@@ -295,7 +372,7 @@ fn write_table(out: &mut dyn Write, tallies: &Tallies) -> anyhow::Result<()> {
         .iter()
         .map(|(label, tally)| {
             [
-                show(label),
+                label.clone(),
                 count_cell(tally.transcript_calls),
                 count_cell(tally.daemon_calls),
                 keys_cell(tally),
@@ -341,4 +418,25 @@ fn write_skipped(out: &mut dyn Write, skipped: &[String]) -> anyhow::Result<()> 
         writeln!(out, "  {entry}")?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::metrics_request;
+
+    /// The reason a skipped metrics route carries for a remote endpoint.
+    const REFUSAL: &str = "remote daemon endpoint refused";
+
+    #[test]
+    fn non_loopback_endpoint_builds_no_metrics_request() {
+        let Err(reason) = metrics_request("http://192.0.2.1:9") else {
+            panic!("a non-loopback endpoint must not get a request that carries the bearer");
+        };
+        assert_eq!(reason, REFUSAL);
+    }
+
+    #[test]
+    fn malformed_endpoint_builds_no_metrics_request() {
+        assert!(metrics_request("not a url").is_err());
+    }
 }

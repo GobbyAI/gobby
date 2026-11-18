@@ -166,6 +166,10 @@ struct Stub {
 
 impl Stub {
     fn serve(tasks: Vec<Task>) -> Self {
+        Self::serve_with(tasks, Paging::HONEST)
+    }
+
+    fn serve_with(tasks: Vec<Task>, paging: Paging) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind stub daemon");
         let port = listener.local_addr().expect("stub address").port();
         let tasks = Arc::new(tasks);
@@ -175,7 +179,7 @@ impl Stub {
             for stream in listener.incoming().flatten() {
                 let tasks = Arc::clone(&tasks);
                 let log = Arc::clone(&log);
-                thread::spawn(move || handle(stream, &tasks, &log));
+                thread::spawn(move || handle(stream, &tasks, paging, &log));
             }
         });
         Self {
@@ -187,15 +191,35 @@ impl Stub {
     /// How many `GET /api/tasks` calls asked for children of some parent.
     fn child_list_calls(&self) -> usize {
         let log = self.requests.lock().expect("request log");
-        log.iter()
-            .filter(|target| {
-                target.starts_with("/api/tasks?") && target.contains("parent_task_id=")
-            })
-            .count()
+        log.iter().filter(|target| is_child_listing(target)).count()
     }
 }
 
-fn handle(stream: TcpStream, tasks: &[Task], log: &Mutex<Vec<String>>) {
+/// Whether a request target lists the children of some parent.
+fn is_child_listing(target: &str) -> bool {
+    target.starts_with("/api/tasks?") && target.contains("parent_task_id=")
+}
+
+/// How the stub answers `GET /api/tasks?parent_task_id=...`.
+#[derive(Clone, Copy)]
+enum Paging {
+    /// Honours `offset` and `limit`, returns at most `max_rows` rows per page, and reports
+    /// `total` as the number of children when `report_total` is set.
+    Honest { max_rows: usize, report_total: bool },
+    /// Ignores `offset` and `limit`. Every listing returns the first `rows` children in fixture
+    /// order, so the daemon repeats itself. `total` is reported only when it is given.
+    Repeating { rows: usize, total: Option<u64> },
+}
+
+impl Paging {
+    /// Honours `offset` and `limit` with no row clamp, and reports `total`.
+    const HONEST: Self = Self::Honest {
+        max_rows: 1000,
+        report_total: true,
+    };
+}
+
+fn handle(stream: TcpStream, tasks: &[Task], paging: Paging, log: &Mutex<Vec<String>>) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
     let Ok(read_half) = stream.try_clone() else {
         return;
@@ -217,7 +241,7 @@ fn handle(stream: TcpStream, tasks: &[Task], log: &Mutex<Vec<String>>) {
     let method = parts.next().unwrap_or_default();
     let target = parts.next().unwrap_or_default().to_owned();
     log.lock().expect("request log").push(target.clone());
-    let (status, body) = route(method, &target, tasks);
+    let (status, body) = route(method, &target, tasks, paging);
     let body = body.to_string();
     let reason = match status {
         200 => "OK",
@@ -235,14 +259,14 @@ fn handle(stream: TcpStream, tasks: &[Task], log: &Mutex<Vec<String>>) {
     let _ = stream.flush();
 }
 
-fn route(method: &str, target: &str, tasks: &[Task]) -> (u16, Value) {
+fn route(method: &str, target: &str, tasks: &[Task], paging: Paging) -> (u16, Value) {
     if method != "GET" {
         return (405, json!({"detail": "Method Not Allowed"}));
     }
     let (raw_path, raw_query) = target.split_once('?').unwrap_or((target, ""));
     let path = pct_decode(raw_path);
     if path == "/api/tasks" {
-        return list(tasks, &parse_query(raw_query));
+        return list(tasks, &parse_query(raw_query), paging);
     }
     if let Some(reference) = path.strip_prefix("/api/tasks/") {
         return match find(tasks, reference) {
@@ -267,9 +291,9 @@ fn find<'a>(tasks: &'a [Task], reference: &str) -> Option<&'a Task> {
     }
 }
 
-/// The list route: filter by `parent_task_id` when given, then page by `limit` and `offset`.
-/// Children keep their fixture order, so the test controls which page holds each one.
-fn list(tasks: &[Task], query: &HashMap<String, String>) -> (u16, Value) {
+/// The list route: filter by `parent_task_id` when given, then answer the page the paging mode
+/// allows. Children keep their fixture order, so the test controls which page holds each one.
+fn list(tasks: &[Task], query: &HashMap<String, String>, paging: Paging) -> (u16, Value) {
     let limit = match page_number(query, "limit", 50, 1, 1000) {
         Ok(value) => value,
         Err(detail) => return (422, json!({"detail": detail})),
@@ -285,22 +309,34 @@ fn list(tasks: &[Task], query: &HashMap<String, String>) -> (u16, Value) {
             None => true,
         })
         .collect();
-    let page: Vec<Value> = rows
-        .iter()
-        .skip(offset)
-        .take(limit)
-        .map(|task| brief_json(task))
-        .collect();
-    (
-        200,
-        json!({
-            "tasks": page,
-            "total": rows.len(),
-            "stats": {},
-            "limit": limit,
-            "offset": offset,
-        }),
-    )
+    let (page, total): (Vec<Value>, Option<u64>) = match paging {
+        Paging::Honest {
+            max_rows,
+            report_total,
+        } => {
+            let page: Vec<Value> = rows
+                .iter()
+                .skip(offset)
+                .take(limit.min(max_rows))
+                .map(|task| brief_json(task))
+                .collect();
+            let total = u64::try_from(rows.len()).ok().filter(|_| report_total);
+            (page, total)
+        }
+        Paging::Repeating { rows: count, total } => {
+            let page: Vec<Value> = rows
+                .iter()
+                .take(count)
+                .map(|task| brief_json(task))
+                .collect();
+            (page, total)
+        }
+    };
+    let mut body = json!({"tasks": page, "stats": {}, "limit": limit, "offset": offset});
+    if let Some(total) = total {
+        body["total"] = json!(total);
+    }
+    (200, body)
 }
 
 fn page_number(
@@ -503,6 +539,15 @@ fn assert_line_per_dependency(run: &Run, deps: &[&str]) {
             detail(run)
         );
     }
+}
+
+fn assert_incomplete(run: &Run, received: u64, total: u64) {
+    let line = format!("the child listing is incomplete: received {received} of {total} children");
+    assert!(
+        run.stderr.contains(&line),
+        "stderr should say `{line}`\n{}",
+        detail(run)
+    );
 }
 
 fn assert_tree_clean(repo: &Repo) {
@@ -784,4 +829,211 @@ fn unreachable_daemon_exits_2() {
     let run = start(&repo, &closed_port_url(), "FX-TARGET");
     assert_exit(&run, 2);
     assert_no_launch_base(&run);
+}
+
+/// `count` open children of the epic that no chunk names, each with a fresh sequence number.
+fn fillers(count: u64) -> Vec<Task> {
+    (0..count)
+        .map(|n| child(30_000 + n, &format!("Filler {n}"), "Filler task."))
+        .collect()
+}
+
+/// Contract: a daemon that clamps each page to 500 rows and reports a total of 1,500 is read in
+/// full. The wanted chunk sits at index 1,200, past the second page, so the start passes only if
+/// the client keeps paging by the rows it has received: listings at offsets 0, 500 and 1,000.
+#[test]
+fn children_clamped_to_500_rows_per_page_are_all_seen() {
+    let repo = Repo::new();
+    commit_map(&repo, &["FX-ALPHA"]);
+    let alpha = repo.commit("land alpha");
+    repo.commit("later work");
+    let head = repo.git(&["rev-parse", "0.9.0"]);
+    let mut children = fillers(1_500);
+    children[0] =
+        chunk_task(SEQ_ALPHA, "FX-ALPHA", "Alpha chunk").closed_as("done", Some(alpha.as_str()));
+    children[1_200] = target_task();
+    let mut tasks = vec![epic()];
+    tasks.extend(children);
+    let stub = Stub::serve_with(
+        tasks,
+        Paging::Honest {
+            max_rows: 500,
+            report_total: true,
+        },
+    );
+    let run = start(&repo, &stub.url, "FX-TARGET");
+    assert_exit(&run, 0);
+    assert_line_per_dependency(&run, &["FX-ALPHA"]);
+    assert_launch_base(&run, &head);
+    assert_eq!(
+        stub.child_list_calls(),
+        3,
+        "listings at offsets 0, 500 and 1000 should read all 1,500 children\n{}",
+        detail(&run)
+    );
+}
+
+/// Contract: a child listing with no numeric total is an input error. The start exits 2 and
+/// names the missing total, after exactly one listing.
+#[test]
+fn listing_without_total_is_an_input_error() {
+    let repo = Repo::new();
+    commit_map(&repo, &["FX-ALPHA"]);
+    let alpha = repo.commit("land alpha");
+    repo.commit("later work");
+    let stub = Stub::serve_with(
+        vec![
+            epic(),
+            target_task(),
+            chunk_task(SEQ_ALPHA, "FX-ALPHA", "Alpha chunk")
+                .closed_as("done", Some(alpha.as_str())),
+        ],
+        Paging::Honest {
+            max_rows: 1000,
+            report_total: false,
+        },
+    );
+    let run = start(&repo, &stub.url, "FX-TARGET");
+    assert_exit(&run, 2);
+    assert!(
+        run.stderr.contains("the child listing has no total"),
+        "stderr should name the missing total\n{}",
+        detail(&run)
+    );
+    assert_eq!(
+        stub.child_list_calls(),
+        1,
+        "a listing without a total is refused after one request\n{}",
+        detail(&run)
+    );
+    assert_no_launch_base(&run);
+}
+
+/// Contract: a daemon that ignores `offset` and returns its one row on every call is stopped by
+/// the second listing, which adds no unseen child. The listing is incomplete, so the start exits
+/// 2 and says how many of the total arrived.
+#[test]
+fn offset_ignoring_daemon_repeating_one_row_is_incomplete() {
+    let repo = Repo::new();
+    commit_map(&repo, &["FX-ALPHA"]);
+    repo.commit("later work");
+    let stub = Stub::serve_with(
+        vec![epic(), target_task()],
+        Paging::Repeating {
+            rows: 1,
+            total: Some(1_000_000),
+        },
+    );
+    let run = start(&repo, &stub.url, "FX-TARGET");
+    assert_exit(&run, 2);
+    assert_incomplete(&run, 1, 1_000_000);
+    assert_eq!(
+        stub.child_list_calls(),
+        2,
+        "the paging should stop at the first repeated page\n{}",
+        detail(&run)
+    );
+    assert_no_launch_base(&run);
+    assert_tree_clean(&repo);
+}
+
+/// Contract: a daemon that ignores `offset` and returns the same three rows on every call is
+/// stopped by the second listing, which adds no unseen child. The listing reports 2,500 but
+/// holds three, so the start exits 2 and says three of the 2,500 arrived.
+#[test]
+fn offset_ignoring_daemon_repeating_three_rows_is_incomplete() {
+    let repo = Repo::new();
+    commit_map(&repo, &["FX-ALPHA"]);
+    repo.commit("later work");
+    let mut tasks = vec![
+        epic(),
+        target_task(),
+        chunk_task(SEQ_ALPHA, "FX-ALPHA", "Alpha chunk"),
+    ];
+    tasks.extend(fillers(2_498));
+    let stub = Stub::serve_with(
+        tasks,
+        Paging::Repeating {
+            rows: 3,
+            total: Some(2_500),
+        },
+    );
+    let run = start(&repo, &stub.url, "FX-TARGET");
+    assert_exit(&run, 2);
+    assert_incomplete(&run, 3, 2_500);
+    assert_eq!(
+        stub.child_list_calls(),
+        2,
+        "the paging should stop at the first repeated page\n{}",
+        detail(&run)
+    );
+    assert_no_launch_base(&run);
+}
+
+/// Contract: child listing requests stop at the 1,000-request ceiling whatever the total says.
+/// The daemon clamps each page to one row and reports 1,500 children, so 1,000 requests reach
+/// only 1,000 of them. The start exits 2 after the 1,000th request and makes no further one.
+#[test]
+fn child_listing_ceiling_stops_at_1000_requests() {
+    let repo = Repo::new();
+    commit_map(&repo, &["FX-ALPHA"]);
+    let alpha = repo.commit("land alpha");
+    repo.commit("later work");
+    let mut tasks = vec![
+        epic(),
+        target_task(),
+        chunk_task(SEQ_ALPHA, "FX-ALPHA", "Alpha chunk").closed_as("done", Some(alpha.as_str())),
+    ];
+    tasks.extend(fillers(1_498));
+    let stub = Stub::serve_with(
+        tasks,
+        Paging::Honest {
+            max_rows: 1,
+            report_total: true,
+        },
+    );
+    let run = start(&repo, &stub.url, "FX-TARGET");
+    assert_exit(&run, 2);
+    assert_incomplete(&run, 1_000, 1_500);
+    assert_eq!(
+        stub.child_list_calls(),
+        1_000,
+        "the ceiling is 1,000 child listing requests\n{}",
+        detail(&run)
+    );
+    assert_no_launch_base(&run);
+}
+
+/// Contract: a listing that needs exactly the 1,000-request ceiling passes. One row per page and
+/// a total of 1,000 take 1,000 requests, and the last of them reaches the total.
+#[test]
+fn child_listing_exactly_at_the_1000_request_ceiling_passes() {
+    let repo = Repo::new();
+    commit_map(&repo, &["FX-ALPHA"]);
+    let alpha = repo.commit("land alpha");
+    repo.commit("later work");
+    let head = repo.git(&["rev-parse", "0.9.0"]);
+    let mut tasks = vec![
+        epic(),
+        target_task(),
+        chunk_task(SEQ_ALPHA, "FX-ALPHA", "Alpha chunk").closed_as("done", Some(alpha.as_str())),
+    ];
+    tasks.extend(fillers(998));
+    let stub = Stub::serve_with(
+        tasks,
+        Paging::Honest {
+            max_rows: 1,
+            report_total: true,
+        },
+    );
+    let run = start(&repo, &stub.url, "FX-TARGET");
+    assert_exit(&run, 0);
+    assert_line_per_dependency(&run, &["FX-ALPHA"]);
+    assert_launch_base(&run, &head);
+    assert_eq!(
+        stub.child_list_calls(),
+        1_000,
+        "one row per page over 1,000 children takes 1,000 requests\n{}",
+        detail(&run)
+    );
 }

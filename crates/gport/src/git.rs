@@ -22,6 +22,26 @@ pub fn output(dir: &Path, args: &[&str]) -> anyhow::Result<Vec<u8>> {
     Ok(result.stdout)
 }
 
+/// Run git in `dir`. Exit 0 gives its stdout and exit 1 gives None, which a caller reads as a "no"
+/// answer such as an unresolved revision or no merge base. Any other exit is an error carrying
+/// stderr, so a probe that cannot run is never mistaken for a "no".
+pub fn output_or_none(dir: &Path, args: &[&str]) -> anyhow::Result<Option<Vec<u8>>> {
+    let result = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .with_context(|| format!("cannot run git {}", args.join(" ")))?;
+    match result.status.code() {
+        Some(0) => Ok(Some(result.stdout)),
+        Some(1) => Ok(None),
+        _ => bail!(
+            "git {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&result.stderr).trim()
+        ),
+    }
+}
+
 /// Run git in `dir` and return its stdout as trimmed text.
 pub fn text(dir: &Path, args: &[&str]) -> anyhow::Result<String> {
     Ok(String::from_utf8(output(dir, args)?)

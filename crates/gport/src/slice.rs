@@ -75,6 +75,9 @@ pub fn check(
         .map(|text| record::found_work_lines(&text, chunk_id))
         .unwrap_or_default();
 
+    let ledger_rows = rows::rows(&ledger);
+    let selectors = Selectors::compile(&map.chunks);
+    let owned = selectors.try_owned_by(chunk_id, &ledger_rows)?;
     let chunk = map.chunk(chunk_id);
     if chunk.is_none() {
         refusals.push(format!(
@@ -135,9 +138,6 @@ pub fn check(
                 short(&base)
             ));
         }
-        let ledger_rows = rows::rows(&ledger);
-        let selectors = Selectors::compile(&map.chunks);
-        let owned = selectors.owned_by(chunk_id, &ledger_rows);
         check_status(root, chunk_id, &owned, &commits, &mut refusals)?;
     }
 
@@ -171,13 +171,13 @@ pub fn report(root: &Path, chunk_ids: &[String], out: &mut dyn Write) -> anyhow:
     let (mut numerator, mut denominator) = (0usize, 0usize);
 
     for chunk_id in chunk_ids {
+        let owned = selectors.try_owned_by(chunk_id, &ledger_rows)?;
         if map.chunk(chunk_id).is_none() {
             refusals.push(format!(
                 "chunk {chunk_id} is not in {MAP_PATH} in the working tree"
             ));
             continue;
         }
-        let owned = selectors.owned_by(chunk_id, &ledger_rows);
         let path = status::path(chunk_id);
         let bytes = match fs::read(root.join(&path)) {
             Ok(bytes) => bytes,
@@ -241,13 +241,27 @@ fn task_tags(tasks: &[String]) -> anyhow::Result<Vec<String>> {
 }
 
 /// The single merge base of the integration branch and HEAD, or None when there is not exactly
-/// one. The probe comes first, because git exits 1 for no base and that is a refusal, not an error.
+/// one. The checkout, the branch and HEAD are verified first, so a missing one is an input error
+/// (Err, exit 2). Only a branch and HEAD that exist with no single merge base is a refusal (None).
 fn merge_base(root: &Path) -> anyhow::Result<Option<String>> {
-    let args = ["merge-base", "--all", INTEGRATION_BRANCH, "HEAD"];
-    if !git::succeeds(root, &args)? {
-        return Ok(None);
+    git::output(root, &["rev-parse", "--git-dir"])
+        .with_context(|| format!("{} is not a git repository", root.display()))?;
+    let branch = format!("{INTEGRATION_BRANCH}^{{commit}}");
+    if git::output_or_none(root, &["rev-parse", "--verify", "--quiet", &branch])?.is_none() {
+        bail!(
+            "integration branch {INTEGRATION_BRANCH} is missing in {}",
+            root.display()
+        );
     }
-    let text = git::text(root, &args)?;
+    if git::output_or_none(root, &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])?.is_none()
+    {
+        bail!("HEAD has no commit in {}", root.display());
+    }
+    let args = ["merge-base", "--all", INTEGRATION_BRANCH, "HEAD"];
+    let Some(bytes) = git::output_or_none(root, &args)? else {
+        return Ok(None);
+    };
+    let text = String::from_utf8(bytes).context("git merge-base printed text that is not UTF-8")?;
     let mut bases = text.lines();
     match (bases.next(), bases.next()) {
         (Some(base), None) => Ok(Some(base.to_owned())),

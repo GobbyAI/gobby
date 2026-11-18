@@ -377,19 +377,481 @@ fn clean_run_exits_zero_and_prints_per_chunk_counts() {
     expect_line(&run, r#"PER_CHUNK {"alpha": 1, "beta": 1}"#);
 }
 
-/// A pipe in a frozen row key is written as `\|`. The key is unescaped before selectors match it,
-/// so the selector sees `MCP x:a|b`.
+/// A pipe in a frozen row key is written as `\|`. Ownership matches the key as written, as
+/// scripts/port/check_coverage.py does, so a selector that spells the backslash owns the row, and
+/// `--owners` prints the key as written.
 #[test]
-fn escaped_pipe_in_a_row_key_is_unescaped_before_matching() {
-    let temp = synthetic(&["MCP x:a\\|b"], &[("alpha", &["^MCP x:a\\|b$"])]);
+fn escaped_pipe_in_a_row_key_is_matched_as_written() {
+    let temp = synthetic(&["MCP x:a\\|b"], &[("alpha", &[r"^MCP x:a\\\|b$"])]);
     let run = run_ledger(temp.path(), &["--owners"]);
     expect_exit(&run, 0);
     assert!(
-        run.stdout == "MCP x:a|b\talpha\n",
+        run.stdout == "MCP x:a\\|b\talpha\n",
         "owners differ\ncode: {}\nstdout:\n{}\nstderr:\n{}",
         run.code,
         run.stdout,
         run.stderr
+    );
+}
+
+/// A selector for the unescaped pipe does not match the key as written, so the escaped row is an
+/// orphan that prints with its backslash.
+#[test]
+fn selector_for_the_unescaped_pipe_does_not_own_an_escaped_key() {
+    let temp = synthetic(&["MCP x:a\\|b"], &[("alpha", &[r"^MCP x:a\|b$"])]);
+    let run = run_ledger(temp.path(), &[]);
+    expect_exit(&run, 1);
+    expect_line(&run, "ORPHAN MCP x:a\\|b");
+    expect_line(
+        &run,
+        "rows=1 owned_once=0 orphans=1 double_owned=0 bad_selectors=0",
+    );
+}
+
+/// `--owners` prints one line per ledger row, so a key listed twice prints twice. The summary
+/// still counts each distinct key once in `owned_once`.
+#[test]
+fn owners_print_one_line_per_row_including_repeats() {
+    let temp = synthetic(
+        &["CLI gobby a", "CLI gobby a", "CLI gobby b"],
+        &[("alpha", &["^CLI gobby a$"]), ("beta", &["^CLI gobby b$"])],
+    );
+    let run = run_ledger(temp.path(), &["--owners"]);
+    expect_exit(&run, 0);
+    assert!(
+        run.stdout == "CLI gobby a\talpha\nCLI gobby a\talpha\nCLI gobby b\tbeta\n",
+        "owners differ\ncode: {}\nstdout:\n{}\nstderr:\n{}",
+        run.code,
+        run.stdout,
+        run.stderr
+    );
+    let summary = run_ledger(temp.path(), &[]);
+    expect_line(
+        &summary,
+        "rows=3 owned_once=2 orphans=0 double_owned=0 bad_selectors=0",
+    );
+}
+
+/// The `--owners` lines for `rows` under one chunk, `alpha`, that holds `selector`.
+fn owners_under(selector: &str, rows: &[&str]) -> String {
+    let temp = synthetic(rows, &[("alpha", &[selector])]);
+    run_ledger(temp.path(), &["--owners"]).stdout
+}
+
+/// The run must print a `BAD alpha: '<selector>': ` line, with the selector as a Python repr, and
+/// exit 1.
+fn expect_bad_selector(selector: &str) {
+    let temp = synthetic(&["MCP x:a"], &[("alpha", &[selector])]);
+    let run = run_ledger(temp.path(), &[]);
+    let prefix = format!("BAD alpha: '{}': ", selector.replace('\\', "\\\\"));
+    expect_exit(&run, 1);
+    assert!(
+        run.stdout.lines().any(|line| line.starts_with(&prefix)),
+        "missing {prefix:?}\nstdout:\n{}\nstderr:\n{}",
+        run.stdout,
+        run.stderr
+    );
+}
+
+/// Each selector is one that Python's `re.compile` refuses, each raising `re.error`. Verdicts were
+/// read under `python3.13 -I` (Python 3.13 is the repository's floor, `requires-python >= 3.13`);
+/// `\z` is the one entry Python 3.14.3 accepts instead. gport must refuse each as a BAD line.
+#[test]
+fn selectors_python_refuses_are_bad_lines() {
+    for selector in [
+        r"\p{L}",
+        r"\P{L}",
+        r"\x{41}",
+        r"\h",
+        r"\K",
+        r"\X",
+        r"\G",
+        r"\e",
+        r"\Q",
+        r"\cA",
+        r"\z",
+        r"(?<name>x)",
+        r"(?L)x",
+        r"(?<=a|bc)x",
+        r"(?<!a|bc)x",
+        r"(?<=a*)x",
+        r"(?<=a?)x",
+        r"\1",
+        r"a{2,1}",
+        r"a**",
+        r"a{1}{2}",
+        r"[a--b]",
+        r"[\Z]",
+        r"[\A]",
+        r"[\N]",
+    ] {
+        expect_bad_selector(selector);
+    }
+}
+
+/// Each selector Python compiles, but whose set syntax means something else in fancy-regex: a
+/// nested `[` (including POSIX `[[:alpha:]]`) and the class operators `&&`, `||`, `~~` and `--`.
+/// Python's verdicts are OK: a nested set and a set operator are literal characters there, with a
+/// FutureWarning. Decision (c) reports them BAD rather than compile them, so gport reports BAD.
+#[test]
+fn python_compiled_set_constructs_are_bad_lines_by_decision() {
+    for selector in [
+        "[[:alpha:]]+",
+        "[a-z&&[^b]]",
+        "[a&&b]",
+        "[a||b]",
+        "[a~~b]",
+        "[[]",
+        "[+--]",
+    ] {
+        expect_bad_selector(selector);
+    }
+}
+
+/// `\Z` matches only at the end of the key, as Python's does. Verdict: Python `re.search` owns
+/// `end` and not `endx` (`python3 -I`, Python 3.14.3).
+#[test]
+fn python_end_of_string_escape_owns_only_the_key_it_ends() {
+    assert_eq!(
+        owners_under(r"^end\Z", &["end", "endx"]),
+        "end\talpha\nendx\t\n"
+    );
+}
+
+/// `{,2}` is a quantifier from zero to two, and a `{` that does not start a quantifier is a
+/// literal. Verdicts: Python owns `x` and not `xxx`; `x{` is a literal (`python3 -I`).
+#[test]
+fn python_brace_quantifiers_and_literal_braces_keep_python_meaning() {
+    assert_eq!(owners_under(r"^x{,2}$", &["x", "xxx"]), "x\talpha\nxxx\t\n");
+    assert_eq!(owners_under(r"^x{$", &["x{", "x"]), "x\t\nx{\talpha\n");
+}
+
+/// `A` is the letter `A`. `\S` excludes U+001F, which Python counts as whitespace, so the key
+/// with a unit separator is an orphan. Verdicts from `python3 -I`: `^A$` owns `A` only;
+/// `^\S+$` owns `abc` only.
+#[test]
+fn python_unicode_escape_and_space_class_keep_python_meaning() {
+    assert_eq!(owners_under(r"^A$", &["A", "a"]), "A\talpha\na\t\n");
+    assert_eq!(
+        owners_under(r"^\S+$", &["abc", "a\u{1f}b"]),
+        "a\u{1f}b\t\nabc\talpha\n"
+    );
+}
+
+/// Outside a set, `&&` is two literal characters in Python and in fancy-regex alike. Verdict:
+/// Python owns `a&&b` (`python3 -I`).
+#[test]
+fn set_operator_outside_a_set_is_literal() {
+    assert_eq!(owners_under(r"^a&&b$", &["a&&b"]), "a&&b\talpha\n");
+}
+
+/// A look-behind of fixed width is valid in Python 3.13 and owns the rows it allows: `(?<=ab)x`
+/// owns `abx` and not a bare `x` (`python3.13 -I`).
+#[test]
+fn fixed_width_look_behind_keeps_python_meaning() {
+    assert_eq!(
+        owners_under(r"(?<=ab)x", &["abx", "x"]),
+        "abx\talpha\nx\t\n"
+    );
+}
+
+/// A selector that runs out of backtracking on a key fails the run: the ledger exits 2 and names
+/// the chunk, rather than reading the selector as no match.
+#[test]
+fn selector_that_fails_to_run_fails_the_ledger_run() {
+    let key = format!("MCP x:{}?", "a".repeat(40));
+    let temp = synthetic(&[key.as_str()], &[("alpha", &[r"^MCP x:(a+)+(?!z)!"])]);
+    let run = run_ledger(temp.path(), &[]);
+    expect_error(&run, "selector of alpha failed on");
+}
+
+/// A backreference is refused in every form: `\1` and `(?P=name)`, a reference to a group still
+/// open as in `(a\1)`, and a case-insensitive one. A differential run found gport matching these
+/// differently from Python, so each is reported BAD rather than matched.
+#[test]
+fn backreference_selectors_are_bad_lines() {
+    for selector in [r"(a)\1", r"(a\1)", r"(?i)(a)\1", r"(?P=n)"] {
+        expect_bad_selector(selector);
+    }
+}
+
+/// A named group is refused, whatever its name and however often the name repeats. Python
+/// compiles `(?P<n>x)` and rejects the duplicate name in `(?P<n>a)(?P<n>b)`; gport reports both
+/// BAD.
+#[test]
+fn named_group_selectors_are_bad_lines() {
+    for selector in [r"(?P<n>x)", r"(?P<n>a)(?P<n>b)"] {
+        expect_bad_selector(selector);
+    }
+}
+
+/// The verbose flag is refused in every inline-flag form, turned on or off: `(?x)a{2} {3}`,
+/// `(?ix)a`, `(?x:a b)` and `(?-x:a)`. Python ignores the whitespace in verbose mode, and
+/// fancy-regex does not match it the same way.
+#[test]
+fn verbose_flag_selectors_are_bad_lines() {
+    for selector in [r"(?x)a{2} {3}", r"(?ix)a", r"(?x:a b)", r"(?-x:a)"] {
+        expect_bad_selector(selector);
+    }
+}
+
+/// The ignore-case flag is refused with a non-ASCII character in the selector, whether written as
+/// a character or as an escape such as `ı` or `\xff`. A differential run found gport matching
+/// U+0131 (dotless i) and the other non-ASCII letters under `(?i)` differently from Python.
+#[test]
+fn ignore_case_with_non_ascii_selectors_are_bad_lines() {
+    for selector in [
+        "(?i)\u{131}",
+        "(?i)[\u{131}]",
+        "(?i:é)",
+        r"(?i)ı",
+        r"(?i)\xff",
+    ] {
+        expect_bad_selector(selector);
+    }
+}
+
+/// A `ledger_selectors` list with an item that is not a string is an input error that names the
+/// chunk, exit 2, as the record and check-slice verbs read the same field.
+#[test]
+fn list_ledger_selector_that_is_not_a_string_is_an_input_error() {
+    let temp = synthetic(&["MCP x:a"], &[]);
+    write(
+        temp.path(),
+        "docs/port/map-v2.json",
+        &json!({"chunks": [{"id": "alpha", "ledger_selectors": [1]}]}).to_string(),
+    );
+    let run = run_ledger(temp.path(), &[]);
+    expect_error(&run, "chunk alpha");
+}
+
+/// A chunk whose `ledger_selectors` is falsy owns nothing: the row is an orphan and the run exits 1.
+/// Python's `chunk.get("ledger_selectors") or []` reads a falsy value as no selectors: null, a
+/// missing key, false, 0, 0.0, "", [] and {}.
+#[test]
+fn falsy_ledger_selectors_own_nothing() {
+    let mut maps = vec![json!({"chunks": [{"id": "alpha"}]})];
+    for value in [
+        json!(null),
+        json!(false),
+        json!(0),
+        json!(0.0),
+        json!(""),
+        json!([]),
+        json!({}),
+    ] {
+        maps.push(json!({"chunks": [{"id": "alpha", "ledger_selectors": value}]}));
+    }
+    for map in maps {
+        let temp = synthetic(&["MCP x:a"], &[]);
+        write(temp.path(), "docs/port/map-v2.json", &map.to_string());
+        let run = run_ledger(temp.path(), &[]);
+        expect_exit(&run, 1);
+        expect_line(&run, "ORPHAN MCP x:a");
+    }
+}
+
+/// A chunk whose `ledger_selectors` is truthy but not a list is an input error that names the
+/// chunk, exit 2. Python would iterate its characters or fail, so gport does not read it as no
+/// selectors.
+#[test]
+fn truthy_non_list_ledger_selectors_is_an_input_error() {
+    for value in [json!("^MCP x:a$"), json!(true), json!(1), json!({"a": 1})] {
+        let temp = synthetic(&["MCP x:a"], &[]);
+        write(
+            temp.path(),
+            "docs/port/map-v2.json",
+            &json!({"chunks": [{"id": "alpha", "ledger_selectors": value}]}).to_string(),
+        );
+        let run = run_ledger(temp.path(), &[]);
+        expect_error(&run, "chunk alpha");
+    }
+}
+
+/// A group name must be a Python identifier, as `re` reads `(?P<name>`. Verdicts from
+/// `python3.13 -I`: `1a`, `a-b` and `a²` raise `bad character in group name`, `(?P<>x)` raises
+/// `missing group name`, and `(?P=1a)` raises `bad character in group name` too.
+#[test]
+fn group_names_that_are_not_identifiers_are_bad_lines() {
+    for selector in [
+        r"(?P<1a>x)",
+        r"(?P<a-b>x)",
+        r"(?P<>x)",
+        r"(?P<a²>x)",
+        r"(?P<٣>x)",
+        r"(?P=1a)",
+    ] {
+        expect_bad_selector(selector);
+    }
+}
+
+/// A named group is refused whatever its name, Unicode identifiers included. Python compiles
+/// `(?P<é>x)`, `(?P<ǅ>x)` and `(?P<_a1>x)`, each matching `x` and not `y`; gport reports each BAD
+/// rather than match it, because a named group is one of the constructs `pyre` refuses.
+/// Changed from an owns-what-it-matches test: the names were Python-valid, the constructs are now
+/// refused.
+#[test]
+fn unicode_and_underscore_group_names_are_bad_lines() {
+    for selector in [r"(?P<é>x)", r"(?P<ǅ>x)", r"(?P<_a1>x)"] {
+        expect_bad_selector(selector);
+    }
+}
+
+/// A named backreference is refused. Python compiles `(?P<a>x)(?P=a)` and matches `xx`, not `x`;
+/// gport reports it BAD, since a backreference by name is one of the constructs `pyre` refuses.
+/// Changed from an owns-what-it-matches test for the same reason.
+#[test]
+fn named_backreference_to_an_identifier_is_a_bad_line() {
+    expect_bad_selector(r"(?P<a>x)(?P=a)");
+}
+
+/// A `-` in inline flags needs at least one flag after it, then a `:`. Verdicts from
+/// `python3.13 -I`: `(?i-)a` and `(?-)a` give `missing flag`, `(?-i)a`, `(?i-m)a` and `(?i--m:a)`
+/// give `missing :` or `missing flag`, and `(?i-:a)`, `(?-:a)` give `missing flag`.
+#[test]
+fn minus_in_inline_flags_needs_flags_and_a_colon_is_a_bad_line() {
+    for selector in [
+        r"(?i-)a",
+        r"a(?i-)b",
+        r"(?-)a",
+        r"(?-i)a",
+        r"(?i-m)a",
+        r"(?x-s)a",
+        r"(?i-:a)",
+        r"(?-:a)",
+        r"(?i--m:a)",
+    ] {
+        expect_bad_selector(selector);
+    }
+}
+
+/// A flag that cannot be turned off, or a flag turned on and off in one group, is refused. Verdicts
+/// from `python3.13 -I`: `(?-u:a)` gives `cannot turn off flags 'a', 'u' and 'L'`, and `(?i-i:a)`
+/// gives `flag turned on and off`.
+#[test]
+fn scoped_flags_turned_off_that_python_refuses_are_bad_lines() {
+    for selector in [r"(?-u:a)", r"(?-a:a)", r"(?i-i:a)"] {
+        expect_bad_selector(selector);
+    }
+}
+
+/// A minus with flags after it and a colon keeps Python's meaning. Verdicts from `python3.13 -I`
+/// with `re.search`: `(?i-m:A)` matches `a` and `A`; `(?-i:a)` and `(?u-i:a)` match `a` and not `A`.
+#[test]
+fn scoped_flags_with_a_minus_keep_python_meaning() {
+    assert_eq!(
+        owners_under(r"(?i-m:A)", &["a", "A"]),
+        "A\talpha\na\talpha\n"
+    );
+    assert_eq!(owners_under(r"(?-i:a)", &["a", "A"]), "A\t\na\talpha\n");
+    assert_eq!(owners_under(r"(?u-i:a)", &["a", "A"]), "A\t\na\talpha\n");
+}
+
+/// The frozen ledger is split as Python's `splitlines` splits it, so a key holding one of its
+/// separators is cut in two and is not a row. Each separator is checked on its own.
+#[test]
+fn row_keys_are_split_on_python_line_separators() {
+    for separator in [
+        "\r", "\u{b}", "\u{c}", "\u{1c}", "\u{1d}", "\u{1e}", "\u{85}", "\u{2028}", "\u{2029}",
+    ] {
+        let key = format!("MCP x:b{separator}c");
+        let temp = synthetic(&["MCP x:a", &key], &[("alpha", &["^MCP x:a$"])]);
+        let run = run_ledger(temp.path(), &[]);
+        expect_exit(&run, 0);
+        expect_line(
+            &run,
+            "rows=1 owned_once=1 orphans=0 double_owned=0 bad_selectors=0",
+        );
+    }
+}
+
+/// Python's `str.strip()` removes U+001C to U+001F, which Rust's `trim()` keeps. A waiver whose
+/// behaviour is only such a character is an empty field and is refused with exit 2.
+#[test]
+fn waiver_behaviour_of_only_python_whitespace_is_refused() {
+    let temp = with_waiver(json!({
+        "id": "gobby.notes.unit-sep",
+        "surface": "MCP x:a",
+        "behaviour": "\u{1c}",
+        "decision": "#5",
+        "replacement": "Replacement text."
+    }));
+    let run = run_ledger(temp.path(), &["--stdout"]);
+    expect_error(&run, "Waiver field behaviour must be a non-empty string");
+}
+
+/// A rationale of only U+001C is empty after Python's `strip()`, so the disposition is reported
+/// `INVALID <ref>: no rationale`.
+#[test]
+fn disposition_rationale_of_only_python_whitespace_is_missing() {
+    let temp = disposition_root(
+        "disp-unit-sep.json",
+        json!({"dispositions": [
+            {"ref": "#1", "disposition": "chunk", "target": "alpha", "rationale": "ok"},
+            {"ref": "#2", "disposition": "chunk", "target": "alpha", "rationale": "\u{1c}"},
+            {"ref": "#3", "disposition": "chunk", "target": "alpha", "rationale": "ok"}
+        ]}),
+    );
+    let run = run_ledger(temp.path(), &[]);
+    expect_exit(&run, 1);
+    expect_line(&run, "INVALID #2: no rationale");
+}
+
+/// The contract ledger is written through a sibling temp file and renamed over the target, so a
+/// write that cannot finish leaves the existing ledger as it was. A read-only directory refuses the
+/// temp file: the run exits 2 and the old bytes stay. Skipped where the directory stays writable,
+/// such as when the tests run as root.
+#[cfg(unix)]
+#[test]
+fn contract_ledger_write_goes_through_a_sibling_temp_file() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = synthetic(&["MCP x:a"], &[("alpha", &["^MCP x:a$"])]);
+    let contracts = temp.path().join("docs/contracts");
+    let target = contracts.join("parity-ledger.md");
+    write(
+        temp.path(),
+        "docs/contracts/parity-ledger.md",
+        "old ledger\n",
+    );
+    fs::set_permissions(&contracts, fs::Permissions::from_mode(0o555)).expect("chmod");
+    if fs::write(contracts.join("probe"), "").is_ok() {
+        fs::set_permissions(&contracts, fs::Permissions::from_mode(0o755)).expect("chmod");
+        eprintln!("skipped: the directory stays writable for this user");
+        return;
+    }
+    let run = run_ledger(temp.path(), &[]);
+    let old = fs::read_to_string(&target).expect("old ledger still present");
+    fs::set_permissions(&contracts, fs::Permissions::from_mode(0o755)).expect("chmod");
+    expect_error(&run, "cannot write");
+    assert!(old == "old ledger\n", "the old ledger was changed: {old:?}");
+}
+
+/// A successful run leaves no temp file beside the contract ledger.
+#[test]
+fn contract_ledger_run_leaves_no_temp_file_behind() {
+    let temp = synthetic(&["MCP x:a"], &[("alpha", &["^MCP x:a$"])]);
+    let run = run_ledger(temp.path(), &[]);
+    expect_exit(&run, 0);
+    let mut names: Vec<String> = fs::read_dir(temp.path().join("docs/contracts"))
+        .expect("read contracts dir")
+        .map(|entry| {
+            entry
+                .expect("dir entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    assert!(
+        names
+            == [
+                "parity-ledger-status.d",
+                "parity-ledger.md",
+                "parity-waivers.json"
+            ],
+        "unexpected files beside the ledger: {names:?}"
     );
 }
 

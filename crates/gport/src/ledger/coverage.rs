@@ -1,13 +1,15 @@
-//! Row ownership: scripts/port/check_coverage.py. Each chunk's ledger selectors are Python `re`
-//! patterns searched in every frozen row key; a row must be owned by exactly one chunk.
+//! Row ownership: scripts/port/check_coverage.py. Each chunk's ledger selectors, matched by the
+//! shared `rows::Selectors` engine, are searched in every frozen row key; a row must be owned by
+//! exactly one chunk.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use anyhow::{Context, Result, bail};
-use fancy_regex::Regex;
+use anyhow::{Context, Result};
 use serde_json::Value;
 
-use super::pyfmt::{json_counts, py_string_repr};
+use super::pyfmt::json_counts;
+use crate::map::ledger_selectors;
+use crate::rows::Selectors;
 
 /// Most ORPHAN and DOUBLE lines printed before the rest are counted.
 const LINE_CAP: usize = 60;
@@ -16,8 +18,12 @@ const LINE_CAP: usize = 60;
 pub struct Coverage {
     /// Every row, counting repeats, as the summary line counts them.
     rows: usize,
-    /// Each distinct key in first-occurrence order, with its sorted owner chunk ids.
-    owners: Vec<(String, Vec<String>)>,
+    /// Every row key in file order, counting repeats.
+    row_keys: Vec<String>,
+    /// Each distinct key's sorted owner chunk ids.
+    owners: BTreeMap<String, Vec<String>>,
+    /// Each distinct key in first-occurrence order.
+    distinct: Vec<String>,
     /// Each row, counting repeats, that no selector owns.
     orphans: Vec<String>,
     /// One message per selector that does not compile.
@@ -25,32 +31,40 @@ pub struct Coverage {
 }
 
 impl Coverage {
-    /// Match every selector in `chunks` against every key.
+    /// Match every selector in `chunks` against every key, as written.
     pub fn check(chunks: &[Value], keys: &[String]) -> Result<Self> {
-        let (selectors, bad) = compile(chunks)?;
-        let mut seen: BTreeSet<&str> = BTreeSet::new();
-        let mut unowned: BTreeSet<&str> = BTreeSet::new();
-        let mut owners = Vec::new();
+        let pairs = selector_pairs(chunks)?;
+        let selectors = Selectors::from_selectors(
+            pairs
+                .iter()
+                .map(|(id, selector)| (id.as_str(), selector.as_str())),
+        );
+        let mut owners = BTreeMap::new();
+        let mut distinct = Vec::new();
         for key in keys {
-            if !seen.insert(key.as_str()) {
+            if owners.contains_key(key) {
                 continue;
             }
-            let ids = owners_of(&selectors, key)?;
-            if ids.is_empty() {
-                unowned.insert(key.as_str());
-            }
-            owners.push((key.clone(), ids));
+            let ids: Vec<String> = selectors
+                .try_owners(key)?
+                .into_iter()
+                .map(str::to_owned)
+                .collect();
+            owners.insert(key.clone(), ids);
+            distinct.push(key.clone());
         }
         let orphans = keys
             .iter()
-            .filter(|key| unowned.contains(key.as_str()))
+            .filter(|key| owners.get(*key).is_some_and(Vec::is_empty))
             .cloned()
             .collect();
         Ok(Self {
             rows: keys.len(),
+            row_keys: keys.to_vec(),
             owners,
+            distinct,
             orphans,
-            bad,
+            bad: selectors.bad,
         })
     }
 
@@ -59,21 +73,22 @@ impl Coverage {
         self.orphans.is_empty() && self.doubles().next().is_none() && self.bad.is_empty()
     }
 
-    /// `<row key>\t<owner ids>` for each distinct key, sorted by key. Ids are comma-joined, so an
-    /// orphan has an empty field and a double-owned row lists each owner.
+    /// `<row key>\t<owner ids>` for each row, one line per row including repeats, sorted by key.
+    /// Ids are comma-joined, so an orphan has an empty field and a double-owned row lists each
+    /// owner.
     pub fn owner_lines(&self) -> Vec<String> {
-        let mut sorted: Vec<&(String, Vec<String>)> = self.owners.iter().collect();
-        sorted.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut sorted: Vec<&String> = self.row_keys.iter().collect();
+        sorted.sort();
         sorted
             .into_iter()
-            .map(|(key, ids)| format!("{key}\t{}", ids.join(",")))
+            .map(|key| format!("{key}\t{}", self.ids_of(key).join(",")))
             .collect()
     }
 
     /// The summary, BAD, ORPHAN, DOUBLE and PER_CHUNK lines, in the Python checker's order.
     pub fn lines(&self) -> Vec<String> {
         let mut per_chunk: BTreeMap<&str, usize> = BTreeMap::new();
-        for (_, ids) in &self.owners {
+        for ids in self.owners.values() {
             if let [only] = ids.as_slice() {
                 *per_chunk.entry(only.as_str()).or_default() += 1;
             }
@@ -106,66 +121,35 @@ impl Coverage {
         lines
     }
 
+    /// The owner ids of a distinct key; a key with none has an empty list.
+    fn ids_of(&self, key: &str) -> &[String] {
+        self.owners.get(key).map(Vec::as_slice).unwrap_or_default()
+    }
+
     /// Distinct keys with more than one owner, in first-occurrence order.
     fn doubles(&self) -> impl Iterator<Item = (&str, &Vec<String>)> {
-        self.owners
-            .iter()
-            .filter(|(_, ids)| ids.len() > 1)
-            .map(|(key, ids)| (key.as_str(), ids))
+        self.distinct.iter().filter_map(|key| {
+            self.owners
+                .get(key)
+                .filter(|ids| ids.len() > 1)
+                .map(|ids| (key.as_str(), ids))
+        })
     }
 }
 
-/// The sorted, distinct chunk ids with a selector that matches `key`.
-fn owners_of(selectors: &[Selector], key: &str) -> Result<Vec<String>> {
-    let mut ids = Vec::new();
-    for (chunk, pattern) in selectors {
-        if pattern
-            .is_match(key)
-            .with_context(|| format!("selector of {chunk} failed on {key}"))?
-        {
-            ids.push(chunk.clone());
-        }
-    }
-    ids.sort_unstable();
-    ids.dedup();
-    Ok(ids)
-}
-
-/// A selector that compiled, with the id of the chunk that holds it.
-type Selector = (String, Regex);
-
-/// Every selector that compiles, paired with its chunk id, and one message per one that does not.
-fn compile(chunks: &[Value]) -> Result<(Vec<Selector>, Vec<String>)> {
-    let mut compiled: Vec<Selector> = Vec::new();
-    let mut bad = Vec::new();
+/// Each chunk's `(id, selector)` pairs, in map order.
+fn selector_pairs(chunks: &[Value]) -> Result<Vec<(String, String)>> {
+    let mut pairs = Vec::new();
     for chunk in chunks {
         let id = chunk
             .get("id")
             .and_then(Value::as_str)
             .context("a map chunk has no string id")?;
-        for selector in selectors_of(chunk)? {
-            match Regex::new(selector) {
-                Ok(pattern) => compiled.push((id.to_owned(), pattern)),
-                Err(error) => bad.push(format!("{id}: {}: {error}", py_string_repr(selector))),
-            }
+        for selector in ledger_selectors(id, chunk.get("ledger_selectors"))? {
+            pairs.push((id.to_owned(), selector));
         }
     }
-    Ok((compiled, bad))
-}
-
-/// A chunk's `ledger_selectors`: absent or null is empty, otherwise a list of strings.
-fn selectors_of(chunk: &Value) -> Result<Vec<&str>> {
-    match chunk.get("ledger_selectors") {
-        None | Some(Value::Null) => Ok(Vec::new()),
-        Some(Value::Array(items)) => items
-            .iter()
-            .map(|item| match item.as_str() {
-                Some(selector) => Ok(selector),
-                None => bail!("a ledger selector is not a string"),
-            })
-            .collect(),
-        Some(_) => bail!("a chunk's ledger_selectors is not a list"),
-    }
+    Ok(pairs)
 }
 
 /// `... N more <what>` when `total` is longer than the printed cap.

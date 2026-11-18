@@ -93,3 +93,17 @@ fn stray_end_marker_is_reported() {
         ["end marker of kept block found:A has no start marker"]
     );
 }
+
+/// Guard: a CRLF record reads the same frozen list, so its frozen paths still bind.
+#[test]
+fn frozen_files_reads_crlf_records() {
+    let text = "<!-- gport:kept seam-contract -->\r\n### Frozen files\r\n- `a.rs`\r\n## Later\r\n- `b.rs`\r\n<!-- gport:end seam-contract -->\r\n";
+    assert_eq!(frozen_files(text), ["a.rs"]);
+}
+
+/// Contract: found:<id> lines are verbatim, so a CRLF body keeps its carriage returns.
+#[test]
+fn found_work_lines_keep_carriage_returns() {
+    let text = "<!-- gport:kept found:A -->\r\n- `x.rs` fixed\r\n<!-- gport:end found:A -->\r\n";
+    assert_eq!(found_work_lines(text, "A"), ["- `x.rs` fixed\r"]);
+}
