@@ -1,0 +1,1106 @@
+CLI gobby agents	V3
+CLI gobby agents check	V3
+CLI gobby agents cleanup	V3
+CLI gobby agents kill	V3
+CLI gobby agents list	V3
+CLI gobby agents runs	V3
+CLI gobby agents runs list	V3
+CLI gobby agents runs show	V3
+CLI gobby agents show	V3
+CLI gobby agents spawn	V3
+CLI gobby agents stats	V3
+CLI gobby agents status	V3
+CLI gobby agents steps	V3
+CLI gobby agents stop	V3
+CLI gobby auth	V1B
+CLI gobby auth credentials	V1B
+CLI gobby auth key	V1B
+CLI gobby auth key list	V1B
+CLI gobby auth key revoke	V1B
+CLI gobby auth login	V1B
+CLI gobby build-sweep	V3
+CLI gobby clones	V3
+CLI gobby clones create	V3
+CLI gobby clones delete	V3
+CLI gobby clones list	V3
+CLI gobby clones merge	V3
+CLI gobby clones spawn	V3
+CLI gobby clones sync	V3
+CLI gobby comms	V5B
+CLI gobby comms attach	V5B
+CLI gobby comms channels	V5B
+CLI gobby comms channels add	V5B
+CLI gobby comms channels list	V5B
+CLI gobby comms channels list-default	V5B
+CLI gobby comms channels remove	V5B
+CLI gobby comms send	V5B
+CLI gobby comms status	V5B
+CLI gobby cron	V5A
+CLI gobby cron add	V5A
+CLI gobby cron edit	V5A
+CLI gobby cron list	V5A
+CLI gobby cron park	V5A
+CLI gobby cron remove	V5A
+CLI gobby cron run	V5A
+CLI gobby cron runs	V5A
+CLI gobby cron toggle	V5A
+CLI gobby cron wake	V5A
+CLI gobby cutover	V1A
+CLI gobby datastores	V1A
+CLI gobby datastores expose	V1A
+CLI gobby datastores rotate-password	V1A
+CLI gobby embeddings	V4
+CLI gobby embeddings catalog	V4
+CLI gobby embeddings doctor	V4
+CLI gobby embeddings switch	V4
+CLI gobby feedback	V4
+CLI gobby feedback digest	V4
+CLI gobby feedback list	V4
+CLI gobby feedback observations	V4
+CLI gobby feedback results	V4
+CLI gobby feedback review	V4
+CLI gobby feedback status	V4
+CLI gobby files	V5B
+CLI gobby files migrate	V5B
+CLI gobby health	V1A
+CLI gobby hooks	V5A
+CLI gobby hooks disable	V5A
+CLI gobby hooks enable	V5A
+CLI gobby hooks list	V5A
+CLI gobby hooks run	V5A
+CLI gobby hooks status	V5A
+CLI gobby hooks test	V5A
+CLI gobby hub-backup	V1A
+CLI gobby hub-backup restore	V1A
+CLI gobby init	V1B
+CLI gobby install	V1B
+CLI gobby mcp-proxy	V5B
+CLI gobby mcp-proxy add-server	V5B
+CLI gobby mcp-proxy auth	V5B
+CLI gobby mcp-proxy call-tool	V5B
+CLI gobby mcp-proxy get-schema	V5B
+CLI gobby mcp-proxy import-server	V5B
+CLI gobby mcp-proxy list-servers	V5B
+CLI gobby mcp-proxy list-templates	V5B
+CLI gobby mcp-proxy list-tools	V5B
+CLI gobby mcp-proxy oauth-shape	V5B
+CLI gobby mcp-proxy recommend-tools	V5B
+CLI gobby mcp-proxy refresh	V5B
+CLI gobby mcp-proxy remove-server	V5B
+CLI gobby mcp-proxy search-tools	V5B
+CLI gobby mcp-proxy show-template	V5B
+CLI gobby mcp-proxy status	V5B
+CLI gobby mcp-server	MCP-CRATE
+CLI gobby memory	V4
+CLI gobby memory backfill-unscoped-lessons	V4
+CLI gobby memory backup	V4
+CLI gobby memory clear-graph	V4
+CLI gobby memory create	V4
+CLI gobby memory dedupe	V4
+CLI gobby memory delete	V4
+CLI gobby memory dream	V4
+CLI gobby memory dream revert	V4
+CLI gobby memory dream status	V4
+CLI gobby memory export	V4
+CLI gobby memory graph-counts	V4
+CLI gobby memory invalidate	V4
+CLI gobby memory list	V4
+CLI gobby memory rebuild-crossrefs	V4
+CLI gobby memory rebuild-graph	V4
+CLI gobby memory recall	V4
+CLI gobby memory reconcile	V4
+CLI gobby memory reindex-embeddings	V4
+CLI gobby memory restore	V4
+CLI gobby memory show	V4
+CLI gobby memory stats	V4
+CLI gobby memory update	V4
+CLI gobby merge	V3
+CLI gobby merge abort	V3
+CLI gobby merge apply	V3
+CLI gobby merge resolve	V3
+CLI gobby merge start	V3
+CLI gobby merge status	V3
+CLI gobby nodes	V3
+CLI gobby nodes list	V3
+CLI gobby observations	V4
+CLI gobby observations list	V4
+CLI gobby pack	V1A
+CLI gobby panes	V3
+CLI gobby panes close	V3
+CLI gobby panes move	V3
+CLI gobby panes read	V3
+CLI gobby panes rename	V3
+CLI gobby panes send	V3
+CLI gobby panes split	V3
+CLI gobby panes swap	V3
+CLI gobby panes wait	V3
+CLI gobby pipelines	V5A
+CLI gobby pipelines approve	V5A
+CLI gobby pipelines check	V5A
+CLI gobby pipelines history	V5A
+CLI gobby pipelines import	V5A
+CLI gobby pipelines list	V5A
+CLI gobby pipelines reject	V5A
+CLI gobby pipelines run	V5A
+CLI gobby pipelines runs	V5A
+CLI gobby pipelines runs list	V5A
+CLI gobby pipelines runs show	V5A
+CLI gobby pipelines search	V5A
+CLI gobby pipelines show	V5A
+CLI gobby plan	V2
+CLI gobby plan coverage	V2
+CLI gobby plans	V2
+CLI gobby plans archive	V2
+CLI gobby plans list	V2
+CLI gobby plans register	V2
+CLI gobby plans review-evidence	V2
+CLI gobby plans review-runs	V2
+CLI gobby plans show	V2
+CLI gobby plans validate	V2
+CLI gobby postgres	V1A
+CLI gobby postgres backup	V1A
+CLI gobby postgres force-revoke-run	V1A
+CLI gobby postgres install	V1A
+CLI gobby postgres repair-code-index	V1A
+CLI gobby postgres restore	V1A
+CLI gobby postgres scoped-roles	V1A
+CLI gobby postgres status	V1A
+CLI gobby projects	V5B
+CLI gobby projects delete	V5B
+CLI gobby projects list	V5B
+CLI gobby projects purge	V5B
+CLI gobby projects rebind	V5B
+CLI gobby projects refresh-verification	V5B
+CLI gobby projects rename	V5B
+CLI gobby projects repair	V5B
+CLI gobby projects show	V5B
+CLI gobby qdrant	V1A
+CLI gobby qdrant install	V1A
+CLI gobby qdrant status	V1A
+CLI gobby restart	V1A
+CLI gobby rollback	V1A
+CLI gobby rollback burn	V1A
+CLI gobby rollback hold	V1A
+CLI gobby rollback hold clear	V1A
+CLI gobby rollback hold extend	V1A
+CLI gobby rollback hold set	V1A
+CLI gobby rollback hold status	V1A
+CLI gobby rollback list	V1A
+CLI gobby rollback pin	V1A
+CLI gobby rollback pin extend	V1A
+CLI gobby rollback restore	V1A
+CLI gobby rollback unpin	V1A
+CLI gobby rules	V5A
+CLI gobby rules audit	V5A
+CLI gobby rules disable	V5A
+CLI gobby rules enable	V5A
+CLI gobby rules export	V5A
+CLI gobby rules import	V5A
+CLI gobby rules list	V5A
+CLI gobby rules show	V5A
+CLI gobby schema	V1A
+CLI gobby schema apply	V1A
+CLI gobby secrets	V1B
+CLI gobby secrets delete	V1B
+CLI gobby secrets get	V1B
+CLI gobby secrets list	V1B
+CLI gobby secrets rekey	V1B
+CLI gobby secrets set	V1B
+CLI gobby service	V1A
+CLI gobby service disable	V1A
+CLI gobby service enable	V1A
+CLI gobby service install	V1A
+CLI gobby service status	V1A
+CLI gobby service uninstall	V1A
+CLI gobby sessions	V3
+CLI gobby sessions approve-dirty-paths	V3
+CLI gobby sessions backfill-context-windows	V3
+CLI gobby sessions delete	V3
+CLI gobby sessions list	V3
+CLI gobby sessions messages	V3
+CLI gobby sessions renumber	V3
+CLI gobby sessions restore	V3
+CLI gobby sessions show	V3
+CLI gobby sessions stats	V3
+CLI gobby sessions summarize	V3
+CLI gobby sessions terminate-terminal	V3
+CLI gobby skills	V4
+CLI gobby skills disable	V4
+CLI gobby skills doc	V4
+CLI gobby skills enable	V4
+CLI gobby skills hub	V4
+CLI gobby skills hub add	V4
+CLI gobby skills hub list	V4
+CLI gobby skills init	V4
+CLI gobby skills install	V4
+CLI gobby skills list	V4
+CLI gobby skills meta	V4
+CLI gobby skills meta get	V4
+CLI gobby skills meta set	V4
+CLI gobby skills meta unset	V4
+CLI gobby skills new	V4
+CLI gobby skills remove	V4
+CLI gobby skills search	V4
+CLI gobby skills show	V4
+CLI gobby skills update	V4
+CLI gobby skills validate	V4
+CLI gobby start	V1A
+CLI gobby status	V1A
+CLI gobby stop	V1A
+CLI gobby sync	V1B
+CLI gobby tasks	V2
+CLI gobby tasks backup	V2
+CLI gobby tasks blocked	V2
+CLI gobby tasks clean	V2
+CLI gobby tasks close	V2
+CLI gobby tasks commit	V2
+CLI gobby tasks commit auto	V2
+CLI gobby tasks commit link	V2
+CLI gobby tasks commit list	V2
+CLI gobby tasks commit unlink	V2
+CLI gobby tasks compact	V2
+CLI gobby tasks compact analyze	V2
+CLI gobby tasks compact apply	V2
+CLI gobby tasks compact stats	V2
+CLI gobby tasks create	V2
+CLI gobby tasks de-escalate	V2
+CLI gobby tasks delete	V2
+CLI gobby tasks dep	V2
+CLI gobby tasks dep add	V2
+CLI gobby tasks dep cycles	V2
+CLI gobby tasks dep remove	V2
+CLI gobby tasks dep tree	V2
+CLI gobby tasks diff	V2
+CLI gobby tasks doctor	V2
+CLI gobby tasks expand	V2
+CLI gobby tasks expand apply	V2
+CLI gobby tasks expand compile	V2
+CLI gobby tasks expand reset	V2
+CLI gobby tasks expand resume	V2
+CLI gobby tasks expand status	V2
+CLI gobby tasks expand validate-plan	V2
+CLI gobby tasks label	V2
+CLI gobby tasks label add	V2
+CLI gobby tasks label remove	V2
+CLI gobby tasks list	V2
+CLI gobby tasks ready	V2
+CLI gobby tasks reindex	V2
+CLI gobby tasks reopen	V2
+CLI gobby tasks restore	V2
+CLI gobby tasks search	V2
+CLI gobby tasks show	V2
+CLI gobby tasks stats	V2
+CLI gobby tasks suggest	V2
+CLI gobby tasks update	V2
+CLI gobby tasks validation-history	V2
+CLI gobby test-quality	V4
+CLI gobby test-quality audit	V4
+CLI gobby test-types	V4
+CLI gobby test-types audit	V4
+CLI gobby test-types suppressions	V4
+CLI gobby tokens	V1B
+CLI gobby tokens audit	V1B
+CLI gobby tokens ledger	V1B
+CLI gobby tokens quota	V1B
+CLI gobby tokens stats	V1B
+CLI gobby ui	V1B
+CLI gobby ui build	V1B
+CLI gobby ui dev	V1B
+CLI gobby ui expose	V1B
+CLI gobby ui install-deps	V1B
+CLI gobby ui mcp-expose	V1B
+CLI gobby ui mcp-unexpose	V1B
+CLI gobby ui restart	V1B
+CLI gobby ui sign-in-link	V1B
+CLI gobby ui start	V1B
+CLI gobby ui status	V1B
+CLI gobby ui stop	V1B
+CLI gobby ui unexpose	V1B
+CLI gobby uninstall	V1B
+CLI gobby unpack	V1A
+CLI gobby variables	V5A
+CLI gobby variables get	V5A
+CLI gobby variables set	V5A
+CLI gobby webhooks	V5A
+CLI gobby webhooks list	V5A
+CLI gobby webhooks test	V5A
+CLI gobby workspaces	V3
+CLI gobby workspaces create	V3
+CLI gobby workspaces delete	V3
+CLI gobby workspaces list	V3
+CLI gobby workspaces rebalance-tab	V3
+CLI gobby workspaces show	V3
+CLI gobby worktrees	V3
+CLI gobby worktrees claim	V3
+CLI gobby worktrees cleanup	V3
+CLI gobby worktrees create	V3
+CLI gobby worktrees delete	V3
+CLI gobby worktrees list	V3
+CLI gobby worktrees release	V3
+CLI gobby worktrees show	V3
+CLI gobby worktrees stale	V3
+CLI gobby worktrees stats	V3
+CLI gobby worktrees sync	V3
+Gate native terminal default flip #21357	TERM-HOST
+HTTP * /mcp	GW-1
+HTTP DELETE /api/admin/test/unregister-agent/{run_id}	P0-HARNESS
+HTTP DELETE /api/agents/definitions/{definition_id}	TPL
+HTTP DELETE /api/auth/keys/{key_id}	AUTH
+HTTP DELETE /api/chat/attachments/{attachment_id}	PROJ-2
+HTTP DELETE /api/chat/{conversation_id}/messages	CHAT-1
+HTTP DELETE /api/comms/channels/{channel_id}	COMMS-1
+HTTP DELETE /api/config/prompts/{path:path}	A1-SECRETS
+HTTP DELETE /api/config/secrets/{name}	A1-SECRETS
+HTTP DELETE /api/cron/jobs/{job_id}	CRON
+HTTP DELETE /api/mcp/servers/{name}	MUX-2
+HTTP DELETE /api/memories/{memory_id}	MEM-1
+HTTP DELETE /api/pipelines/definitions/{definition_id}	PIPE-1
+HTTP DELETE /api/projects/{project_id}	PROJ-2
+HTTP DELETE /api/rules/{name}	RULE-2
+HTTP DELETE /api/sessions/{session_id}/stop	SES-2
+HTTP DELETE /api/skills/{skill_id}	SKILLS
+HTTP DELETE /api/source-control/clones/{clone_id}	AG-4
+HTTP DELETE /api/source-control/worktrees/{worktree_id}	AG-4
+HTTP DELETE /api/tasks/{task_id}	B0-WRITE
+HTTP DELETE /api/tasks/{task_id}/comments/{comment_id}	B0-WRITE
+HTTP DELETE /api/tasks/{task_id}/dependencies/{depends_on_id}	B0-WRITE
+HTTP DELETE /api/variables/{ref}	RULE-2
+HTTP GET /api/admin/config	OBS
+HTTP GET /api/admin/cron/protected-runs	CRON
+HTTP GET /api/admin/metrics	OBS
+HTTP GET /api/admin/startup-progress	R2
+HTTP GET /api/admin/stats	OBS
+HTTP GET /api/admin/status	OBS
+HTTP GET /api/admin/tokens/timeseries	OBS
+HTTP GET /api/admin/usage	OBS
+HTTP GET /api/admin/usage/ledger	OBS
+HTTP GET /api/agents/definitions	TPL
+HTTP GET /api/agents/definitions/{name}	TPL
+HTTP GET /api/agents/definitions/{name}/export	TPL
+HTTP GET /api/agents/running	AG-2
+HTTP GET /api/agents/runs	AG-2
+HTTP GET /api/agents/runs/{run_id}	AG-2
+HTTP GET /api/agents/runs/{run_id}/name	AG-2
+HTTP GET /api/attention/roster	AG-3
+HTTP GET /api/auth/keys	AUTH
+HTTP GET /api/auth/sign-in	AUTH
+HTTP GET /api/auth/status	AUTH
+HTTP GET /api/chat/attachments/limits	PROJ-2
+HTTP GET /api/chat/attachments/{attachment_id}/content	PROJ-2
+HTTP GET /api/chat/{conversation_id}/messages	CHAT-1
+HTTP GET /api/code-index/graph	CIX-1
+HTTP GET /api/code-index/graph/blast-radius	CIX-1
+HTTP GET /api/code-index/graph/file/{file_path:path}	CIX-1
+HTTP GET /api/code-index/graph/path	CIX-1
+HTTP GET /api/code-index/graph/search	CIX-1
+HTTP GET /api/code-index/graph/symbol/{symbol_id}/neighbors	CIX-1
+HTTP GET /api/comms/channels	COMMS-1
+HTTP GET /api/comms/channels/{channel_id}/status	COMMS-1
+HTTP GET /api/comms/messages	COMMS-1
+HTTP GET /api/comms/webhooks/{channel_name}	COMMS-2
+HTTP GET /api/config/effective	A1-CONFIG
+HTTP GET /api/config/prompts	A1-SECRETS
+HTTP GET /api/config/prompts/{path:path}	A1-SECRETS
+HTTP GET /api/config/schema	A1-CONFIG
+HTTP GET /api/config/secrets	A1-SECRETS
+HTTP GET /api/config/template	A1-CONFIG
+HTTP GET /api/config/tool-approvals/global	A1-CONFIG
+HTTP GET /api/config/ui-settings	A1-CONFIG
+HTTP GET /api/config/values	A1-CONFIG
+HTTP GET /api/cron/jobs	CRON
+HTTP GET /api/cron/jobs/{job_id}	CRON
+HTTP GET /api/cron/jobs/{job_id}/runs	CRON
+HTTP GET /api/cron/runs/{run_id}	CRON
+HTTP GET /api/embeddings/doctor	AI-1A
+HTTP GET /api/embeddings/status	AI-1A
+HTTP GET /api/embeddings/switch/status	AI-2
+HTTP GET /api/feedback/entries	OBS
+HTTP GET /api/feedback/review/latest	OBS
+HTTP GET /api/feedback/review/{run_id}	OBS
+HTTP GET /api/feedback/review/{run_id}/observations	OBS
+HTTP GET /api/feedback/review/{run_id}/results	OBS
+HTTP GET /api/feedback/runs	OBS
+HTTP GET /api/feedback/status	OBS
+HTTP GET /api/files/git-diff	PROJ-2
+HTTP GET /api/files/git-status	PROJ-2
+HTTP GET /api/files/image	PROJ-2
+HTTP GET /api/files/projects	PROJ-2
+HTTP GET /api/files/read	PROJ-2
+HTTP GET /api/files/tree	PROJ-2
+HTTP GET /api/files/user-md	PROJ-2
+HTTP GET /api/health	OBS
+HTTP GET /api/llm/status	AI-1A
+HTTP GET /api/llm/vision/status	AI-1A
+HTTP GET /api/mcp/bridge/tool-timeouts	MUX-1
+HTTP GET /api/mcp/servers	MUX-2
+HTTP GET /api/mcp/status	MUX-1
+HTTP GET /api/mcp/templates	MUX-2
+HTTP GET /api/mcp/tools	GW-2
+HTTP GET /api/mcp/{server_name}/tools	GW-2
+HTTP GET /api/memories	MEM-1
+HTTP GET /api/memories/graph	MEM-2
+HTTP GET /api/memories/graph/counts	MEM-2
+HTTP GET /api/memories/graph/entities	MEM-2
+HTTP GET /api/memories/graph/entities/{entity_key}/neighbors	MEM-2
+HTTP GET /api/memories/graph/rebuild/status	MEM-2
+HTTP GET /api/memories/search	MEM-1
+HTTP GET /api/memories/stats	MEM-1
+HTTP GET /api/memories/{memory_id}	MEM-1
+HTTP GET /api/metrics/current	OBS
+HTTP GET /api/metrics/snapshots	OBS
+HTTP GET /api/nodes/detection-manifests	NODEHUB
+HTTP GET /api/observations/unmodeled	OBS
+HTTP GET /api/pipelines/definitions	PIPE-1
+HTTP GET /api/pipelines/definitions/templates	PIPE-1
+HTTP GET /api/pipelines/definitions/{definition_id}	PIPE-1
+HTTP GET /api/pipelines/definitions/{definition_id}/export	PIPE-1
+HTTP GET /api/pipelines/executions	PIPE-2
+HTTP GET /api/pipelines/executions/search	PIPE-2
+HTTP GET /api/pipelines/{execution_id}	PIPE-2
+HTTP GET /api/projects	PROJ-2
+HTTP GET /api/projects/{project_id}	PROJ-2
+HTTP GET /api/projects/{project_id}/checkouts	PROJ-2
+HTTP GET /api/providers	AI-1C
+HTTP GET /api/providers/models	AI-1C
+HTTP GET /api/providers/{provider}/usage	AI-1C
+HTTP GET /api/rules	RULE-2
+HTTP GET /api/rules/groups	RULE-2
+HTTP GET /api/rules/tags	RULE-2
+HTTP GET /api/rules/{name}	RULE-2
+HTTP GET /api/runtime/config	A1-RUNTIME
+HTTP GET /api/sessions	SES-1
+HTTP GET /api/sessions/usage	SES-1
+HTTP GET /api/sessions/{session_id}	SES-1
+HTTP GET /api/sessions/{session_id}/changes	SES-1
+HTTP GET /api/sessions/{session_id}/changes/diff	SES-1
+HTTP GET /api/sessions/{session_id}/messages	SES-3B
+HTTP GET /api/sessions/{session_id}/stop	SES-2
+HTTP GET /api/sessions/{session_id}/token-events	SES-3B
+HTTP GET /api/sessions/{session_id}/transcript	SES-3A
+HTTP GET /api/sessions/{session_id}/transcript/status	SES-3A
+HTTP GET /api/skills	SKILLS
+HTTP GET /api/skills/hubs	SKILLS
+HTTP GET /api/skills/hubs/search	SKILLS
+HTTP GET /api/skills/search	SKILLS
+HTTP GET /api/skills/stats	SKILLS
+HTTP GET /api/skills/{skill_id}	SKILLS
+HTTP GET /api/skills/{skill_id}/export	SKILLS
+HTTP GET /api/skills/{skill_id}/files	SKILLS
+HTTP GET /api/skills/{skill_id}/files/{file_path:path}	SKILLS
+HTTP GET /api/source-control/branches	SRC
+HTTP GET /api/source-control/branches/{branch_name:path}/commits	SRC
+HTTP GET /api/source-control/clones	AG-4
+HTTP GET /api/source-control/diff	SRC
+HTTP GET /api/source-control/status	SRC
+HTTP GET /api/source-control/worktrees	AG-4
+HTTP GET /api/source-control/worktrees/stats	AG-4
+HTTP GET /api/tasks	B0-READ
+HTTP GET /api/tasks/{task_id}	B0-READ
+HTTP GET /api/tasks/{task_id}/comments	B0-READ
+HTTP GET /api/tasks/{task_id}/dependencies	B0-READ
+HTTP GET /api/terminals	TERM-1
+HTTP GET /api/terminals/{terminal_id}	TERM-1
+HTTP GET /api/traces	OBS
+HTTP GET /api/traces/{trace_id}	OBS
+HTTP GET /api/variables	RULE-2
+HTTP GET /api/voice/status	VOICE
+HTTP GET /api/webhooks	HOOK-3
+HTTP GET /docs	S3-FREEZE
+HTTP GET /docs/oauth2-redirect	S3-FREEZE
+HTTP GET /memory/dream/{run_id}	MEM-3
+HTTP GET /openapi.json	S3-FREEZE
+HTTP GET /redoc	S3-FREEZE
+HTTP HEAD /docs	S3-FREEZE
+HTTP HEAD /docs/oauth2-redirect	S3-FREEZE
+HTTP HEAD /openapi.json	S3-FREEZE
+HTTP HEAD /redoc	S3-FREEZE
+HTTP PATCH /api/agents/definitions/{definition_id}/rule-selectors	TPL
+HTTP PATCH /api/agents/definitions/{definition_id}/rules	TPL
+HTTP PATCH /api/agents/definitions/{definition_id}/variables	TPL
+HTTP PATCH /api/config/values	A1-CONFIG
+HTTP PATCH /api/cron/jobs/{job_id}	CRON
+HTTP PATCH /api/mcp/servers/{name}	MUX-2
+HTTP PATCH /api/projects/{project_id}	PROJ-2
+HTTP PATCH /api/tasks/{task_id}	B0-WRITE
+HTTP POST /api/admin/lease/handoff	R6
+HTTP POST /api/admin/restart	R6
+HTTP POST /api/admin/shutdown	R6
+HTTP POST /api/admin/test/register-agent	P0-HARNESS
+HTTP POST /api/admin/test/register-project	P0-HARNESS
+HTTP POST /api/admin/test/set-session-usage	P0-HARNESS
+HTTP POST /api/admin/workflows/reload	PIPE-1
+HTTP POST /api/agents/cleanup	AG-2
+HTTP POST /api/agents/definitions	TPL
+HTTP POST /api/agents/definitions/import/{name}	TPL
+HTTP POST /api/agents/definitions/{definition_id}/restore	TPL
+HTTP POST /api/agents/runs/{run_id}/cancel	AG-2
+HTTP POST /api/agents/spawn	AG-1
+HTTP POST /api/agents/spawn/batch	AG-1
+HTTP POST /api/agents/spawn/prompt-preview	AG-1
+HTTP POST /api/attention/{entry_id}/metadata	AG-3
+HTTP POST /api/attention/{entry_id}/respond	AG-3
+HTTP POST /api/attention/{entry_id}/seen	AG-3
+HTTP POST /api/auth/keys	AUTH
+HTTP POST /api/auth/keys/bootstrap	AUTH
+HTTP POST /api/auth/login	AUTH
+HTTP POST /api/auth/logout	AUTH
+HTTP POST /api/auth/sign-in-link	AUTH
+HTTP POST /api/chat/attachments	PROJ-2
+HTTP POST /api/code-index/graph/clear	CIX-1
+HTTP POST /api/code-index/graph/rebuild	CIX-1
+HTTP POST /api/code-index/invalidate	CIX-1
+HTTP POST /api/code-index/prune	CIX-1
+HTTP POST /api/comms/attachment	COMMS-2
+HTTP POST /api/comms/channels	COMMS-1
+HTTP POST /api/comms/send	COMMS-1
+HTTP POST /api/comms/webhooks/{channel_name}	COMMS-2
+HTTP POST /api/config/export	A1-CONFIG
+HTTP POST /api/config/import	A1-CONFIG
+HTTP POST /api/config/secrets	A1-SECRETS
+HTTP POST /api/config/validation-detection/preview	A1-SECRETS
+HTTP POST /api/cron/jobs	CRON
+HTTP POST /api/cron/jobs/{job_id}/run	CRON
+HTTP POST /api/cron/jobs/{job_id}/toggle	CRON
+HTTP POST /api/embeddings	AI-1A
+HTTP POST /api/embeddings/switch/abort	AI-2
+HTTP POST /api/embeddings/switch/resume	AI-2
+HTTP POST /api/embeddings/switch/start	AI-2
+HTTP POST /api/feedback/review	OBS
+HTTP POST /api/files/write	PROJ-2
+HTTP POST /api/hooks/codex-thread-credential	HOOK-3
+HTTP POST /api/hooks/execute	HOOK-3
+HTTP POST /api/llm/chat/completions	AI-1B
+HTTP POST /api/llm/generate	AI-1B
+HTTP POST /api/llm/vision/extract	AI-1B
+HTTP POST /api/mcp/bridge/ready	MUX-1
+HTTP POST /api/mcp/refresh	MUX-1
+HTTP POST /api/mcp/servers	MUX-2
+HTTP POST /api/mcp/servers/import	MUX-2
+HTTP POST /api/mcp/tools/call	GW-2
+HTTP POST /api/mcp/tools/embed	MCP-FLIP
+HTTP POST /api/mcp/tools/recommend	MCP-FLIP
+HTTP POST /api/mcp/tools/schema	GW-2
+HTTP POST /api/mcp/tools/search	MCP-FLIP
+HTTP POST /api/mcp/{server_name}/tools/{tool_name}	GW-2
+HTTP POST /api/memories	MEM-1
+HTTP POST /api/memories/crossrefs/rebuild	MEM-2
+HTTP POST /api/memories/embeddings/reindex	MEM-2
+HTTP POST /api/memories/graph/clear	MEM-2
+HTTP POST /api/memories/graph/rebuild	MEM-2
+HTTP POST /api/memories/invalidate	MEM-2
+HTTP POST /api/memories/reconcile	MEM-2
+HTTP POST /api/memories/{memory_id}/demote	MEM-1
+HTTP POST /api/memories/{memory_id}/move	MEM-1
+HTTP POST /api/memories/{memory_id}/promote	MEM-1
+HTTP POST /api/memories/{memory_id}/restore	MEM-1
+HTTP POST /api/nodes/checkouts	NODEHUB
+HTTP POST /api/nodes/hooks/replay	HOOK-3
+HTTP POST /api/nodes/receipts	HOOK-3
+HTTP POST /api/nodes/report	NODEHUB
+HTTP POST /api/nodes/runs/code-index-warning	NODEHUB
+HTTP POST /api/nodes/runs/prompt-delivery-failure	NODEHUB
+HTTP POST /api/nodes/runs/terminate	NODEHUB
+HTTP POST /api/pipelines/approve/{token}	PIPE-2
+HTTP POST /api/pipelines/definitions	PIPE-1
+HTTP POST /api/pipelines/definitions/import	PIPE-1
+HTTP POST /api/pipelines/definitions/{definition_id}/duplicate	PIPE-1
+HTTP POST /api/pipelines/definitions/{definition_id}/move-to-global	PIPE-1
+HTTP POST /api/pipelines/definitions/{definition_id}/move-to-project	PIPE-1
+HTTP POST /api/pipelines/definitions/{definition_id}/restore	PIPE-1
+HTTP POST /api/pipelines/definitions/{definition_id}/restore-from-template	PIPE-1
+HTTP POST /api/pipelines/reject/{token}	PIPE-2
+HTTP POST /api/pipelines/run	PIPE-2
+HTTP POST /api/projects/init	PROJ-2
+HTTP POST /api/projects/{project_id}/checkouts	PROJ-2
+HTTP POST /api/projects/{project_id}/checkouts/{machine_id}/rebind	PROJ-2
+HTTP POST /api/projects/{project_id}/purge	PROJ-2
+HTTP POST /api/rules	RULE-2
+HTTP POST /api/runtime/handshake	A1-RUNTIME
+HTTP POST /api/runtime/handshake/challenge	A1-RUNTIME
+HTTP POST /api/runtime/signed-request/nonce	A1-RUNTIME
+HTTP POST /api/sessions/bulk-move	SES-2
+HTTP POST /api/sessions/find_by_terminal_context	SES-1
+HTTP POST /api/sessions/find_current	SES-1
+HTTP POST /api/sessions/register	SES-2
+HTTP POST /api/sessions/statusline	SES-2
+HTTP POST /api/sessions/update_status	SES-2
+HTTP POST /api/sessions/update_summary	SES-3B
+HTTP POST /api/sessions/web-chat	CHAT-2
+HTTP POST /api/sessions/{session_id}/acp/close	CHAT-2
+HTTP POST /api/sessions/{session_id}/acp/delete	CHAT-2
+HTTP POST /api/sessions/{session_id}/expire	SES-2
+HTTP POST /api/sessions/{session_id}/generate-summary	SES-3B
+HTTP POST /api/sessions/{session_id}/release-composer	SES-2
+HTTP POST /api/sessions/{session_id}/rename	SES-2
+HTTP POST /api/sessions/{session_id}/restore-transcript	SES-3A
+HTTP POST /api/sessions/{session_id}/stop	SES-2
+HTTP POST /api/sessions/{session_id}/variables/get	SES-2
+HTTP POST /api/sessions/{session_id}/variables/set	SES-2
+HTTP POST /api/sessions/{session_ref}/dirty-path-approvals	SES-2
+HTTP POST /api/sessions/{session_ref}/native-terminal-binding	SES-2
+HTTP POST /api/skills	SKILLS
+HTTP POST /api/skills/hubs/install	SKILLS
+HTTP POST /api/skills/import	SKILLS
+HTTP POST /api/skills/restore-defaults	SKILLS
+HTTP POST /api/skills/scan	SKILLS
+HTTP POST /api/skills/{skill_id}/move-to-installed	SKILLS
+HTTP POST /api/skills/{skill_id}/move-to-project	SKILLS
+HTTP POST /api/skills/{skill_id}/restore	SKILLS
+HTTP POST /api/source-control/branches/checkout	SRC
+HTTP POST /api/source-control/clones/{clone_id}/sync	AG-4
+HTTP POST /api/source-control/worktrees	AG-4
+HTTP POST /api/source-control/worktrees/cleanup	AG-4
+HTTP POST /api/source-control/worktrees/{worktree_id}/sync	AG-4
+HTTP POST /api/tasks	B0-WRITE
+HTTP POST /api/tasks/{task_id}/claim	AG-3
+HTTP POST /api/tasks/{task_id}/close	B0-CLOSE
+HTTP POST /api/tasks/{task_id}/comments	B0-WRITE
+HTTP POST /api/tasks/{task_id}/de-escalate	B0-WRITE
+HTTP POST /api/tasks/{task_id}/dependencies	B0-WRITE
+HTTP POST /api/tasks/{task_id}/escalate	B0-WRITE
+HTTP POST /api/tasks/{task_id}/release-claim	B0-WRITE
+HTTP POST /api/tasks/{task_id}/reopen	B0-WRITE
+HTTP POST /api/variables	RULE-2
+HTTP POST /api/variables/{ref}/restore-from-template	RULE-2
+HTTP POST /api/voice/transcribe	VOICE
+HTTP POST /api/webhooks/test	HOOK-3
+HTTP POST /memory/dream	MEM-3
+HTTP POST /memory/dream/{run_id}/revert	MEM-3
+HTTP PUT /api/agents/definitions/{definition_id}	TPL
+HTTP PUT /api/comms/channels/{channel_id}	COMMS-1
+HTTP PUT /api/config/generation-endpoints/{endpoint_name}/activate	A1-SECRETS
+HTTP PUT /api/config/prompts/{path:path}	A1-SECRETS
+HTTP PUT /api/config/template	A1-CONFIG
+HTTP PUT /api/files/user-md	PROJ-2
+HTTP PUT /api/mcp/servers/{name}	MUX-2
+HTTP PUT /api/memories/{memory_id}	MEM-1
+HTTP PUT /api/pipelines/definitions/{definition_id}	PIPE-1
+HTTP PUT /api/pipelines/definitions/{definition_id}/toggle	PIPE-1
+HTTP PUT /api/projects/{project_id}	PROJ-2
+HTTP PUT /api/rules/bulk-toggle	RULE-2
+HTTP PUT /api/rules/{name}	RULE-2
+HTTP PUT /api/rules/{name}/toggle	RULE-2
+HTTP PUT /api/skills/{skill_id}	SKILLS
+HTTP PUT /api/skills/{skill_id}/files/{file_path:path}	SKILLS
+HTTP PUT /api/variables/{ref}	RULE-2
+HTTP PUT /api/variables/{ref}/toggle	RULE-2
+MCP HTTP gobby:add_mcp_server	MUX-2
+MCP HTTP gobby:call_tool	GW-1
+MCP HTTP gobby:get_tool_schema	GW-1
+MCP HTTP gobby:get_variable	RULE-2
+MCP HTTP gobby:import_mcp_server	MUX-2
+MCP HTTP gobby:list_mcp_servers	MUX-2
+MCP HTTP gobby:list_tools	GW-1
+MCP HTTP gobby:read_mcp_resource	MCP-FLIP
+MCP HTTP gobby:recommend_tools	MCP-FLIP
+MCP HTTP gobby:remove_mcp_server	MUX-2
+MCP HTTP gobby:search_tools	MCP-FLIP
+MCP HTTP gobby:set_variable	RULE-2
+MCP HTTP gobby:status	OBS
+MCP gobby-agents:admit_team	AG-5
+MCP gobby-agents:apply_agent_definition	AG-1
+MCP gobby-agents:apply_persona	AG-1
+MCP gobby-agents:can_spawn_agent	AG-1
+MCP gobby-agents:cancel_coordination_wait	AG-WAIT
+MCP gobby-agents:cancel_stale_helpers	AG-2
+MCP gobby-agents:check_runbook_seats	AG-5
+MCP gobby-agents:checkpoint_agent_worktree	AG-2
+MCP gobby-agents:end_agent_run	AG-2
+MCP gobby-agents:evaluate_spawn	AG-1
+MCP gobby-agents:get_agent_capture	AG-2
+MCP gobby-agents:get_agent_live_output	AG-2
+MCP gobby-agents:get_agent_result	AG-2
+MCP gobby-agents:get_attachment	AG-3
+MCP gobby-agents:get_inter_session_message	AG-3
+MCP gobby-agents:get_inter_session_messages	AG-3
+MCP gobby-agents:get_running_agent	AG-2
+MCP gobby-agents:kill_agent	AG-2
+MCP gobby-agents:list_agent_runs	AG-2
+MCP gobby-agents:list_running_agents	AG-2
+MCP gobby-agents:running_agent_stats	AG-2
+MCP gobby-agents:send_attachment	AG-3
+MCP gobby-agents:send_message	AG-3
+MCP gobby-agents:spawn_agent	AG-1
+MCP gobby-agents:stop_agent	AG-2
+MCP gobby-agents:unregister_agent	AG-2
+MCP gobby-agents:wait_for_agent	AG-WAIT
+MCP gobby-agents:wait_for_coordination	AG-WAIT
+MCP gobby-agents:wait_for_output	AG-WAIT
+MCP gobby-clones:claim_clone	AG-4
+MCP gobby-clones:cleanup_stale_clones	AG-4
+MCP gobby-clones:create_clone	AG-4
+MCP gobby-clones:delete_clone	AG-4
+MCP gobby-clones:detect_stale_clones	AG-4
+MCP gobby-clones:get_clone	AG-4
+MCP gobby-clones:get_clone_by_task	AG-4
+MCP gobby-clones:get_clone_stats	AG-4
+MCP gobby-clones:link_task_to_clone	AG-4
+MCP gobby-clones:list_clones	AG-4
+MCP gobby-clones:merge_clone	AG-4
+MCP gobby-clones:release_clone	AG-4
+MCP gobby-clones:sync_clone	AG-4
+MCP gobby-communications:add_channel	COMMS-1
+MCP gobby-communications:attach_conversation	COMMS-2
+MCP gobby-communications:compose_status_report	COMMS-2
+MCP gobby-communications:detach_conversation	COMMS-2
+MCP gobby-communications:get_messages	COMMS-1
+MCP gobby-communications:link_identity	COMMS-2
+MCP gobby-communications:list_channels	COMMS-1
+MCP gobby-communications:list_conversation_attachments	COMMS-2
+MCP gobby-communications:list_identities	COMMS-2
+MCP gobby-communications:remove_channel	COMMS-1
+MCP gobby-communications:resolve_operator_conversation	COMMS-1
+MCP gobby-communications:send_attachment	COMMS-2
+MCP gobby-communications:send_message	COMMS-1
+MCP gobby-communications:send_operator_attachment	COMMS-2
+MCP gobby-communications:send_operator_message	COMMS-1
+MCP gobby-communications:send_proactive_message	COMMS-1
+MCP gobby-communications:set_channel_project	COMMS-1
+MCP gobby-communications:unlink_identity	COMMS-2
+MCP gobby-config:get_config_schema	A1-SECRETS
+MCP gobby-config:get_config_values	A1-SECRETS
+MCP gobby-config:patch_config_values	A1-SECRETS
+MCP gobby-cron:create_cron_job	CRON
+MCP gobby-cron:delete_cron_job	CRON
+MCP gobby-cron:get_cron_job	CRON
+MCP gobby-cron:list_cron_jobs	CRON
+MCP gobby-cron:list_cron_runs	CRON
+MCP gobby-cron:run_cron_job	CRON
+MCP gobby-cron:toggle_cron_job	CRON
+MCP gobby-cron:update_cron_job	CRON
+MCP gobby-decisions:evaluate	AI-1B
+MCP gobby-feedback:get_review_observations	OBS
+MCP gobby-feedback:get_review_results	OBS
+MCP gobby-feedback:submit_review	OBS
+MCP gobby-hub:get_machine_id	A1-SECRETS
+MCP gobby-hub:hub_stats	OBS
+MCP gobby-hub:list_all_projects	PROJ-2
+MCP gobby-hub:list_cross_project_sessions	SES-1
+MCP gobby-hub:list_cross_project_tasks	B0-READ
+MCP gobby-memory:backup_memories	MEM-1
+MCP gobby-memory:create_memory	MEM-1
+MCP gobby-memory:delete_memory	MEM-1
+MCP gobby-memory:demote_memory_from_global	MEM-1
+MCP gobby-memory:densify_knowledge_graph_cooccurrence	MEM-2
+MCP gobby-memory:get_memory	MEM-1
+MCP gobby-memory:get_related_memories	MEM-2
+MCP gobby-memory:list_memories	MEM-1
+MCP gobby-memory:memory_dream	MEM-3
+MCP gobby-memory:memory_dream_decisions	MEM-3
+MCP gobby-memory:memory_dream_revert	MEM-3
+MCP gobby-memory:memory_dream_status	MEM-3
+MCP gobby-memory:memory_stats	MEM-1
+MCP gobby-memory:move_memory	MEM-1
+MCP gobby-memory:promote_memory_to_global	MEM-1
+MCP gobby-memory:rebuild_crossrefs	MEM-2
+MCP gobby-memory:rebuild_knowledge_graph	MEM-2
+MCP gobby-memory:recluster_knowledge_graph_entities	MEM-2
+MCP gobby-memory:reindex_embeddings	MEM-2
+MCP gobby-memory:restore_memories	MEM-1
+MCP gobby-memory:restore_memory	MEM-1
+MCP gobby-memory:review_task_memories	MEM-4
+MCP gobby-memory:search_knowledge_graph	MEM-2
+MCP gobby-memory:search_memories	MEM-1
+MCP gobby-memory:surface_memories	MEM-4
+MCP gobby-memory:update_memory	MEM-1
+MCP gobby-merge:analyze_merge_landscape	SRC
+MCP gobby-merge:cherry_pick_into_worktree	SRC
+MCP gobby-merge:inspect_merge_state	SRC
+MCP gobby-merge:merge_abort	SRC
+MCP gobby-merge:merge_apply	SRC
+MCP gobby-merge:merge_resolve	SRC
+MCP gobby-merge:merge_start	SRC
+MCP gobby-merge:merge_status	SRC
+MCP gobby-merge:merge_subset	SRC
+MCP gobby-merge:predict_conflicts	SRC
+MCP gobby-merge:probe_branch_protection	SRC
+MCP gobby-merge:verify_in_worktree	SRC
+MCP gobby-metrics:cleanup_old_metrics	OBS
+MCP gobby-metrics:get_failing_tools	OBS
+MCP gobby-metrics:get_metrics_timeseries	OBS
+MCP gobby-metrics:get_provider_capacity	OBS
+MCP gobby-metrics:get_retention_stats	OBS
+MCP gobby-metrics:get_rule_metrics	OBS
+MCP gobby-metrics:get_session_tools	OBS
+MCP gobby-metrics:get_skill_metrics	OBS
+MCP gobby-metrics:get_tool_metrics	OBS
+MCP gobby-metrics:get_tool_success_rate	OBS
+MCP gobby-metrics:get_top_tools	OBS
+MCP gobby-metrics:get_usage_ledger	OBS
+MCP gobby-metrics:get_usage_report	OBS
+MCP gobby-metrics:reset_metrics	OBS
+MCP gobby-metrics:reset_tool_metrics	OBS
+MCP gobby-plans:append_plan_changelog_round	PLANS
+MCP gobby-plans:apply_plan_handoff_manifest	PLANS
+MCP gobby-plans:apply_plan_review_manifest	PLANS
+MCP gobby-plans:apply_plan_review_repairs	PLANS
+MCP gobby-plans:archive_plan	PLANS
+MCP gobby-plans:bind_static_review_seats	PLANS
+MCP gobby-plans:checkpoint_plan_review_lesson_mint	PLANS
+MCP gobby-plans:create_plan	PLANS
+MCP gobby-plans:delete_plan	PLANS
+MCP gobby-plans:derive_plan_handoff_manifest	PLANS
+MCP gobby-plans:derive_plan_review_manifest	PLANS
+MCP gobby-plans:expire_plan_review_evidence	PLANS
+MCP gobby-plans:finalize_plan_review_evidence	PLANS
+MCP gobby-plans:get_plan	PLANS
+MCP gobby-plans:get_plan_review_snapshot	PLANS
+MCP gobby-plans:list_plans	PLANS
+MCP gobby-plans:prepare_plan_review_round	PLANS
+MCP gobby-plans:regenerate_coverage_manifest	PLANS
+MCP gobby-plans:render_plan_changelog_round	PLANS
+MCP gobby-plans:update_plan_hash	PLANS
+MCP gobby-plans:validate_plan	PLANS
+MCP gobby-plans:validate_plan_review_coverage	PLANS
+MCP gobby-plans:verify_plan_unchanged	PLANS
+MCP gobby-results:get_tool_result	MCP-FLIP
+MCP gobby-results:search_tool_result	MCP-FLIP
+MCP gobby-review-learning:list_check_keys	MEM-4
+MCP gobby-review-learning:recall_review_context	MEM-4
+MCP gobby-review-learning:recall_review_lessons_by_class	MEM-4
+MCP gobby-review-learning:recall_review_lessons_for_files	MEM-4
+MCP gobby-review-learning:record_review_lesson	MEM-4
+MCP gobby-review-learning:retire_review_lesson	MEM-4
+MCP gobby-sessions:capture_output	TERM-1
+MCP gobby-sessions:feedback	SES-2
+MCP gobby-sessions:get_current_session	SES-1
+MCP gobby-sessions:get_handoff	SES-2
+MCP gobby-sessions:get_session	SES-1
+MCP gobby-sessions:get_session_commits	SES-1
+MCP gobby-sessions:get_session_messages	SES-3B
+MCP gobby-sessions:get_transcript_status	SES-3A
+MCP gobby-sessions:get_usage_breakdown	SES-1
+MCP gobby-sessions:hold_session_claims	SES-2
+MCP gobby-sessions:list_sessions	SES-1
+MCP gobby-sessions:mark_loop_complete	SES-2
+MCP gobby-sessions:query_readonly	SES-1
+MCP gobby-sessions:register_session	SES-2
+MCP gobby-sessions:release_composer	SES-2
+MCP gobby-sessions:release_session_claims_hold	SES-2
+MCP gobby-sessions:restore_session_transcript	SES-3A
+MCP gobby-sessions:search_session_messages	SES-3B
+MCP gobby-sessions:send_keys	TERM-1
+MCP gobby-sessions:send_wake	TERM-1
+MCP gobby-sessions:session_stats	SES-1
+MCP gobby-sessions:set_handoff	SES-2
+MCP gobby-sessions:set_status_line	SES-2
+MCP gobby-sessions:set_title	SES-2
+MCP gobby-sessions:terminate_terminal	TERM-1
+MCP gobby-skills:get_skill	SKILLS
+MCP gobby-skills:get_skill_file	SKILLS
+MCP gobby-skills:get_skill_files	SKILLS
+MCP gobby-skills:install_skill	SKILLS
+MCP gobby-skills:list_hubs	SKILLS
+MCP gobby-skills:list_skills	SKILLS
+MCP gobby-skills:materialize_skill_scripts	SKILLS
+MCP gobby-skills:move_skill_to_installed	SKILLS
+MCP gobby-skills:move_skill_to_project	SKILLS
+MCP gobby-skills:remove_skill	SKILLS
+MCP gobby-skills:restore_skill	SKILLS
+MCP gobby-skills:search_hub	SKILLS
+MCP gobby-skills:search_skills	SKILLS
+MCP gobby-skills:update_skill	SKILLS
+MCP gobby-tasks-ops:append_description_section	B0-WRITE
+MCP gobby-tasks-ops:cancel_expansion_run	PLANS
+MCP gobby-tasks-ops:check_expansion_qa_result	PLANS
+MCP gobby-tasks-ops:clear_isolation_pair	B0-WRITE
+MCP gobby-tasks-ops:find_file_overlaps	B0-READ
+MCP gobby-tasks-ops:get_affected_files	B0-READ
+MCP gobby-tasks-ops:get_artifacts	B0-READ
+MCP gobby-tasks-ops:get_expansion_run	PLANS
+MCP gobby-tasks-ops:get_latest_expansion_run	PLANS
+MCP gobby-tasks-ops:land_commit	B0-CLOSE
+MCP gobby-tasks-ops:reindex_tasks	B0-WRITE
+MCP gobby-tasks-ops:reset_expansion_output	PLANS
+MCP gobby-tasks-ops:resume_expansion_run	PLANS
+MCP gobby-tasks-ops:run_expansion_qa_coverage	PLANS
+MCP gobby-tasks-ops:save_expansion_qa_result	PLANS
+MCP gobby-tasks-ops:set_affected_files	B0-WRITE
+MCP gobby-tasks-ops:set_artifact	B0-WRITE
+MCP gobby-tasks-ops:set_artifacts_atomic	B0-WRITE
+MCP gobby-tasks-ops:set_landing_freeze	B0-CLOSE
+MCP gobby-tasks-ops:start_expansion_run	PLANS
+MCP gobby-tasks-ops:validate_expansion_run	PLANS
+MCP gobby-tasks-ops:validate_plan_file	PLANS
+MCP gobby-tasks-ops:wire_affected_files_from_run	PLANS
+MCP gobby-tasks:add_dependency	B0-WRITE
+MCP gobby-tasks:add_label	B0-WRITE
+MCP gobby-tasks:auto_link_commits	B0-CLOSE
+MCP gobby-tasks:backup_tasks	B0-WRITE
+MCP gobby-tasks:check_dependency_cycles	B0-READ
+MCP gobby-tasks:claim_task	B0-WRITE
+MCP gobby-tasks:close_task	B0-CLOSE
+MCP gobby-tasks:create_task	B0-WRITE
+MCP gobby-tasks:de_escalate_task	B0-WRITE
+MCP gobby-tasks:delegate_task	B0-WRITE
+MCP gobby-tasks:delete_task	B0-WRITE
+MCP gobby-tasks:escalate_task	B0-WRITE
+MCP gobby-tasks:get_dependency_tree	B0-READ
+MCP gobby-tasks:get_session_tasks	B0-READ
+MCP gobby-tasks:get_task	B0-READ
+MCP gobby-tasks:get_task_diff	B0-READ
+MCP gobby-tasks:get_task_sessions	B0-READ
+MCP gobby-tasks:get_team	AG-5
+MCP gobby-tasks:hand_off_task_claim	B0-WRITE
+MCP gobby-tasks:link_commit	B0-CLOSE
+MCP gobby-tasks:link_task_to_session	B0-WRITE
+MCP gobby-tasks:list_attestations	B0-CLOSE
+MCP gobby-tasks:list_blocked_tasks	B0-READ
+MCP gobby-tasks:list_ready_tasks	B0-READ
+MCP gobby-tasks:list_tasks	B0-READ
+MCP gobby-tasks:record_attestation	B0-CLOSE
+MCP gobby-tasks:record_closing_step	B0-CLOSE
+MCP gobby-tasks:record_implementation_step	B0-CLOSE
+MCP gobby-tasks:record_review_step	B0-CLOSE
+MCP gobby-tasks:record_test_step	B0-CLOSE
+MCP gobby-tasks:release_task_claim	B0-WRITE
+MCP gobby-tasks:remove_dependency	B0-WRITE
+MCP gobby-tasks:remove_label	B0-WRITE
+MCP gobby-tasks:reopen_task	B0-WRITE
+MCP gobby-tasks:repair_closed_candidate	B0-CLOSE
+MCP gobby-tasks:search_tasks	B0-READ
+MCP gobby-tasks:suggest_next_task	B0-READ
+MCP gobby-tasks:team_progress	AG-5
+MCP gobby-tasks:unlink_commit	B0-CLOSE
+MCP gobby-tasks:update_observed_files	B0-WRITE
+MCP gobby-tasks:update_task	B0-WRITE
+MCP gobby-voice:add_vocab	VOICE
+MCP gobby-voice:clear_vocab	VOICE
+MCP gobby-voice:list_vocab	VOICE
+MCP gobby-voice:remove_vocab	VOICE
+MCP gobby-workflows:approve_pipeline	PIPE-2
+MCP gobby-workflows:cancel_pipeline	PIPE-2
+MCP gobby-workflows:clear_pipeline_execution_history	PIPE-2
+MCP gobby-workflows:create_agent_definition	TPL
+MCP gobby-workflows:create_pipeline	PIPE-1
+MCP gobby-workflows:create_rule	RULE-2
+MCP gobby-workflows:create_variable	RULE-2
+MCP gobby-workflows:delete_agent_definition	TPL
+MCP gobby-workflows:delete_pipeline	PIPE-1
+MCP gobby-workflows:delete_rule	RULE-2
+MCP gobby-workflows:delete_variable	RULE-2
+MCP gobby-workflows:evaluate_agent	RULE-2
+MCP gobby-workflows:evaluate_pipeline	PIPE-2
+MCP gobby-workflows:export_pipeline	PIPE-1
+MCP gobby-workflows:export_variable	RULE-2
+MCP gobby-workflows:fail_pipeline	PIPE-2
+MCP gobby-workflows:get_agent_definition	TPL
+MCP gobby-workflows:get_pipeline	PIPE-1
+MCP gobby-workflows:get_pipeline_status	PIPE-2
+MCP gobby-workflows:get_rule	RULE-2
+MCP gobby-workflows:get_step_status	PIPE-2
+MCP gobby-workflows:get_variable_definition	RULE-2
+MCP gobby-workflows:list_agent_definitions	TPL
+MCP gobby-workflows:list_pipeline_executions	PIPE-2
+MCP gobby-workflows:list_pipelines	PIPE-1
+MCP gobby-workflows:list_rules	RULE-2
+MCP gobby-workflows:list_variables	RULE-2
+MCP gobby-workflows:pipeline_eval	PIPE-2
+MCP gobby-workflows:reject_pipeline	PIPE-2
+MCP gobby-workflows:reload_cache	PIPE-1
+MCP gobby-workflows:resume_pipeline	PIPE-2
+MCP gobby-workflows:run_pipeline	PIPE-2
+MCP gobby-workflows:search_pipeline_executions	PIPE-2
+MCP gobby-workflows:toggle_agent_definition	TPL
+MCP gobby-workflows:toggle_rule	RULE-2
+MCP gobby-workflows:update_agent_rules	TPL
+MCP gobby-workflows:update_agent_step_workflow	TPL
+MCP gobby-workflows:update_agent_variables	TPL
+MCP gobby-workflows:update_pipeline	PIPE-1
+MCP gobby-workflows:update_rule	RULE-2
+MCP gobby-workflows:update_variable	RULE-2
+MCP gobby-workspaces:close_pane	TERM-2
+MCP gobby-workspaces:close_tab	TERM-2
+MCP gobby-workspaces:close_workspace	TERM-2
+MCP gobby-workspaces:create_tab	TERM-2
+MCP gobby-workspaces:create_workspace	TERM-2
+MCP gobby-workspaces:get_workspace	TERM-2
+MCP gobby-workspaces:list_nodes	TERM-2
+MCP gobby-workspaces:list_workspaces	TERM-2
+MCP gobby-workspaces:move_pane	TERM-2
+MCP gobby-workspaces:move_tab	TERM-2
+MCP gobby-workspaces:read_pane	TERM-2
+MCP gobby-workspaces:rebalance_tab	TERM-2
+MCP gobby-workspaces:rename_workspace_item	TERM-2
+MCP gobby-workspaces:send_pane_keys	TERM-2
+MCP gobby-workspaces:send_text	TERM-2
+MCP gobby-workspaces:split_pane	TERM-2
+MCP gobby-workspaces:swap_panes	TERM-2
+MCP gobby-workspaces:wait_for_pane_output	TERM-2
+MCP gobby-worktrees:abandon_worktree	AG-4
+MCP gobby-worktrees:claim_worktree	AG-4
+MCP gobby-worktrees:cleanup_stale_worktrees	AG-4
+MCP gobby-worktrees:create_worktree	AG-4
+MCP gobby-worktrees:delete_worktree	AG-4
+MCP gobby-worktrees:detect_stale_worktrees	AG-4
+MCP gobby-worktrees:get_worktree	AG-4
+MCP gobby-worktrees:get_worktree_by_task	AG-4
+MCP gobby-worktrees:get_worktree_stats	AG-4
+MCP gobby-worktrees:link_task_to_worktree	AG-4
+MCP gobby-worktrees:list_worktrees	AG-4
+MCP gobby-worktrees:mark_worktree_merged	AG-4
+MCP gobby-worktrees:merge_worktree	AG-4
+MCP gobby-worktrees:push_branch	AG-4
+MCP gobby-worktrees:reactivate_worktree	AG-4
+MCP gobby-worktrees:release_worktree	AG-4
+MCP gobby-worktrees:set_worktree_note	AG-4
+MCP gobby-worktrees:sync_worktree	AG-4
+MCP stdio gobby:add_mcp_server	MUX-2
+MCP stdio gobby:call_tool	GW-1
+MCP stdio gobby:get_tool_schema	GW-1
+MCP stdio gobby:get_variable	RULE-2
+MCP stdio gobby:import_mcp_server	MUX-2
+MCP stdio gobby:init_project	PROJ-2
+MCP stdio gobby:list_mcp_servers	MUX-2
+MCP stdio gobby:list_tools	GW-1
+MCP stdio gobby:recommend_tools	MCP-FLIP
+MCP stdio gobby:remove_mcp_server	MUX-2
+MCP stdio gobby:search_tools	MCP-FLIP
+MCP stdio gobby:set_variable	RULE-2
+WS message ask_user_response	CHAT-2
+WS message attach_to_session	CHAT-2
+WS message chat_message	CHAT-2
+WS message clear_chat	CHAT-2
+WS message continue_in_chat	CHAT-2
+WS message delete_chat	CHAT-2
+WS message detach_from_session	CHAT-2
+WS message heartbeat	CHAT-2
+WS message ping	SEAM-WS
+WS message plan_approval_response	CHAT-2
+WS message send_to_cli_session	CHAT-2
+WS message set_agent	CHAT-2
+WS message set_mode	CHAT-2
+WS message set_project	CHAT-2
+WS message set_provider	CHAT-2
+WS message set_worktree	CHAT-2
+WS message stop_chat	CHAT-2
+WS message stop_request	SES-2
+WS message subscribe	SEAM-WS
+WS message terminal_attach	TERM-1
+WS message terminal_create	TERM-1
+WS message terminal_detach	TERM-1
+WS message terminal_focus	TERM-1
+WS message terminal_input	TERM-1
+WS message terminal_kill	TERM-1
+WS message terminal_list	TERM-1
+WS message terminal_paste	TERM-1
+WS message terminal_release_control	TERM-1
+WS message terminal_resize	TERM-1
+WS message terminal_set_scroll_offset	TERM-1
+WS message terminal_set_theme	TERM-1
+WS message terminal_set_viewport	TERM-1
+WS message terminal_take_control	TERM-1
+WS message tool_approval_response	CHAT-2
+WS message tool_call	MUX-1
+WS message tts_stop	VOICE
+WS message unsubscribe	SEAM-WS
+WS message voice_audio	VOICE
+WS message voice_mode_toggle	VOICE
+WS message voice_prepare	VOICE
+WS message voice_status_request	VOICE
+WS message workspace_attach	TERM-2
+WS message workspace_op	TERM-2
+WS message workspace_snapshot	TERM-2
+WS transport /_gobby/ws/bridge	S3-DELETE
+WS transport /ws	SEAM-WS
+WS transport /ws/{path:path}	SEAM-WS

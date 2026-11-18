@@ -1,0 +1,5 @@
+{
+  "MCP notes:gone-away": {"status": "dropped by decision #9", "note": "removed with the Python surface"},
+  "MCP notes:plain": "proxied",
+  "MCP notes:special": {"status": "delegated", "note": "pipe | here\nline two with a \\ backslash\r\nafter a bare cr\rend"}
+}
