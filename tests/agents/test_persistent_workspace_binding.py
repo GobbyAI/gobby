@@ -10,6 +10,7 @@ import pytest
 from gobby.agents import persistent_workspaces
 from gobby.agents.agent_workspaces import workspace_anchor
 from gobby.agents.workspace_bindings import bind_session_workspace
+from gobby.agents.workspace_projects import workspace_project_name
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.agents.test_agent_workspace_lifecycle import _define
@@ -82,7 +83,11 @@ def test_persistent_owner_resumes_in_one_stable_folder(
     _define(temp_db, "fixture-persistent", persistent=True)
     variables = SessionVariableManager(temp_db)
     variables.merge_variables(pane.predecessor_id, {"_agent_type": "fixture-persistent"})
-    expected = workspace_anchor(pane.project_id) / "fixture-persistent" / "current"
+    expected = (
+        workspace_anchor(workspace_project_name(temp_db, pane.project_id))
+        / "fixture-persistent"
+        / "current"
+    )
     assert bind_session_workspace(temp_db, pane.predecessor_id) == expected
     (expected / "notes.md").write_text("current owner")
     assert bind_session_workspace(temp_db, pane.predecessor_id) == expected
@@ -183,7 +188,7 @@ def test_legacy_sessions_remain_separate_in_history(
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
     pane = _pane(temp_db, tmp_path, monkeypatch, "migration")
     _define(temp_db, "fixture-persistent", persistent=True)
-    root = workspace_anchor(pane.project_id) / "fixture-persistent"
+    root = workspace_anchor(workspace_project_name(temp_db, pane.project_id)) / "fixture-persistent"
     for sequence in (101, 102):
         legacy = root / f"session-{sequence}"
         legacy.mkdir(parents=True)
@@ -197,103 +202,6 @@ def test_legacy_sessions_remain_separate_in_history(
         assert (root / "history" / f"session-{sequence}" / "same-name.md").read_text() == str(
             sequence
         )
-
-
-def test_default_cleanup_removes_only_empty_generated_folders(
-    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
-    pane = _pane(temp_db, tmp_path, monkeypatch, "default-cleanup")
-    root = workspace_anchor(pane.project_id) / "default"
-    empty = root / "session-101"
-    historical = root / "session-102"
-    empty.mkdir(parents=True)
-    historical.mkdir()
-    (historical / "empty-recovery-directory").mkdir()
-    (root / "unrelated-empty-directory").mkdir()
-    (historical / "notes.md").write_text("retain historical data")
-    variables = SessionVariableManager(temp_db)
-    variables.merge_variables(
-        pane.predecessor_id,
-        {"_agent_type": "default", "_agent_workspace_dir": str(historical)},
-    )
-    assert bind_session_workspace(temp_db, pane.predecessor_id) is None
-    assert not empty.exists()
-    assert (historical / "notes.md").read_text() == "retain historical data"
-    assert (historical / "empty-recovery-directory").is_dir()
-    assert (root / "unrelated-empty-directory").is_dir()
-    assert variables.get_variables(pane.predecessor_id)["_agent_workspace_dir"] is None
-
-
-def test_default_cleanup_clears_flags_without_a_folder_binding(
-    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from gobby.agents.workspace_bindings import cleanup_default_workspaces
-
-    pane = _pane(temp_db, tmp_path, monkeypatch, "default-flags")
-    variables = SessionVariableManager(temp_db)
-    variables.merge_variables(
-        pane.predecessor_id,
-        {
-            "_agent_type": "default",
-            "_agent_workspace_persistent": True,
-            "_agent_workspace_injected": True,
-        },
-    )
-    with temp_db.transaction():
-        cleanup_default_workspaces(temp_db, pane.project_id)
-    state = variables.get_variables(pane.predecessor_id)
-    assert state["_agent_workspace_persistent"] is False
-    assert state["_agent_workspace_injected"] is False
-
-
-def test_default_activation_clears_multiple_stale_sessions_atomically(
-    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
-    pane = _pane(temp_db, tmp_path, monkeypatch, "default-batch")
-    variables = SessionVariableManager(temp_db)
-    stale_ids = [
-        pane.sessions.register_session(
-            external_id=f"stale-{index}",
-            machine_id=pane.machine_id,
-            source="grok",
-            project_id=pane.project_id,
-        )
-        for index in range(2)
-    ]
-    for session_id in stale_ids:
-        variables.merge_variables(
-            session_id,
-            {"_agent_type": "default", "_agent_workspace_injected": True},
-        )
-
-    assert bind_session_workspace(temp_db, pane.predecessor_id) is None
-    for session_id in stale_ids:
-        assert variables.get_variables(session_id)["_agent_workspace_injected"] is False
-    assert variables.get_variables(pane.predecessor_id)["_agent_workspace_dir"] is None
-
-
-def test_default_cleanup_tolerates_a_concurrently_removed_folder(
-    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from gobby.agents.workspace_bindings import cleanup_default_workspaces
-
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
-    pane = _pane(temp_db, tmp_path, monkeypatch, "default-concurrent")
-    root = workspace_anchor(pane.project_id) / "default"
-    empty = root / "session-101"
-    empty.mkdir(parents=True)
-    remove = Path.rmdir
-
-    def remove_after_other_cleanup(folder: Path) -> None:
-        if folder == empty:
-            remove(folder)
-        remove(folder)
-
-    monkeypatch.setattr(Path, "rmdir", remove_after_other_cleanup)
-    cleanup_default_workspaces(temp_db, pane.project_id)
-    assert not root.exists()
 
 
 @pytest.mark.parametrize("archive", ["../escaped", "session--1", "session-x"])
@@ -319,9 +227,6 @@ def test_launch_grant_acquires_ownership_before_session_start(
     folders = spawn_workspace_write_paths(temp_db, pane.predecessor_id, "fixture-persistent")
     assert len(folders) == 1
     assert Path(folders[0]).name == "current"
-    from gobby.agents.workspace_bindings import cleanup_default_workspaces
-
-    cleanup_default_workspaces(temp_db, pane.project_id)
     assert bind_session_workspace(temp_db, pane.predecessor_id) == Path(folders[0])
     with pytest.raises(persistent_workspaces.WorkspaceOwnershipError, match="live owner"):
         spawn_workspace_write_paths(temp_db, second, "fixture-persistent")

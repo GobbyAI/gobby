@@ -53,21 +53,45 @@ impl WorkspaceScope {
         let root = paths::resolve_nonstrict(&lexical_root);
         let mut writes = Vec::new();
         let mut reads = Vec::new();
-        if let (Some(session_seq), Some(definition)) = (
-            inputs.session_seq,
-            inputs
+        if let Some(session_seq) = inputs.session_seq {
+            let definition = inputs
                 .definition
                 .as_deref()
-                .filter(|name| !name.is_empty() && *name != "default"),
-        ) {
-            let anchor = lexical_root.join(&inputs.project_id);
-            let live = if inputs.persistent_workspace {
+                .filter(|name| !name.is_empty())
+                .unwrap_or("default");
+            let name = &inputs.project_name;
+            anyhow::ensure!(
+                !name.is_empty()
+                    && name
+                        .bytes()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphanumeric())
+                    && name
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
+                    && !name.to_ascii_lowercase().ends_with(".git")
+                    && uuid::Uuid::parse_str(name).is_err(),
+                "invalid project name for agent workspaces"
+            );
+            for legacy in [
+                lexical_root.join(&inputs.project_id),
+                lexical_root.join(format!("{}.git", inputs.project_id)),
+            ] {
+                anyhow::ensure!(
+                    std::fs::symlink_metadata(&legacy)
+                        .is_err_and(|error| { error.kind() == std::io::ErrorKind::NotFound }),
+                    "legacy agent workspace requires migration before launch: {}",
+                    legacy.display()
+                );
+            }
+            let anchor = lexical_root.join(name);
+            let live = if inputs.persistent_workspace && definition != "default" {
                 "current".to_owned()
             } else {
                 format!("session-{session_seq}")
             };
             writes.push(anchor.join(definition).join(live));
-            if let Some(epic_seq) = inputs.epic_seq {
+            if let Some(epic_seq) = inputs.epic_seq.filter(|_| definition != "default") {
                 writes.push(anchor.join("epics").join(format!("epic-{epic_seq}")));
             }
             reads.clone_from(&writes);

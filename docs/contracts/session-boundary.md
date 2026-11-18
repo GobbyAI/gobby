@@ -256,8 +256,14 @@ or `/new` starts a fresh default session. Explicit fresh starts take precedence 
 stale compact and clear markers. Delayed provider registration still waits for the
 first prompt when required; a genuine compact keeps the existing row and claims.
 Recovery and configured startup overrides cannot restore the old persona or workflow.
-Repository safeguards remain. Default uses provider-native scratch space and has no
-agent workspace or workspace policy.
+Repository safeguards remain. Default sessions bind independent scratch folders at
+`$GOBBY_HOME/agents_workspaces/<registered-project-name>/default/session-<seq>/`.
+Compaction and resume retain that folder; `/clear` and `/new` create a new one.
+Default scratch guidance and temp-write enforcement carry no runbook tag.
+Ephemeral definitions also use session folders. Definitions with `persistent_workspace`
+retain sessionless `current/` and archived `history/session-<seq>/` directories.
+Persistence follows the stored definition flag, independently of process lifetime.
+Project UUIDs remain internal identifiers and never name workspace directories.
 
 Spawned CLIs must never be sent `/clear`. If one receives it, Gobby cancels its run,
 releases claims, notifies its parent, and fully tears down the CLI, terminal, sandbox,

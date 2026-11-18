@@ -13,7 +13,7 @@ use serde_json::value::RawValue;
 use checkout_read::{CheckoutReadCommand, CheckoutReadResult};
 
 /// The contract version every frame and node body carries as `v`.
-pub const CONTRACT_VERSION: u64 = 4;
+pub const CONTRACT_VERSION: u64 = 5;
 
 const LIST_LIMIT: usize = 1000;
 const EVENT_LIMIT: usize = 100;
@@ -308,6 +308,7 @@ pub struct SpawnMonitor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpawnPayload {
+    pub project_name: String,
     pub run_id: String,
     pub session_id: String,
     #[serde(deserialize_with = "Option::deserialize")]

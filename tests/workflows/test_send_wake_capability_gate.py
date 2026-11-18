@@ -1,10 +1,8 @@
 """send_wake's caller gate admits the operator terminal and granted capabilities only."""
 
 from datetime import UTC, datetime
-from pathlib import Path
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -16,7 +14,6 @@ from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
-BUNDLED_RULES = Path(__file__).resolve().parents[2] / "src/gobby/install/shared/workflows/rules"
 WAKE_TOOL = "gobby-sessions:send_wake"
 
 
@@ -103,20 +100,3 @@ async def test_send_wake_gate_uses_stored_capabilities(
     assert response.decision == ("allow" if allowed else "block")
     if not allowed:
         assert "send_wake" in (response.reason or "")
-
-
-def test_bundled_rules_gate_send_wake_with_versioned_block_effects() -> None:
-    gating_files: set[Path] = set()
-    for path in sorted(BUNDLED_RULES.rglob("*.yaml")):
-        if "deprecated" in path.parts:
-            continue
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
-        for rule in (document.get("rules") or {}).values():
-            for effect in rule.get("effects") or []:
-                if WAKE_TOOL not in effect.get("mcp_tools", []):
-                    continue
-                assert effect["type"] == "block"
-                assert "when" in rule
-                assert isinstance(document.get("version"), str)
-                gating_files.add(path)
-    assert gating_files

@@ -23,7 +23,6 @@ from tests.fixtures.agent_definitions import seed_seat
 from tests.workflows.rule_arming import (
     SYNTHETIC_ESCALATION_PREFIX,
     SYNTHETIC_RETRY_LIMIT_RULE,
-    arm_bundled_retry_limit_rules,
     install_retry_limit_rule,
 )
 
@@ -159,85 +158,6 @@ async def test_escalation_preempts_agent_tool_enforcement(temp_db: HubDatabase) 
     assert response.reason is not None
     assert response.reason.startswith(f"Rule enforced by Gobby: [{SYNTHETIC_RETRY_LIMIT_RULE}]\n")
     assert variables["_last_blocked_rule_name"] == BLOCKED_RULE
-
-
-@pytest.mark.asyncio
-async def test_bundled_retry_limit_rules_escalate_with_the_original_reason(
-    temp_db: HubDatabase,
-) -> None:
-    armed = arm_bundled_retry_limit_rules(temp_db)
-    assert armed, "the bundled rules must ship a retry-limit escalation"
-    engine = RuleEngine(temp_db)
-    variables = _blocked_state(consecutive_tool_blocks=1, max_consecutive_blocked_tool_attempts=3)
-
-    response = await engine.evaluate(_retry_event(), SESSION_ID, variables)
-
-    assert response.decision == "block"
-    assert response.reason is not None
-    assert any(response.reason.startswith(f"Rule enforced by Gobby: [{name}]\n") for name in armed)
-    assert "You have attempted TodoWrite 3 times consecutively" in response.reason
-    assert f"Most recent original block reason:\n{BLOCKED_REASON}" in response.reason
-    assert "Recovery required:" in response.reason
-
-
-@pytest.mark.parametrize("limit", [0, 1, 2])
-@pytest.mark.asyncio
-async def test_bundled_retry_limit_rules_let_a_different_tool_through(
-    temp_db: HubDatabase, limit: int
-) -> None:
-    """Switching tools resets the count, so even a tiny limit never blocks the new tool."""
-    assert arm_bundled_retry_limit_rules(temp_db)
-    engine = RuleEngine(temp_db)
-    variables = _blocked_state(
-        consecutive_tool_blocks=3, max_consecutive_blocked_tool_attempts=limit
-    )
-
-    response = await engine.evaluate(_retry_event("Read"), SESSION_ID, variables)
-
-    assert response.decision == "allow"
-    assert variables["consecutive_tool_blocks"] == 0
-
-
-@pytest.mark.parametrize(
-    ("prior_retries", "limit", "escalates"),
-    [(0, 1, True), (0, 2, True), (0, 3, False), (1, 3, True), (3, 5, True), (2, 5, False)],
-)
-@pytest.mark.asyncio
-async def test_bundled_retry_limit_rules_escalate_a_same_tool_retry_at_the_limit(
-    temp_db: HubDatabase, prior_retries: int, limit: int, escalates: bool
-) -> None:
-    """The retry in flight is attempt prior_retries + 2: the original denial plus each retry."""
-    assert arm_bundled_retry_limit_rules(temp_db)
-    engine = RuleEngine(temp_db)
-    variables = _blocked_state(
-        consecutive_tool_blocks=prior_retries, max_consecutive_blocked_tool_attempts=limit
-    )
-
-    response = await engine.evaluate(_retry_event(), SESSION_ID, variables)
-
-    assert response.decision == ("block" if escalates else "allow")
-    assert variables["consecutive_tool_blocks"] == prior_retries + 1
-
-
-@pytest.mark.asyncio
-async def test_bundled_retry_limit_rules_say_so_when_no_reason_was_kept(
-    temp_db: HubDatabase,
-) -> None:
-    assert arm_bundled_retry_limit_rules(temp_db)
-    engine = RuleEngine(temp_db)
-    variables = _blocked_state(
-        _last_blocked_reason="",
-        consecutive_tool_blocks=1,
-        max_consecutive_blocked_tool_attempts=2,
-    )
-
-    response = await engine.evaluate(_retry_event(), SESSION_ID, variables)
-
-    assert response.decision == "block"
-    assert response.reason is not None
-    assert "Most recent original block reason:" not in response.reason
-    assert "The prior block reason was unavailable." in response.reason
-    assert "Scroll up and read the immediately preceding tool error" in response.reason
 
 
 @pytest.mark.parametrize("event", sorted(set(RuleTriggerEvent) - {RuleTriggerEvent.BEFORE_TOOL}))

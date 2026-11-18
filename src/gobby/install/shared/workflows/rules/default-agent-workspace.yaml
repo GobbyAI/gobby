@@ -1,0 +1,52 @@
+version: "1.0.0"
+tags: [default, enforcement, gobby]
+
+# Default seats retain repository permissions and get session-local scratch space.
+# No runbook tag or task-worktree write constraint applies here.
+rules:
+  inject-default-agent-workspace:
+    agent_scope: [default]
+    description: "Name the default session's scratchpad once per context epoch"
+    event: turn_start
+    enabled: true
+    priority: 21
+    when: >
+      variables.get('_agent_workspace_dir')
+      and not variables.get('_agent_workspace_injected')
+    effects:
+      - type: inject_context
+        delivery: on_receipt
+        template: |
+          Your scratchpad is accessible at `{{ variables.get('_agent_workspace_dir') }}`.
+          Use it for notes and scratch files. It belongs to this session; compaction and
+          resume retain it, while /clear and /new start an independent session folder.
+      - type: set_variable
+        delivery: on_receipt
+        variable: _agent_workspace_injected
+        value: true
+  reset-default-agent-workspace-on-context-loss:
+    agent_scope: [default]
+    description: "Re-arm scratchpad guidance after context loss"
+    event: session_start
+    enabled: true
+    priority: 8
+    when: "event.data.get('source') in ['clear', 'compact'] or (event.data.get('source') == 'resume' and variables.get('pending_context_reset'))"
+    effects:
+      - type: set_variable
+        variable: _agent_workspace_injected
+        value: false
+  block-default-temp-scratchpad-writes:
+    agent_scope: [default]
+    description: "Direct scratch writes into the default session workspace"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      event.data.get('canonical_tool_kind') == 'write'
+      and temp_scratchpad_write(event.data, tool_input)
+      and not write_paths_within(event.data, tool_input, temp_write_admitted_dirs(variables))
+    effects:
+      - type: block
+        reason: >-
+          Temp scratchpad access is blocked. Your scratchpad is accessible at
+          `{{ variables.get('_agent_workspace_dir') }}`.

@@ -133,7 +133,10 @@ def build_spawn_payload(
     if prefix:
         prompt = f"{prefix}\n\n{prompt}"
 
+    from gobby.agents.workspace_projects import registered_workspace_project_name
+
     payload = SpawnPayload(
+        project_name=registered_workspace_project_name(db, request["project_id"]),
         run_id=run.id,
         session_id=run.child_session_id,
         parent_session_id=run.parent_session_id,

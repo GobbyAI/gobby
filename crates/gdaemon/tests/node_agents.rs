@@ -1817,6 +1817,7 @@ fn srt_policy_inputs(tree: &SrtTree, inputs: &Value) -> Result<PolicyInputs> {
         sandbox: serde_json::from_value(filled["sandbox"].clone())?,
         source_root: PathBuf::from(srt_text(&filled, "source_root")?),
         project_id: srt_text(&filled, "project_id")?,
+        project_name: srt_text(&filled, "project_name")?,
         session_id: srt_text(&filled, "session_id")?,
         workspace: PathBuf::from(srt_text(&filled, "workspace")?),
         home: tree.path("home"),
@@ -2440,7 +2441,7 @@ fn srt_agent_workspace_grants_match_python_corpus() -> Result<()> {
             .context("denyRead")?
             .contains(&json!(workspaces))
     );
-    let anchor = workspaces.join(srt_text(&inputs, "project_id")?);
+    let anchor = workspaces.join(srt_text(&inputs, "project_name")?);
     let own = anchor.join(srt_text(&inputs, "definition")?).join(format!(
         "session-{}",
         inputs["session_seq"].as_u64().context("session_seq")?
@@ -3361,5 +3362,51 @@ fn chokepoint_codex_shell_snapshot_off() -> Result<()> {
         };
         assert_eq!(launch.provider_args, expected, "{provider}: provider_args");
     }
+    Ok(())
+}
+
+#[test]
+fn srt_workspace_refuses_unsafe_project_names() -> Result<()> {
+    let corpus = srt_corpus()?;
+    let inputs = srt_case_inputs(&corpus, "claude-agent-workspace")?;
+    let root = tempfile::tempdir()?;
+    let tree = SrtTree::new(&root.path().join("project-names"))?;
+    tree.materialize(&inputs)?;
+    let mut policy_inputs = srt_policy_inputs(&tree, &inputs)?;
+    for name in [
+        "../other",
+        "/absolute",
+        "a/b",
+        "a.git",
+        "11111111-1111-4111-8111-111111111111",
+    ] {
+        policy_inputs.project_name = name.to_owned();
+        assert!(
+            resolve_srt_policy(&policy_inputs).is_err(),
+            "accepted {name}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn srt_workspace_refuses_unmigrated_history() -> Result<()> {
+    let corpus = srt_corpus()?;
+    let inputs = srt_case_inputs(&corpus, "claude-agent-workspace")?;
+    let root = tempfile::tempdir()?;
+    let tree = SrtTree::new(&root.path().join("legacy-workspace"))?;
+    tree.materialize(&inputs)?;
+    let policy_inputs = srt_policy_inputs(&tree, &inputs)?;
+    let legacy = policy_inputs
+        .gobby_home
+        .join("agents_workspaces")
+        .join(&policy_inputs.project_id);
+    std::fs::create_dir_all(&legacy)?;
+    std::fs::write(legacy.join("notes.md"), "retained history")?;
+    assert!(resolve_srt_policy(&policy_inputs).is_err());
+    assert_eq!(
+        std::fs::read_to_string(legacy.join("notes.md"))?,
+        "retained history"
+    );
     Ok(())
 }

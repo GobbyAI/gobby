@@ -23,9 +23,10 @@ from pydantic import (
     model_validator,
 )
 
+from gobby.agents.workspace_projects import validate_workspace_project_name
 from gobby.utils.terminal_output import redact_terminal_output
 
-CONTRACT_VERSION = 4
+CONTRACT_VERSION = 5
 
 _LIST_LIMIT = 1000
 _READ_BUDGET = 8_388_608
@@ -101,6 +102,7 @@ class SpawnMonitor(NodeModel):
 
 
 class SpawnPayload(NodeModel):
+    project_name: Annotated[str, AfterValidator(validate_workspace_project_name)]
     run_id: str
     session_id: str
     parent_session_id: str | None

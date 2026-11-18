@@ -155,7 +155,7 @@ def _live_lock_holder(project_id: str, scratch: Path) -> Iterator[subprocess.Pop
 def project_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
     """A fresh project in a fresh home, so no per-project state leaks between tests."""
     monkeypatch.setenv("GOBBY_HOME", str((tmp_path / "gobby-home").resolve()))
-    return str(uuid.uuid4())
+    return f"fixture-backup-{uuid.uuid4().hex[:8]}"
 
 
 @pytest.fixture
