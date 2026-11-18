@@ -70,7 +70,7 @@ def test_canonical_authority_and_restricted_staging() -> None:
         "only when all rendered sections fit",
         "shared 10,000 JSON-escaped character cap",
         "If the complete draft cannot fit and writing is prohibited",
-        "set_handoff(clear_session=false)",
+        "`set_handoff` current_state",
         "Restore with argumentless `get_handoff`",
         "No scratch store, indirect writer, or subagent",
         "Materialize the complete draft once writable; only then validate/review/register/expand",

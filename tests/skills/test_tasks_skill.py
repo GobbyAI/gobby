@@ -144,10 +144,8 @@ def test_standalone_handoff_skill_selects_boundaries_and_readable_payloads() -> 
         "compressing prose into shorthand",
         "session-scoped Markdown working-context",
         "agent workspace folder",
-        "`clear_session=false` during planning, review, or ongoing task work",
-        "`true` only for a root/coordinator",
-        "after closing the",
-        "current task",
+        "`set_handoff` always compacts in place and accepts no `clear_session` selector.",
+        "After closing a task, continue in place or start a fresh default session",
         "spawned worker finishes with structured `end_agent_run`",
     ):
         assert expected in content

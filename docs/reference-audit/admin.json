@@ -281,6 +281,141 @@
     },
     {
       "surface": "cli",
+      "command": "gobby rollback list",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/rollback.py",
+        "symbol": "_list_command"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rollback pin extend",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/rollback.py",
+        "symbol": "_pin_extend"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rollback unpin",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/rollback.py",
+        "symbol": "_unpin"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rollback hold set",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/rollback.py",
+        "symbol": "_hold_set"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rollback hold extend",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/rollback.py",
+        "symbol": "_hold_extend"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rollback hold status",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/rollback.py",
+        "symbol": "_hold_status"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rollback hold clear",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/rollback.py",
+        "symbol": "_hold_clear"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rollback burn",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/rollback.py",
+        "symbol": "_burn"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
+      "command": "gobby rollback restore",
+      "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
+      "implementation": {
+        "path": "src/gobby/cli/rollback.py",
+        "symbol": "_restore"
+      },
+      "verification": [
+        "source-inventory",
+        "cli-registry",
+        "focused-install-recovery"
+      ],
+      "audience": "operator"
+    },
+    {
+      "surface": "cli",
       "command": "gobby start",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
       "implementation": {
