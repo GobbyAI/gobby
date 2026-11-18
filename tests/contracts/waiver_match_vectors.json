@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "http": [
+    {"surface": "HTTP DELETE /api/admin/test/unregister-agent/{run_id}", "method": "DELETE", "path": "/api/admin/test/unregister-agent/abc", "expect": true},
+    {"surface": "HTTP DELETE /api/admin/test/unregister-agent/{run_id}", "method": "POST", "path": "/api/admin/test/unregister-agent/abc", "expect": false},
+    {"surface": "HTTP PATCH /api/cron/jobs/{job_id}", "method": "PATCH", "path": "/api/cron/jobs/job-1", "expect": true},
+    {"surface": "HTTP PATCH /api/cron/jobs/{job_id}", "method": "GET", "path": "/api/cron/jobs/job-1", "expect": false},
+    {"surface": "HTTP PATCH /api/cron/jobs/{job_id}", "method": "PATCH", "path": "/api/other/job-1", "expect": false},
+    {"surface": "HTTP PATCH /api/cron/jobs/{job_id}", "method": "PATCH", "path": "/api/cron/jobs/", "expect": false},
+    {"surface": "HTTP PATCH /api/cron/jobs/{job_id}", "method": "PATCH", "path": "/api/cron/jobs/job-1/extra", "expect": false},
+    {"surface": "MCP HTTP gobby:fixture_read", "method": "POST", "path": "/api/mcp/gobby/tools/fixture_read", "expect": false},
+    {"surface": "CLI gobby fixture list", "method": "GET", "path": "/api/fixture/list", "expect": false},
+    {"surface": "WS message fixture_event", "method": "GET", "path": "/ws", "expect": false}
+  ],
+  "keyed": [
+    {"surface": "MCP HTTP gobby:fixture_read", "key": "MCP HTTP gobby:fixture_read", "kind": "mcp", "expect": true},
+    {"surface": "MCP stdio gobby:fixture_read", "key": "MCP stdio gobby:fixture_read", "kind": "mcp", "expect": true},
+    {"surface": "MCP HTTP gobby:fixture_read", "key": "MCP stdio gobby:fixture_read", "kind": "mcp", "expect": false},
+    {"surface": "MCP stdio gobby:fixture_read", "key": "MCP HTTP gobby:fixture_read", "kind": "mcp", "expect": false},
+    {"surface": "MCP fixture-server:fixture_read", "key": "MCP fixture-server:fixture_read", "kind": "mcp", "expect": true},
+    {"surface": "MCP fixture-server:fixture_read", "key": "MCP other-server:fixture_read", "kind": "mcp", "expect": false},
+    {"surface": "WS message fixture_event", "key": "WS message fixture_event", "kind": "ws", "expect": true},
+    {"surface": "WS message fixture_event", "key": "WS message fixture_other", "kind": "ws", "expect": false},
+    {"surface": "CLI gobby fixture list", "key": "CLI gobby fixture list", "kind": "cli", "expect": true},
+    {"surface": "CLI gobby fixture list", "key": "CLI gobby fixture", "kind": "cli", "expect": false},
+    {"surface": "CLI gobby fixture", "key": "CLI gobby fixture list", "kind": "cli", "expect": false},
+    {"surface": "HTTP PATCH /api/cron/jobs/{job_id}", "key": "MCP HTTP gobby:fixture_read", "kind": "mcp", "expect": false},
+    {"surface": "WS message fixture_event", "key": "CLI gobby fixture list", "kind": "cli", "expect": false}
+  ]
+}
