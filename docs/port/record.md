@@ -4734,6 +4734,16 @@ Josh's rulings about the port as Gobby memory held them on 2026-11-18, each with
 ### GEN-ROLLBACK
 
 <!-- gport:kept found:GEN-ROLLBACK -->
+- Python install flaws left in place by #26108 (Josh, 2026-11-18: note the flaw, do not carry it into Rust). The Rust install and rollback path must not repeat them:
+  - A probe of a candidate or a generation copy runs `--version`, and a ghook older than 0.9.88 rewrites the live `.ghook-runtime.json` when it does (`bin_restore.py` `_member_refusal`, `check_binary_release` preflight). A read-only check must write nothing; the installer alone writes the stamp, after the swap, under the store lock.
+  - `ghook --version` from the installed path writes the stamp without the store lock, so a probe that started before a swap can overwrite the new stamp. The stamp file's bytes also differ by a trailing newline depending on the writer. One writer, one encoding.
+  - Cutover captures the candidate's runtime stamp after the daemon stops, so an unusable candidate is refused with the daemon down. Every candidate check belongs before the stop.
+  - The outgoing receipt is removed before the binary replace and put back on failure; a crash between the two loses it. Replace both atomically or write the new receipt first.
+  - A restore failure message names replaced and unreplaced members and omits the burned versions.
+  - The async hook dispatcher (`hooks/mcp_dispatch.py`) and the sync one (`hooks/dispatchers/mcp.py`) still differ: rewriting a resolved ref into tool arguments, an explicit unresolvable ref, a full UUID with no store, the `current` alias, project scoping, and `_proxy` routing. Rust gets one dispatcher.
+  - A gmcp settle failure skips writing the daemon start command, and a rerun that finds gmcp current does not write it either.
+  - `tests/fixtures/landing_case.py` names bundled seats in helper names (AGENTS rule 16).
+- Tests that fail on 0.9.0 and predate #26108, not fixed: `tests/agents/test_srt_socket_root_variable.py::test_spawn_records_the_launch_socket_root_on_the_child_session`, `tests/workflows/test_base_merge_rules.py::test_team_worktree_scope_is_static_in_srt_launch_policy[no-capability]`, and an order-dependent failure in `tests/agents/test_team_teardown_epic_leaf.py`. All three cover spawned-seat launch, which ruling 27 retires for the port.
 <!-- gport:end found:GEN-ROLLBACK -->
 
 ### P0-RECORD
