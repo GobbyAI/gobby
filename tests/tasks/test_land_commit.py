@@ -230,6 +230,63 @@ async def test_freeze_refuses_landing_and_restart_class_needs_no_approval(
     assert all(r.kind == LANDING for r in list_close_receipts(case.db, task.id))
 
 
+async def test_replay_of_a_landed_candidate_reports_landed_under_an_unbound_freeze(
+    case: LandingCase,
+) -> None:
+    """A freeze governs ref movement only, so replaying a landed candidate still reports landed."""
+    sha = case.candidate("lane", {"docs/replay.md": "candidate"})
+    task = case.reviewed(sha)
+    first = await case.land(task, sha)
+    assert first["landed"] is True, first
+    write_freeze(case.repo / ".git", on=True, reason="later freeze", session_id=case.creator)
+
+    replay = await case.land(task, sha)
+
+    assert replay["landed"] is True, replay
+    assert "landing_frozen" not in replay.get("blockers", [])
+    assert case.git("rev-parse", "trunk") == sha
+
+
+async def test_recovery_of_an_already_landed_candidate_reports_landed_under_a_freeze(
+    case: LandingCase,
+) -> None:
+    """A freeze governs ref movement, so an already-landed candidate is recovered and reported.
+
+    The candidate reached trunk outside the landing path: a fast-forward whose reflog entry
+    names it, with no landing receipt. Recovery runs while the freeze is on and reports it
+    landed. A candidate that is not on trunk is refused by the same freeze.
+    """
+    sha = case.candidate("lane", {"docs/recovered.md": "candidate"})
+    task = case.reviewed(sha)
+    case.git(
+        "merge",
+        "--ff-only",
+        sha,
+        env={"GIT_REFLOG_ACTION": f"gobby-land candidate={sha} mode=ff class=none"},
+    )
+    assert [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING] == []
+    write_freeze(case.repo / ".git", on=True, reason="release hold", session_id=case.creator)
+
+    recovered = await case.land(task, sha)
+
+    assert recovered["landed"] is True, recovered
+    assert recovered["provenance"] == "reflog"
+    assert recovered["mode"] == "ff"
+    assert recovered["activation_class"] == "none"
+    assert "landing_frozen" not in recovered.get("blockers", [])
+    [receipt] = [r for r in list_close_receipts(case.db, task.id) if r.kind == LANDING]
+    assert receipt.commit_sha == sha
+    assert case.git("rev-parse", "trunk") == sha
+
+    unlanded = case.candidate("unlanded", {"docs/unlanded.md": "not on trunk"})
+    other = case.reviewed(unlanded, title="Unlanded candidate")
+    refused = await case.land(other, unlanded)
+
+    assert refused["landed"] is False
+    assert "landing_frozen" in refused["blockers"]
+    assert case.git("rev-parse", "trunk") == sha
+
+
 async def test_refuses_unlinked_candidate(case: LandingCase) -> None:
     sha = case.candidate("lane", {"docs/change.md": "linked later"})
     task = case.reviewed(sha)

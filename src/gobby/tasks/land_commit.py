@@ -1,4 +1,4 @@
-"""The task's Dev Team Lead lands an independently reviewed candidate into its main checkout."""
+"""Lands an independently reviewed candidate of a task into its main checkout."""
 
 from __future__ import annotations
 
@@ -76,7 +76,7 @@ _LANDING_ACTION = re.compile(
 )
 _ATTEMPTS = 3
 _LANDING_TIMEOUT = 120.0
-# Conflicts go to Triage; every other blocker is the caller's to fix.
+# Conflicts escalate the task; every other blocker is the caller's to fix.
 _CONFLICTS = frozenset({"base_update_required", "merge_conflict"})
 
 
@@ -484,7 +484,7 @@ async def candidate_scope_paths(
 
 
 def _escalate(db: HubDatabase, task: Task, refusal: LandingResult) -> LandingResult:
-    """Send a conflicting landing to Triage; nothing resolves a conflict by overwriting."""
+    """Escalate a conflicting landing's task; nothing resolves a conflict by overwriting."""
     reason = {
         "kind": "landing_conflict",
         "commit_sha": refusal["commit_sha"],
@@ -496,7 +496,7 @@ def _escalate(db: HubDatabase, task: Task, refusal: LandingResult) -> LandingRes
     except TaskAlreadyEscalatedError:
         pass
     except ValueError:
-        # A closed task has no Triage path left; the refusal stands alone.
+        # A closed task has no escalation route left; the refusal stands alone.
         return refusal
     return {**refusal, "escalated": True}
 
@@ -608,7 +608,7 @@ async def land_candidate(
     """Land a linked candidate under the caller's declared integration authority.
 
     A tip that moved by paths disjoint from the candidate's lands a generated merge;
-    paths the tip changed too and merge conflicts escalate the task to Triage.
+    paths the tip changed too and merge conflicts escalate the task to its escalation route.
     A tip that moves during the call is re-read and every policy check repeats.
     Each attempt admits one coherent task/definition/evidence snapshot. Later
     policy or evidence changes govern later attempts; receipts retain the exact
@@ -694,6 +694,8 @@ async def land_candidate(
                         break
                 if not linked:
                     blockers.append("candidate_not_linked")
+                # A landing freeze governs ref movement only. An already-landed candidate
+                # moves nothing, so its replay and recovery stay exempt and still report landed.
                 if await _ancestor(main, sha, tip):
                     if blockers:
                         return {

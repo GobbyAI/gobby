@@ -349,6 +349,24 @@ def _web_chat_session(
     return session
 
 
+def _session_store_for(db_session_id: str = "db-id") -> MagicMock:
+    """Session store double that resolves only the web chat session under test.
+
+    The injected session id is that session's db id, so it resolves to itself; any other
+    ref raises ValueError, as the real store does for an unknown reference.
+    """
+
+    def resolve(ref: str, _project_id: str | None) -> str:
+        if ref != db_session_id:
+            raise ValueError(f"session {ref!r} not found")
+        return ref
+
+    store = MagicMock()
+    store.resolve_session_reference.side_effect = resolve
+    store.get.return_value = None
+    return store
+
+
 class TestWebChatLifecycle:
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -445,6 +463,7 @@ class TestWebChatLifecycle:
         host.workflow_handler = workflow_handler
 
         proxy = MagicMock()
+        proxy.session_manager = _session_store_for()
         proxy.call_tool = AsyncMock(return_value={"success": False, "error": "gate failed"})
         host.tool_proxy_getter = lambda: proxy
         monkeypatch.setattr(
@@ -507,6 +526,7 @@ class TestWebChatLifecycle:
         host.workflow_handler = workflow_handler
 
         proxy = MagicMock()
+        proxy.session_manager = _session_store_for()
         proxy.call_tool = AsyncMock(return_value={"success": True, "value": "found"})
         host.tool_proxy_getter = lambda: proxy
         monkeypatch.setattr(

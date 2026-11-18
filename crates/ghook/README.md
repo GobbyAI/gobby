@@ -14,7 +14,12 @@ was lost to a sandbox FS-read denial, a network blip, or daemon restart.
 ghook --gobby-owned --cli=<c> --type=<t> [--detach]
 ghook --diagnose    --cli=<c> --type=<t>
 ghook --version
+ghook --runtime-stamp
 ```
+
+`--version` writes `$GOBBY_HOME/bin/.ghook-runtime.json` only when run as the
+installed `bin/ghook`; other copies print the version and write nothing.
+`--runtime-stamp` prints the same stamp JSON to stdout and writes nothing.
 
 ## Terminal context
 

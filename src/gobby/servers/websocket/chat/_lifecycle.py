@@ -580,22 +580,28 @@ class ChatLifecycleMixin:
             return []
 
         from gobby.hooks.mcp_dispatch import dispatch_mcp_calls
+        from gobby.utils.session_context import get_current_session_id
 
         async def _call_tool(server: str, tool: str, arguments: dict[str, Any]) -> Any:
             proxy = tool_proxy_getter()
             if proxy is None:
                 return {"success": False, "error": "tool proxy unavailable"}
-            session_id = arguments.get("session_id")
+            # The dispatcher seeds this call's session before it calls the tool. An unresolved
+            # ambient ref seeds none, so the proxy never receives the raw ref as its session.
             return await proxy.call_tool(
                 server,
                 tool,
                 arguments,
-                session_id=session_id if isinstance(session_id, str) else None,
+                session_id=get_current_session_id(),
                 strip_unknown=True,
                 enforce_workflow=False,
             )
 
-        return await dispatch_mcp_calls(mcp_calls, event, _call_tool, logger)
+        proxy = tool_proxy_getter()
+        session_manager = proxy.session_manager if proxy is not None else None
+        return await dispatch_mcp_calls(
+            mcp_calls, event, _call_tool, logger, session_manager=session_manager
+        )
 
     async def _dispatch_event_handlers(
         self,

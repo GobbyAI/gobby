@@ -26,8 +26,11 @@ from gobby.cli.daemon_start import start
 from gobby.cli.runtime import get_cli_runtime
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap, node_daemon_refusal
 from gobby.install.bin_freshness_github import SourceUnavailableError, platform_target
-from gobby.install.bin_freshness_promotion import preflight_binary_promotions
-from gobby.install.bin_generations import retention_refusal
+from gobby.install.bin_freshness_promotion import (
+    BinaryStampsNotSettledError,
+    preflight_binary_promotions,
+)
+from gobby.install.bin_generations import promotion_guard, retention_refusal
 from gobby.install.bin_release_identity import (
     BinaryReleaseVersionError,
     promotion_hold_token,
@@ -443,6 +446,7 @@ _POST_START_ERRORS = (
     CutoverError,
     BinarySetCoherenceError,
     BinaryReleaseVersionError,
+    BinaryStampsNotSettledError,
     OSError,
     ValueError,
 )
@@ -463,11 +467,24 @@ def _promote_companion(root: Path, bin_dir: Path, name: str, companion: _Client)
         ),
     }[name]
     _require_unchanged_sources(root, {name: companion.source})
-    outcome = promote(companion.artifact, bin_dir, root)
+    probed: dict[str, str] = {}
+
+    def prepare(staged: Path) -> None:
+        if version := probe_native_bin_version(staged):
+            probed["version"] = version
+
+    def settle() -> None:
+        if version := probed.get("version"):
+            write_stamp(bin_dir, version)
+
+    outcome = promote(companion.artifact, bin_dir, root, prepare_staged=prepare, after_swap=settle)
     if outcome is None:
         raise CutoverError(f"{name}: native binary update is already in progress")
-    if version := probe_native_bin_version(bin_dir / native_bin_name(name)):
-        write_stamp(bin_dir, version)
+    if outcome == "current":
+        # No swap happened, so the stamp takes the store lock itself.
+        if version := probe_native_bin_version(bin_dir / native_bin_name(name)):
+            with promotion_guard(bin_dir, []):
+                write_stamp(bin_dir, version)
     return outcome
 
 
@@ -475,10 +492,26 @@ def _promote_client(root: Path, bin_dir: Path, client: _Client) -> None:
     from gobby.cli import install_setup
 
     _require_unchanged_sources(root, {_CLIENT_NAME: client.source})
-    if install_setup._promote_gclient_workspace_artifact(client.artifact, bin_dir, root) is None:
+    probed: dict[str, str] = {}
+
+    def prepare(staged: Path) -> None:
+        if version := probe_native_bin_version(staged):
+            probed["version"] = version
+
+    def settle() -> None:
+        if version := probed.get("version"):
+            install_setup._write_gclient_version_stamp(bin_dir, version)
+
+    outcome = install_setup._promote_gclient_workspace_artifact(
+        client.artifact, bin_dir, root, prepare_staged=prepare, after_swap=settle
+    )
+    if outcome is None:
         raise CutoverError("gclient: native binary update is already in progress")
-    if version := install_setup._get_installed_gclient_version(bin_dir):
-        install_setup._write_gclient_version_stamp(bin_dir, version)
+    if outcome == "current":
+        # No swap happened, so the stamp takes the store lock itself.
+        if version := install_setup._get_installed_gclient_version(bin_dir):
+            with promotion_guard(bin_dir, []):
+                install_setup._write_gclient_version_stamp(bin_dir, version)
 
 
 def _require_unchanged_sources(root: Path, sources: dict[str, str]) -> None:

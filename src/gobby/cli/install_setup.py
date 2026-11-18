@@ -10,6 +10,7 @@ import shutil
 import subprocess  # nosec B404 # fixed npm and managed helper invocations
 import sys
 import tempfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -410,8 +411,15 @@ def _write_gcode_version_stamp(bin_dir: Path, version: str) -> None:
     _gcode_impl.write_gcode_version_stamp(_module(), bin_dir, version)
 
 
-def _install_gcode_from_submodule(bin_dir: Path) -> bool:
-    return _gcode_impl.install_gcode_from_submodule(_module(), bin_dir)
+def _install_gcode_from_submodule(
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    return _gcode_impl.install_gcode_from_submodule(
+        _module(), bin_dir, prepare_staged=prepare_staged, after_swap=after_swap
+    )
 
 
 def _install_gcode(force: bool = False) -> dict[str, Any]:
@@ -464,8 +472,15 @@ def _write_ghook_install_sidecar(
     )
 
 
-def _install_ghook_from_workspace(bin_dir: Path) -> bool:
-    return _ghook_impl.install_ghook_from_workspace(_module(), bin_dir)
+def _install_ghook_from_workspace(
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    return _ghook_impl.install_ghook_from_workspace(
+        _module(), bin_dir, prepare_staged=prepare_staged, after_swap=after_swap
+    )
 
 
 def _probe_ghook_version(ghook_path: Path) -> str | None:
@@ -505,29 +520,71 @@ def _write_gterm_version_stamp(bin_dir: Path, version: str) -> None:
 
 
 def _promote_gterm_workspace_artifact(
-    src_bin: Path, bin_dir: Path, workspace_root: Path
+    src_bin: Path,
+    bin_dir: Path,
+    workspace_root: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
 ) -> str | None:
-    return _gterm_impl.promote_gterm_workspace_artifact(_module(), src_bin, bin_dir, workspace_root)
+    return _gterm_impl.promote_gterm_workspace_artifact(
+        _module(),
+        src_bin,
+        bin_dir,
+        workspace_root,
+        prepare_staged=prepare_staged,
+        after_swap=after_swap,
+    )
 
 
 def _install_gterm_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
     return _gterm_impl.install_gterm_from_github(_module(), bin_dir, target, version)
 
 
-def _install_gterm_from_submodule(bin_dir: Path) -> str | None:
-    return _gterm_impl.install_gterm_from_submodule(_module(), bin_dir)
+def _install_gterm_from_submodule(
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> str | None:
+    return _gterm_impl.install_gterm_from_submodule(
+        _module(), bin_dir, prepare_staged=prepare_staged, after_swap=after_swap
+    )
 
 
-def _install_gterm_from_cargo_git(bin_dir: Path) -> bool:
-    return _gterm_impl.install_gterm_from_cargo_git(_module(), bin_dir)
+def _install_gterm_from_cargo_git(
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    return _gterm_impl.install_gterm_from_cargo_git(
+        _module(), bin_dir, prepare_staged=prepare_staged, after_swap=after_swap
+    )
 
 
-def _install_gterm_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
-    return _gterm_impl.install_gterm_from_cargo_binstall(_module(), bin_dir, version)
+def _install_gterm_from_cargo_binstall(
+    bin_dir: Path,
+    version: str | None = None,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    return _gterm_impl.install_gterm_from_cargo_binstall(
+        _module(), bin_dir, version, prepare_staged=prepare_staged, after_swap=after_swap
+    )
 
 
-def _install_gterm_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
-    return _gterm_impl.install_gterm_from_cargo_install(_module(), bin_dir, version)
+def _install_gterm_from_cargo_install(
+    bin_dir: Path,
+    version: str | None = None,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    return _gterm_impl.install_gterm_from_cargo_install(
+        _module(), bin_dir, version, prepare_staged=prepare_staged, after_swap=after_swap
+    )
 
 
 def _install_gterm(force: bool = False) -> dict[str, Any]:
@@ -557,28 +614,68 @@ def _install_gclient_from_github(bin_dir: Path, target: str, version: str | None
     return _gclient_impl.install_gclient_from_github(_module(), bin_dir, target, version)
 
 
-def _install_gclient_from_submodule(bin_dir: Path) -> str | None:
-    return _gclient_impl.install_gclient_from_submodule(_module(), bin_dir)
-
-
-def _promote_gclient_workspace_artifact(
-    src_bin: Path, bin_dir: Path, workspace_root: Path
+def _install_gclient_from_submodule(
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
 ) -> str | None:
-    return _gclient_impl.promote_gclient_workspace_artifact(
-        _module(), src_bin, bin_dir, workspace_root
+    return _gclient_impl.install_gclient_from_submodule(
+        _module(), bin_dir, prepare_staged=prepare_staged, after_swap=after_swap
     )
 
 
-def _install_gclient_from_cargo_git(bin_dir: Path) -> bool:
-    return _gclient_impl.install_gclient_from_cargo_git(_module(), bin_dir)
+def _promote_gclient_workspace_artifact(
+    src_bin: Path,
+    bin_dir: Path,
+    workspace_root: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> str | None:
+    return _gclient_impl.promote_gclient_workspace_artifact(
+        _module(),
+        src_bin,
+        bin_dir,
+        workspace_root,
+        prepare_staged=prepare_staged,
+        after_swap=after_swap,
+    )
 
 
-def _install_gclient_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
-    return _gclient_impl.install_gclient_from_cargo_binstall(_module(), bin_dir, version)
+def _install_gclient_from_cargo_git(
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    return _gclient_impl.install_gclient_from_cargo_git(
+        _module(), bin_dir, prepare_staged=prepare_staged, after_swap=after_swap
+    )
 
 
-def _install_gclient_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
-    return _gclient_impl.install_gclient_from_cargo_install(_module(), bin_dir, version)
+def _install_gclient_from_cargo_binstall(
+    bin_dir: Path,
+    version: str | None = None,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    return _gclient_impl.install_gclient_from_cargo_binstall(
+        _module(), bin_dir, version, prepare_staged=prepare_staged, after_swap=after_swap
+    )
+
+
+def _install_gclient_from_cargo_install(
+    bin_dir: Path,
+    version: str | None = None,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    return _gclient_impl.install_gclient_from_cargo_install(
+        _module(), bin_dir, version, prepare_staged=prepare_staged, after_swap=after_swap
+    )
 
 
 def _install_gclient(force: bool = False) -> dict[str, Any]:
@@ -597,13 +694,32 @@ def _write_gmcp_version_stamp(bin_dir: Path, version: str) -> None:
 
 
 def _promote_gmcp_workspace_artifact(
-    src_bin: Path, bin_dir: Path, workspace_root: Path
+    src_bin: Path,
+    bin_dir: Path,
+    workspace_root: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
 ) -> str | None:
-    return _gmcp_impl.promote_gmcp_workspace_artifact(_module(), src_bin, bin_dir, workspace_root)
+    return _gmcp_impl.promote_gmcp_workspace_artifact(
+        _module(),
+        src_bin,
+        bin_dir,
+        workspace_root,
+        prepare_staged=prepare_staged,
+        after_swap=after_swap,
+    )
 
 
-def _install_gmcp_from_submodule(bin_dir: Path) -> str | None:
-    return _gmcp_impl.install_gmcp_from_submodule(_module(), bin_dir)
+def _install_gmcp_from_submodule(
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> str | None:
+    return _gmcp_impl.install_gmcp_from_submodule(
+        _module(), bin_dir, prepare_staged=prepare_staged, after_swap=after_swap
+    )
 
 
 def _install_gmcp(force: bool = False) -> dict[str, Any]:
@@ -618,13 +734,36 @@ def _install_gmcp_from_github(bin_dir: Path, target: str, version: str | None = 
     return _gmcp_impl.install_gmcp_from_github(_module(), bin_dir, target, version)
 
 
-def _install_gmcp_from_cargo_git(bin_dir: Path) -> bool:
-    return _gmcp_impl.install_gmcp_from_cargo_git(_module(), bin_dir)
+def _install_gmcp_from_cargo_git(
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    return _gmcp_impl.install_gmcp_from_cargo_git(
+        _module(), bin_dir, prepare_staged=prepare_staged, after_swap=after_swap
+    )
 
 
-def _install_gmcp_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
-    return _gmcp_impl.install_gmcp_from_cargo_binstall(_module(), bin_dir, version)
+def _install_gmcp_from_cargo_binstall(
+    bin_dir: Path,
+    version: str | None = None,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    return _gmcp_impl.install_gmcp_from_cargo_binstall(
+        _module(), bin_dir, version, prepare_staged=prepare_staged, after_swap=after_swap
+    )
 
 
-def _install_gmcp_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
-    return _gmcp_impl.install_gmcp_from_cargo_install(_module(), bin_dir, version)
+def _install_gmcp_from_cargo_install(
+    bin_dir: Path,
+    version: str | None = None,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    return _gmcp_impl.install_gmcp_from_cargo_install(
+        _module(), bin_dir, version, prepare_staged=prepare_staged, after_swap=after_swap
+    )

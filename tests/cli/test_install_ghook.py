@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -49,6 +49,18 @@ def _write_fake_ghook_binary(bin_dir: Path, name: str = "ghook") -> Path:
     binary = bin_dir / name
     binary.write_bytes(b"#!/bin/sh\necho fake-ghook\n")
     return binary
+
+
+def _run_swap_hooks(
+    staged: Path,
+    prepare_staged: Callable[[Path], None] | None,
+    after_swap: Callable[[], None] | None,
+) -> None:
+    """Run a stand-in workspace swap's hooks in the order the real promotion runs them."""
+    if prepare_staged is not None:
+        prepare_staged(staged)
+    if after_swap is not None:
+        after_swap()
 
 
 def _write_fake_native_ghook_binary(bin_dir: Path, name: str = "ghook") -> Path:
@@ -133,6 +145,65 @@ def test_install_ghook_workspace_refusal_preserves_installed_release(
     assert (installed.read_bytes(), receipt.read_bytes()) == original
 
 
+def test_install_ghook_workspace_install_writes_the_candidate_runtime_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    version = MANAGED_BIN_VERSION_PINS["ghook"]
+    workspace = tmp_path / "workspace"
+    (workspace / "crates" / "ghook").mkdir(parents=True)
+    (workspace / "Cargo.toml").write_text("[workspace]\n")
+    (workspace / "crates" / "ghook" / "Cargo.toml").write_text("[package]\n")
+    source = workspace / "target" / "release" / "ghook"
+    source.parent.mkdir(parents=True)
+    stamp = json.dumps(
+        {"ghook_version": version, "response_capability": "hook-response.v1", "schema_version": 1},
+        indent=2,
+        sort_keys=True,
+    )
+    source.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "--runtime-stamp" ]; then\n'
+        f"cat <<'GOBBY_STAMP'\n{stamp}\nGOBBY_STAMP\n"
+        "else\n"
+        f"echo 'ghook {version}'\n"
+        "fi\n"
+    )
+    source.chmod(0o755)
+    bin_dir = tmp_path / "home" / "bin"
+    bin_dir.mkdir(parents=True)
+    identity = schema_contract.expected_schema_identity()
+    (bin_dir / ".gdaemon-schema-identity.json").write_text(json.dumps(identity))
+    monkeypatch.setattr(install_setup_ghook, "get_gobby_home", lambda: bin_dir.parent)
+    monkeypatch.setattr(
+        install_setup_ghook, "__file__", str(workspace / "src/gobby/cli/installer.py")
+    )
+    monkeypatch.setattr(install_setup_ghook, "cargo_release_dir", lambda _root: source.parent)
+    monkeypatch.setattr(install_setup, "shutil", SimpleNamespace(which=lambda _name: "cargo"))
+    monkeypatch.setattr("gobby.cli.install_setup.sys.platform", "darwin")
+    monkeypatch.setattr(install_setup, "platform", SimpleNamespace(machine=lambda: "arm64"))
+    monkeypatch.setattr(
+        install_setup,
+        "subprocess",
+        SimpleNamespace(
+            run=lambda *_args, **_kwargs: subprocess.CompletedProcess([], 0),
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
+    monkeypatch.setattr(
+        "gobby.install.bin_set_coherence.probe_set_member_identity",
+        lambda *_args: identity,
+    )
+    monkeypatch.setattr(
+        "gobby.install.bin_release_identity.workspace_source_identity", lambda *_args: "new-tree"
+    )
+
+    result = _install_ghook(force=True)
+
+    assert result["installed"] is True
+    assert result["version"] == version
+    assert (bin_dir / ".ghook-runtime.json").read_bytes() == (stamp + "\n").encode()
+
+
 class TestGetLatestGhookVersion:
     def test_success(self) -> None:
         payload = json.dumps({"crate": {"max_version": "0.1.1"}}).encode()
@@ -191,7 +262,24 @@ class TestInstallGhookFromWorkspace:
         (workspace / "crates" / "ghook" / "Cargo.toml").touch()
         source = workspace / "target" / "release" / _GHOOK_BIN_NAME
         source.parent.mkdir(parents=True)
-        payload = f"#!/bin/sh\necho 'ghook {MANAGED_BIN_VERSION_PINS['ghook']}'\n".encode()
+        version = MANAGED_BIN_VERSION_PINS["ghook"]
+        stamp = json.dumps(
+            {
+                "ghook_version": version,
+                "response_capability": "hook-response.v1",
+                "schema_version": 1,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        payload = (
+            "#!/bin/sh\n"
+            'if [ "$1" = "--runtime-stamp" ]; then\n'
+            f"printf '%s\\n' '{stamp}'\n"
+            "else\n"
+            f"echo 'ghook {version}'\n"
+            "fi\n"
+        ).encode()
         source.write_bytes(payload)
         source.chmod(0o755)
         destination_dir = tmp_path / "bin"
@@ -238,6 +326,7 @@ class TestInstallGhookFromWorkspace:
 
         assert result is True
         assert (destination_dir / _GHOOK_BIN_NAME).read_bytes() == payload
+        assert (destination_dir / ".ghook-runtime.json").read_bytes() == (stamp + "\n").encode()
         build = run.call_args_list[0].args[0]
         assert build[:5] == ["cargo", "build", "--release", "-p", "gobby-hooks"]
         assert build[-1] == str(workspace / "Cargo.toml")
@@ -288,8 +377,14 @@ class TestInstallGhook:
     ) -> None:
         bin_dir = tmp_path / ".gobby" / "bin"
 
-        def install_from_workspace_side_effect(*args: object, **kwargs: object) -> bool:
+        def install_from_workspace_side_effect(
+            *_args: object,
+            prepare_staged: Callable[[Path], None] | None = None,
+            after_swap: Callable[[], None] | None = None,
+            **_kwargs: object,
+        ) -> bool:
             _write_fake_ghook_binary(bin_dir)
+            _run_swap_hooks(bin_dir / "ghook", prepare_staged, after_swap)
             return True
 
         with (
@@ -368,8 +463,14 @@ class TestInstallGhook:
         pinned_version = MANAGED_BIN_VERSION_PINS["ghook"]
         (bin_dir / _GHOOK_VERSION_STAMP).write_text(f"{pinned_version}\n")
 
-        def install_from_workspace_side_effect(*args: object, **kwargs: object) -> bool:
+        def install_from_workspace_side_effect(
+            *_args: object,
+            prepare_staged: Callable[[Path], None] | None = None,
+            after_swap: Callable[[], None] | None = None,
+            **_kwargs: object,
+        ) -> bool:
             _write_fake_native_ghook_binary(bin_dir)
+            _run_swap_hooks(bin_dir / "ghook", prepare_staged, after_swap)
             return True
 
         with (
@@ -398,8 +499,14 @@ class TestInstallGhook:
     ) -> None:
         bin_dir = tmp_path / ".gobby" / "bin"
 
-        def install_from_workspace_side_effect(*args: object, **kwargs: object) -> bool:
+        def install_from_workspace_side_effect(
+            *_args: object,
+            prepare_staged: Callable[[Path], None] | None = None,
+            after_swap: Callable[[], None] | None = None,
+            **_kwargs: object,
+        ) -> bool:
             _write_fake_ghook_binary(bin_dir)
+            _run_swap_hooks(bin_dir / "ghook", prepare_staged, after_swap)
             return True
 
         real_os_chmod = __import__("os").chmod

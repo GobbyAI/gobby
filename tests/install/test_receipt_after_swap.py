@@ -15,6 +15,8 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
+import os
 import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -24,6 +26,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from gobby.install import bin_freshness_promotion as promotion
+from gobby.install import bin_release_identity
 from gobby.install.bin_generations import Generation, retain_outgoing
 from gobby.install.bin_release_identity import BinaryReleaseIdentity
 from gobby.install.bin_set_coherence import (
@@ -119,11 +122,18 @@ def _script(name: str, version: str, marker: str) -> bytes:
     The marker is a comment, so two builds at one version still have different bytes.
     """
     identity = json.dumps(IDENTITY, separators=(",", ":"), sort_keys=True)
+    stamp = json.dumps(
+        {"ghook_version": version, "response_capability": "hook-response.v1", "schema_version": 1},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     return (
         "#!/bin/sh\n"
         f"# build {marker}\n"
         'if [ "$1" = "--version" ]; then\n'
         f"printf '%s\\n' '{name} {version}'\n"
+        'elif [ "$1" = "--runtime-stamp" ]; then\n'
+        f"printf '%s\\n' '{stamp}'\n"
         "else\n"
         f"printf '%s\\n' '{identity}'\n"
         "fi\n"
@@ -235,6 +245,7 @@ def _restore(
 def test_set_promotion_counts_gdaemon_promoted_when_its_receipt_write_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     bin_dir = tmp_path / "bin"
     source_dir = tmp_path / "sources"
@@ -244,7 +255,7 @@ def test_set_promotion_counts_gdaemon_promoted_when_its_receipt_write_fails(
     monkeypatch.setattr(
         promotion,
         "write_release_identity",
-        _receipt_write_fails_once(promotion.write_release_identity),
+        _receipt_write_fails_once(bin_release_identity.write_release_identity),
     )
 
     # Before the fix this raises BinarySetCoherenceError listing gdaemon as unpromoted.
@@ -252,6 +263,17 @@ def test_set_promotion_counts_gdaemon_promoted_when_its_receipt_write_fails(
 
     assert (bin_dir / "gdaemon").read_bytes() == candidates["gdaemon"].read_bytes()
     assert not (bin_dir / RECEIPT).exists()
+    # The swallowed receipt failure is reported, not silently dropped.
+    warnings = [
+        record
+        for record in caplog.records
+        if record.name == promotion.logger.name and record.levelno == logging.WARNING
+    ]
+    assert [record.getMessage() for record in warnings] == [
+        "gdaemon was promoted but its release receipt was not written"
+    ]
+    assert warnings[0].exc_info is not None
+    assert "synthetic receipt write failure" in str(warnings[0].exc_info[1])
 
 
 def test_retry_of_the_same_build_is_accepted_after_its_receipt_write_failed(
@@ -266,7 +288,7 @@ def test_retry_of_the_same_build_is_accepted_after_its_receipt_write_failed(
     monkeypatch.setattr(
         promotion,
         "write_release_identity",
-        _receipt_write_fails_once(promotion.write_release_identity),
+        _receipt_write_fails_once(bin_release_identity.write_release_identity),
     )
 
     # The first attempt may raise before the fix; the swap it made is what the retry starts from.
@@ -289,7 +311,7 @@ def test_restore_completes_when_the_receipt_write_fails_after_the_swap(
     monkeypatch.setattr(
         promotion,
         "write_release_identity",
-        _receipt_write_fails_once(promotion.write_release_identity),
+        _receipt_write_fails_once(bin_release_identity.write_release_identity),
     )
     daemon = _Daemon()
 
@@ -298,3 +320,68 @@ def test_restore_completes_when_the_receipt_write_fails_after_the_swap(
 
     assert outcome.restored == {"gdaemon": "1.0.0"}
     assert outcome.burned == {"gdaemon": "1.0.1"}
+
+
+def test_failed_replace_puts_the_outgoing_receipt_back_byte_for_byte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replace that fails leaves the still-installed binary with its own receipt."""
+    bin_dir = tmp_path / "bin"
+    _install(bin_dir, "gdaemon", "1.0.0", marker="old")
+    installed = bin_dir / "gdaemon"
+    receipt = bin_release_identity.release_identity_path(bin_dir, "gdaemon")
+    installed_bytes = installed.read_bytes()
+    outgoing_receipt = receipt.read_bytes()
+    staged = tmp_path / "staged" / "gdaemon"
+    _write(staged, _script("gdaemon", "1.0.1", "new"), 0o755)
+    real_replace = os.replace
+
+    def replace(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        # Only the swap onto the binary fails; the receipt put-back still goes through.
+        if Path(target) == installed:
+            raise OSError("synthetic replace failure")
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", replace)
+
+    with pytest.raises(OSError, match="^synthetic replace failure$"):
+        promotion.swap_staged_binary(staged, bin_dir=bin_dir, binary_name="gdaemon", identity=None)
+
+    assert installed.read_bytes() == installed_bytes
+    assert receipt.exists(), "the outgoing receipt was removed and not put back"
+    assert receipt.read_bytes() == outgoing_receipt
+
+
+def test_failed_replace_whose_receipt_put_back_also_fails_names_the_lost_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When the put-back fails too, the error names the receipt that is now lost."""
+    bin_dir = tmp_path / "bin"
+    _install(bin_dir, "gdaemon", "1.0.0", marker="old")
+    installed = bin_dir / "gdaemon"
+    receipt = bin_release_identity.release_identity_path(bin_dir, "gdaemon")
+    installed_bytes = installed.read_bytes()
+    staged = tmp_path / "staged" / "gdaemon"
+    _write(staged, _script("gdaemon", "1.0.1", "new"), 0o755)
+    real_replace = os.replace
+
+    def replace(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        if Path(target) == installed:
+            raise OSError("synthetic replace failure")
+        if Path(target) == receipt:
+            raise OSError("synthetic receipt put-back failure")
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", replace)
+
+    with pytest.raises(OSError) as error:
+        promotion.swap_staged_binary(staged, bin_dir=bin_dir, binary_name="gdaemon", identity=None)
+
+    message = str(error.value)
+    assert f"outgoing release receipt {RECEIPT} could not be put back" in message
+    assert "lost" in message
+    assert "synthetic receipt put-back failure" in message
+    assert isinstance(error.value.__cause__, OSError)
+    assert str(error.value.__cause__) == "synthetic replace failure"
+    assert installed.read_bytes() == installed_bytes
+    assert not receipt.exists()

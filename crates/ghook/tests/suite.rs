@@ -4,6 +4,9 @@
 //! single integration test binary. A module that needs a feature carries its `cfg`
 //! here, where its former `required-features` gated a separate binary.
 
+#[path = "cli_runtime_stamp.rs"]
+mod cli_runtime_stamp;
+
 #[path = "cli_schema_identity.rs"]
 mod cli_schema_identity;
 

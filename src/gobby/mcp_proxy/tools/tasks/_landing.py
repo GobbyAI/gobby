@@ -89,8 +89,10 @@ def create_landing_registry(
     ) -> dict[str, Any]:
         """Set or clear the landing freeze for the calling session's project.
 
-        task_id (with on=true) binds the freeze to that task: only the session holding
-        its claim may later change or clear it, and it refuses every other landing.
+        A landing freeze refuses new landings; an already-landed candidate still reports
+        landed. task_id (with on=true) binds the freeze to that task: only the session
+        holding its claim may later change or clear it, and it refuses new landings from
+        every other session.
         """
         session_id = get_current_session_id()
         if not session_id:
@@ -101,6 +103,7 @@ def create_landing_registry(
         if task_id is not None and not on:
             return {"success": False, "error": "task_id binds the freeze only with on=true"}
         try:
+            session_id = ctx.resolve_session_id(session_id)
             project_id = ctx.resolve_project_from_session(session_id)
             repo_path = ctx.get_project_repo_path(
                 project_id, ctx.checkout_machine_id(project_id, session_id)
@@ -141,9 +144,10 @@ def create_landing_registry(
     registry.register(
         name="set_landing_freeze",
         description=(
-            "Set or clear the landing freeze for the calling session's project. Setting it "
-            "(on=true) requires a non-empty reason. With task_id the freeze binds to that "
-            "task: its claim holder alone may change it, and only that holder may land while "
+            "Set or clear the landing freeze for the calling session's project. A landing "
+            "freeze refuses new landings; an already-landed candidate still reports landed. "
+            "Setting it (on=true) requires a non-empty reason. With task_id the freeze binds "
+            "to that task: its claim holder alone may change it or land new candidates while "
             "it is set. The state, the setting or clearing session and the time are stored "
             "at <git-common-dir>/gobby/landing-freeze.json."
         ),
@@ -171,13 +175,14 @@ def create_landing_registry(
         if not session_id:
             return {"landed": False, "error": "session_required"}
         try:
+            session_id = ctx.resolve_session_id(session_id)
             project_id = ctx.resolve_project_from_session(session_id)
             task = await asyncio.to_thread(
                 resolve_lifecycle_task,
                 ctx.task_manager,
                 task_id,
                 project_id=project_id,
-                caller_session_id=ctx.resolve_session_id(session_id),
+                caller_session_id=session_id,
                 sessions=ctx.session_manager,
             )
             result = await land_candidate(
@@ -188,7 +193,7 @@ def create_landing_registry(
                 code_index=code_index,
             )
             if result.get("escalated"):
-                # Triage owns the conflict now: release the claimant's session claim state.
+                # The escalation route owns the conflict now: release the claimant's claim state.
                 coordinate_task_escalation(
                     ctx,
                     ctx.task_manager.get_task(task.id),
@@ -208,9 +213,10 @@ def create_landing_registry(
             "scope. Selected task_land rules decide required attestations and review. "
             "Each attempt records its admission snapshot; later policy or evidence changes "
             "apply to later attempts. "
-            "A landing freeze refuses. Disjoint integration "
+            "A landing freeze refuses new landings; an already-landed candidate still "
+            "reports landed. Disjoint integration "
             "changes land as a merge; paths the integration tip also changed and merge "
-            "conflicts escalate the task to Triage. Unlanded candidates never block."
+            "conflicts escalate the task to its escalation route. Unlanded candidates never block."
         ),
         input_schema={
             "type": "object",

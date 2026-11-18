@@ -131,6 +131,7 @@ Select the mode matching the operation:
 ghook --gobby-owned --cli=<c> --type=<t> [--detach] [--enqueue-only]
 ghook --diagnose    --cli=<c> --type=<t>
 ghook --version
+ghook --runtime-stamp
 ghook schema-identity --json
 ```
 
@@ -138,7 +139,8 @@ ghook schema-identity --json
 |------|------|---------|
 | `--gobby-owned` | dispatch | Normal hook invocation. Reads stdin, enqueues, attempts POST. |
 | `--diagnose` | introspection | Prints a JSON snapshot of what *would* happen. No network, no envelope write. |
-| `--version` | metadata | Prints version and writes `~/.gobby/bin/.ghook-runtime.json` for the daemon. |
+| `--version` | metadata | Prints version. Writes `$GOBBY_HOME/bin/.ghook-runtime.json` only when run as the installed `bin/ghook`; other copies write nothing. |
+| `--runtime-stamp` | metadata | Prints the runtime stamp JSON to stdout, followed by a newline. Writes nothing. |
 | `--cli` | required for dispatch/diagnose | Host CLI name: `claude`, `codex`, `droid`, `grok`, `agy`. Case-insensitive. |
 | `--type` | required for dispatch/diagnose | Hook type. CLI-specific (e.g. `session-start` for Claude, `SessionStart` for Codex, `PreInvocation`/`PreToolUse` for Antigravity, `PostToolUse`, `Stop`, `pre-compact`, `session-end`). |
 | `--detach` | dispatch | After enqueue and project-root walk-up, call `setsid(2)` to escape the host CLI's process group before the POST. Useful for hooks where the host CLI tears down its session immediately. |
@@ -386,6 +388,6 @@ detaching does not grant filesystem access.
 
 ### Schema version mismatch
 
-Envelopes carry `schema_version: 1`. If the daemon rejects envelopes for being a newer version than it understands, the daemon needs updating. ghook's `--version` command writes `~/.gobby/bin/.ghook-runtime.json` so the daemon can detect this.
+Envelopes carry `schema_version: 1`. If the daemon rejects envelopes for being a newer version than it understands, the daemon needs updating. ghook's `--version` command writes `$GOBBY_HOME/bin/.ghook-runtime.json` when run as the installed binary, so the daemon can detect this.
 
 _Last verified: 2026-10-10_

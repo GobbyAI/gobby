@@ -71,7 +71,7 @@ inbox and HTTP transport:
 | Module | Responsibility |
 |--------|----------------|
 | `lib.rs` | Crate-level documentation anchor so release-time doctest validation is available; runtime code stays in the binary target. |
-| `main.rs` | Arg parsing (clap), mode dispatch (`--gobby-owned`/`--diagnose`/`--version`), orchestrates the dispatch flow. |
+| `main.rs` | Arg parsing (clap), mode dispatch (`--gobby-owned`/`--diagnose`/`--version`/`--runtime-stamp`), orchestrates the dispatch flow. |
 | `cli_config.rs` | Per-CLI registry (claude/codex/droid/grok/agy). Lifecycle start/end/precompact hooks are critical except for Antigravity, which declares none. Stop is noncritical; host-visible failure output is provider-specific in `action.rs`. |
 | `envelope.rs` | `Envelope` struct + `SCHEMA_VERSION = 1`. Serializes to the inbox JSON shape. |
 | `planned_shutdown.rs` | Planned shutdown markers: failed-POST suppression for Stop and pre-compact, and the restart check for spawned `post-tool-batch`. |
@@ -432,8 +432,9 @@ dispatching a hook. `ghook schema-identity --json` emits the embedded datastore
 schema contract without applying schema. `--gobby-owned` and `--enqueue-only`
 are provider/operator transport procedures: test them only with temporary state
 and an isolated daemon. Do not replay fabricated lifecycle events into live
-sessions. `--version` is not a pure probe: it writes the runtime stamp described
-below.
+sessions. `--version` writes the runtime stamp described below only when it runs
+as the installed `$GOBBY_HOME/bin/ghook`; any other copy prints the version and
+writes nothing. `--runtime-stamp` prints the stamp JSON and writes nothing.
 
 ## Versioning
 
@@ -445,7 +446,7 @@ The three version numbers are independent:
 - **Envelope `SCHEMA_VERSION`** bumps only when the inbox envelope shape changes in a way the daemon must explicitly handle.
 - **Diagnose-output schema version** bumps when `--diagnose`'s JSON output adds, removes, or changes fields.
 
-`--version` writes `~/.gobby/bin/.ghook-runtime.json` with the crate and envelope-schema numbers, so the daemon can detect mismatches at startup and refuse to drain envelopes from a future envelope schema it doesn't understand.
+When run as the installed `$GOBBY_HOME/bin/ghook`, `--version` writes `$GOBBY_HOME/bin/.ghook-runtime.json` with the crate and envelope-schema numbers, so the daemon can detect mismatches at startup and refuse to drain envelopes from a future envelope schema it doesn't understand. `--runtime-stamp` prints the same document to stdout, followed by a newline, so the installer can capture it from a staged candidate.
 
 ### Release-Time Tag/Version Alignment
 

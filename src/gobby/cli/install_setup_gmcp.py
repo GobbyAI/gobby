@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +15,7 @@ from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.bin_freshness_promotion import (
+    BinaryStampsNotSettledError,
     clear_source_hash,
     file_sha256,
     install_staged_cargo_binary,
@@ -21,6 +23,7 @@ from gobby.install.bin_freshness_promotion import (
     workspace_binary_is_current,
     write_source_hash,
 )
+from gobby.install.bin_generations import promotion_guard
 from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.install.bin_set_coherence import BinarySetCoherenceError, _codesign_workspace_binary
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS, is_published
@@ -82,8 +85,17 @@ def write_gmcp_version_stamp(module: Any, bin_dir: Path, version: str) -> None:
         raise
 
 
-def install_gmcp_from_submodule(module: Any, bin_dir: Path) -> str | None:
-    """Build gmcp from the local Rust workspace when available (Zig-free)."""
+def install_gmcp_from_submodule(
+    module: Any,
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> str | None:
+    """Build gmcp from the local Rust workspace when available (Zig-free).
+
+    `prepare_staged` and `after_swap` follow the rules of promote_gmcp_workspace_artifact.
+    """
     if not module.shutil.which("cargo"):
         return None
 
@@ -125,16 +137,33 @@ def install_gmcp_from_submodule(module: Any, bin_dir: Path) -> str | None:
         src_bin = release_dir / module._GMCP_BIN_NAME
         if not src_bin.exists():
             return None
-        return promote_gmcp_workspace_artifact(module, src_bin, bin_dir, manifest.parent)
+        return promote_gmcp_workspace_artifact(
+            module,
+            src_bin,
+            bin_dir,
+            manifest.parent,
+            prepare_staged=prepare_staged,
+            after_swap=after_swap,
+        )
     except (FileNotFoundError, module.subprocess.TimeoutExpired, OSError) as e:
         module.logger.warning("gmcp: local workspace build failed: %s", e)
         return None
 
 
 def promote_gmcp_workspace_artifact(
-    module: Any, src_bin: Path, bin_dir: Path, workspace_root: Path
+    module: Any,
+    src_bin: Path,
+    bin_dir: Path,
+    workspace_root: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
 ) -> str | None:
-    """Promote a built gmcp through a signed new inode; None when another update holds it."""
+    """Promote a built gmcp through a signed new inode; None when another update holds it.
+
+    `prepare_staged` runs on the staged copy after codesigning, before the swap. `after_swap`
+    runs under the store lock with the source-hash stamp, so it should only write sidecars.
+    """
     dest = bin_dir / module._GMCP_BIN_NAME
     if workspace_binary_is_current(bin_dir, "gmcp", src_bin, dest, workspace_root=workspace_root):
         return "current"
@@ -142,14 +171,26 @@ def promote_gmcp_workspace_artifact(
     if lock is None:
         module.logger.warning("gmcp: native binary update is already in progress")
         return None
+    digest = file_sha256(src_bin)
+
+    def prepare(staged: Path) -> None:
+        _codesign_workspace_binary(staged)
+        if prepare_staged is not None:
+            prepare_staged(staged)
+
+    def settle() -> None:
+        write_source_hash(bin_dir, "gmcp", digest)
+        if after_swap is not None:
+            after_swap()
+
     with lock:
         stage_and_promote_binary_file(
             src_bin,
             destination=dest,
-            prepare_staged=_codesign_workspace_binary,
+            prepare_staged=prepare,
             workspace_root=workspace_root,
+            after_swap=settle,
         )
-        write_source_hash(bin_dir, "gmcp", file_sha256(src_bin))
     return "promoted"
 
 
@@ -186,7 +227,9 @@ def install_gmcp(module: Any, force: bool = False) -> dict[str, Any]:
     published = is_published("gmcp")
     if gmcp_path.exists() and not force and published:
         if installed_version and managed_version_satisfies_pin("gmcp", installed_version):
-            module._write_gmcp_version_stamp(bin_dir, installed_version)
+            # No swap on this path, so the stamp takes the store lock itself.
+            with promotion_guard(bin_dir, []):
+                module._write_gmcp_version_stamp(bin_dir, installed_version)
             return {"installed": False, "skipped": True, "version": installed_version}
 
     target_version = pinned_version
@@ -194,17 +237,27 @@ def install_gmcp(module: Any, force: bool = False) -> dict[str, Any]:
         target_version = installed_version
     bin_dir.mkdir(parents=True, exist_ok=True)
     method: str | None = None
+    settled: dict[str, str] = {}
+
+    def prepare(staged: Path) -> None:
+        settled["version"] = probe_gmcp_version(module, staged) or target_version
+
+    def settle() -> None:
+        module._write_gmcp_version_stamp(bin_dir, settled["version"])
 
     try:
         if not published:
             if force:
                 clear_source_hash(bin_dir, "gmcp")
-            outcome = module._install_gmcp_from_submodule(bin_dir)
+            outcome = module._install_gmcp_from_submodule(
+                bin_dir, prepare_staged=prepare, after_swap=settle
+            )
             if not outcome:
                 if force or not gmcp_path.exists():
                     raise ManagedBinaryReleaseMissing("gmcp")
                 local_version = installed_version or "unknown"
-                module._write_gmcp_version_stamp(bin_dir, local_version)
+                with promotion_guard(bin_dir, []):
+                    module._write_gmcp_version_stamp(bin_dir, local_version)
                 return {
                     "installed": False,
                     "skipped": True,
@@ -214,7 +267,8 @@ def install_gmcp(module: Any, force: bool = False) -> dict[str, Any]:
                 }
             if outcome == "current":
                 local_version = installed_version or "unknown"
-                module._write_gmcp_version_stamp(bin_dir, local_version)
+                with promotion_guard(bin_dir, []):
+                    module._write_gmcp_version_stamp(bin_dir, local_version)
                 return {
                     "installed": False,
                     "skipped": True,
@@ -235,11 +289,17 @@ def install_gmcp(module: Any, force: bool = False) -> dict[str, Any]:
                 }
             if module._install_gmcp_from_github(bin_dir, target, target_version):
                 method = "github"
-            elif module._install_gmcp_from_cargo_binstall(bin_dir, target_version):
+            elif module._install_gmcp_from_cargo_binstall(
+                bin_dir, target_version, prepare_staged=prepare, after_swap=settle
+            ):
                 method = "cargo-binstall"
-            elif module._install_gmcp_from_cargo_install(bin_dir, target_version):
+            elif module._install_gmcp_from_cargo_install(
+                bin_dir, target_version, prepare_staged=prepare, after_swap=settle
+            ):
                 method = "cargo-install"
-            elif module._install_gmcp_from_cargo_git(bin_dir):
+            elif module._install_gmcp_from_cargo_git(
+                bin_dir, prepare_staged=prepare, after_swap=settle
+            ):
                 method = "cargo-git"
             else:
                 return {
@@ -247,12 +307,23 @@ def install_gmcp(module: Any, force: bool = False) -> dict[str, Any]:
                     "skipped": False,
                     "reason": "all installation methods failed",
                 }
+    except BinaryStampsNotSettledError as exc:
+        # The binary was replaced and its stamps were not settled, so no stamp is written here.
+        # The start command depends on no stamp, so it is recorded for the replaced binary.
+        write_daemon_start_command(get_gobby_home(), daemon_start_argv())
+        return {"installed": False, "skipped": False, "reason": str(exc)}
     except (BinarySetCoherenceError, BinaryReleaseVersionError) as exc:
         return {"installed": False, "skipped": False, "reason": str(exc)}
 
     gmcp_path.chmod(0o755)
-    version = probe_gmcp_version(module, gmcp_path) or target_version
-    module._write_gmcp_version_stamp(bin_dir, version)
+    if method == "github":
+        # Known residual: the release download swaps inside install_release, which takes no
+        # hooks, so this stamp follows the swap outside the store lock. No client is published
+        # today, so this branch is unreachable; threading hooks there is a follow-up.
+        version = probe_gmcp_version(module, gmcp_path) or target_version
+        module._write_gmcp_version_stamp(bin_dir, version)
+    else:
+        version = settled["version"]
     write_daemon_start_command(get_gobby_home(), daemon_start_argv())
     module._ensure_gobby_bin_on_path(bin_dir)
     return {
@@ -283,7 +354,13 @@ def install_gmcp_from_github(
     )
 
 
-def install_gmcp_from_cargo_git(module: Any, bin_dir: Path) -> bool:
+def install_gmcp_from_cargo_git(
+    module: Any,
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
     """Install gmcp from source via cargo install --git."""
     if not module.shutil.which("cargo"):
         return False
@@ -304,6 +381,8 @@ def install_gmcp_from_cargo_git(module: Any, bin_dir: Path) -> bool:
             bin_dir=bin_dir,
             run=module.subprocess.run,
             timeout=180,
+            prepare_staged=prepare_staged,
+            after_swap=after_swap,
         )
     except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
         module.logger.warning("gmcp: cargo install --git failed: %s", e)
@@ -314,6 +393,9 @@ def install_gmcp_from_cargo_binstall(
     module: Any,
     bin_dir: Path,
     version: str | None = None,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
 ) -> bool:
     """Install gmcp via cargo-binstall."""
     if not module.shutil.which("cargo-binstall"):
@@ -333,6 +415,8 @@ def install_gmcp_from_cargo_binstall(
             bin_dir=bin_dir,
             run=module.subprocess.run,
             timeout=60,
+            prepare_staged=prepare_staged,
+            after_swap=after_swap,
         )
     except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
         module.logger.warning("gmcp: cargo-binstall failed: %s", e)
@@ -343,6 +427,9 @@ def install_gmcp_from_cargo_install(
     module: Any,
     bin_dir: Path,
     version: str | None = None,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
 ) -> bool:
     """Compile and install gmcp from source via cargo install."""
     if not module.shutil.which("cargo"):
@@ -358,6 +445,8 @@ def install_gmcp_from_cargo_install(
             bin_dir=bin_dir,
             run=module.subprocess.run,
             timeout=180,
+            prepare_staged=prepare_staged,
+            after_swap=after_swap,
         )
     except (FileNotFoundError, module.subprocess.TimeoutExpired) as e:
         module.logger.warning("gmcp: cargo install failed: %s", e)

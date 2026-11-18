@@ -93,7 +93,7 @@ def test_gate_exempts_only_the_grant_and_the_operator_terminal() -> None:
         "python3 - <<'PY'\nimport importlib\nimportlib.import_module('psycopg')\nPY",
         "python3 - <<'PY'\nif True: import psycopg\nPY",
         "python3 -c 'if True: import psycopg'",
-        "python3 -c \"\nimport os\nif 1: import psycopg\n\"",
+        'python3 -c "\nimport os\nif 1: import psycopg\n"',
         "uv run python - <<'PY'\nx = __import__('asyncpg')\nPY",
         "python3 -Ic 'import psycopg'",
         "python3 -c 'import psycopg as pg'",
@@ -172,7 +172,7 @@ def test_database_clients_and_inline_drivers_are_refused(command: str) -> None:
         "python3 - <<'PY'\nprint('hello')\nPY",
         "uv run python -m pytest -c pytest.ini -k psycopg",
         "python3 -c 'print(1)'",
-        "uv run python -c \"from pathlib import Path; "
+        'uv run python -c "from pathlib import Path; '
         "print(Path('src/gobby/storage/psycopg.py').exists())\"",
         "python3 -c \"import json; print('psycopg')\"",
         "python3 - <<'PY'\nimport json\nprint('asyncpg', json)\nPY",

@@ -18,7 +18,7 @@ import pytest
 from gobby.cli import install_setup_gmcp
 from gobby.cli.install_setup_gterm import ManagedBinaryReleaseMissing
 from gobby.install import version_pins
-from gobby.install.bin_freshness_promotion import file_sha256
+from gobby.install.bin_freshness_promotion import BinaryStampsNotSettledError, file_sha256
 from gobby.install.bin_release_identity import BinaryReleaseVersionError
 
 pytestmark = pytest.mark.unit
@@ -81,7 +81,11 @@ def test_submodule_install_promotes_and_stamps(
         destination=bin_dir / "gmcp",
         prepare_staged=ANY,
         workspace_root=REPO_ROOT,
+        after_swap=ANY,
     )
+    # The source hash is written by the promotion's post-swap hook, not after it returns.
+    write_hash.assert_not_called()
+    promote.call_args.kwargs["after_swap"]()
     write_hash.assert_called_once_with(bin_dir, "gmcp", file_sha256(built))
 
 
@@ -99,9 +103,19 @@ def _gmcp_install_harness(
         bin_dir.mkdir(parents=True)
         (bin_dir / "gmcp").write_bytes(b"existing")
 
-    def build(destination: Path) -> str | None:
+    def build(
+        destination: Path,
+        *,
+        prepare_staged: Callable[[Path], None] | None = None,
+        after_swap: Callable[[], None] | None = None,
+    ) -> str | None:
         if source_outcome == "promoted":
             (destination / "gmcp").write_bytes(b"workspace")
+            # Mirror the real swap: staging hook, then the post-swap hook.
+            if prepare_staged is not None:
+                prepare_staged(destination / "gmcp")
+            if after_swap is not None:
+                after_swap()
         return source_outcome
 
     source = MagicMock(name="source", side_effect=build)
@@ -154,6 +168,36 @@ def test_promotion_records_daemon_start_command(
     module._ensure_gobby_bin_on_path.assert_called_once_with(bin_dir)
 
 
+def test_unsettled_stamps_after_a_replaced_binary_still_record_the_daemon_start_command(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    module, _bin_dir, _source = _gmcp_install_harness(
+        monkeypatch, tmp_path, present=False, source_outcome=None
+    )
+
+    def swap_then_fail_to_settle(
+        destination: Path,
+        *,
+        prepare_staged: Callable[[Path], None] | None = None,
+        after_swap: Callable[[], None] | None = None,
+    ) -> str | None:
+        (destination / "gmcp").write_bytes(b"workspace")
+        raise BinaryStampsNotSettledError(
+            "gmcp was installed but its stamps were not settled; rerun the install; "
+            "cause: synthetic stamp failure"
+        )
+
+    module._install_gmcp_from_submodule = swap_then_fail_to_settle
+
+    result = install_setup_gmcp.install_gmcp(module)
+
+    assert result["installed"] is False
+    assert "stamps were not settled" in result["reason"]
+    start = tmp_path / ".gobby" / "gmcp-daemon-start.json"
+    assert json.loads(start.read_text(encoding="utf-8")) == START_ARGV
+    module._write_gmcp_version_stamp.assert_not_called()
+
+
 def test_daemon_start_command_is_replaced_whole(tmp_path: Path) -> None:
     install_setup_gmcp.write_daemon_start_command(
         tmp_path, ["python", "-m", "gobby.cli", "start", "--verbose", "--stale"]
@@ -185,9 +229,17 @@ def _gmcp_fetch_harness(
         (bin_dir / "gmcp").write_bytes(b"existing")
 
     def fetch_result(method: str) -> Callable[..., bool]:
-        def run(*_args: object) -> bool:
+        def run(
+            *_args: object,
+            prepare_staged: Callable[[Path], None] | None = None,
+            after_swap: Callable[[], None] | None = None,
+        ) -> bool:
             if method == successful_fetch:
                 (bin_dir / "gmcp").write_bytes(method.encode())
+                if prepare_staged is not None:
+                    prepare_staged(bin_dir / "gmcp")
+                if after_swap is not None:
+                    after_swap()
                 return True
             return False
 
@@ -238,9 +290,9 @@ def test_published_binary_runs_fetch_chain(monkeypatch: pytest.MonkeyPatch, tmp_
 
     assert fetches.mock_calls == [
         call.github(bin_dir, "aarch64-apple-darwin", GMCP_PIN),
-        call.binstall(bin_dir, GMCP_PIN),
-        call.cargo_install(bin_dir, GMCP_PIN),
-        call.cargo_git(bin_dir),
+        call.binstall(bin_dir, GMCP_PIN, prepare_staged=ANY, after_swap=ANY),
+        call.cargo_install(bin_dir, GMCP_PIN, prepare_staged=ANY, after_swap=ANY),
+        call.cargo_git(bin_dir, prepare_staged=ANY, after_swap=ANY),
     ]
     assert result["method"] == "cargo-git"
 
@@ -260,8 +312,8 @@ def test_published_absent_binary_runs_fetch_chain(
 
     assert fetches.mock_calls == [
         call.github(bin_dir, "aarch64-apple-darwin", GMCP_PIN),
-        call.binstall(bin_dir, GMCP_PIN),
-        call.cargo_install(bin_dir, GMCP_PIN),
+        call.binstall(bin_dir, GMCP_PIN, prepare_staged=ANY, after_swap=ANY),
+        call.cargo_install(bin_dir, GMCP_PIN, prepare_staged=ANY, after_swap=ANY),
     ]
     assert result["method"] == "cargo-install"
 

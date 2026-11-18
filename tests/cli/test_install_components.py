@@ -7,6 +7,7 @@ import json
 import os
 import stat
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -136,9 +137,11 @@ def test_gmcp_component_promotes_client_binary(
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / ".gobby"))
     promoted: list[Path] = []
 
-    def install_gmcp(bin_dir: Path) -> str:
+    def install_gmcp(bin_dir: Path, *, after_swap: Callable[[], None] | None = None) -> str:
         promoted.append(bin_dir)
         (bin_dir / "gmcp").write_bytes(b"gmcp")
+        if after_swap is not None:
+            after_swap()
         return "gmcp-sha"
 
     def claim_singleton() -> None:
@@ -168,8 +171,10 @@ def test_gmcp_component_records_daemon_start_command(
     home = tmp_path / ".gobby"
     monkeypatch.setenv("GOBBY_HOME", str(home))
 
-    def install_gmcp(bin_dir: Path) -> str:
+    def install_gmcp(bin_dir: Path, *, after_swap: Callable[[], None] | None = None) -> str:
         (bin_dir / "gmcp").write_bytes(b"gmcp")
+        if after_swap is not None:
+            after_swap()
         return "promoted"
 
     monkeypatch.setattr("gobby.cli.install_setup._install_gmcp_from_submodule", install_gmcp)

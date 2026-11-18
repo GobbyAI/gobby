@@ -18,9 +18,14 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) diagnose: bool,
 
-    /// Print version and write ~/.gobby/bin/.ghook-runtime.json stamp.
+    /// Print version. Writes ~/.gobby/bin/.ghook-runtime.json only when this
+    /// binary is the installed bin/ghook.
     #[arg(long)]
     pub(crate) version: bool,
+
+    /// Print the runtime stamp JSON to stdout, followed by a newline. Writes nothing.
+    #[arg(long)]
+    pub(crate) runtime_stamp: bool,
 
     /// Host CLI name (claude, codex, droid, grok, agy), or `git` for the
     /// synchronous reference-transaction guard (exit 0 only on an allow verdict).

@@ -4,20 +4,22 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import click
 import pytest
 
 from gobby.cli import install_setup, install_setup_gdaemon
-from gobby.install import bin_set_coherence
-from gobby.install.bin_release_identity import BinaryReleaseVersionError
+from gobby.install import bin_freshness_promotion, bin_set_coherence
+from gobby.install.bin_release_identity import BinaryReleaseIdentity, BinaryReleaseVersionError
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.storage import schema_contract
+from gobby.utils import spawn
 
 _GDAEMON_PIN = MANAGED_BIN_VERSION_PINS["gdaemon"]
 
@@ -120,9 +122,13 @@ def test_default_bin_dir_follows_gobby_home(
         probed.append(binary)
         return _GDAEMON_PIN
 
-    def install_binary(binary: Path) -> str:
+    def install_binary(
+        binary: Path, verify: Callable[[Path], None], settle: Callable[[], None]
+    ) -> str:
         installed.append(binary)
         binary.write_bytes(b"test binary")
+        verify(binary)
+        settle()
         return "test"
 
     binary = home / "bin" / install_setup_gdaemon._BINARY_NAME
@@ -274,7 +280,11 @@ def test_existing_gdaemon_with_stale_sidecar_and_wrong_binary_fails_closed(
     observed = {**schema_contract.expected_schema_identity(), "runner_protocol": 0}
     monkeypatch.setattr(install_setup_gdaemon, "_probe_version", lambda path: _GDAEMON_PIN)
     monkeypatch.setattr(install_setup_gdaemon, "_probe_identity", lambda path: observed)
-    monkeypatch.setattr(install_setup_gdaemon, "_install_gdaemon", lambda *args: None)
+    monkeypatch.setattr(
+        install_setup_gdaemon,
+        "_install_gdaemon",
+        lambda binary, verify, settle: (verify(binary), settle()),
+    )
 
     with pytest.raises(install_setup_gdaemon.GdaemonInstallError, match="identity mismatch"):
         install_setup_gdaemon.ensure_gdaemon(bin_dir=tmp_path)
@@ -284,29 +294,76 @@ def test_codesign_timeout_is_reported_as_install_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    binary = tmp_path / "gdaemon"
-    binary.write_bytes(b"binary")
-    monkeypatch.setattr(install_setup_gdaemon, "sys", SimpleNamespace(platform="darwin"))
+    """A codesign timeout on the staged gdaemon surfaces as the install error the CLI renders.
+
+    Signing runs in the set promotion's staging step, after the identity probe and release
+    preflight pass and before any swap. The caller's verify and settle hooks never run.
+    """
+    manifest = tmp_path / "workspace" / "Cargo.toml"
+    source = manifest.parent / "target" / "release" / "gdaemon"
+    source.parent.mkdir(parents=True)
+    manifest.write_text("[workspace]\n", encoding="utf-8")
+    identity_json = schema_contract.expected_schema_identity_json()
+    source.write_text(f"#!/bin/sh\nprintf '%s\\n' '{identity_json}'\n", encoding="utf-8")
+    source.chmod(0o755)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    installed = bin_dir / "gdaemon"
+    installed.write_bytes(b"installed-gdaemon")
+    (bin_dir / ".gdaemon-schema-identity.json").write_text(identity_json, encoding="utf-8")
+    verified: list[Path] = []
+    settled: list[None] = []
+    real_run = spawn.run
+
+    def run_with_codesign_timeout(command: list[str], **kwargs: Any) -> Any:
+        if command[0] == "codesign":
+            raise subprocess.TimeoutExpired("codesign", 30)
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr(install_setup_gdaemon, "_workspace_manifest", lambda: manifest)
+    monkeypatch.setattr(install_setup_gdaemon, "cargo_release_dir", lambda _root: source.parent)
     monkeypatch.setattr(
         install_setup_gdaemon,
         "shutil",
-        SimpleNamespace(which=lambda command: "/usr/bin/codesign"),
+        SimpleNamespace(which=lambda command: "/usr/bin/cargo"),
     )
-
-    def timeout(*args: object, **kwargs: object) -> None:
-        raise subprocess.TimeoutExpired("codesign", 30)
-
     monkeypatch.setattr(
         install_setup_gdaemon,
         "subprocess",
-        SimpleNamespace(run=timeout, TimeoutExpired=subprocess.TimeoutExpired),
+        SimpleNamespace(
+            run=lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="", stderr=""),
+            TimeoutExpired=subprocess.TimeoutExpired,
+        ),
+    )
+    monkeypatch.setattr(bin_set_coherence, "sys", SimpleNamespace(platform="darwin"))
+    monkeypatch.setattr(
+        bin_set_coherence,
+        "shutil",
+        SimpleNamespace(which=lambda _name: "/usr/bin/codesign"),
+    )
+    monkeypatch.setattr(spawn, "run", run_with_codesign_timeout)
+    monkeypatch.setattr(
+        bin_freshness_promotion,
+        "preflight_binary_promotions",
+        lambda candidates, **_kwargs: {
+            name: BinaryReleaseIdentity("1.0.0", "source-gdaemon", "0" * 64) for name in candidates
+        },
     )
 
     with pytest.raises(
         install_setup_gdaemon.GdaemonInstallError,
-        match="gdaemon ad-hoc signing timed out",
-    ):
-        install_setup_gdaemon._codesign(binary)
+        match="gdaemon ad-hoc signing timed out after 30 seconds",
+    ) as exc_info:
+        install_setup_gdaemon._install_from_workspace(
+            installed,
+            lambda staged: verified.append(staged),
+            lambda: settled.append(None),
+        )
+
+    assert isinstance(exc_info.value.__cause__, bin_set_coherence.BinarySetCoherenceError)
+    assert verified == []
+    assert settled == []
+    assert installed.read_bytes() == b"installed-gdaemon"
 
 
 def test_workspace_set_refusal_is_reported_as_install_failure(
@@ -346,9 +403,14 @@ def test_workspace_set_refusal_is_reported_as_install_failure(
         ),
     )
 
+    settled: list[None] = []
     with pytest.raises(install_setup_gdaemon.GdaemonInstallError) as exc_info:
-        install_setup_gdaemon._install_from_workspace(installed)
+        install_setup_gdaemon._install_from_workspace(
+            installed, lambda _staged: None, lambda: settled.append(None)
+        )
 
+    # The refusal happens before the swap, so the post-swap hook never runs.
+    assert settled == []
     message = str(exc_info.value)
     assert "workspace binary set promotion refused" in message
     assert "gdaemon embedded identity" in message

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -11,6 +12,7 @@ from urllib.request import Request
 from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_models import compare_versions
+from gobby.install.bin_generations import promotion_guard
 from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.install.bin_set_coherence import (
     BinarySetCoherenceError,
@@ -84,8 +86,17 @@ def write_gcode_version_stamp(module: Any, bin_dir: Path, version: str) -> None:
         raise
 
 
-def install_gcode_from_submodule(module: Any, bin_dir: Path) -> bool:
-    """Build gcode from the local Rust workspace when available."""
+def install_gcode_from_submodule(
+    module: Any,
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    """Build gcode from the local Rust workspace when available.
+
+    `prepare_staged` probes the staged build before the swap; `after_swap` writes its stamps.
+    """
     if not module.shutil.which("cargo"):
         return False
 
@@ -128,7 +139,12 @@ def install_gcode_from_submodule(module: Any, bin_dir: Path) -> bool:
         if not src_bin.exists():
             return False
 
-        promote_workspace_binary_set({"gcode": src_bin}, bin_dir=bin_dir)
+        promote_workspace_binary_set(
+            {"gcode": src_bin},
+            bin_dir=bin_dir,
+            prepare_staged=None if prepare_staged is None else {"gcode": prepare_staged},
+            after_swap=after_swap,
+        )
         return True
     except (FileNotFoundError, module.subprocess.TimeoutExpired, OSError) as e:
         module.logger.warning("gcode: local workspace build failed: %s", e)
@@ -155,23 +171,34 @@ def install_gcode(module: Any, force: bool = False) -> dict[str, Any]:
     pinned_version = MANAGED_BIN_VERSION_PINS["gcode"]
     if gcode_path.exists() and not force:
         if installed_version and managed_version_satisfies_pin("gcode", installed_version):
-            module._write_gcode_version_stamp(bin_dir, installed_version)
+            # No swap on this path, so the stamp takes the store lock itself.
+            with promotion_guard(bin_dir, []):
+                module._write_gcode_version_stamp(bin_dir, installed_version)
             return {"installed": False, "skipped": True, "version": installed_version}
 
     target_version = pinned_version
     if compare_versions(installed_version, pinned_version) == 1:
         target_version = installed_version
     bin_dir.mkdir(parents=True, exist_ok=True)
+    settled: dict[str, str] = {}
+
+    def prepare(staged: Path) -> None:
+        settled["version"] = probe_gcode_version(module, staged) or target_version or "unknown"
+
+    def settle() -> None:
+        module._write_gcode_version_stamp(bin_dir, settled["version"])
+
     try:
-        if not module._install_gcode_from_submodule(bin_dir):
+        if not module._install_gcode_from_submodule(
+            bin_dir, prepare_staged=prepare, after_swap=settle
+        ):
             return {"installed": False, "skipped": False, "reason": workspace_build_only("gcode")}
     except (BinarySetCoherenceError, BinaryReleaseVersionError) as exc:
         return {"installed": False, "skipped": False, "reason": str(exc)}
 
     gcode_path.chmod(0o755)
 
-    resolved_version = probe_gcode_version(module, gcode_path) or target_version or "unknown"
-    module._write_gcode_version_stamp(bin_dir, resolved_version)
+    resolved_version = settled["version"]
 
     module._ensure_gobby_bin_on_path(bin_dir)
 

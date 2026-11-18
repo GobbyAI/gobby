@@ -14,6 +14,7 @@ import tempfile
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,7 @@ from gobby.install.bin_release_identity import (
     promotion_hold_token,
     release_identity_path,
 )
-from gobby.install.bin_set_coherence import promote_workspace_binary_set
+from gobby.install.bin_set_coherence import BinarySetCoherenceError, promote_workspace_binary_set
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.utils.native_bin import IDENTITY_STAMP_NAME, SET_MEMBERS, native_bin_name
 
@@ -244,13 +245,12 @@ def _replace_after_stop(
 ) -> RestoreOutcome:
     """Replace the members with the copies, verify them, then start the daemon again."""
     replaced: list[str] = []
+    outgoing: dict[str, str | None] = {}
     try:
         moved_aside = _move_aside_unverified(bin_dir, members, moment)
         outgoing = {name: _installed_version(bin_dir, name) for name in members}
         with promotion_hold_token(hold_token):
             _promote(bin_dir, generation, staging, members, replaced)
-        for name in members:
-            _restore_sidecars(bin_dir, generation, staging, name)
         restored = _verify_members(bin_dir, generation, members)
         burned = _burn_outgoing(bin_dir, generation, restored, outgoing, moment)
         if "gdaemon" in members:
@@ -264,10 +264,11 @@ def _replace_after_stop(
         )
     except (OSError, RuntimeError) as exc:
         remaining = [name for name in members if name not in replaced]
+        burn_note = _burn_swapped_over(bin_dir, generation, replaced, outgoing, moment)
         raise RestoreError(
             f"restore of generation {generation.id} failed after the daemon was stopped; "
             f"replaced: {_names(replaced)}; not replaced: {_names(remaining)}; cause: {exc}; "
-            "the daemon is stopped and was not restarted"
+            f"{burn_note}the daemon is stopped and was not restarted"
         ) from exc
 
 
@@ -306,15 +307,31 @@ def _promote(
     members: Sequence[str],
     replaced: list[str],
 ) -> None:
-    """Promote the copies: the stamped-set members together, then each other member alone."""
+    """Promote the copies: the stamped-set members together, then each other member alone.
+
+    Each promoted member's sidecars are restored as soon as its copy is in place, under the store
+    lock, so a capture never pairs the restored bytes with the outgoing sidecars. A member whose
+    sidecars do not settle is named in the error, and it still counts as replaced.
+    """
     set_members = [name for name in SET_MEMBERS if name in members]
     if set_members:
-        promote_workspace_binary_set(
-            {name: staging / native_bin_name(name) for name in set_members},
-            bin_dir=bin_dir,
-            source_identities=_source_identities(generation, set_members),
-        )
-        replaced.extend(set_members)
+        try:
+            promote_workspace_binary_set(
+                {name: staging / native_bin_name(name) for name in set_members},
+                bin_dir=bin_dir,
+                source_identities=_source_identities(generation, set_members),
+                settle=partial(_restore_sidecars, bin_dir, generation, staging),
+                # A ghook that predates --runtime-stamp has no document to capture, so nothing is
+                # written for it here. Its own --version writes the stamp beside the install, and
+                # _verify_members runs that after the swap.
+                allow_unstamped_ghook=True,
+            )
+        except BinarySetCoherenceError as exc:
+            # A set that fails part-way has already replaced the members it names, whether or not
+            # their sidecars settled, so those members count as replaced.
+            _mark_replaced(replaced, exc.promoted)
+            raise
+        _mark_replaced(replaced, set_members)
     for name in members:
         if name in SET_MEMBERS:
             continue
@@ -324,10 +341,40 @@ def _promote(
             bin_dir=bin_dir,
             source_identities=_source_identities(generation, [name]),
         )[name]
-        promotion.stage_and_promote_binary_file(
-            source, destination=bin_dir / native_bin_name(name), identity=identity
-        )
-        replaced.append(name)
+        try:
+            promotion.stage_and_promote_binary_file(
+                source,
+                destination=bin_dir / native_bin_name(name),
+                identity=identity,
+                after_swap=partial(
+                    _restore_single_member, bin_dir, generation, staging, name, replaced
+                ),
+            )
+        except promotion.BinaryStampsNotSettledError as exc:
+            raise RestoreError(f"stamps unsettled for: {name}; cause: {exc.__cause__}") from exc
+
+
+def _mark_replaced(replaced: list[str], names: Sequence[str]) -> None:
+    """Add each of names not yet replaced, in the order given."""
+    for name in names:
+        if name not in replaced:
+            replaced.append(name)
+
+
+def _restore_single_member(
+    bin_dir: Path,
+    generation: Generation,
+    staging: Path,
+    name: str,
+    replaced: list[str],
+) -> None:
+    """Runs once a single member's copy is swapped in: mark it replaced, then restore its sidecars.
+
+    The swap has happened by the time this runs, so the member counts as replaced even if a
+    sidecar write then fails.
+    """
+    _mark_replaced(replaced, [name])
+    _restore_sidecars(bin_dir, generation, staging, name)
 
 
 def _restore_sidecars(bin_dir: Path, generation: Generation, staging: Path, name: str) -> None:
@@ -396,6 +443,27 @@ def _burn_outgoing(
             burn_version(bin_dir, name, replaced_version, generation=generation.id, now=moment)
             burned[name] = replaced_version
     return burned
+
+
+def _burn_swapped_over(
+    bin_dir: Path,
+    generation: Generation,
+    replaced: Sequence[str],
+    outgoing: dict[str, str | None],
+    moment: datetime,
+) -> str:
+    """Burn the outgoing version of every member already swapped over, even when the restore fails.
+
+    Returns a note for the RestoreError when a burn could not be written, or "" when all landed.
+    """
+    if not replaced:
+        return ""
+    restored = {name: generation.manifest["members"][name]["version"] for name in replaced}
+    try:
+        _burn_outgoing(bin_dir, generation, restored, outgoing, moment)
+    except OSError as exc:
+        return f"outgoing versions were not all burned: {exc}; "
+    return ""
 
 
 def _names(members: Sequence[str]) -> str:

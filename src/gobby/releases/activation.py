@@ -2,8 +2,8 @@
 
 The release window and its lease are retired: nothing acquires one, so landings and new
 team admission no longer wait on a window. What remains is the guard that keeps a
-spawned agent from stopping, starting, restarting or cutting over the daemon, and the
-lookup that resolves a project's primary checkout for landing.
+spawned agent from stopping, starting, restarting or cutting over the daemon, clearing
+the rollback hold, and the lookup that resolves a project's primary checkout for landing.
 """
 
 from __future__ import annotations
@@ -85,21 +85,25 @@ def agent_activation_refusal(operation: str) -> str | None:
     A caller with no spawn marker passes only when it can read the operator's bootstrap
     credential. A cleared environment is not evidence of the operator, so it is refused when
     that credential is unreadable. The run id in the environment is only a marker and grants
-    nothing. A marked caller is refused for stop, start and cutover, whatever its grant, its
-    key or its GOBBY_HOME says. A marked restart is never admitted here: the daemon route decides
-    it with the daemon's own key (spawned_restart_refusal then posts it).
+    nothing. A marked caller is refused for stop, start, cutover and hold clear, whatever its
+    grant, its key or its GOBBY_HOME says. A marked restart is never admitted here: the daemon
+    route decides it with the daemon's own key (spawned_restart_refusal then posts it).
     """
     if not caller_is_spawned():
         if operator_credential_readable():
             return None
-        return (
-            f"{_REFUSED}: no spawn marker and no readable operator credential; "
-            "daemon activation follows the configured owner"
+        detail = (
+            "the operator clears the generation hold and landing freeze"
+            if operation == "hold clear"
+            else "daemon activation follows the configured owner"
         )
+        return f"{_REFUSED}: no spawn marker and no readable operator credential; {detail}"
     if operation == "restart":
         return f"{_REFUSED}: a spawned seat's restart is decided by the daemon route, not locally"
     if operation == "cutover":
         return spawned_cutover_refusal()
+    if operation == "hold clear":
+        return spawned_hold_clear_refusal()
     return spawned_whole_daemon_refusal()
 
 
@@ -116,6 +120,14 @@ def spawned_cutover_refusal() -> str:
     return (
         f"{_REFUSED}: spawned agents may not cut over the daemon; "
         "activation follows the configured owner"
+    )
+
+
+def spawned_hold_clear_refusal() -> str:
+    """The refusal for a marked caller's hold clear, which stays with the operator."""
+    return (
+        f"{_REFUSED}: spawned agents may not clear the generation hold or a landing freeze; "
+        "the operator clears them"
     )
 
 

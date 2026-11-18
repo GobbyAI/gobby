@@ -261,9 +261,14 @@ def _identity(version: int) -> dict[str, int | str]:
 
 def _write_stub(path: Path, identity: dict[str, int | str], version: str = VERSION) -> None:
     payload = json.dumps(identity, sort_keys=True)
+    stamp = json.dumps(
+        {"ghook_version": version, "response_capability": "hook-response.v1", "schema_version": 1},
+        sort_keys=True,
+    )
     path.write_text(
         "#!/bin/sh\n"
         f"if [ \"$1\" = \"--version\" ]; then printf '%s\\n' '{path.name} {version}'; "
+        f"elif [ \"$1\" = \"--runtime-stamp\" ]; then printf '%s\\n' '{stamp}'; "
         f"else printf '%s\\n' '{payload}'; fi\n",
         encoding="utf-8",
     )
@@ -400,6 +405,14 @@ def test_run_cutover_builds_and_promotes_through_shared_set_path(
     assert signed == [*SET_MEMBERS, "gclient"]
     assert (bin_dir / "gclient").read_bytes() == client_artifact.read_bytes()
     assert (bin_dir / "gclient").stat().st_ino != old_inode
+    runtime_stamp = {
+        "ghook_version": VERSION,
+        "response_capability": "hook-response.v1",
+        "schema_version": 1,
+    }
+    assert (bin_dir / ".ghook-runtime.json").read_bytes() == (
+        json.dumps(runtime_stamp, sort_keys=True) + "\n"
+    ).encode()
     assert bin_freshness_promotion.read_source_hash(
         bin_dir, "gclient"
     ) == bin_freshness_promotion.file_sha256(client_artifact)
@@ -716,6 +729,29 @@ def test_companion_retention_failure_is_reported_and_later_promotions_continue(
     )
     assert restarted == [artifacts["gdaemon"].read_bytes()]
     assert (bin_dir / "gclient").is_file()
+
+
+def test_companion_stamp_failure_after_restart_is_reported_and_later_promotions_continue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, bin_dir, artifacts, _companions_built = _live_companion_workspace(
+        tmp_path, monkeypatch, []
+    )
+
+    def fail_gmcp_stamp(_bin_dir: Path, _version: str) -> None:
+        raise OSError("synthetic gmcp stamp failure")
+
+    # gmcp is the first companion, so gterm and gclient run after its stamp fails.
+    monkeypatch.setattr(install_setup, "_write_gmcp_version_stamp", fail_gmcp_stamp)
+    restarted: list[bytes] = []
+
+    outcome = _run_live_cutover(root, bin_dir, restarted)
+
+    assert restarted == [artifacts["gdaemon"].read_bytes()]
+    assert outcome.promoted == ("gterm",)
+    assert set(outcome.failures) == {"gmcp"}
+    assert "gmcp was installed but its stamps were not settled" in outcome.failures["gmcp"]
+    assert (bin_dir / ".gclient-version").read_text(encoding="utf-8") == f"{VERSION}\n"
 
 
 @pytest.mark.parametrize("name", ["gmcp", "gterm"])

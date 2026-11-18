@@ -282,6 +282,10 @@ def _hold_status(as_json: bool) -> None:
 )
 def _hold_clear(checkout: Path) -> None:
     """Clear the stored hold and any task-bound landing freeze of the checkout."""
+    from gobby.releases.activation import agent_activation_refusal
+
+    if refusal := agent_activation_refusal("hold clear"):
+        raise click.ClickException(refusal)
     with _reported():
         cleared = clear_hold(native_bin_dir())
     click.echo("Cleared the generation hold." if cleared else "No generation hold was stored.")

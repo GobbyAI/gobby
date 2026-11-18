@@ -27,7 +27,10 @@ from gobby.install.bin_freshness_models import (
     is_at_least_version,
     managed_bin_specs,
 )
-from gobby.install.bin_freshness_promotion import stage_and_promote_release_binary
+from gobby.install.bin_freshness_promotion import (
+    BinaryStampsNotSettledError,
+    stage_and_promote_release_binary,
+)
 from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.storage.bin_update_state import BinUpdateRecord, BinUpdateStateStore, BinUpdateStatus
 from gobby.storage.hub.protocol import HubDatabase
@@ -224,7 +227,7 @@ def update_managed_bin(
                 error=str(exc),
                 source_url=asset.asset_url,
             )
-        except (OSError, BinaryReleaseVersionError) as exc:
+        except (OSError, BinaryReleaseVersionError, BinaryStampsNotSettledError) as exc:
             return _record_state(
                 store,
                 inspection=inspection,
@@ -269,7 +272,12 @@ def _stage_and_promote(
         binary_name=spec.binary_name,
         bin_dir=bin_dir,
         asset_name=asset.asset_name,
+        after_swap=lambda: _write_install_stamps(spec, asset, bin_dir),
     )
+
+
+def _write_install_stamps(spec: ManagedBinSpec, asset: ReleaseAsset, bin_dir: Path) -> None:
+    """Record the version and install provenance of the binary just swapped in."""
     _write_atomic_text(bin_dir / spec.stamp_name, f"{asset.version}\n", mode=0o644)
     _write_install_sidecar(spec, asset, bin_dir)
 

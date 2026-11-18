@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 import tarfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
@@ -857,6 +857,20 @@ def test_install_gcode_workspace_refusal_preserves_installed_release(
     assert (installed.read_bytes(), receipt.read_bytes()) == original
 
 
+def _gcode_swap_without_build(
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
+    """A successful workspace swap with no build: runs the hooks the real promotion runs."""
+    if prepare_staged is not None:
+        prepare_staged(bin_dir / "gcode")
+    if after_swap is not None:
+        after_swap()
+    return True
+
+
 class TestGcodeHelpers:
     def test_get_installed_gcode_version(self, tmp_path: Path) -> None:
         assert _get_installed_gcode_version(tmp_path) is None
@@ -888,7 +902,10 @@ class TestGcodeHelpers:
     @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
     @patch("gobby.cli.install_setup._get_installed_gcode_version", return_value=None)
     @patch("gobby.cli.install_setup._get_latest_gcode_version", return_value="0.2.3")
-    @patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=True)
+    @patch(
+        "gobby.cli.install_setup._install_gcode_from_submodule",
+        side_effect=_gcode_swap_without_build,
+    )
     @patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={})
     def test_binary_installers_pass_resolved_bin_dir(
         self,
@@ -1029,7 +1046,10 @@ class TestGcodeHelpers:
     @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
     @patch("gobby.cli.install_setup._get_latest_gcode_version", return_value="0.8.0")
     @patch("gobby.cli.install_setup._get_installed_gcode_version", return_value="0.7.9")
-    @patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=True)
+    @patch(
+        "gobby.cli.install_setup._install_gcode_from_submodule",
+        side_effect=_gcode_swap_without_build,
+    )
     @patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={})
     def test_install_gcode_installs_when_installed_version_is_below_pin(
         self,
@@ -1054,7 +1074,10 @@ class TestGcodeHelpers:
     @patch("gobby.cli.install_setup.platform.machine", return_value="arm64")
     @patch("gobby.cli.install_setup._get_latest_gcode_version", return_value=GCODE_PIN)
     @patch("gobby.cli.install_setup._get_installed_gcode_version", return_value=GCODE_PIN)
-    @patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=True)
+    @patch(
+        "gobby.cli.install_setup._install_gcode_from_submodule",
+        side_effect=_gcode_swap_without_build,
+    )
     @patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={})
     def test_install_gcode_force_bypasses_pin_skip(
         self,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, call
+from unittest.mock import ANY, MagicMock, call
 
 import pytest
 
@@ -35,18 +35,36 @@ def _gclient_install_harness(
 
     source = MagicMock(name="source")
 
-    def source_build(destination: Path) -> str | None:
+    def source_build(
+        destination: Path,
+        *,
+        prepare_staged: Callable[[Path], None] | None = None,
+        after_swap: Callable[[], None] | None = None,
+    ) -> str | None:
         if source_outcome == "promoted":
             (destination / "gclient").write_bytes(b"workspace")
+            # Mirror the real swap: staging hook, then the post-swap hook.
+            if prepare_staged is not None:
+                prepare_staged(destination / "gclient")
+            if after_swap is not None:
+                after_swap()
         return source_outcome
 
     source.side_effect = source_build
     fetches = MagicMock(name="fetches")
 
     def fetch_result(method: str) -> Callable[..., bool]:
-        def run(*_args: object) -> bool:
+        def run(
+            *_args: object,
+            prepare_staged: Callable[[Path], None] | None = None,
+            after_swap: Callable[[], None] | None = None,
+        ) -> bool:
             if method == successful_fetch:
                 (bin_dir / "gclient").write_bytes(method.encode())
+                if prepare_staged is not None:
+                    prepare_staged(bin_dir / "gclient")
+                if after_swap is not None:
+                    after_swap()
                 return True
             return False
 
@@ -101,7 +119,7 @@ def test_unpublished_absent_binary_builds_or_raises(
 
     result = install_setup_gclient.install_gclient(module)
 
-    source.assert_called_once_with(bin_dir)
+    source.assert_called_once_with(bin_dir, prepare_staged=ANY, after_swap=ANY)
     stamp.assert_called_once_with(bin_dir, GCLIENT_PIN)
     assert result["method"] == "workspace"
 
@@ -132,7 +150,7 @@ def test_unpublished_present_binary_is_kept_when_build_reports_current(
 
     result = install_setup_gclient.install_gclient(module)
 
-    source.assert_called_once_with(bin_dir)
+    source.assert_called_once_with(bin_dir, prepare_staged=ANY, after_swap=ANY)
     stamp.assert_called_once_with(bin_dir, "0.0.1")
     assert fetches.mock_calls == []
     assert (bin_dir / "gclient").read_bytes() == b"existing"
@@ -157,7 +175,7 @@ def test_unpublished_present_binary_is_kept_when_build_is_unavailable(
 
     result = install_setup_gclient.install_gclient(module)
 
-    source.assert_called_once_with(bin_dir)
+    source.assert_called_once_with(bin_dir, prepare_staged=ANY, after_swap=ANY)
     stamp.assert_called_once_with(bin_dir, "0.0.1")
     assert fetches.mock_calls == []
     assert (bin_dir / "gclient").read_bytes() == b"existing"
@@ -184,7 +202,7 @@ def test_unpublished_present_binary_is_rebuilt_when_build_promotes(
 
     result = install_setup_gclient.install_gclient(module)
 
-    source.assert_called_once_with(bin_dir)
+    source.assert_called_once_with(bin_dir, prepare_staged=ANY, after_swap=ANY)
     assert fetches.mock_calls == []
     assert (bin_dir / "gclient").read_bytes() == b"workspace"
     stamp.assert_called_once_with(bin_dir, GCLIENT_PIN)
@@ -231,9 +249,9 @@ def test_published_binary_runs_fetch_chain(monkeypatch: pytest.MonkeyPatch, tmp_
     source.assert_not_called()
     assert fetches.mock_calls == [
         call.github(bin_dir, "aarch64-apple-darwin", GCLIENT_PIN),
-        call.binstall(bin_dir, GCLIENT_PIN),
-        call.cargo_install(bin_dir, GCLIENT_PIN),
-        call.cargo_git(bin_dir),
+        call.binstall(bin_dir, GCLIENT_PIN, prepare_staged=ANY, after_swap=ANY),
+        call.cargo_install(bin_dir, GCLIENT_PIN, prepare_staged=ANY, after_swap=ANY),
+        call.cargo_git(bin_dir, prepare_staged=ANY, after_swap=ANY),
     ]
     assert result["method"] == "cargo-git"
 
@@ -255,8 +273,8 @@ def test_published_absent_binary_runs_fetch_chain(
     source.assert_not_called()
     assert fetches.mock_calls == [
         call.github(bin_dir, "aarch64-apple-darwin", GCLIENT_PIN),
-        call.binstall(bin_dir, GCLIENT_PIN),
-        call.cargo_install(bin_dir, GCLIENT_PIN),
+        call.binstall(bin_dir, GCLIENT_PIN, prepare_staged=ANY, after_swap=ANY),
+        call.cargo_install(bin_dir, GCLIENT_PIN, prepare_staged=ANY, after_swap=ANY),
     ]
     assert result["method"] == "cargo-install"
 
@@ -276,7 +294,7 @@ def test_force_rebuilds_unpublished_present_binary(
 
     result = install_setup_gclient.install_gclient(module, force=True)
 
-    source.assert_called_once_with(bin_dir)
+    source.assert_called_once_with(bin_dir, prepare_staged=ANY, after_swap=ANY)
     assert not source_hash_path(bin_dir, "gclient").exists()
     assert fetches.mock_calls == []
     assert result["installed"] is True

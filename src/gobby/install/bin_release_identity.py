@@ -13,6 +13,7 @@ import tempfile
 import tomllib
 from collections.abc import Callable, Collection, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -36,24 +37,26 @@ class BinaryReleaseVersionError(RuntimeError):
     """A promotion would conceal source changes under an installed version."""
 
 
-_hold_token: str | None = None
+_HOLD_TOKEN: ContextVar[str | None] = ContextVar("promotion_hold_token", default=None)
 
 
 @contextmanager
 def promotion_hold_token(token: str | None) -> Iterator[None]:
-    """Present a generation-store hold token to every promotion made in the body."""
-    global _hold_token
-    previous = _hold_token
-    _hold_token = token
+    """Present a generation-store hold token to every promotion made in the body.
+
+    The token is a ContextVar: asyncio.to_thread and tasks created in the body see it, but a
+    raw threading.Thread starts from an empty context on default builds and does not.
+    """
+    reset = _HOLD_TOKEN.set(token)
     try:
         yield
     finally:
-        _hold_token = previous
+        _HOLD_TOKEN.reset(reset)
 
 
 def current_hold_token() -> str | None:
     """The hold token presented by the innermost enclosing promotion_hold_token body."""
-    return _hold_token
+    return _HOLD_TOKEN.get()
 
 
 @dataclass(frozen=True)

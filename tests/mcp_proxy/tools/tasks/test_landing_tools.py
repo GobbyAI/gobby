@@ -12,6 +12,8 @@ import pytest
 
 from gobby.code_index.context import CodeIndexContext
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._landing import create_landing_registry
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -200,6 +202,66 @@ async def test_land_commit_requires_session_and_forwards_resolved_task(
         commit_sha=sha,
         code_index=code_index,
     )
+
+
+@pytest.mark.asyncio
+async def test_land_commit_resolves_a_number_addressed_caller_to_its_session_uuid(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "repo", monkeypatch=monkeypatch
+    )
+    sessions = SessionManager(temp_db)
+    caller = sessions.register(
+        external_id="landing-number-caller",
+        machine_id=isolated.machine_id,
+        source="codex",
+        project_id=isolated.project.id,
+    )
+    stored = sessions.get(caller.id)
+    assert stored is not None and stored.seq_num is not None
+    tasks = LocalTaskManager(temp_db)
+    task = tasks.create_task(
+        isolated.project.id,
+        "Candidate",
+        created_in_session_id=caller.id,
+        validation_criteria="Land the candidate for the caller addressed as a number.",
+    )
+    registry = create_task_ops_registry(tasks, code_index=MagicMock(spec=CodeIndexContext))
+    sha = "b" * 40
+    response = {"landed": True, "mode": "ff", "landed_tip": sha}
+    service = AsyncMock(return_value=response)
+    token = set_project_context(
+        {
+            "id": isolated.project.id,
+            "name": isolated.project.name,
+            "project_path": isolated.root_path,
+        }
+    )
+    try:
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._landing.land_candidate", service),
+            session_context_for_test(f"#{stored.seq_num}"),
+        ):
+            landed = await registry.call(
+                "land_commit", {"task_id": f"#{task.seq_num}", "commit_sha": sha}
+            )
+    finally:
+        reset_project_context(token)
+
+    assert landed == response
+    assert service.await_args is not None
+    assert service.await_args.kwargs["caller_session_id"] == caller.id
+
+
+def test_set_landing_freeze_description_states_the_replay_rule(temp_db: HubDatabase) -> None:
+    registry = create_landing_registry(RegistryContext(task_manager=LocalTaskManager(temp_db)))
+    schema = registry.get_schema("set_landing_freeze")
+    assert schema is not None
+    assert (
+        "A landing freeze refuses new landings; an already-landed candidate still reports landed."
+        in schema["description"]
+    ), schema["description"]
 
 
 @pytest.mark.asyncio

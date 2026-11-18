@@ -10,7 +10,8 @@ import subprocess  # nosec B404 # reads git commit times for staleness reporting
 import tarfile
 import tempfile
 import zipfile
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from typing import IO
@@ -31,6 +32,7 @@ from gobby.install.bin_release_identity import (
     BinaryReleaseVersionError,
     check_binary_release,
     current_hold_token,
+    release_identity_path,
     write_release_identity,
 )
 from gobby.utils import spawn
@@ -41,6 +43,22 @@ logger = logging.getLogger(__name__)
 NATIVE_BINARY_MODE = 0o755
 
 
+class BinaryStampsNotSettledError(RuntimeError):
+    """A binary was swapped in, but the stamps and sidecars that describe it did not settle.
+
+    The new bytes are installed and the promotion is recorded. The hook's error is the cause.
+    Callers report the install as replaced with its stamps unsettled, and write no stamp.
+    """
+
+
+def stamps_not_settled_message(subject: str, cause: BaseException) -> str:
+    """The one wording for an installed binary whose stamps did not settle, on every path."""
+    return (
+        f"{subject} was installed but its stamps were not settled; "
+        f"rerun the install; cause: {cause}"
+    )
+
+
 def stage_and_promote_release_binary(
     archive_bytes: bytes,
     *,
@@ -48,8 +66,13 @@ def stage_and_promote_release_binary(
     binary_name: str,
     bin_dir: Path,
     asset_name: str,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
 ) -> None:
-    """Extract a release binary to staging and atomically promote it."""
+    """Extract a release binary to staging and atomically promote it.
+
+    `prepare_staged` and `after_swap` follow the rules of stage_and_promote_binary_file.
+    """
 
     def write_staged(staged_binary: Path) -> None:
         _extract_binary(
@@ -59,8 +82,12 @@ def stage_and_promote_release_binary(
             destination=staged_binary,
             asset_name=asset_name,
         )
+        if prepare_staged is not None:
+            prepare_staged(staged_binary)
 
-    _stage_and_promote(binary_name, bin_dir=bin_dir, write_staged=write_staged)
+    _stage_and_promote(
+        binary_name, bin_dir=bin_dir, write_staged=write_staged, after_swap=after_swap
+    )
 
 
 def stage_and_promote_binary_file(
@@ -70,8 +97,16 @@ def stage_and_promote_binary_file(
     prepare_staged: Callable[[Path], None] | None = None,
     workspace_root: Path | None = None,
     identity: BinaryReleaseIdentity | None = None,
+    after_swap: Callable[[], None] | None = None,
 ) -> None:
-    """Copy a local binary to staging and atomically promote it."""
+    """Copy a local binary to staging and atomically promote it.
+
+    `prepare_staged` runs on the staged copy before the swap, with no store lock held, so
+    codesigning and version probes belong there. `after_swap` runs once the new bytes are in
+    place and before the promotion is recorded. For a managed member it runs under the store
+    lock, so it should only write sidecars. A failure in it raises BinaryStampsNotSettledError
+    with the hook's error as the cause; the new bytes stay installed.
+    """
 
     name = destination.stem if destination.suffix == ".exe" else destination.name
     identities = (
@@ -93,6 +128,7 @@ def stage_and_promote_binary_file(
         bin_dir=destination.parent,
         write_staged=write_staged,
         identity=identities.get(name),
+        after_swap=after_swap,
     )
 
 
@@ -103,8 +139,13 @@ def install_staged_cargo_binary(
     bin_dir: Path,
     run: Callable[..., subprocess.CompletedProcess[str]],
     timeout: int,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
 ) -> bool:
-    """Install a Cargo artifact in isolation and guard its atomic promotion."""
+    """Install a Cargo artifact in isolation and guard its atomic promotion.
+
+    `prepare_staged` and `after_swap` follow the rules of stage_and_promote_binary_file.
+    """
     with tempfile.TemporaryDirectory(prefix=f"{binary_name}-cargo-") as temporary:
         install_root = Path(temporary)
         staged_command = command.copy()
@@ -121,13 +162,17 @@ def install_staged_cargo_binary(
         def write_staged(staged_binary: Path) -> None:
             with source.open("rb") as fileobj:
                 _write_staged_binary(staged_binary, fileobj)
+            if prepare_staged is not None:
+                prepare_staged(staged_binary)
 
         name = Path(binary_name).stem if binary_name.endswith(".exe") else binary_name
         lock = try_acquire_native_bin_lock(name, bin_dir=bin_dir)
         if lock is None:
             return False
         with lock:
-            _stage_and_promote(binary_name, bin_dir=bin_dir, write_staged=write_staged)
+            _stage_and_promote(
+                binary_name, bin_dir=bin_dir, write_staged=write_staged, after_swap=after_swap
+            )
         return True
 
 
@@ -161,46 +206,118 @@ def preflight_binary_promotions(
     }
 
 
+def _member_name(binary_name: str) -> str:
+    return Path(binary_name).stem if binary_name.endswith(".exe") else binary_name
+
+
+@contextmanager
+def _staged(
+    binary_name: str, *, bin_dir: Path, write_staged: Callable[[Path], None]
+) -> Iterator[Path]:
+    """Write a candidate into a private staging directory beside bin_dir and remove it on exit."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir = Path(tempfile.mkdtemp(prefix=f".{binary_name}-staging-", dir=str(bin_dir)))
+    try:
+        staged_binary = staging_dir / binary_name
+        write_staged(staged_binary)
+        yield staged_binary
+    finally:
+        shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+@contextmanager
+def staged_candidate(
+    source: Path,
+    *,
+    bin_dir: Path,
+    binary_name: str,
+    prepare_staged: Callable[[Path], None] | None = None,
+) -> Iterator[Path]:
+    """Copy source into staging and prepare the copy, holding no store lock.
+
+    Pair with swap_staged_binary to install it. A set promotion stages every member through
+    this before it takes the store guard, so codesigning and probes never run under the lock.
+    """
+
+    def write_staged(staged_binary: Path) -> None:
+        with source.open("rb") as fileobj:
+            _write_staged_binary(staged_binary, fileobj)
+        if prepare_staged is not None:
+            prepare_staged(staged_binary)
+
+    with _staged(binary_name, bin_dir=bin_dir, write_staged=write_staged) as staged_binary:
+        yield staged_binary
+
+
 def _stage_and_promote(
     binary_name: str,
     *,
     bin_dir: Path,
     write_staged: Callable[[Path], None],
     identity: BinaryReleaseIdentity | None = None,
+    after_swap: Callable[[], None] | None = None,
 ) -> None:
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    staging_dir = Path(tempfile.mkdtemp(prefix=f".{binary_name}-staging-", dir=str(bin_dir)))
-    try:
-        staged_binary = staging_dir / binary_name
-        write_staged(staged_binary)
-        name = Path(binary_name).stem if binary_name.endswith(".exe") else binary_name
+    with _staged(binary_name, bin_dir=bin_dir, write_staged=write_staged) as staged_binary:
+        name = _member_name(binary_name)
         if name in RELEASE_CRATES and identity is None:
             identity = check_binary_release(
                 name, staged_binary, bin_dir=bin_dir, workspace_root=None
             )
-        if name in MANAGED_BINARIES:
-            # The empty guard only holds the store lock across the swap; retention stays an
-            # explicit call here, under that lock, so this module keeps its retention seam.
-            with promotion_guard(bin_dir, []):
-                retain_outgoing(bin_dir, [name])
-                _swap_in(
-                    staged_binary,
-                    bin_dir=bin_dir,
-                    binary_name=binary_name,
-                    name=name,
-                    identity=identity,
-                )
-                _record_promotion(bin_dir, name)
-        else:
-            _swap_in(
-                staged_binary,
-                bin_dir=bin_dir,
-                binary_name=binary_name,
-                name=name,
-                identity=identity,
-            )
-    finally:
-        shutil.rmtree(staging_dir, ignore_errors=True)
+        swap_staged_binary(
+            staged_binary,
+            bin_dir=bin_dir,
+            binary_name=binary_name,
+            identity=identity,
+            after_swap=after_swap,
+        )
+
+
+def swap_staged_binary(
+    staged_binary: Path,
+    *,
+    bin_dir: Path,
+    binary_name: str,
+    identity: BinaryReleaseIdentity | None,
+    after_swap: Callable[[], None] | None = None,
+) -> None:
+    """Swap a staged candidate in as binary_name, then run after_swap and record the promotion.
+
+    A managed member is swapped, settled and recorded under the store lock, so a capture never
+    pairs the new bytes with the outgoing sidecars. The record is written even when after_swap
+    fails, because the new bytes are already in place; that failure then raises
+    BinaryStampsNotSettledError with the hook's error as its cause. A caller already holding the
+    store guard re-enters it.
+    """
+    name = _member_name(binary_name)
+    if name not in MANAGED_BINARIES:
+        _swap_in(
+            staged_binary, bin_dir=bin_dir, binary_name=binary_name, name=name, identity=identity
+        )
+        # Only managed members are captured by the generation store, so a non-member's
+        # post-swap writes have no capture to race and need no store lock.
+        if after_swap is not None:
+            _settle_after_swap(name, after_swap)
+        return
+    # The empty guard only holds the store lock across the swap; retention stays an explicit
+    # call here, under that lock, so this module keeps its retention seam.
+    with promotion_guard(bin_dir, []):
+        retain_outgoing(bin_dir, [name])
+        _swap_in(
+            staged_binary, bin_dir=bin_dir, binary_name=binary_name, name=name, identity=identity
+        )
+        try:
+            if after_swap is not None:
+                _settle_after_swap(name, after_swap)
+        finally:
+            _record_promotion(bin_dir, name)
+
+
+def _settle_after_swap(name: str, after_swap: Callable[[], None]) -> None:
+    """Run a post-swap hook. Its failure leaves the new bytes installed, so it is typed as such."""
+    try:
+        after_swap()
+    except Exception as exc:
+        raise BinaryStampsNotSettledError(stamps_not_settled_message(name, exc)) from exc
 
 
 def _swap_in(
@@ -217,9 +334,53 @@ def _swap_in(
     )
     if refusal is not None:
         raise BinaryReleaseVersionError(f"{name}: {refusal}")
-    os.replace(staged_binary, bin_dir / binary_name)
+    # The outgoing receipt describes the bytes this swap replaces. Drop it first, so a failed
+    # receipt write after the swap cannot leave it naming the old version beside the new bytes.
+    receipt = release_identity_path(bin_dir, name)
+    outgoing_receipt = receipt.read_bytes() if receipt.is_file() else None
+    receipt.unlink(missing_ok=True)
+    try:
+        os.replace(staged_binary, bin_dir / binary_name)
+    except BaseException as replace_exc:
+        # The swap did not happen, so the installed binary is still the outgoing one.
+        if outgoing_receipt is not None:
+            try:
+                _restore_receipt(receipt, outgoing_receipt)
+            except OSError as restore_exc:
+                # The installed binary is the outgoing one with no receipt, so the loss is named.
+                raise OSError(
+                    f"{name}: the swap failed and the outgoing release receipt {receipt.name} "
+                    f"could not be put back, so it is lost: {restore_exc}"
+                ) from replace_exc
+        raise
     if identity is not None:
+        _record_receipt(bin_dir, name, identity)
+
+
+def _restore_receipt(path: Path, payload: bytes) -> None:
+    """Put an outgoing receipt back byte-for-byte; a failure raises for the caller to name it."""
+    temporary: str | None = None
+    try:
+        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}-", dir=str(path.parent))
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except OSError:
+        if temporary is not None:
+            Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def _record_receipt(bin_dir: Path, name: str, identity: BinaryReleaseIdentity) -> None:
+    """Note the release receipt of a binary already in place; a failure here must not undo it."""
+    try:
         write_release_identity(bin_dir, name, identity)
+    except OSError:
+        logger.warning(
+            "%s was promoted but its release receipt was not written", name, exc_info=True
+        )
 
 
 def _record_promotion(bin_dir: Path, name: str) -> None:
@@ -342,7 +503,9 @@ def workspace_binary_is_current(
         return False
     preflight_binary_promotions({name: built}, bin_dir=bin_dir, workspace_root=workspace_root)
     try:
-        write_source_hash(bin_dir, name, recorded)
+        # No swap happens here, so the stamp takes the store lock itself.
+        with promotion_guard(bin_dir, []):
+            write_source_hash(bin_dir, name, recorded)
     except OSError:
         # The answer stands; only the evidence for the status marker is lost.
         logger.warning(

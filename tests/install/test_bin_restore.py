@@ -888,3 +888,295 @@ def test_run_restore_of_the_default_member_leaves_gcode_and_ghook_untouched(
     assert probe_native_bin_version(bin_dir / "gdaemon") == "1.0.0"
     for name, payload in untouched.items():
         assert (bin_dir / name).read_bytes() == payload
+
+
+def test_set_restore_records_every_swapped_member_when_a_sidecar_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.install import bin_restore
+    from gobby.install.bin_restore import RestoreError
+
+    bin_dir = tmp_path / "bin"
+    _write_stamp(bin_dir)
+    for name in STAMPED_SET:
+        _install(bin_dir, name, "1.0.0", marker="old")
+    generation = _retain(bin_dir, list(STAMPED_SET), 0)
+    for name in STAMPED_SET:
+        _install(bin_dir, name, "1.0.1", marker="new")
+
+    def fail_on_first_sidecar(*_args: object) -> None:
+        raise OSError("synthetic sidecar failure")
+
+    # Every member of the set is swapped by the time the first sidecar write runs, so the
+    # failure must report all of them as replaced and burn each outgoing version.
+    monkeypatch.setattr(bin_restore, "_restore_sidecars", fail_on_first_sidecar)
+    daemon = _Daemon()
+
+    with pytest.raises(RestoreError, match="daemon is stopped") as error:
+        _restore(bin_dir, generation, list(STAMPED_SET), daemon)
+
+    message = str(error.value)
+    assert "replaced: gcode, gdaemon, ghook; not replaced: none" in message
+    assert "synthetic sidecar failure" in message
+    assert "start" not in daemon.events
+    burned: dict[str, dict[str, Any]] = read_state(bin_dir)["burned"]
+    for name in STAMPED_SET:
+        assert probe_native_bin_version(bin_dir / name) == "1.0.0"
+        assert "1.0.1" in burned[name]
+
+
+def _set_restore_setup(tmp_path: Path) -> tuple[Path, Generation]:
+    """Installed set at 1.0.1 over a retained 1.0.0 set, with the identity stamp in place."""
+    bin_dir = tmp_path / "bin"
+    _write_stamp(bin_dir)
+    for name in STAMPED_SET:
+        _install(bin_dir, name, "1.0.0", marker="old")
+    generation = _retain(bin_dir, list(STAMPED_SET), 0)
+    for name in STAMPED_SET:
+        _install(bin_dir, name, "1.0.1", marker="new")
+    return bin_dir, generation
+
+
+def _fail_swap_of_ghook(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let the first members of a set swap in, then fail the ghook swap."""
+    real_swap = promotion.swap_staged_binary
+
+    def fail_on_ghook(staged_binary: Path, **kwargs: Any) -> None:
+        if kwargs["binary_name"] == "ghook":
+            raise OSError("synthetic swap failure")
+        real_swap(staged_binary, **kwargs)
+
+    monkeypatch.setattr(promotion, "swap_staged_binary", fail_on_ghook)
+
+
+def test_set_restore_settles_the_sidecars_of_members_swapped_before_a_later_swap_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.install.bin_restore import RestoreError
+
+    bin_dir, generation = _set_restore_setup(tmp_path)
+    _fail_swap_of_ghook(monkeypatch)
+    daemon = _Daemon()
+
+    with pytest.raises(RestoreError, match="daemon was stopped") as error:
+        _restore(bin_dir, generation, list(STAMPED_SET), daemon)
+
+    assert "daemon was stopped; replaced: gcode, gdaemon; not replaced: ghook; cause: " in str(
+        error.value
+    )
+    assert "start" not in daemon.events
+    # gcode and gdaemon hold the restored 1.0.0 bytes, so their sidecars must describe 1.0.0.
+    for name in ("gcode", "gdaemon"):
+        assert (bin_dir / f".{name}-version").read_text(encoding="utf-8") == "1.0.0\n"
+    # ghook never swapped, so its sidecar still describes the 1.0.1 bytes it holds.
+    assert (bin_dir / ".ghook-version").read_text(encoding="utf-8") == "1.0.1\n"
+    # The identity stamp describes the whole set, so a part-way restore leaves it as it was.
+    assert json.loads((bin_dir / ".gdaemon-schema-identity.json").read_text(encoding="utf-8")) == (
+        IDENTITY
+    )
+
+
+def test_set_restore_names_the_members_left_unsettled_when_a_sidecar_settle_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.install import bin_restore
+    from gobby.install.bin_restore import RestoreError
+
+    bin_dir, generation = _set_restore_setup(tmp_path)
+    _fail_swap_of_ghook(monkeypatch)
+    real_sidecars = bin_restore._restore_sidecars
+
+    def fail_on_gdaemon(bin_dir_: Path, generation_: Generation, staging: Path, name: str) -> None:
+        if name == "gdaemon":
+            raise OSError("synthetic sidecar failure")
+        real_sidecars(bin_dir_, generation_, staging, name)
+
+    monkeypatch.setattr(bin_restore, "_restore_sidecars", fail_on_gdaemon)
+    daemon = _Daemon()
+
+    with pytest.raises(RestoreError, match="daemon was stopped") as error:
+        _restore(bin_dir, generation, list(STAMPED_SET), daemon)
+
+    message = str(error.value)
+    assert "replaced: gcode, gdaemon; not replaced: ghook" in message
+    assert "stamps unsettled for: gdaemon" in message
+    assert "synthetic swap failure" in message
+    assert "synthetic sidecar failure" in message
+    assert "start" not in daemon.events
+
+
+def test_restore_names_the_member_whose_stamps_stay_unsettled_when_a_single_settle_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.install import bin_restore
+    from gobby.install.bin_restore import RestoreError
+
+    bin_dir = tmp_path / "bin"
+    _install(bin_dir, "gmcp", "1.0.0", marker="old")
+    generation = _retain(bin_dir, ["gmcp"], 0)
+    _install(bin_dir, "gmcp", "1.0.1", marker="new")
+
+    def fail_sidecars(*_args: object) -> None:
+        raise OSError("synthetic sidecar failure")
+
+    monkeypatch.setattr(bin_restore, "_restore_sidecars", fail_sidecars)
+    daemon = _Daemon()
+
+    with pytest.raises(RestoreError, match="daemon was stopped") as error:
+        _restore(bin_dir, generation, ["gmcp"], daemon)
+
+    message = str(error.value)
+    assert "replaced: gmcp; not replaced: none" in message
+    assert "stamps unsettled for: gmcp" in message
+    assert "synthetic sidecar failure" in message
+    assert "start" not in daemon.events
+
+
+def test_set_restore_reports_every_member_swapped_when_the_identity_stamp_write_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.install import bin_set_coherence
+    from gobby.install.bin_restore import RestoreError
+
+    bin_dir, generation = _set_restore_setup(tmp_path)
+
+    def fail_identity_stamp(*_args: object) -> None:
+        raise OSError("synthetic identity stamp failure")
+
+    # All three swaps have landed when the identity stamp write fails, so all three hold the
+    # restored bytes and each outgoing 1.0.1 must be burned.
+    monkeypatch.setattr(bin_set_coherence, "_write_identity_stamp", fail_identity_stamp)
+    daemon = _Daemon()
+
+    with pytest.raises(RestoreError, match="daemon was stopped") as error:
+        _restore(bin_dir, generation, list(STAMPED_SET), daemon)
+
+    message = str(error.value)
+    assert "daemon was stopped; replaced: gcode, gdaemon, ghook; not replaced: none; cause: " in (
+        message
+    )
+    assert "start" not in daemon.events
+    burned: dict[str, dict[str, Any]] = read_state(bin_dir)["burned"]
+    assert set(burned) == set(STAMPED_SET)
+    for name in STAMPED_SET:
+        assert probe_native_bin_version(bin_dir / name) == "1.0.0"
+        assert "1.0.1" in burned[name]
+
+
+def test_set_restore_reports_only_the_members_swapped_before_a_later_swap_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.install.bin_restore import RestoreError
+
+    bin_dir, generation = _set_restore_setup(tmp_path)
+    real_swap = promotion.swap_staged_binary
+
+    def fail_on_ghook(staged_binary: Path, **kwargs: Any) -> None:
+        # gcode and gdaemon swap in; the third member's swap alone fails.
+        if kwargs["binary_name"] == "ghook":
+            raise OSError("synthetic swap failure")
+        real_swap(staged_binary, **kwargs)
+
+    monkeypatch.setattr(promotion, "swap_staged_binary", fail_on_ghook)
+    daemon = _Daemon()
+
+    with pytest.raises(RestoreError, match="daemon was stopped") as error:
+        _restore(bin_dir, generation, list(STAMPED_SET), daemon)
+
+    message = str(error.value)
+    assert "daemon was stopped; replaced: gcode, gdaemon; not replaced: ghook; cause: " in message
+    assert "start" not in daemon.events
+    burned: dict[str, dict[str, Any]] = read_state(bin_dir)["burned"]
+    assert set(burned) == {"gcode", "gdaemon"}
+    for name in ("gcode", "gdaemon"):
+        assert probe_native_bin_version(bin_dir / name) == "1.0.0"
+        assert "1.0.1" in burned[name]
+    assert probe_native_bin_version(bin_dir / "ghook") == "1.0.1"
+
+
+def _stamp_document(version: str) -> str:
+    stamp = {
+        "ghook_version": version,
+        "response_capability": "hook-response.v1",
+        "schema_version": 1,
+    }
+    return json.dumps(stamp, separators=(",", ":"), sort_keys=True)
+
+
+def _legacy_ghook_script(bin_dir: Path, version: str, marker: str) -> bytes:
+    """A ghook that predates --runtime-stamp, so the flag is unknown and it exits 2.
+
+    Its --version writes the runtime stamp beside the install, as the installed binary does.
+    """
+    identity = json.dumps(IDENTITY, separators=(",", ":"), sort_keys=True)
+    stamp_path = bin_dir / ".ghook-runtime.json"
+    return (
+        "#!/bin/sh\n"
+        f"# build {marker}\n"
+        'if [ "$1" = "--version" ]; then\n'
+        f"printf '%s\\n' '{_stamp_document(version)}' > '{stamp_path}'\n"
+        f"printf '%s\\n' 'ghook {version}'\n"
+        'elif [ "$1" = "--runtime-stamp" ]; then\n'
+        "exit 2\n"
+        "else\n"
+        f"printf '%s\\n' '{identity}'\n"
+        "fi\n"
+    ).encode()
+
+
+def _stamped_ghook_script(version: str, marker: str) -> bytes:
+    """A ghook whose --runtime-stamp prints its stamp and whose --version writes nothing."""
+    identity = json.dumps(IDENTITY, separators=(",", ":"), sort_keys=True)
+    return (
+        "#!/bin/sh\n"
+        f"# build {marker}\n"
+        'if [ "$1" = "--version" ]; then\n'
+        f"printf '%s\\n' 'ghook {version}'\n"
+        'elif [ "$1" = "--runtime-stamp" ]; then\n'
+        f"printf '%s\\n' '{_stamp_document(version)}'\n"
+        "else\n"
+        f"printf '%s\\n' '{identity}'\n"
+        "fi\n"
+    ).encode()
+
+
+def test_restore_of_a_ghook_that_predates_the_stamp_ends_with_a_stamp_for_the_restored_binary(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    _write_stamp(bin_dir)
+    _place(bin_dir, "ghook", _legacy_ghook_script(bin_dir, "1.0.0", "old"), "1.0.0")
+    generation = _retain(bin_dir, ["ghook"], 0)
+    _install(bin_dir, "ghook", "1.0.1", marker="new")
+    _write(bin_dir / ".ghook-runtime.json", b'{"ghook_version": "1.0.1"}\n', 0o644)
+
+    outcome = _restore(bin_dir, generation, ["ghook"], _Daemon())
+
+    assert outcome.restored == {"ghook": "1.0.0"}
+    assert json.loads((bin_dir / ".ghook-runtime.json").read_text()) == json.loads(
+        _stamp_document("1.0.0")
+    )
+
+
+def test_restore_of_a_stamped_ghook_ends_with_the_stamp_the_restored_binary_prints(
+    tmp_path: Path,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    _write_stamp(bin_dir)
+    _place(bin_dir, "ghook", _stamped_ghook_script("1.0.0", "old"), "1.0.0")
+    _write(bin_dir / ".ghook-runtime.json", b'{"stale": true}\n', 0o644)
+    generation = _retain(bin_dir, ["ghook"], 0)
+    _install(bin_dir, "ghook", "1.0.1", marker="new")
+
+    outcome = _restore(bin_dir, generation, ["ghook"], _Daemon())
+
+    assert outcome.restored == {"ghook": "1.0.0"}
+    assert (bin_dir / ".ghook-runtime.json").read_bytes() == (
+        _stamp_document("1.0.0") + "\n"
+    ).encode()

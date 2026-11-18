@@ -33,6 +33,7 @@ from gobby.install.bin_generations import (
     retain_outgoing,
     set_hold,
 )
+from gobby.releases import activation
 from gobby.releases.activation import _REFUSED
 from gobby.tasks import landing_policy
 from gobby.utils.local_token import GOBBY_AGENT_API_TOKEN_ENV
@@ -1066,6 +1067,35 @@ def test_hold_clear_refuses_a_spawned_agent_before_clearing_anything(
     freeze = landing_policy.read_freeze(common)
     assert freeze.on is True
     assert freeze.task_id == "t-1"
+
+
+def test_hold_clear_refuses_an_unmarked_caller_without_the_operator_credential(
+    bin_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_hold(bin_dir, task_id="t-1", session_id="s-1", expires_at=FUTURE, now=NOW)
+    checkout = tmp_path / "repo"
+    common = _git_checkout(checkout)
+    landing_policy.write_freeze(
+        common, on=True, reason="cutover in progress", session_id="s-1", task_id="t-1"
+    )
+    monkeypatch.setattr(activation, "operator_credential_readable", lambda: False)
+
+    result = _run("hold", "clear", "--path", str(checkout))
+
+    assert result.exit_code != 0, result.output
+    refusal = re.search(
+        rf"^(?:Error: )?{re.escape(_REFUSED)}: .*$", result.output, flags=re.MULTILINE
+    )
+    assert refusal is not None, result.output
+    assert refusal.group(0).removeprefix("Error: ") == (
+        f"{_REFUSED}: no spawn marker and no readable operator credential; "
+        "the operator clears the generation hold and landing freeze"
+    )
+    assert "daemon activation" not in result.output
+    hold = hold_status(bin_dir)
+    assert hold is not None
+    assert hold["task_id"] == "t-1"
+    assert landing_policy.read_freeze(common).on is True
 
 
 def test_hold_clear_still_clears_the_hold_and_bound_freeze_for_the_operator(

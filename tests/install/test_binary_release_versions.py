@@ -49,10 +49,17 @@ def binary(path: Path, version: str = "1.0.0") -> Path:
         '"latest_version":468,"latest_checksum":"latest",'
         '"assets_root_hash":"root"}'
     )
+    stamp = json.dumps(
+        {"ghook_version": version, "response_capability": "hook-response.v1", "schema_version": 1},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     path.write_text(
         '#!/bin/sh\nif [ "$1" = "--version" ]; then\n'
-        f"printf '%s\\n' '{path.name} {version}'\nelse\n"
-        f"printf '%s\\n' '{identity}'\nfi\n"
+        f"printf '%s\\n' '{path.name} {version}'\n"
+        'elif [ "$1" = "--runtime-stamp" ]; then\n'
+        f"printf '%s\\n' '{stamp}'\n"
+        f"else\nprintf '%s\\n' '{identity}'\nfi\n"
     )
     path.chmod(0o755)
     return path
@@ -376,6 +383,18 @@ def test_legacy_signed_coherent_set_accepts_only_identical_executable(
         coherence,
         "probe_set_member_identity",
         lambda _path, _name: {"runner_protocol": 1, "assets_root_hash": "root"},
+    )
+    # /bin/echo cannot answer --runtime-stamp, so the ghook stamp is stubbed for this signing test.
+    monkeypatch.setattr(
+        coherence,
+        "_capture_runtime_stamp",
+        lambda _path, *, version: json.dumps(
+            {
+                "ghook_version": version,
+                "response_capability": "hook-response.v1",
+                "schema_version": 1,
+            }
+        ).encode(),
     )
     bin_dir = tmp_path / "bin"
     promote_workspace_binary_set(sources, bin_dir=bin_dir, workspace_root=workspace)

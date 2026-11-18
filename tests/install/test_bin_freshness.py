@@ -411,6 +411,46 @@ class TestBinUpdater:
         assert sidecar["install_method"] == "github-release"
         assert sidecar["installed_version"] == "0.4.1"
 
+    def test_upgrade_whose_stamps_do_not_settle_is_recorded_failed_with_the_cause(
+        self,
+        tmp_path: Path,
+        postgres_db: HubDatabase,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        db = postgres_db
+        bin_dir = tmp_path / "bin"
+        spec = _spec()
+        installed = _write_binary(bin_dir, spec, b"old")
+        _write_stamp(bin_dir, spec, "0.4.0")
+        asset = _asset(spec, "0.4.1")
+        client = FakeClient(asset=asset, archive=_tar_with_binary(spec, b"new"))
+        monkeypatch.setattr(
+            "gobby.install.bin_release_identity.probe_native_bin_version",
+            lambda path: "0.4.0" if path == installed else asset.version,
+        )
+
+        def fail_stamps(*_args: object) -> None:
+            raise OSError("synthetic stamp failure")
+
+        monkeypatch.setattr(
+            "gobby.install.bin_freshness_updater._write_install_stamps", fail_stamps
+        )
+
+        record = update_managed_bin(
+            db,
+            spec,
+            BinFreshnessConfig(),
+            bin_dir=bin_dir,
+            client=client,
+        )
+
+        assert record is not None
+        assert record.last_status == "failed"
+        assert record.last_error is not None
+        assert "was installed but its stamps were not settled" in record.last_error
+        assert "synthetic stamp failure" in record.last_error
+        assert (bin_dir / spec.binary_name).read_bytes() == b"new"
+
     def test_github_api_failure_records_failed_and_keeps_binary(
         self, tmp_path: Path, postgres_db: HubDatabase
     ) -> None:

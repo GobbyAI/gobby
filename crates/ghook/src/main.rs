@@ -11,9 +11,12 @@
 //!
 //! Mode 2 prints a JSON diagnostic, no network, no envelope write.
 //!
-//! Mode 3 prints the ghook version and writes
+//! Mode 3 prints the ghook version. It writes
 //! `~/.gobby/bin/.ghook-runtime.json` with
-//! `{schema_version, ghook_version, response_capability}`.
+//! `{schema_version, ghook_version, response_capability}` only when the running
+//! executable is the installed `$GOBBY_HOME/bin/ghook`; any other copy writes
+//! nothing. `--runtime-stamp` prints that same stamp JSON to stdout and writes
+//! nothing.
 
 use clap::Parser;
 use std::process::ExitCode;
@@ -66,16 +69,11 @@ fn main() -> ExitCode {
         };
     }
 
+    if args.runtime_stamp {
+        return print_runtime_stamp();
+    }
     if args.version {
-        return match runtime::write_runtime_stamp() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                // Still print the version; stamp-write failure is non-fatal.
-                let _ = output::stdout(format_args!("ghook {}\n", diagnose::GHOOK_VERSION));
-                output::stderr(format_args!("note: could not write runtime stamp: {e}\n"));
-                ExitCode::SUCCESS
-            }
-        };
+        return print_version();
     }
     if args.diagnose {
         return run_diagnose(&args);
@@ -86,6 +84,34 @@ fn main() -> ExitCode {
 
     eprintln!("ghook: no mode specified; use one of --gobby-owned, --diagnose, or --version");
     ExitCode::from(2)
+}
+
+fn print_runtime_stamp() -> ExitCode {
+    let mut bytes = match runtime::stamp_bytes() {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            eprintln!("ghook: {error}");
+            return ExitCode::from(1);
+        }
+    };
+    bytes.push(b'\n');
+    match output::stdout_bytes(&bytes) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("ghook: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn print_version() -> ExitCode {
+    let stamp = runtime::write_runtime_stamp_if_installed();
+    let _ = output::stdout(format_args!("ghook {}\n", diagnose::GHOOK_VERSION));
+    // Stamp-write failure is non-fatal: the version is still printed.
+    if let Err(e) = stamp {
+        output::stderr(format_args!("note: could not write runtime stamp: {e}\n"));
+    }
+    ExitCode::SUCCESS
 }
 
 fn run_diagnose(args: &Args) -> ExitCode {

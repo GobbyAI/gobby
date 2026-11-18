@@ -2,6 +2,7 @@
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,6 +13,10 @@ from gobby.utils.session_context import get_current_session_id
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
+
+# Full session UUIDs. With no session store, only a full UUID seeds an explicit session ref.
+SESSION_UUID = "7f2c0c5e-8b1a-4d3e-9f4a-2b6c8d0e1f23"
+OTHER_UUID = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
 
 
 def _make_event(
@@ -59,14 +64,14 @@ class TestContextInjection:
         event = _make_event(platform_session_id="plat-123")
 
         await dispatch_mcp_calls(
-            [{"server": "s", "tool": "t", "arguments": {"session_id": "explicit"}}],
+            [{"server": "s", "tool": "t", "arguments": {"session_id": OTHER_UUID}}],
             event,
             call_tool,
             logging.getLogger("test"),
         )
 
         args = call_tool.call_args[0][2]
-        assert args["session_id"] == "explicit"
+        assert args["session_id"] == OTHER_UUID
 
     @pytest.mark.asyncio
     async def test_injects_project_path_from_event_metadata(self) -> None:
@@ -137,7 +142,7 @@ class TestContextInjection:
                 {
                     "server": "gobby-memory",
                     "tool": "digest",
-                    "arguments": {"session_id": "explicit-123"},
+                    "arguments": {"session_id": OTHER_UUID},
                 }
             ],
             event,
@@ -146,7 +151,7 @@ class TestContextInjection:
         )
 
         call_tool.assert_called_once()
-        assert call_tool.call_args[0][2]["session_id"] == "explicit-123"
+        assert call_tool.call_args[0][2]["session_id"] == OTHER_UUID
 
     @pytest.mark.asyncio
     async def test_maps_prompt_text_to_query(self) -> None:
@@ -205,19 +210,163 @@ class TestContextInjection:
     async def test_seeds_session_context_for_internal_callers(self) -> None:
         seen_contexts: list[str | None] = []
 
-        async def call_tool(_server: str, _tool: str, _arguments: dict) -> dict[str, bool]:
+        async def call_tool(
+            _server: str, _tool: str, _arguments: dict[str, Any]
+        ) -> dict[str, bool]:
             seen_contexts.append(get_current_session_id())
             return {"success": True}
 
         await dispatch_mcp_calls(
             [{"server": "gobby-sessions", "tool": "set_handoff", "arguments": {}}],
+            _make_event(platform_session_id=SESSION_UUID),
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        assert seen_contexts == [SESSION_UUID]
+        assert get_current_session_id() is None
+
+
+class TestSessionRefsWithoutSessionStore:
+    """With no session store, only a full UUID seeds a session.
+
+    An explicit ref that is not a full UUID fails the call. An ambient id that is not one
+    runs the tool with nothing seeded, as it does when the store cannot resolve it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_explicit_non_uuid_ref_fails_the_call(self) -> None:
+        call_tool = AsyncMock(return_value={"success": True})
+
+        results = await dispatch_mcp_calls(
+            [
+                {
+                    "server": "s",
+                    "tool": "t",
+                    "arguments": {"session_id": "#7"},
+                    "inject_result": True,
+                }
+            ],
+            _make_event(),
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        call_tool.assert_not_called()
+        assert results[0]["success"] is False
+
+    @pytest.mark.asyncio
+    async def test_ambient_non_uuid_ref_runs_the_tool_with_nothing_seeded(self) -> None:
+        """An injected id that is not a UUID is not a failure: the tool runs with the id as given.
+
+        Only an explicit ref fails the call. The synchronous dispatcher does the same, and
+        seeds no session from the id.
+        """
+        seen: list[tuple[str | None, str | None]] = []
+
+        async def call_tool(_server: str, _tool: str, arguments: dict[str, Any]) -> dict[str, bool]:
+            seen.append((arguments["session_id"], get_current_session_id()))
+            return {"success": True}
+
+        results = await dispatch_mcp_calls(
+            [{"server": "s", "tool": "t", "arguments": {}, "inject_result": True}],
             _make_event(platform_session_id="plat-123"),
             call_tool,
             logging.getLogger("test"),
         )
 
-        assert seen_contexts == ["plat-123"]
+        assert seen == [("plat-123", None)]
+        assert results[0]["success"] is True
+
+    @pytest.mark.asyncio
+    async def test_full_uuid_ref_seeds_its_session_as_given(self) -> None:
+        seen: list[tuple[str | None, str | None]] = []
+
+        async def call_tool(_server: str, _tool: str, arguments: dict[str, Any]) -> dict[str, bool]:
+            seen.append((arguments["session_id"], get_current_session_id()))
+            return {"success": True}
+
+        await dispatch_mcp_calls(
+            [{"server": "s", "tool": "t", "arguments": {"session_id": OTHER_UUID}}],
+            _make_event(),
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        assert seen == [(OTHER_UUID, OTHER_UUID)]
         assert get_current_session_id() is None
+
+    @pytest.mark.asyncio
+    async def test_empty_session_id_passes_through_unseeded(self) -> None:
+        """An empty-string session_id is not replaced by the injected id.
+
+        The tool receives the empty string, and nothing is resolved or seeded from it.
+        """
+        seen: list[tuple[str, str | None]] = []
+
+        async def call_tool(_server: str, _tool: str, arguments: dict[str, Any]) -> dict[str, bool]:
+            seen.append((arguments["session_id"], get_current_session_id()))
+            return {"success": True}
+
+        await dispatch_mcp_calls(
+            [{"server": "s", "tool": "t", "arguments": {"session_id": ""}}],
+            _make_event(),
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        assert seen == [("", None)]
+
+
+class TestNonStringSessionIds:
+    """A non-string session_id is judged as the synchronous dispatcher judges it.
+
+    The sync dispatcher takes ``session_id or None``: a truthy non-string reaches the
+    resolver, which calls ``.strip()`` on it, so the call fails before the tool runs. A
+    falsy non-string is absent and passes through unseeded.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", [7, ["#7"], {"ref": "#7"}, True])
+    async def test_truthy_non_string_session_id_fails_the_call(self, value: Any) -> None:
+        call_tool = AsyncMock(return_value={"success": True})
+
+        results = await dispatch_mcp_calls(
+            [
+                {
+                    "server": "s",
+                    "tool": "t",
+                    "arguments": {"session_id": value},
+                    "inject_result": True,
+                }
+            ],
+            _make_event(),
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        call_tool.assert_not_called()
+        assert results[0]["success"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", [0, [], {}])
+    async def test_falsy_non_string_session_id_is_absent_and_passes_through(
+        self, value: Any
+    ) -> None:
+        seen: list[tuple[Any, str | None]] = []
+
+        async def call_tool(_server: str, _tool: str, arguments: dict[str, Any]) -> dict[str, bool]:
+            seen.append((arguments["session_id"], get_current_session_id()))
+            return {"success": True}
+
+        await dispatch_mcp_calls(
+            [{"server": "s", "tool": "t", "arguments": {"session_id": value}}],
+            _make_event(),
+            call_tool,
+            logging.getLogger("test"),
+        )
+
+        assert seen == [(value, None)]
 
 
 class TestGuardClauses:
@@ -418,7 +567,7 @@ class TestMultipleCalls:
     async def test_multiple_calls_all_dispatched(self) -> None:
         call_tool = AsyncMock()
 
-        calls = [
+        calls: list[dict[str, Any]] = [
             {"server": "s1", "tool": "t1", "arguments": {}},
             {"server": "s2", "tool": "t2", "arguments": {}, "background": True},
         ]
@@ -435,7 +584,7 @@ class TestMultipleCalls:
     async def test_invalid_call_skipped_others_proceed(self) -> None:
         call_tool = AsyncMock()
 
-        calls = [
+        calls: list[dict[str, Any]] = [
             {"server": None, "tool": "t1", "arguments": {}},  # skipped
             {"server": "s2", "tool": "t2", "arguments": {}},  # executed
         ]

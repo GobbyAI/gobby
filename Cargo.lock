@@ -2575,7 +2575,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-hooks"
-version = "0.9.87"
+version = "0.9.88"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

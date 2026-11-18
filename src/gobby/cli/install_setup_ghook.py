@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -11,6 +12,7 @@ from urllib.request import Request
 from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_models import compare_versions
+from gobby.install.bin_generations import promotion_guard
 from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.install.bin_set_coherence import (
     BinarySetCoherenceError,
@@ -146,7 +148,13 @@ def write_ghook_install_sidecar(
         module.logger.warning("ghook: failed writing install sidecar %s: %s", sidecar, e)
 
 
-def install_ghook_from_workspace(module: Any, bin_dir: Path) -> bool:
+def install_ghook_from_workspace(
+    module: Any,
+    bin_dir: Path,
+    *,
+    prepare_staged: Callable[[Path], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+) -> bool:
     """Build ghook from the local Rust workspace and promote it into the set."""
     if not module.shutil.which("cargo"):
         return False
@@ -183,7 +191,12 @@ def install_ghook_from_workspace(module: Any, bin_dir: Path) -> bool:
         source = cargo_release_dir(manifest.parent) / module._GHOOK_BIN_NAME
         if not source.exists():
             return False
-        promote_workspace_binary_set({"ghook": source}, bin_dir=bin_dir)
+        promote_workspace_binary_set(
+            {"ghook": source},
+            bin_dir=bin_dir,
+            prepare_staged=None if prepare_staged is None else {"ghook": prepare_staged},
+            after_swap=after_swap,
+        )
         return True
     except (FileNotFoundError, module.subprocess.TimeoutExpired, OSError) as e:
         module.logger.warning("ghook: local workspace build failed: %s", e)
@@ -226,7 +239,9 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
                 ghook_path,
             )
         elif installed_version and managed_version_satisfies_pin("ghook", installed_version):
-            module._write_ghook_version_stamp(bin_dir, installed_version)
+            # No swap on this path, so the stamp takes the store lock itself.
+            with promotion_guard(bin_dir, []):
+                module._write_ghook_version_stamp(bin_dir, installed_version)
             return {"installed": False, "skipped": True, "version": installed_version}
 
     target_version = pinned_version
@@ -234,23 +249,32 @@ def install_ghook(module: Any, force: bool = False) -> dict[str, Any]:
         target_version = installed_version
 
     bin_dir.mkdir(parents=True, exist_ok=True)
+    settled: dict[str, str] = {}
+
+    def prepare(staged: Path) -> None:
+        settled["version"] = module._probe_ghook_version(staged) or target_version or "unknown"
+
+    def settle() -> None:
+        module._write_ghook_version_stamp(bin_dir, settled["version"])
+        module._write_ghook_install_sidecar(
+            bin_dir,
+            install_method="workspace",
+            install_source_url=None,
+            installed_version=settled["version"],
+            installed_at=module._ghook_installed_at_utc(),
+        )
+
     try:
-        if not module._install_ghook_from_workspace(bin_dir):
+        if not module._install_ghook_from_workspace(
+            bin_dir, prepare_staged=prepare, after_swap=settle
+        ):
             return {"installed": False, "skipped": False, "reason": workspace_build_only("ghook")}
     except (BinarySetCoherenceError, BinaryReleaseVersionError) as exc:
         return {"installed": False, "skipped": False, "reason": str(exc)}
 
     ghook_path.chmod(0o755)
 
-    resolved_version = module._probe_ghook_version(ghook_path) or target_version or "unknown"
-    module._write_ghook_version_stamp(bin_dir, resolved_version)
-    module._write_ghook_install_sidecar(
-        bin_dir,
-        install_method="workspace",
-        install_source_url=None,
-        installed_version=resolved_version,
-        installed_at=module._ghook_installed_at_utc(),
-    )
+    resolved_version = settled["version"]
 
     path_result = module._ensure_gobby_bin_on_path(bin_dir)
     if path_result.get("added"):

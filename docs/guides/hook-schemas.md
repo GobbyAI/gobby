@@ -144,9 +144,10 @@ only. Turn-level `Stop` fails open on daemon outage so a down daemon cannot
 block every turn; Claude's existing fail-open Stop behavior is unchanged.
 ### Runtime Schema Compatibility
 
-Running `ghook --version` writes
+Running the installed `$GOBBY_HOME/bin/ghook --version` writes
 `$GOBBY_HOME/bin/.ghook-runtime.json` with the binary's `schema_version` and
-`ghook_version`. The daemon reads this stamp for `/api/health` and
+`ghook_version`. Other copies print the version and write nothing;
+`ghook --runtime-stamp` prints the same JSON without writing. The daemon reads this stamp for `/api/health` and
 `/api/admin/status`, and `gobby status` renders incompatible states as health
 issues. Diagnostics use explicit `absent`, `compatible`, `malformed`,
 `schema_mismatch`, and `stale_version` states.

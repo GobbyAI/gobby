@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -43,10 +43,25 @@ logger = logging.getLogger(__name__)
 
 REBUILD_REMEDY = "rebuild and install all three together"
 _PROBE_TIMEOUT_SECONDS = 10
+GHOOK = "ghook"
+RUNTIME_STAMP_NAME = ".ghook-runtime.json"
+_RUNTIME_STAMP_KEYS = frozenset({"ghook_version", "response_capability", "schema_version"})
 
 
 class BinarySetCoherenceError(RuntimeError):
-    """Raised when a workspace binary promotion would create a mixed set."""
+    """Raised when a workspace binary promotion would create a mixed set.
+
+    `promoted` names the members whose new bytes are already in place when the error is raised,
+    so a caller can tell which members a failed set promotion actually replaced.
+    """
+
+    def __init__(self, message: str, *, promoted: Sequence[str] = ()) -> None:
+        super().__init__(message)
+        self.promoted: tuple[str, ...] = tuple(promoted)
+
+
+class RuntimeStampUnsupportedError(BinarySetCoherenceError):
+    """A ghook candidate prints no runtime stamp: --runtime-stamp exits non-zero or prints none."""
 
 
 def workspace_build_only(member: str) -> str:
@@ -107,8 +122,26 @@ def promote_workspace_binary_set(
     metadata: WorkspacePromotionMetadata | None = None,
     workspace_root: Path | None = None,
     source_identities: Mapping[str, str] | None = None,
+    prepare_staged: Mapping[str, Callable[[Path], None]] | None = None,
+    settle: Callable[[str], None] | None = None,
+    after_swap: Callable[[], None] | None = None,
+    allow_unstamped_ghook: bool = False,
 ) -> None:
-    """Promote a coherent partial or complete workspace binary set."""
+    """Promote a coherent partial or complete workspace binary set.
+
+    Each member is copied into staging and codesigned there, with `prepare_staged[member]` run
+    on the copy after that, before the store guard is taken. The guard covers the swaps, the
+    settling of each promoted member, the identity stamp, the ghook runtime stamp, and
+    `after_swap`. Settling a member writes its metadata when `metadata` is given, then calls
+    `settle(member)`; it runs for every member after the swaps, and for the members already
+    swapped when the set fails part-way. A failure while swapping raises BinarySetCoherenceError
+    naming what was promoted. A failure to settle names the members whose stamps are unsettled.
+    Either way the swapped members are recorded, and the original exception is the __cause__.
+
+    A ghook member's runtime stamp is the document its staged copy prints for --runtime-stamp.
+    It is captured before the guard, and a copy that cannot print one is refused before any swap.
+    With `allow_unstamped_ghook`, such a copy is promoted and no stamp is written for it.
+    """
     ordered = _validate_candidates(candidates)
     identities = {
         member: probe_set_member_identity(candidates[member], member) for member in ordered
@@ -135,6 +168,7 @@ def promote_workspace_binary_set(
     # Read before anything is replaced, so a commit landing mid-promotion is not recorded.
     source_commit = _head_commit(workspace_root)
     promoted: list[str] = []
+    runtime_stamps: dict[str, bytes] = {}
     try:
         with ExitStack() as locks:
             for member in ordered:
@@ -148,29 +182,179 @@ def promote_workspace_binary_set(
                 workspace_root=workspace_root,
                 source_identities=source_identities,
             )
-            with promotion_guard(bin_dir, MANAGED_BINARIES):
-                _require_promotable(releases, ordered, bin_dir=bin_dir)
-                for member in ordered:
-                    bin_freshness_promotion.stage_and_promote_binary_file(
-                        candidates[member],
-                        destination=bin_dir / native_bin_name(member),
-                        prepare_staged=_codesign_workspace_binary,
-                        workspace_root=workspace_root,
-                        identity=releases[member],
+            with ExitStack() as staging:
+                # Every member is staged, codesigned and probed before the store lock is taken.
+                staged = {
+                    member: staging.enter_context(
+                        bin_freshness_promotion.staged_candidate(
+                            candidates[member],
+                            bin_dir=bin_dir,
+                            binary_name=native_bin_name(member),
+                            prepare_staged=_member_preparer(
+                                member,
+                                prepare_staged,
+                                releases=releases,
+                                runtime_stamps=runtime_stamps,
+                                allow_unstamped_ghook=allow_unstamped_ghook,
+                            ),
+                        )
                     )
-                    promoted.append(member)
-                if complete_set:
-                    if metadata is not None:
-                        _write_promotion_metadata(bin_dir, metadata)
-                    _write_identity_stamp(bin_dir, identities[SET_MEMBERS[0]])
-                _record_promotion(bin_dir, promoted, source_commit)
+                    for member in ordered
+                }
+                versions = _staged_versions(staged) if complete_set and metadata is not None else {}
+                with promotion_guard(bin_dir, MANAGED_BINARIES):
+                    try:
+                        _require_promotable(releases, ordered, bin_dir=bin_dir)
+                        try:
+                            for member in ordered:
+                                bin_freshness_promotion.swap_staged_binary(
+                                    staged[member],
+                                    bin_dir=bin_dir,
+                                    binary_name=native_bin_name(member),
+                                    identity=releases[member],
+                                )
+                                promoted.append(member)
+                        except Exception as swap_error:
+                            # The members already in place are settled before the set fails.
+                            _settle_promoted(
+                                bin_dir,
+                                promoted,
+                                metadata=metadata,
+                                versions=versions,
+                                settle=settle,
+                                swap_error=swap_error,
+                            )
+                            raise
+                        try:
+                            _settle_promoted(
+                                bin_dir,
+                                promoted,
+                                metadata=metadata,
+                                versions=versions,
+                                settle=settle,
+                            )
+                            if complete_set:
+                                _write_identity_stamp(bin_dir, identities[SET_MEMBERS[0]])
+                        finally:
+                            # The settle may copy or remove the runtime stamp, so the captured
+                            # document is written after it, and also when the settle fails:
+                            # the swapped ghook is the one the stamp must describe.
+                            if GHOOK in promoted and GHOOK in runtime_stamps:
+                                write_atomic_bytes(
+                                    bin_dir / RUNTIME_STAMP_NAME,
+                                    runtime_stamps[GHOOK],
+                                    mode=0o644,
+                                )
+                        if after_swap is not None:
+                            after_swap()
+                    finally:
+                        # Recorded whatever happened after the swaps: the members already in
+                        # place are installed, so the record must say so.
+                        _record_promotion(bin_dir, promoted, source_commit)
     except Exception as exc:
+        if promoted and len(promoted) == len(ordered):
+            subject = f"workspace binary set (promoted: {_member_list(promoted)})"
+            raise BinarySetCoherenceError(
+                bin_freshness_promotion.stamps_not_settled_message(subject, exc),
+                promoted=promoted,
+            ) from exc
         unpromoted = [member for member in ordered if member not in promoted]
         raise BinarySetCoherenceError(
             "workspace binary set promotion failed; "
             f"promoted: {_member_list(promoted)}; "
-            f"unpromoted: {_member_list(unpromoted)}; cause: {exc}"
+            f"unpromoted: {_member_list(unpromoted)}; cause: {exc}",
+            promoted=promoted,
         ) from exc
+
+
+def _member_preparer(
+    member: str,
+    prepare_staged: Mapping[str, Callable[[Path], None]] | None,
+    *,
+    releases: Mapping[str, BinaryReleaseIdentity],
+    runtime_stamps: dict[str, bytes],
+    allow_unstamped_ghook: bool,
+) -> Callable[[Path], None]:
+    """Codesign a member's staged copy, capture a ghook's stamp, then run the caller's hook.
+
+    The stamp is captured from the signed copy, because that copy is the one swapped in.
+    """
+    extra = prepare_staged.get(member) if prepare_staged is not None else None
+
+    def prepare(staged: Path) -> None:
+        _codesign_workspace_binary(staged)
+        if member == GHOOK:
+            try:
+                runtime_stamps[member] = _capture_runtime_stamp(
+                    staged, version=releases[member].version
+                )
+            except RuntimeStampUnsupportedError:
+                if not allow_unstamped_ghook:
+                    raise
+        if extra is not None:
+            extra(staged)
+
+    return prepare
+
+
+def _capture_runtime_stamp(candidate: Path, *, version: str) -> bytes:
+    """The runtime stamp a staged ghook prints for --runtime-stamp, exactly as it is printed.
+
+    The stamp must name the version being installed. A copy that exits non-zero or prints no
+    stamp document raises RuntimeStampUnsupportedError; its --version is never run instead.
+    """
+    try:
+        result = spawn.run(
+            [str(candidate), "--runtime-stamp"],
+            check=False,
+            capture_output=True,
+            timeout=_PROBE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise BinarySetCoherenceError(
+            f"ghook --runtime-stamp timed out after {_PROBE_TIMEOUT_SECONDS} seconds"
+        ) from exc
+    except OSError as exc:
+        raise BinarySetCoherenceError(f"failed to launch ghook --runtime-stamp: {exc}") from exc
+    stamp_version = _stamp_version(result.stdout) if result.returncode == 0 else None
+    if stamp_version is None:
+        raise RuntimeStampUnsupportedError(
+            f"ghook does not support --runtime-stamp (exit {result.returncode}); "
+            "rebuild ghook from this workspace"
+        )
+    if not _same_version(stamp_version, version):
+        raise BinarySetCoherenceError(
+            f"ghook --runtime-stamp reports {stamp_version}, but the candidate reports {version}"
+        )
+    return bytes(result.stdout)
+
+
+def _stamp_version(payload: bytes) -> str | None:
+    """The ghook_version of a runtime stamp document, or None when payload is not one."""
+    try:
+        parsed: object = json.loads(payload)
+    except ValueError:
+        return None
+    if not isinstance(parsed, dict) or set(parsed) != _RUNTIME_STAMP_KEYS:
+        return None
+    version = parsed["ghook_version"]
+    return version if isinstance(version, str) else None
+
+
+def _same_version(reported: str, version: str) -> bool:
+    """Whether a stamp's version matches the candidate's, ignoring any -pre or +build suffix."""
+    return reported == version or reported.startswith((f"{version}-", f"{version}+"))
+
+
+def _staged_versions(staged: Mapping[str, Path]) -> dict[str, str]:
+    """Each staged member's reported version, probed before the swap so the stamps match it."""
+    versions: dict[str, str] = {}
+    for member, path in staged.items():
+        version = probe_native_bin_version(path)
+        if version is None:
+            raise BinarySetCoherenceError(f"{member} did not report a version")
+        versions[member] = version
+    return versions
 
 
 def _require_promotable(
@@ -237,27 +421,53 @@ def _codesign_workspace_binary(binary: Path) -> None:
         raise BinarySetCoherenceError(f"{binary.name} ad-hoc signing failed: {detail}")
 
 
-def _write_promotion_metadata(bin_dir: Path, metadata: WorkspacePromotionMetadata) -> None:
+def _settle_promoted(
+    bin_dir: Path,
+    promoted: Sequence[str],
+    *,
+    metadata: WorkspacePromotionMetadata | None,
+    versions: Mapping[str, str],
+    settle: Callable[[str], None] | None,
+    swap_error: Exception | None = None,
+) -> None:
+    """Settle each promoted member in order; a failure names the members left unsettled.
+
+    A member's new bytes are already in place, so a failure here never undoes its swap. When the
+    set failed part-way, `swap_error` is named too, so the cause of that failure is not lost.
+    """
+    for index, member in enumerate(promoted):
+        try:
+            if metadata is not None:
+                _write_member_metadata(bin_dir, metadata, member, versions[member])
+            if settle is not None:
+                settle(member)
+        except Exception as exc:
+            note = f"; set failed first: {swap_error}" if swap_error is not None else ""
+            raise BinarySetCoherenceError(
+                f"stamps unsettled for: {_member_list(list(promoted[index:]))}{note}; cause: {exc}",
+                promoted=promoted,
+            ) from exc
+
+
+def _write_member_metadata(
+    bin_dir: Path, metadata: WorkspacePromotionMetadata, member: str, version: str
+) -> None:
+    """Write one member's stamp and install sidecar; the version was probed before the swap."""
     installed_at = datetime.now(UTC).isoformat()
-    specs = {spec.name: spec for spec in managed_bin_specs()}
-    for member in SET_MEMBERS:
-        version = probe_native_bin_version(bin_dir / native_bin_name(member))
-        if version is None:
-            raise BinarySetCoherenceError(f"installed {member} did not report a version")
-        spec = specs[member]
-        sidecar = {
-            "install_method": metadata.install_method,
-            "install_source_url": None,
-            "installed_version": version,
-            "installed_at": installed_at,
-            "target": metadata.target,
-        }
-        _write_atomic_bytes(bin_dir / spec.stamp_name, f"{version}\n".encode(), mode=0o644)
-        _write_atomic_bytes(
-            bin_dir / spec.sidecar_name,
-            (json.dumps(sidecar, sort_keys=True) + "\n").encode(),
-            mode=0o644,
-        )
+    spec = {candidate.name: candidate for candidate in managed_bin_specs()}[member]
+    sidecar = {
+        "install_method": metadata.install_method,
+        "install_source_url": None,
+        "installed_version": version,
+        "installed_at": installed_at,
+        "target": metadata.target,
+    }
+    write_atomic_bytes(bin_dir / spec.stamp_name, f"{version}\n".encode(), mode=0o644)
+    write_atomic_bytes(
+        bin_dir / spec.sidecar_name,
+        (json.dumps(sidecar, sort_keys=True) + "\n").encode(),
+        mode=0o644,
+    )
 
 
 def _validate_candidates(candidates: Mapping[str, Path]) -> list[str]:
@@ -330,10 +540,11 @@ def _installed_identity(bin_dir: Path) -> dict[str, int | str] | None:
 
 
 def _write_identity_stamp(bin_dir: Path, identity: dict[str, int | str]) -> None:
-    _write_atomic_bytes(bin_dir / IDENTITY_STAMP_NAME, stamp_bytes(identity), mode=0o644)
+    write_atomic_bytes(bin_dir / IDENTITY_STAMP_NAME, stamp_bytes(identity), mode=0o644)
 
 
-def _write_atomic_bytes(path: Path, content: bytes, *, mode: int) -> None:
+def write_atomic_bytes(path: Path, content: bytes, *, mode: int) -> None:
+    """Replace path with content in one rename, so no reader sees a truncated file."""
     fd, temporary = tempfile.mkstemp(
         dir=str(path.parent),
         prefix=f".{path.name}-",

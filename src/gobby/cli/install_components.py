@@ -21,6 +21,8 @@ from psycopg_pool import PoolTimeout
 
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.bootstrap_io import bootstrap_path
+from gobby.install.bin_freshness_promotion import BinaryStampsNotSettledError
+from gobby.install.bin_generations import promotion_guard
 from gobby.install.bin_release_identity import BinaryReleaseVersionError
 from gobby.install.bin_set_coherence import BinarySetCoherenceError
 from gobby.paths import get_gobby_home
@@ -238,20 +240,32 @@ def promote_client_binary(name: str, bin_dir: Path) -> dict[str, Any]:
         "gmcp": install_setup._install_gmcp_from_submodule,
         "gterm": install_setup._install_gterm_from_submodule,
     }[name]
+    write_stamp = {
+        "gclient": install_setup._write_gclient_version_stamp,
+        "gmcp": install_setup._write_gmcp_version_stamp,
+        "gterm": install_setup._write_gterm_version_stamp,
+    }[name]
+
+    def settle() -> None:
+        # The stamp is written under the store lock, in the same hold as the swap.
+        write_stamp(bin_dir, _workspace_client_version(name))
+
     try:
-        outcome = installer(bin_dir)
+        outcome = installer(bin_dir, after_swap=settle)
     except (BinarySetCoherenceError, BinaryReleaseVersionError) as exc:
         raise click.ClickException(str(exc)) from exc
-    if outcome:
-        version = _workspace_client_version(name)
-        if name == "gclient":
-            install_setup._write_gclient_version_stamp(bin_dir, version)
-        elif name == "gmcp":
-            install_setup._write_gmcp_version_stamp(bin_dir, version)
-            if outcome == "promoted":
-                write_daemon_start_command(get_gobby_home(), daemon_start_argv())
-        else:
-            install_setup._write_gterm_version_stamp(bin_dir, version)
+    except BinaryStampsNotSettledError as exc:
+        # The binary was replaced but its stamps were not; the message tells the operator to
+        # rerun, which settles them through the current-binary path.
+        message = str(exc)
+        click.echo(f"Failed: {message}", err=True)
+        return {"success": False, "outcome": None, "error": message}
+    if outcome == "current":
+        # No swap happened, so the stamp takes the store lock itself.
+        with promotion_guard(bin_dir, []):
+            write_stamp(bin_dir, _workspace_client_version(name))
+    if name == "gmcp" and outcome == "promoted":
+        write_daemon_start_command(get_gobby_home(), daemon_start_argv())
     return {"success": bool(outcome), "outcome": outcome}
 
 

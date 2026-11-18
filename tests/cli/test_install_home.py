@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import inspect
 import json
 import os
 import subprocess
+from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType
@@ -119,8 +121,19 @@ def test_binary_installer_builds_in_configured_home(relocated_home: Path, binary
     )
     build = getattr(module, build_name)
 
-    def build_stub(bin_dir: Path) -> bool:
-        (bin_dir / binary).write_bytes(b"temporary test binary")
+    def build_stub(
+        bin_dir: Path,
+        *,
+        prepare_staged: Callable[[Path], None] | None = None,
+        after_swap: Callable[[], None] | None = None,
+    ) -> bool:
+        staged = bin_dir / binary
+        staged.write_bytes(b"temporary test binary")
+        # Mirror the real swap: staging hook, then the post-swap hook.
+        if prepare_staged is not None:
+            prepare_staged(staged)
+        if after_swap is not None:
+            after_swap()
         return True
 
     build.side_effect = build_stub
@@ -131,7 +144,12 @@ def test_binary_installer_builds_in_configured_home(relocated_home: Path, binary
     ):
         result = getattr(implementation, f"install_{binary}")(module)
     assert result["installed"] is True
-    build.assert_called_once_with(relocated_home / "bin")
+    build.assert_called_once()
+    args, kwargs = build.call_args
+    assert args == (relocated_home / "bin",)
+    # The installer's own staging and post-swap closures, not any stand-in for them.
+    assert inspect.isfunction(kwargs["prepare_staged"])
+    assert inspect.isfunction(kwargs["after_swap"])
     assert (relocated_home / "bin" / binary).is_file()
     assert not (Path.home() / ".gobby").exists()
 

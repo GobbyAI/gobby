@@ -11,7 +11,7 @@ from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import click
 import pytest
@@ -47,7 +47,7 @@ def test_component_release_refusal_is_a_cli_error(
     destination.write_bytes(b"installed")
     remedy = f"{component}: changed source; bump its patch version before promotion"
 
-    def refuse(_bin_dir: Path) -> str:
+    def refuse(_bin_dir: Path, **_kwargs: object) -> str:
         raise error_type(remedy)
 
     monkeypatch.setattr(f"gobby.cli.install_setup._install_{component}_from_submodule", refuse)
@@ -111,14 +111,18 @@ def test_binary_components_promote_while_a_daemon_singleton_is_live(
 ) -> None:
     promoted: list[tuple[str, Path]] = []
 
-    def install_gclient(bin_dir: Path) -> str:
+    def install_gclient(bin_dir: Path, *, after_swap: Callable[[], None] | None = None) -> str:
         promoted.append(("gclient", bin_dir))
         (bin_dir / "gclient").write_bytes(b"gclient")
+        if after_swap is not None:
+            after_swap()
         return "gclient-sha"
 
-    def install_gterm(bin_dir: Path) -> str:
+    def install_gterm(bin_dir: Path, *, after_swap: Callable[[], None] | None = None) -> str:
         promoted.append(("gterm", bin_dir))
         (bin_dir / "gterm").write_bytes(b"gterm")
+        if after_swap is not None:
+            after_swap()
         return "gterm-sha"
 
     def claim_singleton() -> None:
@@ -171,12 +175,19 @@ def test_component_install_refreshes_crate_version_stamp_only_on_success(
     binary.write_bytes(b"binary")
     stamp = bin_dir / f".{name}-version"
     stamp.write_text("0.0.1\n")
-    installer = MagicMock(return_value=outcome)
+
+    def install(_bin_dir: Path, *, after_swap: Callable[[], None] | None = None) -> str | None:
+        # Mirror the real installer: the post-swap hook runs only after a promotion.
+        if outcome == "promoted" and after_swap is not None:
+            after_swap()
+        return outcome
+
+    installer = MagicMock(side_effect=install)
     monkeypatch.setattr(f"gobby.cli.install_setup._install_{name}_from_submodule", installer)
 
     result = install_components.promote_client_binary(name, bin_dir)
 
-    installer.assert_called_once_with(bin_dir)
+    installer.assert_called_once_with(bin_dir, after_swap=ANY)
     assert result == {"success": outcome is not None, "outcome": outcome}
     expected = version if outcome else "0.0.1"
     assert stamp.read_text().strip() == expected
@@ -326,3 +337,118 @@ def test_submodule_install_ad_hoc_signs_the_staged_binary(
 
     assert result == "promoted"
     assert "Signature=adhoc" in _signature_text(dest_dir / binary_name)
+
+
+_CLIENT_CRATE_DIRS = {"gclient": "gclient", "gmcp": "gmcp", "gterm": "gterminal"}
+_CLIENT_MODULES = {
+    "gclient": "gobby.cli.install_setup_gclient",
+    "gmcp": "gobby.cli.install_setup_gmcp",
+    "gterm": "gobby.cli.install_setup_gterm",
+}
+_BUILT_BYTES = b"built-workspace-binary"
+_INSTALLED_BYTES = b"installed-binary"
+_SETTLE_CAUSE = "disk full"
+
+
+def _settle_failure_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str) -> Path:
+    """Run the real submodule install of a client whose first post-swap stamp write fails.
+
+    The build, the cargo lookup, the version probes and the target platform are faked. The
+    swap, the receipt, the source hash and the store lock are the real promotion code, so the
+    stamp failure reaches the installer along the path a real one takes. Returns the bin dir.
+    """
+    crate_dir = _CLIENT_CRATE_DIRS[name]
+    workspace = tmp_path / "workspace"
+    manifest = workspace / "crates" / crate_dir / "Cargo.toml"
+    manifest.parent.mkdir(parents=True)
+    (workspace / "Cargo.toml").write_text("[workspace]\n")
+    manifest.write_text(f'[package]\nname = "gobby-{crate_dir}"\nversion = "1.0.0"\n')
+    release_dir = workspace / "target" / "release"
+    release_dir.mkdir(parents=True)
+    (release_dir / name).write_bytes(_BUILT_BYTES)
+    home = tmp_path / ".gobby"
+    bin_dir = home / "bin"
+    bin_dir.mkdir(parents=True)
+    (bin_dir / name).write_bytes(_INSTALLED_BYTES)
+    source_file = str(workspace / "src" / "gobby" / "cli" / "installer.py")
+
+    def run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if args and args[0] == "cargo":
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        if len(args) == 2 and args[1] == "--version":
+            built = Path(args[0]).read_bytes() == _BUILT_BYTES
+            version = "1.0.0" if built else "0.0.1"
+            return subprocess.CompletedProcess(args, 0, stdout=f"{name} {version}\n", stderr="")
+        return _REAL_SUBPROCESS_RUN(args, **kwargs)
+
+    real_write_stamp = getattr(install_setup, f"_write_{name}_version_stamp")
+    failed: list[bool] = []
+
+    def write_stamp(bin_dir_arg: Path, version: str) -> None:
+        # The first stamp write after the swap fails; every later write is the real one.
+        if not failed:
+            failed.append(True)
+            raise OSError(_SETTLE_CAUSE)
+        real_write_stamp(bin_dir_arg, version)
+
+    module_name = _CLIENT_MODULES[name]
+    monkeypatch.setattr(install_setup, f"_write_{name}_version_stamp", write_stamp)
+    monkeypatch.setattr(f"{module_name}.get_gobby_home", lambda: home)
+    monkeypatch.setattr(f"{module_name}.is_published", lambda _name: False)
+    monkeypatch.setattr(f"{module_name}.cargo_release_dir", lambda _root: release_dir)
+    monkeypatch.setattr(f"{module_name}.__file__", source_file)
+    monkeypatch.setattr(
+        install_components,
+        "__file__",
+        str(workspace / "src" / "gobby" / "cli" / "install_components.py"),
+    )
+    monkeypatch.setattr(install_setup, "platform", SimpleNamespace(machine=lambda: "arm64"))
+    monkeypatch.setattr("gobby.cli.install_setup.sys.platform", "darwin")
+    monkeypatch.setattr(
+        "gobby.cli.install_setup.shutil.which",
+        lambda cmd, *_args, **_kwargs: f"/usr/bin/{cmd}" if cmd == "cargo" else None,
+    )
+    monkeypatch.setattr("gobby.cli.install_setup.subprocess.run", run)
+    monkeypatch.setattr(
+        "gobby.install.bin_release_identity.workspace_source_identity",
+        lambda *_args, **_kwargs: "test-source",
+    )
+    if name == "gterm":
+        monkeypatch.setattr(f"{module_name}._zig_016_available", lambda _module: True)
+    return bin_dir
+
+
+def _settle_failure_message(name: str) -> str:
+    return f"{name} was installed but its stamps were not settled; rerun the install; cause: {_SETTLE_CAUSE}"
+
+
+@pytest.mark.parametrize("name", ["gclient", "gmcp", "gterm"])
+def test_client_install_reports_a_settle_failure_after_the_swap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
+) -> None:
+    """A failed post-swap stamp is not an unbuilt client, and no outgoing stamp is written."""
+    bin_dir = _settle_failure_fixture(monkeypatch, tmp_path, name)
+    installer = {
+        "gclient": install_setup._install_gclient,
+        "gmcp": install_setup._install_gmcp,
+        "gterm": install_setup._install_gterm,
+    }[name]
+
+    result = installer(force=False)
+
+    assert result == {"installed": False, "skipped": False, "reason": _settle_failure_message(name)}
+    assert (bin_dir / name).read_bytes() == _BUILT_BYTES
+    assert not (bin_dir / f".{name}-version").exists()
+
+
+@pytest.mark.parametrize("name", ["gclient", "gmcp", "gterm"])
+def test_component_reports_a_settle_failure_as_a_failure_carrying_the_message(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str
+) -> None:
+    bin_dir = _settle_failure_fixture(monkeypatch, tmp_path, name)
+
+    result = install_components.promote_client_binary(name, bin_dir)
+
+    assert result == {"success": False, "outcome": None, "error": _settle_failure_message(name)}
+    assert (bin_dir / name).read_bytes() == _BUILT_BYTES
+    assert not (bin_dir / f".{name}-version").exists()

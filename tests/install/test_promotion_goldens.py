@@ -71,10 +71,17 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def _binary(path: Path, version: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(IDENTITY, separators=(",", ":"), sort_keys=True)
+    stamp = json.dumps(
+        {"ghook_version": version, "response_capability": "hook-response.v1", "schema_version": 1},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
     path.write_text(
         '#!/bin/sh\nif [ "$1" = "--version" ]; then\n'
-        f"printf '%s\\n' '{path.name} {version}'\nelse\n"
-        f"printf '%s\\n' '{payload}'\nfi\n"
+        f"printf '%s\\n' '{path.name} {version}'\n"
+        'elif [ "$1" = "--runtime-stamp" ]; then\n'
+        f"printf '%s\\n' '{stamp}'\n"
+        f"else\nprintf '%s\\n' '{payload}'\nfi\n"
     )
     path.chmod(0o755)
     return path
@@ -123,12 +130,22 @@ def test_complete_set_promotion_writes_exactly_these_files(workspace: Path, tmp_
     tree = _tree(bin_dir)
     assert sorted(tree) == sorted(
         [
+            ".ghook-runtime.json",
             ".gdaemon-schema-identity.json",
             *(f".{name}-install.json" for name in SET_MEMBERS),
             *(f".{name}-release-identity.json" for name in SET_MEMBERS),
             *(f".{name}-version" for name in SET_MEMBERS),
             *SET_MEMBERS,
         ]
+    )
+    stamp = {
+        "ghook_version": "1.0.1",
+        "response_capability": "hook-response.v1",
+        "schema_version": 1,
+    }
+    assert tree[".ghook-runtime.json"] == (
+        0o644,
+        (json.dumps(stamp, separators=(",", ":"), sort_keys=True) + "\n").encode(),
     )
     for name in SET_MEMBERS:
         assert (bin_dir / name).stat().st_ino != inodes[name]

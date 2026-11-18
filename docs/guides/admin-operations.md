@@ -422,11 +422,17 @@ uv run gobby rollback hold clear [--path CHECKOUT]
 
 The landing freeze is turned on or off by the `set_landing_freeze` tool (`on`, `reason`,
 and an optional `task_id`). `task_id` binds an on freeze to a task; the binding needs
-that task's claim and is accepted only with `on=true`. A bound freeze refuses landings
+that task's claim and is accepted only with `on=true`. A bound freeze refuses new landings
 for everyone except its claim holder, and only that holder may change it. An unbound
-freeze refuses every landing. `hold clear` also clears a freeze that is on and bound to
+freeze refuses every new landing. A freeze governs ref movement only: a candidate that is
+already landed still reports landed while it is set. `hold clear` also clears a freeze that is on and bound to
 a task in the checkout at `--path` (default: the current directory), even when no hold
 is stored. An unbound freeze is left alone.
+
+`hold clear` is operator-only. It refuses a spawned seat before it clears anything, and it
+refuses a caller with no spawn marker that cannot read the operator's bootstrap credential,
+the same condition `rollback restore` applies. The refusal message begins with
+`spawned_agent_refused`, and the hold and any bound freeze stay in place.
 
 When the daemon is running, `gobby hub-backup` applies cutover's stop admissions
 (protected cron runs and unresolved handoffs) before it writes anything or stops the
