@@ -361,7 +361,7 @@ def test_raw_interrupts_and_edits_invalidate_composer_content(payload: str, held
         ledger.observe_write("t1", origin="daemon", kind="text", payload="continue")
         assert ledger.read("t1").holds("continue")
     ledger.observe_write("t1", origin="operator", kind="input", payload=payload)
-    assert ledger.read("t1") == _DRAFT
+    assert ledger.read("t1") == (_EMPTY if payload == "\x7f" and not held else _DRAFT)
     assert not ledger.read("t1").holds("continue")
 
 
@@ -376,7 +376,7 @@ def test_cursor_input_marks_a_clean_composer_draft(origin: WriteOrigin, payload:
     assert ledger.read("t1") == _DRAFT
 
 
-@pytest.mark.parametrize("payload", ["\x1b[A", "\x15", "\x7f"])
+@pytest.mark.parametrize("payload", ["\x1b[A", "\x15"])
 def test_cursor_or_control_draft_holds_no_typed_text(payload: str) -> None:
     ledger = _tracked()
     ledger.observe_write("t1", origin="operator", kind="input", payload=payload)
@@ -416,7 +416,7 @@ def test_bound_read_names_a_cursor_draft_with_its_reason() -> None:
         bind_composer_ledger(None)
 
 
-@pytest.mark.parametrize("payload", ["\x15", "\x7f", "\x1b[3~"])
+@pytest.mark.parametrize("payload", ["\x15", "\x1b[3~"])
 def test_control_only_input_marks_a_clean_composer_draft(payload: str) -> None:
     ledger = _tracked()
     ledger.observe_write("t1", origin="operator", kind="input", payload=payload)
@@ -432,7 +432,7 @@ def test_operator_enter_after_a_draft_confirms_empty_on_record_submit() -> None:
     assert ledger.read("t1") == _EMPTY
 
 
-@pytest.mark.parametrize("payload", ["tab", "backspace", "delete", "ctrl_u", "kp0", "kpenter"])
+@pytest.mark.parametrize("payload", ["tab", "delete", "ctrl_u", "kp0", "kpenter"])
 def test_named_editing_keys_remain_human_input(payload: str) -> None:
     ledger = _tracked()
     ledger.observe_write("t1", origin="operator", kind="key", payload=payload)

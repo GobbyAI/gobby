@@ -267,6 +267,21 @@ async def test_dispatch_records_the_write_origin_in_the_composer_ledger(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("delivered", [True, False])
+async def test_operator_type_erase_requires_delivery_confirmation(delivered: bool) -> None:
+    coordinator, runtime, _store, terminal = _counting_coordinator()
+    terminal_id = terminal.id
+    generation = await _grant(coordinator, terminal_id)
+    ledger = coordinator.composer_ledger
+    ledger.release(terminal_id)
+    await coordinator.write(_operator_input(terminal, generation, 1, payload="draft-probe"))
+    assert ledger.read(terminal_id) == LedgerRead("draft")
+    runtime.outcome = Delivered() if delivered else IndeterminateWrite()
+    await coordinator.write(_operator_input(terminal, generation, 2, payload="\x7f" * 11))
+    assert ledger.read(terminal_id) == LedgerRead("empty" if delivered else "draft")
+
+
+@pytest.mark.asyncio
 async def test_attention_and_lease_writes_serialize() -> None:
     hold = asyncio.Event()
     runtime = FakeRuntime(backend="native", hold=hold)

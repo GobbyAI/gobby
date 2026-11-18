@@ -21,7 +21,7 @@ from gobby.hub.machine_routing import is_local_machine
 from gobby.hub.node_client import NodeCommandError
 from gobby.hub.remote_terminal import NodeTerminalWriteError
 from gobby.storage.terminals import Terminal, UnresolvedWriteCapacityError
-from gobby.terminals.composer_ledger import ComposerLedger
+from gobby.terminals.composer_ledger import ComposerLedger, WriteReceipt
 from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.native_runtime import (
@@ -745,22 +745,26 @@ class WriteCoordinator:
         terminal.automatic_write_quarantine_action_key = None
         return True
 
-    def _record_dispatch(self, request: WriteRequest) -> None:
+    def _record_dispatch(self, request: WriteRequest) -> WriteReceipt | None:
         # Recorded before dispatch: an indeterminate write may still have landed.
-        self.composer_ledger.observe_write(
+        return self.composer_ledger.observe_write(
             request.terminal_id,
             origin=request.origin,
             kind=request.kind,
             payload=request.payload,
             submit=request.submit,
+            confirmed=False,
         )
 
     async def _dispatch_remote(self, request: WriteRequest, terminal: Terminal) -> WriteOutcome:
         # The node does not vet key names; refuse invalid ones before dispatch.
         if request.kind == "key" and not is_named_key(request.payload):
             raise TerminalWriteError(stage="none")
-        self._record_dispatch(request)
-        return await remote_terminal.write(terminal, request)
+        receipt = self._record_dispatch(request)
+        outcome = await remote_terminal.write(terminal, request)
+        if isinstance(outcome, Delivered):
+            self.composer_ledger.confirm_write(receipt)
+        return outcome
 
     def _lease_vouches(self, request: WriteRequest) -> bool:
         """True when this write rides an operator attachment the bound caller created.
@@ -804,18 +808,19 @@ class WriteCoordinator:
             # KeyError subclass propagate would leave the latch persisted and
             # suppress every later automatic write to this terminal.
             raise RuntimeUnavailableError(terminal.backend) from exc
-        self._record_dispatch(request)
+        receipt = self._record_dispatch(request)
         try:
             if request.kind == "text":
-                return await runtime.write_text(terminal, request.payload, request.submit)
-            if request.kind == "key":
+                outcome = await runtime.write_text(terminal, request.payload, request.submit)
+            elif request.kind == "key":
                 if not is_named_key(request.payload):
                     raise TerminalWriteError(stage="none")
-                return await runtime.write_key(terminal, request.payload)
-            if request.kind == "input":
+                outcome = await runtime.write_key(terminal, request.payload)
+            elif request.kind == "input":
                 data = request.payload.encode("utf-8")
-                return await runtime.write_input(terminal, data)
-            return await runtime.write_paste(terminal, request.payload)
+                outcome = await runtime.write_input(terminal, data)
+            else:
+                outcome = await runtime.write_paste(terminal, request.payload)
         except HostCommandError as exc:
             # A typed host refusal is a write outcome, and the host reports the
             # stage it reached. Left unconverted it matches no caller's
@@ -825,6 +830,9 @@ class WriteCoordinator:
             if exc.stage == "partial":
                 raise TerminalWriteError(stage="partial") from exc
             raise TerminalWriteError(stage="none") from exc
+        if isinstance(outcome, Delivered):
+            self.composer_ledger.confirm_write(receipt)
+        return outcome
 
 
 async def _require_machine_owned_write(machine_id: str | None) -> None:

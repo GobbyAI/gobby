@@ -30,10 +30,10 @@
 13 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*2 text/panel_bg*27 surface0/panel_bg*1 text/panel_bg*3 accent/panel_bg*1
 14 |│                                                          ││       │ Tiled           │└───────────────────────────┘   │|
 14 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*30 text/panel_bg*3 accent/panel_bg*1
-15 |│                                                          ││       │ New grid…       │                                │|
-15 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 text/panel_bg*32 accent/panel_bg*1
-16 |│                                                          ││       └─────────────────┘                                │|
-16 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*19 text/panel_bg*32 accent/panel_bg*1
+15 |│                                                          ││       └─────────────────┘                                │|
+15 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*7 surface0/panel_bg*19 text/panel_bg*32 accent/panel_bg*1
+16 |│                                                          ││                                                          │|
+16 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 17 |│                                                          ││                                                          │|
 17 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 18 |│                                                          ││                                                          │|

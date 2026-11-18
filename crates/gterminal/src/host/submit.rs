@@ -14,7 +14,7 @@ pub(super) fn presses_enter(bytes: &[u8]) -> bool {
 }
 
 /// One escape sequence after its ESC: a CSI through its final byte, or an SS3 key.
-fn escape_enter(after_esc: &[u8]) -> bool {
+pub(super) fn escape_enter(after_esc: &[u8]) -> bool {
     let len = match after_esc {
         [b'[', params @ ..] => match params.iter().position(|byte| (0x40..=0x7e).contains(byte)) {
             Some(end) => end + 2,

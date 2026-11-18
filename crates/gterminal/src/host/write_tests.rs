@@ -5,6 +5,88 @@ use tokio::sync::watch;
 use tokio::time::timeout;
 
 #[cfg(feature = "vt-engine")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_native_edits_follow_pty_order_without_text() {
+    let state = state();
+    crate::host::state::insert_native_slot(&state, "typing", 24, 80).await;
+    let mut received = attach_accepting_child(&state, "typing").await;
+    let (first, _) = state
+        .attach("typing", None, RenderEncoding::SemanticFrame, 24, 80)
+        .await
+        .unwrap();
+    let (second, _) = state
+        .attach("typing", None, RenderEncoding::SemanticFrame, 24, 80)
+        .await
+        .unwrap();
+    let (_, mut events) = state.events.subscribe(None).await;
+    for _ in 0..32 {
+        let start = std::sync::Arc::new(tokio::sync::Barrier::new(3));
+        let tasks: Vec<_> = [(first, b"draft-probe".to_vec()), (second, vec![0x7f; 11])]
+            .into_iter()
+            .map(|(attachment, bytes)| {
+                let state = state.clone();
+                let start = start.clone();
+                tokio::spawn(async move {
+                    start.wait().await;
+                    state
+                        .frame_input(Some(attachment), NativeInput::Bytes(bytes))
+                        .await
+                        .unwrap();
+                })
+            })
+            .collect();
+        start.wait().await;
+        for task in tasks {
+            task.await.unwrap();
+        }
+        for _ in 0..2 {
+            let bytes = received.recv().await.unwrap();
+            let event = events.recv().await.unwrap();
+            let operation = if bytes[0] == 0x7f {
+                "backspace"
+            } else {
+                "insert"
+            };
+            assert_eq!(event["edits"], json!([{"op":operation,"count":11}]));
+            assert!(!event.to_string().contains("draft-probe"));
+        }
+    }
+}
+
+#[cfg(feature = "vt-engine")]
+#[tokio::test]
+async fn native_summary_preserves_submit_position_and_rejects_unsupported_edits() {
+    let state = state();
+    crate::host::state::insert_native_slot(&state, "typing", 24, 80).await;
+    let mut received = attach_accepting_child(&state, "typing").await;
+    let (attachment, _) = state
+        .attach("typing", None, RenderEncoding::SemanticFrame, 24, 80)
+        .await
+        .unwrap();
+    let (_, mut events) = state.events.subscribe(None).await;
+    for (bytes, expected) in [
+        (
+            &b"ab\rc\x7f"[..],
+            json!([{"op":"insert","count":2},{"op":"submit","count":1},{"op":"insert","count":1},{"op":"backspace","count":1}]),
+        ),
+        ("é".as_bytes(), Value::Null),
+        (&b"\x1b[13;1u"[..], json!([{"op":"submit","count":1}])),
+        (&b"\x1b[13;2u"[..], Value::Null),
+        (&b"\x1bO\r"[..], Value::Null),
+        (&b"\x1b[A"[..], Value::Null),
+        (&b"\x15"[..], Value::Null),
+        (&b"\x1b[200~a\x1b[201~"[..], Value::Null),
+    ] {
+        state
+            .frame_input(Some(attachment), NativeInput::Bytes(bytes.to_vec()))
+            .await
+            .unwrap();
+        assert_eq!(received.recv().await.unwrap().as_ref(), bytes);
+        assert_eq!(events.recv().await.unwrap()["edits"], expected);
+    }
+}
+
+#[cfg(feature = "vt-engine")]
 #[tokio::test]
 async fn closing_during_capture_preserves_the_explicit_refusal() {
     let state = state();

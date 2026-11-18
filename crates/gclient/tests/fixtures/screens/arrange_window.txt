@@ -24,10 +24,10 @@
 10 : overlay0/panel_bg*1 text/unfocused*39 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 11 |│                                       │ Tiled           │││                                                          │|
 11 : overlay0/panel_bg*1 text/unfocused*39 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-12 |│                                       │ New grid…       │││                                                          │|
-12 : overlay0/panel_bg*1 text/unfocused*39 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-13 |│                                       └─────────────────┘││                                                          │|
-13 : overlay0/panel_bg*1 text/unfocused*39 surface0/panel_bg*19 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+12 |│                                       └─────────────────┘││                                                          │|
+12 : overlay0/panel_bg*1 text/unfocused*39 surface0/panel_bg*19 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+13 |│                                                          ││                                                          │|
+13 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 14 |│                                                          ││                                                          │|
 14 : overlay0/panel_bg*1 text/unfocused*58 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 15 |│                                                          ││                                                          │|

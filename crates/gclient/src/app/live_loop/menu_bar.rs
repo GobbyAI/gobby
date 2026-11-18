@@ -24,6 +24,7 @@ pub fn menu_bar_items<W: WorkspaceView>(
         MenuBarMenu::File => vec![
             act("New terminal", Action::NewTerminal),
             act("New tab", Action::NewTab),
+            item("New grid...", MenuAction::OpenNewGrid),
             act("New project…", Action::NewProject),
             act("Open project…", Action::OpenProject),
             enabled_if(

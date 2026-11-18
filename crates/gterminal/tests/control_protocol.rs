@@ -6,7 +6,7 @@ use crate::{embed_support, host_support};
 
 use host_support::{
     candidate_script, committed_pane, connect, control, gterm_bin, held_probe, host_upgrade,
-    pane_text, recv_json, recv_json_within, rpc, send_held_upgrade, send_json,
+    pane_snapshot, pane_text, recv_json, recv_json_within, rpc, send_held_upgrade, send_json,
     send_json_without_id, send_upgrade, spawn_host, temp_socket_dir, wait_exit, wait_outcome,
     wait_socket, wait_until_host, write_text, write_token, CONTROL_SOCKET,
 };
@@ -697,20 +697,10 @@ fn control_surface_round_trip() {
     let resized = recv_json(&mut stream);
     assert_eq!(resized["ok"], true, "{resized}");
 
-    send_json(
-        &mut stream,
-        &json!({
-            "method": "snapshot",
-            "id": "s1",
-            "host_terminal_id": host_terminal_id,
-            "mode": "text",
-            "max_bytes": 4096,
-            "max_lines": 50,
-        }),
-    );
-    let snap = recv_json(&mut stream);
-    assert_eq!(snap["ok"], true, "{snap}");
-    assert!(snap.get("truncated").is_some());
+    // Resizing an attached viewport can invalidate an in-flight capture. Use the
+    // bounded snapshot helper rather than treating that typed transient as failure.
+    let snap = pane_snapshot(&mut stream, &host_terminal_id);
+    assert!(snap.get("truncated").is_some(), "{snap}");
 
     send_json(
         &mut stream,
