@@ -27,6 +27,7 @@ from gobby.cli import (
 )
 from gobby.cli.cutover import CutoverOutcome
 from gobby.install import bin_freshness_promotion, bin_set_coherence
+from gobby.install.bin_generations import GenerationStoreError, retain_outgoing
 from gobby.install.bin_release_identity import release_identity_path
 from gobby.runner_pid_file import ProbeState
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
@@ -689,6 +690,31 @@ def test_cutover_promotes_only_stale_companions_after_the_set_goes_live(
         assert (bin_dir / f".{name}-version").read_text(encoding="utf-8") == f"{VERSION}\n"
     for name, inode in inodes.items():
         assert (bin_dir / name).stat().st_ino == inode
+
+
+def test_companion_retention_failure_is_reported_and_later_promotions_continue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root, bin_dir, artifacts, _companions_built = _live_companion_workspace(
+        tmp_path, monkeypatch, []
+    )
+    _write_stub(bin_dir / "gterm", {"stale": True}, "0.0.1")
+
+    def busy_for_gterm(directory: Path, members: list[str]) -> object:
+        if members == ["gterm"]:
+            raise GenerationStoreError("generation store is busy")
+        return retain_outgoing(directory, members)
+
+    monkeypatch.setattr("gobby.install.bin_freshness_promotion.retain_outgoing", busy_for_gterm)
+    restarted: list[bytes] = []
+
+    outcome = _run_live_cutover(root, bin_dir, restarted)
+
+    assert outcome == CutoverOutcome(
+        promoted=("gmcp",), failures={"gterm": "generation store is busy"}
+    )
+    assert restarted == [artifacts["gdaemon"].read_bytes()]
+    assert (bin_dir / "gclient").is_file()
 
 
 @pytest.mark.parametrize("name", ["gmcp", "gterm"])

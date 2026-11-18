@@ -126,6 +126,8 @@ def promote_workspace_binary_set(
     source_identities = {name: release.source_identity for name, release in releases.items()}
 
     bin_dir.mkdir(parents=True, exist_ok=True)
+    # Read before anything is replaced, so a commit landing mid-promotion is not recorded.
+    source_commit = _head_commit(workspace_root)
     promoted: list[str] = []
     try:
         with ExitStack() as locks:
@@ -161,13 +163,13 @@ def promote_workspace_binary_set(
             f"promoted: {_member_list(promoted)}; "
             f"unpromoted: {_member_list(unpromoted)}; cause: {exc}"
         ) from exc
-    _record_promotion(bin_dir, promoted, workspace_root)
+    _record_promotion(bin_dir, promoted, source_commit)
 
 
-def _record_promotion(bin_dir: Path, promoted: list[str], workspace_root: Path | None) -> None:
+def _record_promotion(bin_dir: Path, promoted: list[str], source_commit: str | None) -> None:
     """Note the promoted set with its source commit; a failure here must not undo it."""
     try:
-        record_promotion(bin_dir, promoted, source_commit=_head_commit(workspace_root))
+        record_promotion(bin_dir, promoted, source_commit=source_commit)
     except GenerationStoreError:
         logger.warning(
             "binary set was promoted but its installed record was not written", exc_info=True
