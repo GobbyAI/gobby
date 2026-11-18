@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +29,7 @@ _SEGMENT = r"[a-z0-9]+(?:-[a-z0-9]+)*"
 _ID_RE = re.compile(rf"{_SEGMENT}\.{_SEGMENT}\.{_SEGMENT}")
 _DECISION_RE = re.compile(r"#[1-9][0-9]*|\.gobby/plans/[A-Za-z0-9._-]+\.md#[A-Za-z0-9._-]+")
 _HTTP_SURFACE_RE = re.compile(r"HTTP ([A-Z]+) (/\S*)")
+_KEYED_KINDS = frozenset({"mcp", "ws", "cli"})
 
 
 class WaiverError(ValueError):
@@ -120,7 +122,28 @@ def load_waivers(
     return loaded
 
 
-def surface_matches(surface: str, method: str, path: str) -> bool:
+def surface_matches(
+    surface: str,
+    method: str = "",
+    path: str = "",
+    *,
+    kind: str = "http",
+    key: str = "",
+) -> bool:
+    """Return whether a waiver surface covers one replayed case of the given kind.
+
+    An ``http`` case uses the ``HTTP`` template rule and ignores ``key``. An ``mcp``, ``ws`` or
+    ``cli`` case matches only the exact ledger key it carries, so an HTTP surface never covers a
+    keyed case and a keyed surface never covers an HTTP case.
+    """
+    if kind == "http":
+        return _http_surface_matches(surface, method, path)
+    if kind in _KEYED_KINDS:
+        return surface == key
+    raise ValueError(f"Unknown waiver case kind {kind!r}")
+
+
+def _http_surface_matches(surface: str, method: str, path: str) -> bool:
     """Return whether an ``HTTP`` surface key, with optional ``{name}`` segments, covers a request.
 
     The method must match exactly. A ``{name}`` route segment matches one non-empty path
@@ -137,3 +160,29 @@ def surface_matches(surface: str, method: str, path: str) -> bool:
         (segment.startswith("{") and segment.endswith("}") and bool(value)) or segment == value
         for segment, value in zip(template, actual, strict=True)
     )
+
+
+def cite_waiver(
+    waivers: Mapping[str, Waiver],
+    waiver_id: str,
+    *,
+    kind: str,
+    key: str = "",
+    method: str = "",
+    path: str = "",
+) -> Waiver:
+    """Return the waiver a case cites, or raise WaiverError for an unknown id or a foreign surface.
+
+    An ``http`` case is identified by its method and path; every other kind by its exact ledger
+    key. Classification calls this before it compares answers, so a citation can never waive a
+    case it does not cover.
+    """
+    if waiver_id not in waivers:
+        raise WaiverError(f"Case cites unknown waiver {waiver_id!r}")
+    waiver = waivers[waiver_id]
+    if not surface_matches(waiver.surface, method, path, kind=kind, key=key):
+        case_surface = f"{method} {path}" if kind == "http" else key
+        raise WaiverError(
+            f"{case_surface} is not waiver {waiver_id!r}'s surface {waiver.surface!r}"
+        )
+    return waiver
