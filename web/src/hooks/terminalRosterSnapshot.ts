@@ -55,7 +55,10 @@ export interface RosterPage {
 }
 
 export function asSession(
-  row: Partial<TerminalSession> & { command?: string | null; cwd?: string | null },
+  row: Partial<TerminalSession> & {
+    command?: string | null;
+    cwd?: string | null;
+  },
 ): TerminalSession {
   const terminalId = row.terminal_id ?? "";
   return {
