@@ -1324,3 +1324,83 @@ async def test_merge_landing_replay_needs_no_retest(case: LandingCase) -> None:
     assert landed_ff_a["activation_class"] == "ui_build"
     assert (landed_foreign_b["mode"], landed_foreign_a["provenance"]) == ("ff", "unknown")
     assert landed_foreign_a["mode"] == "already_landed"
+
+
+def _granted_lander(case: LandingCase) -> str:
+    """A synthetic session whose own definition grants landing and nothing else."""
+    session = case.session("custom-lander")
+    grant_step_writes(
+        case.db,
+        session,
+        case.project_id,
+        "custom-lander",
+        ("closing",),
+        capabilities=("land_tasks",),
+    )
+    return session
+
+
+async def test_freeze_bound_to_the_claimed_task_lets_its_holder_land(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/bound.md": "holder lands"})
+    task = case.reviewed(sha)
+    assert LocalTaskManager(case.db).get_task(task.id).claimed_by_session_id == case.claimant
+    write_freeze(
+        case.repo / ".git",
+        on=True,
+        reason="release hold",
+        session_id=case.creator,
+        task_id=task.id,
+    )
+
+    result = await case.land(task, sha)
+
+    assert result["landed"] is True, result
+    assert case.git("rev-parse", "trunk") == sha
+
+
+async def test_freeze_bound_to_the_claimed_task_refuses_other_landers(case: LandingCase) -> None:
+    sha = case.candidate("lane", {"docs/bound.md": "other lander"})
+    task = case.reviewed(sha)
+    assert LocalTaskManager(case.db).get_task(task.id).claimed_by_session_id == case.claimant
+    write_freeze(
+        case.repo / ".git",
+        on=True,
+        reason="release hold",
+        session_id=case.creator,
+        task_id=task.id,
+    )
+
+    refused = await case.land(task, sha, caller=_granted_lander(case))
+
+    assert refused["landed"] is False
+    assert refused["blockers"] == ["landing_frozen"]
+    assert case.git("rev-parse", "trunk") == case.base
+
+
+@pytest.mark.parametrize("from_holder", [True, False])
+async def test_freeze_bound_to_a_task_no_session_holds_refuses_every_landing(
+    case: LandingCase, from_holder: bool
+) -> None:
+    sha = case.candidate("lane", {"docs/unheld.md": "unheld binding"})
+    task = case.reviewed(sha)
+    unheld = LocalTaskManager(case.db).create_task(
+        case.project_id,
+        "Unheld binding",
+        created_in_session_id=case.creator,
+        validation_criteria="Hold the freeze until the bound task is claimed again.",
+    )
+    assert LocalTaskManager(case.db).get_task(unheld.id).claimed_by_session_id is None
+    write_freeze(
+        case.repo / ".git",
+        on=True,
+        reason="release hold",
+        session_id=case.creator,
+        task_id=unheld.id,
+    )
+    caller = case.claimant if from_holder else _granted_lander(case)
+
+    refused = await case.land(task, sha, caller=caller)
+
+    assert refused["landed"] is False
+    assert refused["blockers"] == ["landing_frozen"]
+    assert case.git("rev-parse", "trunk") == case.base

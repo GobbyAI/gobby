@@ -683,3 +683,108 @@ def test_embedded_entry_that_names_no_file_is_refused(workspace: Path) -> None:
 
     with pytest.raises(BinaryReleaseVersionError, match="moved-away"):
         release.workspace_source_identity(workspace, "gdaemon")
+
+
+def _append_gobby_metadata(root: Path, crate: str, declaration: str) -> None:
+    manifest = root / "crates" / crate / "Cargo.toml"
+    manifest.write_text(manifest.read_text() + f"\n[package.metadata.gobby]\n{declaration}\n")
+
+
+def _remove_gobby_metadata(root: Path, crate: str, declaration: str) -> None:
+    manifest = root / "crates" / crate / "Cargo.toml"
+    manifest.write_text(
+        manifest.read_text().replace(f"\n[package.metadata.gobby]\n{declaration}\n", "")
+    )
+
+
+MALFORMED_EMBEDDED = [
+    pytest.param('embedded = "x"', id="not-a-list"),
+    pytest.param('embedded = ["../outside"]', id="parent-segment"),
+]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("declaration", MALFORMED_EMBEDDED)
+def test_candidate_malformed_embedded_declaration_is_refused(
+    workspace: Path, declaration: str
+) -> None:
+    base = _commit_all(workspace, "base")
+    _append_gobby_metadata(workspace, "gcode", declaration)
+    target = _commit_all(workspace, "candidate declares malformed embedded")
+
+    changed = _changed_paths(workspace, base, target)
+    with pytest.raises(BinaryReleaseVersionError, match="gcode: embedded"):
+        release.affected_binaries(workspace, base, target, changed)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("declaration", MALFORMED_EMBEDDED)
+def test_base_malformed_embedded_declaration_repaired_by_candidate_reports_the_binary(
+    workspace: Path, declaration: str
+) -> None:
+    _append_gobby_metadata(workspace, "gcode", declaration)
+    base = _commit_all(workspace, "base declares malformed embedded")
+    _remove_gobby_metadata(workspace, "gcode", declaration)
+    target = _commit_all(workspace, "candidate repairs embedded")
+
+    changed = _changed_paths(workspace, base, target)
+    assert changed == {"crates/gcode/Cargo.toml"}
+    assert release.affected_binaries(workspace, base, target, changed) == ["gcode"]
+
+
+@pytest.mark.unit
+def test_candidate_deleting_a_library_crate_with_its_dependency_is_not_an_embedded_read_failure(
+    workspace: Path,
+) -> None:
+    library = workspace / "crates" / "gutil"
+    (library / "src").mkdir(parents=True)
+    (library / "Cargo.toml").write_text('[package]\nname = "gutil"\nversion = "1.0.0"\n')
+    (library / "src" / "lib.rs").write_text("pub fn helper() {}\n")
+    manifest = workspace / "crates" / "gclient" / "Cargo.toml"
+    manifest.write_text(manifest.read_text() + 'gobby-util = { path = "../gutil" }\n')
+    base = _commit_all(workspace, "base")
+    shutil.rmtree(library)
+    manifest.write_text(manifest.read_text().replace('gobby-util = { path = "../gutil" }\n', ""))
+    target = _commit_all(workspace, "candidate deletes library crate")
+
+    changed = _changed_paths(workspace, base, target)
+    assert changed == {
+        "crates/gclient/Cargo.toml",
+        "crates/gutil/Cargo.toml",
+        "crates/gutil/src/lib.rs",
+    }
+    assert release.affected_binaries(workspace, base, target, changed) == ["gclient"]
+
+
+@pytest.mark.unit
+def test_candidate_declaring_an_embedded_path_and_changing_it_affects_the_binary(
+    workspace: Path,
+) -> None:
+    (workspace / "templates").mkdir()
+    template = workspace / "templates" / "a.yaml"
+    template.write_text("name: original\n")
+    base = _commit_all(workspace, "base")
+    _declare_embedded(workspace, "gdaemon", ["templates"])
+    template.write_text("name: changed\n")
+    target = _commit_all(workspace, "candidate declares and changes embedded template")
+
+    changed = _changed_paths(workspace, base, target)
+    assert changed == {"crates/gdaemon/Cargo.toml", "templates/a.yaml"}
+    assert release.affected_binaries(workspace, base, target, changed) == ["gdaemon"]
+
+
+@pytest.mark.unit
+def test_embedded_file_declared_only_by_the_candidate_is_matched_against_its_declaration(
+    workspace: Path,
+) -> None:
+    (workspace / "templates").mkdir()
+    template = workspace / "templates" / "a.yaml"
+    template.write_text("name: original\n")
+    base = _commit_all(workspace, "base")
+    _declare_embedded(workspace, "gdaemon", ["templates"])
+    template.write_text("name: changed\n")
+    target = _commit_all(workspace, "candidate declares and changes embedded template")
+
+    changed = {"templates/a.yaml"}
+    assert changed <= _changed_paths(workspace, base, target)
+    assert release.affected_binaries(workspace, base, target, changed) == ["gdaemon"]
