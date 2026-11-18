@@ -552,3 +552,115 @@ def test_affected_closure_does_not_depend_on_release_version(workspace: Path) ->
 
     changed = _changed_paths(workspace, base, target)
     assert release.affected_binaries(workspace, base, target, changed) == SHIPPED_BINARIES
+
+
+def _declare_embedded(root: Path, crate: str, entries: list[str]) -> None:
+    """Append a [package.metadata.gobby] embedded declaration to a crate manifest."""
+    manifest = root / "crates" / crate / "Cargo.toml"
+    manifest.write_text(
+        manifest.read_text() + f"\n[package.metadata.gobby]\nembedded = {json.dumps(entries)}\n"
+    )
+
+
+def _source_identities(root: Path, names: list[str]) -> dict[str, str]:
+    return {name: release.workspace_source_identity(root, name) for name in names}
+
+
+@pytest.mark.unit
+def test_embedded_template_change_moves_only_the_declaring_binary_fingerprint(
+    workspace: Path,
+) -> None:
+    (workspace / "templates").mkdir()
+    template = workspace / "templates" / "a.yaml"
+    template.write_text("name: original\n")
+    _declare_embedded(workspace, "gdaemon", ["templates"])
+    names = ["gdaemon", "gcode", "ghook"]
+    before = _source_identities(workspace, names)
+
+    template.write_text("name: changed\n")
+
+    after = _source_identities(workspace, names)
+    assert after["gdaemon"] != before["gdaemon"]
+    assert after["gcode"] == before["gcode"]
+    assert after["ghook"] == before["ghook"]
+
+
+@pytest.mark.unit
+def test_embedded_declaration_in_shared_core_moves_every_dependent_fingerprint(
+    workspace: Path,
+) -> None:
+    (workspace / "templates").mkdir()
+    template = workspace / "templates" / "a.yaml"
+    template.write_text("name: original\n")
+    _declare_embedded(workspace, "gcore", ["templates"])
+    before = _source_identities(workspace, SHIPPED_BINARIES)
+
+    template.write_text("name: changed\n")
+
+    after = _source_identities(workspace, SHIPPED_BINARIES)
+    unchanged = [name for name in SHIPPED_BINARIES if after[name] == before[name]]
+    assert unchanged == []
+
+
+@pytest.mark.unit
+def test_embedded_file_declaration_tracks_its_crate_and_only_the_named_file(
+    workspace: Path,
+) -> None:
+    (workspace / "templates").mkdir()
+    template = workspace / "templates" / "a.yaml"
+    sibling = workspace / "templates" / "b.yaml"
+    template.write_text("name: a\n")
+    sibling.write_text("name: b\n")
+    names = ["gdaemon", "gcode"]
+    before = _source_identities(workspace, names)
+
+    _declare_embedded(workspace, "gdaemon", ["templates/a.yaml"])
+    declared = _source_identities(workspace, names)
+    assert declared["gdaemon"] != before["gdaemon"]
+    assert declared["gcode"] == before["gcode"]
+
+    sibling.write_text("name: sibling changed\n")
+    assert _source_identities(workspace, names) == declared
+
+    template.write_text("name: a changed\n")
+    tracked = _source_identities(workspace, names)
+    assert tracked["gdaemon"] != declared["gdaemon"]
+    assert tracked["gcode"] == before["gcode"]
+
+
+@pytest.mark.unit
+def test_affected_binaries_tracks_embedded_paths_not_other_root_files(workspace: Path) -> None:
+    (workspace / "templates").mkdir()
+    (workspace / "templates" / "a.yaml").write_text("name: original\n")
+    _declare_embedded(workspace, "gdaemon", ["templates"])
+    base = _commit_all(workspace, "base")
+
+    (workspace / "other").mkdir()
+    (workspace / "other" / "x.txt").write_text("undeclared\n")
+    undeclared = _commit_all(workspace, "undeclared root path")
+    changed = _changed_paths(workspace, base, undeclared)
+    assert changed == {"other/x.txt"}
+    assert release.affected_binaries(workspace, base, undeclared, changed) == []
+
+    (workspace / "templates" / "a.yaml").write_text("name: changed\n")
+    declared = _commit_all(workspace, "embedded template change")
+    changed = _changed_paths(workspace, undeclared, declared)
+    assert changed == {"templates/a.yaml"}
+    assert release.affected_binaries(workspace, undeclared, declared, changed) == ["gdaemon"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("entry", ["absolute", "parent", "nested-parent", "inside-parent"])
+def test_embedded_entry_that_is_absolute_or_has_parent_segment_is_refused(
+    workspace: Path, tmp_path: Path, entry: str
+) -> None:
+    entries = {
+        "absolute": str(tmp_path / "outside"),
+        "parent": "../outside",
+        "nested-parent": "templates/../../outside",
+        "inside-parent": "templates/../templates",
+    }
+    _declare_embedded(workspace, "gdaemon", [entries[entry]])
+
+    with pytest.raises(BinaryReleaseVersionError):
+        release.workspace_source_identity(workspace, "gdaemon")
