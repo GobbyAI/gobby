@@ -703,6 +703,23 @@ async fn reply_integers_outside_64_bits_are_malformed() {
     );
 }
 
+/// A success reply to invoke whose result holds an integer outside `[-2^63, 2^64 - 1]` is a
+/// protocol violation with an unknown outcome (ruling 14). The Python side never sends such a
+/// result: it answers `op_failed` instead, so a success reply that carries one is malformed.
+#[tokio::test]
+async fn invoke_result_integer_beyond_64_bits_is_unknown() {
+    let too_big: &[u8] = br#"{"protocol_version":1,"generation":7,"operation_id":"7:1","result":{"nested":{"count":18446744073709551616}}}"#;
+    let too_small: &[u8] = br#"{"protocol_version":1,"generation":7,"operation_id":"7:1","result":{"nested":{"count":-9223372036854775809}}}"#;
+    for reply in [too_big, too_small] {
+        let err = invoke_answer(reply.to_vec())
+            .await
+            .expect_err("an integer outside [-2^63, 2^64 - 1] in the result");
+        let outcome = unknown_outcome(err);
+        assert_eq!(outcome.command, "invoke");
+        assert_eq!(outcome.operation_id, "7:1");
+    }
+}
+
 /// The two byte limits are pinned to their literal values, so a constant change fails a test.
 #[test]
 fn byte_limits_are_pinned_to_literal_values() {
