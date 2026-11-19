@@ -56,11 +56,27 @@ Next owner (`next_owner`), the work item that will own the entry next:
   (non-empty text) is present exactly when no construct-stage census row has that definition as
   its creator. A census row is construct-stage when an inventory task with stage `construct`
   lists its key, since thread rows carry no stage. Executor rows are not task creators.
-  The construct seam targets equal the functions named by `GobbyRunner.create`'s phase statements
-  (imports, top-level functions of `runner.py`, and `self.<method>` calls; a
-  `self.<attr>.<method>` chain is not named) united with the construct task and thread creators in
-  the census. Only the first part is derived from source. A seam that neither a statement names nor
-  the census creates fails that pin, so adding one is a deliberate change to the rule.
+  The union pin counts the functions that `GobbyRunner.create`'s phase statements name (imports,
+  top-level functions of `runner.py`, and `self.<method>` calls; receiver chains are left to the
+  marker pins below) united with the construct task and thread creators in the census. Only the
+  first part is derived from source. A seam that neither a statement names nor the census creates
+  fails that pin, so adding one is a deliberate change to the rule.
+- `unverified_reason` (construct phases only, R45): non-empty text on a transitive seam that no
+  `phase_scope` block reaches in source. It is present exactly when no direct seam reaches the
+  seam, and it is never present on a direct seam or on a reached seam.
+- Phase attribution (R45, the marker pins). Each `phase_scope(InitPhase.X)` block of
+  `GobbyRunner.create` is read by AST, with the marker itself excluded. The functions a block names
+  are its direct seams: a call, a callable passed to `_run_blocking_startup_phase` or
+  `asyncio.to_thread`, or a method reached through a typed receiver such as
+  `self.config_runtime.start()`. Each direct seam is listed under exactly that phase, and a listed
+  seam that some block names is listed only under a phase whose block names it.
+- A transitive seam, one that no block names, is listed under the first construct phase whose
+  direct seams reach it. Reach follows named references in gobby source: a call, a callable
+  argument, or a method read on a receiver typed by `self`, a parameter annotation, a class-body
+  annotation, or a local whose every assignment names one class. A method resolves on its class or its bases,
+  and a class call resolves to `__init__`. Reach does not follow `getattr` dispatch, dict-typed
+  receivers, `isinstance` narrowing, or call results. The reach is an over-approximation of the named references in
+  source, so a seam listed under a later phase than its first reach fails the pin.
 - `tasks`: `id`, `creator` (the scope that calls `create_task`, `ensure_future`, or
   `threading.Thread`), `spawned_from` (the scope that calls the periodic `spawn` helper),
   `target` (the coroutine or callable the task runs), `runner_attr`, `name`, `stage`,

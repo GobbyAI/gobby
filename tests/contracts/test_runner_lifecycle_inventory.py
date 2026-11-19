@@ -1348,7 +1348,7 @@ class _Scope:
     """What the bare names and attributes of one gobby function resolve to, read from source.
 
     Resolution uses module and function imports, parameter and class-body annotations, a local
-    bound once to a class constructor, and ``self`` inside a method. Nothing else is inferred.
+    whose every assignment names one class, and ``self`` inside a method. Nothing else is inferred.
     """
 
     def __init__(self, module: str, qualname: str, function: FunctionNode | None) -> None:

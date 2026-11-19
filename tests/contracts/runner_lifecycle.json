@@ -115,6 +115,7 @@
           "unobserved_reason": "A delegator (GobbyRunner._initialize_runtime_services). The database executor it sizes is an executor row, not a task creator, and the tasks and threads it starts are censused under their own creators."
         },
         "main": {
+          "unverified_reason": "main is the process entry point (module function gobby.runner:main). No construct phase names it in source. The census names main as the creator of the ProcessorLifecycleMixin.start task, the nearest gobby frame of that scheduling, so the source reach rule cannot attribute it to a phase.",
           "module": "gobby.runner",
           "qualname": "main"
         },
@@ -123,6 +124,7 @@
           "qualname": "ProcessorLifecycleMixin.start"
         },
         "MemoryManager.schedule_background_task": {
+          "unverified_reason": "start_projection_scope_repair (memory/manager.py) calls it. Its callers are the synchronous GobbyRunner.__init__ path (GobbyRunner._initialize_post_database_services, then init_services and _init_memory_stack in runner_init/services.py) and the MemoryServiceBundle.memory_manager property. The construct phase _apply_stateful_services (runner_init/services.py) reads that property on a value taken from a services dict and narrowed by isinstance, which the reach rule does not type, so the source reach rule cannot attribute it to a phase.",
           "module": "gobby.memory.manager",
           "qualname": "MemoryManager.schedule_background_task"
         },
@@ -135,6 +137,7 @@
           "qualname": "schedule_scoped_embedding_backfill"
         },
         "DefinitionRevisionListener.start": {
+          "unverified_reason": "init_stateful_services (runner_init/services.py) starts the listener through getattr(listener, 'start', None) and a call on that local name. No construct phase names DefinitionRevisionListener.start in typed source, and the source reach rule does not resolve getattr dispatch.",
           "module": "gobby.storage.definitions.notifications",
           "qualname": "DefinitionRevisionListener.start"
         },
