@@ -10,10 +10,14 @@ a real account, so none is an oracle. A fixture holds:
   refused before any provider request.
 - ``verified``: always ``false``; ``oracle``: always ``false``.
 - ``source_file``, ``source_test``: the adapter module and the existing adapter test whose shapes
-  the recording follows; ``contract_ref``: the published provider contract the scripted
+  the recording follows (``source_test`` is a pytest node id, ``file::test`` or
+  ``file::Class::test``); ``contract_ref``: the published provider contract the scripted
   responses are taken from.
-- ``drive``: the adapter call (channel config and the message, attachment or webhook payload).
-- ``provider_contract``: the scripted provider responses, in the order the edge serves them.
+- ``drive``: a non-empty object, the adapter call (channel config and the message, attachment or
+  webhook payload).
+- ``provider_contract``: an object whose ``responses`` list holds the scripted provider
+  responses in the order the edge serves them, each with the ``host``, ``method`` and ``path``
+  of the request it answers and its ``body``. A refusal scripts no response.
 - ``exchanges``: the ordered provider requests, each with ``host``, ``method``, ``path`` and the
   sanitized ``semantic`` fields ``destination``, ``text``, ``filename`` and ``payload_sha256``.
 - ``outcome``: the semantic result the adapter returned.
@@ -21,6 +25,7 @@ a real account, so none is an oracle. A fixture holds:
 
 from __future__ import annotations
 
+import ast
 import copy
 import json
 import os
@@ -65,7 +70,12 @@ def replay_wire_fixture(fixture: dict[str, Any], edge_root: Path) -> WireReplay:
 
 
 def wire_differences(fixture: dict[str, Any], replay: WireReplay) -> list[str]:
-    """Every difference between a fixture and a replay, one line naming each field."""
+    """Every difference between a fixture and a replay, one line per differing leaf.
+
+    Each line starts with the JSON pointer of the differing leaf followed by ``": "``, for
+    example ``/exchanges/2/semantic/text: ...``, ``/outcome/message_id: ...`` or
+    ``/upstream: ...``. A leaf that does not differ gets no line.
+    """
     return []
 
 
@@ -94,6 +104,25 @@ def _load_fixtures() -> dict[str, dict[str, Any]]:
         assert isinstance(document, dict), f"{path} is not a JSON object"
         fixtures[stem] = document
     return fixtures
+
+
+def _defines_test(source: str, node_path: list[str]) -> bool:
+    """Whether ``source`` defines the test at ``node_path`` (classes, then the function)."""
+    *classes, function = node_path
+    body: list[ast.stmt] = ast.parse(source).body
+    for class_name in classes:
+        found = [n for n in body if isinstance(n, ast.ClassDef) and n.name == class_name]
+        if not found:
+            return False
+        body = found[0].body
+    return any(
+        isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == function
+        for node in body
+    )
+
+
+def _pointers(differences: list[str]) -> set[str]:
+    return {line.partition(": ")[0] for line in differences}
 
 
 def _signatures(exchanges: list[dict[str, Any]]) -> list[tuple[str, str, str]]:
@@ -171,13 +200,17 @@ def test_adapter_wire_fixtures_carry_provenance() -> None:
         assert source_file.parent == ADAPTER_DIR, (
             f"{stem}.json names {source_file}, which is not an adapter module"
         )
-        test_path, _, test_name = str(fixture["source_test"]).partition("::")
+        test_path, *node_path = str(fixture["source_test"]).split("::")
         source_test = REPO_ROOT / test_path
         assert source_test.is_file() and source_test.is_relative_to(ADAPTER_TEST_DIR), (
             f"{stem}.json names {source_test}, which is not a communications test file"
         )
-        assert test_name and f"def {test_name}(" in source_test.read_text(encoding="utf-8"), (
-            f"{stem}.json names the test {test_name!r}, which {source_test} does not define"
+        assert node_path and all(node_path), (
+            f"{stem}.json names the node id {fixture['source_test']!r}, which has no test name"
+        )
+        assert _defines_test(source_test.read_text(encoding="utf-8"), node_path), (
+            f"{stem}.json names the test {'::'.join(node_path)!r}, "
+            f"which {source_test} does not define"
         )
         contract_ref = str(fixture["contract_ref"])
         assert contract_ref.startswith("https://"), (
@@ -211,6 +244,23 @@ def test_adapter_wire_labels_refusals_and_unverified_captures() -> None:
             )
 
 
+def test_adapter_wire_fixtures_carry_drive_and_provider_contract() -> None:
+    fixtures = _load_fixtures()
+    for stem, fixture in fixtures.items():
+        drive = fixture.get("drive")
+        assert isinstance(drive, dict) and drive, f"{stem}.json has no drive object"
+        contract = fixture.get("provider_contract")
+        assert isinstance(contract, dict), f"{stem}.json has no provider_contract object"
+        responses = contract.get("responses")
+        assert isinstance(responses, list), f"{stem}.json has no provider_contract.responses list"
+        if fixture.get("capture") == "refusal":
+            assert responses == [], f"the refusal {stem}.json scripts provider responses"
+        for index, response in enumerate(responses):
+            assert isinstance(response, dict), f"{stem}.json response {index} is not an object"
+            absent = [key for key in ("host", "method", "path", "body") if key not in response]
+            assert not absent, f"{stem}.json response {index} lacks {absent}"
+
+
 @pytest.mark.integration
 def test_adapter_wire_recordings_are_offline(tmp_path: Path) -> None:
     fixtures = _load_fixtures()
@@ -242,12 +292,14 @@ def test_adapter_wire_replay_detects_a_changed_provider_response(tmp_path: Path)
     fixture = copy.deepcopy(_load_fixtures()["slack_send"])
     responses = fixture.get("provider_contract", {}).get("responses")
     assert isinstance(responses, list) and responses, "slack_send.json scripts no responses"
-    body = responses[0].get("body")
+    posts = [r for r in responses if r.get("path") == "/api/chat.postMessage"]
+    assert len(posts) == 1, f"slack_send.json scripts {len(posts)} chat.postMessage responses"
+    body = posts[0].get("body")
     assert isinstance(body, dict) and "ts" in body, "slack_send.json scripts no message ts"
     body["ts"] = "9999999999.999999"
     replay = replay_wire_fixture(fixture, tmp_path / "slack_send")
     differences = wire_differences(fixture, replay)
-    assert any("outcome" in line for line in differences), (
+    assert "/outcome/message_id" in _pointers(differences), (
         f"a changed provider message ts gave the differences {differences}"
     )
 
@@ -271,29 +323,51 @@ def _reach_upstream(replay: WireReplay) -> None:
     replay.upstream.append("203.0.113.10:443")
 
 
+_SWAPPED_LEAVES = frozenset(
+    f"/exchanges/{index}/{leaf}"
+    for index in (0, 1)
+    for leaf in ("host", "method", "path", "semantic/destination", "semantic/payload_sha256")
+)
+
+
 @pytest.mark.parametrize(
-    ("mutation", "named_field"),
+    ("mutation", "pointers"),
     [
-        pytest.param(_swap_first_two, "path", id="request-order"),
-        pytest.param(_set_semantic("destination", "C0OTHER0001"), "destination", id="destination"),
-        pytest.param(_set_semantic("text", "another text"), "text", id="text"),
-        pytest.param(_set_semantic("filename", "other.txt"), "filename", id="filename"),
-        pytest.param(_set_semantic("payload_sha256", "f" * 64), "payload_sha256", id="digest"),
-        pytest.param(_change_outcome, "outcome", id="outcome"),
-        pytest.param(_reach_upstream, "upstream", id="upstream"),
+        pytest.param(_swap_first_two, _SWAPPED_LEAVES, id="request-order"),
+        pytest.param(
+            _set_semantic("destination", "C0OTHER0001"),
+            {"/exchanges/2/semantic/destination"},
+            id="destination",
+        ),
+        pytest.param(
+            _set_semantic("text", "another text"), {"/exchanges/2/semantic/text"}, id="text"
+        ),
+        pytest.param(
+            _set_semantic("filename", "other.txt"),
+            {"/exchanges/2/semantic/filename"},
+            id="filename",
+        ),
+        pytest.param(
+            _set_semantic("payload_sha256", "f" * 64),
+            {"/exchanges/2/semantic/payload_sha256"},
+            id="digest",
+        ),
+        pytest.param(_change_outcome, {"/outcome/message_id"}, id="outcome"),
+        pytest.param(_reach_upstream, {"/upstream"}, id="upstream"),
     ],
 )
 def test_wire_differences_names_a_mutated_field(
-    mutation: Callable[[WireReplay], None], named_field: str
+    mutation: Callable[[WireReplay], None], pointers: frozenset[str] | set[str]
 ) -> None:
     fixture = _synthetic_fixture()
     replay = _faithful_replay(fixture)
     assert wire_differences(fixture, replay) == [], "a faithful replay gave differences"
     mutation(replay)
     differences = wire_differences(fixture, replay)
-    assert differences, f"a mutated {named_field} gave no difference"
-    assert any(named_field in line for line in differences), (
-        f"a mutated {named_field} gave the differences {differences}, none naming it"
+    assert differences, f"a mutation of {sorted(pointers)} gave no difference"
+    assert _pointers(differences) == set(pointers), (
+        f"a mutation of {sorted(pointers)} gave the differences {differences}, "
+        "which name other leaves or miss one"
     )
 
 
