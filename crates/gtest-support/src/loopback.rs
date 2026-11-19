@@ -41,17 +41,11 @@ pub const ERR_NO_RELAY_TOOL: &str = "loopback-only mode refuses to start: socat 
 /// No validated off-host destination (section 7.4.4; H9: never a pass by skipping).
 pub const ERR_NO_OFFHOST: &str = "no off-host destination; measured behaviour reported";
 
-/// The daemon's external connect failure text under mode on, one constant per class (H56). The
-/// step-6 run replaces each placeholder with the text the Python transport surfaces. A
-/// placeholder never matches a real response, so a test that still holds one fails.
-pub const EXTERNAL_CONNECT_EPERM_TEXT: &str =
-    "UNMEASURED: the step-6 run fills this from the daemon's EPERM connect error";
-/// The daemon's connection-refused text (H56 placeholder, filled at step 6).
-pub const EXTERNAL_CONNECT_REFUSED_TEXT: &str =
-    "UNMEASURED: the step-6 run fills this from the daemon's refused connect error";
-/// The daemon's connect-timeout text (H56 placeholder, filled at step 6).
-pub const EXTERNAL_CONNECT_TIMEOUT_TEXT: &str =
-    "UNMEASURED: the step-6 run fills this from the daemon's timed-out connect error";
+/// The text the daemon reports when its external connect fails before TCP completes, measured in
+/// the step-6 run. The Python transport reports every such failure (blocked by the mode, refused,
+/// timed out) with this one text and no errno, so the daemon-level proof shows that the connect
+/// failed, and the probe proves the blocked class.
+pub const EXTERNAL_CONNECT_FAILED_TEXT: &str = "All connection attempts failed";
 
 /// How long a relay socket may take to appear before the namespace starts (Linux).
 const SOCKET_WAIT: Duration = Duration::from_secs(5);

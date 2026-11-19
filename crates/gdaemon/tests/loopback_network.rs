@@ -10,8 +10,7 @@ use std::path::{Path, PathBuf};
 use gobby_test_support::full_daemon::{FullDaemon, checkout_python};
 use gobby_test_support::http_sender::post_json;
 use gobby_test_support::loopback::{
-    self, EXTERNAL_CONNECT_EPERM_TEXT, EXTERNAL_CONNECT_REFUSED_TEXT,
-    EXTERNAL_CONNECT_TIMEOUT_TEXT, LoopbackError, NamespaceTool, Plan, Platform, Tools,
+    self, EXTERNAL_CONNECT_FAILED_TEXT, LoopbackError, NamespaceTool, Plan, Platform, Tools,
 };
 use serde_json::{Value, json};
 
@@ -74,23 +73,16 @@ fn probe_class(target: SocketAddr, wrapped: bool) -> String {
     must(outcome, "the probe runs").class
 }
 
-/// Fails the test while a daemon-side message still holds an H56 placeholder.
-fn assert_measured(name: &str, text: &str) {
-    assert!(
-        !text.starts_with("UNMEASURED"),
-        "the {name} text is still the H56 placeholder: the step-6 run fills it from the daemon"
-    );
-}
-
-/// The post-connect class the mode-off control expects: the transport or protocol error the daemon
-/// reports after the TCP connect succeeds (design-v2 7.4.6). The step-6 run fills it from the
-/// daemon's answer, as it fills the connect-failure texts in `loopback`.
-const POST_CONNECT_TEXT: &str = "UNMEASURED: the step-6 run fills this from the daemon's post-connect transport or protocol error";
+/// What the daemon's registration answer holds when its own connection got past TCP with the mode
+/// off: the daemon made the HTTP attempt and the destination answered. The step-6 run measured
+/// `HTTP connection failed: Not Found` against the default gateway; the words after the prefix
+/// depend on the destination, so only the prefix is required, with the connect-failure text absent.
+const POST_CONNECT_TEXT: &str = "HTTP connection failed: ";
 
 /// The daemon's answers to the off-host registration and to one tool call on the server.
 struct Attempt {
     add_status: u16,
-    call: Value,
+    add: Value,
     combined: String,
 }
 
@@ -119,10 +111,10 @@ fn daemon_connect_failure(daemon: &FullDaemon, target: SocketAddrV4) -> Attempt 
         ),
         "the tool call answers",
     );
-    let combined: Value = json!({"add": {"status": added_status, "body": added}, "call": {"status": call_status, "body": call}});
+    let combined: Value = json!({"add": {"status": added_status, "body": &added}, "call": {"status": call_status, "body": call}});
     Attempt {
         add_status: added_status,
-        call,
+        add: added,
         combined: combined.to_string(),
     }
 }
@@ -348,10 +340,6 @@ fn control_connects_mode_off() {
         precondition, "connected",
         "no usable off-host destination; measured behaviour reported"
     );
-    assert_measured("EPERM", EXTERNAL_CONNECT_EPERM_TEXT);
-    assert_measured("refused", EXTERNAL_CONNECT_REFUSED_TEXT);
-    assert_measured("timeout", EXTERNAL_CONNECT_TIMEOUT_TEXT);
-    assert_measured("post-connect", POST_CONNECT_TEXT);
     let daemon = must(
         FullDaemon::builder(Path::new(GDAEMON), Path::new(REPO_ROOT))
             .seed(python_seed)
@@ -360,39 +348,31 @@ fn control_connects_mode_off() {
     );
     let attempt = daemon_connect_failure(&daemon, target);
     daemon.teardown().expect("the control daemon tears down");
-    // The daemon's own connection must get past TCP: the registration succeeds, and the call fails
-    // with the post-connect class, not with a route error or a connect failure (H9, design 7.4.6).
+    // The daemon's own connection must get past TCP: the registration answers without the
+    // connect-failure text and with the post-connect answer. The tool call is not judged: after a
+    // failed registration it reports only an open circuit breaker, the same under both modes.
     assert!(
         (200..300).contains(&attempt.add_status),
         "the off-host server must register with the mode off: {}",
         attempt.combined
     );
-    let call = attempt.call.to_string();
+    let add = attempt.add.to_string();
     assert!(
-        !call.contains("SERVER_NOT_FOUND"),
-        "the call hit a route error, not the daemon's connect: {call}"
+        !add.contains(EXTERNAL_CONNECT_FAILED_TEXT),
+        "the mode-off connect failed before TCP completed, which is not a control result: {}",
+        attempt.combined
     );
     assert!(
-        call.contains(POST_CONNECT_TEXT),
-        "the mode-off connect did not fail after TCP as the post-connect class: {call}"
+        add.contains(POST_CONNECT_TEXT),
+        "the mode-off registration did not get past TCP as expected: {}",
+        attempt.combined
     );
-    for (name, text) in [
-        ("EPERM", EXTERNAL_CONNECT_EPERM_TEXT),
-        ("refused", EXTERNAL_CONNECT_REFUSED_TEXT),
-        ("timeout", EXTERNAL_CONNECT_TIMEOUT_TEXT),
-    ] {
-        assert!(
-            !call.contains(text),
-            "the mode-off connect failed as {name}, which is not a control result: {call}"
-        );
-    }
 }
 
 #[test]
 #[ignore = "protocol step 6 proof: run from an unsandboxed shell with cargo nextest run -p gobby-daemon --test suite --run-ignored only -E 'binary(suite) & test(/^loopback_network::/)'; a default run prints these as skipped with this reason"]
 fn daemon_outbound_fails_mode_on() {
     let target = must(loopback::offhost_target(), "an off-host destination");
-    assert_measured("EPERM", EXTERNAL_CONNECT_EPERM_TEXT);
     let daemon = must(
         FullDaemon::builder(Path::new(GDAEMON), Path::new(REPO_ROOT))
             .seed(python_seed)
@@ -403,8 +383,11 @@ fn daemon_outbound_fails_mode_on() {
     let attempt = daemon_connect_failure(&daemon, target);
     daemon.teardown().expect("the daemon tears down");
     assert!(
-        attempt.combined.contains(EXTERNAL_CONNECT_EPERM_TEXT),
-        "the daemon's external connect was not blocked with EPERM: {}",
+        attempt
+            .add
+            .to_string()
+            .contains(EXTERNAL_CONNECT_FAILED_TEXT),
+        "the daemon's external connect was not blocked: {}",
         attempt.combined
     );
 }
