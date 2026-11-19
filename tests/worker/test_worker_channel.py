@@ -13,11 +13,14 @@ import json
 import os
 import socket
 import struct
-from collections.abc import Callable
+from collections.abc import Callable, Coroutine
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
+from gobby.agents.constants import GOBBY_AGENT_API_TOKEN, IDENTITY_ENV_VARS
+from gobby.runner import main
 from gobby.runner_init import StartRefusal
 from gobby.storage.schema_contract import expected_schema_identity
 from gobby.worker.channel import (
@@ -41,6 +44,8 @@ MAX_WIRE_INTEGER = 2**64 - 1
 REPLY_TIMEOUT_SECONDS = 10.0
 FRAME = struct.Struct(">I")
 BOOT_VARIABLES = (WORKER_MARKER_ENV, WORKER_CHANNEL_FD_ENV, WORKER_CREDENTIAL_FD_ENV)
+# Far above the lowest free descriptor, so no descriptor opened during the test reuses it.
+UNUSED_DESCRIPTOR = 1023
 
 
 def _credential_descriptor(payload: bytes) -> int:
@@ -92,6 +97,54 @@ def test_take_worker_boot_refuses_a_marker_without_descriptors(
         assert WORKER_CHANNEL_FD_ENV in str(refused.value)
     finally:
         _close_quietly(credential_fd)
+
+
+def _serve_only(
+    config_path: Path | None = None, verbose: bool = False, worker: WorkerBoot | None = None
+) -> Coroutine[None, None, None]:
+    """Stand in for run_gobby: a marked start goes straight to serving its channel."""
+    assert worker is not None, "a marked start reached run_gobby without its worker boot"
+    return serve_worker(worker)
+
+
+@pytest.mark.parametrize("channel_kind", ["closed", "not-a-socket"])
+def test_marked_start_refuses_an_unusable_channel_descriptor_with_exit_78(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], channel_kind: str
+) -> None:
+    """A channel number above stderr that is closed or is not a socket is a configuration refusal.
+
+    The contract (docs/contracts/worker-protocol.md) requires the channel variable to name an
+    inherited descriptor, and a refused marked start exits with status 78.
+    """
+    for name in (*IDENTITY_ENV_VARS, GOBBY_AGENT_API_TOKEN):
+        monkeypatch.delenv(name, raising=False)
+    credential_fd = _credential_descriptor(CREDENTIAL.encode("utf-8"))
+    pipe_read, pipe_write = os.pipe()
+    channel_fd = UNUSED_DESCRIPTOR if channel_kind == "closed" else pipe_read
+    try:
+        if channel_kind == "closed":
+            with pytest.raises(OSError):
+                os.fstat(channel_fd)
+        monkeypatch.setenv(WORKER_MARKER_ENV, "1")
+        monkeypatch.setenv(WORKER_CHANNEL_FD_ENV, str(channel_fd))
+        monkeypatch.setenv(WORKER_CREDENTIAL_FD_ENV, str(credential_fd))
+        with (
+            patch("gobby.utils.spawn.seal_inherited_descriptors"),
+            patch("gobby.utils.dev.worktree_daemon_refusal", return_value=None),
+            patch("gobby.runner.run_gobby", new=_serve_only),
+        ):
+            try:
+                main()
+            except SystemExit as exc:
+                exit_code = exc.code
+            else:
+                exit_code = None
+        assert exit_code == 78, f"a {channel_kind} channel descriptor exited with {exit_code}"
+        assert WORKER_CHANNEL_FD_ENV in capsys.readouterr().err
+    finally:
+        _close_quietly(credential_fd)
+        _close_quietly(pipe_read)
+        _close_quietly(pipe_write)
 
 
 def test_take_worker_boot_refuses_windows(monkeypatch: pytest.MonkeyPatch) -> None:
