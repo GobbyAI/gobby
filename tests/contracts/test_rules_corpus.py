@@ -3,13 +3,14 @@
 Each case file under ``rules/cases/`` holds ``{"cases": [...]}``. A case carries
 ``id``, ``kind``, ``provenance``, ``scenario_ids``, optional ``family``, ``observer``
 and ``transition`` labels, the synthetic ``rules`` it defines, the ``event`` it fires,
-``seam_failures`` and an ``expect`` block. Rule ids start with ``synthetic-``, and no
-case asserts the behavior of a bundled rule.
+``seam_failures`` and an ``expect`` block. A rule may declare a ``group`` label.
+Rule ids start with ``synthetic-``, and no case asserts the behavior of a bundled rule.
 """
 
 from __future__ import annotations
 
 import ast
+import dataclasses
 import json
 import re
 import shutil
@@ -20,6 +21,7 @@ from typing import Any
 import pytest
 import yaml
 
+from gobby.hooks.events import HookResponse
 from tests.contracts import rules_corpus
 
 CONTRACTS_DIR = Path(__file__).resolve().parent
@@ -99,14 +101,29 @@ RESPONSE_FIELDS = (
     "trigger_action",
     "metadata",
 )
+
+
+def _response_defaults() -> dict[str, Any]:
+    defaults: dict[str, Any] = {}
+    for item in dataclasses.fields(HookResponse):
+        if item.name not in RESPONSE_FIELDS:
+            continue
+        if item.default_factory is not dataclasses.MISSING:
+            defaults[item.name] = item.default_factory()
+        else:
+            defaults[item.name] = item.default
+    return defaults
+
+
+RESPONSE_DEFAULTS = _response_defaults()
 EXPECT_KEYS = (
     "outcome_class",
     "eager_variable_delta",
     "on_receipt_payload",
     "effect_log",
     "audit_records",
-    "response",
 )
+LABEL_AXES = (("family", FAMILIES, "S-FAM-"), ("observer", OBSERVERS, "S-OBS-"))
 
 
 def _upper_id(name: str) -> str:
@@ -198,6 +215,10 @@ FAILURE_MODE_IDS = (
     "S-DEADLINE",
 ) + SEAM_FAIL_IDS
 CLI_INTERNAL_IDS = ("S-CLI-INTERNAL-BEFORE", "S-CLI-INTERNAL-AFTER")
+CLI_INTERNAL_EVENTS = {
+    "S-CLI-INTERNAL-BEFORE": "before_tool",
+    "S-CLI-INTERNAL-AFTER": "after_tool",
+}
 
 NORMALIZER_ENTRY_POINTS = (
     "tokenize_shell_command",
@@ -281,8 +302,26 @@ def _carries(case: dict[str, Any], axis: str, item: str) -> bool:
     if axis == "delivery":
         return item in _deliveries(case)
     if axis == "response_field":
-        return case["expect"].get("response", {}).get(item) is not None
+        response = case["expect"].get("response", {})
+        return item in response and _response_set(item, response[item])
     return case.get(axis) == item
+
+
+def _response_set(field: str, value: Any) -> bool:
+    """A response field counts as set when its value differs from the HookResponse default."""
+    return bool(value != RESPONSE_DEFAULTS[field])
+
+
+def _label_gaps(case: dict[str, Any]) -> list[str]:
+    """Return the label axes the case's scenario IDs call for but the case does not carry."""
+    scenario_ids = case.get("scenario_ids", [])
+    gaps: set[str] = set()
+    for axis, names, prefix in LABEL_AXES:
+        for name in names:
+            tag = f"{prefix}{_upper_id(name)}-"
+            if any(sid.startswith(tag) for sid in scenario_ids) and case.get(axis) != name:
+                gaps.add(axis)
+    return sorted(gaps)
 
 
 def _synthetic_case(**overrides: Any) -> dict[str, Any]:
@@ -352,17 +391,33 @@ def _module_functions(module: str) -> set[str]:
     }
 
 
+def _resolve_import(importer: str, is_package: bool, node: ast.ImportFrom) -> str | None:
+    """Return the absolute dotted module an ``ImportFrom`` names, or None past the root."""
+    if node.level == 0:
+        return node.module
+    parts = importer.split(".")
+    package = parts if is_package else parts[:-1]
+    keep = len(package) - (node.level - 1)
+    if keep <= 0:
+        return None
+    return ".".join([*package[:keep], *([node.module] if node.module else [])])
+
+
 def _gobby_imported_names() -> dict[str, set[str]]:
     imported: dict[str, set[str]] = {}
     for path in (SRC_DIR / "gobby").rglob("*.py"):
+        is_package = path.name == "__init__.py"
         importer = _dotted(path)
+        if is_package:
+            importer = importer.rsplit(".", 1)[0]
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom) or not node.module:
+            if not isinstance(node, ast.ImportFrom):
                 continue
-            if node.module == importer or not node.module.startswith("gobby."):
+            module = _resolve_import(importer, is_package, node)
+            if not module or module == importer or not module.startswith("gobby."):
                 continue
-            imported.setdefault(node.module, set()).update(alias.name for alias in node.names)
+            imported.setdefault(module, set()).update(alias.name for alias in node.names)
     return imported
 
 
@@ -416,7 +471,7 @@ def test_corpus_covers_hardcoded_behavior_and_response_fields() -> None:
         field
         for case in cases
         for field, value in case["expect"].get("response", {}).items()
-        if value is not None
+        if _response_set(field, value)
     }
     missing = [field for field in RESPONSE_FIELDS if field not in set_fields]
     assert not missing, f"response fields no case sets: {missing}"
@@ -435,31 +490,45 @@ def test_corpus_covers_failure_modes() -> None:
 
 
 def test_case_schema_requires_every_expect_section() -> None:
+    for key in EXPECT_KEYS:
+        case = _synthetic_case()
+        del case["expect"][key]
+        with pytest.raises(ValueError, match=re.escape(key)):
+            rules_corpus.validate_case(case)
+    mismatched_family = _synthetic_case(scenario_ids=[FAMILY_IDS[0]], family="review_scope")
+    with pytest.raises(ValueError, match="family"):
+        rules_corpus.validate_case(mismatched_family)
+    unlabelled_observer = _synthetic_case(scenario_ids=[OBSERVER_IDS[0]], observer=None)
+    with pytest.raises(ValueError, match="observer"):
+        rules_corpus.validate_case(unlabelled_observer)
     cases = _load_committed_cases()
     _assert_enough(cases)
     incomplete = [
         (case["id"], key) for case in cases for key in EXPECT_KEYS if key not in case["expect"]
     ]
     assert not incomplete, f"committed cases missing expect sections: {incomplete}"
-    for key in EXPECT_KEYS:
-        case = _synthetic_case()
-        del case["expect"][key]
-        with pytest.raises(ValueError, match=re.escape(key)):
-            rules_corpus.validate_case(case)
+    unlabelled = [(case["id"], axis) for case in cases for axis in _label_gaps(case)]
+    assert not unlabelled, f"committed cases missing or mismatching labels: {unlabelled}"
 
 
 def test_cli_internal_request_skips_declared_group() -> None:
     cases = _load_committed_cases()
     _assert_enough(cases)
     _assert_scenarios_present(cases, CLI_INTERNAL_IDS)
-    for scenario_id in CLI_INTERNAL_IDS:
+    for scenario_id, event_type in CLI_INTERNAL_EVENTS.items():
         case = next(case for case in cases if scenario_id in case["scenario_ids"])
+        assert case["event"]["type"] == event_type, case["id"]
         assert case["event"]["metadata"].get("_cli_internal_request") is True, case["id"]
-        assert case["expect"].get("skipped_groups"), f"{case['id']} skips no group"
+        skipped = set(case["expect"].get("skipped_groups", []))
+        declared = {rule["group"] for rule in case["rules"] if "group" in rule}
+        assert skipped and skipped <= declared, f"{case['id']} skips no group its rules declare"
+        assert any(rule.get("group") not in skipped for rule in case["rules"]), case["id"]
         assert rules_corpus.replay_case(case) == case["expect"], case["id"]
 
 
 def test_exporter_records_through_recorder() -> None:
+    logged = rules_corpus.record_case(_synthetic_case())
+    assert logged, "the recorder logs no seam call for a synthetic rule-pass case"
     registry = rules_corpus.seam_registry()
     missing_kinds = [kind for kind in SEAM_KINDS if kind not in registry]
     assert not missing_kinds, f"seam registry lacks these kinds: {missing_kinds}"
@@ -584,6 +653,7 @@ def test_loader_rejects_unknown_case_kind_and_seam(tmp_path: Path) -> None:
         pytest.param("effect_type", "block", id="effect-type"),
         pytest.param("delivery", "on_receipt", id="delivery"),
         pytest.param("response_field", "modified_input", id="response-field"),
+        pytest.param("response_field", "retry", id="response-field-retry"),
         pytest.param("family", "found_work", id="helper-family"),
         pytest.param("observer", "plan_mode", id="observer"),
         pytest.param("transition", "claim", id="transition"),

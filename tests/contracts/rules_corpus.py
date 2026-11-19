@@ -48,13 +48,22 @@ def load_rule_body(path: Path) -> dict[str, Any]:
 
 
 def check_coverage(corpus_dir: Path, axis: str) -> None:
-    """Raise ``ValueError`` naming the first required item on ``axis`` that no case carries."""
+    """Raise ``ValueError`` naming the first required item on ``axis`` that no case carries.
+
+    A response field counts as set when the case's ``expect.response`` carries the key with
+    a value that differs from that field's ``HookResponse`` default. A missing key is not set.
+    """
     return None
 
 
 def replay_case(case: dict[str, Any]) -> dict[str, Any]:
     """Run one case through the Python rule engine and return the observed ``expect`` block."""
     return {}
+
+
+def record_case(case: dict[str, Any]) -> list[dict[str, Any]]:
+    """Run one case with every seam wrapped and return the ordered seam call log."""
+    return []
 
 
 def replay_normalizer_vector(vector: dict[str, Any]) -> Any:
