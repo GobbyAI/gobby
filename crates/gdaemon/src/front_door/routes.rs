@@ -23,7 +23,7 @@ use axum::http::{HeaderMap, Method, Response, StatusCode};
 use bytes::Bytes;
 use futures_util::FutureExt;
 use gobby_core::bootstrap::RouteBackend;
-use gobby_core::route_family::ProxiedCheck;
+use gobby_core::route_family::{PathMatch, ProxiedCheck};
 use gobby_terminals::family::{RouteLatch, RouteModeError, WsRoutes};
 use http_body_util::BodyExt;
 use serde_json::Value;
@@ -32,6 +32,7 @@ use tower_service::Service;
 use super::FrontDoorState;
 use super::compare::{Outcome, Record};
 use super::proxy::{self, ForwardError};
+use super::registry::surfaces;
 
 pub use gobby_core::route_family::RouteFamily;
 
@@ -78,6 +79,34 @@ struct Entry {
     router: Router,
 }
 
+impl Entry {
+    fn new(
+        family: &'static dyn RouteFamily<FrontDoorState>,
+        backend: RouteBackend,
+        state: &FrontDoorState,
+    ) -> Self {
+        Self {
+            family,
+            backend,
+            router: family
+                .router()
+                .fallback(proxy_fallback)
+                .with_state(state.clone()),
+        }
+    }
+}
+
+/// Exact rows beat segment rows, which beat raw prefixes, which beat rows that match
+/// every path.
+fn specificity(path: PathMatch) -> u8 {
+    match path {
+        PathMatch::Exact(_) => 3,
+        PathMatch::Segment(_) => 2,
+        PathMatch::RawPrefix(_) => 1,
+        PathMatch::Any => 0,
+    }
+}
+
 /// The routing table for one listener.
 pub struct RouteTable {
     entries: Vec<Entry>,
@@ -89,21 +118,20 @@ impl RouteTable {
         routes: &BTreeMap<String, RouteBackend>,
         state: &FrontDoorState,
     ) -> Self {
-        let entries = families
-            .iter()
-            .map(|&family| Entry {
-                family,
-                backend: routes
-                    .get(family.name())
-                    .copied()
-                    .unwrap_or_else(|| family.default_backend()),
-                router: family
-                    .router()
-                    .fallback(proxy_fallback)
-                    .with_state(state.clone()),
-            })
-            .collect();
-        Self { entries }
+        let selected = families.iter().map(|&family| {
+            let backend = routes
+                .get(family.name())
+                .copied()
+                .unwrap_or_else(|| family.default_backend());
+            Entry::new(family, backend, state)
+        });
+        // The surfaces are pinned Native: no routes-map value changes their answers.
+        let native_surfaces = surfaces()
+            .into_iter()
+            .map(|family| Entry::new(family, RouteBackend::Native, state));
+        Self {
+            entries: selected.chain(native_surfaces).collect(),
+        }
     }
 
     /// Serve one non-upgrade request.
@@ -125,14 +153,27 @@ impl RouteTable {
         }
     }
 
-    /// The family whose claim row answers this request, if any.
-    pub fn claim_owner(
-        &self,
-        _method: &Method,
-        _path: &str,
-        _upgrade: bool,
-    ) -> Option<&'static str> {
-        None
+    /// The family whose claim row answers this request, if any. Only Native entries are
+    /// consulted. The most specific matching row wins, and an equal rank keeps the
+    /// earlier entry.
+    pub fn claim_owner(&self, method: &Method, path: &str, upgrade: bool) -> Option<&'static str> {
+        let mut best: Option<(u8, &'static str)> = None;
+        for entry in self
+            .entries
+            .iter()
+            .filter(|entry| entry.backend == RouteBackend::Native)
+        {
+            for claim in entry.family.route_claims() {
+                if !claim.matches(method, path, upgrade) {
+                    continue;
+                }
+                let rank = specificity(claim.path);
+                if best.is_none_or(|(best_rank, _)| rank > best_rank) {
+                    best = Some((rank, entry.family.name()));
+                }
+            }
+        }
+        best.map(|(_, name)| name)
     }
 
     /// The longest claimed prefix wins.

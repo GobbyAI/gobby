@@ -89,8 +89,21 @@ pub struct RouteClaim {
 
 impl RouteClaim {
     /// Whether this row claims a request with the given method, raw path and upgrade flag.
-    pub fn matches(&self, _method: &Method, _path: &str, _upgrade: bool) -> bool {
-        false
+    pub fn matches(&self, method: &Method, path: &str, upgrade: bool) -> bool {
+        let method_matches = self.method.as_ref().is_none_or(|claimed| claimed == method);
+        let path_matches = match self.path {
+            PathMatch::Exact(exact) => path == exact,
+            PathMatch::Segment(segment) => path
+                .strip_prefix(segment)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('/')),
+            PathMatch::RawPrefix(prefix) => path.starts_with(prefix),
+            PathMatch::Any => true,
+        };
+        let kind_matches = match self.kind {
+            Kind::Any => true,
+            Kind::UpgradeOnly => upgrade,
+        };
+        method_matches && path_matches && kind_matches
     }
 }
 

@@ -9,6 +9,7 @@ pub mod proxy;
 pub mod registry;
 pub mod relay;
 pub mod routes;
+pub mod surfaces;
 #[cfg(unix)]
 pub mod terminal_api;
 pub mod tls;
