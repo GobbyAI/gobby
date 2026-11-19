@@ -16,6 +16,7 @@
       "kind": "node_install",
       "command": "gclient node install",
       "plan_line": 654,
+      "description": "Shared exec behaviour of both gclient node install and gclient node enroll: each execs the sibling gdaemon node <verb> with its arguments unchanged and returns its exit status. install is the representative command; the anchor and its test cover both verbs.",
       "anchor_text": "- 2.2.1 - With no daemon URL or token available, `gclient node install` and `gclient node enroll` exec the sibling `gdaemon node <verb>` with every argument unchanged and return its exit status. test: `crates/gclient/tests/node_verbs.rs::node_setup_verbs_exec_sibling_gdaemon`."
     },
     {
@@ -23,6 +24,7 @@
       "kind": "node_install",
       "command": "gclient node install",
       "plan_line": 655,
+      "description": "Shared exec behaviour of both gclient node install and gclient node enroll: either verb, with no sibling gdaemon beside gclient, exits 2 naming the expected gdaemon path. install is the representative command; the anchor and its test cover both verbs.",
       "anchor_text": "- 2.2.2 - A missing sibling `gdaemon` exits 2 naming the expected path. test: `crates/gclient/tests/node_verbs.rs::node_setup_verbs_name_missing_gdaemon`."
     },
     {

@@ -24,6 +24,12 @@ document (``corpus.json`` beside this file)::
 a route; ``route_source_line`` is the plan line that names that route. Enrollment is
 HTTP, not a command frame, so ``command_frames`` stays empty and no enrollment command or
 route reuses the hub-node command contract.
+
+An optional ``description`` says in prose what a case covers beyond its single
+``command``. The entry-point cases 2.2.1 and 2.2.2 use it: their anchors state the shared
+exec behaviour of both ``gclient node install`` and ``gclient node enroll``, and
+``gclient node install`` is the representative command for both verbs. ``README.md``
+beside this file says the same.
 """
 
 from __future__ import annotations
@@ -109,7 +115,9 @@ COVERED_IDS: tuple[str, ...] = tuple(
     for number in range(1, last + 1)
 )
 # The node entry points: the gdaemon release report and the two gclient wrappers that exec the
-# sibling gdaemon. Each anchor's entry kind and the verb it runs.
+# sibling gdaemon. Each anchor's entry kind and the verb it runs. 2.2.1 and 2.2.2 state the
+# shared exec behaviour of both gclient node install and gclient node enroll; install is the
+# representative command, and each case's description names both verbs.
 ENTRY_POINT_SECTIONS = frozenset({"2.1", "2.2"})
 ENTRY_POINT_ANCHORS: dict[str, tuple[str, str]] = {
     "2.1.1": ("node_install", "gdaemon node release-info"),
