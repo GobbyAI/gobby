@@ -76,17 +76,182 @@ impl std::error::Error for CorpusError {}
 
 /// Parse one case file (schema 2 or 3) into a `Case`.
 pub fn parse_case(value: &Value) -> Result<Case, CorpusError> {
-    unimplemented!("not wired: corpus::parse_case")
+    let name = value
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("<unnamed>")
+        .to_owned();
+    let found = value.get("schema_version").and_then(Value::as_u64);
+    let schema_version = match found {
+        Some(schema) if ACCEPTED_SCHEMAS.contains(&schema) => schema,
+        _ => return Err(CorpusError::Schema { case: name, found }),
+    };
+    let kind = match value.get("kind").and_then(Value::as_str) {
+        Some(text) => parse_kind(&name, text)?,
+        None if schema_version == 2 => Kind::Http,
+        None => return Err(field(&name, "kind")),
+    };
+    let family = required_str(value, &name, "family")?;
+    let backend = required_str(value, &name, "backend")?;
+    if backend != "up" && backend != "down" {
+        return Err(shape(
+            &name,
+            format!("backend {backend:?} is not up or down"),
+        ));
+    }
+    let ledger_key = match value.get("ledger_key") {
+        Some(Value::String(key)) => Some(key.clone()),
+        Some(_) => return Err(shape(&name, "ledger_key is not a string")),
+        None if schema_version == 3 => return Err(field(&name, "ledger_key")),
+        None => None,
+    };
+    if let Some(key) = &ledger_key {
+        check_ledger_key(&name, kind, key)?;
+    }
+    let request = value.get("request").cloned();
+    if kind == Kind::Http && request.is_none() {
+        return Err(field(&name, "request"));
+    }
+    let invocation = value.get("invocation").cloned();
+    if kind != Kind::Http && invocation.is_none() {
+        return Err(field(&name, "invocation"));
+    }
+    let waiver = optional_str(value, &name, "waiver")?;
+    let response = value.get("response").cloned();
+    if response.is_none() && waiver.is_none() {
+        return Err(field(&name, "response"));
+    }
+    let normalizers = match value.get("normalizers") {
+        None => Map::new(),
+        Some(Value::Object(map)) => map.clone(),
+        Some(_) => return Err(shape(&name, "normalizers is not an object")),
+    };
+    Ok(Case {
+        schema_version,
+        kind,
+        family,
+        backend,
+        ledger_key,
+        request,
+        invocation,
+        response,
+        db_delta: entries(value, &name, "db_delta")?,
+        side_effects: entries(value, &name, "side_effects")?,
+        normalizers,
+        mask: value
+            .get("mask")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        waiver,
+        native_response: value.get("native_response").cloned(),
+        name,
+    })
 }
 
 /// The recorded value of each declared `db_delta` entry, in declaration order.
 pub fn recorded_db_delta(case: &Case) -> Result<Vec<Value>, CorpusError> {
-    unimplemented!("not wired: corpus::recorded_db_delta")
+    recorded_values(case, &case.db_delta)
 }
 
 /// The recorded capture list of each declared `side_effects` entry, in declaration order.
 pub fn recorded_side_effects(case: &Case) -> Result<Vec<Value>, CorpusError> {
-    unimplemented!("not wired: corpus::recorded_side_effects")
+    recorded_values(case, &case.side_effects)
+}
+
+fn field(case: &str, field: &'static str) -> CorpusError {
+    CorpusError::Field {
+        case: case.to_owned(),
+        field,
+    }
+}
+
+fn shape(case: &str, detail: impl Into<String>) -> CorpusError {
+    CorpusError::Shape {
+        case: case.to_owned(),
+        detail: detail.into(),
+    }
+}
+
+fn required_str(value: &Value, case: &str, key: &'static str) -> Result<String, CorpusError> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| field(case, key))
+}
+
+fn optional_str(value: &Value, case: &str, key: &str) -> Result<Option<String>, CorpusError> {
+    match value.get(key) {
+        None => Ok(None),
+        Some(Value::String(text)) => Ok(Some(text.clone())),
+        Some(_) => Err(shape(case, format!("{key} is not a string"))),
+    }
+}
+
+fn entries(value: &Value, case: &str, key: &str) -> Result<Vec<Value>, CorpusError> {
+    match value.get(key) {
+        None => Ok(Vec::new()),
+        Some(Value::Array(items)) => Ok(items.clone()),
+        Some(_) => Err(shape(case, format!("{key} is not a list"))),
+    }
+}
+
+fn parse_kind(case: &str, text: &str) -> Result<Kind, CorpusError> {
+    match text {
+        "http" => Ok(Kind::Http),
+        "mcp" => Ok(Kind::Mcp),
+        "ws" => Ok(Kind::Ws),
+        "cli" => Ok(Kind::Cli),
+        other => Err(shape(
+            case,
+            format!("kind {other:?} is not http, mcp, ws or cli"),
+        )),
+    }
+}
+
+/// The ledger key prefix of each kind (H14): `HTTP <METHOD> <template>`, `MCP <server>:<tool>`
+/// (or `MCP HTTP|stdio gobby:<tool>`), `WS message <type>` and `CLI gobby <verb>`.
+fn check_ledger_key(case: &str, kind: Kind, key: &str) -> Result<(), CorpusError> {
+    let valid = match kind {
+        Kind::Http => {
+            let parts: Vec<&str> = key.splitn(3, ' ').collect();
+            parts.len() == 3
+                && parts[0] == "HTTP"
+                && !parts[1].is_empty()
+                && parts[1].bytes().all(|byte| byte.is_ascii_uppercase())
+                && parts[2].starts_with('/')
+        }
+        Kind::Mcp => key
+            .strip_prefix("MCP ")
+            .is_some_and(|rest| rest.contains(':')),
+        Kind::Ws => key
+            .strip_prefix("WS message ")
+            .is_some_and(|rest| !rest.is_empty()),
+        Kind::Cli => key
+            .strip_prefix("CLI gobby ")
+            .is_some_and(|rest| !rest.is_empty()),
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(shape(
+            case,
+            format!("ledger_key {key:?} does not match kind {kind:?}"),
+        ))
+    }
+}
+
+/// The `recorded` value of each declared entry, in declaration order (H44).
+fn recorded_values(case: &Case, entries: &[Value]) -> Result<Vec<Value>, CorpusError> {
+    entries
+        .iter()
+        .map(|entry| {
+            entry
+                .get("recorded")
+                .cloned()
+                .ok_or_else(|| field(&case.name, "recorded"))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -104,7 +269,10 @@ mod tests {
         let case = parse_case(&value).expect("schema 3 case parses");
         assert_eq!(case.schema_version, 3);
         assert_eq!(case.kind, Kind::Http);
-        assert_eq!(case.ledger_key.as_deref(), Some("HTTP PATCH /api/config/values"));
+        assert_eq!(
+            case.ledger_key.as_deref(),
+            Some("HTTP PATCH /api/config/values")
+        );
 
         let db = recorded_db_delta(&case).expect("db_delta recorded");
         assert_eq!(db.len(), 2, "one recorded value per declared entry");

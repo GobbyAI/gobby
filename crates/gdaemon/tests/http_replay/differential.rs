@@ -15,12 +15,13 @@ use std::error::Error;
 use std::fmt;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::time::Duration;
 
 use bytes::Bytes;
 use gobby_core::bootstrap::RouteBackend;
 use gobby_core::route_family::RouteFamily;
 use gobby_daemon::front_door::FrontDoorState;
-use gobby_test_support::corpus_v2::is_json;
+use gobby_test_support::corpus_v2::{is_json, request_target};
 use gobby_test_support::listeners::{bind_loopback, local_addr};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -28,10 +29,17 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use serde_json::Value;
+use serde_json::{Value, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
+use super::backend::{Backends, NO_NATIVE_BACKEND, native_family, start_listener};
+use super::compare::{first_difference, normalized_document};
 use super::corpus::{Case, Kind};
 use super::normalize::{NormalizeError, Window};
+
+/// The longest a leg may take to answer.
+const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The file every verdict line is appended to, under the home.
 pub const DIFFERENTIAL_FILE: &str = "differential.jsonl";
@@ -50,7 +58,11 @@ pub enum Verdict {
 impl Verdict {
     /// The outcome name written to `differential.jsonl`.
     pub fn outcome(&self) -> &'static str {
-        unimplemented!("not wired: differential::Verdict::outcome")
+        match self {
+            Verdict::Match => "match",
+            Verdict::Diff { .. } => "diff",
+            Verdict::NoNativeBackend => NO_NATIVE_BACKEND,
+        }
     }
 }
 
@@ -106,7 +118,26 @@ pub fn compare_legs(
     proxy: &Observation,
     native: &Observation,
 ) -> Result<Verdict, DifferentialError> {
-    unimplemented!("not wired: differential::compare_legs")
+    let expected = normalized_document(
+        case,
+        &proxy.response,
+        &proxy.db_delta,
+        &proxy.side_effects,
+        window,
+    )
+    .map_err(DifferentialError::Normalize)?;
+    let actual = normalized_document(
+        case,
+        &native.response,
+        &native.db_delta,
+        &native.side_effects,
+        window,
+    )
+    .map_err(DifferentialError::Normalize)?;
+    Ok(match first_difference(&expected, &actual) {
+        Some(pointer) => Verdict::Diff { pointer },
+        None => Verdict::Match,
+    })
 }
 
 /// Send the case's request to one front door whose family uses `backend`, and observe the leg.
@@ -118,7 +149,24 @@ pub async fn run_leg(
     home: &Path,
     extras: Extras,
 ) -> Result<Observation, DifferentialError> {
-    unimplemented!("not wired: differential::run_leg")
+    if case.kind != Kind::Http {
+        return Err(DifferentialError::Unsupported {
+            case: case.name.clone(),
+            kind: case.kind,
+        });
+    }
+    let request = case
+        .request
+        .as_ref()
+        .ok_or_else(|| shape(format!("{} has no request", case.name)))?;
+    let backends = Backends::new([(case.family.as_str(), backend)]);
+    let addr = start_listener(families, &backends, target, home).await;
+    let (status, body) = send_request(addr, request).await?;
+    Ok(Observation {
+        response: json!({"status": status, "body": body}),
+        db_delta: extras.db_delta,
+        side_effects: extras.side_effects,
+    })
 }
 
 /// Run one case through the proxy and native legs of its family, compare, and append the verdict
@@ -132,13 +180,37 @@ pub async fn run_differential(
     proxy: Extras,
     native: Extras,
 ) -> Result<Verdict, DifferentialError> {
-    unimplemented!("not wired: differential::run_differential")
+    if case.kind != Kind::Http {
+        return Err(DifferentialError::Unsupported {
+            case: case.name.clone(),
+            kind: case.kind,
+        });
+    }
+    let verdict = if native_family(families, &case.family).is_err() {
+        Verdict::NoNativeBackend
+    } else {
+        let proxied = run_leg(case, families, RouteBackend::Proxy, target, home, proxy).await?;
+        let native_leg =
+            run_leg(case, families, RouteBackend::Native, target, home, native).await?;
+        compare_legs(case, window, &proxied, &native_leg)?
+    };
+    append_line(home, &record_line(case, &verdict))?;
+    Ok(verdict)
 }
 
 /// The line one verdict appends: `{"case", "family", "outcome", "pointer"}`, where `pointer` is
 /// the differing pointer for `diff` and `null` otherwise.
 pub fn record_line(case: &Case, verdict: &Verdict) -> Value {
-    unimplemented!("not wired: differential::record_line")
+    let pointer = match verdict {
+        Verdict::Diff { pointer } => Value::String(pointer.clone()),
+        _ => Value::Null,
+    };
+    json!({
+        "case": case.name,
+        "family": case.family,
+        "outcome": verdict.outcome(),
+        "pointer": pointer,
+    })
 }
 
 /// A stub backend that answers every request with the status, content type and body of
@@ -187,16 +259,137 @@ pub async fn recorded_target(recorded: &Value) -> SocketAddr {
     addr
 }
 
+fn shape(detail: impl Into<String>) -> DifferentialError {
+    DifferentialError::Shape(detail.into())
+}
+
+/// Append one verdict line to `home/differential.jsonl`.
+fn append_line(home: &Path, line: &Value) -> Result<(), DifferentialError> {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(home.join(DIFFERENTIAL_FILE))
+        .map_err(DifferentialError::Io)?;
+    writeln!(file, "{line}").map_err(DifferentialError::Io)
+}
+
+/// Send one case request over a fresh connection and read the whole answer. The response is
+/// `(status, body)`: a JSON body when its content type is JSON, otherwise its text.
+async fn send_request(
+    addr: SocketAddr,
+    request: &Value,
+) -> Result<(u16, Value), DifferentialError> {
+    let method = request["method"]
+        .as_str()
+        .ok_or_else(|| shape("request has no method"))?;
+    let mut head = format!(
+        "{method} {} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n",
+        request_target(request)
+    );
+    for (name, value) in request["headers"].as_object().into_iter().flatten() {
+        head.push_str(&format!(
+            "{name}: {}\r\n",
+            value.as_str().unwrap_or_default()
+        ));
+    }
+    let body = match &request["body"] {
+        Value::Null => Vec::new(),
+        body => {
+            head.push_str("content-type: application/json\r\n");
+            serde_json::to_vec(body).expect("serialize request body")
+        }
+    };
+    head.push_str(&format!("content-length: {}\r\n\r\n", body.len()));
+
+    let exchange = async {
+        let mut stream = TcpStream::connect(addr).await?;
+        stream.write_all(head.as_bytes()).await?;
+        stream.write_all(&body).await?;
+        let mut raw = Vec::new();
+        stream.read_to_end(&mut raw).await?;
+        Ok::<Vec<u8>, std::io::Error>(raw)
+    };
+    let raw = tokio::time::timeout(TIMEOUT, exchange)
+        .await
+        .map_err(|_| shape("the leg did not answer in time"))?
+        .map_err(DifferentialError::Io)?;
+    parse_response(&raw)
+}
+
+fn parse_response(raw: &[u8]) -> Result<(u16, Value), DifferentialError> {
+    let split = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .ok_or_else(|| shape("the response has no header end"))?;
+    let head =
+        std::str::from_utf8(&raw[..split]).map_err(|_| shape("the response head is not UTF-8"))?;
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|code| code.parse::<u16>().ok())
+        .ok_or_else(|| shape("the response has no status code"))?;
+    let header = |wanted: &str| {
+        head.lines().skip(1).find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.trim()
+                .eq_ignore_ascii_case(wanted)
+                .then(|| value.trim().to_owned())
+        })
+    };
+    let content_type = header("content-type");
+    let raw_body = &raw[split + 4..];
+    let body =
+        if header("transfer-encoding").is_some_and(|value| value.eq_ignore_ascii_case("chunked")) {
+            dechunk(raw_body)?
+        } else {
+            raw_body.to_vec()
+        };
+    let value = if body.is_empty() {
+        Value::Null
+    } else if is_json(content_type.as_deref()) {
+        serde_json::from_slice(&body)
+            .map_err(|error| shape(format!("the body is not JSON: {error}")))?
+    } else {
+        Value::String(String::from_utf8_lossy(&body).into_owned())
+    };
+    Ok((status, value))
+}
+
+/// Decode a `chunked` transfer-coding body.
+fn dechunk(mut body: &[u8]) -> Result<Vec<u8>, DifferentialError> {
+    let mut out = Vec::new();
+    loop {
+        let line_end = body
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .ok_or_else(|| shape("a chunk size line is unterminated"))?;
+        let size_text = std::str::from_utf8(&body[..line_end])
+            .map_err(|_| shape("a chunk size is not UTF-8"))?;
+        let size = usize::from_str_radix(size_text.split(';').next().unwrap_or("").trim(), 16)
+            .map_err(|_| shape("a chunk size is not hex"))?;
+        body = &body[line_end + 2..];
+        if size == 0 {
+            return Ok(out);
+        }
+        if body.len() < size + 2 {
+            return Err(shape("a chunk is truncated"));
+        }
+        out.extend_from_slice(&body[..size]);
+        body = &body[size + 2..];
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::backend::{PROBE, stub_target};
+    use super::*;
     use crate::common::refused_addr;
     use gobby_daemon::front_door::routes::FAMILIES;
     use gobby_test_support::corpus_v2::{CORPUS_DIR, read_json};
     use serde_json::{Map, json};
-    use time::{Duration, OffsetDateTime};
     use time::format_description::well_known::Rfc3339;
+    use time::{Duration, OffsetDateTime};
 
     fn at(text: &str) -> OffsetDateTime {
         OffsetDateTime::parse(text, &Rfc3339).expect("rfc3339 test timestamp")
@@ -226,7 +419,9 @@ mod tests {
             family: family.to_owned(),
             backend: backend.to_owned(),
             ledger_key: Some(format!("HTTP GET {path}")),
-            request: Some(json!({"method": "GET", "path": path, "query": {}, "headers": {}, "body": null})),
+            request: Some(
+                json!({"method": "GET", "path": path, "query": {}, "headers": {}, "body": null}),
+            ),
             invocation: None,
             response: None,
             db_delta: Vec::new(),
@@ -378,8 +573,23 @@ mod tests {
     #[tokio::test]
     async fn health_matches_its_native_answer_when_the_backend_is_up() {
         let case = v2_case("health_ok.json");
-        let target = recorded_target(case.response.as_ref().expect("recorded response")).await;
+        let recorded = case.response.clone().expect("recorded response");
+        let target = recorded_target(&recorded).await;
         let home = tempfile::tempdir().expect("home");
+        let proxy = run_leg(
+            &case,
+            FAMILIES,
+            RouteBackend::Proxy,
+            target,
+            home.path(),
+            Extras::default(),
+        )
+        .await
+        .expect("proxy leg");
+        assert_eq!(
+            proxy.response["status"], recorded["status"],
+            "the proxy leg answers the recorded status"
+        );
         let verdict = run_differential(
             &case,
             FAMILIES,
@@ -398,8 +608,23 @@ mod tests {
     #[tokio::test]
     async fn health_matches_its_native_answer_when_the_backend_is_down() {
         let case = v2_case("health_backend_down.json");
+        let recorded = case.response.clone().expect("recorded response");
         let target = refused_addr().await;
         let home = tempfile::tempdir().expect("home");
+        let proxy = run_leg(
+            &case,
+            FAMILIES,
+            RouteBackend::Proxy,
+            target,
+            home.path(),
+            Extras::default(),
+        )
+        .await
+        .expect("proxy leg");
+        assert_eq!(
+            proxy.response["status"], recorded["status"],
+            "the proxy leg answers the recorded status"
+        );
         let verdict = run_differential(
             &case,
             FAMILIES,
@@ -431,7 +656,11 @@ mod tests {
         .await
         .expect("runs");
         assert_eq!(verdict, Verdict::Match);
-        assert_eq!(seen.lock().expect("seen").len(), 2, "both legs reach the stub");
+        assert_eq!(
+            seen.lock().expect("seen").len(),
+            2,
+            "both legs reach the stub"
+        );
     }
 
     #[tokio::test]
@@ -452,8 +681,14 @@ mod tests {
         .expect("runs");
         assert_eq!(verdict, Verdict::NoNativeBackend);
         assert_eq!(verdict.outcome(), "no-native-backend");
-        assert!(seen.lock().expect("seen").is_empty(), "no leg reaches the stub");
-        assert_eq!(verdict_lines(home.path())[0]["outcome"], "no-native-backend");
+        assert!(
+            seen.lock().expect("seen").is_empty(),
+            "no leg reaches the stub"
+        );
+        assert_eq!(
+            verdict_lines(home.path())[0]["outcome"],
+            "no-native-backend"
+        );
     }
 
     #[test]
