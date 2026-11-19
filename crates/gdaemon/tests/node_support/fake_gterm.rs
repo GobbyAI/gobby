@@ -25,7 +25,7 @@ pub struct FakeGterm {
     writes: Arc<WriteGate>,
     process: Child,
     task: JoinHandle<()>,
-    requests: Arc<Mutex<Vec<(Value, tokio::time::Instant)>>>,
+    requests: Arc<RequestLog>,
     drop_next_list: Arc<AtomicBool>,
     reject_next_commit: Arc<AtomicBool>,
     lose_commit_reply: Arc<AtomicBool>,
@@ -49,6 +49,32 @@ struct WriteGate {
     disconnect: AtomicBool,
     received: Notify,
     release: Notify,
+}
+
+/// Every request the host received, with its receipt time, and a wake for each new one.
+#[derive(Default)]
+struct RequestLog {
+    entries: Mutex<Vec<(Value, tokio::time::Instant)>>,
+    recorded: Notify,
+}
+
+impl RequestLog {
+    fn record(&self, request: Value) {
+        self.entries
+            .lock()
+            .expect("fixture requests")
+            .push((request, tokio::time::Instant::now()));
+        self.recorded.notify_waiters();
+    }
+
+    fn count(&self, method: &str) -> usize {
+        self.entries
+            .lock()
+            .expect("fixture requests")
+            .iter()
+            .filter(|(request, _)| request["method"] == method)
+            .count()
+    }
 }
 
 /// Holds one reply after the host has acted on its request.
@@ -91,7 +117,7 @@ impl FakeGterm {
                 return Err(error);
             }
         };
-        let requests = Arc::new(Mutex::new(Vec::new()));
+        let requests = Arc::new(RequestLog::default());
         let writes = Arc::new(WriteGate::default());
         let drop_next_list = Arc::new(AtomicBool::new(false));
         let reject_next_commit = Arc::new(AtomicBool::new(false));
@@ -183,10 +209,7 @@ impl FakeGterm {
                                             continue;
                                         }
                                     };
-                                    requests
-                                        .lock()
-                                        .expect("fixture requests")
-                                        .push((request.clone(), tokio::time::Instant::now()));
+                                    requests.record(request.clone());
                                     let method = request["method"].as_str().unwrap_or("");
                                     if method == "write" {
                                         if writes.pause.swap(false, Ordering::SeqCst) {
@@ -345,8 +368,24 @@ impl FakeGterm {
         self.resume_snapshot.notify_one();
     }
 
+    /// Resolves once the host has received at least `count` requests of `method`.
+    pub async fn wait_for_requests(&self, method: &str, count: usize) {
+        loop {
+            // Register for the wake before counting, so a request recorded between
+            // the count and the await still wakes this waiter.
+            let recorded = self.requests.recorded.notified();
+            tokio::pin!(recorded);
+            recorded.as_mut().enable();
+            if self.requests.count(method) >= count {
+                return;
+            }
+            recorded.await;
+        }
+    }
+
     pub fn requests(&self) -> Vec<Value> {
         self.requests
+            .entries
             .lock()
             .expect("fixture requests")
             .iter()
@@ -357,6 +396,7 @@ impl FakeGterm {
     /// Receipt times of one method's requests on the paused test clock, in arrival order.
     pub fn request_times(&self, method: &str) -> Vec<tokio::time::Instant> {
         self.requests
+            .entries
             .lock()
             .expect("fixture requests")
             .iter()

@@ -1041,24 +1041,14 @@ async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
     // policy compile, the ps shim, codesign, the monitor, and settings. The
     // test finished in 11.2 s at 1-minute load about 39, then in 12.2 s. At load 43 the 30 s
     // guard expired and the test wall was 33.4 s. 45 s is 15 s over that.
-    // The 5 ms sleep is the poll interval, so the wait does not spin a core.
+    // Each wait wakes on the host recording a request, so nothing polls.
     let prepare_guard = Duration::from_secs(45);
     let fixture = LaunchFixture::new().await?;
     let mut watcher = tokio::spawn({
         let agents = Arc::clone(&fixture.agents);
         async move { watch_exits(&agents).await }
     });
-    let ready = async {
-        while !fixture
-            .host
-            .requests()
-            .iter()
-            .any(|r| r["method"] == "list")
-        {
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    };
-    tokio::time::timeout(prepare_guard, ready)
+    tokio::time::timeout(prepare_guard, fixture.host.wait_for_requests("list", 1))
         .await
         .context("exit watcher did not finish its initial subscription/inventory request")?;
     // Serialize behind the watcher's initial inventory request before spawning.
@@ -1069,20 +1059,7 @@ async fn exit_before_commit_reply_is_settled_for_owner() -> Result<()> {
         .await?;
     fixture.host.exit_before_next_commit_reply();
     let mut launch = Box::pin(fixture.launch());
-    let consumed = async {
-        loop {
-            let subscriptions = fixture
-                .host
-                .requests()
-                .iter()
-                .filter(|r| r["method"] == "subscribe_events")
-                .count();
-            if subscriptions == 2 {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    };
+    let consumed = fixture.host.wait_for_requests("subscribe_events", 2);
     let barrier = tokio::select! {
         result = &mut launch => anyhow::bail!("commit reply gate was bypassed: {result:?}"),
         result = &mut watcher => anyhow::bail!("exit watcher stopped: {result:?}"),
