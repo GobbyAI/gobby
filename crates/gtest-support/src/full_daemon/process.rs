@@ -59,7 +59,7 @@ pub struct Identity {
     /// The process id.
     pub pid: u32,
     /// The start time read when the identity was taken.
-    start: String,
+    pub(super) start: String,
 }
 
 impl Identity {

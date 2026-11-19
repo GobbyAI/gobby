@@ -172,31 +172,46 @@ pub fn read_host_pid(socket_dir: &Path) -> Option<u32> {
         .ok()
 }
 
-/// The pids that are live gterm hosts. A pid that is gone, or that another process holds now, is
-/// dropped, so no process group is ever built from it.
-pub fn live_terminal_hosts(pids: &[u32]) -> Vec<u32> {
+/// The pids that are live gterm hosts, each with the start time that identifies it. A pid that is
+/// gone, or that a process with another name holds, is dropped.
+pub fn live_terminal_hosts(pids: &[u32]) -> Vec<Identity> {
     pids.iter()
         .copied()
         .filter(|&pid| pid_alive(pid) && is_gterm_host(pid))
+        .filter_map(Identity::observe)
         .collect()
 }
 
-/// Stops a live gterm host: SIGTERM, then the forced stop after the grace period. Returns whether
-/// a live host was actually signalled, which decides whether the teardown step is recorded.
-pub fn stop_terminal_host(pid: u32) -> bool {
-    if !pid_alive(pid) || !is_gterm_host(pid) {
+/// Whether the identified host is still that live gterm process.
+pub fn host_is_live(host: &Identity) -> bool {
+    host.is_same_process() && pid_alive(host.pid) && is_gterm_host(host.pid)
+}
+
+/// Stops a live gterm host: SIGTERM, then the forced stop after the grace period. Each signal goes
+/// out only while the pid still names the identified host. Returns whether a live host was
+/// actually signalled, which decides whether the teardown step is recorded.
+pub fn stop_terminal_host(host: &Identity) -> bool {
+    if !host_is_live(host) {
         return false;
     }
-    signal_pid(pid, true);
+    signal_pid(host.pid, true);
     let deadline = Instant::now() + WORKER_GRACE;
-    while pid_alive(pid) && Instant::now() < deadline {
+    while host_is_live(host) && Instant::now() < deadline {
         sleep(POLL);
     }
-    // The forced stop goes out only while the pid still names a gterm host.
-    if pid_alive(pid) && is_gterm_host(pid) {
-        signal_pid(pid, false);
+    if host_is_live(host) {
+        signal_pid(host.pid, false);
     }
     true
+}
+
+/// The live members of the given process groups, each identified by pid and start time. Taken
+/// while the group leaders still run, so a pid reused after a leader exits is never among them.
+pub(super) fn group_snapshot(groups: &[u32]) -> Vec<Identity> {
+    group_members(groups)
+        .into_iter()
+        .filter_map(Identity::observe)
+        .collect()
 }
 
 /// The live processes of a run: those whose cwd is under `root` or whose process group is one of
@@ -402,6 +417,106 @@ mod tests {
         assert!(
             kept.is_empty(),
             "neither pid is a live gterm host: {kept:?}"
+        );
+    }
+
+    /// Set for the copy of this test binary that stands in for a gterm host.
+    const STAND_IN: &str = "GOBBY_TEST_GTERM_STAND_IN";
+    const STAND_IN_BODY: &str =
+        "full_daemon::terminal_host::tests::a_gterm_stand_in_sleeps_when_asked";
+
+    /// The body of the stand-in process, and a no-op in an ordinary run.
+    #[test]
+    fn a_gterm_stand_in_sleeps_when_asked() {
+        if std::env::var_os(STAND_IN).is_some() {
+            std::thread::sleep(Duration::from_secs(600));
+        }
+    }
+
+    /// A live process named `gterm`: a copy of this test binary that sleeps. Not a copy of a
+    /// system binary, which macOS kills at random with `Code Signature Invalid`, and not a link to
+    /// one, which keeps the system binary's name.
+    fn gterm_stand_in(dir: &Path) -> Owned {
+        let program = dir.join("gterm");
+        fs::copy(std::env::current_exe().expect("this test binary"), &program)
+            .expect("copy this test binary under the gterm name");
+        let child = Command::new(&program)
+            .args(["--exact", STAND_IN_BODY])
+            .env(STAND_IN, "1")
+            .current_dir(dir)
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn the gterm stand-in");
+        Owned(child)
+    }
+
+    /// What the system reports about the child: its wait status and its `ps` row.
+    fn report(child: &mut Owned) -> String {
+        let row = Command::new("ps")
+            .args([
+                "-o",
+                "pid=,stat=,lstart=,ucomm=",
+                "-p",
+                &child.pid().to_string(),
+            ])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned());
+        format!("wait status {:?}, ps row {row:?}", child.0.try_wait())
+    }
+
+    #[test]
+    fn live_terminal_hosts_keeps_a_live_gterm_and_drops_the_rest() {
+        let tools = tempfile::tempdir().expect("tempdir");
+        let mut gterm = gterm_stand_in(tools.path());
+        let plain = Owned::spawn(Path::new("/bin/sleep"), tools.path());
+        let kept: Vec<u32> = live_terminal_hosts(&[plain.pid(), gterm.pid()])
+            .iter()
+            .map(|host| host.pid)
+            .collect();
+        assert_eq!(
+            kept,
+            vec![gterm.pid()],
+            "only the live gterm host is kept: {}",
+            report(&mut gterm)
+        );
+    }
+
+    #[test]
+    fn stop_terminal_host_does_not_signal_a_gterm_pid_with_another_start_time() {
+        let tools = tempfile::tempdir().expect("tempdir");
+        let mut gterm = gterm_stand_in(tools.path());
+        assert!(
+            is_gterm_host(gterm.pid()),
+            "the stand-in must read as a gterm host: {}",
+            report(&mut gterm)
+        );
+        let recorded = Identity {
+            pid: gterm.pid(),
+            start: "Thu Jan  1 00:00:00 1970".to_owned(),
+        };
+        assert!(
+            !stop_terminal_host(&recorded),
+            "a host whose start time differs from the recorded one is not this run's host"
+        );
+        assert!(
+            matches!(gterm.0.try_wait(), Ok(None)),
+            "the process that now holds the pid must not be signalled"
+        );
+    }
+
+    #[test]
+    fn stop_terminal_host_stops_the_host_its_identity_names() {
+        let tools = tempfile::tempdir().expect("tempdir");
+        let mut gterm = gterm_stand_in(tools.path());
+        let host = live_terminal_hosts(&[gterm.pid()]).pop();
+        let host = host.unwrap_or_else(|| panic!("a live host: {}", report(&mut gterm)));
+        assert!(stop_terminal_host(&host), "a live host is signalled");
+        assert!(
+            matches!(gterm.0.wait().map(|status| status.success()), Ok(false)),
+            "the identified host must be stopped by the signal"
         );
     }
 }

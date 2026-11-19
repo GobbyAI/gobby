@@ -33,8 +33,8 @@ pub use process::{GroupWatch, pid_alive};
 use process::{Identity, stop_daemon, stop_worker};
 pub use terminal_host::processes_in_run;
 use terminal_host::{
-    ensure_gterm, install_gterm, live_terminal_hosts, read_host_pid, stop_strays,
-    stop_terminal_host, terminal_host_children, worker_of,
+    ensure_gterm, group_snapshot, host_is_live, install_gterm, live_terminal_hosts, read_host_pid,
+    stop_strays, stop_terminal_host, terminal_host_children, worker_of,
 };
 
 /// The readiness URL path the daemon must answer 200 on.
@@ -517,9 +517,11 @@ impl FullDaemon {
     /// The terminal host pids this run knows of: the one `gterm.pid` names, and any gterm host
     /// that is gdaemon's child. A host can start before it writes its pid file, so the child scan
     /// finds a host whose file does not exist yet. Read while gdaemon still runs.
-    fn terminal_host_candidates(&self) -> Vec<u32> {
+    fn terminal_host_candidates(&self, daemon_running: bool) -> Vec<Identity> {
         let mut hosts: Vec<u32> = read_host_pid(&self.host_dir_path()).into_iter().collect();
-        hosts.extend(terminal_host_children(self.daemon_pid));
+        if daemon_running {
+            hosts.extend(terminal_host_children(self.daemon_pid));
+        }
         hosts.sort_unstable();
         hosts.dedup();
         live_terminal_hosts(&hosts)
@@ -573,13 +575,38 @@ impl FullDaemon {
         let mut first_error = None;
         // A Drop after `teardown` finds the run already gone: there is nothing left to stop.
         let live_run = self.root.is_some();
+        // gdaemon's pid names this run's process only while its child handle is unreaped. After
+        // that the pid can belong to another process, so nothing is looked up through it.
+        let daemon_running = self.child.is_some();
         // Read while gdaemon still runs: a worker is found through its parent, and a stopped
         // gdaemon's children are reparented where they cannot be found.
-        let worker = self
-            .worker
-            .take()
-            .or_else(|| worker_of(self.daemon_pid).and_then(Identity::observe));
-        let hosts = self.terminal_host_candidates();
+        let worker = self.worker.take().or_else(|| {
+            daemon_running
+                .then(|| worker_of(self.daemon_pid))
+                .flatten()
+                .and_then(Identity::observe)
+        });
+        let hosts = self.terminal_host_candidates(daemon_running);
+        // The members of the run's process groups, identified while their leaders still run. A
+        // member that outlives the orderly stops below is a stray; a pid that changed hands since
+        // is not the member any more and is left alone.
+        let group_ids: Vec<u32> = daemon_running
+            .then_some(self.daemon_pid)
+            .into_iter()
+            .chain(
+                worker
+                    .as_ref()
+                    .filter(|worker| worker.is_same_process())
+                    .map(|worker| worker.pid),
+            )
+            .chain(
+                hosts
+                    .iter()
+                    .filter(|host| host_is_live(host))
+                    .map(|host| host.pid),
+            )
+            .collect();
+        let members = group_snapshot(&group_ids);
         if let Some(mut child) = self.child.take() {
             match stop_daemon(&mut child, DAEMON_GRACE) {
                 Ok(()) => steps.push(TeardownStep::DaemonStopped),
@@ -592,7 +619,7 @@ impl FullDaemon {
         }
         // A host that exited with the daemon is not a step: nothing was stopped.
         let mut host_stopped = false;
-        for &host in &hosts {
+        for host in &hosts {
             host_stopped |= stop_terminal_host(host);
         }
         if host_stopped {
@@ -600,23 +627,24 @@ impl FullDaemon {
         }
         // The relays carry traffic only for gdaemon, which has stopped by now.
         self.relays = None;
-        let processes_alive_at_drop = pid_alive(self.daemon_pid)
+        let processes_alive_at_drop = (daemon_running && pid_alive(self.daemon_pid))
             || worker.as_ref().is_some_and(Identity::is_same_process)
-            || !live_terminal_hosts(&hosts).is_empty();
-        // Anything left in the run's root or in its process groups outlived the orderly stops
-        // above. It is stopped here and fails the teardown, so a leak cannot pass as a clean run.
+            || hosts.iter().any(host_is_live);
+        // Anything left in the run's root, and any identified member of its process groups that
+        // still runs, outlived the orderly stops above. It is stopped here and fails the teardown.
         if live_run {
-            // The worker and host groups are swept only while their leaders are still the processes
-            // the harness identified: a leader that has exited may have left its pid to another one.
-            let worker_group = worker
-                .as_ref()
-                .filter(|worker| worker.is_same_process())
-                .map_or(0, |worker| worker.pid);
-            let groups: Vec<u32> = [self.daemon_pid, worker_group]
-                .into_iter()
-                .chain(live_terminal_hosts(&hosts))
-                .collect();
-            let strays = processes_in_run(&self.root_canonical, &groups);
+            let own = std::process::id();
+            let mut strays = processes_in_run(&self.root_canonical, &[]);
+            strays.extend(
+                members
+                    .iter()
+                    .filter(|member| {
+                        member.pid != own && member.is_same_process() && pid_alive(member.pid)
+                    })
+                    .map(|member| member.pid),
+            );
+            strays.sort_unstable();
+            strays.dedup();
             if !strays.is_empty() {
                 stop_strays(&strays);
                 first_error = first_error.or(Some(FullDaemonError::Teardown(format!(
