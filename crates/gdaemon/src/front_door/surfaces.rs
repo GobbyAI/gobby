@@ -1,16 +1,30 @@
 //! The native surfaces the front door claims. Each surface is a route family that
-//! carries claim rows only: it has no table path (empty prefixes and an empty router),
-//! so the routing table never selects it, and the claim runner is the only route to it.
-//! The routing table pins every surface to `Native`, whatever the `front_door.routes`
-//! map says.
+//! carries claim rows and answers its claimed requests in `serve_claim`. It has no table
+//! path (empty prefixes and an empty router), so the routing table never selects it, and
+//! the claim runner is the only route to it. The routing table pins every surface to
+//! `Native`, whatever the `front_door.routes` map says.
+
+use std::net::SocketAddr;
 
 use axum::Router;
-use axum::http::Method;
+use axum::body::Body;
+use axum::http::{Method, Request, Response};
 use gobby_core::route_family::{
-    Credential, Gate, Kind, PathMatch, PeerRule, RouteClaim, RouteFamily,
+    BoxFut, Credential, Gate, Kind, PathMatch, PeerRule, RouteClaim, RouteFamily,
 };
 
 use super::FrontDoorState;
+#[cfg(unix)]
+use super::auth;
+use super::challenge;
+use super::is_browser_ws;
+#[cfg(unix)]
+use super::terminal_api;
+#[cfg(unix)]
+use crate::lease::admin_api;
+use crate::nodes::{NativeRoutes, channel, internal_api, machines_api};
+use crate::websocket::publish;
+use crate::websocket::subscriptions::EntryMode;
 
 static WS_BRIDGE_CLAIMS: &[RouteClaim] = &[RouteClaim {
     method: None,
@@ -24,7 +38,7 @@ static WS_BRIDGE_CLAIMS: &[RouteClaim] = &[RouteClaim {
 #[cfg(unix)]
 static TERMINAL_WRITE_CLAIMS: &[RouteClaim] = &[RouteClaim {
     method: Some(Method::POST),
-    path: PathMatch::Exact("/api/internal/terminals/write"),
+    path: PathMatch::Exact(terminal_api::PATH),
     gate: Gate::BeforeRefusal,
     credential: Credential::Unchecked,
     peer: PeerRule::Any,
@@ -120,6 +134,14 @@ impl RouteFamily<FrontDoorState> for WsBridgeFamily {
     fn route_claims(&self) -> &'static [RouteClaim] {
         WS_BRIDGE_CLAIMS
     }
+    fn serve_claim<'a>(
+        &'a self,
+        state: &'a FrontDoorState,
+        peer: SocketAddr,
+        request: Request<Body>,
+    ) -> BoxFut<'a, Result<Request<Body>, Response<Body>>> {
+        Box::pin(async move { Err(publish::handle(&state.native_ws, request, peer).await) })
+    }
 }
 
 /// Terminal write route, answered only while the runtime is present.
@@ -139,6 +161,22 @@ impl RouteFamily<FrontDoorState> for TerminalWriteFamily {
     }
     fn route_claims(&self) -> &'static [RouteClaim] {
         TERMINAL_WRITE_CLAIMS
+    }
+    fn claim_enabled(&self, state: &FrontDoorState) -> bool {
+        state.runtime.is_some()
+    }
+    fn serve_claim<'a>(
+        &'a self,
+        state: &'a FrontDoorState,
+        peer: SocketAddr,
+        request: Request<Body>,
+    ) -> BoxFut<'a, Result<Request<Body>, Response<Body>>> {
+        Box::pin(async move {
+            let Some(runtime) = state.runtime.as_deref() else {
+                return Ok(request);
+            };
+            Err(terminal_api::handle(runtime, peer, request).await)
+        })
     }
 }
 
@@ -161,6 +199,29 @@ impl RouteFamily<FrontDoorState> for LeaseAdminFamily {
     fn route_claims(&self) -> &'static [RouteClaim] {
         LEASE_ADMIN_CLAIMS
     }
+    fn claim_enabled(&self, state: &FrontDoorState) -> bool {
+        state.runtime.is_some()
+    }
+    fn serve_claim<'a>(
+        &'a self,
+        state: &'a FrontDoorState,
+        _peer: SocketAddr,
+        request: Request<Body>,
+    ) -> BoxFut<'a, Result<Request<Body>, Response<Body>>> {
+        Box::pin(async move {
+            let Some(runtime) = state.runtime.as_deref() else {
+                return Ok(request);
+            };
+            if !request.headers().contains_key("x-gobby-key-id") {
+                return Err(auth::rejection(
+                    axum::http::StatusCode::UNAUTHORIZED,
+                    "authentication_required",
+                    "A valid API key is required for native lease administration",
+                ));
+            }
+            Err(admin_api::handle(runtime, request).await)
+        })
+    }
 }
 
 /// Node-internal routes, answered only for loopback peers.
@@ -178,6 +239,16 @@ impl RouteFamily<FrontDoorState> for NodeInternalFamily {
     }
     fn route_claims(&self) -> &'static [RouteClaim] {
         NODE_INTERNAL_CLAIMS
+    }
+    fn serve_claim<'a>(
+        &'a self,
+        state: &'a FrontDoorState,
+        peer: SocketAddr,
+        request: Request<Body>,
+    ) -> BoxFut<'a, Result<Request<Body>, Response<Body>>> {
+        Box::pin(async move {
+            Err(internal_api::handle(&state.native, &state.auth, request, peer).await)
+        })
     }
 }
 
@@ -197,9 +268,21 @@ impl RouteFamily<FrontDoorState> for RuntimeChallengeFamily {
     fn route_claims(&self) -> &'static [RouteClaim] {
         RUNTIME_CHALLENGE_CLAIMS
     }
+    fn serve_claim<'a>(
+        &'a self,
+        state: &'a FrontDoorState,
+        _peer: SocketAddr,
+        request: Request<Body>,
+    ) -> BoxFut<'a, Result<Request<Body>, Response<Body>>> {
+        Box::pin(async move {
+            challenge::answer(&state.auth.bootstrap_path, request)
+                .await
+                .map_err(|response| *response)
+        })
+    }
 }
 
-/// Node channel route.
+/// Node channel route, served only by a hub.
 pub struct NodeChannelFamily;
 
 impl RouteFamily<FrontDoorState> for NodeChannelFamily {
@@ -214,6 +297,22 @@ impl RouteFamily<FrontDoorState> for NodeChannelFamily {
     }
     fn route_claims(&self) -> &'static [RouteClaim] {
         NODE_CHANNEL_CLAIMS
+    }
+    fn claim_enabled(&self, state: &FrontDoorState) -> bool {
+        matches!(state.native, NativeRoutes::Hub(_))
+    }
+    fn serve_claim<'a>(
+        &'a self,
+        state: &'a FrontDoorState,
+        _peer: SocketAddr,
+        request: Request<Body>,
+    ) -> BoxFut<'a, Result<Request<Body>, Response<Body>>> {
+        Box::pin(async move {
+            match &state.native {
+                NativeRoutes::Hub(nodes) => Err(channel::handle(nodes.clone(), request).await),
+                NativeRoutes::Standalone(_) => Ok(request),
+            }
+        })
     }
 }
 
@@ -233,6 +332,16 @@ impl RouteFamily<FrontDoorState> for MachinesFamily {
     fn route_claims(&self) -> &'static [RouteClaim] {
         MACHINES_CLAIMS
     }
+    fn serve_claim<'a>(
+        &'a self,
+        state: &'a FrontDoorState,
+        _peer: SocketAddr,
+        request: Request<Body>,
+    ) -> BoxFut<'a, Result<Request<Body>, Response<Body>>> {
+        Box::pin(async move {
+            Err(machines_api::handle(machines_api::router(state.native.clone()), request).await)
+        })
+    }
 }
 
 /// Browser and listener WebSocket upgrades.
@@ -250,5 +359,22 @@ impl RouteFamily<FrontDoorState> for WsNativeFamily {
     }
     fn route_claims(&self) -> &'static [RouteClaim] {
         WS_NATIVE_CLAIMS
+    }
+    fn serve_claim<'a>(
+        &'a self,
+        state: &'a FrontDoorState,
+        peer: SocketAddr,
+        request: Request<Body>,
+    ) -> BoxFut<'a, Result<Request<Body>, Response<Body>>> {
+        Box::pin(async move {
+            let entry = if state.ws_listener {
+                EntryMode::Direct
+            } else if is_browser_ws(request.uri().path()) {
+                EntryMode::Browser
+            } else {
+                return Ok(request);
+            };
+            Err(state.native_ws.accept(request, entry, peer).await)
+        })
     }
 }

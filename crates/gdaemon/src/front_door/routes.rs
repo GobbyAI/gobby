@@ -23,7 +23,7 @@ use axum::http::{HeaderMap, Method, Response, StatusCode};
 use bytes::Bytes;
 use futures_util::FutureExt;
 use gobby_core::bootstrap::RouteBackend;
-use gobby_core::route_family::{PathMatch, ProxiedCheck};
+use gobby_core::route_family::{Credential, Gate, PathMatch, ProxiedCheck, RouteClaim};
 use gobby_terminals::family::{RouteLatch, RouteModeError, WsRoutes};
 use http_body_util::BodyExt;
 use serde_json::Value;
@@ -72,6 +72,12 @@ pub fn terminal_route(routes: &BTreeMap<String, RouteBackend>) -> RouteBackend {
         .copied()
         .unwrap_or_else(|| TerminalFamily.default_backend())
 }
+
+/// A claim row together with the family that declared it.
+type ClaimRow = (
+    &'static dyn RouteFamily<FrontDoorState>,
+    &'static RouteClaim,
+);
 
 struct Entry {
     family: &'static dyn RouteFamily<FrontDoorState>,
@@ -157,23 +163,55 @@ impl RouteTable {
     /// consulted. The most specific matching row wins, and an equal rank keeps the
     /// earlier entry.
     pub fn claim_owner(&self, method: &Method, path: &str, upgrade: bool) -> Option<&'static str> {
-        let mut best: Option<(u8, &'static str)> = None;
+        self.best_claim(|_, claim| claim.matches(method, path, upgrade))
+            .map(|(family, _)| family.name())
+    }
+
+    /// The family and row that answer this request in one claim phase, if any. A row
+    /// qualifies when its gate and credential are the phase's, it matches the request,
+    /// and its family's `claim_enabled` holds for `state`. Only Native entries are
+    /// consulted, and the most specific qualifying row wins.
+    pub fn claimant(
+        &self,
+        state: &FrontDoorState,
+        method: &Method,
+        path: &str,
+        upgrade: bool,
+        gate: Gate,
+        credential: Credential,
+    ) -> Option<ClaimRow> {
+        self.best_claim(|family, claim| {
+            claim.gate == gate
+                && claim.credential == credential
+                && claim.matches(method, path, upgrade)
+                && family.claim_enabled(state)
+        })
+    }
+
+    /// The most specific row that `accepts`, among Native entries. An equal rank keeps
+    /// the earlier entry.
+    fn best_claim(
+        &self,
+        accepts: impl Fn(&'static dyn RouteFamily<FrontDoorState>, &RouteClaim) -> bool,
+    ) -> Option<ClaimRow> {
+        let mut best: Option<(u8, ClaimRow)> = None;
         for entry in self
             .entries
             .iter()
             .filter(|entry| entry.backend == RouteBackend::Native)
         {
-            for claim in entry.family.route_claims() {
-                if !claim.matches(method, path, upgrade) {
+            let family = entry.family;
+            for claim in family.route_claims() {
+                if !accepts(family, claim) {
                     continue;
                 }
                 let rank = specificity(claim.path);
                 if best.is_none_or(|(best_rank, _)| rank > best_rank) {
-                    best = Some((rank, entry.family.name()));
+                    best = Some((rank, (family, claim)));
                 }
             }
         }
-        best.map(|(_, name)| name)
+        best.map(|(_, row)| row)
     }
 
     /// The longest claimed prefix wins.
