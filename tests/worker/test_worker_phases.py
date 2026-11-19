@@ -1,9 +1,5 @@
-"""WP-4 tests (R2c): the phase gate, the driver over the real GobbyRunner.create, and the
+"""Tests for the phase gate, the driver over the real GobbyRunner.create, and the
 dormancy, import-scope and rule-16 checks.
-
-Written against design-v2 sections 4.3, 4.4, 4.6, 5.7, 5.8 and 5.18 and rulings R5 and R6.
-The module fails on import until gobby.worker.phase_ids, gobby.worker.gate and
-gobby.worker.phases exist (G1 and G2).
 """
 
 from __future__ import annotations
@@ -38,9 +34,9 @@ INVENTORY = ROOT / "tests/contracts/runner_lifecycle.json"
 CENSUS = ROOT / "tests/contracts/runner_census.json"
 BUNDLED_WORKFLOWS = ROOT / "src/gobby/install/shared/workflows"
 BUNDLED_KINDS = ("agents", "pipelines", "rules")
-# Every .py and .rs file that R0 owns or adds to (design section 2). The rule-16 scan reads
-# only the lines R0 adds under these paths.
-R0_SCAN_PATHS = (
+# Every .py and .rs file the port owns or adds to. The rule-16 scan reads only the lines the
+# port adds under these paths.
+SCAN_PATHS = (
     "src/gobby/runner.py",
     "src/gobby/worker",
     "tests/worker",
@@ -192,7 +188,7 @@ async def test_real_refusal_marks_unusable_before_rollback(monkeypatch: pytest.M
     assert refused.message == "startup refused by test"
     assert refused.next_phase is None
     assert seams.events == ["storage", "refusal", "runtime.close", "rollback"]
-    # R5: the gate marks the driver unusable inside the failing scope, before create's
+    # The gate marks the driver unusable inside the failing scope, before create's
     # except block runs runtime.close() and the rollback.
     assert seams.unusable_at_close == [True]
     assert seams.unusable_at_rollback == [True]
@@ -204,7 +200,7 @@ async def test_create_passes_config_path_and_verbose(monkeypatch: pytest.MonkeyP
     seams = _Seams()
     _patch_phase_seams(monkeypatch, seams)
     config_path = Path("phase-test-config.yaml")
-    # The facade builds the driver from this factory (design GF-20); create itself is unchanged.
+    # The facade builds the driver from this factory; create itself is unchanged.
     driver = PhaseDriver(functools.partial(GobbyRunner.create, config_path, True))
 
     for phase in InitPhase:
@@ -215,7 +211,7 @@ async def test_create_passes_config_path_and_verbose(monkeypatch: pytest.MonkeyP
 
 
 async def test_create_that_skips_a_phase_scope_fails_without_waiting_forever() -> None:
-    # R63: a create that parks at a phase scope that is neither the requested phase nor the
+    # A create that parks at a phase scope that is neither the requested phase nor the
     # following one answers failed at once. The timeouts turn a regression into a failure.
     async def skipping_create() -> object:
         owner = object()
@@ -349,6 +345,12 @@ def test_only_runner_imports_worker() -> None:
     assert runner_hits == {
         ("gobby.worker.phase_ids", "GobbyRunner.create"),
         ("gobby.worker.gate", "GobbyRunner.create"),
+        # Type-only import for the run_gobby worker parameter; nothing loads at run time.
+        ("gobby.worker.channel", "<module>"),
+        # Call-time imports in the function bodies. The one-owner driver patches the module
+        # attributes these names are read from, so they stay out of module scope.
+        ("gobby.worker.channel", "main"),
+        ("gobby.worker.channel", "run_gobby"),
     }
 
 
@@ -421,7 +423,7 @@ def test_worker_modules_not_imported_by_runner() -> None:
 
 
 def _bundled_definition_names() -> set[str]:
-    """Names of bundled agent, pipeline and rule definitions (design 4.4).
+    """Names of bundled agent, pipeline and rule definitions.
 
     A name is the file's top-level name when declared, else its file stem. Only YAML files
     under the three definition directories count. The name default is never collected.
@@ -447,11 +449,11 @@ def _git(*args: str) -> str:
 
 
 def _added_lines(base: str) -> Iterator[tuple[str, str]]:
-    """Yield (path, text) for each line R0 adds to a .py or .rs file under R0_SCAN_PATHS.
+    """Yield (path, text) for each line the port adds to a .py or .rs file under SCAN_PATHS.
 
     Tracked changes come from `git diff --unified=0 <base>`. Untracked new files count in full.
     """
-    diff = _git("diff", "--unified=0", base, "--", *R0_SCAN_PATHS)
+    diff = _git("diff", "--unified=0", base, "--", *SCAN_PATHS)
     current: str | None = None
     in_hunk = False
     for line in diff.splitlines():
@@ -466,14 +468,14 @@ def _added_lines(base: str) -> Iterator[tuple[str, str]]:
         elif in_hunk and line.startswith("+") and current is not None:
             if current.endswith((".py", ".rs")):
                 yield current, line[1:]
-    untracked = _git("ls-files", "--others", "--exclude-standard", "--", *R0_SCAN_PATHS)
+    untracked = _git("ls-files", "--others", "--exclude-standard", "--", *SCAN_PATHS)
     for rel in untracked.splitlines():
         if rel.endswith((".py", ".rs")):
             for text in (ROOT / rel).read_text(encoding="utf-8").splitlines():
                 yield rel, text
 
 
-def test_no_bundled_definition_names_in_r0_additions() -> None:
+def test_no_bundled_definition_names_in_added_lines() -> None:
     names = _bundled_definition_names()
     assert names, "no bundled definition names were collected"
     assert "default" not in names
@@ -486,6 +488,6 @@ def test_no_bundled_definition_names_in_r0_additions() -> None:
 
     base = _load_json(INVENTORY)["base"]["commit"]
     added = list(_added_lines(base))
-    assert added, "the R0 scan paths carry no added lines, so the scan is vacuous"
+    assert added, "the scan paths carry no added lines, so the scan is vacuous"
     violations = [f"{rel}: {text.strip()}" for rel, text in added if matcher.search(text)]
     assert violations == []

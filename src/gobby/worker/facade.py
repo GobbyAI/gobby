@@ -1,10 +1,10 @@
-"""Worker facade: one raw request in, one canonical response out (R0 design 5.5 to 5.10, 5.6).
+"""Worker facade: one raw request in, one canonical response out.
 
-``WorkerFacade.handle`` applies the guard order of design 5.6 to one request. It assumes no
-transport: no socket, no signal and no path. The caller moves the bytes.
+``WorkerFacade.handle`` applies the guard order to one request. It assumes no transport: no
+socket, no signal and no path. The caller moves the bytes.
 
 Construct a facade inside a running event loop. The phase driver creates loop futures, and
-the create task runs on the loop that drives the initialize calls (R44).
+the create task runs on the loop that drives the initialize calls.
 """
 
 from __future__ import annotations
@@ -17,9 +17,9 @@ from typing import Any, cast
 
 from pydantic import JsonValue, ValidationError
 
-from gobby.storage.schema_contract import expected_schema_identity
 from gobby.worker.decode import DecodeError
 from gobby.worker.encode import UnencodableValue, canonical_bytes, encode_value
+from gobby.worker.identity import schema_identity
 from gobby.worker.ops import OPS, DomainOp, OpRegistrationError, resolve
 from gobby.worker.phase_ids import InitPhase
 from gobby.worker.phases import UNUSABLE, PhaseDriver, PhaseOutcome, runner_create_factory
@@ -53,7 +53,7 @@ class WorkerFacade:
     """One worker's request surface: a handshake binds a generation, then initialize and invoke.
 
     ``credential`` is the expected handshake credential. ``None`` (or an empty string) refuses
-    every handshake, so there is no allow-when-unconfigured path (ruling R2). ``ops`` is the
+    every handshake, so there is no allow-when-unconfigured path. ``ops`` is the
     allow-listed table. ``create`` is a zero-argument factory for the runner's create coroutine;
     when it is omitted, the real ``GobbyRunner.create`` runs with ``config_path`` and ``verbose``.
     """
@@ -74,7 +74,7 @@ class WorkerFacade:
         self._generation: int | None = None
 
     async def handle(self, raw: bytes) -> bytes:
-        """Answer one request. Only ``BaseException`` from an op or a phase escapes (GF-12)."""
+        """Answer one request. Only ``BaseException`` from an op or a phase escapes."""
         try:
             response = await self._respond(raw)
         except ProtocolError as exc:
@@ -106,7 +106,7 @@ class WorkerFacade:
         try:
             result = _handshake_result(request.generation)
         except Exception as exc:
-            # A schema identity that cannot be loaded is a server fault (R53). The handshake
+            # A schema identity that cannot be loaded is a server fault. The handshake
             # binds nothing, so the next command is not_handshaken.
             raise _refusal(request, ErrorCode.OP_FAILED, "schema identity unavailable") from exc
         self._generation = request.generation
@@ -153,7 +153,7 @@ class WorkerFacade:
             if inspect.isawaitable(value):
                 value = await value
         except Exception as exc:
-            # The op-call boundary: any Exception from the op fails this call only (GF-12).
+            # The op-call boundary: any Exception from the op fails this call only.
             raise _refusal(request, ErrorCode.OP_FAILED, _text(str(exc))) from exc
         return _result(request, value)
 
@@ -161,11 +161,11 @@ class WorkerFacade:
 def _prepare(
     request: Request, op: DomainOp, params: Mapping[str, Any]
 ) -> tuple[Callable[..., object], dict[str, object]]:
-    """Check the params against the declared keys and specs, then resolve the op (design 5.9).
+    """Check the params against the declared keys and specs, then resolve the op.
 
     A value that a decoder rejects is ``invalid_request``. A registration fault, such as an
     unresolvable path, an unbuildable dataclass target or an unusable signature, is
-    ``op_failed`` with an explicit message (R31).
+    ``op_failed`` with an explicit message.
     """
     if set(params) != set(op.params):
         raise _refusal(request, ErrorCode.INVALID_REQUEST)
@@ -193,7 +193,7 @@ _REGISTRATION_FAULTS: tuple[type[Exception], ...] = (
 
 
 def _result(request: Request, value: object) -> Response:
-    """Encode an op's return value, or fail the call as ``op_failed`` (design 5.11)."""
+    """Encode an op's return value, or fail the call as ``op_failed``."""
     try:
         encoded = cast(JsonValue, encode_value(value))
         # Probe the canonical writer too: a lone surrogate passes encode_value but cannot be
@@ -217,13 +217,13 @@ def _handshake_result(generation: int) -> JsonValue:
         protocol_version=WORKER_PROTOCOL_VERSION,
         generation=generation,
         commands=sorted(command.value for command in Command),
-        schema_identity=expected_schema_identity(),
+        schema_identity=schema_identity(),
     )
     return cast(JsonValue, result.model_dump(mode="json"))
 
 
 def _refusal(request: Request, code: ErrorCode, message: str | None = None) -> ProtocolError:
-    """The refusal for ``request``, echoing its generation and operation id (design 5.2)."""
+    """The refusal for ``request``, echoing its generation and operation id."""
     return ProtocolError(
         code,
         generation=request.generation,
@@ -257,5 +257,5 @@ def _writable(text: str | None) -> bool:
 
 
 def _text(value: str) -> str:
-    """A message UTF-8 can write, capped to 2,048 characters (GF-10)."""
+    """A message UTF-8 can write, capped to 2,048 characters."""
     return cap_message(value.encode("utf-8", "backslashreplace").decode("utf-8"))

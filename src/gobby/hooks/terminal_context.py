@@ -13,6 +13,7 @@ from uuid import UUID
 import psutil
 
 from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY, CODEX_CLEAR_ORIGIN_PENDING
+from gobby.terminals.foreground import process_tty
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
@@ -327,7 +328,7 @@ def _seat_identity(seat: psutil.Process) -> dict[str, Any]:
     identity["parent_pid"] = seat.pid
     identity["parent_create_time"] = seat.create_time()
     identity["parent_name"] = seat.name()
-    identity["tty"] = _non_empty_str(seat.terminal())
+    identity["tty"] = _non_empty_str(process_tty(seat))
     for context_key, environment_key in _ENVIRONMENT_IDENTITY_KEYS:
         identity[context_key] = _non_empty_str(environ.get(environment_key))
     return identity

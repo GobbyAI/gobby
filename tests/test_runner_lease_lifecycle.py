@@ -18,14 +18,16 @@ from gobby.runtime_grants.lease_view import RuntimeLeaseView, current_lease
 from gobby.servers.auth_service import AuthService
 from gobby.servers.grant_auth import LiveLeaseGrantService
 from gobby.servers.http import HTTPServer
+from gobby.worker.channel import WorkerBoot
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("worker_marked", [False, True])
 @pytest.mark.parametrize("supplied_claim", [False, True])
 async def test_node_bootstrap_refuses_before_lease(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supplied_claim: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supplied_claim: bool, worker_marked: bool
 ) -> None:
     pid_file = tmp_path / "gobby.pid"
     ownership = claim_pid_file(pid_file) if supplied_claim else None
@@ -47,8 +49,9 @@ async def test_node_bootstrap_refuses_before_lease(
     monkeypatch.setattr("gobby.runner_backend.watch_supervisor", forbidden)
     create = AsyncMock(side_effect=AssertionError("a node must not construct a runner"))
     monkeypatch.setattr(GobbyRunner, "create", create)
+    worker = WorkerBoot(channel_fd=-1, credential="") if worker_marked else None
     with pytest.raises(StartRefusal) as refused:
-        await run_gobby(ownership_resolution=ownership)
+        await run_gobby(ownership_resolution=ownership, worker=worker)
     assert str(refused.value) == (
         "datastore_mode: remote is a node; a node runs no Python daemon and never takes "
         "the hub lease. See docs/guides/shared-stack.md (Client setup)."
