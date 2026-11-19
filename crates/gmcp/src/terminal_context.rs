@@ -1,6 +1,7 @@
 //! Terminal signals sent by the MCP wrapper (not the SESSION_START hook).
 
 use crate::contract::WRAPPER_CONTRACT;
+use gobby_core::json::{COMPACT, Json, dumps};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
@@ -30,23 +31,9 @@ pub fn serialize(context: &Map<String, Value>) -> String {
                 .map(|value| (key.clone(), value.clone()))
         })
         .collect();
-    escape_non_ascii(&Value::Object(filtered).to_string())
-}
-
-// Python's json.dumps escapes non-ASCII as \uXXXX, with surrogate pairs above the BMP.
-fn escape_non_ascii(json: &str) -> String {
-    let mut escaped = String::with_capacity(json.len());
-    for character in json.chars() {
-        if character.is_ascii() {
-            escaped.push(character);
-            continue;
-        }
-        let mut units = [0_u16; 2];
-        for unit in character.encode_utf16(&mut units) {
-            escaped.push_str(&format!("\\u{unit:04x}"));
-        }
-    }
-    escaped
+    // Python writes `json.dumps(allowlisted, separators=(",", ":"))`.
+    dumps(&Json::from(&Value::Object(filtered)), COMPACT)
+        .expect("COMPACT writes every float a Value can hold")
 }
 
 fn capture_with(environment: &BTreeMap<String, String>, parent: Option<u32>) -> Map<String, Value> {

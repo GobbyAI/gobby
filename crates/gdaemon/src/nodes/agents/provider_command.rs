@@ -314,7 +314,7 @@ fn push_env_pair(argv: &mut Vec<String>, name: &str, value: &str) {
 
 /// A TOML basic string as Codex reads it: JSON string syntax, the Python port's `json.dumps`.
 fn quoted(value: &str) -> String {
-    Value::String(value.to_string()).to_string()
+    gobby_core::json::quote(value, true)
 }
 
 #[cfg(test)]

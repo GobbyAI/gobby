@@ -8,8 +8,8 @@
 //! Replies are written in Python's `json.dumps` wire format.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 
+use gobby_core::json::quote;
 use serde_json::Value;
 use serde_json::value::RawValue;
 
@@ -222,33 +222,9 @@ fn ack_frame(kind: &str, events: &BTreeSet<String>) -> String {
         if index > 0 {
             frame.push_str(", ");
         }
-        push_python_string(&mut frame, event);
+        // Each event is a `json.dumps` string with `ensure_ascii`, as Python writes it.
+        frame.push_str(&quote(event, true));
     }
     frame.push_str("]}");
     frame
-}
-
-/// Python `json.dumps` string encoding with `ensure_ascii`: everything outside
-/// printable ASCII is a lowercase `\uXXXX` escape, using surrogate pairs.
-fn push_python_string(out: &mut String, value: &str) {
-    out.push('"');
-    for ch in value.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            ' '..='~' => out.push(ch),
-            _ => {
-                for unit in ch.encode_utf16(&mut [0; 2]) {
-                    // Writing to a String cannot fail.
-                    let _ = write!(out, "\\u{unit:04x}");
-                }
-            }
-        }
-    }
-    out.push('"');
 }

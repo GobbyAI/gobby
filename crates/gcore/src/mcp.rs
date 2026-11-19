@@ -14,6 +14,8 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::json::{CANONICAL, Json, dumps};
+
 /// Authenticated caller context supplied by the gateway, never serialized input.
 #[derive(Debug, Clone, Default)]
 pub struct ToolContext {
@@ -332,12 +334,11 @@ fn exposes_context(value: &Value) -> bool {
 
 /// Python json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=True).
 pub fn canonical_definition_json(description: &str, input_schema: &Value) -> String {
-    let mut result = String::from("{\"description\":");
-    write_canonical(&Value::String(description.into()), &mut result);
-    result.push_str(",\"input_schema\":");
-    write_canonical(input_schema, &mut result);
-    result.push('}');
-    result
+    let definition = Json::Object(vec![
+        ("description".into(), Json::Str(description.into())),
+        ("input_schema".into(), Json::from(input_schema)),
+    ]);
+    dumps(&definition, CANONICAL).expect("CANONICAL writes every float a Value can hold")
 }
 
 pub fn definition_hash(description: &str, input_schema: &Value) -> String {
@@ -351,89 +352,4 @@ fn hash_canonical(canonical: &str) -> String {
         write!(hash, "{byte:02x}").expect("writing to String is infallible");
     }
     hash
-}
-
-fn write_canonical(value: &Value, output: &mut String) {
-    match value {
-        Value::Object(object) => {
-            output.push('{');
-            let mut entries: Vec<_> = object.iter().collect();
-            entries.sort_unstable_by_key(|(key, _)| *key);
-            for (index, (key, value)) in entries.into_iter().enumerate() {
-                if index != 0 {
-                    output.push(',');
-                }
-                write_canonical(&Value::String(key.clone()), output);
-                output.push(':');
-                write_canonical(value, output);
-            }
-            output.push('}');
-        }
-        Value::Array(values) => {
-            output.push('[');
-            for (index, value) in values.iter().enumerate() {
-                if index != 0 {
-                    output.push(',');
-                }
-                write_canonical(value, output);
-            }
-            output.push(']');
-        }
-        Value::String(value) => {
-            // serde supplies JSON control/quote escaping; Python also escapes DEL
-            // and non-ASCII, with UTF-16 surrogate pairs for astral characters.
-            let escaped = serde_json::to_string(value).expect("strings always serialize");
-            for c in escaped.chars() {
-                if c >= '\u{7f}' {
-                    for unit in c.encode_utf16(&mut [0; 2]) {
-                        write!(output, "\\u{unit:04x}").expect("writing to String is infallible");
-                    }
-                } else {
-                    output.push(c);
-                }
-            }
-        }
-        Value::Number(number) if number.is_f64() => output.push_str(&python_float(number)),
-        _ => output.push_str(&value.to_string()),
-    }
-}
-
-fn python_float(number: &serde_json::Number) -> String {
-    let text = number.to_string();
-    let (mantissa, exponent) = text.split_once(['e', 'E']).unwrap_or((&text, "0"));
-    let exponent: i32 = exponent.parse().expect("JSON number exponent");
-    let sign = if mantissa.starts_with('-') { "-" } else { "" };
-    let mantissa = mantissa.trim_start_matches('-');
-    let decimal = mantissa.find('.').unwrap_or(mantissa.len()) as i32;
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let leading = digits.chars().take_while(|c| *c == '0').count();
-    let digits = digits.trim_start_matches('0').trim_end_matches('0');
-    if digits.is_empty() {
-        return format!("{sign}0.0");
-    }
-    let power = exponent + decimal - leading as i32 - 1;
-    if !(-4..16).contains(&power) {
-        let fraction = if digits.len() > 1 {
-            format!(".{}", &digits[1..])
-        } else {
-            String::new()
-        };
-        format!("{sign}{}{fraction}e{power:+03}", &digits[..1])
-    } else {
-        let point = power + 1;
-        if point <= 0 {
-            format!("{sign}0.{}{digits}", "0".repeat((-point) as usize))
-        } else if point as usize >= digits.len() {
-            format!(
-                "{sign}{digits}{}.0",
-                "0".repeat(point as usize - digits.len())
-            )
-        } else {
-            format!(
-                "{sign}{}.{}",
-                &digits[..point as usize],
-                &digits[point as usize..]
-            )
-        }
-    }
 }
