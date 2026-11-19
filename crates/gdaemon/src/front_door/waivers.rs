@@ -95,7 +95,8 @@ pub fn is_native_extension(id: &str) -> bool {
 
 /// Whether a manifest surface `HTTP <METHOD> <route template>` covers one request.
 ///
-/// The method must match exactly. A `{name}` template segment matches one non-empty path
+/// The surface method must be uppercase (`[A-Z]+`, as `scripts/parity_waivers.py` requires) and
+/// must equal the request method exactly. A `{name}` template segment matches one non-empty path
 /// segment, and every other segment must match literally.
 pub fn surface_matches(surface: &str, method: &str, path: &str) -> bool {
     let Some((surface_method, template)) = surface
@@ -104,7 +105,8 @@ pub fn surface_matches(surface: &str, method: &str, path: &str) -> bool {
     else {
         return false;
     };
-    if surface_method != method
+    if !is_uppercase_method(surface_method)
+        || surface_method != method
         || !template.starts_with('/')
         || template.contains(char::is_whitespace)
     {
@@ -117,6 +119,11 @@ pub fn surface_matches(surface: &str, method: &str, path: &str) -> bool {
             (segment.starts_with('{') && segment.ends_with('}') && !value.is_empty())
                 || segment == value
         })
+}
+
+/// Whether an HTTP method is one or more uppercase ASCII letters.
+fn is_uppercase_method(method: &str) -> bool {
+    !method.is_empty() && method.bytes().all(|byte| byte.is_ascii_uppercase())
 }
 
 /// The surface a replayed case presents to the matcher: an HTTP request, or the exact ledger key
