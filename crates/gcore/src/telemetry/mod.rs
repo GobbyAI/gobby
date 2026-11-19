@@ -7,7 +7,8 @@
 //! at most [`MAX_LABEL_SETS`] distinct label sets; further sets fold into one series
 //! labelled `overflow="true"`.
 
-use std::sync::OnceLock;
+use std::collections::BTreeMap;
+use std::sync::{Mutex, OnceLock, PoisonError};
 
 /// The declared metric names.
 pub mod names {
@@ -19,9 +20,56 @@ pub mod names {
 pub const MAX_LABEL_SETS: usize = 256;
 
 /// The registry. The process has one, from [`Telemetry::global`]; tests build their own.
+///
+/// A series keeps the kind of its first update; a later update of another kind to the
+/// same name and labels is ignored.
 #[derive(Debug, Default)]
 pub struct Telemetry {
-    _series: (),
+    metrics: Mutex<BTreeMap<&'static str, Metric>>,
+}
+
+/// One metric name's series: at most [`MAX_LABEL_SETS`] label sets, then overflow.
+#[derive(Debug, Default)]
+struct Metric {
+    series: BTreeMap<Labels, SampleValue>,
+    overflow: Option<SampleValue>,
+}
+
+type Labels = Vec<(&'static str, String)>;
+
+/// The update one call applies to a series.
+#[derive(Clone, Copy)]
+enum Update {
+    Add(u64),
+    Observe(f64),
+    Set(f64),
+}
+
+impl Update {
+    fn first(self) -> SampleValue {
+        match self {
+            Update::Add(amount) => SampleValue::Counter(amount),
+            Update::Observe(value) => SampleValue::Histogram {
+                count: 1,
+                sum: value,
+            },
+            Update::Set(value) => SampleValue::Gauge(value),
+        }
+    }
+
+    fn apply(self, current: &mut SampleValue) {
+        match (self, current) {
+            (Update::Add(amount), SampleValue::Counter(total)) => {
+                *total = total.saturating_add(amount);
+            }
+            (Update::Observe(value), SampleValue::Histogram { count, sum }) => {
+                *count = count.saturating_add(1);
+                *sum += value;
+            }
+            (Update::Set(value), SampleValue::Gauge(current)) => *current = value,
+            _ => {}
+        }
+    }
 }
 
 impl Telemetry {
@@ -37,25 +85,71 @@ impl Telemetry {
     }
 
     /// Adds `amount` to the counter `name` under `labels`.
-    pub fn inc_counter(&self, _name: &'static str, _labels: &[(&'static str, &str)], _amount: u64) {
+    pub fn inc_counter(&self, name: &'static str, labels: &[(&'static str, &str)], amount: u64) {
+        self.update(name, labels, Update::Add(amount));
     }
 
     /// Records `value` in the histogram `name` under `labels`.
     pub fn observe_histogram(
         &self,
-        _name: &'static str,
-        _labels: &[(&'static str, &str)],
-        _value: f64,
+        name: &'static str,
+        labels: &[(&'static str, &str)],
+        value: f64,
     ) {
+        self.update(name, labels, Update::Observe(value));
     }
 
     /// Sets the gauge `name` under `labels` to `value`.
-    pub fn set_gauge(&self, _name: &'static str, _labels: &[(&'static str, &str)], _value: f64) {}
+    pub fn set_gauge(&self, name: &'static str, labels: &[(&'static str, &str)], value: f64) {
+        self.update(name, labels, Update::Set(value));
+    }
 
     /// Every series, sorted by name and then by labels.
     pub fn snapshot(&self) -> Vec<Sample> {
-        Vec::new()
+        let metrics = self.metrics.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut samples: Vec<Sample> = Vec::new();
+        for (name, metric) in metrics.iter() {
+            let overflow = metric
+                .overflow
+                .iter()
+                .map(|value| (overflow_labels(), value));
+            let series = metric
+                .series
+                .iter()
+                .map(|(labels, value)| (labels.clone(), value));
+            samples.extend(series.chain(overflow).map(|(labels, value)| Sample {
+                name,
+                labels,
+                value: value.clone(),
+            }));
+        }
+        samples.sort_by(|left, right| (left.name, &left.labels).cmp(&(right.name, &right.labels)));
+        samples
     }
+
+    fn update(&self, name: &'static str, labels: &[(&'static str, &str)], update: Update) {
+        let mut labels: Labels = labels
+            .iter()
+            .map(|(key, value)| (*key, (*value).to_owned()))
+            .collect();
+        labels.sort();
+        let mut metrics = self.metrics.lock().unwrap_or_else(PoisonError::into_inner);
+        let metric = metrics.entry(name).or_default();
+        if let Some(current) = metric.series.get_mut(&labels) {
+            update.apply(current);
+        } else if metric.series.len() < MAX_LABEL_SETS {
+            metric.series.insert(labels, update.first());
+        } else {
+            match metric.overflow.as_mut() {
+                Some(current) => update.apply(current),
+                None => metric.overflow = Some(update.first()),
+            }
+        }
+    }
+}
+
+fn overflow_labels() -> Labels {
+    vec![("overflow", "true".to_owned())]
 }
 
 /// One series of the registry.

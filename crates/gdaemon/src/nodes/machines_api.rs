@@ -9,6 +9,7 @@ use axum::{
     routing::get,
 };
 use deadpool_postgres::tokio_postgres::Row;
+use gobby_core::domain_error::{DomainError, DomainErrorClass, http};
 use gobby_core::postgres_pool::Pool;
 use serde_json::{Value, json};
 use std::time::SystemTime;
@@ -173,9 +174,20 @@ fn error(status: StatusCode, code: &str, message: &str) -> Response {
     )
 }
 
+/// A coded envelope whose status comes from the error's class; a 503 carries the retry
+/// hint, as [`error`] does.
+fn domain_error(class: DomainErrorClass, code: &str, message: &str) -> Response {
+    let (status, body) = http::coded(&DomainError::new(class, message), code);
+    crate::front_door::health::json_response(
+        status,
+        body,
+        status == StatusCode::SERVICE_UNAVAILABLE,
+    )
+}
+
 fn unavailable() -> Response {
-    error(
-        StatusCode::SERVICE_UNAVAILABLE,
+    domain_error(
+        DomainErrorClass::Unavailable,
         "machines_unavailable",
         "Machine inventory is unavailable",
     )
@@ -190,8 +202,8 @@ fn missing_auth() -> Response {
 }
 
 fn not_found() -> Response {
-    error(
-        StatusCode::NOT_FOUND,
+    domain_error(
+        DomainErrorClass::Missing,
         "machine_not_found",
         "Machine not found",
     )

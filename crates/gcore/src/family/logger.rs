@@ -1,5 +1,7 @@
 //! A family's logging namespace and its metric helpers.
 
+use crate::telemetry::Telemetry;
+
 /// The logging target and metric label of one family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FamilyLogger {
@@ -18,11 +20,11 @@ impl FamilyLogger {
 
     /// Adds `amount` to the counter `name`, labelled with the family's name.
     pub fn inc_counter(&self, name: &'static str, amount: u64) {
-        let _ = (name, amount);
+        Telemetry::global().inc_counter(name, &[("family", self.family)], amount);
     }
 
     /// Records `value` in the histogram `name`, labelled with the family's name.
     pub fn observe_histogram(&self, name: &'static str, value: f64) {
-        let _ = (name, value);
+        Telemetry::global().observe_histogram(name, &[("family", self.family)], value);
     }
 }
