@@ -7,6 +7,7 @@ runner, and it patches the phase callables before calling ``GobbyRunner.create``
 from __future__ import annotations
 
 import ast
+import functools
 import hashlib
 import json
 import re
@@ -68,6 +69,7 @@ TASK_KEYS = {
     "runtime_attributed",
 }
 PHASE_KEYS = {"id", "stage", "owner", "hub_only", "next_owner", "seams"}
+CONSTRUCT_PHASE_KEYS = {*PHASE_KEYS, "seam_notes"}
 SERVICE_KEYS = {"id", "start_owner", "stop_owner", "stage", "hub_only", "next_owner"}
 IDENTITY_KEYS = {"name", "source", "producer", "consumers", "current_owner"}
 ERROR_KEYS = {"raised_by", "exception", "exit_code", "effect"}
@@ -278,8 +280,10 @@ def _hub_only_constant() -> set[str]:
     raise AssertionError("HUB_ONLY_STARTUP_PHASES literal not found")
 
 
-def _create_body_digest() -> str:
-    """sha256 of the normalized AST of GobbyRunner.create's body (design section 5.8)."""
+def _normalized_create_statements() -> list[ast.AST]:
+    """The top-level statements of GobbyRunner.create in the digest's normalized form (5.8): the
+    docstring and the gobby.worker imports are dropped, and each phase_scope block is replaced by
+    its body."""
 
     class _Normalize(ast.NodeTransformer):
         def visit_ImportFrom(self, node: ast.ImportFrom) -> ast.AST | None:
@@ -313,13 +317,22 @@ def _create_body_digest() -> str:
     if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
         if isinstance(first.value.value, str):
             body = body[1:]
-    normalized: list[str] = []
+    normalized: list[ast.AST] = []
     for statement in body:
         result = _Normalize().visit(statement)
         for item in result if isinstance(result, list) else [result]:
             if isinstance(item, ast.AST):
-                normalized.append(ast.dump(item, annotate_fields=True, include_attributes=False))
-    return hashlib.sha256("\n".join(normalized).encode("utf-8")).hexdigest()
+                normalized.append(item)
+    return normalized
+
+
+def _create_body_digest() -> str:
+    """sha256 of the normalized AST of GobbyRunner.create's body (design section 5.8)."""
+    dumps = [
+        ast.dump(item, annotate_fields=True, include_attributes=False)
+        for item in _normalized_create_statements()
+    ]
+    return hashlib.sha256("\n".join(dumps).encode("utf-8")).hexdigest()
 
 
 def _strings(value: Any) -> Iterator[str]:
@@ -355,7 +368,8 @@ def test_inventory_schema_fields() -> None:
         assert task["creator"] is not None
         assert {"module", "qualname"} <= set(task["creator"]), task["id"]
     for phase in inventory["phases"]:
-        assert set(phase) == PHASE_KEYS, phase.get("id")
+        expected = CONSTRUCT_PHASE_KEYS if phase["stage"] == "construct" else PHASE_KEYS
+        assert set(phase) == expected, phase.get("id")
         assert phase["stage"] in PHASE_STAGES, phase["id"]
         assert phase["next_owner"] in NEXT_OWNERS, phase["id"]
         assert phase["owner"] is not None, phase["id"]
@@ -1063,3 +1077,224 @@ def test_subsystem_and_recovery_seams_match_their_calls() -> None:
         for phase in phases:
             if phase["stage"] == stage:
                 assert reached.get(phase["id"]) == set(phase["seams"]), phase["id"]
+
+
+# R36 construct seams -----------------------------------------------------------------------------
+
+HELPER_TARGET = ("gobby.runner", "_run_blocking_startup_phase")
+
+
+def _module_file(module: str) -> Path:
+    """The source file of a gobby module. A package resolves to its __init__.py."""
+    base = SRC.parent / module.replace(".", "/")
+    if base.with_suffix(".py").is_file():
+        return base.with_suffix(".py")
+    return base / "__init__.py"
+
+
+@functools.cache
+def _cached_tree(path: Path) -> ast.Module:
+    """A parsed module, shared by the construct pins, which must not mutate it."""
+    return _parse(path)
+
+
+def _construct_phases() -> list[dict[str, Any]]:
+    phases = [phase for phase in _inventory()["phases"] if phase["stage"] == "construct"]
+    for phase in phases:
+        assert "seam_notes" in phase, f"{phase['id']} has no seam_notes (R36)"
+    return phases
+
+
+def _targets(phase: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """The (module, qualname) that each seam note of a phase names."""
+    return [(entry["module"], entry["qualname"]) for entry in phase["seam_notes"].values()]
+
+
+def _construct_creators() -> set[tuple[str, str]]:
+    """The (module, qualname) creators of the construct-stage task and thread census rows.
+
+    A row is construct-stage when an inventory task with stage construct lists its key, because
+    thread rows carry no stage of their own. Executor rows are not task creators (R29).
+    """
+    owned = {
+        key
+        for task in _inventory()["tasks"]
+        if task["stage"] == "construct"
+        for key in task["census"]
+    }
+    creators: set[tuple[str, str]] = set()
+    for section in ("tasks", "threads"):
+        for row in _census()[section]:
+            if _census_key(row["key"]) in owned:
+                module, qualname = row["creator"].split(":", 1)
+                creators.add((module, qualname))
+    return creators
+
+
+def _defined_in(module: str, name: str, depth: int = 0) -> tuple[str, str, str] | None:
+    """(module, qualname, kind) of the top-level def or class ``name`` of a gobby module.
+
+    Kind is ``function`` or ``class``. An absolute ``from gobby... import`` re-export is followed.
+    """
+    assert depth < 8, f"re-export chain too deep at {module}.{name}"
+    for node in _cached_tree(_module_file(module)).body:
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            return module, name, "class"
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == name:
+            return module, name, "function"
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and (node.module or "").startswith("gobby.")
+        ):
+            for alias in node.names:
+                if (alias.asname or alias.name) == name:
+                    return _defined_in(node.module or "", alias.name, depth + 1)
+    return None
+
+
+def _create_try_body() -> list[ast.stmt]:
+    """The phase statements of GobbyRunner.create: the body of its try, normalized."""
+    tries = [node for node in _normalized_create_statements() if isinstance(node, ast.Try)]
+    assert len(tries) == 1, "GobbyRunner.create must hold exactly one try block"
+    return tries[0].body
+
+
+def _create_references() -> tuple[Counter[tuple[str, str]], list[tuple[str, str]]]:
+    """The gobby functions the phase statements of GobbyRunner.create name, and the first
+    argument of each call to the startup-phase wrapper.
+
+    A name counts when it is imported from a gobby module into the try body, or is a top-level
+    function of runner.py, or is a GobbyRunner method reached as ``self.<method>``. A chain such
+    as ``self.config_runtime.start()`` is not named by these rules; the census pin covers it.
+    The first arguments come back in source order.
+    """
+    nodes = [node for statement in _create_try_body() for node in ast.walk(statement)]
+    imports: dict[str, tuple[str, str]] = {}
+    for node in nodes:
+        if (
+            isinstance(node, ast.ImportFrom)
+            and node.level == 0
+            and (node.module or "").startswith("gobby.")
+        ):
+            for alias in node.names:
+                imports[alias.asname or alias.name] = (node.module or "", alias.name)
+
+    def resolve(name: str) -> tuple[str, str] | None:
+        found = (
+            _defined_in(*imports[name]) if name in imports else _defined_in("gobby.runner", name)
+        )
+        if found is None or found[2] != "function":
+            return None
+        return found[0], found[1]
+
+    methods = {
+        qualname
+        for qualname in _definitions(_cached_tree(RUNNER_FILE))
+        if qualname.startswith("GobbyRunner.")
+    }
+    refs: Counter[tuple[str, str]] = Counter()
+    for node in nodes:
+        target: tuple[str, str] | None = None
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            target = resolve(node.id)
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Load)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+            and f"GobbyRunner.{node.attr}" in methods
+        ):
+            target = ("gobby.runner", f"GobbyRunner.{node.attr}")
+        if target is not None:
+            refs[target] += 1
+    first_args: list[tuple[str, str]] = []
+    for node in nodes:
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+            and resolve(node.func.id) == HELPER_TARGET
+        ):
+            argument = resolve(node.args[0].id)
+            if argument is not None:
+                first_args.append(argument)
+    return refs, first_args
+
+
+def test_construct_seam_notes_cover_each_seam() -> None:
+    """Every construct phase carries seam_notes with one entry per seam (R36, additive field)."""
+    for phase in _construct_phases():
+        assert "seam_notes" in phase, f"{phase['id']} has no seam_notes"
+        assert len(phase["seams"]) == len(set(phase["seams"])), phase["id"]
+        assert set(phase["seam_notes"]) == set(phase["seams"]), phase["id"]
+        for seam, entry in phase["seam_notes"].items():
+            assert {"module", "qualname"} <= set(entry), (phase["id"], seam)
+            assert set(entry) <= {"module", "qualname", "unobserved_reason"}, (phase["id"], seam)
+            assert entry["module"].startswith("gobby."), (phase["id"], seam)
+            assert entry["qualname"], (phase["id"], seam)
+
+
+def test_construct_seams_resolve_to_definitions() -> None:
+    """(a) Each seam's module and qualname name a function def in the source, found by AST."""
+    for phase in _construct_phases():
+        for seam in phase["seams"]:
+            entry = phase["seam_notes"][seam]
+            path = _module_file(entry["module"])
+            assert path.is_file(), (phase["id"], seam, entry)
+            found = _definitions(_cached_tree(path)).get(entry["qualname"])
+            assert isinstance(found, ast.FunctionDef | ast.AsyncFunctionDef), (phase["id"], seam)
+            assert entry["qualname"] == seam or entry["qualname"].endswith(f".{seam}"), (
+                phase["id"],
+                seam,
+            )
+
+
+def test_construct_seams_are_observed_or_reasoned() -> None:
+    """(b) A seam is the creator of a construct-stage census row, or carries a non-empty
+    unobserved_reason. Exactly the seams without such a creator carry the reason."""
+    creators = _construct_creators()
+    for phase in _construct_phases():
+        for seam, entry in phase["seam_notes"].items():
+            if (entry["module"], entry["qualname"]) in creators:
+                assert "unobserved_reason" not in entry, (phase["id"], seam)
+            else:
+                reason = entry.get("unobserved_reason")
+                assert isinstance(reason, str) and reason.strip(), (phase["id"], seam)
+
+
+def test_construct_seams_match_create_references() -> None:
+    """(e) Each gobby function that the phase statements of GobbyRunner.create name is listed by
+    as many construct phases as it is named. The k-th startup-phase wrapper call names a seam of
+    the k-th construct phase that lists the wrapper, since inventory order is the source order of
+    the phases (R36). A seam moved between phases, or deleted from one, fails here."""
+    refs, first_args = _create_references()
+    assert refs, "GobbyRunner.create names no gobby function"
+    listed: Counter[tuple[str, str]] = Counter()
+    for phase in _construct_phases():
+        listed.update(_targets(phase))
+    for target, count in refs.items():
+        assert listed[target] == count, (target, count, listed[target])
+    listing = [phase for phase in _construct_phases() if HELPER_TARGET in _targets(phase)]
+    assert len(listing) == len(first_args), (len(listing), len(first_args))
+    for phase, argument in zip(listing, first_args, strict=True):
+        assert argument in _targets(phase), (phase["id"], argument)
+
+
+def test_construct_seams_equal_source_and_census_union() -> None:
+    """The construct seam targets equal the functions GobbyRunner.create names (see the reference
+    pin) united with the construct-stage task and thread creators of the census. Only the first
+    part is derived from source; the second is read from the frozen census (R36)."""
+    refs, _first_args = _create_references()
+    listed = {target for phase in _construct_phases() for target in _targets(phase)}
+    creators = _construct_creators()
+    assert creators <= listed, sorted(creators - listed)
+    assert set(refs) <= listed, sorted(set(refs) - listed)
+    assert listed <= set(refs) | creators, sorted(listed - (set(refs) | creators))
+
+
+def test_runner_lifecycle_doc_names_seam_notes() -> None:
+    text = DOC_PATH.read_text(encoding="utf-8")
+    for term in ("`seam_notes`", "`unobserved_reason`"):
+        assert term in text, term
