@@ -6,7 +6,7 @@ use super::Level;
 
 /// One record, as the layouts see it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Record {
+pub(crate) struct Record {
     /// Local time as `YYYY-MM-DDTHH:MM:SS`; the text layout writes a space for the `T`.
     pub time: String,
     pub level: Level,
@@ -21,12 +21,12 @@ pub struct Record {
 
 /// The text line: `time - LEVEL - short name - message`, then ` | k=v` per extra, with
 /// C0 controls, DEL, CR and LF escaped so one record is one line.
-pub fn format_text(_record: &Record) -> String {
+pub(crate) fn format_text(_record: &Record) -> String {
     String::new()
 }
 
 /// The JSON line: `time`, `level`, `name`, `module`, `message`, then the extras, encoded
 /// as Python's `json.dumps` does.
-pub fn format_json(_record: &Record) -> Result<String, DumpError> {
+pub(crate) fn format_json(_record: &Record) -> Result<String, DumpError> {
     Ok(String::new())
 }

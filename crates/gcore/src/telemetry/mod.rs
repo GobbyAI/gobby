@@ -1,8 +1,10 @@
 //! The in-process metric registry: named counters, gauges and histograms with labels.
 //!
-//! Metric names are constants in [`names`], so a name that is not declared does not
-//! compile. Label values are runtime values (rule, server and tool names), so each metric
-//! keeps at most [`MAX_LABEL_SETS`] distinct label sets; further sets fold into one series
+//! Callers name a metric with one of the constants in [`names`]. The methods accept any
+//! `&'static str`, so the declaration is a convention, not a compile-time check.
+//!
+//! Label values are runtime values (rule, server and tool names), so each metric keeps
+//! at most [`MAX_LABEL_SETS`] distinct label sets; further sets fold into one series
 //! labelled `overflow="true"`.
 
 use std::sync::OnceLock;

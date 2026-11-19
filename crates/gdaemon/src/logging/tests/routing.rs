@@ -1,4 +1,5 @@
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
 
 use gobby_core::json::{Json, PYTHON, dumps};
 use gobby_core::telemetry::{SampleValue, Telemetry, names::LOGGING_RECORDS_TOTAL};
@@ -17,6 +18,18 @@ fn holders(dir: &Path, message: &str) -> Vec<&'static str> {
         .copied()
         .filter(|name| read(dir, name).contains(message))
         .collect()
+}
+
+/// Held by every test that sends a hooks record at WARNING or above through a routed
+/// layer. The counter lives in the process registry, which tests on other threads share,
+/// so the counting test holds it across both reads.
+static HOOKS_WARNINGS: Mutex<()> = Mutex::new(());
+
+/// The hooks warning lock. A test that failed while holding it does not block the rest.
+fn hooks_warnings() -> MutexGuard<'static, ()> {
+    HOOKS_WARNINGS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// The `logging_records_total` count for one surface and severity.
@@ -141,11 +154,14 @@ fn warn_and_above_reach_errors_log_and_info_does_not() {
     let dir = tempfile::tempdir().expect("temporary logs directory");
     let (dispatch, _handle) = routed(settings_in(dir.path()));
 
-    with_default(&dispatch, || {
-        tracing::info!(target: "gobby.hooks", "hooks info record");
-        tracing::warn!(target: "gobby.hooks", "hooks warning record");
-        tracing::error!(target: "gobby.hooks", "hooks error record");
-    });
+    {
+        let _counted = hooks_warnings();
+        with_default(&dispatch, || {
+            tracing::info!(target: "gobby.hooks", "hooks info record");
+            tracing::warn!(target: "gobby.hooks", "hooks warning record");
+            tracing::error!(target: "gobby.hooks", "hooks error record");
+        });
+    }
 
     let hooks = read(dir.path(), "hooks.log");
     let errors = read(dir.path(), "errors.log");
@@ -265,8 +281,8 @@ fn records_before_config_go_to_stderr_verbatim_and_create_no_file() {
     if std::env::var_os(PRE_CONFIG_CHILD).is_some() {
         // Child: only the pre-configuration sink is installed.
         install_pre_config();
-        tracing::warn!(target: "gobby.daemon", "pre-config warning line");
-        tracing::info!(target: "gobby.hooks", "pre-config info line");
+        tracing::warn!(target: "gobby.daemon", "early warning line");
+        tracing::info!(target: "gobby.hooks", "early info line");
         return;
     }
 
@@ -287,11 +303,11 @@ fn records_before_config_go_to_stderr_verbatim_and_create_no_file() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "{stderr}");
     let lines: Vec<&str> = stderr.lines().collect();
-    assert!(lines.contains(&"pre-config warning line"), "{stderr}");
-    assert!(lines.contains(&"pre-config info line"), "{stderr}");
+    assert!(lines.contains(&"early warning line"), "{stderr}");
+    assert!(lines.contains(&"early info line"), "{stderr}");
     assert!(
         !logs.exists(),
-        "the pre-config sink created {}",
+        "the pre-configuration sink created {}",
         logs.display()
     );
 }
@@ -371,9 +387,12 @@ fn text_line_and_json_fields_match_python_layout() {
     // Through the layer, with the real clock and source module.
     let dir = tempfile::tempdir().expect("temporary logs directory");
     let (dispatch, _handle) = routed(settings_in(dir.path()));
-    with_default(&dispatch, || {
-        tracing::warn!(target: "gobby.hooks", k = "v", "message");
-    });
+    {
+        let _counted = hooks_warnings();
+        with_default(&dispatch, || {
+            tracing::warn!(target: "gobby.hooks", k = "v", "message");
+        });
+    }
     let text_line = fancy_regex::Regex::new(
         r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} - WARNING  - hooks - message \| k=v$",
     )
@@ -389,9 +408,12 @@ fn text_line_and_json_fields_match_python_layout() {
         ..settings_in(json_dir.path())
     };
     let (dispatch, _handle) = routed(settings);
-    with_default(&dispatch, || {
-        tracing::warn!(target: "gobby.hooks", k = "v", "message");
-    });
+    {
+        let _counted = hooks_warnings();
+        with_default(&dispatch, || {
+            tracing::warn!(target: "gobby.hooks", k = "v", "message");
+        });
+    }
     let hooks = read(json_dir.path(), "hooks.log");
     let lines: Vec<&str> = hooks.lines().collect();
     assert_eq!(lines.len(), 1, "{hooks}");
@@ -413,6 +435,8 @@ fn text_line_and_json_fields_match_python_layout() {
 fn warn_and_above_count_once_per_source_record() {
     let dir = tempfile::tempdir().expect("temporary logs directory");
     let (dispatch, _handle) = routed(settings_in(dir.path()));
+    // No other hooks warning reaches the process registry between the two reads.
+    let _counted = hooks_warnings();
     let warnings_before = record_count("hooks", "WARNING");
     let infos_before = record_count("hooks", "INFO");
 

@@ -10,14 +10,20 @@ use std::path::PathBuf;
 
 pub mod classify;
 pub mod epoch;
+// The layouts and the routed layer have no production caller until `activate` installs
+// the layer; until then only the tests reach them.
+#[cfg(test)]
 mod format;
-pub mod layer;
+#[cfg(test)]
+mod layer;
 pub mod settings;
 mod sink;
 pub mod writer;
 
-pub use format::{Record, format_json, format_text};
-pub use layer::{RouteHandle, RoutedLayer, routed_layer};
+#[cfg(test)]
+pub(crate) use format::{Record, format_json, format_text};
+#[cfg(test)]
+pub(crate) use layer::{RouteHandle, routed_layer};
 pub use settings::resolve_dir;
 pub use sink::{install_pre_config, raw_stderr};
 
