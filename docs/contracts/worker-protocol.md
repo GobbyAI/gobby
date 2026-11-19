@@ -131,7 +131,7 @@ An `initialize` result has these keys, always present: `phase` (the requested ph
 |---|---|---|---|---|
 | `ready` | the phase completed | the following phase, or null on the last phase | null | null |
 | `refused` | the phase raised `StartRefusal`; its rollback succeeded | null | `str(exc)`, at most 2,048 characters | null |
-| `failed` | the phase raised another `Exception`, or its rollback failed | null | `str(exc)`, or `rollback failed: ...`, at most 2,048 characters | the exception class name, or `IncompleteCreate` when `create` returned before every phase ran (R55) |
+| `failed` | the phase raised another `Exception`, its rollback failed, or `create` parked out of order (R63) | null | `str(exc)`, `rollback failed: ...`, or `create entered a phase out of order`, at most 2,048 characters | the exception class name, `IncompleteCreate` when `create` returned before every phase ran (R55), or `PhaseOrderViolation` when `create` parked out of order (R63) |
 
 A refused or failed phase does not advance the next phase. The facade becomes unusable after
 a refused or failed phase. A refused or failed phase reports `next_phase` as null.
@@ -141,6 +141,13 @@ A `create` that returns before every phase scope has run (R55) makes the phase b
 the error type `IncompleteCreate`. No exception exists for that case, so the error type is
 this fixed name. The facade is unusable from then on, so every later `initialize` and
 `invoke` is `worker_unusable`.
+
+A `create` that parks at a phase scope that is neither the requested phase nor the following
+phase (R63) makes the phase being settled `failed`, with `next_phase` null, the message
+`create entered a phase out of order`, and the error type `PhaseOrderViolation`. The facade
+cancels the create while it waits at that scope and waits for its rollback to finish before it
+answers. The facade is unusable from then on, so `initialize` never waits on a phase that cannot
+come.
 
 Construction (R44): `WorkerFacade` builds a phase driver whose gate creates futures on the
 running event loop. Construct the facade inside a running loop, from async code, never from
@@ -161,9 +168,11 @@ facade is unusable, and every later `initialize` and `invoke` is `worker_unusabl
 
 Integers on the wire are in `[-2^63, 2^64 - 1]` only (R54). A result that holds an integer
 outside that range is `op_failed`. A request whose `generation` or `protocol_version` is outside
-it is `invalid_request`, and its echo leaves out the generation. A domain parameter outside it
-is `invalid_request`. Rust reads these integers as `u64` or `i64`, so no value outside the
-range crosses the wire.
+it is `invalid_request`, and its echo leaves out the generation.
+An `Int` parameter outside it is `invalid_request`.
+`Anything` and `JsonObject` values pass through as decoded JSON.
+An integer nested in one reaches the op as it was decoded (R65).
+The Rust client reads envelope integers as `u64` or `i64`.
 
 Python and Rust keep separate constants. The Rust constant `MAX_DOMAIN_OP_REQUEST_BYTES`
 is not shared with the hook ingress bound, which is private to its module.
@@ -186,8 +195,9 @@ is not shared with the hook ingress bound, which is private to its module.
 Registration faults map to `op_failed`, never to `invalid_request` (R31). They are the
 `OpRegistrationError`, `TypeError`, `ImportError` and `NameError` raised by a broken
 registration. An op module or dataclass module whose import raises any `Exception` is a
-registration fault of the same kind (R53). The fault is a server fault, and it fails only the
-call that hit it.
+registration fault of the same kind (R53). A dataclass whose annotations cannot be evaluated,
+for any `Exception`, is a `TypeError` registration fault (R62). The fault is a server fault,
+and it fails only the call that hit it.
 
 ## Op table and invoke
 

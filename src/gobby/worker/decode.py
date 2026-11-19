@@ -161,7 +161,7 @@ class DataclassFields:
             cls = self._resolve()
             _BUILDING.add(cls)
             try:
-                hints = typing.get_type_hints(cls)
+                hints = _annotations_of(cls)
                 fields = [field for field in dataclasses.fields(cls) if field.init]
                 specs = {field.name: spec_for(hints[field.name]) for field in fields}
                 required = frozenset(
@@ -174,6 +174,19 @@ class DataclassFields:
             finally:
                 _BUILDING.discard(cls)
         return self._layout_cache
+
+
+def _annotations_of(cls: type) -> dict[str, Any]:
+    """Evaluate a dataclass's annotations. Any Exception from evaluating them is a TypeError.
+
+    A string annotation is evaluated as Python source, so it can raise any Exception (a
+    SyntaxError, a NameError, a ZeroDivisionError). Each is a broken registration, not a client
+    value, so each is the same registration fault (R62).
+    """
+    try:
+        return typing.get_type_hints(cls)
+    except Exception as exc:
+        raise TypeError(f"dataclass annotations do not resolve: {cls.__qualname__}: {exc}") from exc
 
 
 def spec_for(annotation: object) -> Spec:

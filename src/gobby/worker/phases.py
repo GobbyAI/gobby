@@ -24,6 +24,9 @@ _MESSAGE_LIMIT: Final = 2048
 # error type is this fixed name.
 _EARLY_RETURN_MESSAGE: Final = "create returned before every phase ran"
 _EARLY_RETURN_TYPE: Final = "IncompleteCreate"
+# A create that parks at a phase scope the order does not allow (R63).
+_OUT_OF_ORDER_MESSAGE: Final = "create entered a phase out of order"
+_OUT_OF_ORDER_TYPE: Final = "PhaseOrderViolation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,8 +154,26 @@ class PhaseDriver:
                     raise error
                 gate.failure = (phase, error)
                 continue
+            parked = gate.parked
+            if parked is not None and parked is not phase and parked is not following:
+                return await self._settle_out_of_order(task)
             gate.changed.clear()
             await gate.changed.wait()
+
+    async def _settle_out_of_order(self, task: asyncio.Task[object]) -> PhaseOutcome:
+        """Stop a create that parked at a phase scope the order does not allow (R63).
+
+        The create is cancelled while it waits at that scope, so its rollback runs before the
+        failure is reported. Nothing else would ever release that scope, so initialize would
+        otherwise wait forever.
+        """
+        self._gate.unusable = True
+        task.cancel()
+        await asyncio.wait({task})
+        if not task.cancelled():
+            # Retrieve the outcome, so asyncio does not log an error that no one reads.
+            task.exception()
+        return PhaseOutcome(PhaseStatus.FAILED, None, _OUT_OF_ORDER_MESSAGE, _OUT_OF_ORDER_TYPE)
 
     async def _settle_failure(
         self, task: asyncio.Task[object], original: BaseException

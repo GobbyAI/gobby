@@ -163,6 +163,7 @@ async def test_driver_runs_real_create_in_five_steps(monkeypatch: pytest.MonkeyP
     seen_events: list[list[str]] = []
     for phase in phases:
         outcome = await driver.initialize(phase)
+        assert isinstance(outcome, PhaseOutcome)
         statuses.append(outcome.status)
         next_phases.append(outcome.next_phase)
         seen_events.append(list(seams.events))
@@ -182,8 +183,10 @@ async def test_real_refusal_marks_unusable_before_rollback(monkeypatch: pytest.M
     seams.probe = lambda: driver.unusable
 
     first = await driver.initialize(InitPhase.STORAGE_AND_CONFIG)
+    assert isinstance(first, PhaseOutcome)
     assert first.status == "ready"
     refused = await driver.initialize(InitPhase.CONTENT_REFUSAL)
+    assert isinstance(refused, PhaseOutcome)
 
     assert refused.status == "refused"
     assert refused.message == "startup refused by test"
@@ -205,7 +208,9 @@ async def test_create_passes_config_path_and_verbose(monkeypatch: pytest.MonkeyP
     driver = PhaseDriver(functools.partial(GobbyRunner.create, config_path, True))
 
     for phase in InitPhase:
-        assert (await driver.initialize(phase)).status == "ready"
+        outcome = await driver.initialize(phase)
+        assert isinstance(outcome, PhaseOutcome)
+        assert outcome.status == "ready"
     assert seams.storage_args == [(config_path, True)]
 
 
