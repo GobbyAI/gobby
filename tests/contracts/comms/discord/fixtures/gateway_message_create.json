@@ -1,0 +1,30 @@
+{
+  "provider": "discord",
+  "operation": "inbound",
+  "capture": "unit_test_values",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/discord.py",
+  "source_test": "tests/communications/adapters/test_communications_adapters_discord.py::test_gateway_message_create_forwards_to_manager",
+  "contract_ref": "https://discord.com/developers/docs/events/gateway-events",
+  "note": "Values copied from the adapter's own unit test, which hands the dispatch type and data to the adapter's gateway dispatch handler directly; no gateway frame was received. Not a provider recording and not an oracle: Discord is deferred until a live test-guild round trip passes.",
+  "dispatch": {
+    "event_type": "MESSAGE_CREATE",
+    "data": {
+      "id": "msg_456",
+      "channel_id": "channel_123",
+      "author": {
+        "id": "user_789",
+        "username": "tester"
+      },
+      "content": "Hello from gateway"
+    }
+  },
+  "forwarded": {
+    "count": 1,
+    "content": "Hello from gateway",
+    "metadata": {
+      "platform_channel_id": "channel_123"
+    }
+  }
+}

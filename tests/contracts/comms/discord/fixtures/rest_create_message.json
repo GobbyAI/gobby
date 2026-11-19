@@ -1,0 +1,34 @@
+{
+  "provider": "discord",
+  "operation": "send",
+  "capture": "unit_test_values",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/discord.py",
+  "source_test": "tests/communications/adapters/test_communications_adapters_discord.py::test_send_message_success",
+  "contract_ref": "https://discord.com/developers/docs/resources/message",
+  "note": "Values copied from the adapter's own unit test, which mocks httpx.AsyncClient.post. Not a provider recording and not an oracle: Discord is deferred until a live test-guild round trip passes.",
+  "message": {
+    "content": "Hello Discord",
+    "metadata": {
+      "platform_destination": "channel_123"
+    }
+  },
+  "request": {
+    "method": "POST",
+    "path": "/channels/channel_123/messages",
+    "json": {
+      "content": "Hello Discord",
+      "allowed_mentions": {
+        "parse": []
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "json": {
+      "id": "1234567890"
+    }
+  },
+  "returns": "1234567890"
+}
