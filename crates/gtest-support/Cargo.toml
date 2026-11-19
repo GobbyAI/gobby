@@ -30,7 +30,7 @@ tokio-postgres = "0.7.18"
 # Blocking HTTP client for the v2 request sender; already in the lockfile through gobby-core.
 ureq = "2"
 # Safe wrappers for getifaddrs (net) and kill (signal); the crate forbids unsafe code.
-nix = { version = "0.29", default-features = false, features = ["net", "signal"] }
+nix = { version = "0.29", default-features = false, features = ["net", "signal", "user"] }
 # Self-cleaning per-run home directories, as the existing gdaemon tests use.
 tempfile = "3"
 

@@ -125,3 +125,9 @@ slow-timeout = { period = "120s", terminate-after = 3 }
 # own database. One at a time keeps the shared test hub's tmpfs and ports bounded.
 filter = 'binary(suite) & (test(/^full_daemon::/) | test(/^loopback_network::/))'
 test-group = 'harness-full-daemon'
+
+[[profile.default.overrides]]
+# The support crate's database tests create and drop per-run databases on the shared test hub,
+# so they join the serial database group with the other DB-backed suites.
+filter = 'package(gobby-test-support) & binary(suite) & test(/^database::/)'
+test-group = 'serial-db'

@@ -10,7 +10,6 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use serde_json::{Map, Value};
 use tokio_postgres::Config;
@@ -284,12 +283,15 @@ pub fn run_database_pid(name: &str, prefix: &str) -> Option<u32> {
     pid.parse().ok()
 }
 
-/// The operator's `~/.gobby`, or `None` when no home directory is known.
+/// The operator's `~/.gobby`, or `None` when no password entry exists for this uid.
 ///
-/// Uses the standard library's home lookup (`HOME` first). The Python guard resolves the
-/// password entry instead; the crate has no account lookup without nix's `user` feature.
+/// Reads the passwd entry for the effective uid, as the Python guard does (`pwd.getpwuid`), so
+/// the environment's `HOME` cannot move the verdict.
 pub fn operator_home() -> Option<PathBuf> {
-    std::env::home_dir().map(|home| home.join(".gobby"))
+    nix::unistd::User::from_uid(nix::unistd::getuid())
+        .ok()
+        .flatten()
+        .map(|user| user.dir.join(".gobby"))
 }
 
 /// `DATABASE_URL` from the process environment, accepted for a test that needs the test hub.
@@ -495,7 +497,7 @@ fn read_profile(path: &Path) -> Result<Map<String, Value>, HubGuardError> {
     options.read(true).custom_flags(nix::libc::O_NOFOLLOW);
     let mut file: File = options.open(path).map_err(|_| unreadable())?;
     let opened = file.metadata().map_err(|_| unreadable())?;
-    let owner = current_uid()?;
+    let owner = current_uid();
     if !opened.is_file() || opened.permissions().mode() & 0o7777 != 0o600 || opened.uid() != owner {
         return Err(refuse(
             "R4",
@@ -517,20 +519,9 @@ fn read_profile(path: &Path) -> Result<Map<String, Value>, HubGuardError> {
     }
 }
 
-/// The effective uid of this process. A file created here is owned by it, so the probe file's
-/// owner is the answer; the crate has no account call without nix's `user` feature.
-fn current_uid() -> Result<u32, HubGuardError> {
-    static UID: OnceLock<u32> = OnceLock::new();
-    if let Some(uid) = UID.get() {
-        return Ok(*uid);
-    }
-    let probe = tempfile::tempfile()
-        .map_err(|error| refuse("R4", format!("cannot determine the current uid: {error}")))?;
-    let uid = probe
-        .metadata()
-        .map_err(|error| refuse("R4", format!("cannot determine the current uid: {error}")))?
-        .uid();
-    Ok(*UID.get_or_init(|| uid))
+/// The real uid of this process (`getuid`, as the Python guard's `os.getuid()`).
+fn current_uid() -> u32 {
+    nix::unistd::getuid().as_raw()
 }
 
 /// The path with symlinks and `..` resolved where it exists; the absolute lexical path otherwise.
