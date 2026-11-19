@@ -49,9 +49,84 @@ fn test_hub() -> Option<String> {
     test_hub_url_or_skip(&|name| std::env::var(name).ok())
 }
 
-/// The pre-start seed step (C15): mints the operator key in the run database.
-fn python_seed(_context: &SeedContext<'_>) -> Result<String, String> {
-    Err("the Python seed step lands in C15".to_owned())
+/// The e2e fixture's database state, applied to the run database outside pytest: the canonical
+/// user and machine rows, the runtime rows of `_seed_e2e_runtime_state`, and the local operator
+/// key minted by `ensure_local_api_key` (tests/e2e/conftest.py:547-612,
+/// tests/e2e/test_runtime_boundary.py:76-84, tests/contracts/test_http_corpus.py:43-68). The key
+/// is printed as the last line of stdout.
+const SEED_SCRIPT: &str = r#"
+import json
+import sys
+from pathlib import Path
+
+from gobby.config.bootstrap_io import read_bootstrap_yaml
+from gobby.storage.api_keys import ensure_local_api_key
+from gobby.storage.hub.postgres import PostgresHubDatabase
+from tests.e2e.conftest import _seed_e2e_runtime_state, build_e2e_project
+from tests.e2e.test_runtime_boundary import E2E_MACHINE_ID, _seed_identity_rows
+from tests.fixtures.postgres import (
+    TEST_USER_EMAIL,
+    TEST_USER_ID,
+    TEST_USER_NAME,
+    TEST_USER_PASSWORD_HASH,
+)
+
+url, home, project = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3])
+host_dir = Path(sys.argv[4])
+db = PostgresHubDatabase(url)
+db.execute(
+    """
+    INSERT INTO users (id, email, name, password_hash)
+    VALUES (%s, %s, %s, %s)
+    ON CONFLICT (id) DO NOTHING
+    """,
+    (TEST_USER_ID, TEST_USER_EMAIL, TEST_USER_NAME, TEST_USER_PASSWORD_HASH),
+)
+_seed_identity_rows(db, E2E_MACHINE_ID, TEST_USER_ID)
+build_e2e_project(project)
+_seed_e2e_runtime_state(db, project, terminal_host_socket_dir=host_dir)
+ensure_local_api_key(db, E2E_MACHINE_ID, home / "bootstrap.yaml")
+key = read_bootstrap_yaml(home / "bootstrap.yaml")["api_key"]
+print(json.dumps({"operator_key": key}))
+"#;
+
+/// The pre-start seed step: runs [`SEED_SCRIPT`] on the checkout's interpreter.
+fn python_seed(context: &SeedContext<'_>) -> Result<String, String> {
+    let output = Command::new(context.python)
+        .arg("-c")
+        .arg(SEED_SCRIPT)
+        .arg(context.database_url)
+        .arg(context.home)
+        .arg(context.project_dir)
+        .arg(context.terminal_host_dir)
+        .current_dir(context.repo_root)
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .env("HOME", context.home)
+        .env("GOBBY_HOME", context.home)
+        .env("GOBBY_TEST_PROTECT", "1")
+        .env("PYTHONPATH", context.repo_root.join("src"))
+        .output()
+        .map_err(|error| format!("run the seed interpreter: {error}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        return Err(format!(
+            "the seed exited with {}:\n{stdout}{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let last = stdout
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .ok_or_else(|| "the seed printed no operator key".to_owned())?;
+    let value: Value =
+        serde_json::from_str(last).map_err(|error| format!("the seed's output: {error}"))?;
+    value["operator_key"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| "the seed's output names no operator_key".to_owned())
 }
 
 /// Start the full daemon from this checkout with the process environment.
@@ -235,6 +310,13 @@ fn teardown_stops_daemon_and_worker_before_the_database_drops() {
     let daemon = start_daemon().expect("the full daemon starts");
     let daemon_pid = daemon.daemon_pid();
     let worker_pid = daemon.worker_pid().expect("readiness recorded the worker");
+    let host_pid = daemon
+        .terminal_host_pid()
+        .expect("the daemon started the terminal host");
+    assert!(
+        pid_alive(host_pid),
+        "the terminal host runs before teardown"
+    );
     let name = daemon.database_name().expect("a run database").to_owned();
     let report = daemon.teardown().expect("teardown");
     assert_eq!(
@@ -242,6 +324,7 @@ fn teardown_stops_daemon_and_worker_before_the_database_drops() {
         [
             TeardownStep::DaemonStopped,
             TeardownStep::WorkerStopped,
+            TeardownStep::TerminalHostStopped,
             TeardownStep::DatabaseDropped,
             TeardownStep::HomeRemoved,
         ]
@@ -252,6 +335,7 @@ fn teardown_stops_daemon_and_worker_before_the_database_drops() {
     );
     assert!(!pid_alive(daemon_pid), "gdaemon is gone");
     assert!(!pid_alive(worker_pid), "the worker is gone");
+    assert!(!pid_alive(host_pid), "the terminal host is gone");
     assert!(!database_exists(&maintenance_url(&url), &name).expect("probe"));
 }
 
