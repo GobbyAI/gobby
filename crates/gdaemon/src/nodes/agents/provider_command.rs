@@ -316,3 +316,7 @@ fn push_env_pair(argv: &mut Vec<String>, name: &str, value: &str) {
 fn quoted(value: &str) -> String {
     Value::String(value.to_string()).to_string()
 }
+
+#[cfg(test)]
+#[path = "provider_command/tests.rs"]
+mod tests;

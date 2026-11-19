@@ -26,6 +26,9 @@ mod family_lifecycle;
 #[path = "family_seam.rs"]
 mod family_seam;
 
+#[path = "family_template.rs"]
+mod family_template;
+
 #[path = "front_door.rs"]
 mod front_door;
 
@@ -46,6 +49,9 @@ mod lease;
 
 #[path = "lifecycle.rs"]
 mod lifecycle;
+
+#[path = "logging.rs"]
+mod logging;
 
 #[path = "loopback_network.rs"]
 mod loopback_network;

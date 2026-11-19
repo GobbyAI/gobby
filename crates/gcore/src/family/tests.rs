@@ -237,6 +237,30 @@ fn logger_target_is_the_family_namespace() {
 }
 
 #[test]
+fn family_logger_counter_reads_back_with_family_label() {
+    // The counter and family names are unique to this test, so other tests that share
+    // the process registry never touch this series.
+    const COUNTER: &str = "family_logger_probe_total";
+    let ctx = FamilyContext::new(bare_parts(Arc::new(RecordingPublisher::default())));
+
+    ctx.logger("logger_probe").inc_counter(COUNTER, 2);
+
+    let series: Vec<_> = crate::telemetry::Telemetry::global()
+        .snapshot()
+        .into_iter()
+        .filter(|sample| sample.name == COUNTER)
+        .collect();
+    assert_eq!(
+        series,
+        vec![crate::telemetry::Sample {
+            name: COUNTER,
+            labels: vec![("family", "logger_probe".to_owned())],
+            value: crate::telemetry::SampleValue::Counter(2),
+        }]
+    );
+}
+
+#[test]
 fn identity_reads_three_headers_and_has_no_secret_field() {
     let mut headers = HeaderMap::new();
     headers.insert("x-gobby-user-id", HeaderValue::from_static("user-1"));
