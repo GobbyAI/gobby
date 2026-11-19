@@ -79,6 +79,8 @@ def _materialize_profile(spec: dict[str, Any] | None, tmp_path: Path) -> str | N
 
 def test_vector_file_is_schema_one_with_unique_ids() -> None:
     assert _DOCUMENT["schema_version"] == 1
+    # The same floor as the Rust reader: an emptied or truncated file must not pass.
+    assert len(_VECTORS) >= 53
     ids = [vector["id"] for vector in _VECTORS]
     assert len(ids) == len(set(ids))
     for vector in _VECTORS:

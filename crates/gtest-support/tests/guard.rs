@@ -32,9 +32,14 @@ fn vectors(document: &Value) -> &Vec<Value> {
 /// The shared file's size when this floor was set: 11 accept and 42 refuse vectors (53 in all).
 const MIN_VECTOR_COUNT: usize = 53;
 
-/// Stub for the red stage: the real floor check replaces it.
+/// Fails unless the vector set holds at least `MIN_VECTOR_COUNT` vectors. An emptied or truncated
+/// file would otherwise pass the verdict loop without checking anything.
 fn assert_vector_floor(vectors: &[Value]) {
-    let _ = vectors;
+    assert!(
+        vectors.len() >= MIN_VECTOR_COUNT,
+        "the vector set holds {} vectors, below the floor of {MIN_VECTOR_COUNT}: the shared file was emptied or truncated",
+        vectors.len()
+    );
 }
 
 fn env_map(spec: &Value) -> HashMap<String, String> {

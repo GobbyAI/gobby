@@ -30,6 +30,7 @@ from websockets.sync.server import ServerConnection, serve
 from gobby.runtime_grants.handshake import decode_grant_header, encode_grant_header
 from gobby.runtime_grants.schema import GrantBundle
 from gobby.utils.daemon_url import resolve_daemon_url
+from scripts.parity_waivers import PASSED
 from tests.contracts import corpus_v3, http_corpus, normalizers_v3, recorder_v3
 from tests.contracts.http_corpus import CorpusError
 from tests.fixtures.hub_guard import HARNESS_DATABASE_PATTERN, HubGuardError, maintenance_url
@@ -310,9 +311,7 @@ def test_ws_publish_capture_subscribes_and_keeps_only_the_declared_types() -> No
                 continue
             subscribed = set(message["events"])
             subscribes.append(list(message["events"]))
-            connection.send(
-                json.dumps({"type": "subscribe_success", "events": sorted(subscribed)})
-            )
+            connection.send(json.dumps({"type": "subscribe_success", "events": sorted(subscribed)}))
             for frame in (
                 {"type": "session_event", "n": 1},
                 {"type": "other"},
@@ -587,7 +586,7 @@ def test_secret_keyed_values_are_written_redacted_and_still_match_the_raw_replay
     assert case["side_effects"][0]["recorded"] == [{"type": "probe", "signature": "@secret@"}]
     actual, observed = recorder_v3._classify_inputs(observation)
     result = http_corpus.classify_replay(case, actual, {}, observed=observed)
-    assert result.outcome == http_corpus.PASSED
+    assert result.outcome == PASSED
 
 
 @pytest.mark.unit

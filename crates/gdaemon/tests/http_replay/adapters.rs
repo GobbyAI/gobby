@@ -56,7 +56,12 @@ pub fn check_terminal_replay(
     reply: &[u8],
     replayed: &TerminalReplay,
 ) -> Result<(), String> {
-    let _ = (client, reply, replayed);
+    if replayed.backend_received != client {
+        return Err("the client-to-backend leg changed the fixture bytes".to_owned());
+    }
+    if replayed.client_received != reply {
+        return Err("the backend-to-client leg changed the fixture bytes".to_owned());
+    }
     Ok(())
 }
 
@@ -106,6 +111,10 @@ async fn replay_terminal_fixture(payload: &[u8]) -> Result<TerminalReplay, Strin
     )
     .await
     .map_err(|_| "the reply timed out".to_owned())?;
+    // Surplus bytes after the reply are read to the quiet window and compared, not dropped.
+    super::read_until_quiet(&mut stream, &mut received)
+        .await
+        .map_err(|error| error.to_string())?;
     let capture = tokio::time::timeout(TIMEOUT, captured)
         .await
         .map_err(|_| "the backend capture timed out".to_owned())?
@@ -186,7 +195,10 @@ async fn terminal_ws_44_replay() {
             .unwrap_or_else(|error| panic!("{name}: {error}"));
         compared += 1;
     }
-    assert_eq!(compared, listed, "every manifest fixture replays and compares");
+    assert_eq!(
+        compared, listed,
+        "every manifest fixture replays and compares"
+    );
 }
 
 #[test]

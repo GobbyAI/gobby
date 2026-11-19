@@ -34,7 +34,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 
-use super::backend::{Backends, NO_NATIVE_BACKEND, native_family, start_listener};
+use super::backend::{
+    Backends, NO_NATIVE_BACKEND, native_family, start_listener, stub_target_task,
+};
 use super::compare::{first_difference, normalized_document};
 use super::corpus::{Case, Kind};
 use super::normalize::{NormalizeError, Window};
@@ -199,9 +201,18 @@ pub async fn run_differential(
         Verdict::NoNativeBackend
     } else {
         let proxied = run_leg(case, families, RouteBackend::Proxy, target, home, proxy).await?;
+        // The native leg's proxy target is a tripwire. A request that reaches it was not answered
+        // by the native family, so the legs show no native parity (fix3 V24).
+        let (tripwire, reached, task) = stub_target_task().await;
         let native_leg =
-            run_leg(case, families, RouteBackend::Native, target, home, native).await?;
-        compare_legs(case, window, &proxied, &native_leg)?
+            run_leg(case, families, RouteBackend::Native, tripwire, home, native).await;
+        task.abort();
+        let native_leg = native_leg?;
+        if reached.lock().expect("tripwire").is_empty() {
+            compare_legs(case, window, &proxied, &native_leg)?
+        } else {
+            Verdict::NativeFallthrough
+        }
     };
     append_line(home, &record_line(case, &verdict))?;
     Ok(verdict)
@@ -641,7 +652,10 @@ mod tests {
         // Open item (fix3 V24): the health family's native leg is `proxy::forward` to the proxy
         // target, so this is a fall-through, not native parity. Recorded with FW-S4.
         assert_eq!(verdict, Verdict::NativeFallthrough);
-        assert_eq!(verdict_lines(home.path())[0]["outcome"], "native-fallthrough");
+        assert_eq!(
+            verdict_lines(home.path())[0]["outcome"],
+            "native-fallthrough"
+        );
     }
 
     #[tokio::test]

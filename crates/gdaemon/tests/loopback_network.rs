@@ -85,8 +85,7 @@ fn assert_measured(name: &str, text: &str) {
 /// The post-connect class the mode-off control expects: the transport or protocol error the daemon
 /// reports after the TCP connect succeeds (design-v2 7.4.6). The step-6 run fills it from the
 /// daemon's answer, as it fills the connect-failure texts in `loopback`.
-const POST_CONNECT_TEXT: &str =
-    "UNMEASURED: the step-6 run fills this from the daemon's post-connect transport or protocol error";
+const POST_CONNECT_TEXT: &str = "UNMEASURED: the step-6 run fills this from the daemon's post-connect transport or protocol error";
 
 /// The daemon's answers to the off-host registration and to one tool call on the server.
 struct Attempt {

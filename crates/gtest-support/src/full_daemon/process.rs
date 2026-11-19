@@ -52,46 +52,6 @@ fn is_zombie(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-/// The `(pid, pgid)` pairs whose parent is `parent`, from one `ps` table read.
-#[cfg(unix)]
-fn children_of(parent: u32) -> Vec<(u32, u32)> {
-    let Ok(output) = Command::new("ps")
-        .args(["-A", "-o", "pid=,ppid=,pgid="])
-        .output()
-    else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let fields: Vec<u32> = line
-                .split_whitespace()
-                .map(str::parse)
-                .collect::<Result<_, _>>()
-                .ok()?;
-            match fields[..] {
-                [pid, ppid, pgid] if ppid == parent => Some((pid, pgid)),
-                _ => None,
-            }
-        })
-        .collect()
-}
-
-/// Plain std cannot read the process table on Windows, so no child can be found through its
-/// parent. A worker is then never recorded there, and that path is refused before any launch.
-#[cfg(windows)]
-fn children_of(_parent: u32) -> Vec<(u32, u32)> {
-    Vec::new()
-}
-
-/// The Python worker: the child of gdaemon that leads its own process group (`pid == pgid`).
-pub fn find_worker(daemon_pid: u32) -> Option<u32> {
-    children_of(daemon_pid)
-        .into_iter()
-        .find(|(pid, pgid)| pid == pgid)
-        .map(|(pid, _)| pid)
-}
-
 /// Asks a process group (Unix) or a process tree (Windows) to stop. `graceful` sends SIGTERM on
 /// Unix; Windows has no graceful signal in plain std, so it always force-stops the tree.
 #[cfg(unix)]

@@ -152,11 +152,18 @@ pub async fn start_listener_task(
 /// A stub Python backend: answers every request with `stub-answer` and records its method and
 /// path before answering.
 pub async fn stub_target() -> (SocketAddr, Seen) {
+    let (addr, seen, _task) = stub_target_task().await;
+    (addr, seen)
+}
+
+/// As [`stub_target`], and also returns the task that accepts connections, so a caller that starts
+/// many stubs can stop each one.
+pub async fn stub_target_task() -> (SocketAddr, Seen, JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
     let addr = listener.local_addr().expect("stub addr");
     let seen: Seen = Arc::default();
     let log = seen.clone();
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
             let log = log.clone();
             tokio::spawn(async move {
@@ -183,23 +190,89 @@ pub async fn stub_target() -> (SocketAddr, Seen) {
             });
         }
     });
-    (addr, seen)
+    (addr, seen, task)
 }
 
 /// A relay between the front door and a WS stub. It forwards the upgrade head unchanged, passes
-/// each later client chunk through `rewrite_client`, and after the stub's first reply chunk waits
+/// each later client chunk through `rewrite_client`, and after the stub's end of stream waits
 /// briefly and writes `late_reply` to the client (design-v2 section 7.11.1; fix3 V22 and V25).
 #[derive(Debug, Clone, Default)]
 pub struct WsHop {
     /// Rewrites each client chunk after the upgrade head. `None` forwards the client bytes as sent.
     pub rewrite_client: Option<fn(&mut [u8])>,
-    /// Bytes written to the client after the stub's first reply chunk. Empty writes nothing.
+    /// Bytes written to the client after the stub's reply and its end of stream. Empty writes
+    /// nothing.
     pub late_reply: Vec<u8>,
 }
 
-/// Starts a hop to `backend` and returns the address the front door should dial instead.
-pub async fn start_ws_hop(backend: SocketAddr, _hop: &WsHop) -> SocketAddr {
-    backend
+/// The delay between the stub's end of stream and the hop's late write.
+const LATE_DELAY: Duration = Duration::from_millis(50);
+
+/// Starts a hop to `backend` for one connection and returns the address the front door should
+/// dial instead. The upgrade head crosses unchanged; the client bytes after it pass through
+/// `rewrite_client` chunk by chunk; the backend's bytes cross unchanged, and `late_reply` follows
+/// them after the backend's end of stream and [`LATE_DELAY`], before the client leg closes.
+pub async fn start_ws_hop(backend: SocketAddr, hop: &WsHop) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind hop");
+    let addr = listener.local_addr().expect("hop addr");
+    let hop = hop.clone();
+    tokio::spawn(async move {
+        let Ok((inbound, _)) = listener.accept().await else {
+            return;
+        };
+        let Ok(outbound) = TcpStream::connect(backend).await else {
+            return;
+        };
+        let (mut front_read, mut front_write) = inbound.into_split();
+        let (mut back_read, mut back_write) = outbound.into_split();
+        let rewrite = hop.rewrite_client;
+        tokio::spawn(async move {
+            let (head, rest) = crate::common::read_head(&mut front_read).await;
+            if back_write.write_all(head.as_bytes()).await.is_err() {
+                return;
+            }
+            let mut pending = rest;
+            loop {
+                if !pending.is_empty() {
+                    if let Some(rewrite) = rewrite {
+                        rewrite(&mut pending);
+                    }
+                    if back_write.write_all(&pending).await.is_err() {
+                        return;
+                    }
+                }
+                let mut chunk = [0_u8; 4096];
+                match front_read.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => pending = chunk[..read].to_vec(),
+                }
+            }
+            let _ = back_write.shutdown().await;
+        });
+        let late = hop.late_reply;
+        tokio::spawn(async move {
+            let mut chunk = [0_u8; 4096];
+            loop {
+                match back_read.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => {
+                        if front_write.write_all(&chunk[..read]).await.is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
+            // The stub's reply has crossed; the late bytes follow it, before the client leg closes.
+            if !late.is_empty() {
+                tokio::time::sleep(LATE_DELAY).await;
+                if front_write.write_all(&late).await.is_err() {
+                    return;
+                }
+            }
+            let _ = front_write.shutdown().await;
+        });
+    });
+    addr
 }
 
 /// One `GET` over a fresh connection; returns the status code and the body text.

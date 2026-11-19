@@ -28,8 +28,12 @@ mod process;
 mod terminal_host;
 
 pub use process::{GroupWatch, pid_alive};
-use process::{find_worker, stop_daemon, stop_worker};
-use terminal_host::{ensure_gterm, install_gterm, read_host_pid, stop_terminal_host};
+use process::{stop_daemon, stop_worker};
+pub use terminal_host::processes_in_run;
+use terminal_host::{
+    ensure_gterm, install_gterm, read_host_pid, stop_strays, stop_terminal_host,
+    terminal_host_children, worker_of,
+};
 
 /// The readiness URL path the daemon must answer 200 on (section 7.3.5).
 const READY_PATH: &str = "/api/auth/status";
@@ -400,7 +404,7 @@ impl FullDaemonBuilder<'_> {
         if let Err(reason) = wait_ready(&mut daemon, &home) {
             return Err(daemon.abort_start(reason));
         }
-        daemon.worker_pid = find_worker(daemon.daemon_pid);
+        daemon.worker_pid = worker_of(daemon.daemon_pid);
         if daemon.worker_pid.is_none() {
             let reason = FullDaemonError::Ready(
                 "readiness passed but no worker process group leader is a child of gdaemon".into(),
@@ -507,6 +511,17 @@ impl FullDaemon {
             .map_or_else(PathBuf::new, |dir| dir.path().to_path_buf())
     }
 
+    /// The terminal host pids this run knows of: the one `gterm.pid` names, and any gterm host
+    /// that is gdaemon's child. A host can start before it writes its pid file, so the child scan
+    /// finds a host whose file does not exist yet. Read while gdaemon still runs.
+    fn terminal_host_candidates(&self) -> Vec<u32> {
+        let mut hosts: Vec<u32> = read_host_pid(&self.host_dir_path()).into_iter().collect();
+        hosts.extend(terminal_host_children(self.daemon_pid));
+        hosts.sort_unstable();
+        hosts.dedup();
+        hosts
+    }
+
     /// The gdaemon process id.
     pub fn daemon_pid(&self) -> u32 {
         self.daemon_pid
@@ -527,7 +542,9 @@ impl FullDaemon {
         self.database_name.as_deref()
     }
 
-    /// Stop gdaemon, then the worker, then drop the database, then remove the temporary root.
+    /// Stop gdaemon, then the worker and the terminal host, then any process still in the run's
+    /// root or process groups, then drop the database, then remove the temporary root. A process
+    /// that survived the orderly stops is stopped here too, and the teardown then fails naming it.
     pub fn teardown(mut self) -> Result<TeardownReport, FullDaemonError> {
         self.shutdown()
     }
@@ -536,7 +553,7 @@ impl FullDaemon {
     /// before the error is returned, so the reported pids are dead unless teardown failed.
     fn abort_start(mut self, reason: FullDaemonError) -> FullDaemonError {
         let daemon_pid = self.daemon_pid;
-        let worker_pid = self.worker_pid.or_else(|| find_worker(daemon_pid));
+        let worker_pid = self.worker_pid.or_else(|| worker_of(daemon_pid));
         let teardown = self.shutdown().err().map(|error| error.to_string());
         FullDaemonError::FailedStart {
             reason: reason.to_string(),
@@ -551,13 +568,15 @@ impl FullDaemon {
     fn shutdown(&mut self) -> Result<TeardownReport, FullDaemonError> {
         let mut steps = Vec::new();
         let mut first_error = None;
+        // A Drop after `teardown` finds the run already gone: there is nothing left to stop.
+        let live_run = self.root.is_some();
         // Read while gdaemon still runs: a worker is found through its parent, and a stopped
         // gdaemon's children are reparented where they cannot be found.
         let worker = self
             .worker_pid
             .take()
-            .or_else(|| find_worker(self.daemon_pid));
-        let host = read_host_pid(&self.host_dir_path());
+            .or_else(|| worker_of(self.daemon_pid));
+        let hosts = self.terminal_host_candidates();
         if let Some(mut child) = self.child.take() {
             match stop_daemon(&mut child, DAEMON_GRACE) {
                 Ok(()) => steps.push(TeardownStep::DaemonStopped),
@@ -569,14 +588,33 @@ impl FullDaemon {
             steps.push(TeardownStep::WorkerStopped);
         }
         // A host that exited with the daemon is not a step: nothing was stopped.
-        if host.is_some_and(stop_terminal_host) {
+        let mut host_stopped = false;
+        for &host in &hosts {
+            host_stopped |= stop_terminal_host(host);
+        }
+        if host_stopped {
             steps.push(TeardownStep::TerminalHostStopped);
         }
         // The relays carry traffic only for gdaemon, which has stopped by now.
         self.relays = None;
         let processes_alive_at_drop = pid_alive(self.daemon_pid)
             || worker.is_some_and(pid_alive)
-            || host.is_some_and(pid_alive);
+            || hosts.iter().any(|&host| pid_alive(host));
+        // Anything left in the run's root or in its process groups outlived the orderly stops
+        // above. It is stopped here and fails the teardown, so a leak cannot pass as a clean run.
+        if live_run {
+            let groups: Vec<u32> = [self.daemon_pid, worker.unwrap_or(0)]
+                .into_iter()
+                .chain(hosts.iter().copied())
+                .collect();
+            let strays = processes_in_run(&self.root_canonical, &groups);
+            if !strays.is_empty() {
+                stop_strays(&strays);
+                first_error = first_error.or(Some(FullDaemonError::Teardown(format!(
+                    "processes of the run outlived its orderly teardown and were stopped: {strays:?}"
+                ))));
+            }
+        }
         if let Some(database) = self.database.take() {
             match database.teardown() {
                 Ok(()) => steps.push(TeardownStep::DatabaseDropped),
@@ -617,13 +655,6 @@ impl Drop for FullDaemon {
         // Best effort: a panicking test still stops both process groups before the database goes.
         let _ = self.shutdown();
     }
-}
-
-/// The live processes of a run: those whose cwd is under `root` or whose process group is one of
-/// `groups`. Stub for the red stage; the real scan replaces it.
-pub fn processes_in_run(root: &Path, groups: &[u32]) -> Vec<u32> {
-    let _ = (root, groups);
-    Vec::new()
 }
 
 /// The checkout's interpreter path: `<repo_root>/.venv/bin/python` (Unix) or
@@ -711,11 +742,6 @@ fn write_home(home: &Path, ports: DaemonPorts, database_url: &str) -> Result<(),
             "max_sessions_per_machine": 10,
             "cleanup_interval_minutes": 5,
         },
-        "gobby-tasks": {"expansion": {"enabled": false}, "validation": {"enabled": false}},
-        "code_index": {"enabled": false},
-        "embeddings": {"api_base": "http://127.0.0.1:11434/v1"},
-        "memory": {"dream": {"enabled": false}},
-        "session_summary": {"summary_file_path": home.join("session_summaries").display().to_string()},
     });
     fs::write(home.join("config.yaml"), config.to_string()).map_err(home_io)?;
     let bootstrap = json!({
@@ -803,6 +829,11 @@ fn wait_ready(daemon: &mut FullDaemon, home: &Path) -> Result<(), FullDaemonErro
                 "gdaemon exited with {status}:\n{}",
                 log_tail(&home.join("logs/daemon_error.log"))
             )));
+        }
+        // Record the worker while gdaemon lives: once gdaemon exits, the worker is reparented and
+        // no later lookup by parent can find it.
+        if daemon.worker_pid.is_none() {
+            daemon.worker_pid = worker_of(daemon.daemon_pid);
         }
         if get_status(&url).ok() == Some(200) {
             return Ok(());

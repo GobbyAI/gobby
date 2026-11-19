@@ -312,6 +312,98 @@ fn failed_start_tears_down_a_running_worker() {
     }
 }
 
+/// The pid, parent pid, process group and command basename of each process, from one `ps` read.
+fn process_rows() -> Vec<(u32, u32, u32, String)> {
+    let Ok(output) = Command::new("ps")
+        .args([
+            "-A", "-o", "pid=", "-o", "ppid=", "-o", "pgid=", "-o", "comm=",
+        ])
+        .output()
+    else {
+        return Vec::new();
+    };
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let pid = fields.next()?.parse().ok()?;
+            let ppid = fields.next()?.parse().ok()?;
+            let pgid = fields.next()?.parse().ok()?;
+            let command: Vec<&str> = fields.collect();
+            let name = Path::new(&command.join(" "))
+                .file_name()?
+                .to_str()?
+                .to_owned();
+            Some((pid, ppid, pgid, name))
+        })
+        .collect()
+}
+
+/// A failed start that loses gdaemon after its worker came up still stops that worker. gdaemon
+/// is killed alone, so the worker is reparented and no lookup by parent finds it afterwards: the
+/// worker must have been recorded while gdaemon lived.
+#[test]
+fn failed_start_stops_a_worker_recorded_before_gdaemon_died() {
+    let Some(_) = test_hub() else { return };
+    let owner = std::process::id();
+    let crash = std::thread::spawn(move || -> Option<u32> {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while Instant::now() < deadline {
+            let rows = process_rows();
+            let daemon = rows
+                .iter()
+                .find(|(_, ppid, _, name)| *ppid == owner && name == "gdaemon")
+                .map(|(pid, ..)| *pid);
+            if let Some(daemon) = daemon {
+                let worker = rows
+                    .iter()
+                    .find(|(pid, ppid, pgid, name)| {
+                        *ppid == daemon && pid == pgid && name.starts_with("python")
+                    })
+                    .map(|(pid, ..)| *pid);
+                if let Some(worker) = worker {
+                    // The readiness loop polls every 100 ms: two seconds lets it record the worker.
+                    std::thread::sleep(Duration::from_secs(2));
+                    let _ = Command::new("kill")
+                        .args(["-KILL", &daemon.to_string()])
+                        .status();
+                    return Some(worker);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        None
+    });
+    let started = FullDaemon::builder(Path::new(GDAEMON), Path::new(REPO_ROOT))
+        .seed(python_seed)
+        .readiness_path("/api/harness/never-ready")
+        .ready_ceiling(Duration::from_secs(120))
+        .start();
+    let worker = crash
+        .join()
+        .expect("the crash thread finishes")
+        .expect("the worker came up before readiness failed");
+    match started {
+        Err(FullDaemonError::FailedStart {
+            daemon_pid,
+            worker_pid,
+            teardown,
+            ..
+        }) => {
+            assert_eq!(teardown, None, "the failed start's teardown must complete");
+            assert_eq!(
+                worker_pid,
+                Some(worker),
+                "the worker recorded before gdaemon died is the one reported"
+            );
+            assert!(!pid_alive(daemon_pid), "gdaemon outlived its failed start");
+            assert!(!pid_alive(worker), "the worker outlived its failed start");
+        }
+        Err(other) => panic!("the start must fail at readiness, got {other}"),
+        Ok(_) => panic!("gdaemon was killed before readiness, so the start cannot succeed"),
+    }
+}
+
 /// H60: when the process that owns a daemon dies without teardown, the daemon's groups and the
 /// terminal host still stop. The test re-executes this binary as the owner, which starts a
 /// daemon, reports its pids, and exits with no Drop and no teardown. The watchdog must then stop
@@ -499,25 +591,39 @@ fn teardown_stops_daemon_and_worker_before_the_database_drops() {
     assert!(!database_exists(&maintenance_url(&url), &name).expect("probe"));
 }
 
+/// What a test records about its daemon before it panics, for the checks after the unwind.
+struct PanicRecord {
+    daemon_pid: u32,
+    worker_pid: Option<u32>,
+    database: String,
+    host_pid: Option<u32>,
+    root: PathBuf,
+}
+
 #[test]
 fn teardown_runs_from_drop_when_a_test_panics() {
     let Some(url) = test_hub() else { return };
-    let mut seen: Option<(u32, Option<u32>, String, Option<u32>, PathBuf)> = None;
+    let mut seen: Option<PanicRecord> = None;
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         let daemon = start_daemon().expect("the full daemon starts");
         let name = daemon.database_name().expect("a run database").to_owned();
-        seen = Some((
-            daemon.daemon_pid(),
-            daemon.worker_pid(),
-            name,
-            daemon.terminal_host_pid(),
-            daemon.run_root().to_path_buf(),
-        ));
+        seen = Some(PanicRecord {
+            daemon_pid: daemon.daemon_pid(),
+            worker_pid: daemon.worker_pid(),
+            database: name,
+            host_pid: daemon.terminal_host_pid(),
+            root: daemon.run_root().to_path_buf(),
+        });
         panic!("simulated failure after start");
     }));
     assert!(result.is_err(), "the closure panicked");
-    let (daemon_pid, worker_pid, name, host_pid, root) =
-        seen.expect("start recorded its processes");
+    let PanicRecord {
+        daemon_pid,
+        worker_pid,
+        database: name,
+        host_pid,
+        root,
+    } = seen.expect("start recorded its processes");
     assert!(!pid_alive(daemon_pid), "gdaemon outlived the panic");
     assert!(
         !worker_pid.is_some_and(pid_alive),

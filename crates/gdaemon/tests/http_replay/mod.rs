@@ -16,16 +16,17 @@ mod compare;
 mod corpus;
 mod db_delta;
 mod differential;
+#[cfg(test)]
+mod driver_tests;
 mod normalize;
 mod side_effects;
 mod soak;
 mod summary;
-#[cfg(test)]
-mod driver_tests;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use backend::{Backends, WsHop, start_listener, start_ws_hop};
 use compare::{comparison_document, first_difference, normalized_document};
@@ -44,6 +45,9 @@ use crate::common::{TIMEOUT, frame, read_exact_into, start_front_door, ws_backen
 
 /// A final, unmasked text frame: the frame header of one text payload.
 const TEXT_FIN: u8 = 0x81;
+
+/// How long a WS observation waits for more bytes after the expected reply before it stops.
+const QUIET: Duration = Duration::from_millis(200);
 
 /// The classification of one replay (design 7.8): the Rust names of `passed`, `diff`, `waived`
 /// and `native-extension`.
@@ -313,13 +317,15 @@ async fn observe_ws(
     window: &Window,
     transports: &Transports,
 ) -> Result<Observation, DriverError> {
-    let _ = transports;
     let invocation = case
         .invocation
         .as_ref()
         .ok_or_else(|| shape(format!("{} has no invocation", case.name)))?;
     let sent: Vec<String> = text_list(&invocation["frames"], &case.name)?;
-    let replies = expanded_frames(recorded_response(case)?, window, &case.name)?;
+    let replies: Vec<String> = match &transports.ws_reply {
+        Some(frames) => frames.clone(),
+        None => expanded_frames(recorded_response(case)?, window, &case.name)?,
+    };
     let client: Vec<u8> = sent
         .iter()
         .flat_map(|payload| frame(TEXT_FIN, payload.as_bytes(), true))
@@ -328,8 +334,12 @@ async fn observe_ws(
         .iter()
         .flat_map(|payload| frame(TEXT_FIN, payload.as_bytes(), false))
         .collect();
-    let (backend, _captured) = ws_backend(client.len(), reply.clone()).await;
-    let door = start_front_door(backend).await;
+    let (backend, captured) = ws_backend(client.len(), reply.clone()).await;
+    let upstream = match &transports.ws_hop {
+        Some(hop) => start_ws_hop(backend, hop).await,
+        None => backend,
+    };
+    let door = start_front_door(upstream).await;
     let (mut stream, head, mut received) = ws_client(door, "/api/terminals/ws").await;
     if !head.starts_with("HTTP/1.1 101") {
         return Err(shape(format!("the upgrade was refused: {head}")));
@@ -343,11 +353,45 @@ async fn observe_ws(
     )
     .await
     .map_err(|_| shape("the WS reply timed out"))?;
+    read_until_quiet(&mut stream, &mut received).await?;
+    let capture = tokio::time::timeout(TIMEOUT, captured)
+        .await
+        .map_err(|_| shape("the WS backend did not report its client leg"))?
+        .map_err(|_| shape("the WS backend's capture was dropped"))?;
+    // The backend must receive exactly the invocation's frames: a front door that rewrites them
+    // is a failed replay, not a match (fix3 V22).
+    if capture.received != client {
+        return Err(shape("client leg changed the invocation frames"));
+    }
     Ok(Observation {
         response: json!(decode_text_frames(&received)?),
         db_delta: self_db_delta(case, window)?,
         side_effects: self_side_effects(case, window)?,
     })
+}
+
+/// Reads what else arrives on `stream` after the expected bytes: until the peer closes, or until it
+/// stays quiet for [`QUIET`], bounded by [`TIMEOUT`]. A surplus frame is then observed, not dropped
+/// (fix3 V25).
+async fn read_until_quiet<S: tokio::io::AsyncRead + Unpin>(
+    stream: &mut S,
+    buffer: &mut Vec<u8>,
+) -> Result<(), DriverError> {
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let mut chunk = [0_u8; 4096];
+        let read = tokio::time::timeout(
+            QUIET.min(remaining),
+            tokio::io::AsyncReadExt::read(stream, &mut chunk),
+        )
+        .await;
+        match read {
+            Err(_) | Ok(Ok(0)) => return Ok(()),
+            Ok(Ok(read)) => buffer.extend_from_slice(&chunk[..read]),
+            Ok(Err(error)) => return Err(DriverError::Io(error)),
+        }
+    }
 }
 
 fn text_list(value: &Value, case: &str) -> Result<Vec<String>, DriverError> {
@@ -419,8 +463,6 @@ fn observe_cli(case: &Case, home: &Path, binary: &Path) -> Result<Observation, D
         .ok_or_else(|| shape(format!("{} has no invocation", case.name)))?;
     let argv = text_list(&invocation["argv"], &case.name)?;
     let stdin = invocation["stdin"].as_str().map(str::to_owned);
-    let _ = binary;
-    let binary = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.venv/bin/gobby");
     let mut command = Command::new(binary);
     command
         .args(&argv)
@@ -672,6 +714,7 @@ async fn v3_cases_proxy_self_replay() {
 fn cited_kinds_replay_waived() {
     // One synthetic cited case per kind (rule 16: synthetic definitions for behaviour). Its
     // native answer is the observation that is Waived; the recorded Python answer is a Diff.
+    let mcp_response = |text: &str| json!({"jsonrpc": "2.0", "id": 1, "result": {"text": text}});
     let kinds = [
         (
             "http",
@@ -684,8 +727,8 @@ fn cited_kinds_replay_waived() {
             "mcp",
             "MCP HTTP gobby:list_tools",
             json!(null),
-            json!({"status": 200, "headers": {}, "body": "python"}),
-            json!({"status": 200, "headers": {}, "body": "native"}),
+            mcp_response("python"),
+            mcp_response("native"),
         ),
         (
             "ws",
@@ -719,19 +762,38 @@ fn cited_kinds_replay_waived() {
             "behaviour": "The case answers its native contract.", "decision": "#25938",
             "replacement": "The asserted native_response."
         }));
-        let mut case = json!({
-            "schema_version": 3, "name": format!("cited_{kind}"), "kind": kind,
-            "family": "probe", "backend": "up", "credential": "none",
-            "ledger_key": surface, "response": python, "native_response": native,
-            "waiver": id, "mask": [], "normalizers": {}, "db_delta": [], "side_effects": [],
-        });
+        // Keys in the order the loader requires (design 7.5.2): request or invocation, then
+        // response, the declared entries, mask, waiver and native_response.
+        let mut case = serde_json::Map::new();
+        for (key, value) in [
+            ("schema_version", json!(3)),
+            ("name", json!(format!("cited_{kind}"))),
+            ("kind", json!(kind)),
+            ("family", json!("probe")),
+            ("backend", json!("up")),
+            ("credential", json!("none")),
+            ("ledger_key", json!(surface)),
+        ] {
+            case.insert(key.to_owned(), value);
+        }
         if !request.is_null() {
-            case["request"] = request;
+            case.insert("request".to_owned(), request);
         }
         if !invocation.is_null() {
-            case["invocation"] = invocation;
+            case.insert("invocation".to_owned(), invocation);
         }
-        cases.push(case);
+        for (key, value) in [
+            ("response", python.clone()),
+            ("db_delta", json!([])),
+            ("side_effects", json!([])),
+            ("normalizers", json!({})),
+            ("mask", json!([])),
+            ("waiver", json!(id)),
+            ("native_response", native.clone()),
+        ] {
+            case.insert(key.to_owned(), value);
+        }
+        cases.push(Value::Object(case));
     }
     let waivers =
         WaiverManifest::parse(&json!({"schema_version": 1, "waivers": entries}).to_string())

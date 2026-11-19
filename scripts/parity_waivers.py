@@ -127,15 +127,20 @@ def surface_matches(
     method: str = "",
     path: str = "",
     *,
-    kind: str = "http",
+    kind: str | None = None,
     key: str = "",
 ) -> bool:
     """Return whether a waiver surface covers one replayed case of the given kind.
 
     An ``http`` case uses the ``HTTP`` template rule and ignores ``key``. An ``mcp``, ``ws`` or
     ``cli`` case matches only the exact ledger key it carries, so an HTTP surface never covers a
-    keyed case and a keyed surface never covers an HTTP case.
+    keyed case and a keyed surface never covers an HTTP case. A call without ``kind`` is an
+    ``http`` call only when it names no ``key``; a keyed call must say its kind (H39).
     """
+    if kind is None:
+        if key:
+            raise WaiverError(f"{surface}: a keyed match needs kind= (mcp, ws or cli)")
+        kind = "http"
     if kind == "http":
         return _http_surface_matches(surface, method, path)
     if kind in _KEYED_KINDS:

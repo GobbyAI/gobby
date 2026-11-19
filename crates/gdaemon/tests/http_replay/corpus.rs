@@ -1,17 +1,70 @@
 //! Reads one corpus case of schema 2 or 3 into the typed view the replay driver uses (design-v2
-//! sections 7.5.1, 7.5.2, 7.5.5 and 7.5.6; H1, H14, H44).
+//! sections 7.5.1, 7.5.2, 7.5.5 and 7.5.6; H1, H14, H16, H44).
+//!
+//! The loader refuses every case shape that the Python loader refuses (`tests/contracts/
+//! corpus_v3.py`, fix3 V27). `parse_case` checks one case's own shape. `load_manifest` adds the
+//! file-level rules: the file stem, the family and the manifest's families, and, for a schema 3
+//! manifest, that it lists every case file of its directory (fix3 V6).
 //!
 //! The recording of a schema 3 case keeps each `db_delta` and `side_effects` value under
 //! `recorded` at its declaration index (H44). `recorded_db_delta` and `recorded_side_effects`
-//! read those values back in declaration order. Manifest loading and the declared-order and
-//! mask-no-match rules of H16 belong to the schema 3 loader, which lands with the replay chunk.
+//! read those values back in declaration order.
 
 use std::fmt;
+use std::path::Path;
 
-use serde_json::{Map, Value};
+use gobby_daemon::front_door::waivers::is_native_extension;
+use serde_json::{Map, Value, json};
 
 /// The schema versions the loader accepts (H1): v2 files as they are, and v3 files.
 pub const ACCEPTED_SCHEMAS: [u64; 2] = [2, 3];
+
+/// The manifest file name in every corpus directory.
+const MANIFEST_FILE: &str = "manifest.json";
+
+/// JSON vectors kept beside the schema 3 cases. Tests read them; the loader never replays them
+/// (Python `V3_NON_CASE_FILES`).
+const V3_NON_CASE_FILES: [&str; 1] = ["grant_encoding.json"];
+
+/// Schema 3 keys in the order the loader requires (design 7.5.2; Python `V3_KEY_ORDER`).
+const V3_KEY_ORDER: [&str; 17] = [
+    "schema_version",
+    "name",
+    "kind",
+    "family",
+    "backend",
+    "credential",
+    "ledger_key",
+    "request",
+    "invocation",
+    "seed",
+    "response",
+    "db_delta",
+    "side_effects",
+    "normalizers",
+    "mask",
+    "waiver",
+    "native_response",
+];
+
+/// The schema 3 keys every case carries (Python `V3_REQUIRED_KEYS`).
+const V3_REQUIRED_KEYS: [&str; 8] = [
+    "schema_version",
+    "name",
+    "kind",
+    "family",
+    "backend",
+    "credential",
+    "ledger_key",
+    "mask",
+];
+
+const CREDENTIALS: [&str; 3] = ["none", "operator", "grant"];
+const CHANNELS: [&str; 3] = ["pg_notify", "ws_publish", "files_home_write"];
+const FIELD_NORMALIZERS: [&str; 5] = ["uuid_ordinal", "monotonic", "timestamp", "bytes", "none"];
+const MCP_TRANSPORTS: [&str; 2] = ["http", "stdio"];
+const PARITY_VALUES: [&str; 2] = ["proxy", "native"];
+const ORIGIN_VALUES: [&str; 2] = ["python", "gdaemon"];
 
 /// The case kinds (design 7.5.2). Schema 2 cases are all `Http`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +127,8 @@ impl fmt::Display for CorpusError {
 
 impl std::error::Error for CorpusError {}
 
-/// Parse one case file (schema 2 or 3) into a `Case`.
+/// Parse one case file (schema 2 or 3) into a `Case`: the case's own shape, by the rules of the
+/// Python loader. The file-level rules (stem, family, listing) are checked by [`load_manifest`].
 pub fn parse_case(value: &Value) -> Result<Case, CorpusError> {
     let name = value
         .get("name")
@@ -86,57 +140,110 @@ pub fn parse_case(value: &Value) -> Result<Case, CorpusError> {
         Some(schema) if ACCEPTED_SCHEMAS.contains(&schema) => schema,
         _ => return Err(CorpusError::Schema { case: name, found }),
     };
-    let kind = match value.get("kind").and_then(Value::as_str) {
-        Some(text) => parse_kind(&name, text)?,
-        None if schema_version == 2 => Kind::Http,
-        None => return Err(field(&name, "kind")),
+    let object = value
+        .as_object()
+        .ok_or_else(|| shape(&name, "the case is not a JSON object"))?;
+    if schema_version == 3 {
+        check_v3_keys(object, &name)?;
+    }
+    let kind = match (schema_version, object.get("kind")) {
+        (2, Some(_)) => return Err(shape(&name, "a schema 2 case carries no kind")),
+        (2, None) => Kind::Http,
+        _ => parse_kind(&name, &required_str(value, &name, "kind")?)?,
     };
+    required_str(value, &name, "name")?;
     let family = required_str(value, &name, "family")?;
     let backend = required_str(value, &name, "backend")?;
     if backend != "up" && backend != "down" {
         return Err(shape(
             &name,
-            format!("backend {backend:?} is not up or down"),
+            format!("backend {backend:?} is neither 'up' nor 'down'"),
+        ));
+    }
+    let credential = required_str(value, &name, "credential")?;
+    if !CREDENTIALS.contains(&credential.as_str()) {
+        return Err(shape(
+            &name,
+            format!("credential {credential:?} is unknown"),
         ));
     }
     let ledger_key = match value.get("ledger_key") {
-        Some(Value::String(key)) => Some(key.clone()),
-        Some(_) => return Err(shape(&name, "ledger_key is not a string")),
         None if schema_version == 3 => return Err(field(&name, "ledger_key")),
         None => None,
+        Some(Value::String(key)) => Some(key.clone()),
+        Some(_) => return Err(shape(&name, "ledger_key is not a string")),
     };
-    if let Some(key) = &ledger_key {
-        check_ledger_key(&name, kind, key)?;
-    }
     let request = value.get("request").cloned();
-    if kind == Kind::Http && request.is_none() {
-        return Err(field(&name, "request"));
-    }
     let invocation = value.get("invocation").cloned();
-    if kind != Kind::Http && invocation.is_none() {
-        return Err(field(&name, "invocation"));
-    }
-    let waiver = optional_str(value, &name, "waiver")?;
     let response = value.get("response").cloned();
-    if response.is_none() && waiver.is_none() {
-        return Err(field(&name, "response"));
+    let waiver = optional_str(value, &name, "waiver")?;
+    let mask = value
+        .get("mask")
+        .cloned()
+        .ok_or_else(|| field(&name, "mask"))?;
+    check_mask_shape(&mask, &name)?;
+    let native_extension = waiver.as_deref().is_some_and(is_native_extension);
+    if schema_version == 3 {
+        match (native_extension, response.is_some()) {
+            (true, true) => {
+                return Err(shape(
+                    &name,
+                    "a native-extension waiver cannot carry a response",
+                ));
+            }
+            (false, false) => return Err(field(&name, "response")),
+            _ => {}
+        }
+        if kind == Kind::Http {
+            if request.is_none() {
+                return Err(field(&name, "request"));
+            }
+            if invocation.is_some() {
+                return Err(shape(&name, "invocation is only for kinds mcp, ws and cli"));
+            }
+        } else {
+            if request.is_some() {
+                return Err(shape(&name, "request is only for kind http"));
+            }
+            if invocation.is_none() {
+                return Err(shape(
+                    &name,
+                    format!("invocation is required for kind {}", kind_label(kind)),
+                ));
+            }
+        }
+    } else {
+        if response.is_none() {
+            return Err(field(&name, "response"));
+        }
+        if kind == Kind::Http && request.is_none() {
+            return Err(field(&name, "request"));
+        }
+    }
+    if let Some(request) = &request
+        && kind == Kind::Http
+    {
+        check_request_shape(request, &name)?;
+    }
+    if let Some(key) = &ledger_key
+        && schema_version == 3
+    {
+        check_ledger_key(&name, kind, key, request.as_ref(), invocation.as_ref())?;
+    }
+    if let Some(response) = &response
+        && schema_version == 3
+    {
+        check_response(&name, kind, response)?;
+    }
+    if schema_version == 3 {
+        check_v3_optional(value, &name)?;
+        check_mask_resolves(value, &name)?;
     }
     let normalizers = match value.get("normalizers") {
         None => Map::new(),
         Some(Value::Object(map)) => map.clone(),
         Some(_) => return Err(shape(&name, "normalizers is not an object")),
     };
-    if schema_version == 3 {
-        for entry in value
-            .get("db_delta")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            check_db_delta(&name, entry)?;
-        }
-        check_masks(&name, value)?;
-    }
     Ok(Case {
         schema_version,
         kind,
@@ -149,36 +256,111 @@ pub fn parse_case(value: &Value) -> Result<Case, CorpusError> {
         db_delta: entries(value, &name, "db_delta")?,
         side_effects: entries(value, &name, "side_effects")?,
         normalizers,
-        mask: value
-            .get("mask")
-            .cloned()
-            .unwrap_or_else(|| Value::Array(Vec::new())),
+        mask,
         waiver,
         native_response: value.get("native_response").cloned(),
         name,
     })
 }
 
-/// The schema 3 order rules of one `db_delta` entry (Python `_check_db_delta`, H16): `order` is
-/// `set` or `as_recorded`, `as_recorded` needs a non-empty `order_by`, and `set` refuses one.
+/// The schema 3 key rules (Python `_validate_schema_3`): no unknown key, every required key present,
+/// and the keys in the declared order.
+fn check_v3_keys(object: &Map<String, Value>, case: &str) -> Result<(), CorpusError> {
+    if let Some(unknown) = object
+        .keys()
+        .find(|key| !V3_KEY_ORDER.contains(&key.as_str()))
+    {
+        return Err(shape(case, format!("unknown key {unknown:?}")));
+    }
+    if let Some(&missing) = V3_REQUIRED_KEYS
+        .iter()
+        .find(|key| !object.contains_key(**key))
+    {
+        return Err(field(case, missing));
+    }
+    let positions: Vec<usize> = object
+        .keys()
+        .filter_map(|key| V3_KEY_ORDER.iter().position(|known| *known == key.as_str()))
+        .collect();
+    if positions.windows(2).any(|pair| pair[0] > pair[1]) {
+        return Err(shape(case, "keys are out of key order"));
+    }
+    Ok(())
+}
+
+/// The schema 3 optional-key rules (Python `_check_optional` and the entry checks): `seed` steps,
+/// `normalizers`, every `db_delta` entry and every `side_effects` entry.
+fn check_v3_optional(value: &Value, case: &str) -> Result<(), CorpusError> {
+    if let Some(seed) = value.get("seed") {
+        let steps = seed
+            .as_array()
+            .ok_or_else(|| shape(case, "each seed step is one http or sql object"))?;
+        if !steps.iter().all(is_seed_step) {
+            return Err(shape(case, "each seed step is one http or sql object"));
+        }
+    }
+    if let Some(normalizers) = value.get("normalizers") {
+        check_normalizers(normalizers, case, false)?;
+        check_pointer_keys(normalizers, case)?;
+    }
+    for entry in entries(value, case, "db_delta")? {
+        check_db_delta(case, &entry)?;
+    }
+    for effect in entries(value, case, "side_effects")? {
+        check_side_effect(case, &effect)?;
+    }
+    Ok(())
+}
+
+fn is_seed_step(step: &Value) -> bool {
+    step.as_object()
+        .is_some_and(|map| map.len() == 1 && map.keys().all(|key| key == "http" || key == "sql"))
+}
+
+/// The schema 3 order rules of one `db_delta` entry (Python `_check_db_delta`, H16): the table, the
+/// key and the columns are declared, `order` is `set` or `as_recorded`, `as_recorded` needs a
+/// non-empty `order_by`, and `set` refuses one.
 fn check_db_delta(case: &str, entry: &Value) -> Result<(), CorpusError> {
-    let table = entry
+    let object = entry
+        .as_object()
+        .ok_or_else(|| shape(case, "db_delta entries must be objects"))?;
+    let table = object
         .get("table")
         .and_then(Value::as_str)
-        .unwrap_or("<unnamed table>");
-    let order = match entry.get("order") {
-        None => return Err(shape(case, format!("db_delta {table} order is required"))),
-        Some(value) => value
-            .as_str()
-            .filter(|text| *text == "set" || *text == "as_recorded")
-            .ok_or_else(|| {
-                shape(
-                    case,
-                    format!("db_delta {table} order must be 'set' or 'as_recorded'"),
-                )
-            })?,
+        .filter(|table| !table.is_empty())
+        .ok_or_else(|| shape(case, "db_delta table is required"))?;
+    let key_declared = object
+        .get("key")
+        .and_then(Value::as_array)
+        .is_some_and(|columns| !columns.is_empty() && columns.iter().all(Value::is_string));
+    if !key_declared {
+        return Err(shape(case, format!("db_delta {table} key is required")));
+    }
+    let columns_declared = match object.get("columns") {
+        Some(Value::String(text)) => text == "all",
+        Some(Value::Array(columns)) => !columns.is_empty() && columns.iter().all(Value::is_string),
+        _ => false,
     };
-    match (order, entry.get("order_by")) {
+    if !columns_declared {
+        return Err(shape(
+            case,
+            format!("db_delta {table} columns must be 'all' or a list"),
+        ));
+    }
+    if let Some(normalizers) = object.get("normalizers") {
+        check_normalizers(normalizers, case, true)?;
+    }
+    let order = match object.get("order") {
+        None => return Err(shape(case, format!("db_delta {table} order is required"))),
+        Some(Value::String(order)) if order == "set" || order == "as_recorded" => order.as_str(),
+        Some(_) => {
+            return Err(shape(
+                case,
+                format!("db_delta {table} order must be 'set' or 'as_recorded'"),
+            ));
+        }
+    };
+    match (order, object.get("order_by")) {
         ("set", Some(_)) => Err(shape(
             case,
             format!("db_delta {table} order_by is not allowed with order 'set'"),
@@ -197,16 +379,128 @@ fn check_db_delta(case: &str, entry: &Value) -> Result<(), CorpusError> {
     }
 }
 
-/// The schema 3 mask rules (Python `_check_mask_shape` and `_check_mask_resolves`, H16): the mask
-/// is a list of pointers, each starting with `/` and naming a field of the case.
-fn check_masks(case: &str, value: &Value) -> Result<(), CorpusError> {
-    let shape_error = || shape(case, "mask must be a list of pointers");
+/// One `side_effects` entry (Python `_check_side_effect`): a known channel, a `match` object and
+/// valid normalizers keyed by pointer.
+fn check_side_effect(case: &str, effect: &Value) -> Result<(), CorpusError> {
+    let object = effect.as_object();
+    let channel_known = object
+        .and_then(|map| map.get("channel"))
+        .and_then(Value::as_str)
+        .is_some_and(|channel| CHANNELS.contains(&channel));
+    let match_declared = object.is_some_and(|map| map.get("match").is_some_and(Value::is_object));
+    if !channel_known || !match_declared {
+        return Err(shape(
+            case,
+            "side effect needs a known channel and a match object",
+        ));
+    }
+    if let Some(normalizers) = object.and_then(|map| map.get("normalizers")) {
+        check_normalizers(normalizers, case, false)?;
+        check_pointer_keys(normalizers, case)?;
+    }
+    Ok(())
+}
+
+/// A normalizer map (Python `_check_normalizers`): each value names a field normalizer, or is
+/// `{"name", "after"}` where `after` is legal only on a `db_delta` normalizer and only for timestamps.
+fn check_normalizers(
+    normalizers: &Value,
+    case: &str,
+    allow_after: bool,
+) -> Result<(), CorpusError> {
+    let map = normalizers
+        .as_object()
+        .ok_or_else(|| shape(case, "normalizers must be an object"))?;
+    for spec in map.values() {
+        let (_, after) = normalizer_spec(spec, case)?;
+        if after.is_some() && !allow_after {
+            return Err(shape(
+                case,
+                "'after' is declared only on db_delta normalizers",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// One normalizer spec: its field normalizer name and its `after` column, if any.
+fn normalizer_spec(spec: &Value, case: &str) -> Result<(String, Option<String>), CorpusError> {
+    let (name, after) = match spec {
+        Value::String(name) => (name.clone(), None),
+        Value::Object(map)
+            if map.contains_key("name")
+                && map.keys().all(|key| key == "name" || key == "after") =>
+        {
+            let after = match map.get("after") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(column)) if !column.is_empty() => Some(column.clone()),
+                Some(_) => return Err(shape(case, "normalizer 'after' must name a column")),
+            };
+            (map["name"].as_str().unwrap_or_default().to_owned(), after)
+        }
+        other => {
+            return Err(shape(
+                case,
+                format!("normalizer {other} is not a field normalizer"),
+            ));
+        }
+    };
+    if !FIELD_NORMALIZERS.contains(&name.as_str()) {
+        return Err(shape(
+            case,
+            format!("normalizer {name:?} is not a field normalizer"),
+        ));
+    }
+    if after.is_some() && name != "timestamp" {
+        return Err(shape(case, "only the timestamp normalizer takes 'after'"));
+    }
+    Ok((name, after))
+}
+
+/// Case-level and side-effect normalizer keys are RFC 6901 pointers (Python `_check_pointer_keys`).
+fn check_pointer_keys(normalizers: &Value, case: &str) -> Result<(), CorpusError> {
+    for key in normalizers.as_object().into_iter().flat_map(Map::keys) {
+        if !key.starts_with('/') {
+            return Err(shape(
+                case,
+                format!("normalizer key {key:?} must be a JSON pointer"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn check_request_shape(request: &Value, case: &str) -> Result<(), CorpusError> {
+    if request.get("method").is_some_and(Value::is_string)
+        && request.get("path").is_some_and(Value::is_string)
+    {
+        Ok(())
+    } else {
+        Err(shape(case, "request needs a method and a path"))
+    }
+}
+
+fn check_mask_shape(mask: &Value, case: &str) -> Result<(), CorpusError> {
+    if mask
+        .as_array()
+        .is_some_and(|pointers| pointers.iter().all(Value::is_string))
+    {
+        Ok(())
+    } else {
+        Err(shape(case, "mask must be a list of pointers"))
+    }
+}
+
+/// The schema 3 mask rule (Python `_check_mask_resolves`): each pointer starts with `/` and names a
+/// field of the case.
+fn check_mask_resolves(value: &Value, case: &str) -> Result<(), CorpusError> {
     let mask = value
         .get("mask")
-        .cloned()
-        .unwrap_or_else(|| Value::Array(Vec::new()));
-    for pointer in mask.as_array().ok_or_else(shape_error)? {
-        let text = pointer.as_str().ok_or_else(shape_error)?;
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    for pointer in mask {
+        let text = pointer.as_str().unwrap_or_default();
         if !text.starts_with('/') {
             return Err(shape(
                 case,
@@ -309,36 +603,271 @@ fn parse_kind(case: &str, text: &str) -> Result<Kind, CorpusError> {
     }
 }
 
-/// The ledger key prefix of each kind (H14): `HTTP <METHOD> <template>`, `MCP <server>:<tool>`
-/// (or `MCP HTTP|stdio gobby:<tool>`), `WS message <type>` and `CLI gobby <verb>`.
-fn check_ledger_key(case: &str, kind: Kind, key: &str) -> Result<(), CorpusError> {
-    let valid = match kind {
+fn kind_label(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Http => "http",
+        Kind::Mcp => "mcp",
+        Kind::Ws => "ws",
+        Kind::Cli => "cli",
+    }
+}
+
+/// The parts of one ledger key (Python `_KEY_PATTERNS`, matched whole): the HTTP method, the MCP
+/// transport token (`HTTP` or `stdio`), server and tool, the WS frame type and the CLI verb.
+#[derive(Debug, PartialEq, Eq)]
+enum KeyParts<'a> {
+    Http {
+        method: &'a str,
+    },
+    Mcp {
+        transport: Option<&'a str>,
+        server: &'a str,
+        tool: &'a str,
+    },
+    Ws {
+        frame_type: &'a str,
+    },
+    Cli {
+        verb: &'a str,
+    },
+}
+
+/// Parses a ledger key of `kind` (H14): `HTTP <METHOD> <template>`, `MCP <server>:<tool>` or
+/// `MCP HTTP|stdio <server>:<tool>`, `WS message <type>` and `CLI gobby <verb>`. A keyed MCP name
+/// other than `gobby` is refused (Python `_check_ledger_key`).
+fn parse_key<'a>(case: &str, kind: Kind, key: &'a str) -> Result<KeyParts<'a>, CorpusError> {
+    let bad = || {
+        shape(
+            case,
+            format!("ledger_key {key:?} is not a {} key", kind_label(kind)),
+        )
+    };
+    let plain = |text: &str| !text.is_empty() && !text.contains(char::is_whitespace);
+    match kind {
         Kind::Http => {
-            let parts: Vec<&str> = key.splitn(3, ' ').collect();
-            parts.len() == 3
-                && parts[0] == "HTTP"
-                && !parts[1].is_empty()
-                && parts[1].bytes().all(|byte| byte.is_ascii_uppercase())
-                && parts[2].starts_with('/')
+            let (method, template) = key
+                .strip_prefix("HTTP ")
+                .and_then(|rest| rest.split_once(' '))
+                .ok_or_else(&bad)?;
+            let method_ok = !method.is_empty() && method.bytes().all(|b| b.is_ascii_uppercase());
+            if !method_ok || !template.starts_with('/') || !plain(template) {
+                return Err(bad());
+            }
+            Ok(KeyParts::Http { method })
         }
-        Kind::Mcp => key
-            .strip_prefix("MCP ")
-            .is_some_and(|rest| rest.contains(':')),
-        Kind::Ws => key
-            .strip_prefix("WS message ")
-            .is_some_and(|rest| !rest.is_empty()),
-        Kind::Cli => key
-            .strip_prefix("CLI gobby ")
-            .is_some_and(|rest| !rest.is_empty()),
+        Kind::Mcp => {
+            let rest = key.strip_prefix("MCP ").ok_or_else(&bad)?;
+            let (transport, named) = if let Some(named) = rest.strip_prefix("HTTP ") {
+                (Some("HTTP"), named)
+            } else if let Some(named) = rest.strip_prefix("stdio ") {
+                (Some("stdio"), named)
+            } else {
+                (None, rest)
+            };
+            let (server, tool) = named.split_once(':').ok_or_else(&bad)?;
+            if !plain(server) || !plain(tool) {
+                return Err(bad());
+            }
+            if transport.is_some() && server != "gobby" {
+                return Err(shape(
+                    case,
+                    format!("ledger_key {key:?} needs the gobby server"),
+                ));
+            }
+            Ok(KeyParts::Mcp {
+                transport,
+                server,
+                tool,
+            })
+        }
+        Kind::Ws => {
+            let frame_type = key
+                .strip_prefix("WS message ")
+                .filter(|rest| plain(rest))
+                .ok_or_else(&bad)?;
+            Ok(KeyParts::Ws { frame_type })
+        }
+        Kind::Cli => {
+            let verb = key
+                .strip_prefix("CLI gobby ")
+                .filter(|rest| plain(rest))
+                .ok_or_else(&bad)?;
+            Ok(KeyParts::Cli { verb })
+        }
+    }
+}
+
+/// The ledger key against its case: an HTTP key names the request's method, and an MCP key names
+/// the invocation's transport and tool. The invocation's own shape is checked here too.
+fn check_ledger_key(
+    case: &str,
+    kind: Kind,
+    key: &str,
+    request: Option<&Value>,
+    invocation: Option<&Value>,
+) -> Result<(), CorpusError> {
+    match parse_key(case, kind, key)? {
+        KeyParts::Http { method } => {
+            let requested = request
+                .and_then(|request| request["method"].as_str())
+                .unwrap_or_default();
+            if method != requested {
+                return Err(shape(
+                    case,
+                    format!(
+                        "ledger_key method {method:?} differs from request method {requested:?}"
+                    ),
+                ));
+            }
+        }
+        _ => {
+            if let Some(invocation) = invocation {
+                check_invocation(case, kind, key, invocation)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A non-HTTP invocation against its ledger key (Python `_check_invocation`): the MCP server, tool
+/// and transport name the keyed ones; the WS frames carry the keyed type; the CLI argv starts with
+/// the keyed verb.
+fn check_invocation(
+    case: &str,
+    kind: Kind,
+    key: &str,
+    invocation: &Value,
+) -> Result<(), CorpusError> {
+    let object = invocation
+        .as_object()
+        .ok_or_else(|| shape(case, "invocation must be an object"))?;
+    match parse_key(case, kind, key)? {
+        KeyParts::Mcp {
+            transport,
+            server,
+            tool,
+        } => {
+            let shaped = object.get("server").is_some_and(Value::is_string)
+                && object.get("tool").is_some_and(Value::is_string)
+                && object.get("arguments").is_some_and(Value::is_object);
+            if !shaped {
+                return Err(shape(
+                    case,
+                    "invocation needs a server, a tool and arguments",
+                ));
+            }
+            let invoked = object
+                .get("transport")
+                .and_then(Value::as_str)
+                .filter(|text| MCP_TRANSPORTS.contains(text))
+                .ok_or_else(|| {
+                    shape(
+                        case,
+                        format!("invocation.transport must be one of {MCP_TRANSPORTS:?}"),
+                    )
+                })?;
+            let named = (
+                object["server"].as_str().unwrap_or_default(),
+                object["tool"].as_str().unwrap_or_default(),
+            );
+            if named != (server, tool) {
+                return Err(shape(
+                    case,
+                    format!(
+                        "invocation {}:{} differs from ledger_key {key:?}",
+                        named.0, named.1
+                    ),
+                ));
+            }
+            if let Some(transport) = transport {
+                let keyed = if transport == "HTTP" { "http" } else { "stdio" };
+                if keyed != invoked {
+                    return Err(shape(
+                        case,
+                        format!(
+                            "ledger_key {key:?} names transport {keyed:?} but the invocation's transport is {invoked:?}"
+                        ),
+                    ));
+                }
+            }
+        }
+        KeyParts::Ws { frame_type } => {
+            let frames = object
+                .get("frames")
+                .and_then(Value::as_array)
+                .filter(|frames| frames.iter().all(Value::is_string))
+                .ok_or_else(|| shape(case, "invocation.frames must be text frames"))?;
+            for frame in frames {
+                let text = frame.as_str().unwrap_or_default();
+                let decoded: Value = serde_json::from_str(text)
+                    .map_err(|_| shape(case, format!("frame is not JSON: {text:?}")))?;
+                let decoded = decoded
+                    .as_object()
+                    .ok_or_else(|| shape(case, format!("frame is not a JSON object: {text:?}")))?;
+                let found = decoded.get("type").and_then(Value::as_str);
+                if found != Some(frame_type) {
+                    return Err(shape(
+                        case,
+                        format!("frame type {found:?} differs from ledger_key {key:?}"),
+                    ));
+                }
+            }
+        }
+        KeyParts::Cli { verb } => {
+            let argv = object
+                .get("argv")
+                .and_then(Value::as_array)
+                .filter(|argv| !argv.is_empty() && argv.iter().all(Value::is_string))
+                .ok_or_else(|| shape(case, "invocation.argv must be a non-empty string list"))?;
+            let first = argv[0].as_str().unwrap_or_default();
+            if first != verb {
+                return Err(shape(
+                    case,
+                    format!("argv[0] {first:?} differs from ledger_key verb {verb:?}"),
+                ));
+            }
+            match object.get("stdin") {
+                None | Some(Value::Null | Value::String(_)) => {}
+                Some(_) => return Err(shape(case, "invocation.stdin must be text or null")),
+            }
+        }
+        KeyParts::Http { .. } => {}
+    }
+    Ok(())
+}
+
+/// The response shape of one kind (Python `_check_response`): WS frames are text, CLI results carry
+/// an exit and two streams, MCP results are JSON-RPC 2.0 messages with exactly one of `result` and
+/// `error`, and HTTP answers carry an integer status.
+fn check_response(case: &str, kind: Kind, response: &Value) -> Result<(), CorpusError> {
+    let valid = match kind {
+        Kind::Ws => response
+            .as_array()
+            .is_some_and(|frames| frames.iter().all(Value::is_string)),
+        Kind::Cli => {
+            response.get("exit").is_some_and(is_integer)
+                && response.get("stdout").is_some_and(Value::is_string)
+                && response.get("stderr").is_some_and(Value::is_string)
+        }
+        Kind::Mcp => {
+            response.get("jsonrpc") == Some(&json!("2.0"))
+                && response.get("id").is_some_and(is_integer)
+                && response.get("result").is_some() != response.get("error").is_some()
+        }
+        Kind::Http => response.get("status").is_some_and(is_integer),
     };
     if valid {
         Ok(())
     } else {
         Err(shape(
             case,
-            format!("ledger_key {key:?} does not match kind {kind:?}"),
+            format!("response has the wrong shape for kind {}", kind_label(kind)),
         ))
     }
+}
+
+fn is_integer(value: &Value) -> bool {
+    value.is_i64() || value.is_u64()
 }
 
 /// The `recorded` value of each declared entry, in declaration order (H44).
@@ -354,8 +883,10 @@ fn recorded_values(case: &Case, entries: &[Value]) -> Result<Vec<Value>, CorpusE
         .collect()
 }
 
-/// Every case of the manifest at `path` (schema 2 or 3), each listed file parsed by [`parse_case`].
-pub fn load_manifest(path: &std::path::Path) -> Result<Vec<Case>, CorpusError> {
+/// Every case of the manifest at `path` (schema 2 or 3), each listed file parsed by [`parse_case`]
+/// and checked against its name, its schema version and its manifest's families (Python
+/// `_validate_case`). A schema 3 manifest must also list every case file of its directory (V6).
+pub fn load_manifest(path: &Path) -> Result<Vec<Case>, CorpusError> {
     let label = path.display().to_string();
     let manifest_error = |detail: String| CorpusError::Shape {
         case: label.clone(),
@@ -365,28 +896,107 @@ pub fn load_manifest(path: &std::path::Path) -> Result<Vec<Case>, CorpusError> {
     let manifest: Value = serde_json::from_slice(&text)
         .map_err(|error| manifest_error(format!("manifest is not JSON: {error}")))?;
     let found = manifest.get("schema_version").and_then(Value::as_u64);
-    match found {
-        Some(schema) if ACCEPTED_SCHEMAS.contains(&schema) => {}
+    let schema = match found {
+        Some(schema) if ACCEPTED_SCHEMAS.contains(&schema) => schema,
         _ => return Err(CorpusError::Schema { case: label, found }),
+    };
+    let families = manifest
+        .get("families")
+        .and_then(Value::as_object)
+        .ok_or_else(|| manifest_error("families must be an object".to_owned()))?;
+    for (name, family) in families {
+        let parity = family.get("parity").and_then(Value::as_str);
+        let origin = family.get("origin").and_then(Value::as_str);
+        if !parity.is_some_and(|value| PARITY_VALUES.contains(&value))
+            || !origin.is_some_and(|value| ORIGIN_VALUES.contains(&value))
+        {
+            return Err(manifest_error(format!(
+                "family {name:?} needs a parity and an origin"
+            )));
+        }
     }
-    let listed = manifest
+    let listed: Vec<&str> = manifest
         .get("cases")
         .and_then(Value::as_array)
-        .ok_or_else(|| manifest_error("manifest has no cases array".to_owned()))?;
-    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
-    listed
+        .ok_or_else(|| manifest_error("cases must be .json file names".to_owned()))?
         .iter()
         .map(|entry| {
-            let file = entry
+            entry
                 .as_str()
-                .ok_or_else(|| manifest_error("manifest case is not a file name".to_owned()))?;
-            let text = std::fs::read(dir.join(file))
-                .map_err(|error| manifest_error(format!("{file}: {error}")))?;
-            let value: Value = serde_json::from_slice(&text)
-                .map_err(|error| manifest_error(format!("{file} is not JSON: {error}")))?;
-            parse_case(&value)
+                .filter(|name| name.ends_with(".json"))
+                .ok_or_else(|| manifest_error("cases must be .json file names".to_owned()))
         })
-        .collect()
+        .collect::<Result<_, _>>()?;
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut cases = Vec::with_capacity(listed.len());
+    for &file in &listed {
+        let value = read_case_file(&dir.join(file), file)?;
+        let case = parse_case(&value)?;
+        if case.schema_version != schema {
+            return Err(shape(
+                file,
+                format!(
+                    "schema_version {} differs from manifest {schema}",
+                    case.schema_version
+                ),
+            ));
+        }
+        let stem = file.strip_suffix(".json").unwrap_or(file);
+        if case.name != stem {
+            return Err(shape(
+                file,
+                format!("name {:?} must equal the file stem", case.name),
+            ));
+        }
+        if !families.contains_key(&case.family) {
+            return Err(shape(
+                file,
+                format!("family {:?} is not in the manifest", case.family),
+            ));
+        }
+        cases.push(case);
+    }
+    if schema == 3 {
+        check_listing(dir, &listed)?;
+    }
+    Ok(cases)
+}
+
+/// Reads one case file as a JSON object.
+fn read_case_file(path: &Path, file: &str) -> Result<Value, CorpusError> {
+    let text = std::fs::read(path).map_err(|error| shape(file, error.to_string()))?;
+    let value: Value = serde_json::from_slice(&text)
+        .map_err(|error| shape(file, format!("is not JSON: {error}")))?;
+    if value.is_object() {
+        Ok(value)
+    } else {
+        Err(shape(file, "must be a JSON object"))
+    }
+}
+
+/// Python V6 (`_check_listed_files`): a schema 3 directory lists every `.json` file in it. Each file
+/// is the manifest, a listed case, or a declared non-case vector; any other `.json` file is refused.
+fn check_listing(dir: &Path, listed: &[&str]) -> Result<(), CorpusError> {
+    let label = dir.display().to_string();
+    let entries = std::fs::read_dir(dir).map_err(|error| shape(&label, error.to_string()))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| shape(&label, error.to_string()))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".json")
+            || name == MANIFEST_FILE
+            || listed.contains(&name.as_str())
+            || V3_NON_CASE_FILES.contains(&name.as_str())
+        {
+            continue;
+        }
+        return Err(shape(
+            &name,
+            format!(
+                "is a .json file in this corpus that is not listed in {MANIFEST_FILE} and is not a declared non-case vector"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -991,22 +1601,29 @@ mod loader_rule_tests {
     fn a_schema_2_case_carries_no_kind() {
         let mut value = http_case();
         value["schema_version"] = json!(2);
-        value.as_object_mut().expect("case object").shift_remove("ledger_key");
+        value
+            .as_object_mut()
+            .expect("case object")
+            .shift_remove("ledger_key");
         let error = refused(&value);
         assert!(error.to_string().contains("no kind"), "{error}");
     }
 
     #[test]
     fn a_mcp_case_carries_no_request() {
-        let mut value = kind_case(
-            "mcp",
-            "MCP HTTP gobby:list_tools",
-            json!({"transport": "http", "server": "gobby", "tool": "list_tools", "arguments": {}}),
-            json!({"jsonrpc": "2.0", "id": 1, "result": {}}),
-        );
-        value["request"] = json!({"method": "POST", "path": "/api/mcp/gobby/tools/list_tools"});
+        let value = json!({
+            "schema_version": 3, "name": "rule_probe", "kind": "mcp", "family": "health",
+            "backend": "up", "credential": "operator", "ledger_key": "MCP HTTP gobby:list_tools",
+            "request": {"method": "POST", "path": "/api/mcp/gobby/tools/list_tools"},
+            "invocation": {"transport": "http", "server": "gobby", "tool": "list_tools", "arguments": {}},
+            "response": {"jsonrpc": "2.0", "id": 1, "result": {}},
+            "mask": []
+        });
         let error = refused(&value);
-        assert!(error.to_string().contains("request is only for kind http"), "{error}");
+        assert!(
+            error.to_string().contains("request is only for kind http"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1039,7 +1656,10 @@ mod loader_rule_tests {
         write_case(dir.path(), "a.json", &value);
         let families = json!({"health": {"parity": "bogus", "origin": "python"}});
         let path = write_manifest(dir.path(), 3, &["a.json"], &families);
-        assert!(load_manifest(&path).is_err(), "an unknown parity is refused");
+        assert!(
+            load_manifest(&path).is_err(),
+            "an unknown parity is refused"
+        );
     }
 
     #[test]
@@ -1058,22 +1678,45 @@ mod loader_rule_tests {
     }
 
     #[test]
-    fn a_v3_manifest_ignores_a_json_file_that_is_not_a_case() {
-        // grant_encoding.json is a vector of the v3 directory, not a case: it carries no ledger_key.
+    fn a_v3_manifest_ignores_a_declared_non_case_vector() {
+        // grant_encoding.json is a declared vector of the v3 directory (Python V3_NON_CASE_FILES).
         let dir = tempfile::tempdir().expect("dir");
         let mut listed = http_case();
         listed["name"] = json!("a");
         write_case(dir.path(), "a.json", &listed);
-        write_case(dir.path(), "vector.json", &json!({"schema_version": 3, "description": "x"}));
+        write_case(
+            dir.path(),
+            "grant_encoding.json",
+            &json!({"schema_version": 3, "description": "x"}),
+        );
         let path = write_manifest(dir.path(), 3, &["a.json"], &families());
-        let cases = load_manifest(&path).expect("the vector is not a case");
+        let cases = load_manifest(&path).expect("the declared vector is not a case");
         assert_eq!(cases.len(), 1);
         assert_eq!(cases[0].kind, Kind::Http);
     }
 
     #[test]
+    fn a_v3_manifest_refuses_an_unlisted_json_file_that_is_not_a_declared_vector() {
+        // Python V6: any .json file that is neither listed nor declared is refused, with or without
+        // a ledger_key.
+        let dir = tempfile::tempdir().expect("dir");
+        let mut listed = http_case();
+        listed["name"] = json!("a");
+        write_case(dir.path(), "a.json", &listed);
+        write_case(
+            dir.path(),
+            "vector.json",
+            &json!({"schema_version": 3, "description": "x"}),
+        );
+        let path = write_manifest(dir.path(), 3, &["a.json"], &families());
+        let error = load_manifest(&path).expect_err("vector.json is not declared");
+        assert!(error.to_string().contains("vector.json"), "{error}");
+    }
+
+    #[test]
     fn the_shipped_v3_manifest_lists_every_case_file() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/contracts/v3/manifest.json");
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/contracts/v3/manifest.json");
         let cases = load_manifest(&path).expect("the shipped v3 manifest loads");
         assert_eq!(cases.len(), 5);
     }

@@ -27,6 +27,8 @@ from tests.contracts.http_corpus import (
 
 V2_DIR = CORPUS_DIR
 V3_DIR = Path(__file__).resolve().parent / "v3"
+# JSON vectors kept beside the schema 3 cases. Tests read them; the loader never replays them.
+V3_NON_CASE_FILES = frozenset({"grant_encoding.json"})
 KINDS = frozenset({"http", "mcp", "ws", "cli"})
 CHANNELS = frozenset({"pg_notify", "ws_publish", "files_home_write"})
 FIELD_NORMALIZERS = frozenset({"uuid_ordinal", "monotonic", "timestamp", "bytes", "none"})
@@ -100,16 +102,33 @@ def load_manifest(corpus_dir: Path) -> dict[str, Any]:
 
 
 def load_cases(corpus_dir: Path) -> list[dict[str, Any]]:
-    """Load and validate one manifest's cases, in manifest order."""
+    """Load and validate one manifest's cases, in manifest order.
+
+    A schema 3 directory must list every JSON case file in it: an unlisted file is refused rather
+    than silently left out of the replay.
+    """
     manifest = load_manifest(corpus_dir)
     version = manifest["schema_version"]
     families: Mapping[str, Any] = manifest["families"]
+    if version == 3:
+        _check_listed_files(corpus_dir, manifest["cases"])
     cases: list[dict[str, Any]] = []
     for file_name in manifest["cases"]:
         case = _read_object(corpus_dir / file_name)
         _validate_case(case, file_name=file_name, version=version, families=families)
         cases.append(case)
     return cases
+
+
+def _check_listed_files(corpus_dir: Path, listed: list[str]) -> None:
+    """Refuse a schema 3 JSON file that is neither listed, the manifest, nor a declared vector."""
+    for path in sorted(corpus_dir.glob("*.json")):
+        if path.name == MANIFEST_NAME or path.name in listed or path.name in V3_NON_CASE_FILES:
+            continue
+        raise CorpusError(
+            f"{path.name}: a .json file in this corpus is not listed in {MANIFEST_NAME} "
+            "and is not a declared non-case vector"
+        )
 
 
 def load_corpus() -> list[dict[str, Any]]:
@@ -333,6 +352,12 @@ def _check_invocation(
         if invocation.get("transport") not in MCP_TRANSPORTS:
             raise CorpusError(
                 f"{file_name}: invocation.transport must be one of {sorted(MCP_TRANSPORTS)}"
+            )
+        key_transport = key["transport"]
+        if key_transport is not None and key_transport.lower() != invocation["transport"]:
+            raise CorpusError(
+                f"{file_name}: ledger_key {case['ledger_key']!r} names transport "
+                f"{key_transport!r} but invocation.transport is {invocation['transport']!r}"
             )
         if (invocation["server"], invocation["tool"]) != (key["server"], key["tool"]):
             raise CorpusError(

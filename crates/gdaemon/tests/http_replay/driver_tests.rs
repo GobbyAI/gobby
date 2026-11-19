@@ -35,7 +35,13 @@ fn probe_script(dir: &Path, text: &str) -> PathBuf {
 
 /// A recorded case cited by a synthetic waiver whose surface is `surface`, with `native` as its
 /// native answer. `native_extension` cases drop their recorded `response`, as the loader requires.
-fn cited(file: &str, waiver: &str, surface: &str, native: Value, native_extension: bool) -> (Case, WaiverManifest) {
+fn cited(
+    file: &str,
+    waiver: &str,
+    surface: &str,
+    native: Value,
+    native_extension: bool,
+) -> (Case, WaiverManifest) {
     let (mut value, _) = v3_case(file);
     if native_extension {
         value
@@ -118,19 +124,47 @@ async fn a_cli_case_observes_the_stdout_of_its_entry_point() {
     );
 }
 
+/// A stub reply with the recording's two frames and the same normalized fields (`client_id` and
+/// `daemon_epoch`), but a different item list, so the only difference is a value.
+fn differing_stub_reply() -> Vec<String> {
+    vec![
+        json!({
+            "client_id": "00000000-0000-4000-8000-000000000001",
+            "conversation_ids": [],
+            "latency": 0.0,
+            "type": "connection_established",
+            "user_id": "20000000-0000-4000-8000-000000000001"
+        })
+        .to_string(),
+        json!({
+            "items": [{"id": "other"}],
+            "next_cursor": null,
+            "request_id": null,
+            "snapshot": {"daemon_epoch": "00000000-0000-4000-8000-000000000002", "seq": 0},
+            "type": "terminal_list"
+        })
+        .to_string(),
+    ]
+}
+
 #[tokio::test]
 async fn a_ws_case_observes_the_reply_its_stub_sends() {
     let (_, case) = v3_case("ws_terminal_list.json");
     let home = tempfile::tempdir().expect("home");
-    let stub_reply = json!({"type": "terminal_list", "items": [{"id": "other"}]}).to_string();
+    let stub_reply = differing_stub_reply();
     let mut transports = Transports::recorded();
-    transports.ws_reply = Some(vec![stub_reply.clone()]);
+    transports.ws_reply = Some(stub_reply.clone());
     let observed = observe(&case, home.path(), &open_window(), &transports)
         .await
         .expect("observe");
-    assert_eq!(observed.response, json!([stub_reply]));
+    assert_eq!(observed.response, json!(stub_reply));
     let replay = classify(&case, &no_waivers(), &observed, &open_window()).expect("classify");
-    assert!(matches!(replay, Replay::Diff { .. }), "{replay:?}");
+    assert_eq!(
+        replay,
+        Replay::Diff {
+            pointer: "/response/1/items".to_owned()
+        }
+    );
 }
 
 #[tokio::test]
@@ -171,7 +205,10 @@ fn a_waiver_surface_of_another_kind_is_a_waiver_error() {
         let observed = observation(json!([]));
         let error =
             classify(&case, &waivers, &observed, &open_window()).expect_err("foreign surface");
-        assert!(matches!(error, DriverError::Waiver(_)), "{file} ({key}): {error:?}");
+        assert!(
+            matches!(error, DriverError::Waiver(_)),
+            "{file} ({key}): {error:?}"
+        );
     }
 }
 
@@ -186,8 +223,8 @@ fn a_native_extension_citation_classifies_its_native_answer() {
         native.clone(),
         true,
     );
-    let on_native = classify(&case, &waivers, &observation(native), &open_window())
-        .expect("classify native");
+    let on_native =
+        classify(&case, &waivers, &observation(native), &open_window()).expect("classify native");
     assert_eq!(
         on_native,
         Replay::NativeExtension {

@@ -168,22 +168,25 @@ fn parsed(text: &str) -> Value {
 }
 
 /// The shared envelope replay (design-v2 section 7.11.2): every case of `cases.json` is replayed
-/// frame by frame. Returns the number of cases replayed.
+/// frame by frame. Returns the number of cases whose assertions passed (fix3 V29).
 pub(super) fn replay_corpus() -> usize {
-    let cases = load_corpus();
-    let count = cases.len();
-    replay_frames(cases);
-    count
+    replay_frames(load_corpus())
 }
 
 #[test]
 fn rust_replays_envelope_corpus() {
-    replay_corpus();
+    assert_eq!(
+        replay_corpus(),
+        18,
+        "every one of the 18 envelope cases replays"
+    );
 }
 
-/// The per-case assertions of the envelope replay.
-fn replay_frames(cases: Vec<Case>) {
+/// The per-case assertions of the envelope replay. A case counts once its assertions have passed,
+/// so the returned count is what the replay checked, not what it was given.
+fn replay_frames(cases: Vec<Case>) -> usize {
     assert!(!cases.is_empty(), "corpus lists no cases");
+    let mut replayed = 0;
     for case in cases {
         let mut states: BTreeMap<&str, SubscriptionState> = BTreeMap::new();
         for (client, spec) in &case.clients {
@@ -276,7 +279,9 @@ fn replay_frames(cases: Vec<Case>) {
                 }
             }
         }
+        replayed += 1;
     }
+    replayed
 }
 
 /// One fixture per state the codec can hold when a malformed control arrives.

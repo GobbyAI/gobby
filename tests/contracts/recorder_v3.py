@@ -53,6 +53,7 @@ from tests.contracts.normalizers_v3 import (
 from tests.contracts.recorder_daemon_v3 import recorder_daemon
 from tests.fixtures.hub_guard import (
     HARNESS_DATABASE_PATTERN,
+    GuardMode,
     HubGuard,
     check_derived_url,
     check_test_hub,
@@ -103,6 +104,10 @@ def open_run_database(
     url = base_url if base_url is not None else source.get("DATABASE_URL")
     guard: HubGuard = check_test_hub(url, source)
     assert url is not None
+    if guard.mode is GuardMode.REHEARSAL:
+        # H6: a rehearsal run creates and drops nothing and sweeps nothing. The Python recorder
+        # has no rehearsal path, so it refuses before the sweep and before any connection.
+        raise RecorderError("rehearsal profiles are not built on the Python recorder (H6)")
     sweep_dead_runs(url)
     name = harness_database_name(os.getpid(), secrets.token_hex(6))
     derived = derive_run_url(guard, name)
@@ -324,6 +329,14 @@ def pg_notify_capture(run: RunDatabase, channels: Sequence[str]) -> Iterator[PgN
         yield capture
 
 
+def _decode_frame(frame: Any) -> Any:
+    """Decode one text frame as JSON; a frame that is not JSON decodes to None and is skipped."""
+    try:
+        return json.loads(frame)
+    except ValueError:
+        return None
+
+
 class WsPublishCapture:
     """A WS client connected before the request; keeps the frames whose type is declared."""
 
@@ -337,21 +350,56 @@ class WsPublishCapture:
 
     def __enter__(self) -> WsPublishCapture:
         self._socket = connect(self._url, additional_headers=self._headers)
+        try:
+            self._subscribe()
+        except BaseException:
+            # __exit__ does not run when __enter__ raises, so the socket is closed here.
+            self._socket.close()
+            raise
         self._thread = threading.Thread(target=self._read, daemon=True)
         self._thread.start()
         return self
+
+    def _subscribe(self) -> None:
+        """Subscribe to the declared types, then wait for the daemon's acknowledgement.
+
+        The daemon delivers an event type only to a connection that subscribed to it (the
+        broadcast filter), so the capture must subscribe before the request. Frames that arrive
+        before the acknowledgement are kept when their type is declared.
+        """
+        assert self._socket is not None
+        self._socket.send(json.dumps({"type": "subscribe", "events": sorted(self._types)}))
+        deadline = time.monotonic() + CAPTURE_CAP_SECONDS
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RecorderError("the daemon did not acknowledge the ws_publish subscription")
+            try:
+                frame = self._socket.recv(timeout=remaining)
+            except TimeoutError as error:
+                raise RecorderError(
+                    "the daemon did not acknowledge the ws_publish subscription"
+                ) from error
+            decoded = _decode_frame(frame)
+            if not isinstance(decoded, dict):
+                continue
+            if decoded.get("type") == "subscribe_success":
+                return
+            if decoded.get("type") == "error":
+                raise RecorderError(f"the daemon rejected the ws_publish subscription: {decoded}")
+            self._keep(decoded)
+
+    def _keep(self, decoded: dict[str, Any]) -> None:
+        if decoded.get("type") in self._types:
+            self._drainer.add(decoded)
 
     def _read(self) -> None:
         assert self._socket is not None
         try:
             while True:
-                frame = self._socket.recv()
-                try:
-                    decoded = json.loads(frame)
-                except ValueError:
-                    continue
-                if isinstance(decoded, dict) and decoded.get("type") in self._types:
-                    self._drainer.add(decoded)
+                decoded = _decode_frame(self._socket.recv())
+                if isinstance(decoded, dict):
+                    self._keep(decoded)
         except ConnectionClosed:
             return
 
@@ -497,15 +545,32 @@ def _rpc_message(response: httpx.Response, rpc_id: int) -> dict[str, Any]:
     raise RecorderError(f"no MCP reply with id {rpc_id} in a {response.status_code} response")
 
 
+def _stdio_env(home: Path, daemon_url: str) -> dict[str, str]:
+    """The stdio wrapper's environment: its isolated home, the test fence and the per-run daemon.
+
+    Without GOBBY_DAEMON_URL the wrapper dials its default daemon, which on this machine is the
+    operator's live daemon. GOBBY_TEST_PROTECT with GOBBY_HOME limits its daemon scan to the
+    processes whose command line names this home, so no other daemon is found or started.
+    """
+    return {
+        "PATH": os.environ.get("PATH", ""),
+        "HOME": str(home),
+        "GOBBY_HOME": str(home),
+        "GOBBY_TEST_PROTECT": "1",
+        "GOBBY_DAEMON_URL": daemon_url,
+        "PYTHONUNBUFFERED": "1",
+    }
+
+
 def send_mcp_stdio(
-    invocation: Mapping[str, Any], *, home: Path, cwd: Path, scratch: Path
+    invocation: Mapping[str, Any], *, home: Path, cwd: Path, scratch: Path, daemon_url: str
 ) -> dict[str, Any]:
     """Run one JSON-RPC tools/call through the stdio MCP wrapper, as its clients spawn it.
 
-    The wrapper reads its daemon address from the isolated home, so its environment carries
-    only that home and the path; its stderr goes to a scratch file for diagnosis.
+    The wrapper's environment comes from ``_stdio_env``: the per-run home and the per-run daemon
+    URL only. Its stderr goes to a scratch file for diagnosis.
     """
-    env = {"PATH": os.environ.get("PATH", ""), "HOME": str(home), "PYTHONUNBUFFERED": "1"}
+    env = _stdio_env(home, daemon_url)
     with (scratch / "mcp-stdio-stderr.log").open("w") as stderr:
         process = subprocess.Popen(
             [sys.executable, "-m", "gobby.mcp_proxy.stdio"],
@@ -572,18 +637,29 @@ def send_ws(ws_url: str, frames: Sequence[str], *, operator: Mapping[str, str]) 
     return replies
 
 
-def send_cli(argv: Sequence[str], *, stdin: str | None, scratch: Path) -> dict[str, Any]:
-    """Run the checkout's gobby entry point in a sealed environment with a temporary home."""
-    home = scratch / "home"
-    home.mkdir(parents=True, exist_ok=True)
-    env = {
+def _cli_env(home: Path, daemon_url: str) -> dict[str, str]:
+    """The CLI's sealed environment: a temporary home, the test fence and the per-run daemon URL.
+
+    GOBBY_DAEMON_URL keeps any daemon call on the per-run daemon, never the default port.
+    """
+    return {
         "PATH": f"{REPO_ROOT / '.venv' / 'bin'}:/usr/bin:/bin:/usr/sbin:/sbin",
         "HOME": str(home),
         "GOBBY_HOME": str(home),
         "GOBBY_TEST_PROTECT": "1",
+        "GOBBY_DAEMON_URL": daemon_url,
         "LANG": "C.UTF-8",
         "COLUMNS": "80",
     }
+
+
+def send_cli(
+    argv: Sequence[str], *, stdin: str | None, scratch: Path, daemon_url: str
+) -> dict[str, Any]:
+    """Run the checkout's gobby entry point in a sealed environment with a temporary home."""
+    home = scratch / "home"
+    home.mkdir(parents=True, exist_ok=True)
+    env = _cli_env(home, daemon_url)
     result = subprocess.run(
         [str(REPO_ROOT / ".venv" / "bin" / "gobby"), *argv],
         input=stdin,
@@ -732,14 +808,23 @@ def _send(
         invocation = case["invocation"]
         if invocation["transport"] == "stdio":
             return send_mcp_stdio(
-                invocation, home=daemon.home, cwd=daemon.project_dir, scratch=scratch
+                invocation,
+                home=daemon.home,
+                cwd=daemon.project_dir,
+                scratch=scratch,
+                daemon_url=daemon.http_url,
             )
         return send_mcp_http(client, invocation, operator=operator)
     invocation = case["invocation"]
     if kind == "ws":
         return send_ws(f"ws://127.0.0.1:{daemon.ws_port}/", invocation["frames"], operator=operator)
     if kind == "cli":
-        return send_cli(invocation["argv"], stdin=invocation.get("stdin"), scratch=scratch)
+        return send_cli(
+            invocation["argv"],
+            stdin=invocation.get("stdin"),
+            scratch=scratch,
+            daemon_url=daemon.http_url,
+        )
     raise RecorderError(f"unknown kind {kind!r}")
 
 
@@ -766,12 +851,50 @@ def replay_case(
     return http_corpus.classify_replay(case, actual, waivers, observed=observed)
 
 
+def _carries_secret(value: Any) -> bool:
+    """True when a secret-keyed field sits anywhere in the value; redaction would change it."""
+    return bool(http_corpus.redact_secrets(value) != value)
+
+
+def _recorded_db_delta(value: Mapping[str, Any], case_name: str) -> dict[str, Any]:
+    """Redact one db_delta value for writing: secret-keyed fields never reach a recording.
+
+    Added and removed rows are redacted in full, the same rule the comparison applies to both
+    sides, so the stored value and the comparison agree. A changed value in a secret-keyed column,
+    or one that carries a secret-keyed field, is refused: writing it would commit the secret, and
+    masking it would hide its change from the comparison (V5). A decision is needed for those.
+    """
+    changed: list[dict[str, Any]] = []
+    for item in value["changed"]:
+        column = item["column"]
+        if (
+            column in http_corpus.SECRET_KEYS
+            or _carries_secret(item["before"])
+            or _carries_secret(item["after"])
+        ):
+            raise RecorderError(
+                f"{case_name}: a changed value in secret-keyed column {column!r} cannot be "
+                "recorded; the case needs a decision (V5)"
+            )
+        changed.append({**item, "key": http_corpus.redact_secrets(item["key"])})
+    return {
+        "added": http_corpus.redact_secrets(value["added"]),
+        "removed": http_corpus.redact_secrets(value["removed"]),
+        "changed": changed,
+    }
+
+
 def _recorded_entries(case: dict[str, Any], observation: Observation) -> None:
-    """Attach recorded values to the case's db_delta and side_effects entries, in place."""
+    """Attach redacted recorded values to the case's db_delta and side_effects entries, in place.
+
+    Redaction runs after normalization, as the comparison does, and captures are redacted in full
+    (design 7.6: every body and capture).
+    """
+    case_name = str(case.get("name", ""))
     for entry, value in zip(case.get("db_delta", []), observation.db_delta, strict=True):
-        entry["recorded"] = value
+        entry["recorded"] = _recorded_db_delta(value, case_name)
     for entry, value in zip(case.get("side_effects", []), observation.side_effects, strict=True):
-        entry["recorded"] = value
+        entry["recorded"] = http_corpus.redact_secrets(value)
 
 
 def record_template(
