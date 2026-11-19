@@ -1,9 +1,11 @@
 //! The native pool budget: the three stored `database_concurrency` keys, resolved against
 //! the hub's capacity, and the fixed share each native pool takes of it.
 
+use serde_json::Value;
+
 use super::{
     ConcurrencyValue, DatabaseConcurrencyConfig, DatabaseConcurrencyError,
-    DatabaseConcurrencyResolution, PostgresCapacity,
+    DatabaseConcurrencyResolution, PostgresCapacity, resolve_database_concurrency,
 };
 
 /// The connections each native pool takes: the smallest share the pool accepts.
@@ -42,8 +44,22 @@ pub fn parse_stored(
     field: &'static str,
     raw: Option<&str>,
 ) -> Result<ConcurrencyValue, DatabaseConcurrencyError> {
-    let _ = (field, raw);
-    Ok(ConcurrencyValue::default())
+    let Some(raw) = raw else {
+        return Ok(ConcurrencyValue::default());
+    };
+    let invalid = || DatabaseConcurrencyError::InvalidStoredValue { field };
+    match serde_json::from_str::<Value>(raw).map_err(|_| invalid())? {
+        Value::String(text) if text == "auto" => Ok(ConcurrencyValue::Automatic(text)),
+        // A float or an integer beyond i64 has no `as_i64` and is not a stored count.
+        Value::Number(number) => match number.as_i64() {
+            Some(value) if value < 1 => Err(DatabaseConcurrencyError::NonPositiveValue { field }),
+            Some(value) => u32::try_from(value)
+                .map(ConcurrencyValue::Explicit)
+                .map_err(|_| invalid()),
+            None => Err(invalid()),
+        },
+        _ => Err(invalid()),
+    }
 }
 
 /// The resolver's input from the three stored keys.
@@ -72,26 +88,13 @@ pub fn resolve_pool_budget(
     capacity: &PostgresCapacity,
     cpu_count: u32,
 ) -> Result<PoolBudget, DatabaseConcurrencyError> {
-    let _ = (to_config(stored)?, NATIVE_POOL_COUNT);
+    let resolution = resolve_database_concurrency(&to_config(stored)?, capacity, cpu_count)?;
+    let native_budget = resolution.native_pool_max_size;
     Ok(PoolBudget {
-        resolution: DatabaseConcurrencyResolution {
-            cpu_count,
-            max_connections: capacity.max_connections,
-            superuser_reserved_connections: capacity.superuser_reserved_connections,
-            reserved_connections: capacity.reserved_connections,
-            usable_connections: 0,
-            pool_budget: 0,
-            pool_max_size: 0,
-            native_pool_max_size: 0,
-            executor_max_workers: 0,
-            coverage_max_concurrency: 0,
-            direct_connection_reserve: 0,
-            bootstrap_pool_size: 0,
-            hardware_warning: None,
-        },
-        native_budget: 0,
-        share: 8,
-        degraded: None,
+        resolution,
+        native_budget,
+        share: POOL_SHARE,
+        degraded: (native_budget < NATIVE_POOL_COUNT * POOL_SHARE).then_some("database_pool"),
     })
 }
 

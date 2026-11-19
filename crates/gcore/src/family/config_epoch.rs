@@ -29,17 +29,28 @@ impl ConfigEpoch {
 /// Revisions only move forward. A publish whose revision is not greater than the current
 /// one is dropped, and the comparison and the swap happen under the channel's own lock, so
 /// a slow read of an older revision that finishes after a newer publish never reverts the
-/// epoch. There is no reset: the configuration store numbers every write, a restore
-/// included, with a revision above every earlier one, so a restore arrives as an ordinary
-/// newer revision. A publisher starts at the revision of the epoch it was built with.
+/// epoch. A publish of the current revision with other values is dropped too.
+///
+/// There is no reset. A publisher starts at the revision of the epoch it was built with,
+/// and a stored revision that moves backwards, such as a restore to an older revision or
+/// a deleted row read as revision zero, is not published until the store passes the
+/// highest revision this publisher has published.
 pub struct ConfigEpochPublisher {
     tx: watch::Sender<ConfigEpoch>,
 }
 
 impl ConfigEpochPublisher {
-    /// Publishes `epoch` when its revision is greater than the current one.
+    /// Publishes `epoch` when its revision is greater than the current one. Subscribers
+    /// are notified only when the epoch changes.
     pub fn publish(&self, epoch: ConfigEpoch) {
-        let _ = (&self.tx, epoch);
+        self.tx.send_if_modified(|current| {
+            if epoch.revision > current.revision {
+                *current = epoch;
+                true
+            } else {
+                false
+            }
+        });
     }
 }
 

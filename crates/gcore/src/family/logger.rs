@@ -13,8 +13,7 @@ impl FamilyLogger {
 
     /// The family's logging namespace, `gobby.<family>`.
     pub fn target(&self) -> String {
-        let _ = self.family;
-        String::new()
+        format!("gobby.{}", self.family)
     }
 
     /// Adds `amount` to the counter `name`, labelled with the family's name.

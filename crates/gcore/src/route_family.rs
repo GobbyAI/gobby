@@ -171,7 +171,7 @@ pub trait RouteFamily<S>: Send + Sync {
     }
     /// Runs once per process, before admission.
     fn start<'a>(&'a self, _ctx: &'a FamilyContext) -> BoxFut<'a, Result<(), HookError>> {
-        Box::pin(async { Err(unimplemented_hook()) })
+        Box::pin(async { Ok(()) })
     }
     /// Runs once per lease acquisition. Jobs registered through `activation` are staged
     /// for the lease.
@@ -179,17 +179,11 @@ pub trait RouteFamily<S>: Send + Sync {
         &'a self,
         _activation: &'a mut Activation<'_>,
     ) -> BoxFut<'a, Result<(), HookError>> {
-        Box::pin(async { Err(unimplemented_hook()) })
+        Box::pin(async { Ok(()) })
     }
     /// Runs once per lease release or drain, in reverse start order.
     fn deactivate<'a>(&'a self, _mode: StopMode) -> BoxFut<'a, Result<(), StopFailure>> {
-        let family = self.name();
-        Box::pin(async move {
-            Err(StopFailure {
-                family,
-                message: String::new(),
-            })
-        })
+        Box::pin(async { Ok(()) })
     }
     /// Runs before each worker spawn.
     fn before_spawn<'a>(
@@ -197,24 +191,18 @@ pub trait RouteFamily<S>: Send + Sync {
         _ctx: &'a FamilyContext,
         _spawn: SpawnKind,
     ) -> BoxFut<'a, Result<(), HookError>> {
-        Box::pin(async { Err(unimplemented_hook()) })
+        Box::pin(async { Ok(()) })
     }
     /// Runs after each healthy start or respawn of the worker.
     fn after_healthy<'a>(&'a self, _ctx: &'a FamilyContext) -> BoxFut<'a, Result<(), HookError>> {
-        Box::pin(async { Err(unimplemented_hook()) })
+        Box::pin(async { Ok(()) })
     }
     /// Runs once, when recovery completes.
     fn recovery_complete<'a>(
         &'a self,
         _ctx: &'a FamilyContext,
     ) -> BoxFut<'a, Result<(), HookError>> {
-        Box::pin(async { Err(unimplemented_hook()) })
-    }
-}
-
-fn unimplemented_hook() -> HookError {
-    HookError::Ordinary {
-        message: String::new(),
+        Box::pin(async { Ok(()) })
     }
 }
 

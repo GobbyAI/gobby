@@ -17,12 +17,12 @@ impl DegradedServices {
 
     /// Marks `name` degraded.
     pub fn mark(&self, name: &str) {
-        let _ = name;
+        self.lock().insert(name.to_owned());
     }
 
     /// Removes `name` from the set.
     pub fn clear(&self, name: &str) {
-        let _ = name;
+        self.lock().remove(name);
     }
 
     /// Every marked name, sorted.

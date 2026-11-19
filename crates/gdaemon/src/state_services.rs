@@ -7,7 +7,6 @@ mod host_process_fixture;
 use anyhow::{Context, Result};
 use gobby_core::{
     bootstrap::HubDatabaseBootstrap,
-    family::FamilyContext,
     postgres_pool::{Pool, PoolSettings},
 };
 use gobby_terminals::family::{RouteLatch, SupervisorMode};
@@ -117,8 +116,13 @@ impl ActiveServices {
 }
 
 /// Marks the terminal host degraded after its start failed and returns the line that
-/// reports the failure.
-pub(crate) fn report_terminal_host_failure(ctx: &FamilyContext, error: &str) -> String {
+/// reports the failure. Only its test calls it until the terminal host's start failure is
+/// wired to the process's family context, which removes the test-only gate.
+#[cfg(test)]
+pub(crate) fn report_terminal_host_failure(
+    ctx: &gobby_core::family::FamilyContext,
+    error: &str,
+) -> String {
     let _ = (ctx, error);
     String::new()
 }
@@ -126,6 +130,7 @@ pub(crate) fn report_terminal_host_failure(ctx: &FamilyContext, error: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gobby_core::family::FamilyContext;
     use gobby_terminals::host::{EpochAuthority, EpochBinding, HostFailure, HostOptions};
     use std::{future::Future, pin::Pin};
 

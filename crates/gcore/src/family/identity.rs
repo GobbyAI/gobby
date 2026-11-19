@@ -10,7 +10,9 @@ pub const IDENTITY_ENTRY_HEADERS: [&str; 3] =
 /// Removes every identity header from `headers`. The front-door proof header is kept,
 /// because pre-authentication checks read it.
 pub fn strip_identity_entry_headers(headers: &mut HeaderMap) {
-    let _ = headers;
+    for name in IDENTITY_ENTRY_HEADERS {
+        headers.remove(name);
+    }
 }
 
 /// The authenticated caller. It carries no secret.
@@ -25,9 +27,15 @@ pub struct CallerIdentity {
 }
 
 impl CallerIdentity {
-    /// The identity in `headers`, or `None` when any of the three headers is absent.
+    /// The identity in `headers`, or `None` when any of the three headers is absent or is
+    /// not visible ASCII.
     pub fn from_headers(headers: &HeaderMap) -> Option<Self> {
-        let _ = headers;
-        None
+        let [user_id, machine_id, key_id] = IDENTITY_ENTRY_HEADERS
+            .map(|name| headers.get(name).and_then(|value| value.to_str().ok()));
+        Some(Self {
+            user_id: user_id?.to_owned(),
+            machine_id: machine_id?.to_owned(),
+            key_id: key_id?.to_owned(),
+        })
     }
 }

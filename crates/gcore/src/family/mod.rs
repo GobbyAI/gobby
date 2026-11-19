@@ -55,6 +55,11 @@ impl Extensions {
     pub fn insert<T: Send + Sync + 'static>(&mut self, value: T) {
         Arc::make_mut(&mut self.values).insert(TypeId::of::<T>(), Arc::new(value));
     }
+
+    fn get<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
+        let value = Arc::clone(self.values.get(&TypeId::of::<T>())?);
+        value.downcast::<T>().ok()
+    }
 }
 
 /// Everything a [`FamilyContext`] is built from.
@@ -85,9 +90,16 @@ pub struct ContextParts {
 
 struct Inner {
     publisher: Arc<dyn FramePublisher>,
+    backend: Option<watch::Receiver<BackendStatus>>,
+    lease: Option<watch::Receiver<LeaseState>>,
+    budget: Option<PoolBudget>,
+    serve_pool: Option<Arc<Pool>>,
+    config: watch::Receiver<ConfigEpoch>,
     home: PathBuf,
     degraded: DegradedServices,
     config_publisher: Arc<ConfigEpochPublisher>,
+    startup: Option<Arc<dyn StartupRecorder>>,
+    extensions: Extensions,
 }
 
 /// The process's handles, shared by every family. Cloning shares the same handles.
@@ -115,9 +127,16 @@ impl FamilyContext {
         Self {
             inner: Arc::new(Inner {
                 publisher: parts.publisher,
+                backend: parts.backend,
+                lease: parts.lease,
+                budget: parts.budget,
+                serve_pool: parts.serve_pool,
+                config: parts.config,
                 home: parts.home,
                 degraded: parts.degraded,
                 config_publisher: parts.config_publisher,
+                startup: parts.startup,
+                extensions: parts.extensions,
             }),
         }
     }
@@ -148,27 +167,30 @@ impl FamilyContext {
 
     /// The backend status now, when the door has a runtime.
     pub fn backend_status(&self) -> Option<BackendStatus> {
-        None
+        self.inner
+            .backend
+            .as_ref()
+            .map(|receiver| receiver.borrow().clone())
     }
 
     /// A receiver of the backend status, when the door has a runtime.
     pub fn subscribe_backend(&self) -> Option<watch::Receiver<BackendStatus>> {
-        None
+        self.inner.backend.clone()
     }
 
     /// The lease state now, when the daemon holds a lease.
     pub fn lease_state(&self) -> Option<LeaseState> {
-        None
+        self.inner.lease.as_ref().map(|receiver| *receiver.borrow())
     }
 
     /// The resolved pool budget, when there is a database.
     pub fn budget(&self) -> Option<&PoolBudget> {
-        None
+        self.inner.budget.as_ref()
     }
 
     /// The serve pool, when there is a database.
     pub fn serve_pool(&self) -> Option<Arc<Pool>> {
-        None
+        self.inner.serve_pool.clone()
     }
 
     /// The daemon's home directory.
@@ -178,12 +200,15 @@ impl FamilyContext {
 
     /// The configuration epoch now.
     pub fn config_epoch(&self) -> ConfigEpoch {
-        ConfigEpoch::unpublished()
+        self.inner.config.borrow().clone()
     }
 
-    /// A receiver that sees each later configuration epoch.
+    /// A receiver that sees each later configuration epoch. The epoch current at the call
+    /// is not reported as a change; read it with `borrow`.
     pub fn subscribe_config(&self) -> watch::Receiver<ConfigEpoch> {
-        config_channel(ConfigEpoch::unpublished()).1
+        let mut receiver = self.inner.config.clone();
+        receiver.mark_unchanged();
+        receiver
     }
 
     /// The logging namespace and metric label of `family`.
@@ -209,11 +234,11 @@ impl FamilyContext {
 
     /// The startup recorder, when one is attached.
     pub fn startup(&self) -> Option<Arc<dyn StartupRecorder>> {
-        None
+        self.inner.startup.clone()
     }
 
     /// The extension of type `T`, when one was inserted.
     pub fn extension<T: Send + Sync + 'static>(&self) -> Option<Arc<T>> {
-        None
+        self.inner.extensions.get::<T>()
     }
 }
