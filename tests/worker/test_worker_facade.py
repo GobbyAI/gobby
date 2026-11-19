@@ -15,8 +15,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
+
+from gobby.hub.caller_scope import current_caller, require_machine_owned
+from gobby.runner_init import StartRefusal
+from gobby.utils.session_context import is_daemon_execution
+from gobby.worker.decode import Int, IsoDatetime, Str
 from gobby.worker.facade import WorkerFacade
 from gobby.worker.gate import _ACTIVE, phase_scope
+from gobby.worker.ops import OPS, DomainOp
+from gobby.worker.phase_ids import InitPhase
 from gobby.worker.protocol import (
     ErrorBody,
     ErrorCode,
@@ -24,14 +32,6 @@ from gobby.worker.protocol import (
     Response,
     encode_response,
 )
-from pydantic import ValidationError
-
-from gobby.hub.caller_scope import current_caller, require_machine_owned
-from gobby.runner_init import StartRefusal
-from gobby.utils.session_context import is_daemon_execution
-from gobby.worker.decode import Int, IsoDatetime, Str
-from gobby.worker.ops import OPS, DomainOp
-from gobby.worker.phase_ids import InitPhase
 
 CREDENTIAL = "corpus-credential"
 GENERATION = 7

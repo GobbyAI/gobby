@@ -13,8 +13,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from gobby.runner_init import StartRefusal
+from gobby.storage.schema_contract import expected_schema_identity
+from gobby.worker.decode import Str
 from gobby.worker.facade import WorkerFacade
 from gobby.worker.gate import phase_scope
+from gobby.worker.ops import OPS, DomainOp
+from gobby.worker.phase_ids import InitPhase
 from gobby.worker.protocol import (
     ACCEPTED_PROTOCOL_VERSIONS,
     DOMAIN_OP_MAX_REQUEST_BYTES,
@@ -31,12 +37,6 @@ from gobby.worker.protocol import (
     decode_request,
     encode_response,
 )
-
-from gobby.runner_init import StartRefusal
-from gobby.storage.schema_contract import expected_schema_identity
-from gobby.worker.decode import Str
-from gobby.worker.ops import OPS, DomainOp
-from gobby.worker.phase_ids import InitPhase
 
 CREDENTIAL = "corpus-credential"
 WRONG_CREDENTIAL = "not-the-credential"

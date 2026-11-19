@@ -40,8 +40,10 @@ A response is a JSON object with `protocol_version` (always 1 in R0), `generatio
 - `error`: `{"code": <ErrorCode>, "message": <str>}`. The message is at most 2,048 characters.
 
 Echo rule. `generation` and `operation_id` are echoed only from a parsed request whose own
-value passes its own envelope rule. An unknown key does not prevent the echo. A request
-that is not parsed (over 16 MiB, or not JSON) is answered with both fields null.
+value passes its own envelope rule. An unknown key does not prevent the echo. An
+`operation_id` that cannot be written as UTF-8 (a lone surrogate from a JSON escape) fails
+that rule, so it is not echoed and the request is `invalid_request`. A request that is not
+parsed (over 16 MiB, or not JSON) is answered with both fields null.
 
 Example, a handshake accepted:
 
@@ -124,7 +126,13 @@ An `initialize` result has these keys, always present: `phase` (the requested ph
 | `failed` | the phase raised another `Exception`, or its rollback failed | null | `str(exc)`, or `rollback failed: ...`, at most 2,048 characters | the exception class name |
 
 A refused or failed phase does not advance the next phase. The facade becomes unusable after
-a refused or failed phase.
+a refused or failed phase. A refused or failed phase reports `next_phase` as null.
+
+Construction (R44): `WorkerFacade` builds a phase driver whose gate creates futures on the
+running event loop. Construct the facade inside a running loop, from async code, never from
+synchronous setup. The constructor takes `credential`, `ops` (default: the op table),
+`create` (a zero-argument factory for the runner's create coroutine) and, only when `create`
+is omitted, `config_path` and `verbose` for the real `GobbyRunner.create`.
 
 Not-ready gating (R7): an `invoke` is refused with `not_ready` until the handshake has bound
 and all five phases have reported `ready`. After a refused, failed or cancelled phase the
@@ -161,7 +169,7 @@ registration) map to `op_failed`, never to `invalid_request` (R31). The fault is
 ## Op table and invoke
 
 - `invoke` takes the body `{"op": <str>, "params": {...}}`. `params` defaults to `{}` and must
-  have exactly the keys the op declares.
+  have exactly the keys the op declares; any other key set is `invalid_request`.
 - The op table `OPS` is built from one `DomainOp(...)` line per op. Names are unique. R0
   registers no op (R11).
 - Resolution is lazy: the `"module:qualname"` path is resolved on first invoke, so importing
@@ -180,7 +188,9 @@ registration) map to `op_failed`, never to `invalid_request` (R31). The fault is
   frozenset as a list sorted by canonical text; a tuple or list as an array; an exception as
   `_type` plus its attributes (`vars`), or `_type` alone when it has no `__dict__`.
   Anything else (bytes, arbitrary objects, functions, modules, non-finite floats, dicts with
-  non-str keys, a dataclass field or dict key named `_type`) is `op_failed`.
+  non-str keys, a dataclass field or dict key named `_type`) is `op_failed`. So is a value
+  whose canonical text cannot be written as UTF-8 (a lone surrogate) or that nests past the
+  recursion limit. The facade probes the canonical writer before it answers.
 - A worker op binds no caller and no daemon-owned execution. The caller-ownership facts
   below apply to every op.
 
