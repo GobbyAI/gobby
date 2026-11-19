@@ -258,6 +258,7 @@ fn record(ts: i64, family: &str, outcome: Outcome) -> Record {
         proxied_status: Some(200),
         detail: None,
         waiver: None,
+        ledger_key: None,
     }
 }
 

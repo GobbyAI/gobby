@@ -422,6 +422,7 @@ fn record(
         proxied_status: proxied_status.map(|status| status.as_u16()),
         detail,
         waiver: None,
+        ledger_key: None,
     });
 }
 

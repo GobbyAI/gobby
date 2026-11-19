@@ -11,7 +11,9 @@ use std::sync::{Mutex, PoisonError};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::front_door::waivers::{WaiverManifest, is_native_extension, surface_matches};
+use crate::front_door::waivers::{
+    CaseSurface, WaiverManifest, is_native_extension, surface_matches, surface_matches_case,
+};
 
 /// The log's file name under `<home>/logs/`.
 pub const LOG_FILE: &str = "front-door-compare.jsonl";
@@ -51,6 +53,10 @@ pub struct Record {
     pub detail: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiver: Option<WaiverRef>,
+    /// The exact ledger key of a non-HTTP case (MCP, WS or CLI), so its waiver can be verified.
+    /// HTTP records leave it unset, and it is omitted from the serialized record when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ledger_key: Option<String>,
 }
 
 /// Appends records to `<home>/logs/front-door-compare.jsonl`.
@@ -211,10 +217,18 @@ fn check_waiver(
             waiver.id, waiver.decision, entry.decision
         ));
     }
-    if !surface_matches(&entry.surface, &record.method, &record.path) {
+    let covered = match &record.ledger_key {
+        Some(key) => surface_matches_case(&entry.surface, CaseSurface::Keyed { key }),
+        None => surface_matches(&entry.surface, &record.method, &record.path),
+    };
+    if !covered {
+        let case = record
+            .ledger_key
+            .clone()
+            .unwrap_or_else(|| format!("{} {}", record.method, record.path));
         return Err(format!(
-            "{} {} is not waiver {}'s surface {}",
-            record.method, record.path, waiver.id, entry.surface
+            "{case} is not waiver {}'s surface {}",
+            waiver.id, entry.surface
         ));
     }
     Ok(())
