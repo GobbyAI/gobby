@@ -27,9 +27,8 @@ from scripts.parity_waivers import (
     WAIVED,
     WAIVERS_PATH,
     Waiver,
-    WaiverError,
+    cite_waiver,
     load_waivers,
-    surface_matches,
 )
 
 CORPUS_DIR = Path(__file__).resolve().parent / "http"
@@ -329,48 +328,154 @@ class ReplayResult:
     pointer: str | None = None
 
 
-def _normalized_response(case: Mapping[str, Any], response: Mapping[str, Any]) -> dict[str, Any]:
-    document = {"response": copy.deepcopy(dict(response))}
-    normalized: dict[str, Any] = _normalized(document, case["mask"])["response"]
+# Kinds whose responses are HTTP-shaped (status, headers, body). The ws and cli kinds answer
+# with a frame list and an exit/stdout/stderr object, so their responses are redacted whole.
+_HTTP_SHAPED_KINDS = frozenset({"http", "mcp"})
+
+
+def _case_kind(case: Mapping[str, Any]) -> str:
+    """Return a case's kind; schema 2 cases carry none and are ``http``."""
+    kind: str = case.get("kind", "http")
+    return kind
+
+
+def _redacted_response(kind: str, response: Any) -> Any:
+    """Redact one response by its kind, keeping the v2 body rule for HTTP-shaped answers."""
+    if kind in _HTTP_SHAPED_KINDS:
+        return {**response, "body": redact_secrets(response["body"])}
+    return redact_secrets(response)
+
+
+def _entry_values(case: Mapping[str, Any], field: str) -> list[Any]:
+    """Return the recorded value of each declared ``db_delta`` or ``side_effects`` entry."""
+    values: list[Any] = []
+    for index, entry in enumerate(case.get(field, [])):
+        if "recorded" not in entry:
+            raise CorpusError(f"{case['name']}: {field}[{index}] has no recorded value")
+        values.append(entry["recorded"])
+    return values
+
+
+def _observed_values(
+    case: Mapping[str, Any], observed: Mapping[str, Any] | None
+) -> tuple[list[Any], list[Any]]:
+    """Return the replay's db_delta values and side-effect captures, one per declared entry.
+
+    Only schema 3 cases declare db_delta and side_effects, so only they take an observation.
+    """
+    if case.get("schema_version") != 3:
+        if observed is not None:
+            raise CorpusError(f"{case['name']}: only schema 3 cases take observed values")
+        return [], []
+    if observed is None:
+        raise CorpusError(f"{case['name']}: schema 3 classification needs observed values")
+    for field in ("db_delta", "side_effects"):
+        if field not in observed:
+            raise CorpusError(f"{case['name']}: observed {field} is missing")
+    return list(observed["db_delta"]), list(observed["side_effects"])
+
+
+def _comparison(
+    case: Mapping[str, Any], response: Any, db_values: list[Any], effect_values: list[Any]
+) -> dict[str, Any]:
+    """Normalize one comparison set in case coordinates: response, db_delta and side effects.
+
+    Each db_delta or side-effect value sits under ``recorded`` at its declaration index, so an
+    RFC 6901 mask pointer addresses the recording and the observation alike.
+    """
+    document = {
+        "response": _redacted_response(_case_kind(case), response),
+        "db_delta": [{"recorded": redact_secrets(value)} for value in db_values],
+        "side_effects": [{"recorded": redact_secrets(value)} for value in effect_values],
+    }
+    normalized: dict[str, Any] = apply_masks(document, case["mask"])
     return normalized
+
+
+def _escape_pointer_token(token: Any) -> str:
+    """Escape one object key as an RFC 6901 reference token."""
+    return str(token).replace("~", "~0").replace("/", "~1")
+
+
+def _first_difference(expected: Any, actual: Any, pointer: str = "") -> str | None:
+    """Return the first RFC 6901 pointer where two normalized documents differ, or None."""
+    if isinstance(expected, dict) and isinstance(actual, dict):
+        for key in dict.fromkeys([*expected, *actual]):
+            child = f"{pointer}/{_escape_pointer_token(key)}"
+            if key not in expected or key not in actual:
+                return child
+            difference = _first_difference(expected[key], actual[key], child)
+            if difference is not None:
+                return difference
+        return None
+    if isinstance(expected, list) and isinstance(actual, list):
+        if len(expected) != len(actual):
+            return pointer
+        for index, (left, right) in enumerate(zip(expected, actual, strict=True)):
+            difference = _first_difference(left, right, f"{pointer}/{index}")
+            if difference is not None:
+                return difference
+        return None
+    if type(expected) is type(actual) and expected == actual:
+        return None
+    return pointer
+
+
+def _citation(case: Mapping[str, Any]) -> dict[str, str]:
+    """Return the surface a cited case names: its method and path for http, else its ledger key."""
+    if _case_kind(case) == "http":
+        request = case["request"]
+        return {"method": request["method"], "path": request["path"]}
+    return {"key": case["ledger_key"]}
+
+
+def _difference(
+    case: Mapping[str, Any],
+    expected_response: Any,
+    actual: Any,
+    observation: tuple[list[Any], list[Any]],
+) -> str | None:
+    """Return the first pointer where the replay departs from the expected response and recording."""
+    recorded_db = _entry_values(case, "db_delta")
+    recorded_effects = _entry_values(case, "side_effects")
+    expected = _comparison(case, expected_response, recorded_db, recorded_effects)
+    observed_db, observed_effects = observation
+    return _first_difference(expected, _comparison(case, actual, observed_db, observed_effects))
 
 
 def classify_replay(
     case: Mapping[str, Any],
-    actual: Mapping[str, Any],
+    actual: Any,
     waivers: Mapping[str, Waiver],
     *,
     observed: Mapping[str, Any] | None = None,
 ) -> ReplayResult:
-    """Classify one replayed case against Python, or against its native contract when waived.
+    """Classify one replayed case of any kind against its recording, or its native answer.
 
-    An unwaived case passes only when the actual response matches the recorded Python response.
-    A waived case cites its waiver and asserts the native response it must match. A native-extension
-    waiver never reports Python success.
+    ``actual`` is the replayed response. A schema 3 case also takes ``observed``, the replayed
+    ``db_delta`` values and ``side_effects`` captures in declaration order; a schema 2 case takes
+    none. An unwaived case passes only when its whole comparison set equals the recording. A
+    cited case matches its ``native_response`` on the response and the recording on the rest,
+    and a native-extension waiver never reports Python success. A diff names the first pointer
+    where the replay departs from the expected set.
     """
+    observation = _observed_values(case, observed)
     waiver_id = case.get("waiver")
     if waiver_id is None:
         if "response" not in case:
             raise CorpusError(f"{case['name']} has no Python response and no waiver")
-        expected = normalize_case(case)["response"]
-        if _normalized_response(case, actual) == expected:
+        difference = _difference(case, case["response"], actual, observation)
+        if difference is None:
             return ReplayResult(outcome=PASSED)
-        return ReplayResult(outcome=DIFF)
-    if waiver_id not in waivers:
-        raise WaiverError(f"Case cites unknown waiver {waiver_id!r}")
-    waiver = waivers[waiver_id]
-    request = case["request"]
-    if not surface_matches(waiver.surface, request["method"], request["path"]):
-        raise WaiverError(
-            f"{request['method']} {request['path']} is not waiver {waiver_id!r}'s surface "
-            f"{waiver.surface!r}"
-        )
+        return ReplayResult(outcome=DIFF, pointer=difference)
+    waiver = cite_waiver(waivers, waiver_id, kind=_case_kind(case), **_citation(case))
     if waiver.native_extension and "response" in case:
         raise CorpusError(f"Native-extension waiver {waiver_id!r} cannot cite a Python response")
     native = case.get("native_response")
     if native is None:
         raise CorpusError(f"Waived case {waiver_id!r} must assert its native_response")
-    if _normalized_response(case, actual) != _normalized_response(case, native):
-        return ReplayResult(outcome=DIFF)
+    difference = _difference(case, native, actual, observation)
+    if difference is not None:
+        return ReplayResult(outcome=DIFF, pointer=difference)
     outcome = NATIVE_EXTENSION if waiver.native_extension else WAIVED
     return ReplayResult(outcome=outcome, waiver=waiver_id, decision=waiver.decision)
