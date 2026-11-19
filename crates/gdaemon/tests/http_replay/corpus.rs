@@ -1262,7 +1262,8 @@ mod manifest_tests {
             json!({"order": "as_recorded", "order_by": ["id"]}),
         ] {
             let value = v3_case(json!([]), db_delta_with(extra), json!({}));
-            parse_case(&value).expect("a declared order loads");
+            let refusal = parse_case(&value).err();
+            assert!(refusal.is_none(), "a declared order loads: {refusal:?}");
         }
     }
 
@@ -1338,11 +1339,16 @@ mod manifest_tests {
             json!([]),
             json!({"map": {"0": 1}}),
         );
-        parse_case(&digit_key).expect("digit key on a dict resolves");
         let slash_key = v3_case(json!(["/response/body/a~1b"]), json!([]), json!({"a/b": 1}));
-        parse_case(&slash_key).expect("~1 escapes a slash");
         let tilde_key = v3_case(json!(["/response/body/a~0b"]), json!([]), json!({"a~b": 1}));
-        parse_case(&tilde_key).expect("~0 escapes a tilde");
+        for (case, what) in [
+            (digit_key, "a digit key on a dict resolves"),
+            (slash_key, "~1 escapes a slash"),
+            (tilde_key, "~0 escapes a tilde"),
+        ] {
+            let refusal = parse_case(&case).err();
+            assert!(refusal.is_none(), "{what}: {refusal:?}");
+        }
     }
 
     #[test]
@@ -1371,7 +1377,11 @@ mod manifest_tests {
             "response": {"status": 200, "headers": {}, "body": {}},
             "mask": ["/response/body/x"]
         });
-        parse_case(&value).expect("a schema 2 case loads with an unresolved mask");
+        let refusal = parse_case(&value).err();
+        assert!(
+            refusal.is_none(),
+            "a schema 2 case loads with an unresolved mask: {refusal:?}"
+        );
     }
 }
 

@@ -409,6 +409,7 @@ const REHEARSAL_URL: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:61503/
 /// parent sets both probe variables, and it writes the guard's verdict for the profile to a file.
 #[test]
 fn home_probe_child() {
+    // test-quality: allow NO_ASSERTION -- not a test: the child process whose written verdict home_override_does_not_change_the_rehearsal_verdict asserts on
     let (Some(profile), Some(out)) = (
         std::env::var_os(HOME_PROBE_PROFILE_ENV),
         std::env::var_os(HOME_PROBE_OUT_ENV),

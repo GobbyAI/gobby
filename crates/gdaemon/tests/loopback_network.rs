@@ -305,6 +305,7 @@ fn testnet_mode_on_eperm() {
 #[test]
 #[ignore = "protocol step 6 proof: run from an unsandboxed shell with cargo nextest run -p gobby-daemon --test suite --run-ignored only -E 'binary(suite) & test(/^loopback_network::/)'; a default run prints these as skipped with this reason"]
 fn off_host_probe_fails_mode_on() {
+    // test-quality: allow UNCONDITIONAL_SKIP -- a sandboxed shell denies the off-host connect this proof needs, so it runs only when asked for from an unsandboxed one
     let target = must(loopback::offhost_target(), "an off-host destination");
     assert_eq!(
         probe_class(SocketAddr::V4(target), true),
@@ -316,6 +317,7 @@ fn off_host_probe_fails_mode_on() {
 #[test]
 #[ignore = "protocol step 6 proof: run from an unsandboxed shell with cargo nextest run -p gobby-daemon --test suite --run-ignored only -E 'binary(suite) & test(/^loopback_network::/)'; a default run prints these as skipped with this reason"]
 fn sandbox_probe_matches_profile() {
+    // test-quality: allow UNCONDITIONAL_SKIP -- a sandboxed shell cannot start the nested sandbox this proof needs, so it runs only when asked for from an unsandboxed one
     let target = must(loopback::offhost_target(), "an off-host destination");
     assert_eq!(
         probe_class(SocketAddr::V4(target), true),
@@ -333,6 +335,7 @@ fn sandbox_probe_matches_profile() {
 #[test]
 #[ignore = "protocol step 6 proof: run from an unsandboxed shell with cargo nextest run -p gobby-daemon --test suite --run-ignored only -E 'binary(suite) & test(/^loopback_network::/)'; a default run prints these as skipped with this reason"]
 fn control_connects_mode_off() {
+    // test-quality: allow UNCONDITIONAL_SKIP -- a sandboxed shell denies the off-host connect this control needs, so it runs only when asked for from an unsandboxed one
     let target = must(loopback::offhost_target(), "an off-host destination");
     // The control proves the destination answers TCP with the mode off, in this run.
     let precondition = probe_class(SocketAddr::V4(target), false);
@@ -372,6 +375,7 @@ fn control_connects_mode_off() {
 #[test]
 #[ignore = "protocol step 6 proof: run from an unsandboxed shell with cargo nextest run -p gobby-daemon --test suite --run-ignored only -E 'binary(suite) & test(/^loopback_network::/)'; a default run prints these as skipped with this reason"]
 fn daemon_outbound_fails_mode_on() {
+    // test-quality: allow UNCONDITIONAL_SKIP -- a sandboxed shell denies the off-host connect this proof needs, so it runs only when asked for from an unsandboxed one
     let target = must(loopback::offhost_target(), "an off-host destination");
     // The destination must answer TCP with the mode off, and the wrapped probe must be blocked.
     // Without both, a refused or unreachable destination would give the same connect-failure text.

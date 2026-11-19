@@ -367,6 +367,7 @@ fn process_rows() -> Vec<(u32, u32, u32, String)> {
 /// worker must have been recorded while gdaemon lived.
 #[test]
 fn failed_start_stops_a_worker_recorded_before_gdaemon_died() {
+    // test-quality: allow SLEEP_IN_TEST -- the crash thread polls the process table, and the harness's record of the worker cannot be observed from outside its blocked start call
     let Some(_) = test_hub() else { return };
     let owner = std::process::id();
     let crash = std::thread::spawn(move || -> Option<u32> {
@@ -433,6 +434,7 @@ fn failed_start_stops_a_worker_recorded_before_gdaemon_died() {
 /// all three.
 #[test]
 fn owner_death_tears_down_the_daemon_groups() {
+    // test-quality: allow SLEEP_IN_TEST -- a poll interval inside a deadline loop that waits for other processes to exit
     let Some(_) = test_hub() else {
         return;
     };

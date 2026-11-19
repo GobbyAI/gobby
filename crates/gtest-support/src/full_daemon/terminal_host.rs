@@ -428,6 +428,7 @@ mod tests {
     /// The body of the stand-in process, and a no-op in an ordinary run.
     #[test]
     fn a_gterm_stand_in_sleeps_when_asked() {
+        // test-quality: allow NO_ASSERTION, SLEEP_IN_TEST -- not a test: the body of the stand-in process the host tests launch and assert on
         if std::env::var_os(STAND_IN).is_some() {
             std::thread::sleep(Duration::from_secs(600));
         }

@@ -124,10 +124,11 @@ fn rehearsal_spec() -> serde_json::Value {
     })
 }
 
-fn expect_guard_rule(error: DatabaseError, rule: &str) {
+/// The guard rule that refused, or a text naming the other error for the failure message.
+fn guard_rule(error: DatabaseError) -> String {
     match error {
-        DatabaseError::Guard(refusal) => assert_eq!(refusal.rule, rule, "{refusal}"),
-        other => panic!("expected a {rule} refusal, got: {other}"),
+        DatabaseError::Guard(refusal) => refusal.rule.to_string(),
+        other => format!("not a guard refusal: {other}"),
     }
 }
 
@@ -250,10 +251,10 @@ fn rehearsal_mode_creates_drops_and_sweeps_nothing() {
 fn sweep_refuses_a_remote_endpoint_or_another_user_before_connecting() {
     let remote = sweep_dead_pid("postgresql://gobby_test:gobby_test@10.0.0.5:60892/postgres")
         .expect_err("a non-loopback endpoint");
-    expect_guard_rule(remote, "R3");
+    assert_eq!(guard_rule(remote), "R3");
     let live = sweep_dead_pid("postgresql://gobby:gobby@127.0.0.1:60891/postgres")
         .expect_err("the live hub's user");
-    expect_guard_rule(live, "R3");
+    assert_eq!(guard_rule(live), "R3");
 }
 
 #[test]
@@ -263,7 +264,7 @@ fn create_refuses_names_outside_the_harness_pattern_before_connecting() {
         "gobby",
     )
     .expect_err("a name outside the harness pattern");
-    expect_guard_rule(refused, "ARG");
+    assert_eq!(guard_rule(refused), "ARG");
 }
 
 #[test]
