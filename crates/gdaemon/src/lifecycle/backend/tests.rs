@@ -289,7 +289,7 @@ async fn bounded_spawn_never_hands_the_child_a_descriptor_reused_after_the_calle
         });
     }
     let error = spawn_bounded(
-        vec![reader],
+        vec![OwnedFd::from(reader)],
         move || {
             // The helper stays stalled before fork until the test releases it.
             let _ = gate.recv();
@@ -383,7 +383,8 @@ async fn spawn_assigns_generation_from_source() -> anyhow::Result<()> {
 const PROBE_ARGUMENT: &str = "probe-argument";
 
 /// Records what a probe child sees in `$GOBBY_HOME/probe.txt`: each descriptor above 2 that is
-/// open at exec, the environment, its argument, and the text read from its credential descriptor.
+/// open at exec, the environment, its argument and how many follow it, and the text read from its
+/// credential descriptor.
 const PROBE_SCRIPT: &str = r#"p="$GOBBY_HOME/probe.txt"
 i=3
 while [ $i -le 1024 ]; do
@@ -392,6 +393,7 @@ while [ $i -le 1024 ]; do
 done
 env >> "$p"
 echo "arg $0" >> "$p"
+echo "argc $#" >> "$p"
 if [ -n "${GOBBY_WORKER_CREDENTIAL_FD-}" ]; then
   echo "credential $(cat "/dev/fd/$GOBBY_WORKER_CREDENTIAL_FD")" >> "$p"
 fi
@@ -496,9 +498,9 @@ async fn rust_mode_credential_rides_an_inherited_pipe_only() -> anyhow::Result<(
         .as_ref()
         .map(|worker| worker.credential.clone())
         .expect("attached above");
-    assert_eq!(
-        recorded_credential(&recorded),
-        Some(credential.as_str()),
+    // Compared without printing either value, so a failure never echoes the credential.
+    assert!(
+        recorded_credential(&recorded) == Some(credential.as_str()),
         "the child reads the attached credential from its own pipe"
     );
     assert_eq!(
@@ -547,16 +549,64 @@ async fn rust_mode_spawn_sets_the_marker_and_python_default_does_not() -> anyhow
     Ok(())
 }
 
-/// A Python-default spawn is what it was before the worker channel: its argument is the configured
-/// one, its only inherited descriptor above 2 is the liveness pipe, and it carries no worker
+/// The shell's own exports, which every command it runs carries. They are not the spawn's.
+const SHELL_EXPORTS: [&str; 4] = ["_", "OLDPWD", "PWD", "SHLVL"];
+
+/// Whether `name` is a plain environment variable name.
+fn is_plain_name(name: &str) -> bool {
+    !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Whether the environment comparison pins `name`. The shell's exports are left out, since they
+/// are the shell's. So are the `DYLD_` names: macOS strips them from the environment of a
+/// protected binary such as `/bin/sh` before the child runs, so the child never carries them.
+fn is_pinned_name(name: &str) -> bool {
+    is_plain_name(name) && !name.starts_with("DYLD_") && !SHELL_EXPORTS.contains(&name)
+}
+
+/// The environment names a recorded `env` listing carries, as the pin sees them.
+fn recorded_names(recorded: &str) -> BTreeSet<String> {
+    recorded
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(name, _)| name)
+        .filter(|name| is_pinned_name(name))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The environment names a Python-default spawn gives its child. The child inherits the test
+/// process's environment. The spawn adds the home and the liveness descriptor, and removes the two
+/// handles that a backend must not inherit by name.
+fn expected_python_default_names() -> BTreeSet<String> {
+    let mut names: BTreeSet<String> = std::env::vars_os()
+        .filter_map(|(name, _)| name.into_string().ok())
+        .filter(|name| is_pinned_name(name))
+        .collect();
+    names.insert("GOBBY_HOME".to_owned());
+    names.insert("GOBBY_SUPERVISOR_FD".to_owned());
+    names.remove("GOBBY_SINGLETON_LOCK_FD");
+    names.remove("GOBBY_PARENT_FD");
+    names
+}
+
+/// A Python-default spawn is what it was before the worker channel: its child receives the
+/// configured argument and no other, its environment names are the inherited set plus the spawn's
+/// own, its only inherited descriptor above 2 is the liveness pipe, and it carries no worker
 /// variables.
 #[tokio::test]
 async fn python_default_spawn_is_unchanged() -> anyhow::Result<()> {
     let home = tempfile::tempdir()?;
     let config = probe_config(home.path())?;
+    let expected_names = expected_python_default_names();
     let (child, recorded) = run_probe(&config, None).await?;
     assert_eq!(child.worker_generation(), None, "no generation is drawn");
     assert!(child.worker.is_none(), "no worker is attached");
+    assert_eq!(
+        recorded_names(&recorded),
+        expected_names,
+        "the environment names are the inherited set plus the home and the liveness descriptor"
+    );
     let supervisor_fd = recorded_fd(&recorded, "GOBBY_SUPERVISOR_FD");
     assert!(supervisor_fd.is_some(), "the liveness pipe is named");
     assert_eq!(
@@ -584,7 +634,31 @@ async fn python_default_spawn_is_unchanged() -> anyhow::Result<()> {
     let argument = format!("arg {PROBE_ARGUMENT}");
     assert!(
         recorded.lines().any(|line| line == argument.as_str()),
-        "the argument vector is the configured one"
+        "the child's first argument is the configured one"
+    );
+    assert!(
+        recorded.lines().any(|line| line == "argc 0"),
+        "no argument follows the configured one"
+    );
+    Ok(())
+}
+
+/// Each spawn draws its worker generation exactly once: the child serves the drawn value, and the
+/// supervisor's source has issued exactly one.
+#[tokio::test]
+async fn one_spawn_draws_one_generation() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    let supervisor = rust_mode_supervisor(&home);
+    let child = BackendChild::spawn(&supervisor.config, supervisor.spawn_generations()).await?;
+    assert_eq!(
+        child.worker_generation(),
+        Some(1),
+        "the first spawn serves the first generation"
+    );
+    assert_eq!(
+        supervisor.issued_generations(),
+        1,
+        "one spawn draws one generation"
     );
     Ok(())
 }
@@ -714,6 +788,17 @@ async fn rust_mode_handshake_against_real_python() -> anyhow::Result<()> {
         result.commands,
         ["handshake", "initialize", "invoke"],
         "the worker serves the three commands"
+    );
+    // Closing the parent's end ends the worker's serve loop. The worker must then exit on its own,
+    // and the test reaps it, so that no worker process outlives the test.
+    drop(attachment);
+    let status = timeout(Duration::from_secs(30), child.child.wait())
+        .await
+        .context("the worker did not exit after its channel closed")??;
+    child.finish_stderr().await;
+    assert!(
+        status.success(),
+        "the worker exited with {status} after its channel closed"
     );
     Ok(())
 }

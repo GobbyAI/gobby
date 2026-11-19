@@ -1,9 +1,13 @@
 //! Rust side of the private worker protocol (frozen contract, protocol v1).
 //!
-//! Under the Python default the supervisor performs no exchange. In Rust mode it
-//! runs the handshake for each spawned worker. Each call makes exactly one exchange
-//! and never resends. A reply lost on any command is an unknown outcome for the
-//! caller to reconcile. Requests are built here, so their bytes equal the
+//! Under the Python default the supervisor performs no exchange. In Rust mode the
+//! supervisor runs the handshake for each worker it spawns, while that child's start
+//! is supervised (`lifecycle/backend/handshake.rs`): a sticky failure refuses the
+//! supervisor, and a crash ends the child so that the next spawn takes a new
+//! generation. Each call makes exactly one exchange and never resends. The reply is
+//! read under the command's byte limit and deadline; a reply over the limit, or no
+//! reply by the deadline, is a channel error. A channel error is an unknown outcome
+//! for the caller to reconcile. Requests are built here, so their bytes equal the
 //! corpus bytes (`tests/contracts/worker_protocol.json`). Replies are checked
 //! against the contract before they reach the caller: the envelope, the error
 //! object, each command's own error codes, the handshake result, and the
@@ -16,6 +20,7 @@ use std::time::Duration;
 use gobby_core::schema::SchemaIdentityContract;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tokio::time::timeout;
 
 #[cfg(unix)]
 use super::backend::BackendSupervisor;
@@ -134,6 +139,12 @@ impl GenerationSource {
     /// Returns the current generation and advances the source.
     pub fn next_generation(&self) -> u64 {
         self.0.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// The number of generations drawn so far.
+    #[cfg(test)]
+    pub(crate) fn issued(&self) -> u64 {
+        self.0.load(Ordering::Relaxed).saturating_sub(1)
     }
 }
 
@@ -427,10 +438,16 @@ async fn exchange<C: WorkerChannel>(
             limit: request_limit,
         });
     }
-    let reply_bytes = channel
-        .exchange(&request, reply_limit)
-        .await
-        .map_err(|ChannelError| call.unknown())?;
+    // A handshake waits for the shorter deadline. A reply that misses its deadline is lost.
+    let deadline = if command == HANDSHAKE {
+        HANDSHAKE_REPLY_DEADLINE
+    } else {
+        COMMAND_REPLY_DEADLINE
+    };
+    let reply_bytes = match timeout(deadline, channel.exchange(&request, reply_limit)).await {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(ChannelError)) | Err(_) => return Err(call.unknown()),
+    };
     let reply = read_reply(&reply_bytes, &call).map_err(|violation| call.violation(violation))?;
     Ok((call, reply))
 }

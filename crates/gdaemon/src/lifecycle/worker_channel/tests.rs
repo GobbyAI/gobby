@@ -12,14 +12,15 @@ use super::{
     read_frame,
 };
 use crate::lifecycle::worker_handshake::{
-    COMMAND_REPLY_DEADLINE, ChannelError, GenerationSource, HANDSHAKE_REPLY_DEADLINE,
-    MAX_DOMAIN_OP_REPLY_BYTES, MAX_WORKER_REPLY_BYTES,
+    COMMAND_REPLY_DEADLINE, ChannelError, HANDSHAKE_REPLY_DEADLINE, MAX_DOMAIN_OP_REPLY_BYTES,
+    MAX_WORKER_REPLY_BYTES, WorkerSession,
 };
 
 /// The parent's end of the connection must not reach the child: only the child end is passed.
-#[test]
-fn parent_end_is_close_on_exec() {
-    let attached = attach(&GenerationSource::default());
+#[tokio::test]
+async fn parent_end_is_close_on_exec() {
+    let session = WorkerSession::new(1).expect("generation 1 is nonzero");
+    let attached = attach(session);
     assert!(
         attached.is_ok(),
         "attach must create the worker connection: {attached:?}"
