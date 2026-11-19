@@ -550,6 +550,133 @@ async fn valid_key_forwards_identity_headers() {
     assert_eq!(resolver.calls.lock().expect("calls").len(), 2);
 }
 
+/// The identity headers and the front-door proof, as a client nominates them hop-by-hop
+/// across two `Connection` fields in mixed case.
+const IDENTITY_NOMINATIONS: [&str; 2] = [
+    "X-Gobby-User-Id, keep-alive, x-gobby-MACHINE-id",
+    "x-gobby-key-id, X-Gobby-Front-Door",
+];
+
+const IDENTITY_AND_PROOF: [&str; 4] = [
+    "x-gobby-user-id",
+    "x-gobby-machine-id",
+    "x-gobby-key-id",
+    "x-gobby-front-door",
+];
+
+fn nominating_request(authorization: Option<&str>) -> Request<Body> {
+    let mut request = Request::builder().uri("/api/mcp/servers");
+    if let Some(authorization) = authorization {
+        request = request.header("authorization", authorization);
+    }
+    for name in IDENTITY_AND_PROOF {
+        request = request.header(name, "forged");
+    }
+    for nomination in IDENTITY_NOMINATIONS {
+        request = request.header("connection", nomination);
+    }
+    request.body(Body::empty()).expect("request")
+}
+
+#[tokio::test]
+async fn connection_nominated_identity_and_proof_survive_to_the_backend() {
+    let (backend, mut seen) = header_backend().await;
+    let resolver = Arc::new(FixedResolver {
+        calls: Mutex::new(Vec::new()),
+        identity: Some(KeyIdentity {
+            user_id: "operator-user".into(),
+            machine_id: "node-machine".into(),
+            key_id: "operator-key".into(),
+        }),
+    });
+    let front_door = authenticated_front_door(backend, resolver.clone());
+    let peer: SocketAddr = "127.0.0.1:1234".parse().expect("peer");
+
+    // Proxy path, authenticated: what authentication wrote reaches the backend.
+    let bearer = format!("Bearer {TEST_API_KEY}");
+    let response = front_door
+        .handle(nominating_request(Some(&bearer)), peer, false)
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, headers) = tokio::time::timeout(TIMEOUT, seen.recv())
+        .await
+        .expect("backend request")
+        .expect("headers");
+    let forwarded: Vec<Option<&str>> = IDENTITY_AND_PROOF
+        .iter()
+        .map(|name| headers.get(*name).and_then(|value| value.to_str().ok()))
+        .collect();
+    assert_eq!(
+        forwarded,
+        [
+            Some("operator-user"),
+            Some("node-machine"),
+            Some("operator-key"),
+            Some("boot-secret"),
+        ]
+    );
+
+    // Proxy path, anonymous: the client's own values are still stripped at entry.
+    let response = front_door
+        .handle(nominating_request(None), peer, false)
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (_, headers) = tokio::time::timeout(TIMEOUT, seen.recv())
+        .await
+        .expect("anonymous backend request")
+        .expect("headers");
+    let survivors: Vec<&str> = IDENTITY_AND_PROOF
+        .into_iter()
+        .filter(|name| headers.contains_key(*name))
+        .collect();
+    assert_eq!(survivors, Vec::<&str>::new());
+
+    // Splice path: the forwarded head carries the authenticated values and no
+    // `Connection` token names them, so no downstream hop can drop them.
+    let (backend, capture) = ws_backend(0, Vec::new()).await;
+    let auth = Arc::new(
+        AuthState::new("boot-secret".into(), Some(resolver), Default::default()).expect("auth"),
+    );
+    let address = start_authenticated_front_door(backend, auth).await;
+    let mut client = TcpStream::connect(address).await.expect("client");
+    let mut extra = format!("authorization: Bearer {TEST_API_KEY}\r\n");
+    for name in IDENTITY_AND_PROOF {
+        extra.push_str(&format!("{name}: forged\r\n"));
+    }
+    for nomination in IDENTITY_NOMINATIONS {
+        extra.push_str(&format!("connection: {nomination}\r\n"));
+    }
+    let (response, _) = tokio::time::timeout(
+        TIMEOUT,
+        ws_upgrade(&mut client, address, "/__vite_hmr", &extra),
+    )
+    .await
+    .expect("upgrade");
+    assert!(response.starts_with("HTTP/1.1 101"), "{response}");
+    let capture = tokio::time::timeout(TIMEOUT, capture)
+        .await
+        .expect("capture")
+        .expect("backend");
+    let head = capture.request_head.to_ascii_lowercase();
+    for line in [
+        "x-gobby-user-id: operator-user",
+        "x-gobby-machine-id: node-machine",
+        "x-gobby-key-id: operator-key",
+        "x-gobby-front-door: boot-secret",
+    ] {
+        assert!(head_has(&head, line), "{line}: {head}");
+    }
+    assert!(!head.contains("forged"), "{head}");
+    let nominated: Vec<&str> = head
+        .lines()
+        .filter_map(|line| line.strip_prefix("connection:"))
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|token| IDENTITY_AND_PROOF.contains(token))
+        .collect();
+    assert_eq!(nominated, Vec::<&str>::new(), "{head}");
+}
+
 struct ChannelBody(mpsc::Receiver<Bytes>);
 
 impl hyper::body::Body for ChannelBody {
