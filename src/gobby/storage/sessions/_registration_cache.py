@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
-from uuid import UUID
 
 from gobby.sessions.contested_expiry import ContestedExpiryCause
 from gobby.storage.session_models import Session
@@ -271,10 +270,6 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
         ``current`` is this session's row when the caller already loaded it;
         the merge compares against it instead of reading the row again.
 
-        A ``gobby_terminal_id`` merges only when that native row is bound to this
-        session. The id comes from the pane environment, so every hook resends it,
-        and merging it back after a refused bind would revive the refused route.
-
         Returns the updated session.
         """
         if current is None or current.id != session_id:
@@ -285,7 +280,7 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
             return None
 
         current_ctx = current.terminal_context or {}
-        incoming = _admitted_context(self.db, terminal_context, current_ctx, session_id)
+        incoming = {key: value for key, value in terminal_context.items() if value is not None}
         if not incoming or all(current_ctx.get(key) == value for key, value in incoming.items()):
             return current
 
@@ -317,15 +312,12 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
         The merge applies only while the stored ``marker_key`` still reads ``pending`` and
         no process is recorded. Returns ``None`` when another writer settled it
         first, so that writer's stored result stands. Otherwise returns the updated
-        session. A ``gobby_terminal_id`` merges only as ``backfill_terminal_context``
-        admits it.
+        session.
         """
         current = self.get(session_id)
         if current is None:
             return None
-        incoming = _admitted_context(
-            self.db, terminal_context, current.terminal_context or {}, session_id
-        )
+        incoming = {key: value for key, value in terminal_context.items() if value is not None}
         with self.db.transaction() as conn:
             won = conn.execute(
                 """
@@ -355,44 +347,6 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
                 (utc_now(), session_id),
             )
         return _publish_terminal_context(self, session_id)
-
-
-def _admitted_context(
-    db: HubDatabase,
-    terminal_context: dict[str, Any],
-    current_ctx: dict[str, Any],
-    session_id: str,
-) -> dict[str, Any]:
-    """The non-null keys of an incoming context that a merge may write.
-
-    A pane's ``gobby_terminal_id`` is held back unless it is already stored or its row
-    is bound to this session, so an unproven or refused route never persists.
-    """
-    incoming = {key: value for key, value in terminal_context.items() if value is not None}
-    pane_terminal_id = incoming.get("gobby_terminal_id")
-    if (
-        pane_terminal_id is not None
-        and pane_terminal_id != current_ctx.get("gobby_terminal_id")
-        and not _terminal_bound_to_session(db, pane_terminal_id, session_id)
-    ):
-        del incoming["gobby_terminal_id"]
-    return incoming
-
-
-def _terminal_bound_to_session(db: HubDatabase, terminal_id: object, session_id: str) -> bool:
-    """Whether the native row a pane names is bound to this session."""
-    if not isinstance(terminal_id, str):
-        return False
-    try:
-        terminal_uuid = str(UUID(terminal_id))
-        session_uuid = str(UUID(session_id))
-    except ValueError:
-        return False
-    row = db.fetchone(
-        "SELECT 1 AS bound FROM terminals WHERE id = %s AND session_id = %s",
-        (terminal_uuid, session_uuid),
-    )
-    return row is not None
 
 
 def _publish_terminal_context(state: _ManagerState, session_id: str) -> Session | None:

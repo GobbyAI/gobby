@@ -16,98 +16,13 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
-from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY, CODEX_CLEAR_ORIGIN_PENDING
 
 LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
-
-
-def _refuse_tty_mismatch_bind(
-    session_manager: SessionManager, project_id: str, *, prebound: bool
-) -> tuple[TerminalManager, Session, str, dict[str, Any]]:
-    """Register a seat whose CLI tty differs from its pane's, and refuse its bind.
-
-    Returns the terminal manager, the session, the pane id and the context the hook sent.
-    """
-    terminals = TerminalManager(session_manager.db)
-    terminal_id = str(uuid4())
-    terminal = terminals.create_pending(
-        terminal_id=terminal_id,
-        project_id=project_id,
-        backend="native",
-        ownership="gobby",
-        spawn_key=terminal_id,
-    )
-    assert terminal.attempt_started_at is not None
-    assert (
-        terminals.record_process(
-            terminal_id,
-            {"pgid": 101, "host_terminal_id": terminal_id},
-            attempt_generation=terminal.attempt_generation,
-            attempt_started_at=terminal.attempt_started_at,
-        )
-        is not None
-    )
-    context = {"gobby_terminal_id": terminal_id, "parent_pid": 202, "tty": "/dev/ttys002"}
-    hook_context = dict(context)
-    session = _register_terminal(
-        session_manager, project_id, "tty-mismatch", terminal_context=context
-    )
-    if prebound:
-        assert terminals.bind_session(terminal_id, session.id, session.project_id) is not None
-    assert terminals.resolve_live_for_session(session) is not None
-    processes = {
-        101: SimpleNamespace(terminal=lambda: "/dev/ttys001"),
-        202: SimpleNamespace(terminal=lambda: "/dev/ttys002"),
-    }
-    with patch("gobby.sessions.terminal_binding.psutil.Process", side_effect=processes.__getitem__):
-        assert (
-            bind_discovered_terminal(
-                terminals,
-                logging.getLogger(__name__),
-                session_id=session.id,
-                project_id=session.project_id,
-                terminal_context=context,
-                session_manager=session_manager,
-            )
-            is None
-        )
-    return terminals, session, terminal_id, hook_context
 
 
 @pytest.mark.parametrize("prebound", [False, True], ids=["context-fallback", "previously-bound"])
 def test_tty_mismatch_session_resolves_no_terminal(
     session_manager: SessionManager, sample_project: dict[str, Any], prebound: bool
-) -> None:
-    terminals, session, terminal_id, _ = _refuse_tty_mismatch_bind(
-        session_manager, sample_project["id"], prebound=prebound
-    )
-    stored = session_manager.get(session.id)
-    assert stored is not None
-    assert stored.terminal_context == {"parent_pid": 202, "tty": "/dev/ttys002"}
-    assert terminals.resolve_live_for_session(stored) is None
-    unchanged = terminals.get(terminal_id)
-    assert unchanged is not None and unchanged.session_id is None
-
-
-@pytest.mark.parametrize("prebound", [False, True], ids=["context-fallback", "previously-bound"])
-def test_refused_route_stays_refused_after_the_next_hook_backfill(
-    session_manager: SessionManager, sample_project: dict[str, Any], prebound: bool
-) -> None:
-    terminals, session, terminal_id, hook_context = _refuse_tty_mismatch_bind(
-        session_manager, sample_project["id"], prebound=prebound
-    )
-    # The next hook from the same pane sends the same environment-derived context.
-    session_manager.backfill_terminal_context(session.id, dict(hook_context))
-    stored = session_manager.get(session.id)
-    assert stored is not None
-    assert stored.terminal_context == {"parent_pid": 202, "tty": "/dev/ttys002"}
-    assert terminals.resolve_live_for_session(stored) is None
-    unchanged = terminals.get(terminal_id)
-    assert unchanged is not None and unchanged.session_id is None
-
-
-def test_pane_id_merges_once_the_same_hook_binds_its_row(
-    session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> None:
     terminals = TerminalManager(session_manager.db)
     terminal_id = str(uuid4())
@@ -128,92 +43,35 @@ def test_pane_id_merges_once_the_same_hook_binds_its_row(
         )
         is not None
     )
+    context = {"gobby_terminal_id": terminal_id, "parent_pid": 202, "tty": "/dev/ttys002"}
     session = _register_terminal(
-        session_manager,
-        sample_project["id"],
-        "same-hook-bind",
-        terminal_context={"parent_pid": 202, "tty": "/dev/ttys002"},
+        session_manager, sample_project["id"], "tty-mismatch", terminal_context=context
     )
-    hook_context = {"gobby_terminal_id": terminal_id, "parent_pid": 202, "tty": "/dev/ttys002"}
-    # Before the bind, the merge holds the pane id back.
-    held = session_manager.backfill_terminal_context(session.id, dict(hook_context))
-    assert held is not None and "gobby_terminal_id" not in (held.terminal_context or {})
+    if prebound:
+        assert terminals.bind_session(terminal_id, session.id, session.project_id) is not None
+    assert terminals.resolve_live_for_session(session) is not None
     processes = {
-        101: SimpleNamespace(terminal=lambda: "/dev/ttys002"),
+        101: SimpleNamespace(terminal=lambda: "/dev/ttys001"),
         202: SimpleNamespace(terminal=lambda: "/dev/ttys002"),
     }
     with patch("gobby.sessions.terminal_binding.psutil.Process", side_effect=processes.__getitem__):
-        pending = bind_discovered_terminal(
-            terminals,
-            logging.getLogger(__name__),
-            session_id=session.id,
-            project_id=session.project_id,
-            terminal_context=dict(hook_context),
-            session_manager=session_manager,
+        assert (
+            bind_discovered_terminal(
+                terminals,
+                logging.getLogger(__name__),
+                session_id=session.id,
+                project_id=session.project_id,
+                terminal_context=context,
+                session_manager=session_manager,
+            )
+            is None
         )
-    assert pending is None
-    bound = terminals.get_live_for_session(session.id)
-    assert bound is not None and bound.id == terminal_id
-    session_manager.backfill_terminal_context(session.id, dict(hook_context))
     stored = session_manager.get(session.id)
     assert stored is not None
-    assert stored.terminal_context == hook_context
-
-
-def _live_native_pane(terminals: TerminalManager, project_id: str) -> str:
-    """A native pane with a recorded shell and no session bound to it."""
-    terminal_id = str(uuid4())
-    terminal = terminals.create_pending(
-        terminal_id=terminal_id,
-        project_id=project_id,
-        backend="native",
-        ownership="gobby",
-        spawn_key=terminal_id,
-    )
-    assert terminal.attempt_started_at is not None
-    assert (
-        terminals.record_process(
-            terminal_id,
-            {"pgid": 101, "host_terminal_id": terminal_id},
-            attempt_generation=terminal.attempt_generation,
-            attempt_started_at=terminal.attempt_started_at,
-        )
-        is not None
-    )
-    return terminal_id
-
-
-@pytest.mark.parametrize("bound", [False, True], ids=["unbound", "bound"])
-def test_clear_origin_settle_merges_a_pane_id_only_for_its_bound_row(
-    session_manager: SessionManager, sample_project: dict[str, Any], bound: bool
-) -> None:
-    terminals = TerminalManager(session_manager.db)
-    terminal_id = _live_native_pane(terminals, sample_project["id"])
-    session = _register_terminal(
-        session_manager,
-        sample_project["id"],
-        "clear-origin-settle",
-        terminal_context={"cwd": "/repo", CODEX_CLEAR_ORIGIN_KEY: CODEX_CLEAR_ORIGIN_PENDING},
-    )
-    if bound:
-        assert terminals.bind_session(terminal_id, session.id, session.project_id) is not None
-    # A /clear successor's later hook settles its origin with the pane's environment.
-    settled = session_manager.settle_terminal_context(
-        session.id,
-        {"cwd": "/repo", "gobby_terminal_id": terminal_id, CODEX_CLEAR_ORIGIN_KEY: "codex_vscode"},
-        marker_key=CODEX_CLEAR_ORIGIN_KEY,
-        pending=CODEX_CLEAR_ORIGIN_PENDING,
-    )
-    assert settled is not None
-    stored = settled.terminal_context or {}
-    assert stored.get(CODEX_CLEAR_ORIGIN_KEY) == "codex_vscode"
-    resolved = terminals.resolve_live_for_session(settled)
-    if bound:
-        assert stored.get("gobby_terminal_id") == terminal_id
-        assert resolved is not None and resolved.id == terminal_id
-    else:
-        assert "gobby_terminal_id" not in stored
-        assert resolved is None
+    assert stored.terminal_context == {"parent_pid": 202, "tty": "/dev/ttys002"}
+    assert terminals.resolve_live_for_session(stored) is None
+    unchanged = terminals.get(terminal_id)
+    assert unchanged is not None and unchanged.session_id is None
 
 
 @pytest.fixture(autouse=True)

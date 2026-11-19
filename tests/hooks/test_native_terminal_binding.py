@@ -15,6 +15,8 @@ import pytest
 from gobby.hooks.event_handlers._session_start.terminal_runtime import bind_discovered_terminal
 from gobby.sessions.terminal_binding import cli_shares_shell_tty
 from gobby.storage.terminals import Terminal
+from gobby.terminals import foreground
+from gobby.terminals.foreground import process_tty
 
 
 def test_native_binding_refuses_a_different_cli_tty() -> None:
@@ -207,6 +209,7 @@ def child_on_fresh_pty() -> Iterator[tuple[int, str]]:
         psutil._psposix.get_terminal_map.cache_clear()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="needs a POSIX pty and controlling terminal")
 def test_cli_tty_proof_sees_a_pty_missing_from_the_cached_device_map(
     child_on_fresh_pty: tuple[int, str],
 ) -> None:
@@ -258,3 +261,30 @@ def test_native_binding_refusal_names_a_tty_mismatch_with_both_values(
     assert len(messages) == 1
     assert "tty mismatch" in messages[0]
     assert "/dev/ttys001" in messages[0] and "/dev/ttys002" in messages[0]
+
+
+def test_a_missing_device_map_cache_is_logged_once_rather_than_ignored(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A psutil without the private map cache cannot reread new ptys; that must be visible."""
+    monkeypatch.setattr(psutil, "_psposix", SimpleNamespace(), raising=False)
+    foreground._warn_terminal_map_cache_missing.cache_clear()
+    reads: list[None] = []
+
+    class _NoTty:
+        def terminal(self) -> str | None:
+            reads.append(None)
+            return None
+
+    try:
+        with caplog.at_level(logging.WARNING, logger=foreground.logger.name):
+            assert process_tty(_NoTty()) is None
+            assert process_tty(_NoTty()) is None
+    finally:
+        foreground._warn_terminal_map_cache_missing.cache_clear()
+
+    # Each read still retries once, and the warning names the missing API once.
+    assert len(reads) == 4
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "get_terminal_map.cache_clear" in warnings[0].getMessage()

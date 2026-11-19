@@ -699,12 +699,8 @@ class TestHookManagerBeforeAgent:
         assert session is not None
         assert session.reasoning_effort == "high"
         assert session.terminal_context is not None
-        expected = {**terminal_context, "cwd": str(temp_dir)}
-        # No terminal row proves the pane, so its id is not stored.
-        del expected["gobby_terminal_id"]
-        for key, value in expected.items():
+        for key, value in {**terminal_context, "cwd": str(temp_dir)}.items():
             assert session.terminal_context[key] == value
-        assert "gobby_terminal_id" not in session.terminal_context
         assert session.terminal_context["parent_name"] == "codex"
         assert isinstance(session.terminal_context["parent_create_time"], float)
 
@@ -757,12 +753,6 @@ class TestHookManagerBeforeAgent:
             mock.create_time.return_value = create_time
             return mock
 
-        from gobby.storage.terminals import TerminalManager
-
-        terminals = TerminalManager(manager._session_manager.db)
-        manager._event_handlers.terminal_manager = terminals
-        project = LocalProjectManager(manager._session_manager.db).get_by_name("test-project")
-        assert project is not None
         host = process(
             host_pid, ["codex", "app-server", "--listen", "unix://", "--managed-daemon"], 50.0
         )
@@ -772,16 +762,6 @@ class TestHookManagerBeforeAgent:
             seat.terminal.return_value = tty
             seat.environ.return_value = {"GOBBY_TERMINAL_ID": terminal_id}
             table.append(seat)
-            # Each seat's pane runs its TUI, so the bind can prove the seat's tty.
-            terminals.create_pending(
-                terminal_id=terminal_id,
-                project_id=project.id,
-                backend="native",
-                ownership="gobby",
-                spawn_key=terminal_id,
-                machine_id=LOCAL_MACHINE_ID,
-            )
-            _record_native_shell(terminals, terminal_id, pid)
 
         def lookup(pid: int) -> MagicMock:
             for candidate in table:
@@ -839,8 +819,6 @@ class TestHookManagerBeforeAgent:
             assert session.terminal_context["parent_name"] == "codex"
             assert session.terminal_context["tty"] == tty
             assert session.terminal_context["gobby_terminal_id"] == terminal_id
-            bound = terminals.get_live_for_session(session.id)
-            assert bound is not None and bound.id == terminal_id
 
     def test_before_agent_allows(
         self,
@@ -2026,7 +2004,7 @@ class TestHookManagerSessionLookup:
     def test_handle_backfills_terminal_context_for_known_session(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
     ) -> None:
-        """Later Codex hooks repair missed metadata but never merge an unbound pane id."""
+        """Later Codex hooks should repair a session that missed SessionStart terminal metadata."""
         manager = hook_manager_with_mocks
         project_id = json.loads((temp_dir / ".gobby" / "project.json").read_text())["id"]
         registered = cast(Any, manager._session_manager).register(
@@ -2061,8 +2039,7 @@ class TestHookManagerSessionLookup:
         updated = manager._session_manager.get(session_id)
         assert updated is not None
         assert updated.terminal_context is not None
-        # No native row named "%5" is bound to this session, so its pane id stays out.
-        assert "gobby_terminal_id" not in updated.terminal_context
+        assert updated.terminal_context["gobby_terminal_id"] == "%5"
         assert updated.terminal_context["cwd"] == str(temp_dir)
 
     def test_handle_resolves_active_task(

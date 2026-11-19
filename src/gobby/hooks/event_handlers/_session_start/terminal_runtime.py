@@ -91,11 +91,6 @@ def bind_discovered_terminal(
         return None
     if terminal_manager.bind_session(native_terminal_id, session_id, project_id) is None:
         return project_id, terminal_context
-    if session_manager is not None:
-        # The context merge admits a pane's terminal id only once its row is bound here.
-        session_manager.backfill_terminal_context(
-            session_id, {"gobby_terminal_id": native_terminal_id}
-        )
     return None
 
 
