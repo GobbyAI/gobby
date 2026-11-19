@@ -1,12 +1,14 @@
-//! Field normalizers of the corpus v3 closed set (design-v2 section 7.6; H10, H16, H40).
+//! Field normalizers of the corpus v3 closed set (design-v2 section 7.6; H10, H16, H40, H73).
 //!
-//! A normalization unit is one comparison document. Redaction runs first, then the case's masks,
-//! then the rules. A rule's pointer may carry `*` segments, which match every element of an
-//! array, so the leaves they match form one sequence in document order. `uuid_ordinal` numbers
-//! UUIDs by first appearance in that order. `monotonic` masks integers and decimal text (`-?[0-9]+`,
-//! as `pg_notify` payloads arrive) and requires each sequence to strictly increase; any other
-//! value is an error, as in `_sequence_value` of `normalizers_v3.py`. `timestamp` masks RFC 3339 values that lie inside the run
-//! window and fails any value outside it. `bytes` and `none` leave the value unchanged.
+//! The port of `tests/contracts/normalizers_v3.py`. A normalization unit is one document, one
+//! side-effect entry's captures, or one db_delta table's images, and each unit has its own
+//! `uuid_ordinal` counter. Every rule is an exact RFC 6901 pointer that must name a scalar leaf of
+//! its unit: a pointer that matches nothing fails the unit, and no wildcard exists. `uuid_ordinal`
+//! numbers UUIDs by first appearance in document order. `monotonic` masks integers and decimal text
+//! (`-?[0-9]+`, as `pg_notify` payloads arrive) and is allowed only in a sequence unit (captures, or
+//! a table ordered `as_recorded`); each sequence must strictly increase. `timestamp` masks RFC 3339
+//! values inside the run window and fails any value outside it. `bytes` and `none` leave the value
+//! unchanged. The masks of a comparison run after the rules (`http_corpus._comparison`).
 
 use std::fmt;
 
@@ -48,7 +50,7 @@ pub enum NormalizeError {
     NotMonotonic { pointer: String },
     /// A monotonic value is neither an integer nor decimal text at this pointer.
     NotInteger { pointer: String },
-    /// A normalizer's pointer or column matches no value of its item.
+    /// A normalizer's pointer or column names no scalar leaf of its unit.
     NoMatch { pointer: String },
     /// A uuid_ordinal value is not a lowercase canonical UUID at this pointer.
     NotUuid { pointer: String },
@@ -67,6 +69,10 @@ pub enum NormalizeError {
     MonotonicNeedsSequence,
     /// `monotonic` is declared on a document or response value, which is not a sequence unit.
     MonotonicInDocument { pointer: String },
+    /// A sequence unit's item is neither an object nor an array.
+    NotAnObject { pointer: String },
+    /// A side-effect entry's recorded value is not a list of captures.
+    NotAList { pointer: String },
 }
 
 impl fmt::Display for NormalizeError {
@@ -117,6 +123,8 @@ impl fmt::Display for NormalizeError {
                     "monotonic needs a sequence unit, not the value at {pointer}"
                 )
             }
+            NormalizeError::NotAnObject { pointer } => write!(f, "{pointer} must be an object"),
+            NormalizeError::NotAList { pointer } => write!(f, "{pointer} must be a list"),
         }
     }
 }
@@ -143,93 +151,172 @@ pub fn redact(document: &Value) -> Value {
     redacted
 }
 
-/// Normalize one comparison document: redaction, then `mask` (RFC 6901 pointers replaced by
-/// `@mask@`), then each `(pointer, normalizer)` rule in order.
+/// Normalize one document unit (Python `normalize_document`), then apply `mask` (RFC 6901
+/// pointers replaced by `@mask@`). Every rule names a scalar leaf, the replacements are computed in
+/// document order with one counter, and a monotonic rule is refused: only a sequence unit may
+/// carry one. Redaction is the caller's step (Python redacts in `_normalize_response`).
 pub fn normalize_document(
     document: &Value,
     mask: &Value,
     rules: &[(String, Normalizer)],
     window: &Window,
 ) -> Result<Value, NormalizeError> {
-    let mut working = redact(document);
-    corpus_v2::apply_masks(&mut working, mask);
+    let specs: Vec<(String, Spec)> = rules
+        .iter()
+        .map(|(pointer, normalizer)| {
+            (
+                pointer.clone(),
+                Spec {
+                    normalizer: *normalizer,
+                    after: None,
+                },
+            )
+        })
+        .collect();
+    let mut out = document.clone();
+    apply_rules(
+        &mut out,
+        &specs,
+        &mut Ordinals::default(),
+        false,
+        window,
+        "",
+    )?;
+    corpus_v2::apply_masks(&mut out, mask);
+    Ok(out)
+}
 
-    // Each rule takes the first leaf pattern it matches, and leaves are visited in document order,
-    // so UUID ordinals and monotonic sequences follow the document, not the rule list.
-    let mut pointers = Vec::new();
-    collect_leaves(&working, "", &mut pointers);
+/// Normalize one sequence unit: each item is a document whose rules are pointers relative to the
+/// item (Python `_normalize_items`). The counter is shared by the items, and every `monotonic`
+/// pointer is checked across the items in order after all of them have validated.
+pub fn normalize_items(
+    items: &[Value],
+    rules: &[(String, Spec)],
+    sequence: bool,
+    where_: &str,
+    window: &Window,
+) -> Result<Vec<Value>, NormalizeError> {
+    let mut out = items.to_vec();
     let mut ordinals = Ordinals::default();
-    let mut last_sequence: Vec<Option<i128>> = vec![None; rules.len()];
-    let mut edits: Vec<(String, Value)> = Vec::new();
-    // An exact pointer must name a leaf (Python: a rule that matches nothing fails the unit); a
-    // wildcard pattern (side-effect captures) may match none.
-    for (pattern, _) in rules {
-        if !pattern.contains('*') && !pointers.iter().any(|pointer| pointer == pattern) {
+    let mut monotonic = Vec::new();
+    for (index, item) in out.iter_mut().enumerate() {
+        let prefix = format!("{where_}[{index}]");
+        if !matches!(item, Value::Object(_) | Value::Array(_)) {
+            return Err(NormalizeError::NotAnObject { pointer: prefix });
+        }
+        monotonic = apply_rules(item, rules, &mut ordinals, sequence, window, &prefix)?;
+    }
+    check_monotonic(&mut out, &monotonic, where_)?;
+    Ok(out)
+}
+
+/// Apply one unit's rules to `node` (Python `_apply_rules`). Every pointer must name a scalar leaf
+/// of `node`; the checks run in Python's order (the pointer, then the value, then `after`), and the
+/// replacements are written only after every rule has validated. Returns the monotonic pointers
+/// for the caller's sequence check.
+fn apply_rules(
+    node: &mut Value,
+    rules: &[(String, Spec)],
+    ordinals: &mut Ordinals,
+    sequence: bool,
+    window: &Window,
+    prefix: &str,
+) -> Result<Vec<String>, NormalizeError> {
+    let mut leaves = Vec::new();
+    collect_leaves(node, "", &mut leaves);
+    for (pointer, _) in rules {
+        if !leaves.contains(pointer) {
             return Err(NormalizeError::NoMatch {
-                pointer: pattern.clone(),
+                pointer: format!("{prefix}{pointer}"),
             });
         }
     }
-    for pointer in pointers {
-        let Some(index) = rules
-            .iter()
-            .position(|(pattern, _)| pattern_matches(pattern, &pointer))
-        else {
-            continue;
-        };
-        let normalizer = rules[index].1;
-        let Some(current) = working.pointer(&pointer) else {
-            continue;
-        };
-        // A masked leaf is `@mask@` whatever it held: the mask wins over the rule.
-        if current == &json!("@mask@") {
-            continue;
-        }
-        match normalizer {
+    let mut ordered: Vec<&(String, Spec)> = rules.iter().collect();
+    ordered.sort_by_key(|(pointer, _)| leaves.iter().position(|leaf| leaf == pointer));
+
+    let mut monotonic = Vec::new();
+    let mut writes: Vec<(String, Value)> = Vec::new();
+    for (pointer, spec) in ordered {
+        let where_ = format!("{prefix}{pointer}");
+        let value = node
+            .pointer(pointer)
+            .ok_or_else(|| NormalizeError::NoMatch {
+                pointer: where_.clone(),
+            })?;
+        match spec.normalizer {
             Normalizer::Bytes | Normalizer::NoOp => {}
-            Normalizer::UuidOrdinal => match current {
+            Normalizer::Monotonic => {
+                if !sequence {
+                    return Err(NormalizeError::MonotonicInDocument { pointer: where_ });
+                }
+                monotonic.push(pointer.clone());
+            }
+            Normalizer::UuidOrdinal => match value {
                 Value::String(text) if is_uuid(text) => {
                     let number = ordinals.number(text);
-                    edits.push((pointer, json!(format!("@uuid:{number}@"))));
+                    writes.push((pointer.clone(), json!(format!("@uuid:{number}@"))));
                 }
-                _ => return Err(NormalizeError::NotUuid { pointer }),
+                _ => return Err(NormalizeError::NotUuid { pointer: where_ }),
             },
-            Normalizer::Monotonic => {
-                let Some(value) = sequence_value(current) else {
-                    return Err(NormalizeError::NotInteger { pointer });
-                };
-                if last_sequence[index].is_some_and(|last| value <= last) {
-                    return Err(NormalizeError::NotMonotonic { pointer });
-                }
-                last_sequence[index] = Some(value);
-                edits.push((pointer, json!("@seq@")));
-            }
             Normalizer::Timestamp => {
-                let parsed = match current {
-                    Value::String(text) => OffsetDateTime::parse(text, &Rfc3339).ok(),
-                    _ => None,
-                };
-                let Some(parsed) = parsed else {
-                    return Err(NormalizeError::NotTimestamp { pointer });
-                };
-                if parsed < window.start || parsed > window.end {
-                    return Err(NormalizeError::OutsideWindow { pointer });
+                let parsed = timestamp_at(value, &where_, window)?;
+                if let Some(after) = &spec.after {
+                    let sibling =
+                        node.get(after.as_str())
+                            .ok_or_else(|| NormalizeError::AfterMissing {
+                                pointer: where_.clone(),
+                            })?;
+                    let earlier = timestamp_at(sibling, &format!("{prefix}/{after}"), window)?;
+                    if parsed < earlier {
+                        return Err(NormalizeError::AfterViolated { pointer: where_ });
+                    }
                 }
-                edits.push((pointer, json!("@ts@")));
+                writes.push((pointer.clone(), json!("@ts@")));
             }
         }
     }
-    for (pointer, value) in edits {
-        if let Some(slot) = working.pointer_mut(&pointer) {
+    for (pointer, value) in writes {
+        if let Some(slot) = node.pointer_mut(&pointer) {
             *slot = value;
         }
     }
-    Ok(working)
+    Ok(monotonic)
 }
 
-/// The integer a monotonic leaf holds: a JSON integer, or text matching `-?[0-9]+`. Floats,
-/// booleans and any other text are not sequence values. Integers beyond the `i128` range are
-/// refused, where Python integers are unbounded.
+/// Assert each `monotonic` pointer strictly increases across the items, then mask it (Python
+/// `_check_monotonic`). The pointer in an error names the item, as `rows[1]/seq` does.
+fn check_monotonic(
+    items: &mut [Value],
+    pointers: &[String],
+    where_: &str,
+) -> Result<(), NormalizeError> {
+    for pointer in pointers {
+        let mut previous: Option<i128> = None;
+        for (index, item) in items.iter_mut().enumerate() {
+            let where_pointer = format!("{where_}[{index}]{pointer}");
+            let current = item
+                .pointer(pointer)
+                .ok_or_else(|| NormalizeError::NoMatch {
+                    pointer: where_pointer.clone(),
+                })?;
+            let value = sequence_value(current).ok_or_else(|| NormalizeError::NotInteger {
+                pointer: where_pointer.clone(),
+            })?;
+            if previous.is_some_and(|last| value <= last) {
+                return Err(NormalizeError::NotMonotonic {
+                    pointer: where_pointer,
+                });
+            }
+            previous = Some(value);
+            if let Some(slot) = item.pointer_mut(pointer) {
+                *slot = json!("@seq@");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The integer a `monotonic` leaf holds: a JSON integer or decimal text (`-?[0-9]+`).
 fn sequence_value(value: &Value) -> Option<i128> {
     match value {
         Value::Number(number) => number
@@ -249,12 +336,13 @@ fn sequence_value(value: &Value) -> Option<i128> {
     }
 }
 
-/// Escape one object key as an RFC 6901 reference token.
+/// Escape one object key or array index as an RFC 6901 reference token (`_escape`).
 pub fn escape_token(token: &str) -> String {
     token.replace('~', "~0").replace('/', "~1")
 }
 
-/// Every scalar leaf pointer of `value`, in document order.
+/// Every scalar leaf of `value` as an RFC 6901 pointer, in document order (`_leaf_pointers`).
+/// Empty objects and arrays have no leaves, so a rule on them matches nothing.
 fn collect_leaves(value: &Value, pointer: &str, out: &mut Vec<String>) {
     match value {
         Value::Object(map) => {
@@ -271,19 +359,7 @@ fn collect_leaves(value: &Value, pointer: &str, out: &mut Vec<String>) {
     }
 }
 
-/// Whether a leaf pointer matches a rule pattern, where `*` matches any one segment.
-fn pattern_matches(pattern: &str, pointer: &str) -> bool {
-    let pattern_tokens: Vec<&str> = pattern.split('/').collect();
-    let pointer_tokens: Vec<&str> = pointer.split('/').collect();
-    pattern_tokens.len() == pointer_tokens.len()
-        && pattern_tokens
-            .iter()
-            .zip(&pointer_tokens)
-            .all(|(token, actual)| *token == "*" || token == actual)
-}
-
-/// A canonical UUID: 36 characters, lowercase hex digits, with hyphens at 8, 13, 18 and 23
-/// (`_UUID` of `normalizers_v3.py`, which accepts no uppercase digits).
+/// A canonical UUID in lowercase only (`_UUID`).
 fn is_uuid(text: &str) -> bool {
     text.len() == 36
         && text.bytes().enumerate().all(|(index, byte)| {
@@ -358,10 +434,9 @@ pub fn parse_spec(spec: &Value, allow_after: bool) -> Result<Spec, NormalizeErro
     Ok(Spec { normalizer, after })
 }
 
-/// One db_delta entry's row images as one normalization unit (`normalize_images` of
-/// `normalizers_v3.py`). The caller passes the images in the order its delta defines, and they
-/// share one `uuid_ordinal` counter. `rules` maps each column to its spec. A rule's column must
-/// exist in every image, and each `monotonic` column must strictly increase across the images.
+/// Normalize one db_delta table's images (Python `normalize_images`): one unit, in the order
+/// given. A column is the rule on the pointer `/<column>`, as Python builds it. Only `as_recorded`
+/// allows `monotonic`, and its values run across the images in that order.
 pub fn normalize_images(
     images: &[Value],
     rules: &[(String, Spec)],
@@ -375,88 +450,14 @@ pub fn normalize_images(
     {
         return Err(NormalizeError::MonotonicNeedsSequence);
     }
-    let mut out = images.to_vec();
-    let mut ordinals = Ordinals::default();
-    let mut monotonic: Vec<String> = Vec::new();
-    for (index, image) in images.iter().enumerate() {
-        // Rules run in the image's own column order, as Python runs them in document order.
-        let position = |column: &String| {
-            image
-                .as_object()
-                .and_then(|fields| fields.keys().position(|key| key == column))
-                .unwrap_or(usize::MAX)
-        };
-        let mut ordered: Vec<&(String, Spec)> = rules.iter().collect();
-        ordered.sort_by_key(|(column, _)| position(column));
-
-        let mut writes: Vec<(&str, Value)> = Vec::new();
-        monotonic.clear();
-        for (column, spec) in ordered {
-            let pointer = format!("rows[{index}]/{column}");
-            let value = image
-                .get(column.as_str())
-                .ok_or_else(|| NormalizeError::NoMatch {
-                    pointer: pointer.clone(),
-                })?;
-            match spec.normalizer {
-                Normalizer::Bytes | Normalizer::NoOp => {}
-                Normalizer::Monotonic => monotonic.push(column.clone()),
-                Normalizer::UuidOrdinal => match value {
-                    Value::String(text) if is_uuid(text) => {
-                        let number = ordinals.number(text);
-                        writes.push((column.as_str(), json!(format!("@uuid:{number}@"))));
-                    }
-                    _ => return Err(NormalizeError::NotUuid { pointer }),
-                },
-                Normalizer::Timestamp => {
-                    let parsed = timestamp_at(value, &pointer, window)?;
-                    if let Some(after) = &spec.after {
-                        let sibling = image.get(after.as_str()).ok_or_else(|| {
-                            NormalizeError::AfterMissing {
-                                pointer: pointer.clone(),
-                            }
-                        })?;
-                        let earlier =
-                            timestamp_at(sibling, &format!("rows[{index}]/{after}"), window)?;
-                        if parsed < earlier {
-                            return Err(NormalizeError::AfterViolated { pointer });
-                        }
-                    }
-                    writes.push((column.as_str(), json!("@ts@")));
-                }
-            }
-        }
-        if let Some(fields) = out[index].as_object_mut() {
-            for (column, replacement) in writes {
-                fields.insert(column.to_owned(), replacement);
-            }
-        }
-    }
-    for column in &monotonic {
-        let mut previous: Option<i128> = None;
-        for (index, image) in images.iter().enumerate() {
-            let pointer = format!("rows[{index}]/{column}");
-            let value = image
-                .get(column.as_str())
-                .ok_or_else(|| NormalizeError::NoMatch {
-                    pointer: pointer.clone(),
-                })?;
-            let current = sequence_value(value).ok_or_else(|| NormalizeError::NotInteger {
-                pointer: pointer.clone(),
-            })?;
-            if previous.is_some_and(|last| current <= last) {
-                return Err(NormalizeError::NotMonotonic { pointer });
-            }
-            previous = Some(current);
-            if let Some(fields) = out[index].as_object_mut() {
-                fields.insert(column.clone(), json!("@seq@"));
-            }
-        }
-    }
-    Ok(out)
+    let pointed: Vec<(String, Spec)> = rules
+        .iter()
+        .map(|(column, spec)| (format!("/{column}"), spec.clone()))
+        .collect();
+    normalize_items(images, &pointed, order == Order::AsRecorded, "rows", window)
 }
 
-/// The UTC instant of one timestamp value, which must be an RFC 3339 string inside the window.
+/// Read a timestamp: an RFC 3339 string with a UTC offset, inside the run window.
 fn timestamp_at(
     value: &Value,
     pointer: &str,
@@ -477,8 +478,8 @@ fn timestamp_at(
     Ok(parsed)
 }
 
-/// Run one normalizer vector (`tests/contracts/normalizer_vectors.json`) as its `kind` says, with
-/// its declared key, order, normalizers and mask, and return the normalized value.
+/// Replay one normalizer vector (`tests/contracts/normalizer_vectors.json`) through the same
+/// functions the comparison uses.
 pub fn run_vector(vector: &Value, window: &Window) -> Result<Value, NormalizeError> {
     let kind = vector["kind"].as_str().unwrap_or_default();
     let declared = vector["normalizers"]
@@ -502,24 +503,23 @@ pub fn run_vector(vector: &Value, window: &Window) -> Result<Value, NormalizeErr
                         .collect::<Vec<String>>()
                 });
             }
-            let rules = column_rules(&declared, true)?;
+            let rules = column_rules(&declared)?;
             Ok(Value::Array(normalize_images(
                 &rows, &rules, order, window,
             )?))
         }
         "captures" => {
             let items = vector["items"].as_array().cloned().unwrap_or_default();
-            let rules = column_rules(&declared, false)?;
-            Ok(Value::Array(normalize_images(
-                &items,
-                &rules,
-                Order::AsRecorded,
-                window,
+            let rules = pointer_specs(&declared)?;
+            Ok(Value::Array(normalize_items(
+                &items, &rules, true, "captures", window,
             )?))
         }
         "document" => {
-            let rules = pointer_rules(&declared)?;
-            refuse_monotonic_in_document(&rules)?;
+            let rules: Vec<(String, Normalizer)> = pointer_specs(&declared)?
+                .into_iter()
+                .map(|(pointer, spec)| (pointer, spec.normalizer))
+                .collect();
             let mask = vector.get("mask").cloned().unwrap_or_else(|| json!([]));
             normalize_document(&vector["document"], &mask, &rules, window)
         }
@@ -527,47 +527,29 @@ pub fn run_vector(vector: &Value, window: &Window) -> Result<Value, NormalizeErr
     }
 }
 
-/// The column rules of one unit. A db_delta row names its column (`db_rows`, where a timestamp may
-/// declare `after`); a capture names its field as an RFC 6901 pointer of the item (`/payload`).
+/// A db_delta table's column declarations, which may declare `after`.
 fn column_rules(
     declared: &serde_json::Map<String, Value>,
-    db_rows: bool,
 ) -> Result<Vec<(String, Spec)>, NormalizeError> {
     declared
         .iter()
-        .map(|(name, spec)| {
-            let column = if db_rows {
-                name.clone()
-            } else {
-                name.trim_start_matches('/').to_owned()
-            };
-            Ok((column, parse_spec(spec, db_rows)?))
-        })
+        .map(|(column, spec)| Ok((column.clone(), parse_spec(spec, true)?)))
         .collect()
 }
 
-/// The pointer rules of a document or of the response, each a leaf normalizer.
-fn pointer_rules(
+/// A document's or capture item's pointer declarations, keyed by RFC 6901 pointer.
+fn pointer_specs(
     declared: &serde_json::Map<String, Value>,
-) -> Result<Vec<(String, Normalizer)>, NormalizeError> {
+) -> Result<Vec<(String, Spec)>, NormalizeError> {
     declared
         .iter()
-        .map(|(pointer, spec)| Ok((pointer.clone(), parse_spec(spec, false)?.normalizer)))
+        .map(|(pointer, spec)| Ok((pointer.clone(), parse_spec(spec, false)?)))
         .collect()
 }
 
-/// Refuse `monotonic` in a document: it is a sequence-unit normalizer (Python raises the same).
-pub fn refuse_monotonic_in_document(rules: &[(String, Normalizer)]) -> Result<(), NormalizeError> {
-    match rules
-        .iter()
-        .find(|(_, normalizer)| *normalizer == Normalizer::Monotonic)
-    {
-        Some((pointer, _)) => Err(NormalizeError::MonotonicInDocument {
-            pointer: pointer.clone(),
-        }),
-        None => Ok(()),
-    }
-}
+#[cfg(test)]
+#[path = "normalize_tests.rs"]
+mod tests;
 
 /// The normalizer vector file replayed through [`run_vector`] (design 7.6, H40).
 #[cfg(test)]
@@ -618,7 +600,3 @@ mod vector_tests {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "normalize_tests.rs"]
-mod tests;

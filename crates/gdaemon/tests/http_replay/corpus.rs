@@ -126,6 +126,17 @@ pub fn parse_case(value: &Value) -> Result<Case, CorpusError> {
         Some(Value::Object(map)) => map.clone(),
         Some(_) => return Err(shape(&name, "normalizers is not an object")),
     };
+    if schema_version == 3 {
+        for entry in value
+            .get("db_delta")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            check_db_delta(&name, entry)?;
+        }
+        check_masks(&name, value)?;
+    }
     Ok(Case {
         schema_version,
         kind,
@@ -146,6 +157,95 @@ pub fn parse_case(value: &Value) -> Result<Case, CorpusError> {
         native_response: value.get("native_response").cloned(),
         name,
     })
+}
+
+/// The schema 3 order rules of one `db_delta` entry (Python `_check_db_delta`, H16): `order` is
+/// `set` or `as_recorded`, `as_recorded` needs a non-empty `order_by`, and `set` refuses one.
+fn check_db_delta(case: &str, entry: &Value) -> Result<(), CorpusError> {
+    let table = entry
+        .get("table")
+        .and_then(Value::as_str)
+        .unwrap_or("<unnamed table>");
+    let order = match entry.get("order") {
+        None => return Err(shape(case, format!("db_delta {table} order is required"))),
+        Some(value) => value
+            .as_str()
+            .filter(|text| *text == "set" || *text == "as_recorded")
+            .ok_or_else(|| {
+                shape(
+                    case,
+                    format!("db_delta {table} order must be 'set' or 'as_recorded'"),
+                )
+            })?,
+    };
+    match (order, entry.get("order_by")) {
+        ("set", Some(_)) => Err(shape(
+            case,
+            format!("db_delta {table} order_by is not allowed with order 'set'"),
+        )),
+        ("as_recorded", order_by)
+            if !order_by
+                .and_then(Value::as_array)
+                .is_some_and(|items| !items.is_empty()) =>
+        {
+            Err(shape(
+                case,
+                format!("db_delta {table} order_by is required with order 'as_recorded'"),
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// The schema 3 mask rules (Python `_check_mask_shape` and `_check_mask_resolves`, H16): the mask
+/// is a list of pointers, each starting with `/` and naming a field of the case.
+fn check_masks(case: &str, value: &Value) -> Result<(), CorpusError> {
+    let shape_error = || shape(case, "mask must be a list of pointers");
+    let mask = value
+        .get("mask")
+        .cloned()
+        .unwrap_or_else(|| Value::Array(Vec::new()));
+    for pointer in mask.as_array().ok_or_else(shape_error)? {
+        let text = pointer.as_str().ok_or_else(shape_error)?;
+        if !text.starts_with('/') {
+            return Err(shape(
+                case,
+                format!("mask pointer '{text}' must start with '/'"),
+            ));
+        }
+        if !resolves(value, text) {
+            return Err(shape(
+                case,
+                format!("mask '{text}' matches no recorded field"),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Whether an RFC 6901 pointer names a field of `document` (Python `_resolves`): a dict key, or a
+/// list index written as plain ASCII digits and in range. A sign never resolves as an index.
+fn resolves(document: &Value, pointer: &str) -> bool {
+    let mut node = document;
+    for raw in pointer[1..].split('/') {
+        let token = raw.replace("~1", "/").replace("~0", "~");
+        node = match node {
+            Value::Object(map) => match map.get(&token) {
+                Some(child) => child,
+                None => return false,
+            },
+            Value::Array(items) => {
+                let plain = !token.is_empty() && token.bytes().all(|byte| byte.is_ascii_digit());
+                let index = plain.then(|| token.parse::<usize>().ok()).flatten();
+                match index.and_then(|index| items.get(index)) {
+                    Some(child) => child,
+                    None => return false,
+                }
+            }
+            _ => return false,
+        };
+    }
+    true
 }
 
 /// The recorded value of each declared `db_delta` entry, in declaration order.
@@ -487,7 +587,11 @@ mod manifest_tests {
     #[test]
     fn a_db_delta_order_must_be_set_or_as_recorded() {
         // Golden: "db_delta t order must be 'set' or 'as_recorded'".
-        let value = v3_case(json!([]), db_delta_with(json!({"order": "bogus"})), json!({}));
+        let value = v3_case(
+            json!([]),
+            db_delta_with(json!({"order": "bogus"})),
+            json!({}),
+        );
         let error = parse_case(&value).expect_err("an unknown order");
         assert!(
             error
@@ -606,7 +710,11 @@ mod manifest_tests {
     #[test]
     fn dict_keys_and_escaped_tokens_resolve_as_python_resolves_them() {
         // Golden (Python _resolves): a digit token is a dict key on a dict; ~1 is "/" and ~0 is "~".
-        let digit_key = v3_case(json!(["/response/body/map/0"]), json!([]), json!({"map": {"0": 1}}));
+        let digit_key = v3_case(
+            json!(["/response/body/map/0"]),
+            json!([]),
+            json!({"map": {"0": 1}}),
+        );
         parse_case(&digit_key).expect("digit key on a dict resolves");
         let slash_key = v3_case(json!(["/response/body/a~1b"]), json!([]), json!({"a/b": 1}));
         parse_case(&slash_key).expect("~1 escapes a slash");

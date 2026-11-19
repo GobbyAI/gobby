@@ -34,49 +34,67 @@ fn closed_set_names_parse_and_everything_else_is_refused() {
 
 #[test]
 fn uuid_ordinals_number_by_first_appearance_in_document_order() {
+    // Golden (Python normalize_document, exact pointers only): a/id is 1, then b/0/id is 2,
+    // b/1/id is 1 and b/2/id is 2.
     let document = json!({
         "a": {"id": U1},
-        "b": [U2, U1, U2]
+        "b": [{"id": U2}, {"id": U1}, {"id": U2}]
     });
     let rules = [
         ("/a/id".to_owned(), Normalizer::UuidOrdinal),
-        ("/b/*".to_owned(), Normalizer::UuidOrdinal),
+        ("/b/0/id".to_owned(), Normalizer::UuidOrdinal),
+        ("/b/1/id".to_owned(), Normalizer::UuidOrdinal),
+        ("/b/2/id".to_owned(), Normalizer::UuidOrdinal),
     ];
-    let normalized = normalize_document(&document, &json!([]), &rules, &one_hour_window())
-        .expect("normalizes");
+    let normalized =
+        normalize_document(&document, &json!([]), &rules, &one_hour_window()).expect("normalizes");
     assert_eq!(
         normalized,
-        json!({"a": {"id": "@uuid:1@"}, "b": ["@uuid:2@", "@uuid:1@", "@uuid:2@"]})
+        json!({
+            "a": {"id": "@uuid:1@"},
+            "b": [{"id": "@uuid:2@"}, {"id": "@uuid:1@"}, {"id": "@uuid:2@"}]
+        })
     );
 }
 
 #[test]
 fn monotonic_accepts_decimal_text_as_pg_notify_delivers_payloads() {
-    // Captures are normalized as one unit; a payload is text, and the value sequence is
-    // the one the Python capture carries (config_values_patch.json, pg_notify /payload).
-    let rules = [("/side_effects/*/payload".to_owned(), Normalizer::Monotonic)];
-    let captures =
-        json!({"side_effects": [{"payload": "9"}, {"payload": "10"}, {"payload": "-3"}]});
-    let error = normalize_document(&captures, &json!([]), &rules, &one_hour_window())
+    // Captures are one sequence unit; a payload is text, as pg_notify delivers it
+    // (config_values_patch.json, /payload). Golden (Python normalize_captures): "9", "10" then
+    // "-3" fails at item 2, and "9", "10" masks to @seq@.
+    let rules = [(
+        "/payload".to_owned(),
+        parse_spec(&json!("monotonic"), false).expect("spec"),
+    )];
+    let captures = [
+        json!({"payload": "9"}),
+        json!({"payload": "10"}),
+        json!({"payload": "-3"}),
+    ];
+    let error = normalize_items(&captures, &rules, true, "captures", &one_hour_window())
         .expect_err("-3 does not follow 10");
     assert_eq!(
         error,
         NormalizeError::NotMonotonic {
-            pointer: "/side_effects/2/payload".to_owned()
+            pointer: "captures[2]/payload".to_owned()
         }
     );
 
-    let rising = json!({"side_effects": [{"payload": "9"}, {"payload": "10"}]});
+    let rising = [json!({"payload": "9"}), json!({"payload": "10"})];
     assert_eq!(
-        normalize_document(&rising, &json!([]), &rules, &one_hour_window())
+        normalize_items(&rising, &rules, true, "captures", &one_hour_window())
             .expect("digit text strictly increases"),
-        json!({"side_effects": [{"payload": "@seq@"}, {"payload": "@seq@"}]})
+        vec![json!({"payload": "@seq@"}), json!({"payload": "@seq@"})]
     );
 }
 
 #[test]
 fn monotonic_refuses_values_that_are_not_integers() {
-    let rules = [("/seq".to_owned(), Normalizer::Monotonic)];
+    // Golden (Python normalize_captures): every one of these is "monotonic needs an integer".
+    let rules = [(
+        "/seq".to_owned(),
+        parse_spec(&json!("monotonic"), false).expect("spec"),
+    )];
     for value in [
         json!("1.5"),
         json!("x1"),
@@ -84,17 +102,18 @@ fn monotonic_refuses_values_that_are_not_integers() {
         json!(true),
         json!(2.0),
     ] {
-        let error = normalize_document(
-            &json!({"seq": value}),
-            &json!([]),
+        let error = normalize_items(
+            &[json!({"seq": value})],
             &rules,
+            true,
+            "captures",
             &one_hour_window(),
         )
         .expect_err("not an integer");
         assert_eq!(
             error,
             NormalizeError::NotInteger {
-                pointer: "/seq".to_owned()
+                pointer: "captures[0]/seq".to_owned()
             }
         );
     }
@@ -102,22 +121,30 @@ fn monotonic_refuses_values_that_are_not_integers() {
 
 #[test]
 fn monotonic_sequences_mask_to_seq_and_must_strictly_increase() {
-    let rules = [("/c/*/seq".to_owned(), Normalizer::Monotonic)];
-    let rising = json!({"c": [{"seq": 1}, {"seq": 2}, {"seq": 7}]});
-    let normalized = normalize_document(&rising, &json!([]), &rules, &one_hour_window())
+    // Golden (Python normalize_captures): 1, 2, 7 masks to @seq@; 2 then 1 fails at item 1.
+    let rules = [(
+        "/seq".to_owned(),
+        parse_spec(&json!("monotonic"), false).expect("spec"),
+    )];
+    let rising = [json!({"seq": 1}), json!({"seq": 2}), json!({"seq": 7})];
+    let normalized = normalize_items(&rising, &rules, true, "captures", &one_hour_window())
         .expect("strictly increasing");
     assert_eq!(
         normalized,
-        json!({"c": [{"seq": "@seq@"}, {"seq": "@seq@"}, {"seq": "@seq@"}]})
+        vec![
+            json!({"seq": "@seq@"}),
+            json!({"seq": "@seq@"}),
+            json!({"seq": "@seq@"})
+        ]
     );
 
-    let falling = json!({"c": [{"seq": 2}, {"seq": 1}]});
-    let error = normalize_document(&falling, &json!([]), &rules, &one_hour_window())
+    let falling = [json!({"seq": 2}), json!({"seq": 1})];
+    let error = normalize_items(&falling, &rules, true, "captures", &one_hour_window())
         .expect_err("reordered sequence");
     assert_eq!(
         error,
         NormalizeError::NotMonotonic {
-            pointer: "/c/1/seq".to_owned()
+            pointer: "captures[1]/seq".to_owned()
         }
     );
 }
@@ -142,12 +169,17 @@ fn timestamps_inside_the_window_mask_and_outside_fail() {
 }
 
 #[test]
-fn redaction_and_masks_run_before_the_rules() {
+fn masks_run_after_the_rules_and_redaction_is_the_callers_step() {
+    // Golden (Python normalize_document, which takes no mask and does not redact): the uuid rule
+    // numbers id as 1, the password is untouched, and the comparison masks id last.
     let document = json!({"id": U1, "password": "hunter-two"});
     let rules = [("/id".to_owned(), Normalizer::UuidOrdinal)];
     let normalized = normalize_document(&document, &json!(["/id"]), &rules, &one_hour_window())
         .expect("normalizes");
-    assert_eq!(normalized, json!({"id": "@mask@", "password": "@secret@"}));
+    assert_eq!(
+        normalized,
+        json!({"id": "@mask@", "password": "hunter-two"})
+    );
 }
 
 #[test]
@@ -396,7 +428,12 @@ fn a_mask_applies_after_the_rules_so_a_masked_uuid_takes_an_ordinal() {
         ("/result/second".to_owned(), Normalizer::UuidOrdinal),
     ];
     assert_eq!(
-        normalize_document(&document, &json!(["/result/first"]), &rules, &one_hour_window()),
+        normalize_document(
+            &document,
+            &json!(["/result/first"]),
+            &rules,
+            &one_hour_window()
+        ),
         Ok(json!({"result": {"first": "@mask@", "second": "@uuid:2@"}}))
     );
 }
@@ -406,7 +443,12 @@ fn a_masked_wrong_typed_value_is_still_a_case_error() {
     // Python validates the value before the mask: "uuid_ordinal needs a canonical UUID at /x".
     let rules = [("/x".to_owned(), Normalizer::UuidOrdinal)];
     assert_eq!(
-        normalize_document(&json!({"x": "not-a-uuid"}), &json!(["/x"]), &rules, &one_hour_window()),
+        normalize_document(
+            &json!({"x": "not-a-uuid"}),
+            &json!(["/x"]),
+            &rules,
+            &one_hour_window()
+        ),
         Err(NormalizeError::NotUuid {
             pointer: "/x".to_owned()
         })
@@ -450,7 +492,12 @@ fn a_none_rule_on_a_list_element_leaf_matches_that_leaf() {
     // Golden: Python (patched list index) leaves {"b": ["x", "y"]} unchanged.
     let rules = [("/b/1".to_owned(), Normalizer::NoOp)];
     assert_eq!(
-        normalize_document(&json!({"b": ["x", "y"]}), &json!([]), &rules, &one_hour_window()),
+        normalize_document(
+            &json!({"b": ["x", "y"]}),
+            &json!([]),
+            &rules,
+            &one_hour_window()
+        ),
         Ok(json!({"b": ["x", "y"]}))
     );
 }

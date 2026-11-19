@@ -349,13 +349,19 @@ fn parse_response(raw: &[u8]) -> Result<(u16, Map<String, Value>, Value), Differ
         .nth(1)
         .and_then(|code| code.parse::<u16>().ok())
         .ok_or_else(|| shape("the response has no status code"))?;
+    // A repeated header is one field whose values join with ", ", as httpx reports it.
     let header = |wanted: &str| {
-        head.lines().skip(1).find_map(|line| {
-            let (name, value) = line.split_once(':')?;
-            name.trim()
-                .eq_ignore_ascii_case(wanted)
-                .then(|| value.trim().to_owned())
-        })
+        let values: Vec<&str> = head
+            .lines()
+            .skip(1)
+            .filter_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                name.trim()
+                    .eq_ignore_ascii_case(wanted)
+                    .then(|| value.trim())
+            })
+            .collect();
+        (!values.is_empty()).then(|| values.join(", "))
     };
     let content_type = header("content-type");
     let raw_body = &raw[split + 4..];
@@ -740,9 +746,12 @@ mod tests {
     fn a_header_only_difference_between_the_legs_is_a_diff_at_the_header() {
         // Golden (Python _first_difference): /response/headers/retry-after.
         let case = http_case("hdr", "health", "up", "/api/health");
-        let proxy = observation(json!({"status": 200, "headers": {"retry-after": "1"}, "body": null}));
-        let native = observation(json!({"status": 200, "headers": {"retry-after": "2"}, "body": null}));
-        let verdict = compare_legs(&case, &wide_window(), &proxy, &native).expect("the legs compare");
+        let proxy =
+            observation(json!({"status": 200, "headers": {"retry-after": "1"}, "body": null}));
+        let native =
+            observation(json!({"status": 200, "headers": {"retry-after": "2"}, "body": null}));
+        let verdict =
+            compare_legs(&case, &wide_window(), &proxy, &native).expect("the legs compare");
         assert_eq!(
             verdict,
             Verdict::Diff {
@@ -755,9 +764,12 @@ mod tests {
     fn a_missing_allowlisted_header_is_a_diff_at_its_header() {
         // Golden (Python _first_difference): /response/headers/cache-control.
         let case = http_case("hdr", "health", "up", "/api/health");
-        let proxy = observation(json!({"status": 200, "headers": {"cache-control": "no-store"}, "body": null}));
+        let proxy = observation(
+            json!({"status": 200, "headers": {"cache-control": "no-store"}, "body": null}),
+        );
         let native = observation(json!({"status": 200, "headers": {}, "body": null}));
-        let verdict = compare_legs(&case, &wide_window(), &proxy, &native).expect("the legs compare");
+        let verdict =
+            compare_legs(&case, &wide_window(), &proxy, &native).expect("the legs compare");
         assert_eq!(
             verdict,
             Verdict::Diff {

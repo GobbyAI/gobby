@@ -7,12 +7,13 @@
 //! followed by the actual one, a missing key reports its own pointer, lists compare length and
 //! then elements in order, and scalars compare by type and value.
 
+use gobby_test_support::corpus_v2;
 use serde_json::{Value, json};
 
-use super::corpus::Case;
+use super::corpus::{Case, Kind};
 use super::normalize::{
-    NormalizeError, Window, escape_token, normalize_document, parse_spec, redact,
-    refuse_monotonic_in_document,
+    NormalizeError, Spec, Window, escape_token, normalize_document, normalize_items, parse_spec,
+    redact,
 };
 
 /// The normalizer declarations of an entry, from its `normalizers` object, in declaration order.
@@ -83,14 +84,24 @@ fn first_difference_at(expected: &Value, actual: &Value, pointer: &str) -> Optio
     }
 }
 
-/// The comparison document of one case observation, normalized as the observer normalizes it.
+/// The side-effect rules of one entry, as pointers relative to each captured item (Python
+/// `normalize_captures`, where `after` is refused).
+fn capture_rules(entry: &Value) -> Result<Vec<(String, Spec)>, NormalizeError> {
+    normalizers_of(entry)?
+        .into_iter()
+        .map(|(pointer, spec)| Ok((pointer.clone(), parse_spec(spec, false)?)))
+        .collect()
+}
+
+/// The normalized comparison document of one case observation (Python `_normalize_response`,
+/// `normalize_captures` and `_comparison`), with each unit normalized on its own counter.
 ///
+/// The response is one unit: it is redacted, an HTTP response is masked before its rules (Python
+/// observes the masked answer, H73), and then the case's pointer rules run on `{"response": ...}`.
+/// Each side-effect entry is one sequence unit of captures, normalized before any redaction. The
 /// `db_delta` values must already be the output of `db_delta::table_delta`, which normalizes each
-/// entry as its own unit, so they are not normalized again here. `side_effects` values are the raw
-/// captures of each entry, and the response is the raw response. Each entry's normalizers resolve
-/// against the document: a case normalizer by its pointer, a side-effect normalizer on each capture
-/// of its entry. Masks are applied before the rules here; Python applies them after normalization
-/// (open item F2 in the report).
+/// entry as its own unit. The assembled document is redacted, and the case's masks apply last, for
+/// every kind.
 pub fn normalized_document(
     case: &Case,
     response: &Value,
@@ -98,22 +109,35 @@ pub fn normalized_document(
     side_effects: &[Value],
     window: &Window,
 ) -> Result<Value, NormalizeError> {
-    let document = comparison_document(response, db_delta, side_effects);
-    let mut rules = Vec::new();
+    let mut unit = json!({"response": redact(response)});
+    if matches!(case.kind, Kind::Http) {
+        corpus_v2::apply_masks(&mut unit, &case.mask);
+    }
+    let mut response_rules = Vec::new();
     for (pointer, spec) in &case.normalizers {
-        rules.push((pointer.clone(), parse_spec(spec, false)?.normalizer));
+        response_rules.push((pointer.clone(), parse_spec(spec, false)?.normalizer));
     }
-    // Response rules are document rules; `monotonic` is a sequence-unit rule of captures only.
-    refuse_monotonic_in_document(&rules)?;
-    for (index, entry) in case.side_effects.iter().enumerate() {
-        for (pointer, spec) in normalizers_of(entry)? {
-            rules.push((
-                format!("/side_effects/{index}/recorded/*{pointer}"),
-                parse_spec(spec, false)?.normalizer,
-            ));
-        }
+    let normalized = normalize_document(&unit, &json!([]), &response_rules, window)?;
+
+    let mut recorded = Vec::new();
+    for (index, captures) in side_effects.iter().enumerate() {
+        let rules = match case.side_effects.get(index) {
+            Some(entry) => capture_rules(entry)?,
+            None => Vec::new(),
+        };
+        let items = captures
+            .as_array()
+            .ok_or_else(|| NormalizeError::NotAList {
+                pointer: format!("side_effects[{index}]"),
+            })?;
+        recorded.push(Value::Array(normalize_items(
+            items, &rules, true, "captures", window,
+        )?));
     }
-    normalize_document(&document, &case.mask, &rules, window)
+
+    let mut document = comparison_document(&normalized["response"], db_delta, &recorded);
+    corpus_v2::apply_masks(&mut document, &case.mask);
+    Ok(document)
 }
 
 #[cfg(test)]
@@ -407,7 +431,8 @@ mod tests {
             json!({"/response/body/id": "none"}),
             Vec::new(),
         );
-        let normalized = normalized_document(&case, &json!({"body": {"id": U1}}), &[], &[], &wide());
+        let normalized =
+            normalized_document(&case, &json!({"body": {"id": U1}}), &[], &[], &wide());
         assert_eq!(
             normalized,
             Ok(json!({
@@ -529,9 +554,7 @@ mod tests {
         let error = normalized_document(&case, &json!({}), &[], &[json!([5])], &wide())
             .expect_err("a scalar item cannot be normalized");
         assert!(
-            error
-                .to_string()
-                .contains("captures[0] must be an object"),
+            error.to_string().contains("captures[0] must be an object"),
             "{error}"
         );
     }
@@ -589,8 +612,14 @@ mod tests {
             json!({}),
             vec![json!({"normalizers": {"/owner": "uuid_ordinal"}})],
         );
-        let error = normalized_document(&case, &json!({}), &[], &[json!([{"owner": UPPER}])], &wide())
-            .expect_err("an uppercase UUID");
+        let error = normalized_document(
+            &case,
+            &json!({}),
+            &[],
+            &[json!([{"owner": UPPER}])],
+            &wide(),
+        )
+        .expect_err("an uppercase UUID");
         assert!(error.to_string().contains("captures[0]/owner"), "{error}");
     }
 
