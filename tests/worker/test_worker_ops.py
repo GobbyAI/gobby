@@ -124,6 +124,7 @@ def test_dataclass_decoder_decodes_datetime_field() -> None:
     window = decode.DataclassFields(Window).decode({"start": "2026-11-18T12:00:00+00:00"})
 
     assert window == Window(start=datetime(2026, 11, 18, 12, tzinfo=UTC), label="w")
+    assert isinstance(window, Window)
     assert isinstance(window.start, datetime)
 
 
@@ -162,6 +163,7 @@ def test_write_request_decodes_without_terminal() -> None:
         payload="ls",
         submit=True,
     )
+    assert isinstance(request, WriteRequest)
     assert request.terminal is None
     with pytest.raises(DecodeError):
         spec.decode(
@@ -202,6 +204,7 @@ def test_write_request_decodes_with_terminal() -> None:
         }
     )
 
+    assert isinstance(request, WriteRequest)
     assert isinstance(request.terminal, Terminal)
     assert request.terminal.created_at == datetime(2026, 11, 18, 12, tzinfo=UTC)
     assert request.terminal.unresolved_writes == {}
@@ -317,7 +320,8 @@ def test_sync_and_async_ops() -> None:
 
 def test_ops_docstring_states_caller_facts() -> None:
     # A worker op binds no caller and no daemon-owned execution (R19, design-v2 5.20).
-    assert require_machine_owned("machine-r0") is None
+    # Returning without raising is the fact: no caller is bound, so nothing is refused.
+    require_machine_owned("machine-r0")
     assert is_daemon_execution() is False
 
     doc = ops.__doc__ or ""

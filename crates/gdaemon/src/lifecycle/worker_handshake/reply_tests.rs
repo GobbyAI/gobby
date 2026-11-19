@@ -1,4 +1,5 @@
-//! Reply validation for the Rust worker client (R56): the initialize result, the
+//! Reply validation for the Rust worker client, which accepts a reply only after
+//! checking its shape: the initialize result, the
 //! handshake result, the error object, the byte limits and the frozen corpus
 //! vectors run through the reply path. A child of `tests`, so it shares its
 //! helpers and the corpus reader.
@@ -580,7 +581,7 @@ async fn initialize_error_code_outside_its_set_is_unknown() {
     }
 }
 
-/// An `op_failed` reply to initialize is the unknown outcome, never a refusal (R66).
+/// An `op_failed` reply to initialize is the unknown outcome, never a refusal.
 #[tokio::test]
 async fn initialize_op_failed_is_unknown() {
     let outcome = unknown_outcome(initialize_error("op_failed", "boom").await);

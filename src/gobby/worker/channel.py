@@ -31,6 +31,9 @@ MAX_FRAME_BYTES = 16 * 1024 * 1024
 
 # Descriptors 0 to 2 are the standard streams, so a channel never uses one of them.
 _LOWEST_INHERITED_FD = 3
+# A descriptor is a C int. os.fstat and os.fdopen raise OverflowError or TypeError, not
+# OSError, for a larger value, so the parser refuses it before either call sees it.
+_HIGHEST_INHERITED_FD = 2**31 - 1
 
 
 class FrameError(Exception):
@@ -71,12 +74,12 @@ def take_worker_boot() -> WorkerBoot | None:
 
 
 def _inherited_descriptor(name: str, text: str | None) -> int:
-    """The descriptor a variable names. It must be an inherited descriptor above stderr."""
+    """The descriptor a variable names: an inherited descriptor above stderr, in C int range."""
     try:
         fd = int(text or "")
     except ValueError:
         fd = -1
-    if fd < _LOWEST_INHERITED_FD:
+    if not _LOWEST_INHERITED_FD <= fd <= _HIGHEST_INHERITED_FD:
         raise StartRefusal(f"{name} must name an inherited descriptor above stderr")
     return fd
 
