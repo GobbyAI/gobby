@@ -1025,3 +1025,29 @@ def test_an_unordered_rule_sorts_a_collection_by_key_before_positional_rules() -
     assert isinstance(refusal, str) and refusal.startswith("refused: "), (
         f"an unordered rule with no key normalized to {refusal}"
     )
+
+
+def _recorded_http_answer(case: dict[str, Any], body: Any, tmp_path: Path) -> Any:
+    """The normalized response the recorder keeps when the daemon answers ``body`` to ``case``."""
+    client = httpx.Client(
+        base_url="http://127.0.0.1:9",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body)),
+    )
+    with client:
+        raw = recorder_v3._send("http", case, client, None, operator={}, scratch=tmp_path)
+    return recorder_v3._normalize_response(case, raw, WINDOW)
+
+
+@pytest.mark.unit
+def test_an_http_answer_is_sorted_before_a_positional_mask_applies(tmp_path: Path) -> None:
+    case = _v3_case(
+        normalizers={"/response/body": {"name": "unordered", "key": "name"}},
+        mask=["/response/body/0/id"],
+    )
+    rows = [{"name": "alpha", "id": _ALPHA_ID}, {"name": "beta", "id": _BETA_ID}]
+    expected = [{"name": "alpha", "id": http_corpus.MASK}, {"name": "beta", "id": _BETA_ID}]
+    for label, order in (("as listed", rows), ("reversed", list(reversed(rows)))):
+        normalized = _recorded_http_answer(case, copy.deepcopy(order), tmp_path)
+        assert normalized["body"] == expected, (
+            f"the rows {label} are recorded as {normalized['body']}, expected {expected}"
+        )

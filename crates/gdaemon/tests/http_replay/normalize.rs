@@ -651,7 +651,7 @@ mod vector_tests {
             end: at("end"),
         };
         let vectors = file["vectors"].as_array().expect("vectors");
-        assert_eq!(vectors.len(), 20, "the vector file has 20 vectors");
+        assert_eq!(vectors.len(), 21, "the vector file has 21 vectors");
         for vector in vectors {
             let id = vector["id"].as_str().unwrap_or("vector");
             let result = run_vector(vector, &window);

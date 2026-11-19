@@ -239,6 +239,14 @@
       "document": {"body": "\\x0a", "status": 200},
       "expect": "pass",
       "normalized": {"body": "\\x0a", "status": 200}
+    },
+    {
+      "id": "N21",
+      "kind": "document",
+      "normalizers": {"/body": {"name": "unordered", "key": "name"}},
+      "document": {"body": [{"name": "éclair"}, {"name": "zeta"}]},
+      "expect": "pass",
+      "normalized": {"body": [{"name": "zeta"}, {"name": "éclair"}]}
     }
   ]
 }

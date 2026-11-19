@@ -51,6 +51,7 @@ TELEGRAM_BOT_PATH = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
 TELEGRAM_BOT_MARKER = "/bot@TELEGRAM_TOKEN@"
 # The sanitized fields kept for each provider request, and the request fields they are read from.
 SEMANTIC_FIELDS = ("destination", "text", "filename", "payload_sha256")
+DECODE_ERROR_KEY = "decode_error"
 DESTINATION_KEYS = ("channel", "channel_id", "chat_id", "To")
 TEXT_KEYS = ("text", "initial_comment", "caption", "Body")
 TEAMS_ACTIVITY_PATH = re.compile(r".*/v3/conversations/([^/]+)/activities")

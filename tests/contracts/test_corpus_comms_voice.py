@@ -11,6 +11,8 @@ import copy
 import hashlib
 import json
 import re
+import socket
+import ssl
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -24,7 +26,7 @@ import pytest
 
 from scripts.parity_waivers import DIFF, PASSED
 from tests.contracts import corpus_v3, recorder_v3
-from tests.contracts.comms.fake_edge import FakeEdge
+from tests.contracts.comms.fake_edge import DECODE_ERROR_KEY, FakeEdge
 from tests.contracts.http_corpus import classify_replay
 from tests.contracts.normalizers_v3 import Window, normalize_captures
 from tests.contracts.recorder_daemon_v3 import (
@@ -749,3 +751,104 @@ def test_channel_lists_match_in_any_row_order_and_differ_on_a_changed_channel(na
     )
     renamed = _raw_channel_answer(case, reverse=True, rename=True)
     assert _classify_answer(case, renamed) == DIFF, f"{name}: a renamed channel still matches"
+
+
+# A provider request whose payload the edge cannot decode is still an arrival. These requests go
+# through the real edge: a CONNECT tunnel to the provider host, then raw HTTP over TLS.
+
+RAW_BODY_TOKEN = "corpus-raw-body-token"
+MALFORMED_PATH = "/api/chat.postMessage"
+MALFORMED_REQUESTS: dict[str, tuple[str, bytes]] = {
+    "truncated-json": (
+        "Content-Type: application/json",
+        b'{"channel": "C0CORPUS0001", "text": "' + RAW_BODY_TOKEN.encode() + b'"',
+    ),
+    "form-not-utf8": (
+        "Content-Type: application/x-www-form-urlencoded",
+        b"channel=C0CORPUS0001&text=" + RAW_BODY_TOKEN.encode() + b"\xff",
+    ),
+}
+
+
+def _malformed_request(name: str) -> bytes:
+    """The raw bytes of one malformed Slack POST, which asks the edge to close after it."""
+    if name == "bad-chunk-size":
+        head = "Transfer-Encoding: chunked"
+        body = b"zz\r\n" + RAW_BODY_TOKEN.encode() + b"\r\n0\r\n\r\n"
+        sized = ""
+    else:
+        head, body = MALFORMED_REQUESTS[name]
+        sized = f"Content-Length: {len(body)}\r\n"
+    lines = (
+        f"POST {MALFORMED_PATH} HTTP/1.1\r\nHost: slack.com\r\n{head}\r\n{sized}"
+        "Connection: close\r\n\r\n"
+    )
+    return lines.encode("latin-1") + body
+
+
+def _send_through_edge(edge: FakeEdge, host: str, request: bytes) -> None:
+    """Tunnel ``request`` to ``host`` through the edge and read until the edge closes the tunnel."""
+    context = ssl.create_default_context(cafile=str(edge.ca_path()))
+    with socket.create_connection(edge.address, timeout=10.0) as conn:
+        conn.sendall(f"CONNECT {host}:443 HTTP/1.1\r\nHost: {host}:443\r\n\r\n".encode("latin-1"))
+        established = b""
+        while b"\r\n\r\n" not in established:
+            chunk = conn.recv(4096)
+            assert chunk, f"the edge closed the CONNECT to {host} before answering"
+            established += chunk
+        assert established.startswith(b"HTTP/1.1 200"), f"the edge answered {established!r}"
+        with context.wrap_socket(conn, server_hostname=host) as tls:
+            tls.sendall(request)
+            try:
+                while tls.recv(4096):
+                    pass
+            except (OSError, ssl.SSLError):
+                pass
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("name", [*sorted(MALFORMED_REQUESTS), "bad-chunk-size"])
+def test_a_malformed_provider_request_is_captured_by_its_signature(
+    name: str, tmp_path: Path
+) -> None:
+    with _started_edge(tmp_path) as edge:
+        _send_through_edge(edge, "slack.com", _malformed_request(name))
+        arrivals = edge.hits()
+        captured = ProviderEdgeCapture(edge, ["slack.com"]).hits()
+    signatures = [(item["host"], item["method"], item["path"]) for item in captured]
+    assert signatures == [("slack.com", "POST", MALFORMED_PATH)], (
+        f"{name}: the malformed request was captured as {captured}"
+    )
+    assert captured[0] != _hit("slack.com", "POST", MALFORMED_PATH), (
+        f"{name}: the malformed request is captured as a well-formed request sending nothing"
+    )
+    marker = arrivals[0].get(DECODE_ERROR_KEY)
+    assert isinstance(marker, str) and marker, (
+        f"{name}: the arrival {arrivals[0]} carries no {DECODE_ERROR_KEY} marker"
+    )
+    assert RAW_BODY_TOKEN not in json.dumps(arrivals), f"{name}: the edge log keeps the raw body"
+
+
+@pytest.mark.integration
+def test_a_refused_send_that_made_a_malformed_provider_request_is_a_difference(
+    tmp_path: Path,
+) -> None:
+    case = _v3_case_named(REFUSED_SEND_CASE)
+    with _started_edge(tmp_path) as edge:
+        observed: list[Any] = []
+        for effect in _provider_edge_effects(case):
+            with ProviderEdgeCapture(edge, _effect_hosts(effect)) as capture:
+                _send_through_edge(edge, "slack.com", _malformed_request("truncated-json"))
+                items = capture.hits()
+            observed.append(
+                normalize_captures(items, effect.get("normalizers", {}), window=REPLAY_WINDOW)
+            )
+    outcome = classify_replay(
+        case,
+        copy.deepcopy(case["response"]),
+        {},
+        observed={"db_delta": _recorded_db(case), "side_effects": observed},
+    ).outcome
+    assert outcome == DIFF, (
+        f"a refused send that made a malformed Slack request classifies {outcome}: {observed}"
+    )
