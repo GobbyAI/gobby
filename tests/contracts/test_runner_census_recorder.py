@@ -11,8 +11,10 @@ from typing import Any
 
 import pytest
 
+from gobby.config.bootstrap_io import read_present_bootstrap_mapping
 from tests.e2e.task_census_bootstrap import (
     TEST_HUB_URL,
+    BootstrapFileError,
     bootstrap_database_url,
     database_url_is_test_hub,
     real_home,
@@ -345,17 +347,79 @@ def test_guard_refuses_bootstrap_without_database_url(
     assert reason is not None and "bootstrap.yaml" in reason
 
 
-def test_bootstrap_scan_decodes_only_the_database_line(tmp_path: Path) -> None:
-    """Other lines are never decoded or parsed: the undecodable byte line is skipped, and an
-    indented database_url is not the top-level key."""
+def test_bootstrap_undecodable_bytes_are_refused(tmp_path: Path) -> None:
+    """The daemon reads bootstrap.yaml as UTF-8, so a file with other bytes is refused even when
+    its first database_url line names the test hub (R64)."""
     home = tmp_path / "home"
     home.mkdir()
     (home / "bootstrap.yaml").write_bytes(
-        b"opaque: \xff\xfe\n"
-        b"  database_url: indented-is-not-the-key\n"
-        b'database_url: "' + TEST_HUB_URL.encode("ascii") + b'"\n'
+        b'database_url: "' + TEST_HUB_URL.encode("ascii") + b'"\nopaque: \xff\xfe\n'
     )
-    assert bootstrap_database_url(home) == TEST_HUB_URL
+    with pytest.raises(BootstrapFileError):
+        bootstrap_database_url(home)
+
+
+def test_bootstrap_indented_database_url_is_not_the_key(tmp_path: Path) -> None:
+    """A database_url nested under another key is not the top-level value."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "bootstrap.yaml").write_text(
+        f"daemon:\n  database_url: {TEST_HUB_URL}\n", encoding="utf-8"
+    )
+    assert bootstrap_database_url(home) is None
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"database_url: {TEST_HUB_URL}\ndatabase_url: {LIVE_LOOKING_URL}\n",
+        f'database_url: {TEST_HUB_URL}\n"database_url": {LIVE_LOOKING_URL}\n',
+    ],
+    ids=["repeated-key", "quoted-key"],
+)
+def test_guard_reads_the_last_duplicate_database_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    """The daemon's yaml.safe_load keeps the last value of a repeated key, so a test-hub line
+    followed by a live line is what the daemon reads: the guard reads the same value and refuses
+    (R64). The agreement is checked against the daemon's own reader."""
+    operator = tmp_path / "operator"
+    monkeypatch.setenv("HOME", str(operator))
+    home = tmp_path / "census-home"
+    home.mkdir()
+    path = home / "bootstrap.yaml"
+    path.write_text(text, encoding="utf-8")
+    assert bootstrap_database_url(home) == LIVE_LOOKING_URL
+    assert bootstrap_database_url(home) == read_present_bootstrap_mapping(path)["database_url"]
+    reason = unsafe_reason(_guard_env(home), operator_home=operator)
+    assert reason is not None and "bootstrap.yaml" in reason
+    assert "live-secret" not in reason and "5432" not in reason
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"[\ndatabase_url: {TEST_HUB_URL}\n]\n",
+        f"database_url: {TEST_HUB_URL}\nkey: [unclosed\n",
+        "",
+    ],
+    ids=["sequence", "unparsable", "empty"],
+)
+def test_guard_refuses_bootstrap_that_is_not_a_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, text: str
+) -> None:
+    """A file the daemon refuses (not a YAML mapping, or not parsable) is refused by the guard,
+    even when a column-zero database_url line in it names the test hub (R64)."""
+    operator = tmp_path / "operator"
+    monkeypatch.setenv("HOME", str(operator))
+    home = tmp_path / "census-home"
+    home.mkdir()
+    (home / "bootstrap.yaml").write_text(text, encoding="utf-8")
+    with pytest.raises(BootstrapFileError):
+        bootstrap_database_url(home)
+    reason = unsafe_reason(_guard_env(home), operator_home=operator)
+    assert reason is not None and "bootstrap.yaml" in reason
+    assert "not a readable YAML mapping" in reason
 
 
 def test_record_target_refuses_frozen_fixture_directory(tmp_path: Path) -> None:
