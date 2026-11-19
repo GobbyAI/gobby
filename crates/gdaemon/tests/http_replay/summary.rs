@@ -59,14 +59,62 @@ pub struct Summary {
 
 /// Runs `gdaemon compare-report --since <since>` with `GOBBY_HOME` set to `home`.
 pub fn compare_report(home: &Path, since: i64) -> Result<CompareReport, SummaryError> {
-    let _ = (home, since);
-    unimplemented!("not wired: summary::compare_report")
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_gdaemon"))
+        .arg("compare-report")
+        .arg("--since")
+        .arg(since.to_string())
+        .env("GOBBY_HOME", home)
+        .output()
+        .map_err(|error| SummaryError::Report(format!("cannot start gdaemon: {error}")))?;
+    let report = serde_json::from_slice(&output.stdout).map_err(|error| {
+        SummaryError::Report(format!(
+            "no report on stdout ({error}); stderr: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    })?;
+    Ok(CompareReport {
+        success: output.status.success(),
+        report,
+    })
 }
 
 /// Summarizes a finished soak run and writes the summary to `<run home>/soak-summary.json`.
 pub fn summarize(run: &SoakRun) -> Result<Summary, SummaryError> {
-    let _ = run;
-    unimplemented!("not wired: summary::summarize")
+    let report = compare_report(&run.home, run.since)?;
+    let recorded = report
+        .report
+        .get("families")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let expected = serde_json::to_value(&run.expected)
+        .map_err(|error| SummaryError::Report(error.to_string()))?;
+    let passed = report.success && recorded == expected;
+    let excluded: Vec<Value> = run
+        .excluded
+        .iter()
+        .map(|entry| json!({"case": entry.case, "family": entry.family, "reason": entry.reason}))
+        .collect();
+    let summary = json!({
+        "iterations": run.iterations,
+        "seed": run.seed,
+        "N": run.hours,
+        "elapsed_seconds": run.elapsed_seconds,
+        "since": run.since,
+        "expected": expected,
+        "recorded": recorded,
+        "excluded": excluded,
+        "failures": failures(run)?,
+        "passed": passed,
+    });
+    let path = run.home.join(SUMMARY_FILE);
+    let text = serde_json::to_string_pretty(&summary)
+        .map_err(|error| SummaryError::Io(error.to_string()))?;
+    std::fs::write(&path, text)
+        .map_err(|error| SummaryError::Io(format!("{}: {error}", path.display())))?;
+    Ok(Summary {
+        passed,
+        json: summary,
+    })
 }
 
 /// Every record that is not a match, with the iteration and case that made it. The run log
