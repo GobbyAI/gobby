@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
 from gobby.agents import spawn_executor, spawn_executor_support
-from gobby.agents.agent_workspaces import _SESSION_LOCATION_SQL
+from gobby.agents.agent_workspaces import session_workspace_dir
 from gobby.agents.constants import (
     CARGO_HOME,
     CARGO_TARGET_DIR,
@@ -78,6 +78,7 @@ from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordin
 from gobby.utils.native_bin import native_bin_name
 from gobby.workflows.reserved_variables import SRT_RUN_SOCKET_ROOT_VARIABLE
 from tests.agents.prepared_spawn import prepared_spawn
+from tests.fixtures.workspace_seat import WorkspaceSeat
 from tests.terminals.fakes import (
     FakeRuntime,
     MemoryTerminalStore,
@@ -1108,12 +1109,14 @@ class TestExecuteSpawn:
         assert call_order == ["env", "command", "preapprove"]
 
     @pytest.mark.asyncio
-    async def test_codex_terminal_spawn_with_sandbox_config(self) -> None:
+    async def test_codex_terminal_spawn_with_sandbox_config(
+        self, workspace_seat: WorkspaceSeat
+    ) -> None:
         """Test that Codex terminal spawn applies sandbox flags."""
         sandbox_config = SandboxConfig(enabled=True, mode="permissive")
         mock_session_manager = MagicMock()
-        # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
-        mock_session_manager._storage.db.fetchone.return_value = None
+        # The child is a real session row, so its workspace is named from the registered project.
+        mock_session_manager._storage.db = workspace_seat.db
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
@@ -1121,19 +1124,20 @@ class TestExecuteSpawn:
             session_id="sess",
             run_id="run",
             parent_session_id="parent",
-            project_id="proj",
+            project_id=workspace_seat.project_id,
             session_manager=mock_session_manager,
             sandbox_config=sandbox_config,
             prepared_spawn=prepared_spawn(),
         )
 
+        child = workspace_seat.session_id
         mock_prepare = MagicMock(
             return_value=MagicMock(
-                session_id="gobby-sess-123",
+                session_id=child,
                 agent_run_id="run-xyz",
                 env_vars={
-                    "GOBBY_SESSION_ID": "gobby-sess-123",
-                    UV_CACHE_DIR: "/tmp/gobby/uv-cache/gobby-sess-123",
+                    "GOBBY_SESSION_ID": child,
+                    UV_CACHE_DIR: f"/tmp/gobby/uv-cache/{child}",
                 },
             )
         )
@@ -1267,11 +1271,13 @@ class TestExecuteSpawn:
         assert result.child_session_id == "gobby-sess-123"
 
     @pytest.mark.asyncio
-    async def test_grok_terminal_spawn_applies_sandbox_config(self) -> None:
+    async def test_grok_terminal_spawn_applies_sandbox_config(
+        self, workspace_seat: WorkspaceSeat
+    ) -> None:
         """Grok spawn passes built-in sandbox profile flags."""
         mock_session_manager = MagicMock()
-        # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
-        mock_session_manager._storage.db.fetchone.return_value = None
+        # The child is a real session row, so its workspace is named from the registered project.
+        mock_session_manager._storage.db = workspace_seat.db
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
@@ -1279,16 +1285,16 @@ class TestExecuteSpawn:
             session_id="sess",
             run_id="run",
             parent_session_id="parent",
-            project_id="proj",
+            project_id=workspace_seat.project_id,
             session_manager=mock_session_manager,
             sandbox_config=SandboxConfig(enabled=True, mode="restrictive"),
             prepared_spawn=prepared_spawn(),
         )
         mock_prepare = MagicMock(
             return_value=MagicMock(
-                session_id="gobby-sess-123",
+                session_id=workspace_seat.session_id,
                 agent_run_id="run-grok123",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-123"},
+                env_vars={"GOBBY_SESSION_ID": workspace_seat.session_id},
             )
         )
         mock_spawner = MagicMock()
@@ -1448,12 +1454,14 @@ class TestExecuteSpawn:
         )
 
     @pytest.mark.asyncio
-    async def test_agy_terminal_spawn_pins_sandbox_false_under_srt(self) -> None:
+    async def test_agy_terminal_spawn_pins_sandbox_false_under_srt(
+        self, workspace_seat: WorkspaceSeat
+    ) -> None:
         from gobby.agents.srt_runtime import SandboxLaunch
 
         mock_session_manager = MagicMock()
-        # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
-        mock_session_manager._storage.db.fetchone.return_value = None
+        # The child is a real session row, so its workspace is named from the registered project.
+        mock_session_manager._storage.db = workspace_seat.db
         request = SpawnRequest(
             prompt="Test",
             cwd="/repo",
@@ -1461,13 +1469,13 @@ class TestExecuteSpawn:
             session_id="sess",
             run_id="run",
             parent_session_id="parent",
-            project_id="proj",
+            project_id=workspace_seat.project_id,
             session_manager=mock_session_manager,
             sandbox_config=SandboxConfig(enabled=True, backend="srt"),
             prepared_spawn=prepared_spawn(
-                session_id="gobby-sess-agy",
+                session_id=workspace_seat.session_id,
                 agent_run_id="run-agy123",
-                env_vars={"GOBBY_SESSION_ID": "gobby-sess-agy"},
+                env_vars={"GOBBY_SESSION_ID": workspace_seat.session_id},
             ),
         )
         record = SimpleNamespace(
@@ -1501,7 +1509,7 @@ class TestExecuteSpawn:
         command = _spawn_kwargs(request)["command"]
         assert "--sandbox=false" in command
         mock_session_manager.update_sandbox_policy_hash.assert_called_once_with(
-            "gobby-sess-agy", "f" * 64
+            workspace_seat.session_id, "f" * 64
         )
         assert prepare_sandbox.await_args is not None
         assert prepare_sandbox.await_args.kwargs["allow_run_unix_sockets"] is True
@@ -1601,23 +1609,14 @@ class TestExecuteSpawnSandbox:
     """Integration tests for sandbox configuration in spawn flow."""
 
     @pytest.mark.asyncio
-    async def test_terminal_spawn_passes_sandbox_config_to_spawner(self, tmp_path: Path) -> None:
+    async def test_terminal_spawn_passes_sandbox_config_to_spawner(
+        self, tmp_path: Path, workspace_seat: WorkspaceSeat
+    ) -> None:
         """Test that sandbox_config is resolved and passed to the terminal runtime."""
         sandbox_config = SandboxConfig(enabled=True, mode="permissive")
         mock_session_manager = MagicMock()
-        # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
-        mock_session_manager._storage.db.fetchone.return_value = None
-
         # The seat's own folder is named from its session row, which spawn reads at spawn time.
-        def fetch_session_row(sql: str, _params: object) -> MagicMock:
-            cursor = MagicMock()
-            is_location = sql == _SESSION_LOCATION_SQL
-            cursor.fetchone.return_value = (
-                {"project_id": "proj", "seq_num": 7} if is_location else None
-            )
-            return cursor
-
-        mock_session_manager._storage.db.execute.side_effect = fetch_session_row
+        mock_session_manager._storage.db = workspace_seat.db
         request = SpawnRequest(
             prompt="Test with sandbox",
             agent_name="sandbox-test-seat",
@@ -1626,19 +1625,20 @@ class TestExecuteSpawnSandbox:
             session_id="sess",
             run_id="run",
             parent_session_id="parent",
-            project_id="proj",
+            project_id=workspace_seat.project_id,
             sandbox_config=sandbox_config,
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
         )
 
+        child = workspace_seat.session_id
         mock_spawn_context = MagicMock()
-        mock_spawn_context.session_id = "child-session-id"
+        mock_spawn_context.session_id = child
         mock_spawn_context.agent_run_id = "run-123"
         mock_spawn_context.env_vars = {
-            "GOBBY_SESSION_ID": "child-session-id",
-            UV_CACHE_DIR: "/tmp/gobby/uv-cache/child-session-id",
+            "GOBBY_SESSION_ID": child,
+            UV_CACHE_DIR: f"/tmp/gobby/uv-cache/{child}",
         }
 
         mock_spawner = MagicMock()
@@ -1685,12 +1685,9 @@ class TestExecuteSpawnSandbox:
 
         # Verify sandbox was resolved and env vars passed to spawn
         mock_resolver.resolve.assert_called_once()
-        mock_session_manager.update_sandbox_enabled.assert_called_once_with(
-            "child-session-id",
-            True,
-        )
+        mock_session_manager.update_sandbox_enabled.assert_called_once_with(child, True)
         resolved_config = mock_resolver.resolve.call_args.args[0]
-        assert "/tmp/gobby/uv-cache/child-session-id" not in resolved_config.extra_write_paths
+        assert f"/tmp/gobby/uv-cache/{child}" not in resolved_config.extra_write_paths
         sandbox_target = Path(_spawn_kwargs(request)["env"][CARGO_TARGET_DIR])
         assert {Path(path).name for path in resolved_config.extra_write_paths} == {
             "tmp",
@@ -1699,9 +1696,13 @@ class TestExecuteSpawnSandbox:
             "logs",
             "cache",
             "cargo-home",
-            "session-7",
+            f"session-{workspace_seat.seq_num}",
             sandbox_target.name,
         }
+        seat_folder = session_workspace_dir(
+            workspace_seat.project_name, "sandbox-test-seat", workspace_seat.seq_num
+        )
+        assert str(seat_folder) in resolved_config.extra_write_paths
         assert _runtime_of(request).last_request is not None
         call_kwargs = _spawn_kwargs(request)
         assert "env" in call_kwargs

@@ -1015,7 +1015,7 @@ async def test_public_activation_rebinds_workspace_policy(
     )
     result = await agents_registry.call("apply_agent_definition", {"agent": "y"})
     assert result["success"] is True
-    expected = tmp_path / "agents_workspaces" / project.id / "y" / "current"
+    expected = tmp_path / "agents_workspaces" / project.name / "y" / "current"
     stored = manager.get_variables(sid)
     assert stored["_agent_workspace_dir"] == str(expected)
     assert expected.is_dir()
