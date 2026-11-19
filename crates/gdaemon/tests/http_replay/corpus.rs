@@ -254,6 +254,12 @@ fn recorded_values(case: &Case, entries: &[Value]) -> Result<Vec<Value>, CorpusE
         .collect()
 }
 
+/// Every case of the manifest at `path` (schema 2 or 3), each listed file parsed by [`parse_case`].
+pub fn load_manifest(path: &std::path::Path) -> Result<Vec<Case>, CorpusError> {
+    let _ = path;
+    unimplemented!("not wired: load_manifest")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,5 +363,53 @@ mod tests {
             .remove("recorded");
         let error = recorded_db_delta(&case).expect_err("no recorded value");
         assert!(matches!(error, CorpusError::Field { .. }), "{error:?}");
+    }
+}
+
+#[cfg(test)]
+mod manifest_tests {
+    use super::{Kind, load_manifest};
+    use serde_json::{Value, json};
+    use std::path::PathBuf;
+
+    fn contracts(relative: &str) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/contracts")
+            .join(relative)
+    }
+
+    fn listed(path: &PathBuf) -> usize {
+        let manifest: Value =
+            serde_json::from_slice(&std::fs::read(path).expect("read manifest")).expect("json");
+        manifest["cases"].as_array().expect("cases").len()
+    }
+
+    #[test]
+    fn a_schema_3_manifest_loads_every_listed_case() {
+        let path = contracts("v3/manifest.json");
+        let cases = load_manifest(&path).expect("the v3 manifest loads");
+        assert_eq!(cases.len(), listed(&path));
+        assert!(cases.iter().all(|case| case.schema_version == 3));
+    }
+
+    #[test]
+    fn a_schema_2_manifest_loads_its_sixteen_cases_as_http() {
+        let path = contracts("http/manifest.json");
+        let cases = load_manifest(&path).expect("the v2 manifest loads");
+        assert_eq!(cases.len(), 16);
+        assert!(
+            cases
+                .iter()
+                .all(|case| case.schema_version == 2 && case.kind == Kind::Http)
+        );
+    }
+
+    #[test]
+    fn a_manifest_of_another_schema_is_refused() {
+        let dir = tempfile::tempdir().expect("manifest dir");
+        let path = dir.path().join("manifest.json");
+        std::fs::write(&path, json!({"schema_version": 4, "cases": []}).to_string())
+            .expect("write manifest");
+        assert!(load_manifest(&path).is_err(), "schema 4 is refused");
     }
 }

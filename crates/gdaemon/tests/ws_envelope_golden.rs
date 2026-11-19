@@ -438,3 +438,9 @@ fn broadcast_filter_outside_corpus_domain() {
     assert!(initialized.matches_broadcast(&json!({"type": "hook_event", "event_type": "7"})));
     assert!(initialized.matches_broadcast(&json!({"type": "hook_event", "5": "x"})));
 }
+
+/// The shared envelope replay: every case of `cases.json`, replayed frame by frame as
+/// `rust_replays_envelope_corpus` does. Returns the number of cases replayed.
+pub(super) fn replay_corpus() -> usize {
+    unimplemented!("not wired: ws_envelope_golden::replay_corpus")
+}

@@ -452,6 +452,61 @@ fn timestamp_at(
     Ok(parsed)
 }
 
+/// Run one normalizer vector (`tests/contracts/normalizer_vectors.json`) as its `kind` says, with
+/// its declared key, order, normalizers and mask, and return the normalized value.
+pub fn run_vector(vector: &Value, window: &Window) -> Result<Value, NormalizeError> {
+    let _ = (vector, window);
+    unimplemented!("not wired: run_vector")
+}
+
+/// The normalizer vector file replayed through [`run_vector`] (design 7.6, H40).
+#[cfg(test)]
+mod vector_tests {
+    use super::{Window, run_vector};
+    use serde_json::Value;
+    use std::path::PathBuf;
+    use time::OffsetDateTime;
+    use time::format_description::well_known::Rfc3339;
+
+    #[test]
+    fn normalizer_vectors_replay_through_normalize_rs() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/contracts/normalizer_vectors.json");
+        let file: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read vectors")).expect("json");
+        let at = |key: &str| {
+            OffsetDateTime::parse(
+                file["window"][key].as_str().expect("window bound"),
+                &Rfc3339,
+            )
+            .expect("window bound is RFC 3339")
+        };
+        let window = Window {
+            start: at("start"),
+            end: at("end"),
+        };
+        let vectors = file["vectors"].as_array().expect("vectors");
+        assert_eq!(vectors.len(), 20, "the vector file has 20 vectors");
+        for vector in vectors {
+            let id = vector["id"].as_str().unwrap_or("vector");
+            let result = run_vector(vector, &window);
+            match vector["expect"].as_str() {
+                Some("pass") => {
+                    let normalized = result.unwrap_or_else(|error| panic!("{id}: {error}"));
+                    assert_eq!(normalized, vector["normalized"], "{id}");
+                }
+                Some("fail") => {
+                    let error = result.expect_err(&format!("{id} must fail"));
+                    let expected = vector["error"].as_str().expect("fail vectors name an error");
+                    let text = error.to_string();
+                    assert!(text.contains(expected), "{id}: {text:?} lacks {expected:?}");
+                }
+                other => panic!("{id}: unknown expect {other:?}"),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
