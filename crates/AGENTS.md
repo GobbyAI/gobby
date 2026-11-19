@@ -101,13 +101,121 @@ each as its own crate statically linked into `gdaemon` (decision 16):
   `gobby-tasks`), `publish = false`, version inherited from the workspace.
 - Add the crate to the root `Cargo.toml` `members` list when its Stage 2 epic
   starts; no placeholder crates.
-- Export one static `RouteFamily`: the prefixes the family claims, its
-  `axum::Router` over the shared daemon state, and its service trait. `gdaemon`
-  composes families in its routing table; the per-family `Proxy | Native |
-  Compare` backend comes from bootstrap.
 - Own the family's row types and repositories, built on the `gcore` async pool
   and transaction seam. Reach another family only through its public API;
   Cargo rejects the cycle otherwise, and that is intended.
+
+### The family contract
+
+A family crate depends on `gobby-core` with its `route-family` feature, never on
+`gdaemon`. It exports one static that implements
+`gobby_core::route_family::RouteFamily` over the front door's state. Only `name`,
+`prefixes` and `router` are required; every other method has a default, so a family
+overrides only what it uses:
+
+```rust
+use axum::Router;
+use gobby_core::bootstrap::RouteBackend;
+use gobby_core::route_family::RouteFamily;
+
+pub struct TasksFamily;
+pub static TASKS: TasksFamily = TasksFamily;
+
+impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
+    fn name(&self) -> &'static str {
+        "tasks" // the family's front_door.routes key
+    }
+    fn prefixes(&self) -> &'static [&'static str] {
+        &["/api/tasks"]
+    }
+    fn router(&self) -> Router<S> {
+        Router::new() // .route(..).with_state(own) for the native handlers
+    }
+    fn default_backend(&self) -> RouteBackend {
+        RouteBackend::Proxy // until the checkpoint's activation commit
+    }
+}
+```
+
+- Registration. A family registers with one line in `FAMILIES` in
+  `crates/gdaemon/src/front_door/registry.rs`, one family per line in alphabetical
+  order, plus its dependency line in gdaemon's `Cargo.toml`, and families never edit
+  `serve.rs`. Runner wiring in `serve.rs`, such as a supervisor, recovery or port
+  slot, changes only through a Found Work line that names the slot.
+- One backend per family. The family's name is its `front_door.routes` key, and there
+  is one backend per family: `Proxy`, `Native` or `Compare`, from the routes entry or
+  else `default_backend`. Compare applies to the whole family, so routes that move on
+  different cuts form a cut group: register one family per cut group, each with a
+  distinct name.
+- Routing. `router` serves the native handlers under `prefixes`, matched on whole
+  path segments; a request under a prefix that no handler matches is proxied, and
+  `claims(&Parts)` returning false proxies a request unchanged. `route_claims`
+  declares `RouteClaim` rows (method, `PathMatch`, `Gate`, `Credential`, `PeerRule`,
+  `Kind`) that the front door's claim runner answers through `serve_claim` before
+  the routing table, and `claim_enabled` turns them off for a state. Rows apply only
+  while the family's backend is Native. Within a phase the most specific path wins
+  (exact, then segment, then raw prefix, then any); equal specificity goes to the
+  lower `start_rank`, then to registry order. Paths match raw, never percent-decoded.
+  `Credential::AfterAuthenticate` runs after authentication, but identity may still
+  be absent: a handler that acts on a caller reads `FamilyContext::caller` and
+  refuses `None`.
+- Compare. The caller always receives the proxied response, and every outcome goes
+  to the compare log that `gdaemon compare-report` summarizes. GET and HEAD run both
+  legs and compare them. Any other method proxies once and calls `check_proxied`
+  with the request and the proxied response; it returns a `ProxiedCheck`:
+  `Skipped`, `Verified`, or `Mismatch(reason)`, where the reason names a JSON pointer
+  or a cause and never a request or response value.
+- Context. The hooks reach the process's `FamilyContext` (`activate` through
+  `Activation::ctx`; `deactivate` takes only its `StopMode`): the frame publisher
+  for WebSocket broadcasts, the backend and lease status watches, the pool budget
+  and serve pool, the home directory, the configuration epoch (`config_epoch`,
+  `subscribe_config`) and its one publisher (`config_publisher`), the degraded set,
+  `caller` for the identity the front door authenticated, an optional startup
+  recorder, and `Extensions`, the typed handles a later chunk inserts before
+  families start, read with `extension::<T>()`. A handle the daemon may lack (no
+  database, no lease, no runtime) is an `Option`, and `FamilyContext::unconfigured()`
+  holds none. A family takes these handles from the context and builds none of its
+  own.
+- Lifecycle. Hooks run only for Native and Compare entries; a Proxy family runs
+  none. They run in `start_rank` order, lower first, with registry order inside a
+  rank. `start` runs once per process, before admission. `activate` runs once per
+  lease and may register jobs through its `Activation`. `deactivate` runs at lease
+  release (`StopMode::Stop`, a stop) or a drain (`StopMode::Drain`), in reverse
+  start order, and the whole pass shares one stop deadline. `before_spawn`
+  (`SpawnKind::FirstStart` or `Respawn`), `after_healthy` and `recovery_complete`
+  are the hook points of the worker supervisor and the recovery driver.
+- Hook errors. `HookError::Ordinary` marks the family degraded and the pass
+  continues with the other families. `HookError::Fatal` stops the pass, unwinds the
+  families already started under the shared deadline, and says whether a relaunch
+  could clear the cause. `deactivate` must be safe on a family whose `start` or
+  `activate` stopped part way.
+- Jobs. `Activation::register_job(name, interval, run)` stages a periodic job for
+  the lease. Only a Native family may register one; Compare is refused with
+  `JobRefused::Compare`, and a zero interval or a name already held is refused.
+  Staged jobs reach the job sink only when the activation pass succeeds, so a fatal
+  failure leaves nothing registered and a retry registers the same names cleanly.
+- Pool. A family queries through `FamilyContext::serve_pool`, the shared serve pool.
+  Each native pool takes `POOL_SHARE` connections from the budget that
+  `gobby_core::database_concurrency::pool_budget` resolves from the stored
+  concurrency keys, and a budget below four shares marks `database_pool` degraded.
+- Logging and metrics. `FamilyContext::logger(name)` returns a `FamilyLogger`
+  whose namespace is `gobby.<family>` and whose counters and histograms carry a
+  `family` label in `gobby_core::telemetry`. A family logs through `tracing` under a
+  `gobby` target, which is the only namespace the routed log files record, and never
+  prints to stderr.
+- Errors. A family maps its failures onto the `DomainError` classes and renders
+  them through the `gobby_core::domain_error` adapters
+  (`docs/contracts/domain-errors.md`). It defines no error framework or status
+  mapping of its own.
+- Dormancy. A family ships with `default_backend` returning `Proxy`, and no runtime
+  switch turns it on. Its checkpoint's activation commit changes the compiled
+  default to `Native`; the change reaches a daemon only through `gobby cutover`, and
+  rollback restores an earlier binary generation (`docs/guides/configuration.md`,
+  Family activation and rollback). `front_door.routes` is a harness and
+  isolated-test override, not an operator switch.
+- Freeze. The seam's production files are frozen: the project record's seam
+  contract lists them, and `gport check-slice` refuses a change to one unless a
+  Found Work line under the changing chunk names its path.
 
 The crate → binary map and the rebuild-and-reinstall requirement (including the
 new-inode install step macOS needs) live in `AGENTS.md` under Architecture Facts.

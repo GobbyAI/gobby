@@ -59,6 +59,38 @@ calls the adapters.
 - `parts_with(err, envelope)` returns `(status(err.class()), envelope(err))`. A
   family that keeps an intentional existing envelope declares it here. The
   declaration replaces only the body; the status still comes from the class.
+- `coded(err, code)` returns `(status(err.class()), {"error": <message>, "code":
+  <code>})`, the coded envelope of the Python auth middleware and of the native
+  machines routes.
+
+#### Python-parity presets (`http::python`)
+
+These render the fixed bodies of the Python daemon's global exception handler
+(`src/gobby/servers/exception_handlers.py`), for routes whose oracle is that daemon:
+
+- `internal_500(err)` returns `(500, {"status": "error", "message": "Internal server
+  error", "error_logged": true})`. The error is never rendered; the caller logs it
+  first.
+- `hub_unavailable()` returns `(503, {"status": "error", "message": "Hub temporarily
+  unavailable"})`, the hub pool-outage body.
+- `hook_acknowledged(err)` returns `Some((200, {"status": "error", "message":
+  "Internal error occurred but request acknowledged", "error_logged": true}))` for an
+  `Internal` error and `None` for every other class. It is the only status that does
+  not come from the class, and it applies only to the `/api/hooks` routes, whose
+  oracle acknowledges an internal failure instead of failing the hook.
+
+#### Converted routes
+
+The machines routes render their 503 `machines_unavailable` (class `Unavailable`) and
+404 `machine_not_found` (class `Missing`) answers through `coded`; their bodies and the
+503 retry hint are unchanged. Their 401 `missing_auth` and 405 `method_not_allowed`
+answers stay outside the classes. Other families adopt the adapters when they port.
+
+#### Not domain errors
+
+401 authentication rejections, 405 method answers, 413 body limits, 502 upstream
+failures and the 503 backend-state body are transport statuses. They stay with their
+transports and are not classified.
 
 ### MCP (`gobby_core::domain_error::mcp`)
 
@@ -85,3 +117,9 @@ calls the adapters.
 
 A family that changes a wire response relative to the Python oracle records the change
 as an exact #24963 waiver in its own contract. This contract adds no family waivers.
+
+422 has no class: `Validation` is 400. A family whose Python oracle answers 422 (an
+explicit 422 or FastAPI's request-validation answer) records an exact entry for that
+route in `docs/contracts/parity-waivers.json` and tests the waived 400. The runtime
+handshake route in `gobby-runtime` answers its invalid-request 422 directly, outside
+the classes.
