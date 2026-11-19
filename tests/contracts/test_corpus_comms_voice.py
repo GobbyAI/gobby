@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import re
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,7 @@ import httpx
 import pytest
 
 from tests.contracts import corpus_v3, recorder_v3
+from tests.contracts.comms.fake_edge import FakeEdge
 from tests.contracts.recorder_daemon_v3 import (
     CORPUS_SLACK_CHANNEL_ID,
     RecorderDaemon,
@@ -35,13 +38,14 @@ GOBBY_CHAT_CHANNEL_ID = "00000000-0000-4000-8000-00000000c0c0"
 CORPUS_SLACK_CHANNEL_NAME = "corpus-slack"
 UUID_TEXT = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 SECRET_MARKER = "corpus-fake-"
-PROVIDER_REACHING_CASES = (
-    "comms_channel_create",
-    "comms_channel_update",
-    "comms_send",
-    "comms_attachment",
-    "comms_mcp_send_message",
-)
+# The hosts each provider-reaching case contacts through the provider edge.
+PROVIDER_REACHING_HOSTS: dict[str, tuple[str, ...]] = {
+    "comms_channel_create": ("slack.com",),
+    "comms_channel_update": ("slack.com",),
+    "comms_send": ("slack.com",),
+    "comms_attachment": ("slack.com", "upload.corpus.test"),
+    "comms_mcp_send_message": ("slack.com",),
+}
 VOICE_STATUS_CASES = ("voice_status", "voice_status_want_tts")
 ENGINE_FIELDS = ("whisper_model", "tts_provider")
 ENGINE_SUFFIXES = frozenset({"engine", "model", "package", "provider"})
@@ -136,8 +140,37 @@ def _wait_for_active(
             time.sleep(0.5)
 
 
+@contextmanager
+def _started_edge(root: Path) -> Iterator[FakeEdge]:
+    """Run a provider edge for the life of the block, so no daemon starts without one."""
+    edge = FakeEdge(root)
+    edge.start()
+    try:
+        yield edge
+    finally:
+        edge.stop()
+
+
+def _provider_edge_effects(case: dict[str, Any]) -> list[dict[str, Any]]:
+    """The provider_edge side effects a case declares, in declaration order."""
+    return [
+        effect
+        for effect in case.get("side_effects", [])
+        if effect.get("channel") == "provider_edge"
+    ]
+
+
+def _effect_hosts(effect: dict[str, Any]) -> list[str]:
+    """The hosts a provider_edge side effect matches."""
+    hosts: list[str] = effect.get("match", {}).get("hosts", [])
+    return hosts
+
+
 @pytest.mark.unit
 def test_every_comms_and_voice_ledger_key_has_a_v3_case() -> None:
+    for file_name in STATUS_FILES:
+        status_file = STATUS_DIR / file_name
+        assert status_file.is_file(), f"the parity ledger status file {status_file} does not exist"
     keys = _comms_and_voice_ledger_keys()
     assert len(keys) == COMMS_VOICE_LEDGER_KEY_COUNT, (
         f"expected {COMMS_VOICE_LEDGER_KEY_COUNT} comms and voice ledger keys, found {len(keys)}"
@@ -156,36 +189,48 @@ def test_v3_holds_thirty_six_comms_and_voice_cases() -> None:
 
 
 @pytest.mark.e2e
-def test_comms_routes_answer_once_communications_is_enabled_at_start() -> None:
+def test_comms_routes_answer_once_communications_is_enabled_at_start(tmp_path: Path) -> None:
     startup = _communications_startup()
     assert startup is not None, "the v3 manifest declares no communications startup block"
-    with (
-        recorder_v3.open_run_database() as run,
-        recorder_daemon(base_url=run.base_url, database_url=run.url, startup=startup) as daemon,
-    ):
-        response = httpx.get(
-            f"{daemon.http_url}/api/comms/channels",
-            headers=daemon.operator_headers(),
-            timeout=30.0,
-        )
+    with _started_edge(tmp_path) as edge:
+        assert edge.address[1] != 0, "the provider edge bound no port"
+        with (
+            recorder_v3.open_run_database() as run,
+            recorder_daemon(
+                base_url=run.base_url, database_url=run.url, startup=startup, edge=edge
+            ) as daemon,
+        ):
+            response = httpx.get(
+                f"{daemon.http_url}/api/comms/channels",
+                headers=daemon.operator_headers(),
+                timeout=30.0,
+            )
     assert response.status_code == 200, f"GET /api/comms/channels answered {response.status_code}"
 
 
 @pytest.mark.e2e
-def test_corpus_slack_channel_is_live_at_the_first_request() -> None:
+def test_corpus_slack_channel_is_live_at_the_first_request(tmp_path: Path) -> None:
     assert UUID_TEXT.fullmatch(CORPUS_SLACK_CHANNEL_ID), (
         f"the fixed channel id is not a UUID: {CORPUS_SLACK_CHANNEL_ID!r}"
     )
     startup = _communications_startup()
     assert startup is not None, "the v3 manifest declares no communications startup block"
-    with (
-        recorder_v3.open_run_database() as run,
-        recorder_daemon(base_url=run.base_url, database_url=run.url, startup=startup) as daemon,
-    ):
-        status = _wait_for_active(daemon, CORPUS_SLACK_CHANNEL_ID, timeout_seconds=60.0)
-    assert status.get("active") is True, f"the startup Slack channel is not active: {status}"
-    assert status.get("init_error") is None, (
-        f"the startup Slack channel failed to initialize: {status}"
+    with _started_edge(tmp_path) as edge:
+        assert edge.address[1] != 0, "the provider edge bound no port"
+        with (
+            recorder_v3.open_run_database() as run,
+            recorder_daemon(
+                base_url=run.base_url, database_url=run.url, startup=startup, edge=edge
+            ) as daemon,
+        ):
+            status = _wait_for_active(daemon, CORPUS_SLACK_CHANNEL_ID, timeout_seconds=60.0)
+        assert status.get("active") is True, f"the startup Slack channel is not active: {status}"
+        assert status.get("init_error") is None, (
+            f"the startup Slack channel failed to initialize: {status}"
+        )
+        arrivals = [hit["host"] for hit in edge.hits()]
+    assert "slack.com" in arrivals, (
+        f"the startup Slack channel reached no slack.com through the provider edge: {arrivals}"
     )
 
 
@@ -198,8 +243,9 @@ def test_fixed_channel_id_is_a_uuid_and_not_the_gobby_chat_id() -> None:
         "the fixed channel id is the dropped gobby_chat id"
     )
     startup_ids = [row.get("id") for row in _startup_channels()]
-    assert CORPUS_SLACK_CHANNEL_ID in startup_ids, (
-        "the communications startup block does not declare the fixed channel id"
+    assert startup_ids == [CORPUS_SLACK_CHANNEL_ID], (
+        f"the communications startup block declares channel ids {startup_ids}, "
+        "expected only the fixed channel id"
     )
 
 
@@ -239,12 +285,23 @@ def test_every_provider_reaching_case_declares_a_provider_edge_side_effect() -> 
         f"expected {COMMS_VOICE_CASE_COUNT} communications and voice cases, found {len(cases)}"
     )
     by_name = {case["name"]: case for case in cases}
-    for name in PROVIDER_REACHING_CASES:
-        assert name in by_name, f"{name} is not a communications or voice case"
-        channels = [effect.get("channel") for effect in by_name[name].get("side_effects", [])]
-        assert "provider_edge" in channels, (
-            f"{name} reaches a provider host but declares no provider_edge side effect"
+    missing = sorted(set(PROVIDER_REACHING_HOSTS) - set(by_name))
+    assert missing == [], f"these are not communications or voice cases: {missing}"
+    for case in cases:
+        name = case["name"]
+        effects = _provider_edge_effects(case)
+        declared = sorted(host for effect in effects for host in _effect_hosts(effect))
+        expected = sorted(PROVIDER_REACHING_HOSTS.get(name, ()))
+        assert declared == expected, (
+            f"{name} declares provider_edge hosts {declared}, expected {expected}"
         )
+        for effect in effects:
+            hosts = set(_effect_hosts(effect))
+            recorded = {hit.get("host") for hit in effect.get("recorded", [])}
+            assert recorded == hosts, (
+                f"{name} records provider_edge hosts {sorted(recorded, key=str)}, "
+                f"declared {sorted(hosts)}"
+            )
 
 
 @pytest.mark.unit

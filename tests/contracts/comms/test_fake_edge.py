@@ -10,6 +10,8 @@ import ssl
 import subprocess
 import sys
 import urllib.request
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
@@ -55,15 +57,28 @@ def _primary_address() -> str:
         return str(probe.getsockname()[0])
 
 
-def _trusting_client(edge: FakeEdge) -> httpx.Client:
-    """An HTTP client that reaches the provider hosts through the edge and trusts its authority."""
+@contextmanager
+def _listening_on(address: str) -> Iterator[int]:
+    """Listen on one address at an ephemeral port for the life of the block, and yield the port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind((address, 0))
+        listener.listen()
+        yield int(listener.getsockname()[1])
+
+
+def _route_environment_through(monkeypatch: pytest.MonkeyPatch, edge: FakeEdge) -> None:
+    """Point this process at the edge: its proxy, the loopback bypass and the test authority."""
     host, port = edge.address
-    context = ssl.create_default_context(cafile=str(edge.ca_path()))
-    return httpx.Client(proxy=f"http://{host}:{port}", verify=context, timeout=10.0)
+    for name in ("HTTPS_PROXY", "https_proxy"):
+        monkeypatch.setenv(name, f"http://{host}:{port}")
+    for name in ("NO_PROXY", "no_proxy"):
+        monkeypatch.setenv(name, LOOPBACK_NO_PROXY)
+    monkeypatch.setenv("SSL_CERT_FILE", str(edge.ca_path()))
 
 
 @pytest.mark.integration
 def test_fake_edge_listens_on_loopback_only(tmp_path: Path) -> None:
+    assert LOOPBACK_PROBE.is_file(), f"the loopback probe does not exist at {LOOPBACK_PROBE}"
     edge = FakeEdge(tmp_path)
     edge.start()
     try:
@@ -75,21 +90,31 @@ def test_fake_edge_listens_on_loopback_only(tmp_path: Path) -> None:
         )
         primary = _primary_address()
         assert primary != LOOPBACK_HOST, "this machine has no non-loopback address to probe"
-        assert _probe(f"{primary}:{port}", tmp_path / "primary.json") == "refused", (
-            "the fake edge accepts connections on a non-loopback address"
+        with _listening_on(primary) as control_port:
+            control = _probe(f"{primary}:{control_port}", tmp_path / "control.json")
+            assert control == "connected", (
+                f"a control listener on the primary address answered {control!r}, "
+                "so a refused probe of the edge would prove nothing"
+            )
+        primary_class = _probe(f"{primary}:{port}", tmp_path / "primary.json")
+        assert primary_class == "refused", (
+            f"a non-loopback probe of the fake edge answered {primary_class!r}, not refused"
         )
     finally:
         edge.stop()
 
 
 @pytest.mark.integration
-def test_provider_hosts_route_to_the_edge_and_are_logged(tmp_path: Path) -> None:
+def test_provider_hosts_route_to_the_edge_and_are_logged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     edge = FakeEdge(tmp_path)
     edge.start()
     try:
         port = edge.address[1]
         assert port != 0, "the fake edge bound no port"
-        with _trusting_client(edge) as client:
+        _route_environment_through(monkeypatch, edge)
+        with httpx.Client(timeout=10.0) as client:
             for provider in PROVIDER_HOSTS:
                 edge.clear()
                 response = client.get(f"https://{provider}/")
@@ -116,13 +141,8 @@ def test_urllib_jwks_fetch_goes_through_the_edge(
     edge = FakeEdge(tmp_path)
     edge.start()
     try:
-        host, port = edge.address
-        assert port != 0, "the fake edge bound no port"
-        for name in ("HTTPS_PROXY", "https_proxy"):
-            monkeypatch.setenv(name, f"http://{host}:{port}")
-        for name in ("NO_PROXY", "no_proxy"):
-            monkeypatch.setenv(name, LOOPBACK_NO_PROXY)
-        monkeypatch.setenv("SSL_CERT_FILE", str(edge.ca_path()))
+        assert edge.address[1] != 0, "the fake edge bound no port"
+        _route_environment_through(monkeypatch, edge)
         opener = urllib.request.build_opener()
         with opener.open(TEAMS_JWKS_URL, timeout=10) as reply:
             document = json.loads(reply.read().decode("utf-8"))
