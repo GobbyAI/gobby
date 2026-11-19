@@ -20,6 +20,9 @@ mod cli_contract;
 #[path = "compare.rs"]
 mod compare;
 
+#[path = "family_seam.rs"]
+mod family_seam;
+
 #[path = "front_door.rs"]
 mod front_door;
 

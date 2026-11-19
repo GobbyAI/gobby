@@ -31,16 +31,14 @@ use tower_service::Service;
 
 use super::FrontDoorState;
 use super::compare::{Outcome, Record};
-use super::health::HealthFamily;
 use super::proxy::{self, ForwardError};
 
 pub use gobby_core::route_family::RouteFamily;
 
-/// Every family gdaemon implements. Stage 2 leaves add their families here.
-pub static FAMILIES: &[&dyn RouteFamily<FrontDoorState>] = &[&HealthFamily, &TerminalFamily];
+pub use super::registry::FAMILIES;
 
 /// The lifecycle is native; terminal upgrades retain the existing proxy transport.
-struct TerminalFamily;
+pub(super) struct TerminalFamily;
 
 impl RouteFamily<FrontDoorState> for TerminalFamily {
     fn name(&self) -> &'static str {
@@ -125,6 +123,16 @@ impl RouteTable {
             (RouteBackend::Compare, true) => compare(entry, state, request).await,
             _ => proxy::forward(state, request).await,
         }
+    }
+
+    /// The family whose claim row answers this request, if any.
+    pub fn claim_owner(
+        &self,
+        _method: &Method,
+        _path: &str,
+        _upgrade: bool,
+    ) -> Option<&'static str> {
+        None
     }
 
     /// The longest claimed prefix wins.

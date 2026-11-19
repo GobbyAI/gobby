@@ -71,6 +71,8 @@ pub mod search;
 pub mod graph_analytics;
 
 #[cfg(feature = "route-family")]
+pub mod family;
+#[cfg(feature = "route-family")]
 pub mod route_family;
 
 #[cfg(test)]

@@ -24,3 +24,7 @@ mod mcp_contract;
 
 #[path = "public_boundary.rs"]
 mod public_boundary;
+
+#[cfg(feature = "route-family")]
+#[path = "route_claims.rs"]
+mod route_claims;

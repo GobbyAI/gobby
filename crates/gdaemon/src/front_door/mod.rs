@@ -6,6 +6,7 @@ pub mod challenge;
 pub mod compare;
 pub mod health;
 pub mod proxy;
+pub mod registry;
 pub mod relay;
 pub mod routes;
 #[cfg(unix)]
