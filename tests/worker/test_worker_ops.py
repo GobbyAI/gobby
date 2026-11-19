@@ -1,4 +1,4 @@
-"""Parameter decoders (design-v2 5.12), the op table (5.10) and lazy resolution (R11, R19)."""
+"""Parameter decoders, the op table and lazy resolution of worker ops."""
 
 import asyncio
 import inspect
@@ -319,7 +319,7 @@ def test_sync_and_async_ops() -> None:
 
 
 def test_ops_docstring_states_caller_facts() -> None:
-    # A worker op binds no caller and no daemon-owned execution (R19, design-v2 5.20).
+    # A worker op binds no caller and no daemon-owned execution.
     # Returning without raising is the fact: no caller is bound, so nothing is refused.
     require_machine_owned("machine-r0")
     assert is_daemon_execution() is False
