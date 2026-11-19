@@ -394,8 +394,51 @@ async fn exchange<C: WorkerChannel>(
     Ok((call, reply))
 }
 
+/// Rejects an integer literal outside `[-2^63, 2^64 - 1]` anywhere in a reply. It runs on the
+/// raw bytes before the reply is parsed, because `serde_json::Value` would turn such a literal
+/// into a float. String literals are skipped, and a number with a fraction or an exponent is
+/// not an integer. A number that does not fit an `i128` is outside the range too.
+fn scan_integer_width(bytes: &[u8]) -> Result<(), ProtocolViolation> {
+    const LOWEST: i128 = -(1_i128 << 63);
+    const HIGHEST: i128 = (1_i128 << 64) - 1;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => {
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'"' {
+                    index += if bytes[index] == b'\\' { 2 } else { 1 };
+                }
+                index += 1;
+            }
+            b'-' | b'0'..=b'9' => {
+                let start = index;
+                while index < bytes.len()
+                    && matches!(bytes[index], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+                {
+                    index += 1;
+                }
+                let token = &bytes[start..index];
+                if token.iter().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
+                    continue;
+                }
+                let value: i128 = std::str::from_utf8(token)
+                    .ok()
+                    .and_then(|text| text.parse().ok())
+                    .ok_or(ProtocolViolation::Malformed)?;
+                if !(LOWEST..=HIGHEST).contains(&value) {
+                    return Err(ProtocolViolation::Malformed);
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    Ok(())
+}
+
 /// Validates the envelope in the order the contract states, then the error object.
 fn read_reply(bytes: &[u8], call: &Call) -> Result<Reply, ProtocolViolation> {
+    scan_integer_width(bytes)?;
     let parsed: Value = serde_json::from_slice(bytes).map_err(|_| ProtocolViolation::Malformed)?;
     let Value::Object(mut fields) = parsed else {
         return Err(ProtocolViolation::Malformed);

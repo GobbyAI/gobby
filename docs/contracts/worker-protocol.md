@@ -109,7 +109,7 @@ The facade applies these steps in order. The first failing step decides the resp
 | 8 | Generation differs from the bound generation | `stale_generation` |
 | 9 | Command is not `initialize` or `invoke` | `unknown_command` |
 | 10 | `initialize`: body is exactly `{"phase": <known phase>}`; then unusable; then phase order | `invalid_request`, `worker_unusable`, `phase_out_of_order` |
-| 11 | `invoke`: body is exactly `{"op", "params"}`; then unusable; then not ready; then op lookup; then params | `invalid_request`, `worker_unusable`, `not_ready`, `unknown_command`, `invalid_request` |
+| 11 | `invoke`: body is exactly `{"op", "params"}`; then unusable; then not ready; then op lookup; then params; then the op runs, and an op that raises an `Exception` is `op_failed` | `invalid_request`, `worker_unusable`, `not_ready`, `unknown_command`, `op_failed` |
 
 `command` is a plain string at the envelope level, so an unknown command is `unknown_command`,
 never `invalid_request`.
@@ -172,7 +172,10 @@ it is `invalid_request`, and its echo leaves out the generation.
 An `Int` parameter outside it is `invalid_request`.
 `Anything` and `JsonObject` values pass through as decoded JSON.
 An integer nested in one reaches the op as it was decoded.
-The Rust client reads envelope integers as `u64` or `i64`.
+The Rust client reads envelope integers as `u64` or `i64`. It applies the same range to every
+integer in a reply, before it parses the reply. A reply that holds an out-of-range integer is
+malformed: a protocol violation for `handshake`, and an unknown outcome for `initialize` and
+`invoke`.
 
 Python and Rust keep separate constants. The Rust constant `MAX_DOMAIN_OP_REQUEST_BYTES`
 is not shared with the hook ingress bound, which is private to its module.
@@ -191,6 +194,23 @@ is not shared with the hook ingress bound, which is private to its module.
 | `worker_unusable` | `worker is unusable` | a refused, failed or cancelled phase has made the facade unusable |
 | `not_ready` | `worker is not ready` | an `invoke` before the handshake and every phase are ready |
 | `op_failed` | dynamic, at most 2,048 characters, or `schema identity unavailable` | an op raised an `Exception`, returned an unencodable value (including an integer outside the wire range), a registration fault occurred, or the handshake could not load its schema identity |
+
+### Error codes per command
+
+A command's error reply carries one of the codes in its row. Each row is the union of that
+command's guard steps above, and the Rust client's code sets (`HANDSHAKE_ERROR_CODES`,
+`INITIALIZE_ERROR_CODES` and `INVOKE_ERROR_CODES`) equal the rows.
+
+| Command | Error codes |
+|---|---|
+| `handshake` | `invalid_request`, `protocol_mismatch`, `unauthorized`, `stale_generation`, `op_failed` |
+| `initialize` | `invalid_request`, `protocol_mismatch`, `not_handshaken`, `stale_generation`, `worker_unusable`, `phase_out_of_order` |
+| `invoke` | `invalid_request`, `protocol_mismatch`, `not_handshaken`, `stale_generation`, `worker_unusable`, `not_ready`, `unknown_command`, `op_failed` |
+
+Out-of-set rule. A reply whose error code is outside its command's row is a protocol violation
+for `handshake`. For `initialize` and `invoke` it is an unknown outcome, because the effect may
+already have happened. `initialize` never answers `op_failed`: a failed phase is a `failed`
+result, not an error.
 
 Registration faults map to `op_failed`, never to `invalid_request`. They are the
 `OpRegistrationError`, `TypeError`, `ImportError` and `NameError` raised by a broken

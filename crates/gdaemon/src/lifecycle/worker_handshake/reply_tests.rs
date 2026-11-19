@@ -86,14 +86,12 @@ async fn answer_initialize(phase: &str, result: Value) -> Result<PhaseReply, Wor
     perform_initialize(&mut channel, &mut session_at(7), phase).await
 }
 
-/// Asserts that a reply to initialize failed validation as an unknown outcome.
-fn assert_initialize_unknown(result: Result<PhaseReply, WorkerCallError>) {
-    let outcome = unknown_outcome(result.expect_err("the reply fails validation"));
-    assert_eq!(outcome.command, "initialize");
-}
-
-async fn initialize_is_unknown(phase: &str, result: Value) {
-    assert_initialize_unknown(answer_initialize(phase, result).await);
+/// The unknown outcome of an initialize whose reply for `phase` fails validation.
+async fn initialize_unknown(phase: &str, result: Value) -> UnknownOutcome {
+    let err = answer_initialize(phase, result)
+        .await
+        .expect_err("the reply fails validation");
+    unknown_outcome(err)
 }
 
 /// The corpus handshake reply with `mutate` applied to its result.
@@ -124,74 +122,104 @@ async fn invoke_answer(reply: Vec<u8>) -> Result<Value, WorkerCallError> {
 
 #[tokio::test]
 async fn initialize_result_missing_phase_is_unknown() {
-    initialize_is_unknown("storage_and_config", without(ready_first(), "phase")).await;
+    assert_eq!(
+        initialize_unknown("storage_and_config", without(ready_first(), "phase"))
+            .await
+            .command,
+        "initialize"
+    );
 }
 
 #[tokio::test]
 async fn initialize_result_missing_status_is_unknown() {
-    initialize_is_unknown("storage_and_config", without(ready_first(), "status")).await;
+    assert_eq!(
+        initialize_unknown("storage_and_config", without(ready_first(), "status"))
+            .await
+            .command,
+        "initialize"
+    );
 }
 
 #[tokio::test]
 async fn initialize_result_missing_next_phase_is_unknown() {
-    initialize_is_unknown("storage_and_config", without(ready_first(), "next_phase")).await;
+    assert_eq!(
+        initialize_unknown("storage_and_config", without(ready_first(), "next_phase"))
+            .await
+            .command,
+        "initialize"
+    );
 }
 
 #[tokio::test]
 async fn initialize_result_missing_message_is_unknown() {
-    initialize_is_unknown("storage_and_config", without(ready_first(), "message")).await;
+    assert_eq!(
+        initialize_unknown("storage_and_config", without(ready_first(), "message"))
+            .await
+            .command,
+        "initialize"
+    );
 }
 
 #[tokio::test]
 async fn initialize_result_missing_error_type_is_unknown() {
-    initialize_is_unknown("storage_and_config", without(ready_first(), "error_type")).await;
+    assert_eq!(
+        initialize_unknown("storage_and_config", without(ready_first(), "error_type"))
+            .await
+            .command,
+        "initialize"
+    );
 }
 
 #[tokio::test]
 async fn initialize_result_extra_key_is_unknown() {
-    initialize_is_unknown(
+    let outcome = initialize_unknown(
         "storage_and_config",
         with(ready_first(), "extra", json!(true)),
     )
     .await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 #[tokio::test]
 async fn initialize_phase_mismatch_is_unknown() {
-    initialize_is_unknown(
+    let outcome = initialize_unknown(
         "storage_and_config",
         with(ready_first(), "phase", json!("content_refusal")),
     )
     .await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 #[tokio::test]
 async fn initialize_unknown_status_is_unknown() {
-    initialize_is_unknown(
+    let outcome = initialize_unknown(
         "storage_and_config",
         with(ready_first(), "status", json!("bogus")),
     )
     .await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 // Per-status table: ready rows.
 
 #[tokio::test]
 async fn ready_row_next_phase_must_be_the_successor() {
-    initialize_is_unknown(
+    let outcome = initialize_unknown(
         "storage_and_config",
         with(ready_first(), "next_phase", json!("startup_content")),
     )
     .await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 #[tokio::test]
 async fn ready_row_next_phase_must_not_be_null_before_the_last_phase() {
-    initialize_is_unknown(
+    let outcome = initialize_unknown(
         "storage_and_config",
         with(ready_first(), "next_phase", Value::Null),
     )
     .await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 #[tokio::test]
@@ -203,31 +231,39 @@ async fn ready_row_last_phase_must_have_null_next_phase() {
         Value::Null,
         Value::Null,
     );
-    initialize_is_unknown("runtime_services", last).await;
+    assert_eq!(
+        initialize_unknown("runtime_services", last).await.command,
+        "initialize"
+    );
 }
 
 #[tokio::test]
 async fn ready_row_message_must_be_null() {
-    initialize_is_unknown(
+    let outcome = initialize_unknown(
         "storage_and_config",
         with(ready_first(), "message", json!("unexpected")),
     )
     .await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 #[tokio::test]
 async fn ready_row_error_type_must_be_null() {
-    initialize_is_unknown(
+    let outcome = initialize_unknown(
         "storage_and_config",
         with(ready_first(), "error_type", json!("RuntimeError")),
     )
     .await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 #[tokio::test]
 async fn ready_for_an_unknown_phase_is_unknown() {
     let result = phase_result("bogus", "ready", Value::Null, Value::Null, Value::Null);
-    initialize_is_unknown("bogus", result).await;
+    assert_eq!(
+        initialize_unknown("bogus", result).await.command,
+        "initialize"
+    );
 }
 
 // Per-status table: refused rows.
@@ -241,7 +277,8 @@ async fn refused_row_next_phase_must_be_null() {
         json!("refused"),
         Value::Null,
     );
-    initialize_is_unknown("storage_and_config", refused).await;
+    let outcome = initialize_unknown("storage_and_config", refused).await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 #[tokio::test]
@@ -253,7 +290,8 @@ async fn refused_row_error_type_must_be_null() {
         json!("refused"),
         json!("RuntimeError"),
     );
-    initialize_is_unknown("storage_and_config", refused).await;
+    let outcome = initialize_unknown("storage_and_config", refused).await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 #[tokio::test]
@@ -265,7 +303,8 @@ async fn refused_row_message_must_be_a_string() {
         Value::Null,
         Value::Null,
     );
-    initialize_is_unknown("storage_and_config", refused).await;
+    let outcome = initialize_unknown("storage_and_config", refused).await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 // Per-status table: failed rows.
@@ -279,7 +318,8 @@ async fn failed_row_next_phase_must_be_null() {
         json!("boom"),
         json!("RuntimeError"),
     );
-    initialize_is_unknown("startup_content", failed).await;
+    let outcome = initialize_unknown("startup_content", failed).await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 #[tokio::test]
@@ -291,7 +331,8 @@ async fn failed_row_message_must_be_a_string() {
         Value::Null,
         json!("RuntimeError"),
     );
-    initialize_is_unknown("startup_content", failed).await;
+    let outcome = initialize_unknown("startup_content", failed).await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 #[tokio::test]
@@ -303,7 +344,8 @@ async fn failed_row_error_type_must_be_a_string() {
         json!("boom"),
         Value::Null,
     );
-    initialize_is_unknown("startup_content", failed).await;
+    let outcome = initialize_unknown("startup_content", failed).await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 #[tokio::test]
@@ -315,7 +357,8 @@ async fn failed_row_error_type_must_not_be_empty() {
         json!("boom"),
         json!(""),
     );
-    initialize_is_unknown("startup_content", failed).await;
+    let outcome = initialize_unknown("startup_content", failed).await;
+    assert_eq!(outcome.command, "initialize");
 }
 
 /// Messages are capped at 2,048 characters, counted as characters and not bytes.
@@ -340,7 +383,12 @@ async fn phase_message_limit_counts_characters() {
         json!("é".repeat(2049)),
         Value::Null,
     );
-    initialize_is_unknown("content_refusal", over_limit).await;
+    assert_eq!(
+        initialize_unknown("content_refusal", over_limit)
+            .await
+            .command,
+        "initialize"
+    );
 }
 
 // Error objects.
@@ -704,7 +752,7 @@ async fn reply_integers_outside_64_bits_are_malformed() {
 }
 
 /// A success reply to invoke whose result holds an integer outside `[-2^63, 2^64 - 1]` is a
-/// protocol violation with an unknown outcome (ruling 14). The Python side never sends such a
+/// protocol violation with an unknown outcome. The Python side never sends such a
 /// result: it answers `op_failed` instead, so a success reply that carries one is malformed.
 #[tokio::test]
 async fn invoke_result_integer_beyond_64_bits_is_unknown() {
