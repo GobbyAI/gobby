@@ -7,6 +7,7 @@ runner, and it patches the phase callables before calling ``GobbyRunner.create``
 from __future__ import annotations
 
 import ast
+import copy
 import functools
 import hashlib
 import json
@@ -16,6 +17,8 @@ from collections import Counter
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 REPO = Path(__file__).resolve().parents[2]
 SRC = REPO / "src" / "gobby"
@@ -79,6 +82,26 @@ EFFECTS = {"refusal exit 78", "crash exit 1", "clean exit 0", "clean return", "p
 CREATE_CALLS = {"create_task", "ensure_future"}
 STOP_ATTRS = {"stop", "close", "aclose", "shutdown"}
 LINE_CITE = re.compile(r"runner\.py:\d")
+CI_WORKFLOW = REPO / ".github" / "workflows" / "ci.yml"
+CENSUS_TOP_KEYS = {
+    "profile",
+    "environment",
+    "tasks",
+    "threads",
+    "executors",
+    "unobserved",
+    "outside_runner_lifecycle",
+    "excluded",
+}
+# The only non-gobby owners the inventory may name (R58): the library calls that stop a task,
+# an executor or a middleware dispatch. Any other module outside gobby is a failed pin.
+LIBRARY_OWNERS = frozenset(
+    {
+        ("anyio._core._sockets", "connect_tcp"),
+        ("opentelemetry.sdk.resources", "get_aggregated_resources"),
+        ("starlette.middleware.base", "BaseHTTPMiddleware.__call__"),
+    }
+)
 
 
 def _inventory() -> dict[str, Any]:
@@ -643,12 +666,7 @@ def test_started_and_stopped_services_are_inventoried() -> None:
     assert starts <= set(services), sorted(starts - set(services))
     stops = _stop_receivers()
     assert stops <= set(services), sorted(stops - set(services))
-    for service_id, service in services.items():
-        attr = service_id.split(".")[-1]
-        for owner in service["start_owner"]:
-            assert attr in _source_of(owner["module"]), (service_id, owner)
-        for owner in service["stop_owner"]:
-            assert attr in _source_of(owner["module"]), (service_id, owner)
+    assert _service_owner_problems(_inventory()) == []
 
 
 # 1.1.7 -------------------------------------------------------------------------------------------
@@ -739,16 +757,13 @@ def test_identities_and_errors_are_inventoried() -> None:
             kind = f"exit_code:{error['exit_code']}"
         actual.add((owner["module"], owner["qualname"], kind))
     assert actual == _raise_and_exit_entries()
+    assert _identity_owner_problems(inventory) == []
     for identity in inventory["identities"]:
         producer = identity["producer"]
         if producer["module"].endswith(".rs"):
             # A Rust producer names a crate file by its repository path and a Rust qualname.
             rust_source = (REPO / producer["module"]).read_text(encoding="utf-8")
             assert producer["qualname"].split("::")[-1] in rust_source, identity["name"]
-        else:
-            assert producer["qualname"].split(".")[-1] in _source_of(producer["module"]), identity[
-                "name"
-            ]
         for consumer in identity["consumers"]:
             assert identity["name"] in _source_of(consumer["module"]), (identity["name"], consumer)
 
@@ -989,27 +1004,9 @@ def test_cancel_owner_present_iff_debt_tag() -> None:
 
 
 def test_cancel_and_stop_owners_resolve_to_definitions() -> None:
-    """Every gobby owner the inventory names is a def or class in its module (finding 7a).
-
-    Owners outside gobby (asyncio, anyio, starlette) are library calls and are not resolved.
-    """
-    inventory = _inventory()
-    owners: set[str] = set()
-    for task in inventory["tasks"]:
-        if task["cancel_owner"] is not None:
-            owners.add(_owner_text(task["cancel_owner"]) or "")
-    for item in inventory["outside_placements"]:
-        if item["stop_owner"] is not None:
-            owners.add(item["stop_owner"])
-    for service in inventory["services"]:
-        owners.update(
-            _owner_text(owner) or "" for owner in [*service["start_owner"], *service["stop_owner"]]
-        )
-    for text in sorted(owners):
-        module, qualname = text.split(":", 1)
-        if not module.startswith("gobby."):
-            continue
-        assert qualname in _definitions(_parse(_path_of(module))), text
+    """Every gobby owner the inventory names is a def or class in its module (finding 7a), and
+    every owner outside gobby is an allow-listed library call (R58)."""
+    assert _owner_resolution_problems(_inventory()) == []
 
 
 def test_outside_placements_have_owner_or_debt() -> None:
@@ -1589,3 +1586,240 @@ def test_construct_transitive_seams_follow_source_reach() -> None:
             else:
                 assert reason is None, (phase["id"], seam)
                 assert listing == [first], (seam, first, listing)
+
+
+# R58 owner pins ---------------------------------------------------------------------------------
+
+
+def _owner_texts(inventory: Mapping[str, Any]) -> set[str]:
+    """Every owner text the inventory names: task cancel owners, placement stop owners and
+    service start and stop owners."""
+    owners: set[str] = set()
+    for task in inventory["tasks"]:
+        if task["cancel_owner"] is not None:
+            owners.add(_owner_text(task["cancel_owner"]) or "")
+    for item in inventory["outside_placements"]:
+        if item["stop_owner"] is not None:
+            owners.add(item["stop_owner"])
+    for service in inventory["services"]:
+        owners.update(
+            _owner_text(owner) or "" for owner in [*service["start_owner"], *service["stop_owner"]]
+        )
+    return owners
+
+
+_DEF_NODES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+
+
+def _body_names(node: ast.AST) -> set[str]:
+    """What a def's body spells: names, attributes, import aliases, nested def names and string
+    constants. The def's own name is not in its body, so it is not counted."""
+    if not isinstance(node, _DEF_NODES):
+        return set()
+    spelled: set[str] = set()
+    for statement in node.body:
+        for child in ast.walk(statement):
+            spelled.update(_spelled_names(child))
+            if isinstance(child, ast.Constant) and isinstance(child.value, str):
+                spelled.add(child.value)
+    return spelled
+
+
+def _assigns_on_runner(module: str, qualname: str, attr: str) -> bool:
+    """Whether a gobby def stores ``runner.<attr>``, the way the runner's init helpers do."""
+    node = _module_defs(module).get(qualname)
+    if node is None:
+        return False
+    return any(
+        isinstance(child, ast.Attribute)
+        and isinstance(child.ctx, ast.Store)
+        and child.attr == attr
+        and isinstance(child.value, ast.Name)
+        and child.value.id == "runner"
+        for child in ast.walk(node)
+    )
+
+
+def _service_owner_ok(owner: Mapping[str, str], attr: str, *, start: bool) -> bool:
+    """A service owner names its attribute in its body (R58). A start owner may instead reach,
+    through named references, a function that stores ``runner.<attr>``: the runner's create
+    phases start storage and memory services in init helpers (deviation D1)."""
+    module, qualname = owner["module"], owner["qualname"]
+    if not module.startswith("gobby."):
+        return (module, qualname) in LIBRARY_OWNERS
+    node = _module_defs(module).get(qualname)
+    if node is None:
+        return False
+    if attr in _body_names(node):
+        return True
+    if not start:
+        return False
+    return any(_assigns_on_runner(mod, name, attr) for mod, name in _reach({(module, qualname)}))
+
+
+def _service_owner_problems(inventory: Mapping[str, Any]) -> list[str]:
+    """Each service's start and stop owners, checked against the service's attribute (R58)."""
+    problems: list[str] = []
+    for service in inventory["services"]:
+        attr = service["id"].split(".")[-1]
+        for owner in service["start_owner"]:
+            if not _service_owner_ok(owner, attr, start=True):
+                problems.append(f"{service['id']} start: {owner}")
+        for owner in service["stop_owner"]:
+            if not _service_owner_ok(owner, attr, start=False):
+                problems.append(f"{service['id']} stop: {owner}")
+    return problems
+
+
+def _module_constants(module: str) -> dict[str, str]:
+    """Module-level names bound to a string literal, as name -> value."""
+    constants: dict[str, str] = {}
+    for node in _parse(_path_of(module)).body:
+        if isinstance(node, ast.Assign):
+            targets, value = node.targets, node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets, value = [node.target], node.value
+        else:
+            continue
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            constants.update(
+                {target.id: value.value for target in targets if isinstance(target, ast.Name)}
+            )
+    return constants
+
+
+def _identity_ok(owner: Mapping[str, str], identity: str) -> bool:
+    """A producer spells its identity by one of three things (R58): the def's own name, a string
+    constant in its body, or a module constant holding the identity that its body reads."""
+    module, qualname = owner["module"], owner["qualname"]
+    if not module.startswith("gobby."):
+        return False
+    node = _module_defs(module).get(qualname)
+    if node is None:
+        return False
+    if qualname.split(".")[-1] == identity:
+        return True
+    spelled = _body_names(node)
+    if identity in spelled:
+        return True
+    return any(
+        name in spelled and value == identity for name, value in _module_constants(module).items()
+    )
+
+
+def _identity_owner_problems(inventory: Mapping[str, Any]) -> list[str]:
+    """Each Python identity producer spells its identity (R58). Rust producers are checked in
+    the identity test against the crate source."""
+    problems: list[str] = []
+    for identity in inventory["identities"]:
+        producer = identity["producer"]
+        if producer["module"].endswith(".rs"):
+            continue
+        if not _identity_ok(producer, identity["name"]):
+            problems.append(f"{identity['name']}: {producer}")
+    return problems
+
+
+def _owner_resolution_problems(inventory: Mapping[str, Any]) -> list[str]:
+    """Each gobby owner resolves to a def, and each non-gobby owner is an allow-listed library
+    call (R58). Anything else outside gobby is a failed pin."""
+    problems: list[str] = []
+    for text in sorted(_owner_texts(inventory)):
+        module, qualname = text.split(":", 1)
+        if module.startswith("gobby."):
+            if qualname not in _module_defs(module):
+                problems.append(f"undefined owner: {text}")
+        elif (module, qualname) not in LIBRARY_OWNERS:
+            problems.append(f"unlisted library owner: {text}")
+    return problems
+
+
+def _owner_of(inventory: Mapping[str, Any], section: str, key: str, ident: str) -> dict[str, Any]:
+    (entry,) = [item for item in inventory[section] if item[key] == ident]
+    result: dict[str, Any] = entry
+    return result
+
+
+def test_service_owners_reference_their_attribute() -> None:
+    assert _service_owner_problems(_inventory()) == []
+
+
+def test_service_owner_pin_kills_wrong_stop_owner() -> None:
+    """The stop owner is a same-module function that never names cron_scheduler. The module
+    source still names the attribute, so only the owner's body can kill this mutant."""
+    mutant = copy.deepcopy(_inventory())
+    service = _owner_of(mutant, "services", "id", "cron_scheduler")
+    service["stop_owner"] = [
+        {"module": "gobby.runner_lifecycle_shutdown", "qualname": "_shutdown_websocket_server"}
+    ]
+    problems = _service_owner_problems(mutant)
+    assert any(problem.startswith("cron_scheduler stop:") for problem in problems), problems
+
+
+def test_service_owner_pin_kills_unreached_start_owner() -> None:
+    """The start owner is a shutdown function that neither names database_watchdog nor reaches a
+    function that assigns it on runner."""
+    mutant = copy.deepcopy(_inventory())
+    service = _owner_of(mutant, "services", "id", "database_watchdog")
+    service["start_owner"] = [
+        {"module": "gobby.runner_lifecycle_shutdown", "qualname": "_stop_started_services"}
+    ]
+    problems = _service_owner_problems(mutant)
+    assert any(problem.startswith("database_watchdog start:") for problem in problems), problems
+
+
+def test_identity_producers_spell_their_identity() -> None:
+    assert _identity_owner_problems(_inventory()) == []
+
+
+def test_identity_pin_kills_producer_that_does_not_spell_it() -> None:
+    """take_front_door_secret is in the same module and its last segment is in the module source,
+    but it reads the front-door constant, so it does not produce GOBBY_SUPERVISOR_FD."""
+    mutant = copy.deepcopy(_inventory())
+    identity = _owner_of(mutant, "identities", "name", "GOBBY_SUPERVISOR_FD")
+    identity["producer"] = {"module": "gobby.runner_backend", "qualname": "take_front_door_secret"}
+    problems = _identity_owner_problems(mutant)
+    assert any(problem.startswith("GOBBY_SUPERVISOR_FD:") for problem in problems), problems
+
+
+def test_owners_resolve_or_are_allow_listed() -> None:
+    assert _owner_resolution_problems(_inventory()) == []
+
+
+def test_owner_pin_kills_unlisted_library_owner() -> None:
+    mutant = copy.deepcopy(_inventory())
+    item = next(item for item in mutant["outside_placements"] if item["stop_owner"])
+    item["stop_owner"] = "evil.lib:teardown"
+    problems = _owner_resolution_problems(mutant)
+    assert any(problem.endswith("evil.lib:teardown") for problem in problems), problems
+
+
+def test_library_owner_allow_list_matches_fixture() -> None:
+    """The fixture's non-gobby owners are exactly the allow-listed library calls."""
+    owners = {tuple(text.split(":", 1)) for text in _owner_texts(_inventory())}
+    outside = {pair for pair in owners if not pair[0].startswith("gobby.")}
+    assert outside == LIBRARY_OWNERS
+
+
+def test_runner_lifecycle_doc_names_schema_keys() -> None:
+    """The doc names every task key and every census section (R59)."""
+    text = DOC_PATH.read_text(encoding="utf-8")
+    for key in sorted(TASK_KEYS):
+        assert f"`{key}`" in text, key
+    assert set(_census()) == CENSUS_TOP_KEYS
+    section = text[text.index("## Runtime census") :]
+    for key in sorted(CENSUS_TOP_KEYS):
+        assert f"`{key}`" in section, key
+
+
+def test_ci_test_job_fetches_full_history() -> None:
+    """The base-digest and fixture-order pins read git history, so the test job checks out full
+    history instead of the default shallow clone (R58)."""
+    jobs = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))["jobs"]
+    checkouts = [
+        step
+        for step in jobs["test"]["steps"]
+        if str(step.get("uses", "")).startswith("actions/checkout@")
+    ]
+    assert checkouts, "the test job has no checkout step"
+    assert checkouts[0].get("with", {}).get("fetch-depth") == 0

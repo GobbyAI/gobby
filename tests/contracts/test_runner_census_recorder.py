@@ -11,20 +11,36 @@ from typing import Any
 
 import pytest
 
+from tests.e2e.task_census_bootstrap import (
+    TEST_HUB_URL,
+    bootstrap_database_url,
+    database_url_is_test_hub,
+    real_home,
+    unsafe_reason,
+)
 from tests.e2e.task_census_recorder import (
+    RECORDED_PYTHON,
     _mapped_inventory_tasks,
     _placed_stop,
     build_census,
+    census_skip_reason,
     creation_record,
     creator_from_frames,
     executor_record,
     normalize_name,
     normalize_record,
     record_key,
+    record_target_problem,
     submit_record,
 )
 
 REPO = Path(__file__).resolve().parents[2]
+LOCALHOST_HUB_URL = "postgresql://gobby_test:gobby_test@localhost:60892/gobby_test"
+ISOLATED_HUB_URL = (
+    "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test_4242_abcdef"
+    "?options=-csearch_path%3Dschema_x"
+)
+LIVE_LOOKING_URL = "postgresql://gobby:live-secret@127.0.0.1:5432/gobby"
 CENSUS_PATH = REPO / "tests" / "contracts" / "runner_census.json"
 LIFESPAN_CITES = {
     "src/gobby/servers/_app_lifecycle.py:98",
@@ -235,3 +251,153 @@ def test_key_without_placement_is_debt() -> None:
     assert _placed_stop("task|a|b", {}) == (None, "debt:R0")
     placement = {"task|a|b": {"stop_owner": "m:f", "debt": None}}
     assert _placed_stop("task|a|b", placement) == ("m:f", None)
+
+
+def _guard_env(home: Path, database_url: str = TEST_HUB_URL) -> dict[str, str]:
+    return {
+        "GOBBY_TEST_PROTECT": "1",
+        "DATABASE_URL": database_url,
+        "GOBBY_HOME": str(home),
+    }
+
+
+def _write_bootstrap(home: Path, url: str | None) -> None:
+    home.mkdir(parents=True, exist_ok=True)
+    database_line = "" if url is None else f"database_url: {url}\n"
+    (home / "bootstrap.yaml").write_text(f"daemon_port: 1\n{database_line}", encoding="utf-8")
+
+
+@pytest.mark.parametrize("url", [TEST_HUB_URL, LOCALHOST_HUB_URL, ISOLATED_HUB_URL])
+def test_test_hub_dsn_accepts_loopback_forms(url: str) -> None:
+    """The CI DSN names localhost, and the e2e bootstrap names an isolated database (R57)."""
+    assert database_url_is_test_hub(url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        None,
+        "",
+        "postgresql://other/daemon",
+        "postgresql://gobby_test:gobby_test@127.0.0.1:5432/gobby_test",
+        "postgresql://gobby_test:gobby_test@db.example.com:60892/gobby_test",
+        "postgresql://gobby:gobby_test@127.0.0.1:60892/gobby_test",
+        "postgresql://gobby_test:other@127.0.0.1:60892/gobby_test",
+        "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby",
+        "mysql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
+        "postgresql://gobby_test:gobby_test@127.0.0.1:notaport/gobby_test",
+    ],
+)
+def test_test_hub_dsn_refuses_other_targets(url: str | None) -> None:
+    assert not database_url_is_test_hub(url)
+
+
+def test_guard_accepts_isolated_home_and_localhost_hub(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In-process accept case: a temporary operator home, and a bootstrap naming the hub."""
+    operator = tmp_path / "operator"
+    monkeypatch.setenv("HOME", str(operator))
+    home = tmp_path / "census-home"
+    _write_bootstrap(home, ISOLATED_HUB_URL)
+    assert unsafe_reason(_guard_env(home, LOCALHOST_HUB_URL), operator_home=operator) is None
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_guard_refuses_gobby_home_at_operator_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, nested: bool
+) -> None:
+    operator = tmp_path / "operator"
+    monkeypatch.setenv("HOME", str(operator))
+    homes = [operator, operator / ".gobby"]
+    if nested:
+        homes.append(operator / ".gobby" / "logs")
+    for home in homes:
+        reason = unsafe_reason(_guard_env(home), operator_home=operator)
+        assert reason is not None and "operator home" in reason, home
+
+
+def test_guard_refuses_bootstrap_naming_another_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reason names the file and never echoes the URL it refused."""
+    operator = tmp_path / "operator"
+    monkeypatch.setenv("HOME", str(operator))
+    home = tmp_path / "census-home"
+    _write_bootstrap(home, LIVE_LOOKING_URL)
+    reason = unsafe_reason(_guard_env(home), operator_home=operator)
+    assert reason is not None and "bootstrap.yaml" in reason
+    assert "live-secret" not in reason and "5432" not in reason
+
+
+@pytest.mark.parametrize("with_file", [False, True])
+def test_guard_refuses_bootstrap_without_database_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, with_file: bool
+) -> None:
+    operator = tmp_path / "operator"
+    monkeypatch.setenv("HOME", str(operator))
+    home = tmp_path / "census-home"
+    if with_file:
+        _write_bootstrap(home, None)
+    else:
+        home.mkdir()
+    reason = unsafe_reason(_guard_env(home), operator_home=operator)
+    assert reason is not None and "bootstrap.yaml" in reason
+
+
+def test_bootstrap_scan_decodes_only_the_database_line(tmp_path: Path) -> None:
+    """Other lines are never decoded or parsed: the undecodable byte line is skipped, and an
+    indented database_url is not the top-level key."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "bootstrap.yaml").write_bytes(
+        b"opaque: \xff\xfe\n"
+        b"  database_url: indented-is-not-the-key\n"
+        b'database_url: "' + TEST_HUB_URL.encode("ascii") + b'"\n'
+    )
+    assert bootstrap_database_url(home) == TEST_HUB_URL
+
+
+def test_record_target_refuses_frozen_fixture_directory(tmp_path: Path) -> None:
+    """Injected roots keep the check independent of where the worktree sits (R38, R57)."""
+    repo = tmp_path / "repo"
+    home = tmp_path / "home"
+    fixture = repo / "tests" / "contracts" / "runner_census.json"
+    problem = record_target_problem(fixture, repo=repo, home=home)
+    assert problem is not None and "tests/contracts" in problem
+    assert record_target_problem(repo / "tests" / "e2e" / "c.json", repo=repo, home=home) is None
+    assert record_target_problem(tmp_path / "scratch" / "c.json", repo=repo, home=home) is None
+    assert record_target_problem(home / "c.json", repo=repo, home=home) is not None
+
+
+def test_census_module_skips_off_the_recorded_host() -> None:
+    """The recorded host is darwin under CPython 3.14; any other platform or minor version skips
+    the census with a reason that names it (R57). The skip is the exact minor version."""
+    assert RECORDED_PYTHON == (3, 14)
+    assert census_skip_reason(platform="darwin", version=(3, 14)) is None
+    for platform, version in (("linux", (3, 14)), ("win32", (3, 14)), ("darwin", (3, 13))):
+        reason = census_skip_reason(platform=platform, version=version)
+        assert reason is not None and "macOS" in reason and "3.14" in reason, (platform, version)
+
+
+def test_real_home_ignores_the_harness_home_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The e2e harness sets HOME to the isolated gobby home, so the operator's home must come
+    from the account database, not from HOME (found by the census e2e run)."""
+    isolated = tmp_path / "isolated"
+    monkeypatch.setenv("HOME", str(isolated))
+    assert real_home() != isolated
+    assert real_home() != isolated.resolve()
+
+
+def test_guard_accepts_the_harness_shaped_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HOME and GOBBY_HOME name the same isolated directory. That is an isolated home, not the
+    operator's, so the guard accepts a bootstrap that names the isolated hub. Only the path
+    comparison touches the operator's home; no file under it is read."""
+    home = tmp_path / "isolated"
+    monkeypatch.setenv("HOME", str(home))
+    _write_bootstrap(home, ISOLATED_HUB_URL)
+    assert unsafe_reason(_guard_env(home, LOCALHOST_HUB_URL), operator_home=real_home()) is None
