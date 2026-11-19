@@ -1,0 +1,25 @@
+{
+  "chunk": "P0-HARNESS",
+  "rows": [
+    {
+      "row": "HTTP DELETE /api/admin/test/unregister-agent/{run_id}",
+      "status": "dropped",
+      "evidence": "Test-only Python route (src/gobby/servers/routes/admin/_testing.py); the Rust full-daemon harness seeds state through the test hub and needs no native handler. Dropped by D20, approved in ruling 23."
+    },
+    {
+      "row": "HTTP POST /api/admin/test/register-agent",
+      "status": "dropped",
+      "evidence": "Test-only Python route (src/gobby/servers/routes/admin/_testing.py); the Rust full-daemon harness seeds state through the test hub and needs no native handler. Dropped by D20, approved in ruling 23."
+    },
+    {
+      "row": "HTTP POST /api/admin/test/register-project",
+      "status": "dropped",
+      "evidence": "Test-only Python route (src/gobby/servers/routes/admin/_testing.py); the Rust full-daemon harness seeds state through the test hub and needs no native handler. Dropped by D20, approved in ruling 23."
+    },
+    {
+      "row": "HTTP POST /api/admin/test/set-session-usage",
+      "status": "dropped",
+      "evidence": "Test-only Python route (src/gobby/servers/routes/admin/_testing.py); the Rust full-daemon harness seeds state through the test hub and needs no native handler. Dropped by D20, approved in ruling 23."
+    }
+  ]
+}

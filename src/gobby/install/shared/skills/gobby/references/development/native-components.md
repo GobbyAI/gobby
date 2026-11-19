@@ -52,8 +52,9 @@ and its supported Zig/SDK toolchain; a library-only build does not validate it.
 root that no registered checkout owns; `--apply` removes them and `--json` emits
 the findings.
 
-gcode database tests read only `GCODE_POSTGRES_TEST_DATABASE_URL`. Point it at
-`gobby_gcode_test` on the isolated hub. The fixture creates a cohort keyed by
+gcode database tests read only `DATABASE_URL`, through the shared test hub
+guard. Point it at the isolated hub (`gobby_test`); gcode derives its
+`gobby_gcode_test` namespace there. The fixture creates a cohort keyed by
 compiled schema version and a 32-character schema root-hash prefix, enables
 `pg_search`, applies the schema in `public`, and seeds the fixture machine.
 Supply a temporary `GOBBY_HOME`/fixture machine identity. Keep DB modules named
@@ -82,4 +83,4 @@ or any rule active. Template defaults are source evidence only. Native spawning
 requires an available host and has no silent fallback; use typed failures
 and the relevant agent/session recovery procedure.
 
-_Version: 1.1.2_
+_Version: 1.1.3_

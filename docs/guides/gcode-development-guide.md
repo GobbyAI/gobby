@@ -119,8 +119,9 @@ isolated roots and linked worktrees; standalone-only identity is rejected.
 
 ### Contributor database fixtures
 
-`crates/gcode/src/test_env.rs` reads only `GCODE_POSTGRES_TEST_DATABASE_URL`.
-Point it at `gobby_gcode_test` on the isolated test hub. The fixture selects
+`crates/gcode/src/test_env.rs` reads only `DATABASE_URL`, through the shared
+test hub guard. Point it at the isolated test hub (`gobby_test`); gcode derives
+its `gobby_gcode_test` namespace on that hub. The fixture selects
 `gobby_gcode_test_v<compiled schema version>_<32-character root hash prefix>`
 on that hub, creates the database and enables `pg_search` when absent, then
 applies the schema in `public` and seeds the fixture machine. Supply a temporary
