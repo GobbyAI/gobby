@@ -12,11 +12,12 @@ import json
 import sys
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass, make_dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from gobby.worker.decode import DataclassFields, Int
+from gobby.worker.decode import Anything, DataclassFields, Int, JsonObject
 from gobby.worker.facade import WorkerFacade
 from gobby.worker.gate import phase_scope
 from gobby.worker.ops import DomainOp
@@ -70,6 +71,11 @@ class RaisingFinder:
 Unresolvable = make_dataclass(
     "Unresolvable", [("label", "NoSuchTypeForRegistration")], module=__name__
 )
+# Annotations that typing.get_type_hints cannot evaluate (R62): a string that does not parse,
+# and a string whose evaluation raises ZeroDivisionError.
+BadSyntax = make_dataclass("BadSyntax", [("label", "1 +")], module=__name__)
+DivideByZero = make_dataclass("DivideByZero", [("label", "1 / 0")], module=__name__)
+DOC_PATH = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "worker-protocol.md"
 
 
 def echo_op(n: int) -> int:
@@ -113,6 +119,14 @@ def big_result_op() -> int:
     return 2**64
 
 
+def wide_any_op(value: Any) -> str:
+    return "exact" if value == 2**70 else "other"
+
+
+def wide_json_op(value: dict[str, object]) -> str:
+    return "exact" if value.get("n") == 2**70 else "other"
+
+
 def domain_op(name: str, function: str, params: Mapping[str, Any] | None = None) -> DomainOp:
     return DomainOp(name=name, func=f"{__name__}:{function}", params=dict(params or {}))
 
@@ -128,6 +142,18 @@ _SYNTHETIC_OPS: tuple[DomainOp, ...] = (
     domain_op("cyclic_result", "cyclic_result_op"),
     domain_op("big_result", "big_result_op"),
     domain_op("keyed", "label_of", {"record": DataclassFields(f"{__name__}:Keyed")}),
+    domain_op("wide_any", "wide_any_op", {"value": Anything()}),
+    domain_op("wide_json", "wide_json_op", {"value": JsonObject()}),
+    domain_op(
+        "syntax_annotation",
+        "label_of",
+        {"record": DataclassFields(f"{__name__}:BadSyntax")},
+    ),
+    domain_op(
+        "zero_annotation",
+        "label_of",
+        {"record": DataclassFields(f"{__name__}:DivideByZero")},
+    ),
     DomainOp(name="op_import_fault", func=f"{FAULT_MODULE}:run", params={}),
     domain_op(
         "dataclass_import_fault",
@@ -179,6 +205,14 @@ FAULT_CASES: tuple[tuple[str, dict[str, object], str], ...] = (
     ("dataclass_outside_table", {"record": {}}, "<class 'float'>"),
     # NameError (R47): an annotation that typing.get_type_hints cannot resolve.
     ("dataclass_unresolved", {"record": {}}, "NoSuchTypeForRegistration"),
+    # Any Exception from evaluating an annotation is a TypeError registration fault (R62): a
+    # SyntaxError from a string that does not parse, and a ZeroDivisionError from one that raises.
+    ("syntax_annotation", {"record": {}}, "dataclass annotations do not resolve: BadSyntax"),
+    (
+        "zero_annotation",
+        {"record": {}},
+        "dataclass annotations do not resolve: DivideByZero: division by zero",
+    ),
 )
 
 
@@ -445,3 +479,30 @@ async def test_wire_bound_integer_param_is_accepted(value: int) -> None:
     facade = await ready_facade()
     reply = await send(facade, invoke_bytes("echo", {"n": value}))
     assert reply["result"] == value
+
+
+async def test_anything_and_json_object_params_pass_wide_integers_through() -> None:
+    # Only an Int parameter refuses an integer outside the wire range (R54, R65). Anything and
+    # JsonObject values reach the op as decoded JSON.
+    facade = await ready_facade()
+    scalar = await send(facade, invoke_bytes("wide_any", {"value": 2**70}))
+    assert scalar["result"] == "exact"
+    nested = await send(facade, invoke_bytes("wide_json", {"value": {"n": 2**70}}))
+    assert nested["result"] == "exact"
+
+
+@pytest.mark.parametrize("annotated", [BadSyntax, DivideByZero], ids=["syntax", "zero-division"])
+def test_class_target_with_unevaluable_annotation_fails_at_registration(annotated: type) -> None:
+    # A class target builds its field specs when it is registered, so the fault surfaces there
+    # as a TypeError (R62), not as the SyntaxError or ZeroDivisionError underneath.
+    with pytest.raises(TypeError, match="dataclass annotations do not resolve"):
+        DataclassFields(annotated)
+
+
+def test_bounds_paragraph_states_what_the_decoders_refuse() -> None:
+    # R65: the Bounds paragraph names the one decoder that refuses a wide integer, and the two
+    # decoders that pass it through as decoded JSON.
+    text = DOC_PATH.read_text(encoding="utf-8")
+    assert "An `Int` parameter outside it is `invalid_request`." in text
+    assert "`Anything` and `JsonObject` values pass through as decoded JSON." in text
+    assert "A domain parameter outside it" not in text

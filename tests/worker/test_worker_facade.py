@@ -45,6 +45,7 @@ PHASES: tuple[str, ...] = (
 _TESTS_DIR = Path(__file__).resolve().parents[1]
 CORPUS_PATH = _TESTS_DIR / "contracts" / "worker_protocol.json"
 INVENTORY_PATH = _TESTS_DIR / "contracts" / "runner_lifecycle.json"
+DOC_PATH = _TESTS_DIR.parent / "docs" / "contracts" / "worker-protocol.md"
 
 Step = Callable[[], Awaitable[None]]
 Create = Callable[[], Coroutine[Any, Any, object]]
@@ -682,6 +683,38 @@ async def test_create_that_returns_early_is_a_failed_initialize() -> None:
     later = await send(facade, initialize_bytes("content_refusal"))
     assert error_code(later) == "worker_unusable"
     assert error_code(await send(facade, invoke_bytes("quick", {}))) == "worker_unusable"
+
+
+async def test_create_that_skips_a_phase_scope_is_a_failed_initialize() -> None:
+    # R63: a create that parks at a phase scope the order does not allow answers failed, and the
+    # facade is unusable after it. The timeouts turn a regression into a failure, not a hang.
+    async def create() -> object:
+        owner = object()
+        async with phase_scope(InitPhase.STORAGE_AND_CONFIG, owner):
+            pass
+        async with phase_scope(InitPhase.RUNTIME_SERVICES, owner):
+            pass
+        return owner
+
+    facade = WorkerFacade(credential=CREDENTIAL, ops=OPS, create=create)
+    await bind(facade)
+    first = await asyncio.wait_for(send(facade, initialize_bytes("storage_and_config")), timeout=5)
+    assert first["result"] == {
+        "phase": "storage_and_config",
+        "status": "failed",
+        "next_phase": None,
+        "message": "create entered a phase out of order",
+        "error_type": "PhaseOrderViolation",
+    }
+    later = await asyncio.wait_for(send(facade, initialize_bytes("content_refusal")), timeout=5)
+    assert error_code(later) == "worker_unusable"
+    assert error_code(await send(facade, invoke_bytes("quick", {}))) == "worker_unusable"
+
+
+def test_phase_table_documents_the_phase_order_violation() -> None:
+    text = DOC_PATH.read_text(encoding="utf-8")
+    assert "PhaseOrderViolation" in text
+    assert "create entered a phase out of order" in text
 
 
 async def test_worker_op_binds_no_caller() -> None:

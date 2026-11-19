@@ -9,6 +9,7 @@ gobby.worker.phases exist (G1 and G2).
 from __future__ import annotations
 
 import ast
+import asyncio
 import functools
 import json
 import os
@@ -30,7 +31,7 @@ from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner import GobbyRunner
 from gobby.worker.gate import phase_scope
 from gobby.worker.phase_ids import InitPhase
-from gobby.worker.phases import UNUSABLE, PhaseDriver
+from gobby.worker.phases import UNUSABLE, PhaseDriver, PhaseOutcome
 
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY = ROOT / "tests/contracts/runner_lifecycle.json"
@@ -206,6 +207,29 @@ async def test_create_passes_config_path_and_verbose(monkeypatch: pytest.MonkeyP
     for phase in InitPhase:
         assert (await driver.initialize(phase)).status == "ready"
     assert seams.storage_args == [(config_path, True)]
+
+
+async def test_create_that_skips_a_phase_scope_fails_without_waiting_forever() -> None:
+    # R63: a create that parks at a phase scope that is neither the requested phase nor the
+    # following one answers failed at once. The timeouts turn a regression into a failure.
+    async def skipping_create() -> object:
+        owner = object()
+        async with phase_scope(InitPhase.STORAGE_AND_CONFIG, owner):
+            pass
+        async with phase_scope(InitPhase.RUNTIME_SERVICES, owner):
+            pass
+        return owner
+
+    driver = PhaseDriver(skipping_create)
+    outcome = await asyncio.wait_for(driver.initialize(InitPhase.STORAGE_AND_CONFIG), timeout=5)
+    assert isinstance(outcome, PhaseOutcome)
+    assert outcome.status == "failed"
+    assert outcome.next_phase is None
+    assert outcome.message == "create entered a phase out of order"
+    assert outcome.error_type == "PhaseOrderViolation"
+    assert driver.unusable
+    later = await asyncio.wait_for(driver.initialize(InitPhase.CONTENT_REFUSAL), timeout=5)
+    assert later is UNUSABLE
 
 
 def _load_json(path: Path) -> dict[str, Any]:
