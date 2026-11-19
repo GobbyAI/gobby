@@ -1,0 +1,300 @@
+"""Contracts for the communications and voice cases of the schema 3 corpus.
+
+The corpus must hold a case for each of the 34 communications and voice ledger keys, 36 cases in
+all, with a startup block that enables communications, a fixed Slack channel, voice masks, provider
+edge side effects and webhook answers. A test that starts a daemon runs only after its inputs exist.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+
+from tests.contracts import corpus_v3, recorder_v3
+from tests.contracts.recorder_daemon_v3 import (
+    CORPUS_SLACK_CHANNEL_ID,
+    RecorderDaemon,
+    recorder_daemon,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+V3_DIR = corpus_v3.V3_DIR
+STATUS_DIR = REPO_ROOT / "docs" / "contracts" / "parity-ledger-status.d"
+STATUS_FILES = ("comms-cron-hub-nodes.json", "websocket-chat-voice-ui.json")
+COMMS_VOICE_FAMILIES = frozenset({"communications", "voice"})
+COMMS_VOICE_CASE_COUNT = 36
+TOTAL_V3_CASE_COUNT = 41
+COMMS_VOICE_LEDGER_KEY_COUNT = 34
+GOBBY_CHAT_CHANNEL_ID = "00000000-0000-4000-8000-00000000c0c0"
+CORPUS_SLACK_CHANNEL_NAME = "corpus-slack"
+UUID_TEXT = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+SECRET_MARKER = "corpus-fake-"
+PROVIDER_REACHING_CASES = (
+    "comms_channel_create",
+    "comms_channel_update",
+    "comms_send",
+    "comms_attachment",
+    "comms_mcp_send_message",
+)
+VOICE_STATUS_CASES = ("voice_status", "voice_status_want_tts")
+ENGINE_FIELDS = ("whisper_model", "tts_provider")
+ENGINE_SUFFIXES = frozenset({"engine", "model", "package", "provider"})
+AVAILABILITY_FIELDS = (
+    "stt_available",
+    "stt_reason",
+    "voice_ready",
+    "voice_loading",
+    "stt_warmup_status",
+    "stt_warmup_error",
+    "tts_warmup_status",
+    "tts_warmup_error",
+    "tts_available",
+    "tts_reason",
+    "tts_backend_kind",
+    "tts_capabilities",
+    "transcription_enabled",
+    "translation_enabled",
+)
+VISIBLE_VOICE_FIELDS = frozenset({"enabled", "stt_enabled", "tts_enabled"})
+WEBHOOK_VERIFY_CASE = "comms_webhook_verify"
+WEBHOOK_RECEIVE_CASE = "comms_webhook_receive"
+README_HEADINGS = (
+    "Communications enablement",
+    "Seeded channel",
+    "Voice masks",
+    "Uncovered voice WebSocket rows",
+)
+
+
+def _v3_cases() -> list[dict[str, Any]]:
+    return corpus_v3.load_cases(V3_DIR)
+
+
+def _v3_case_named(name: str) -> dict[str, Any]:
+    matches = [case for case in _v3_cases() if case.get("name") == name]
+    assert len(matches) == 1, f"expected one v3 case named {name!r}, found {len(matches)}"
+    return matches[0]
+
+
+def _comms_voice_cases() -> list[dict[str, Any]]:
+    return [case for case in _v3_cases() if case.get("family") in COMMS_VOICE_FAMILIES]
+
+
+def _communications_startup() -> dict[str, Any] | None:
+    startup = corpus_v3.load_manifest(V3_DIR).get("startup", {})
+    communications: dict[str, Any] | None = startup.get("communications")
+    return communications
+
+
+def _startup_channels() -> list[dict[str, Any]]:
+    startup = _communications_startup() or {}
+    channels: list[dict[str, Any]] = list(startup.get("channels", []))
+    return channels
+
+
+def _is_comms_or_voice_key(key: str) -> bool:
+    return (
+        "/api/comms" in key
+        or "/api/voice" in key
+        or key.startswith(("MCP gobby-communications:", "MCP gobby-voice:"))
+    )
+
+
+def _comms_and_voice_ledger_keys() -> set[str]:
+    keys: set[str] = set()
+    for file_name in STATUS_FILES:
+        rows = json.loads((STATUS_DIR / file_name).read_text(encoding="utf-8"))
+        keys.update(key for key in rows if _is_comms_or_voice_key(key))
+    return keys
+
+
+def _wait_for_active(
+    daemon: RecorderDaemon, channel_id: str, timeout_seconds: float
+) -> dict[str, Any]:
+    """Poll the channel's status until it is active without an init error, or the cap passes."""
+    deadline = time.monotonic() + timeout_seconds
+    status: dict[str, Any] = {}
+    with httpx.Client(
+        base_url=daemon.http_url, headers=daemon.operator_headers(), timeout=10.0
+    ) as client:
+        while True:
+            response = client.get(f"/api/comms/channels/{channel_id}/status")
+            if response.status_code == 200:
+                status = response.json()
+            else:
+                status = {"http_status": response.status_code}
+            if status.get("active") is True and status.get("init_error") is None:
+                return status
+            if time.monotonic() >= deadline:
+                return status
+            time.sleep(0.5)
+
+
+@pytest.mark.unit
+def test_every_comms_and_voice_ledger_key_has_a_v3_case() -> None:
+    keys = _comms_and_voice_ledger_keys()
+    assert len(keys) == COMMS_VOICE_LEDGER_KEY_COUNT, (
+        f"expected {COMMS_VOICE_LEDGER_KEY_COUNT} comms and voice ledger keys, found {len(keys)}"
+    )
+    declared = {case["ledger_key"] for case in _v3_cases()}
+    missing = sorted(keys - declared)
+    assert missing == [], f"no v3 case carries these ledger keys: {missing}"
+
+
+@pytest.mark.unit
+def test_v3_holds_thirty_six_comms_and_voice_cases() -> None:
+    cases = _comms_voice_cases()
+    assert len(cases) == COMMS_VOICE_CASE_COUNT, (
+        f"expected {COMMS_VOICE_CASE_COUNT} communications and voice cases, found {len(cases)}"
+    )
+
+
+@pytest.mark.e2e
+def test_comms_routes_answer_once_communications_is_enabled_at_start() -> None:
+    startup = _communications_startup()
+    assert startup is not None, "the v3 manifest declares no communications startup block"
+    with (
+        recorder_v3.open_run_database() as run,
+        recorder_daemon(base_url=run.base_url, database_url=run.url, startup=startup) as daemon,
+    ):
+        response = httpx.get(
+            f"{daemon.http_url}/api/comms/channels",
+            headers=daemon.operator_headers(),
+            timeout=30.0,
+        )
+    assert response.status_code == 200, f"GET /api/comms/channels answered {response.status_code}"
+
+
+@pytest.mark.e2e
+def test_corpus_slack_channel_is_live_at_the_first_request() -> None:
+    assert UUID_TEXT.fullmatch(CORPUS_SLACK_CHANNEL_ID), (
+        f"the fixed channel id is not a UUID: {CORPUS_SLACK_CHANNEL_ID!r}"
+    )
+    startup = _communications_startup()
+    assert startup is not None, "the v3 manifest declares no communications startup block"
+    with (
+        recorder_v3.open_run_database() as run,
+        recorder_daemon(base_url=run.base_url, database_url=run.url, startup=startup) as daemon,
+    ):
+        status = _wait_for_active(daemon, CORPUS_SLACK_CHANNEL_ID, timeout_seconds=60.0)
+    assert status.get("active") is True, f"the startup Slack channel is not active: {status}"
+    assert status.get("init_error") is None, (
+        f"the startup Slack channel failed to initialize: {status}"
+    )
+
+
+@pytest.mark.unit
+def test_fixed_channel_id_is_a_uuid_and_not_the_gobby_chat_id() -> None:
+    assert UUID_TEXT.fullmatch(CORPUS_SLACK_CHANNEL_ID), (
+        f"the fixed channel id is not a UUID: {CORPUS_SLACK_CHANNEL_ID!r}"
+    )
+    assert CORPUS_SLACK_CHANNEL_ID != GOBBY_CHAT_CHANNEL_ID, (
+        "the fixed channel id is the dropped gobby_chat id"
+    )
+    startup_ids = [row.get("id") for row in _startup_channels()]
+    assert CORPUS_SLACK_CHANNEL_ID in startup_ids, (
+        "the communications startup block does not declare the fixed channel id"
+    )
+
+
+@pytest.mark.unit
+def test_no_comms_or_voice_case_uses_the_dropped_gobby_chat_id() -> None:
+    cases = _comms_voice_cases()
+    assert len(cases) >= COMMS_VOICE_CASE_COUNT, (
+        f"scanned {len(cases)} communications and voice cases, expected {COMMS_VOICE_CASE_COUNT}"
+    )
+    carrying = [
+        case["name"] for case in cases if GOBBY_CHAT_CHANNEL_ID in json.dumps(case, sort_keys=True)
+    ]
+    assert carrying == [], f"cases carry the dropped gobby_chat id: {carrying}"
+
+
+@pytest.mark.unit
+def test_voice_status_cases_mask_engine_and_availability_fields() -> None:
+    for name in VOICE_STATUS_CASES:
+        case = _v3_case_named(name)
+        body = case["response"]["body"]
+        assert isinstance(body, dict), f"{name} does not answer a JSON object"
+        masked = set(case["mask"])
+        for field in (*ENGINE_FIELDS, *AVAILABILITY_FIELDS):
+            assert f"/response/{field}" in masked, f"{name} does not mask {field}"
+        for key in body:
+            if key.rsplit("_", 1)[-1] in ENGINE_SUFFIXES:
+                assert f"/response/{key}" in masked, f"{name} does not mask engine field {key}"
+            assert f"/response/{key}" in masked or key in VISIBLE_VOICE_FIELDS, (
+                f"{name} answers {key!r}, which is neither masked nor a visible flag"
+            )
+
+
+@pytest.mark.unit
+def test_every_provider_reaching_case_declares_a_provider_edge_side_effect() -> None:
+    cases = _comms_voice_cases()
+    assert len(cases) == COMMS_VOICE_CASE_COUNT, (
+        f"expected {COMMS_VOICE_CASE_COUNT} communications and voice cases, found {len(cases)}"
+    )
+    by_name = {case["name"]: case for case in cases}
+    for name in PROVIDER_REACHING_CASES:
+        assert name in by_name, f"{name} is not a communications or voice case"
+        channels = [effect.get("channel") for effect in by_name[name].get("side_effects", [])]
+        assert "provider_edge" in channels, (
+            f"{name} reaches a provider host but declares no provider_edge side effect"
+        )
+
+
+@pytest.mark.unit
+def test_no_committed_case_holds_a_generated_secret_value() -> None:
+    manifest = corpus_v3.load_manifest(V3_DIR)
+    assert len(manifest["cases"]) == TOTAL_V3_CASE_COUNT, (
+        f"expected {TOTAL_V3_CASE_COUNT} schema 3 cases, found {len(manifest['cases'])}"
+    )
+    leaking = [
+        name
+        for name in manifest["cases"]
+        if SECRET_MARKER in (V3_DIR / name).read_text(encoding="utf-8")
+    ]
+    assert leaking == [], f"committed cases hold a generated secret value: {leaking}"
+
+
+@pytest.mark.unit
+def test_v3_readme_documents_comms_voice_scope() -> None:
+    readme = V3_DIR / "README.md"
+    assert readme.is_file(), "tests/contracts/v3/README.md does not exist"
+    headings = {
+        line.lstrip("#").strip()
+        for line in readme.read_text(encoding="utf-8").splitlines()
+        if line.startswith("#")
+    }
+    for heading in README_HEADINGS:
+        assert heading in headings, f"the v3 README has no heading {heading!r}"
+
+
+@pytest.mark.unit
+def test_startup_slack_channel_declares_a_default_destination() -> None:
+    rows = [row for row in _startup_channels() if row.get("name") == CORPUS_SLACK_CHANNEL_NAME]
+    assert len(rows) == 1, (
+        f"the communications startup block declares {len(rows)} {CORPUS_SLACK_CHANNEL_NAME!r} "
+        "channels, expected 1"
+    )
+    destination = rows[0].get("config", {}).get("default_destination")
+    assert isinstance(destination, str) and destination, (
+        "the startup Slack channel declares no default_destination"
+    )
+
+
+@pytest.mark.unit
+def test_webhook_cases_answer_as_the_routes_document() -> None:
+    verify = _v3_case_named(WEBHOOK_VERIFY_CASE)["response"]
+    assert verify["status"] == 200, f"the webhook GET answered {verify['status']}"
+    assert str(verify["headers"].get("content-type", "")).startswith("text/plain")
+    assert verify["body"] == "corpus-challenge", f"the webhook GET answered {verify['body']!r}"
+    receive = _v3_case_named(WEBHOOK_RECEIVE_CASE)["response"]
+    assert receive["status"] == 400, f"the webhook POST answered {receive['status']}"
+    assert receive["body"] == {
+        "detail": f"Webhook signature verification failed for channel '{CORPUS_SLACK_CHANNEL_NAME}'"
+    }, f"the webhook POST answered {receive['body']!r}"

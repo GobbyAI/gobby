@@ -36,6 +36,9 @@ from tests.fixtures.postgres import (
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 E2E_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+# The fixed row id of the startup Slack channel. Empty until the communications startup block is
+# applied before the daemon starts.
+CORPUS_SLACK_CHANNEL_ID = ""
 SCHEMA_APPLY_TIMEOUT_SECONDS = 300
 
 
