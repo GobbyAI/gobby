@@ -157,6 +157,7 @@ fn file_menu_lists_project_actions_and_help_holds_the_alert_log() {
         [
             "New terminal",
             "New tab",
+            "New grid...",
             "New project…",
             "Open project…",
             "Destroy orphaned terminals…",
