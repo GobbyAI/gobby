@@ -105,9 +105,9 @@ static WS_NATIVE_CLAIMS: &[RouteClaim] = &[RouteClaim {
 }];
 
 /// Native WebSocket bridge for the publish path under `/_gobby/`.
-pub struct WsBridge;
+pub struct WsBridgeFamily;
 
-impl RouteFamily<FrontDoorState> for WsBridge {
+impl RouteFamily<FrontDoorState> for WsBridgeFamily {
     fn name(&self) -> &'static str {
         "ws_bridge"
     }
@@ -124,10 +124,10 @@ impl RouteFamily<FrontDoorState> for WsBridge {
 
 /// Terminal write route, answered only while the runtime is present.
 #[cfg(unix)]
-pub struct TerminalWrite;
+pub struct TerminalWriteFamily;
 
 #[cfg(unix)]
-impl RouteFamily<FrontDoorState> for TerminalWrite {
+impl RouteFamily<FrontDoorState> for TerminalWriteFamily {
     fn name(&self) -> &'static str {
         "terminal_write"
     }
@@ -145,10 +145,10 @@ impl RouteFamily<FrontDoorState> for TerminalWrite {
 /// Lease administration routes. The rows match by path; the method is checked by the
 /// handler, so a wrong method keeps the handler's answer.
 #[cfg(unix)]
-pub struct LeaseAdmin;
+pub struct LeaseAdminFamily;
 
 #[cfg(unix)]
-impl RouteFamily<FrontDoorState> for LeaseAdmin {
+impl RouteFamily<FrontDoorState> for LeaseAdminFamily {
     fn name(&self) -> &'static str {
         "lease_admin"
     }
@@ -164,9 +164,9 @@ impl RouteFamily<FrontDoorState> for LeaseAdmin {
 }
 
 /// Node-internal routes, answered only for loopback peers.
-pub struct NodeInternal;
+pub struct NodeInternalFamily;
 
-impl RouteFamily<FrontDoorState> for NodeInternal {
+impl RouteFamily<FrontDoorState> for NodeInternalFamily {
     fn name(&self) -> &'static str {
         "node_internal"
     }
@@ -182,9 +182,9 @@ impl RouteFamily<FrontDoorState> for NodeInternal {
 }
 
 /// Runtime handshake challenge route.
-pub struct RuntimeChallenge;
+pub struct RuntimeChallengeFamily;
 
-impl RouteFamily<FrontDoorState> for RuntimeChallenge {
+impl RouteFamily<FrontDoorState> for RuntimeChallengeFamily {
     fn name(&self) -> &'static str {
         "runtime_challenge"
     }
@@ -200,9 +200,9 @@ impl RouteFamily<FrontDoorState> for RuntimeChallenge {
 }
 
 /// Node channel route.
-pub struct NodeChannel;
+pub struct NodeChannelFamily;
 
-impl RouteFamily<FrontDoorState> for NodeChannel {
+impl RouteFamily<FrontDoorState> for NodeChannelFamily {
     fn name(&self) -> &'static str {
         "node_channel"
     }
@@ -218,9 +218,9 @@ impl RouteFamily<FrontDoorState> for NodeChannel {
 }
 
 /// Machines routes, under `/api/machines` and below.
-pub struct Machines;
+pub struct MachinesFamily;
 
-impl RouteFamily<FrontDoorState> for Machines {
+impl RouteFamily<FrontDoorState> for MachinesFamily {
     fn name(&self) -> &'static str {
         "machines"
     }
@@ -236,9 +236,9 @@ impl RouteFamily<FrontDoorState> for Machines {
 }
 
 /// Browser and listener WebSocket upgrades.
-pub struct WsNative;
+pub struct WsNativeFamily;
 
-impl RouteFamily<FrontDoorState> for WsNative {
+impl RouteFamily<FrontDoorState> for WsNativeFamily {
     fn name(&self) -> &'static str {
         "ws_native"
     }

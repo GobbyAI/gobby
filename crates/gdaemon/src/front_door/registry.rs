@@ -14,8 +14,11 @@ use super::FrontDoorState;
 use super::health::HealthFamily;
 use super::routes::TerminalFamily;
 #[cfg(unix)]
-use super::surfaces::{LeaseAdmin, TerminalWrite};
-use super::surfaces::{Machines, NodeChannel, NodeInternal, RuntimeChallenge, WsBridge, WsNative};
+use super::surfaces::{LeaseAdminFamily, TerminalWriteFamily};
+use super::surfaces::{
+    MachinesFamily, NodeChannelFamily, NodeInternalFamily, RuntimeChallengeFamily, WsBridgeFamily,
+    WsNativeFamily,
+};
 
 /// Every route family, one per line, in alphabetical order.
 #[rustfmt::skip]
@@ -30,14 +33,14 @@ pub static FAMILIES: &[&dyn RouteFamily<FrontDoorState>] = &[
 #[cfg(unix)]
 pub fn surfaces() -> Vec<&'static dyn RouteFamily<FrontDoorState>> {
     vec![
-        &LeaseAdmin,
-        &Machines,
-        &NodeChannel,
-        &NodeInternal,
-        &RuntimeChallenge,
-        &TerminalWrite,
-        &WsBridge,
-        &WsNative,
+        &LeaseAdminFamily,
+        &MachinesFamily,
+        &NodeChannelFamily,
+        &NodeInternalFamily,
+        &RuntimeChallengeFamily,
+        &TerminalWriteFamily,
+        &WsBridgeFamily,
+        &WsNativeFamily,
     ]
 }
 
@@ -45,12 +48,12 @@ pub fn surfaces() -> Vec<&'static dyn RouteFamily<FrontDoorState>> {
 #[cfg(not(unix))]
 pub fn surfaces() -> Vec<&'static dyn RouteFamily<FrontDoorState>> {
     vec![
-        &Machines,
-        &NodeChannel,
-        &NodeInternal,
-        &RuntimeChallenge,
-        &WsBridge,
-        &WsNative,
+        &MachinesFamily,
+        &NodeChannelFamily,
+        &NodeInternalFamily,
+        &RuntimeChallengeFamily,
+        &WsBridgeFamily,
+        &WsNativeFamily,
     ]
 }
 

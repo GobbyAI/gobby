@@ -45,3 +45,19 @@ fn route_claim_matchers_keep_today_rules() {
     assert!(any.matches(&Method::GET, "/anything", false));
     assert!(any.matches(&Method::POST, "/", true));
 }
+
+#[test]
+fn upgrade_only_row_answers_upgrades_and_refuses_plain_requests() {
+    let upgrade_only = RouteClaim {
+        kind: Kind::UpgradeOnly,
+        ..claim(None, PathMatch::Any)
+    };
+    assert!(
+        upgrade_only.matches(&Method::GET, "/ws", true),
+        "an upgrade matches an upgrade-only row"
+    );
+    assert!(
+        !upgrade_only.matches(&Method::GET, "/ws", false),
+        "a plain request does not match an upgrade-only row"
+    );
+}
