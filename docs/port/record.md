@@ -1315,6 +1315,82 @@ Source: AskUserQuestion answers and chat messages in session gobby#19401.
     - not observed: several subagents editing and committing in one checkout under one
       session, and the Workflow tool's worktree isolation. The port session tries each on one
       small leaf before fanning out.
+28. The port session widens its own fan-out (Josh, 2026-11-18 ~22:35 CT, over Telegram to the port
+    session gobby#22918). Asked whether to open several port sessions per wave so that more chunks
+    run at once: "Happy to, but I thought you could do that yourself with ultra code."
+    The port session's reading, which Josh corrects where it is wrong. The one port session of
+    ruling 27 runs every unblocked chunk of a wave at once through the Workflow tool, each chunk in
+    its own worktree. Subagents may make the red and green commits inside their chunk's worktree;
+    the port session rules, validates and lands. No further port session is opened unless the port
+    session asks for one. D23's cap on concurrent chunk sessions does not limit this fan-out; its
+    text is not rewritten.
+29. No version bump per landing (Josh, same exchange). Asked to drop the per-landing bump: "Yes. I
+    thought we fixed that when I ruled that we only care about the version checks during CI."
+    The port session's reading, which Josh corrects where it is wrong. A landing on 0.9.0 carries
+    no managed-binary version bump, lockfile version entry or managed pin. Each changed managed
+    binary is bumped once, in the cutover that promotes it, because the promotion guard needs a new
+    version only at promotion. A local hook or land_commit check that still demands a bump per
+    commit is friction to switch off or fix. This overrides D39's per-commit bump, protocol step
+    8's "lands and bumps" and the protocol's "a landing bumps only gdaemon"; their text is not
+    rewritten. AGENTS.md's Architecture Facts paragraph is corrected with this ruling.
+30. No observation windows until final validation (Josh, same exchange): "We don't need observation
+    windows until after we're done with the port. There are no users except me. We need to be
+    agile." Also, ~22:20 CT, on node key storage and keypair ideas: "No side quests until after the
+    port."
+    The port session's reading, which Josh corrects where it is wrong. A cutover keeps its backup
+    (ruling 17), its announcement, its promotion and its rollback recipe. It has no timed
+    observation window and no landing freeze for one: work continues once the cutover's smoke
+    checks pass. Windows return at the port's final validation, which Josh starts. This overrides
+    the window text of rulings 16 and 17 and the map's window hours until he says otherwise; their
+    text is not rewritten. Ideas that the port does not need are recorded as found-work lines and
+    built after it.
+31. Platforms (Josh, 2026-11-18, over Telegram to the port session). ~19:50 CT: "I'd like to be
+    compatible with Linux and windows x64 and windows arm". ~19:55 CT: "End product, 1.0 needs to
+    work on any os". ~20:00 CT: "Build it like we want compatibility but we can live smoke test
+    after the port. Only macOS tests need to pass 100% right now".
+    The port session's reading, which Josh corrects where it is wrong. The 1.0 product targets
+    macOS, Linux, Windows x64 and Windows arm64. A chunk's gate is green macOS tests. Product code
+    is written for the other platforms: no Unix-only assumption without a cfg branch, and every
+    contract a chunk freezes is platform-neutral or carries a recorded line per platform. No chunk
+    waits on a Linux container run or a Windows proof; each unproven leg is a record line for the
+    smoke test after the port. This overrides the map wherever it says Windows is after 1.0
+    (docs/port/map-v2.md:685, :3085, :3163); its text is not rewritten.
+32. Python flaws and features (Josh, 2026-11-18, over Telegram to the port session). ~13:00 CT:
+    "If it's broken python I don't want to spend a lot of time fixing it. I'd rather note the flaw
+    and make sure it doesn't carry over to the rust port." ~16:20 CT: "to clarify, if it's a
+    feature that doesn't work that doesn't mean cut the feature, it means don't port the bug".
+    ~16:40 CT: "Yeah don't cut features without asking". ~17:25 CT: "The port is yours to handle.
+    My admonition was on dropping features in gobby."
+    The port session's reading, which Josh corrects where it is wrong. A flaw in Python that the
+    port replaces is fixed only when the fix is cheap or the flaw is a regression the chunk made;
+    otherwise it becomes a debt line that names the defect and what Rust must do. A broken feature
+    is still ported, working. No Gobby product feature is dropped or narrowed without asking Josh.
+    Port tooling, harness and process decisions are the port session's to rule on and report.
+33. Worker and node credentials (Josh, 2026-11-18 ~21:38 to ~22:40 CT, over Telegram to the port
+    session). He asked whether the API key is used after the worker handshake and what the hub and
+    node do; the port session answered, and he replied "Ok just wanted confirmation". Later: "If I
+    ever sell a cloud hosted option I will have nodes on machines I don't control."
+    The port session's reading, which Josh corrects where it is wrong. The worker protocol's
+    credential covers the handshake only, so R1 keeps the worker channel bound to one connection
+    and private to the machine, or adds a per-command credential under a new protocol version.
+    That trust model is never reused for a network link. A node sends its API key on every request
+    to the hub in 1.0. No chunk freezes a contract that blocks replacing the node credential
+    later: the hub derives identity from the credential at one front-door seam, never from the
+    request body. Tenant-scoped keys, rotation, a public-CA certificate and keystore storage are
+    record lines, built after the port (ruling 30).
+34. Push at cutovers (Josh, 2026-11-18 ~14:15 CT, over Telegram to the port session): "we don't
+    have to push every few commits. wait until cutovers".
+    The port session's reading, which Josh corrects where it is wrong. A chunk lands on local
+    0.9.0 with land_commit and is not pushed. 0.9.0 is pushed to origin at each cutover. This
+    replaces the push in protocol step 8; its text is not rewritten.
+35. Agent tiers and Codex review (Josh, 2026-11-19, over Telegram to the port session): "No, opus
+    medium performs better" and "Are you using the codex code-reviewers?"
+    The port session's reading, which Josh corrects where it is wrong. Implementer and fix
+    agents run Opus 5.5 at medium effort; per-commit verifiers stay Haiku 5.5 at xhigh. Four
+    Codex code-reviewer sessions that Josh opened (sol-6.2, medium effort) review every chunk's
+    plan, its checkpoints and its final SHA, and no chunk lands before its Codex verdict on the
+    final SHA. Implementers record an exact-SHA test attestation and an evidence file for each
+    commit they make. This amends ruling 27's Haiku-only fan-out; its text is not rewritten.
 
 ## Rulings from memory
 
@@ -5008,7 +5084,7 @@ Josh's rulings about the port as Gobby memory held them on 2026-11-18, each with
   - Agent tiers and review (ruling 35): implementer and fix agents run Opus 5.5 at medium effort, per-commit verifiers stay Haiku 5.5 at xhigh, and the operator's four Codex code-reviewer sessions review every chunk's plan, checkpoints and final SHA. No chunk lands before its Codex verdict on the final SHA, and implementers record exact-SHA test attestations with an evidence file for each.
 - Contracts:
   - The worker credential is per spawn, rides its own inherited pipe, and is never in argv, the environment, a log or a repr (`WorkerBoot` and `WorkerAttachment` both omit it).
-  - `take_worker_boot` (`src/gobby/worker/channel.py`) reads the credential, then checks with fstat that the channel descriptor is open and is a socket. A closed or non-socket channel refuses the marked start with exit 78 and a message naming `GOBBY_WORKER_CHANNEL_FD`, before `socket()` is reached (3f7f95a93fda63f6612a194644671a4c5d5f99db). It also refuses a marked start on nt with exit 78 before any descriptor is read.
+  - `take_worker_boot` (`src/gobby/worker/channel.py`) reads the credential, then checks with fstat that the channel descriptor is open and is a socket. A closed or non-socket channel refuses the marked start with exit 78 and a message naming `GOBBY_WORKER_CHANNEL_FD`, before `socket()` is reached (3f7f95a93fda63f6612a194644671a4c5d5f99db). Both descriptor variables go through one parser that accepts only 3 through 2**31 - 1 (the C int range) and refuses any other value with exit 78 and a message naming the variable (a12c94f6367386c893762789a34cdb6819a93361). It also refuses a marked start on nt with exit 78 before any descriptor is read.
   - docs/contracts/worker-protocol.md has a "Transport and framing" section (45326e421bc938ec0755539e848777d823299077): the socket pair, the three descriptor variables, the per-spawn credential pipe, what `take_worker_boot` refuses (exit 78), the length-prefixed frames with their request and reply limits, and the Rust client's 60 s and 300 s reply deadlines. Its R1 hand-off section points at the section that holds each item, and it states the schema_identity comparison.
   - main passes `worker` to run_gobby on every start, so the exact-call assertion in `tests/test_runner_lifecycle.py` (`test_main_override_env_lets_a_worktree_package_start`) names `worker=None`, and the record_start fake in `tests/test_runner_pid_file.py` accepts `worker`. No other run_gobby fake or assertion changed.
   - The real-Python handshake test asserts that the worker exits and is reaped once its channel closes. It sets `PYTHONPATH`, `DATABASE_URL`, `GOBBY_TEST_PROTECT` and `GOBBY_ALLOW_WORKTREE_DAEMON` on the child only and writes a `bootstrap.yaml` with database_url and files_home, the shape `tests/worker/test_orchestration_owner.py` uses; it sets no `GOBBY_CONFIG`.
@@ -5016,16 +5092,21 @@ Josh's rulings about the port as Gobby memory held them on 2026-11-18, each with
   - `worker_link_child_end_is_the_only_inherited_channel` lives in `crates/gdaemon/src/lifecycle/backend/tests.rs`, because `BackendChild::spawn` is private to the backend module; its parent-end check is in `crates/gdaemon/src/lifecycle/worker_channel/tests.rs`, which calls attach directly. `parent_end_is_close_on_exec` is a tokio test, because `UnixStream::from_std` needs the runtime attach runs in. The credential test compares without printing the credential.
   - The respawn test shortens its own supervisor's drain_timeout to one second: an exited but unreaped child keeps the drain's signal path open for the whole production grace budget (17 seconds), which that test does not exercise.
   - The red slice-3 Rust commit (38ed87afbe) failed `cargo clippy -D warnings` only on dead code in its stubs (`WorkerSpawn`, attach, `read_frame`, `BackendChild::worker`, then always None); bd210a7e59 wired each one, and every green commit passes clippy with no allow attribute.
+  - The worker attachment on `BackendChild` is transitional: the red slice-3 Rust commit (38ed87afbe) added `worker: Option<WorkerAttachment>`, always None there, so the credential and real-worker tests compiled and failed on their assertions; bd210a7e59 stores the attachment that attach returns in it.
 - Found and fixed in this chunk:
   - `tests/contracts/test_corpus_v3.py` (`test_ledger_and_waiver_manifest_match_the_digests_taken_at_head`) carried a bundled definition name in its assertion message, against AGENTS rule 16 (from #25938). c0895940cc rewords the message; the check is unchanged.
+  - Found by the Codex review (gobby#22924) at 3f7f95a93f: the inherited-descriptor parser in `src/gobby/worker/channel.py` accepted any integer of 3 or more, so a value beyond the C int range escaped the StartRefusal path (on Python 3.14 as OverflowError from `os.fstat` for `GOBBY_WORKER_CHANNEL_FD` and as TypeError from `os.fdopen` for `GOBBY_WORKER_CREDENTIAL_FD`). 125fb19b5f5351d2f9dbf233861dd0c4ee4f5b64 adds the failing test `test_take_worker_boot_refuses_a_descriptor_beyond_the_c_int_range`, parametrized over both variables. Closed at a12c94f6367386c893762789a34cdb6819a93361: one shared upper bound, 2**31 - 1, refuses with the existing StartRefusal (exit 78); no except clause was widened.
+  - `crates/gdaemon/src/lifecycle/worker_handshake/reply_tests.rs` carried the design-ruling ids R56 and R66 in two comments. Closed at a12c94f6367386c893762789a34cdb6819a93361: the comments describe the property in words.
+  - `tests/worker/test_worker_ops.py` (added by #25948) had 7 test-types findings: attr-defined on decoded object values at lines 127, 165 and 205 to 208, and func-returns-value at line 320. Closed at a12c94f6367386c893762789a34cdb6819a93361: the test narrows the decoded values with `isinstance(..., Window)` and `isinstance(..., WriteRequest)` and calls `require_machine_owned` as a statement, with no type: ignore, cast or baseline edit; `gobby test-types audit tests/worker` exits 0.
 - Unproven platform legs (post-port smoke test, ruling 31):
   - The worker transport is unix-only. The non-unix branch of `crates/gdaemon/src/lifecycle/worker_channel.rs` returns `io::ErrorKind::Unsupported` from attach, and `WorkerLink`'s exchange returns a channel error. The worker channel is transitional until CP-PREDELETE-CUT, so no product feature is narrowed. The Windows worker transport is unbuilt.
   - Windows x64 (`x86_64-pc-windows-msvc`): `worker_channel.rs` compiled in an isolated check with its parent types stubbed. With `WorkerSpawn` and attach crate-private again (3f7f95a93f), that check gives 2 dead_code warnings (`WorkerSpawn` never constructed, the non-unix attach never used), because `lifecycle::backend` is cfg(unix). The full gobby-daemon check for that target stops in the ring and openssl-sys build scripts on the macOS port host (no Windows SDK headers, no perl), before the crate compiles. Owner of the warnings: the seam chunk (#25950), which adds the non-unix dead_code allows and the win32 skips in its commit that edits the lifecycle sites. Owner of the run: post-port smoke test.
   - Windows arm64 (`aarch64-pc-windows-msvc`): not checked. No worker test has run on Windows. Owner: post-port smoke test.
   - Linux: the worker tests (`tests/worker`, the Rust lifecycle tests) ran on macOS only. Owner: post-port smoke test.
 - Review and validation:
-  - `crates/gdaemon/src/lifecycle/**` is a security path (D115). No security-auditor seat runs during the port (ruling 27). The lifecycle paths were reviewed by an independent Codex code-reviewer seat (gobby#22924), with the security angle included: 25 of 25 files, no blocking finding. Its two small findings are fixed at 7e8c09b13b and 3f7f95a93f.
-  - The harness gate ran at 3f7f95a93fda63f6612a194644671a4c5d5f99db: `cargo nextest run -p gobby-daemon -p gobby-test-support` with the filters full_daemon, loopback, http_replay, http_contracts, ws_envelope_golden, waivers, worker_handshake, guard, front_door, ws_golden_proxy, native_ws_transport, database, backend, worker_channel, lifecycle and run_modes: 457 passed. The four ignored loopback proofs (`crates/gdaemon/tests/loopback_network.rs`) passed from an unsandboxed shell, 4 of 4. The focused pytest set (tests/contracts, `tests/fixtures/test_hub_guard.py`, `tests/e2e/test_daemon_lifecycle.py`, tests/worker and the three runner test files): 848 passed, 1 skipped.
+  - `crates/gdaemon/src/lifecycle/**` is a security path (D115). No security-auditor seat runs during the port (ruling 27). The lifecycle paths were reviewed by an independent Codex code-reviewer seat (gobby#22924), with the security angle included: 25 of 25 files, no blocking finding. Its two small findings are fixed at 7e8c09b13b and 3f7f95a93f; its low residual at 3f7f95a93f (the descriptor range) is fixed at 125fb19b5f and a12c94f636.
+  - The final gate ran at a12c94f6367386c893762789a34cdb6819a93361: `cargo nextest run -p gobby-daemon -p gobby-test-support` with the filters full_daemon, loopback, http_replay, http_contracts, ws_envelope_golden, waivers, worker_handshake, guard, front_door, ws_golden_proxy, native_ws_transport, database, backend, worker_channel, lifecycle and run_modes: 457 passed, 392 skipped. The focused pytest set (tests/contracts, `tests/fixtures/test_hub_guard.py`, `tests/e2e/test_daemon_lifecycle.py`, tests/worker and the three runner test files): 850 passed, 1 skipped (848 at 3f7f95a93f plus the two parametrized cases of the descriptor range test). `cargo clippy -D warnings` and `cargo fmt --check` are clean for gobby-daemon and gobby-test-support; ruff check and ruff format are clean on the 15 Python files the branch changed; mypy src/ finds no issues in 2249 files; the test-quality audit of the 15 changed test files finds 0 new issues; the test-types audit finds 0 new errors in the 11 changed Python test files and 0 errors in tests/worker; the suppression ratchet holds at 165 of 165, 0 new.
+  - The four ignored loopback proofs (`crates/gdaemon/tests/loopback_network.rs`) passed from an unsandboxed shell at 3f7f95a93fda63f6612a194644671a4c5d5f99db, 4 of 4.
 <!-- gport:end found:R1 -->
 
 ### SEAM-FAMILY
