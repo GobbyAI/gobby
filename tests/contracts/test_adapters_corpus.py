@@ -6,9 +6,16 @@ editing the committed JSON cannot relax a contract. Each case count floor is ass
 any case is indexed or copied.
 
 A case must change outcome when the production path it exercises is broken. The path is
-derived here from the case's kind and source, never read from the case, so a case cannot name
-a path it does not reach. ``replay_case`` builds its adapter (or app) afresh on every call, so
-a class or module attribute patched before the call is the one the replay runs.
+derived here from the case's kind and source (and, for a node-origin case, from a constant
+table keyed by its branch), never read from the case, so a case cannot name a path it does
+not reach. ``replay_case`` builds its adapter (or app) afresh on every call, so a class or
+module attribute patched before the call is the one the replay runs.
+
+A node-origin case carries no file, so the node path and the hub path return the same value
+for it. Its reach check therefore watches the hub-side read instead of the return value: with
+the branch's reader broken, the node replay must still match (the skip really skips), and with
+``node_origin`` also forced false the outcome must change (the payload really sits on the
+branch that reads).
 """
 
 from __future__ import annotations
@@ -23,14 +30,17 @@ from typing import Any, NoReturn
 
 import pytest
 
+from gobby.adapters import claude_code, droid, grok
 from gobby.adapters.agy import AgyAdapter
 from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.adapters.claude_code import ClaudeCodeAdapter
+from gobby.adapters.codex_impl import hooks_adapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.git import GitAdapter
 from gobby.adapters.grok import GrokAdapter
 from gobby.servers.routes.mcp.hooks import SUPPORTED_HOOK_SOURCES
+from gobby.sessions.transcripts import agy as agy_transcripts
 from tests.contracts import adapters_corpus
 
 CONTRACTS_DIR = Path(__file__).resolve().parent
@@ -50,16 +60,6 @@ CASE_KINDS = ("inbound", "outbound", "node_origin", "git_verdict", "route_refusa
 # Response fields the adapter layer sets, not the rule engine. No declared capability row lists
 # modify_args, so each of these needs an outbound case of its own, whatever the source.
 ADAPTER_OWNED_RESPONSE_FIELDS = ("system_message", "modify_args")
-# Node-origin branches that skip a hub-side file read, as (source, branch). The spill reader
-# exists in three adapters, so each one needs its own case.
-NODE_ORIGIN_BRANCHES = (
-    ("claude", "spill_reader_skip"),
-    ("grok", "spill_reader_skip"),
-    ("codex", "spill_reader_skip"),
-    ("droid", "notification_wait_skip"),
-    ("droid", "idle_prompt_cancel_skip"),
-    ("agy", "prompt_backfill_skip"),
-)
 GIT_VERDICTS = ("allow", "block")
 ROUTE_REFUSALS = ("unknown_source", "malformed_payload")
 REFUSAL_STATUS = 400
@@ -68,8 +68,12 @@ TRANSLATION_METHODS = ("translate_to_hook_event", "translate_from_hook_response"
 BROKEN_PATH = "corpus reach check: production path broken"
 
 
-class _PathBrokenError(Exception):
-    """Raised by a production path the reach checks have stubbed out."""
+class _PathBrokenError(BaseException):
+    """Raised by a production path the reach checks have stubbed out.
+
+    It derives from ``BaseException`` so no ``except Exception`` or ``except OSError`` handler
+    in an adapter can swallow it and hide that the stubbed path ran.
+    """
 
 
 def _broken(*_args: object, **_kwargs: object) -> NoReturn:
@@ -78,6 +82,37 @@ def _broken(*_args: object, **_kwargs: object) -> NoReturn:
 
 def _not_node_origin() -> bool:
     return False
+
+
+class _UnreadablePath(Path):
+    """A ``Path`` whose file reads fail, bound in place of a module's ``Path`` name."""
+
+    def open(self, *_args: object, **_kwargs: object) -> NoReturn:
+        raise _PathBrokenError(BROKEN_PATH)
+
+    def read_text(self, *_args: object, **_kwargs: object) -> NoReturn:
+        raise _PathBrokenError(BROKEN_PATH)
+
+    def read_bytes(self) -> NoReturn:
+        raise _PathBrokenError(BROKEN_PATH)
+
+
+# Node-origin branches that skip a hub-side file read, keyed by (source, branch), each mapped to
+# the ``(owner, attribute, stub)`` that breaks the read the hub path would make. The spill reader
+# exists in three adapters, so each one needs its own case.
+NODE_ORIGIN_READERS: dict[tuple[str, str], tuple[object, str, Callable[..., object]]] = {
+    ("claude", "spill_reader_skip"): (claude_code, "Path", _UnreadablePath),
+    ("grok", "spill_reader_skip"): (grok, "Path", _UnreadablePath),
+    ("codex", "spill_reader_skip"): (hooks_adapter, "Path", _UnreadablePath),
+    ("droid", "notification_wait_skip"): (droid, "droid_transcript_has_tool_id", _broken),
+    ("droid", "idle_prompt_cancel_skip"): (
+        droid,
+        "droid_transcript_confirms_turn_cancellation",
+        _broken,
+    ),
+    ("agy", "prompt_backfill_skip"): (agy_transcripts, "read_current_user_prompt", _broken),
+}
+NODE_ORIGIN_BRANCHES = tuple(NODE_ORIGIN_READERS)
 
 
 def _outcome(case: dict[str, Any]) -> object:
@@ -100,9 +135,16 @@ def _exercised_paths(case: dict[str, Any]) -> list[tuple[object, str, Callable[.
     if kind == "outbound":
         return [(adapter, "translate_from_hook_response", _broken)]
     if kind == "node_origin":
+        reader = _node_origin_reader(case)
+        if reader is None:
+            return []
         # node_origin is imported by name into each adapter module; patch that binding.
-        return [(inspect.getmodule(adapter), "node_origin", _not_node_origin)]
+        return [(inspect.getmodule(adapter), "node_origin", _not_node_origin), reader]
     return []
+
+
+def _node_origin_reader(case: dict[str, Any]) -> tuple[object, str, Callable[..., object]] | None:
+    return NODE_ORIGIN_READERS.get((str(case.get("source")), str(case.get("branch"))))
 
 
 def _committed_cases() -> list[dict[str, Any]]:
@@ -250,6 +292,13 @@ def test_adapter_cases_change_outcome_when_their_adapter_path_is_broken(
         if not paths:
             unreached.append(f"{case['id']}: kind and source name no adapter path")
             continue
+        reader = _node_origin_reader(case) if case.get("kind") == "node_origin" else None
+        if reader is not None:
+            with monkeypatch.context() as patch:
+                owner, attribute, stub = reader
+                patch.setattr(owner, attribute, stub)
+                if _outcome(case) != case["expect"]:
+                    unreached.append(f"{case['id']}: the node path still reads {attribute}")
         with monkeypatch.context() as patch:
             for owner, attribute, stub in paths:
                 patch.setattr(owner, attribute, stub)

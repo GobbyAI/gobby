@@ -82,6 +82,10 @@ SHORT_CIRCUIT_PATHS: dict[str, tuple[type, str]] = {
     "blocking_webhook": (HookManager, "_evaluate_blocking_webhooks"),
 }
 SYNTHETIC_RULE_PREFIX = "synthetic-"
+# A collaborator failure is injected only through these case keys, never in the script, so
+# removing them yields the healthy twin of the case.
+FAILURE_KEY = "failure"
+FAILURE_INJECTION_KEYS = ("failing_collaborator", FAILURE_KEY)
 # Text no recorded pipeline output contains, so a stubbed path cannot pass as recorded output.
 BROKEN_PATH = "corpus reach check: production path broken"
 
@@ -165,6 +169,8 @@ def _manifest_offender(offender: str) -> tuple[dict[str, Any], list[dict[str, An
 def _carries_item(case: dict[str, Any], axis: str, item: str) -> bool:
     if axis == "handler_event":
         return case.get("event_type") == item
+    if axis == "scenario":
+        return case.get("scenario") == item
     return case.get("kind") == "collaborator_failure" and case.get("failing_collaborator") == item
 
 
@@ -245,9 +251,17 @@ def test_failing_collaborator_changes_the_healthy_outcome() -> None:
     assert len(failing) >= len(COLLABORATOR_KINDS), (
         f"{len(failing)} failing-collaborator cases; at least {len(COLLABORATOR_KINDS)} required"
     )
+    scripted_failures = [
+        case["id"]
+        for case in failing
+        if any(FAILURE_KEY in entry for entry in case.get("collaborator_script", []))
+    ]
+    assert not scripted_failures, (
+        f"failing-collaborator cases that inject a failure in the script: {scripted_failures}"
+    )
     unreached: list[str] = []
     for case in failing:
-        healthy = {key: value for key, value in case.items() if key != "failing_collaborator"}
+        healthy = {key: value for key, value in case.items() if key not in FAILURE_INJECTION_KEYS}
         if _outcome({**healthy, "kind": "event"}) == case["expect"]:
             unreached.append(f"{case['id']}: {case.get('failing_collaborator')}")
     assert not unreached, f"collaborator failures that never reach the pipeline: {unreached}"
@@ -305,10 +319,14 @@ def test_pipeline_rules_are_synthetic_definitions() -> None:
 def _first_item(axis: str) -> str:
     if axis == "handler_event":
         return sorted(_handler_map_events())[0]
+    if axis == "scenario":
+        return REQUIRED_SCENARIOS[0]
     return COLLABORATOR_KINDS[0]
 
 
-@pytest.mark.parametrize("axis", ("handler_event", "collaborator_kind"))
+# Every HookEventType member is a handler-map key today, so the event-type axis is covered by
+# the handler-event axis.
+@pytest.mark.parametrize("axis", ("handler_event", "scenario", "collaborator_kind"))
 def test_pipeline_coverage_negative(tmp_path: Path, axis: str) -> None:
     cases = _committed_cases()
     assert len(cases) >= MIN_CASES, (

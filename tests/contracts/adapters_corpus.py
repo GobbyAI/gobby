@@ -37,6 +37,8 @@ def replay_case(case: dict[str, Any]) -> dict[str, Any]:
     """Run one case through the Python adapter (or the ASGI route) and return the observed output.
 
     Each call builds a fresh adapter (or app), so a class or module attribute patched before the
-    call is the one the replay runs.
+    call is the one the replay runs. A ``node_origin`` case is replayed inside a node delivery
+    context, so ``node_origin()`` is true for it unless the binding is patched; its payload names
+    a file that does not exist, so the hub path would reach that file's read.
     """
     return {}

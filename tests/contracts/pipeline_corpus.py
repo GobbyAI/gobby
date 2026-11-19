@@ -4,6 +4,13 @@ Each case is one ``HookManager.handle`` call with every collaborator wrapped in 
 The ``expect`` block holds the response and the ordered collaborator calls, recorded from the
 Python pipeline rather than written by hand.
 
+``collaborator_script`` lists the healthy results each recorded collaborator returns. An
+injected failure lives in one place only: a ``collaborator_failure`` case names the collaborator
+in ``failing_collaborator`` and the failure in ``failure`` (``{"method": ..., "error": ...}``);
+no script entry carries a failure. Removing those two keys leaves the healthy twin. A call to a
+collaborator method the script does not list returns ``None``, so a twin never fails merely
+because its script is shorter.
+
 This module is a signature-level stub. Every function returns an empty value and reads
 nothing from disk, so the contract tests fail on their assertions until the loader, the
 coverage checks and the replay are implemented.
