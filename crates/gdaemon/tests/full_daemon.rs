@@ -8,6 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Duration, Instant};
 
 use gobby_core::grant::{encode_grant_header, parse_grant_json};
 use gobby_test_support::corpus_v2::{load_all_cases, load_manifest};
@@ -240,6 +241,100 @@ fn refused_database_url_fails_before_any_override_is_set() {
         std::env::var_os("GOBBY_ALLOW_WORKTREE_DAEMON").is_none(),
         "the test process's own environment never receives the override"
     );
+}
+
+/// Set in the re-executed test binary, which plays the owner that dies without teardown (H60).
+const OWNER_CHILD: &str = "GOBBY_HARNESS_OWNER_CHILD";
+
+/// H50: a start whose readiness never passes tears down the worker it had started, and reports
+/// the pids it held. The worker must be running when readiness fails, so the test proves the
+/// teardown reached a live worker and not an empty launch.
+#[test]
+fn failed_start_tears_down_a_running_worker() {
+    let Some(_) = test_hub() else {
+        return;
+    };
+    let started = FullDaemon::builder(Path::new(GDAEMON), Path::new(REPO_ROOT))
+        .seed(python_seed)
+        .readiness_path("/api/harness/never-ready")
+        .ready_ceiling(Duration::from_secs(30))
+        .start();
+    match started {
+        Err(FullDaemonError::FailedStart {
+            daemon_pid,
+            worker_pid,
+            teardown,
+            ..
+        }) => {
+            assert_eq!(teardown, None, "the failed start's teardown must complete");
+            let worker = worker_pid.expect("the worker was running when readiness failed");
+            assert!(!pid_alive(daemon_pid), "gdaemon outlived its failed start");
+            assert!(!pid_alive(worker), "the worker outlived its failed start");
+        }
+        Err(other) => panic!("the start must fail at readiness, got {other}"),
+        Ok(_) => panic!("a route that never answers 200 must not be ready"),
+    }
+}
+
+/// H60: when the process that owns a daemon dies without teardown, the daemon's groups and the
+/// terminal host still stop. The test re-executes this binary as the owner, which starts a
+/// daemon, reports its pids, and exits with no Drop and no teardown. The watchdog must then stop
+/// all three.
+#[test]
+fn owner_death_tears_down_the_daemon_groups() {
+    let Some(_) = test_hub() else {
+        return;
+    };
+    if std::env::var_os(OWNER_CHILD).is_some() {
+        let daemon = start_daemon().expect("the owner's daemon starts");
+        println!(
+            "PIDS {} {} {}",
+            daemon.daemon_pid(),
+            daemon.worker_pid().unwrap_or(0),
+            daemon.terminal_host_pid().unwrap_or(0)
+        );
+        // Exit without teardown or Drop: the owner's death is what the watchdog must survive.
+        std::process::exit(0);
+    }
+    let output = Command::new(std::env::current_exe().expect("this test binary"))
+        .arg("owner_death_tears_down_the_daemon_groups")
+        .arg("--nocapture")
+        .env(OWNER_CHILD, "1")
+        .output()
+        .expect("run the owner");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let pids: Vec<u32> = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("PIDS "))
+        .expect("the owner reports its pids")
+        .split_whitespace()
+        .map(|pid| pid.parse().expect("a pid"))
+        .collect();
+    let [daemon, worker, host]: [u32; 3] = pids
+        .try_into()
+        .unwrap_or_else(|pids: Vec<u32>| panic!("three pids expected, got {pids:?}"));
+    assert!(
+        daemon != 0 && worker != 0,
+        "the owner's daemon and worker are both reported"
+    );
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while [daemon, worker, host]
+        .iter()
+        .any(|&pid| pid != 0 && pid_alive(pid))
+        && Instant::now() < deadline
+    {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    for (name, pid) in [
+        ("gdaemon", daemon),
+        ("worker", worker),
+        ("gterm host", host),
+    ] {
+        assert!(
+            pid == 0 || !pid_alive(pid),
+            "the {name} (pid {pid}) outlived its owner"
+        );
+    }
 }
 
 // Unix only: the accepted profile needs the 0600 owner check. The Windows verdicts for these

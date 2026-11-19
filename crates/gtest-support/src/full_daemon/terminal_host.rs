@@ -10,14 +10,10 @@ use std::thread::sleep;
 use std::time::Instant;
 
 use super::POLL;
+#[cfg(unix)]
+use super::process::NAME_COLUMN;
 use super::process::{pid_alive, signal_pid};
 use super::{FullDaemonError, WORKER_GRACE};
-
-/// The `ps` column that names a process: `ucomm` on macOS, `comm` elsewhere (Linux `ps`).
-#[cfg(target_os = "macos")]
-const NAME_COLUMN: &str = "ucomm";
-#[cfg(not(target_os = "macos"))]
-const NAME_COLUMN: &str = "comm";
 
 /// The gterm binary file name for this platform (`gterm` or `gterm.exe`).
 fn gterm_file_name() -> String {

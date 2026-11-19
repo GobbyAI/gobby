@@ -118,7 +118,7 @@ fn profile_is_the_design_text() {
     assert_eq!(
         loopback::macos_profile(),
         EXPECTED_PROFILE,
-        "the profile is not the design text (loopback.rs unbuilt, C18)"
+        "the profile is not the design text"
     );
 }
 
@@ -136,7 +136,7 @@ fn sandbox_exec_argv_wraps_gdaemon_with_the_profile() {
         "/x/gdaemon",
         "serve",
     ];
-    assert_eq!(argv, expected, "the argv (loopback.rs unbuilt, C18)");
+    assert_eq!(argv, expected, "the argv is not the design argv");
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn off_host_target_must_be_a_routable_ipv4_literal() {
     let local = [Ipv4Addr::new(192, 168, 0, 5)];
     assert!(
         loopback::validate_offhost(SocketAddrV4::new(gateway, 80), &local).is_ok(),
-        "a gateway is an off-host destination (loopback.rs unbuilt, C18)"
+        "a gateway is an off-host destination"
     );
     assert!(
         loopback::validate_offhost(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 80), &local).is_err(),
@@ -170,7 +170,7 @@ fn off_host_selection_takes_the_override_then_the_gateway() {
     assert_eq!(
         loopback::select_offhost(Some("192.168.0.1:443"), Some(gateway), &local).ok(),
         Some(SocketAddrV4::new(gateway, 443)),
-        "the override wins (loopback.rs unbuilt, C18)"
+        "the override wins"
     );
     assert_eq!(
         loopback::select_offhost(None, Some(gateway), &local).ok(),
@@ -193,13 +193,13 @@ fn gateway_parsers_read_the_macos_and_linux_route_tools() {
     assert_eq!(
         loopback::parse_route_gateway(macos),
         Some(Ipv4Addr::new(192, 168, 0, 1)),
-        "macOS route output (loopback.rs unbuilt, C18)"
+        "macOS route output parses"
     );
     let linux = "default via 10.0.2.2 dev eth0 proto dhcp metric 100\n";
     assert_eq!(
         loopback::parse_ip_route_gateway(linux),
         Some(Ipv4Addr::new(10, 0, 2, 2)),
-        "Linux ip route output (loopback.rs unbuilt, C18)"
+        "Linux ip route output parses"
     );
     assert_eq!(loopback::parse_route_gateway(""), None);
 }
@@ -215,7 +215,7 @@ fn planner_fails_closed_without_a_mechanism() {
     assert_eq!(
         loopback::plan(Platform::Other, all),
         Err(LoopbackError::Mechanism(loopback::ERR_NO_MECHANISM)),
-        "Windows refuses with the clear error (H46; loopback.rs unbuilt, C18)"
+        "Windows refuses with the clear error (H46)"
     );
     assert_eq!(
         loopback::plan(Platform::MacOs, Tools::default()),
@@ -224,7 +224,7 @@ fn planner_fails_closed_without_a_mechanism() {
     assert_eq!(
         loopback::plan(Platform::MacOs, all),
         Ok(Plan::SandboxExec),
-        "macOS plans Seatbelt (loopback.rs unbuilt, C18)"
+        "macOS plans Seatbelt"
     );
     assert_eq!(
         loopback::plan(Platform::Linux, Tools::default()),
@@ -255,7 +255,7 @@ fn probe_connects_to_a_loopback_listener_unwrapped() {
     assert_eq!(
         probe_class(addr, false),
         "connected",
-        "the unwrapped probe reaches a loopback listener (loopback.rs unbuilt, C18)"
+        "the unwrapped probe reaches a loopback listener"
     );
 }
 
@@ -264,7 +264,7 @@ fn probe_is_refused_on_a_closed_loopback_port() {
     assert_eq!(
         probe_class(closed_loopback_port(), false),
         "refused",
-        "a closed loopback port refuses (loopback.rs unbuilt, C18)"
+        "a closed loopback port refuses"
     );
 }
 
@@ -277,7 +277,7 @@ fn loopback_connect_allowed_mode_on() {
     assert_eq!(
         probe_class(addr, true),
         "connected",
-        "the mode admits a loopback connect (loopback.rs unbuilt, C18)"
+        "the mode admits a loopback connect"
     );
 }
 
@@ -288,7 +288,7 @@ fn testnet_mode_on_eperm() {
     assert_eq!(
         probe_class(target, true),
         blocked_class(),
-        "the mode blocks TEST-NET (diagnostic; loopback.rs unbuilt, C18)"
+        "the mode blocks TEST-NET (diagnostic)"
     );
 }
 
@@ -301,7 +301,7 @@ fn off_host_probe_fails_mode_on() {
     assert_eq!(
         probe_class(SocketAddr::V4(target), true),
         blocked_class(),
-        "the mode blocks an off-host connect (O2; loopback.rs unbuilt, C18)"
+        "the mode blocks an off-host connect (O2)"
     );
 }
 

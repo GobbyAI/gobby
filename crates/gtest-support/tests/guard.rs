@@ -102,8 +102,7 @@ fn expected_verdict(vector: &Value) -> String {
 /// Unix verdict. Other vectors keep the Python verdict on every platform.
 #[cfg(windows)]
 fn windows_adjusted(vector: &Value, expected: String) -> String {
-    let reaches_owner_check = vector["op"] == "check"
-        && vector["profile"]["path"] == "absolute";
+    let reaches_owner_check = vector["op"] == "check" && vector["profile"]["path"] == "absolute";
     if reaches_owner_check && (expected == "accept:rehearsal" || expected == "refuse:R4") {
         "refuse:R4-windows".to_owned()
     } else {

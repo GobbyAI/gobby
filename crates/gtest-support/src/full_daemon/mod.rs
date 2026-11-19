@@ -21,14 +21,18 @@ use tempfile::TempDir;
 use crate::database::{DatabaseError, RunDatabase, start_run_database};
 use crate::http_sender::get_status;
 use crate::hub_guard::{GuardMode, HubGuardError, check_test_hub};
+use crate::loopback::{self, LoopbackError, LoopbackGuard};
 use crate::ports::{DaemonPorts, daemon_ports};
 
 mod process;
 mod terminal_host;
 
-pub use process::pid_alive;
+pub use process::{GroupWatch, pid_alive};
 use process::{find_worker, stop_daemon, stop_worker};
 use terminal_host::{ensure_gterm, install_gterm, read_host_pid, stop_terminal_host};
+
+/// The readiness URL path the daemon must answer 200 on (section 7.3.5).
+const READY_PATH: &str = "/api/auth/status";
 
 /// The line a database-backed test prints when `DATABASE_URL` is unset (ruling H18).
 pub const SKIP_LINE: &str =
@@ -82,6 +86,18 @@ pub enum FullDaemonError {
     Seed(String),
     /// Readiness was not reached, or the child exited first.
     Ready(String),
+    /// A start failed after gdaemon was spawned. Teardown ran before this was returned, so the
+    /// pids are dead unless `teardown` names the step that failed (H50).
+    FailedStart {
+        /// Why the start failed.
+        reason: String,
+        /// gdaemon's pid.
+        daemon_pid: u32,
+        /// The Python worker's pid, when it was running at the failure.
+        worker_pid: Option<u32>,
+        /// The teardown error, when teardown itself failed.
+        teardown: Option<String>,
+    },
     /// A teardown step failed.
     Teardown(String),
     /// The platform has no mechanism for this harness yet (H46: refuse, never skip).
@@ -98,6 +114,15 @@ impl fmt::Display for FullDaemonError {
             Self::Schema(detail) => write!(f, "schema: {detail}"),
             Self::Seed(detail) => write!(f, "seed: {detail}"),
             Self::Ready(detail) => write!(f, "ready: {detail}"),
+            Self::FailedStart {
+                reason,
+                daemon_pid,
+                worker_pid,
+                teardown,
+            } => write!(
+                f,
+                "start failed ({reason}); gdaemon pid {daemon_pid}, worker {worker_pid:?}, teardown {teardown:?}"
+            ),
             Self::Teardown(detail) => write!(f, "teardown: {detail}"),
             Self::Unsupported(detail) => write!(f, "unsupported: {detail}"),
         }
@@ -174,6 +199,8 @@ pub struct FullDaemonBuilder<'a> {
     profile: Option<PathBuf>,
     seed: Option<Seed>,
     loopback: bool,
+    ready_ceiling: Duration,
+    readiness_path: String,
 }
 
 impl FullDaemonBuilder<'_> {
@@ -182,6 +209,20 @@ impl FullDaemonBuilder<'_> {
     /// mechanism.
     pub fn loopback_only(mut self) -> Self {
         self.loopback = true;
+        self
+    }
+
+    /// Shorten the readiness wait (the e2e fixture's ceiling is the default). Only tests that
+    /// need a failed start use this.
+    pub fn ready_ceiling(mut self, ceiling: Duration) -> Self {
+        self.ready_ceiling = ceiling;
+        self
+    }
+
+    /// Poll this path instead of `/api/auth/status` for readiness. A path the daemon never
+    /// answers with 200 makes a start fail after the ceiling, which the failed-start test needs.
+    pub fn readiness_path(mut self, path: &str) -> Self {
+        self.readiness_path = path.to_owned();
         self
     }
 
@@ -219,17 +260,13 @@ impl FullDaemonBuilder<'_> {
             profile,
             seed,
             loopback,
+            ready_ceiling,
+            readiness_path,
         } = self;
         let base = lookup("DATABASE_URL");
         let guard = check_test_hub(base.as_deref(), &*lookup, profile.as_deref())?;
         if cfg!(windows) {
             return Err(FullDaemonError::Unsupported(WINDOWS_UNBUILT.into()));
-        }
-        if loopback {
-            // C17 stub: the wrapper is built in C18 (section 7.4), and nothing launches before it.
-            return Err(FullDaemonError::Unsupported(
-                crate::loopback::ERR_UNBUILT.into(),
-            ));
         }
         let python = checkout_python(repo_root);
         require_file(gdaemon, "the gdaemon binary")?;
@@ -278,6 +315,10 @@ impl FullDaemonBuilder<'_> {
             worker_pid: None,
             front_door: format!("http://127.0.0.1:{}", ports.http),
             operator_key: String::new(),
+            ready_ceiling,
+            readiness_path,
+            watch: None,
+            relays: None,
         };
         let host_dir = daemon.host_dir_path();
 
@@ -309,9 +350,22 @@ impl FullDaemonBuilder<'_> {
             home.join("config.yaml").display().to_string(),
         ])
         .to_string();
-        let mut command = Command::new(gdaemon);
+        // Loopback-only: the harness ports and the database port cross the namespace, and the
+        // daemon's own outbound network is limited to loopback (section 7.4.2).
+        let (mut command, relays) = if loopback {
+            let inbound = [ports.http, ports.websocket];
+            let outbound = [database_port(&database_url)?];
+            let (command, relays) =
+                loopback::wrap_command(gdaemon, &["serve"], &inbound, &outbound, &host_dir)
+                    .map_err(loopback_error)?;
+            (command, Some(relays))
+        } else {
+            let mut command = Command::new(gdaemon);
+            command.arg("serve");
+            (command, None)
+        };
+        daemon.relays = relays;
         command
-            .arg("serve")
             .env_clear()
             .envs(daemon_environment(repo_root, &python, &home))
             .env("DATABASE_URL", &database_url)
@@ -333,15 +387,55 @@ impl FullDaemonBuilder<'_> {
             .map_err(|error| FullDaemonError::Io(format!("spawn gdaemon: {error}")))?;
         daemon.daemon_pid = child.id();
         daemon.child = Some(child);
+        // The watchdog starts before readiness, so a test that dies at any later point still
+        // stops gdaemon's groups and the gterm host (section 7.3.6, H60).
+        daemon.watch = Some(GroupWatch::start(
+            daemon.daemon_pid,
+            &host_dir.join("gterm.pid"),
+        )?);
 
-        wait_ready(&mut daemon, &home)?;
+        if let Err(reason) = wait_ready(&mut daemon, &home) {
+            return Err(daemon.abort_start(reason));
+        }
         daemon.worker_pid = find_worker(daemon.daemon_pid);
         if daemon.worker_pid.is_none() {
-            return Err(FullDaemonError::Ready(
+            let reason = FullDaemonError::Ready(
                 "readiness passed but no worker process group leader is a child of gdaemon".into(),
-            ));
+            );
+            return Err(daemon.abort_start(reason));
         }
         Ok(daemon)
+    }
+}
+
+/// Maps a loopback refusal or failure to the harness error. A missing mechanism is unsupported
+/// on this host, so it is reported as such rather than as a missing file (H46).
+fn loopback_error(error: LoopbackError) -> FullDaemonError {
+    match &error {
+        LoopbackError::Mechanism(_) => FullDaemonError::Unsupported(error.to_string()),
+        LoopbackError::Target(_) => FullDaemonError::Missing(error.to_string()),
+        LoopbackError::Probe(_) | LoopbackError::Io(_) => FullDaemonError::Io(error.to_string()),
+    }
+}
+
+/// The TCP port in the database URL, the one the loopback relay must carry. A URL without a port
+/// names the PostgreSQL default.
+fn database_port(database_url: &str) -> Result<u16, FullDaemonError> {
+    let without_scheme = database_url
+        .split_once("://")
+        .map_or(database_url, |(_, rest)| rest);
+    let after_credentials = without_scheme
+        .rsplit_once('@')
+        .map_or(without_scheme, |(_, host)| host);
+    let authority = after_credentials
+        .split(['/', '?'])
+        .next()
+        .unwrap_or(after_credentials);
+    match authority.rsplit_once(':') {
+        Some((_, port)) => port.parse().map_err(|_| {
+            FullDaemonError::Io(format!("the database URL's port is not a number: {port}"))
+        }),
+        None => Ok(5432),
     }
 }
 
@@ -358,6 +452,12 @@ pub struct FullDaemon {
     worker_pid: Option<u32>,
     front_door: String,
     operator_key: String,
+    ready_ceiling: Duration,
+    readiness_path: String,
+    /// The teardown watchdog for gdaemon's group, started with the daemon.
+    watch: Option<GroupWatch>,
+    /// The socat relays of a loopback-only run, stopped when the daemon is torn down.
+    relays: Option<LoopbackGuard>,
 }
 
 impl FullDaemon {
@@ -370,6 +470,8 @@ impl FullDaemon {
             profile: None,
             seed: None,
             loopback: false,
+            ready_ceiling: READY_CEILING,
+            readiness_path: READY_PATH.to_owned(),
         }
     }
 
@@ -419,6 +521,20 @@ impl FullDaemon {
         self.shutdown()
     }
 
+    /// Tears down a daemon whose start failed, then reports what it held. Teardown runs here,
+    /// before the error is returned, so the reported pids are dead unless teardown failed.
+    fn abort_start(mut self, reason: FullDaemonError) -> FullDaemonError {
+        let daemon_pid = self.daemon_pid;
+        let worker_pid = self.worker_pid.or_else(|| find_worker(daemon_pid));
+        let teardown = self.shutdown().err().map(|error| error.to_string());
+        FullDaemonError::FailedStart {
+            reason: reason.to_string(),
+            daemon_pid,
+            worker_pid,
+            teardown,
+        }
+    }
+
     /// Runs every step even after one fails, so the database and home are never left behind by a
     /// stop error. The first error is returned.
     fn shutdown(&mut self) -> Result<TeardownReport, FullDaemonError> {
@@ -445,6 +561,8 @@ impl FullDaemon {
         if host.is_some_and(stop_terminal_host) {
             steps.push(TeardownStep::TerminalHostStopped);
         }
+        // The relays carry traffic only for gdaemon, which has stopped by now.
+        self.relays = None;
         let processes_alive_at_drop = pid_alive(self.daemon_pid)
             || worker.is_some_and(pid_alive)
             || host.is_some_and(pid_alive);
@@ -468,6 +586,10 @@ impl FullDaemon {
             } else {
                 drop(host_dir);
             }
+        }
+        // Released last: until here a test killed mid-teardown still gets its groups stopped.
+        if let Some(mut watch) = self.watch.take() {
+            watch.stop();
         }
         match first_error {
             Some(error) => Err(error),
@@ -650,8 +772,9 @@ fn process_create_time(python: &Path, repo_root: &Path) -> Result<String, FullDa
 }
 
 fn wait_ready(daemon: &mut FullDaemon, home: &Path) -> Result<(), FullDaemonError> {
-    let url = format!("{}/api/auth/status", daemon.front_door);
-    let deadline = Instant::now() + READY_CEILING;
+    let url = format!("{}{}", daemon.front_door, daemon.readiness_path);
+    let ceiling = daemon.ready_ceiling;
+    let deadline = Instant::now() + ceiling;
     loop {
         let child = daemon
             .child
@@ -668,7 +791,7 @@ fn wait_ready(daemon: &mut FullDaemon, home: &Path) -> Result<(), FullDaemonErro
         }
         if Instant::now() >= deadline {
             return Err(FullDaemonError::Ready(format!(
-                "no 200 from {url} within {READY_CEILING:?}:\n{}",
+                "no 200 from {url} within {ceiling:?}:\n{}",
                 log_tail(&home.join("logs/daemon_error.log"))
             )));
         }
