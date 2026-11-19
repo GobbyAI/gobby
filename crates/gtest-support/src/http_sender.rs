@@ -198,3 +198,35 @@ fn capture(name: &str, response: ureq::Response) -> Result<Value, SendError> {
     };
     Ok(json!({"response": {"status": status, "headers": headers, "body": body}}))
 }
+
+/// The status of a `GET` to `url`, with no credential. A non-2xx status is returned, not an error.
+pub fn get_status(url: &str) -> Result<u16, SendError> {
+    match agent().get(url).call() {
+        Ok(response) => Ok(response.status()),
+        Err(ureq::Error::Status(status, _)) => Ok(status),
+        Err(ureq::Error::Transport(error)) => Err(SendError::Transport(format!("{url}: {error}"))),
+    }
+}
+
+/// A JSON `POST` to `url`, with an optional operator bearer. Returns the status and the parsed
+/// body, whatever the status is.
+pub fn post_json(url: &str, bearer: Option<&str>, body: &Value) -> Result<(u16, Value), SendError> {
+    let mut outgoing = agent().post(url).set("content-type", "application/json");
+    if let Some(key) = bearer {
+        outgoing = outgoing.set("Authorization", &format!("Bearer {key}"));
+    }
+    let result = outgoing.send_bytes(
+        &serde_json::to_vec(body)
+            .map_err(|error| SendError::Case(format!("{url}: body: {error}")))?,
+    );
+    let response = match result {
+        Ok(response) => response,
+        Err(ureq::Error::Status(_, response)) => response,
+        Err(ureq::Error::Transport(error)) => {
+            return Err(SendError::Transport(format!("{url}: {error}")));
+        }
+    };
+    let status = response.status();
+    let captured = capture(url, response)?;
+    Ok((status, captured["response"]["body"].clone()))
+}
