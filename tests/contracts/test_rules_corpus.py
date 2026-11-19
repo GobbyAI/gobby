@@ -12,7 +12,6 @@ from __future__ import annotations
 import ast
 import dataclasses
 import json
-import os
 import re
 import shutil
 from collections.abc import Iterable
@@ -520,6 +519,21 @@ def test_case_schema_requires_every_expect_section() -> None:
     assert not unlabelled, f"committed cases missing or mismatching labels: {unlabelled}"
 
 
+def test_optional_expect_keys_load_with_or_without_the_key(tmp_path: Path) -> None:
+    with_key = _synthetic_case(id="synthetic-skipped-group")
+    with_key["rules"][0]["group"] = "synthetic-group"
+    with_key["expect"][SKIPPED_GROUPS_KEY] = ["synthetic-group"]
+    without_key = _synthetic_case(id="synthetic-no-skipped-group")
+    _write_corpus(tmp_path, cases=[with_key, without_key])
+    _manifest, loaded = rules_corpus.load_corpus(tmp_path)
+    by_id = {case["id"]: case for case in loaded}
+    assert set(by_id) == {with_key["id"], without_key["id"]}, f"loaded cases: {sorted(by_id)}"
+    assert by_id[with_key["id"]]["expect"][SKIPPED_GROUPS_KEY] == ["synthetic-group"]
+    bare = by_id[without_key["id"]]["expect"]
+    present = [key for key in OPTIONAL_EXPECT_KEYS if key in bare]
+    assert not present, f"optional expect keys appear on a case that omits them: {present}"
+
+
 def test_cli_internal_request_skips_declared_group() -> None:
     cases = _load_committed_cases()
     _assert_enough(cases)
@@ -566,24 +580,13 @@ def test_seam_registry_matches_required_kinds() -> None:
     )
 
 
-def _record_corpus(root: Path) -> None:
-    """Write each case's effect_log from the recorder when GOBBY_CORPUS_RECORD is 1."""
-    if os.environ.get(RECORD_ENV) != "1":
-        return
-    for path in sorted((root / "cases").glob("*.json")):
-        document = json.loads(path.read_text())
-        for case in document["cases"]:
-            case["expect"]["effect_log"] = rules_corpus.record_case(case)
-        path.write_text(json.dumps(document))
-
-
 def test_record_branch_writes_case_through_recorder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(RECORD_ENV, "1")
     case = _synthetic_case()
     _write_corpus(tmp_path, cases=[case])
-    _record_corpus(tmp_path)
+    rules_corpus.record_corpus(tmp_path)
     written = json.loads((tmp_path / "cases" / "synthetic.json").read_text())["cases"]
     logged = rules_corpus.record_case(case)
     assert logged, "the recorder logs no seam call for the synthetic case"

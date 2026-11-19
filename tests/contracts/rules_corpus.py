@@ -66,6 +66,16 @@ def record_case(case: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def record_corpus(corpus_dir: Path) -> None:
+    """Fill each case's ``expect.effect_log`` with the ``record_case`` output.
+
+    Runs only when the ``GOBBY_CORPUS_RECORD`` environment variable is 1; otherwise the
+    corpus files are left unchanged, so a default run replays. Each case is written back
+    into the case file it was read from, with the same document layout.
+    """
+    return None
+
+
 def replay_normalizer_vector(vector: dict[str, Any]) -> Any:
     """Call the normalizer entry point named by a vector and return its observed output."""
     return None
