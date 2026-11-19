@@ -46,6 +46,8 @@ FRAME = struct.Struct(">I")
 BOOT_VARIABLES = (WORKER_MARKER_ENV, WORKER_CHANNEL_FD_ENV, WORKER_CREDENTIAL_FD_ENV)
 # Far above the lowest free descriptor, so no descriptor opened during the test reuses it.
 UNUSED_DESCRIPTOR = 1023
+# Far above the C int range that os.fstat and os.fdopen accept.
+OUT_OF_C_INT_DESCRIPTOR = 1 << 60
 
 
 def _credential_descriptor(payload: bytes) -> int:
@@ -97,6 +99,42 @@ def test_take_worker_boot_refuses_a_marker_without_descriptors(
         assert WORKER_CHANNEL_FD_ENV in str(refused.value)
     finally:
         _close_quietly(credential_fd)
+
+
+@pytest.mark.parametrize("variable", [WORKER_CHANNEL_FD_ENV, WORKER_CREDENTIAL_FD_ENV])
+def test_take_worker_boot_refuses_a_descriptor_beyond_the_c_int_range(
+    monkeypatch: pytest.MonkeyPatch, variable: str
+) -> None:
+    """A descriptor number no C int can hold is refused like any other invalid descriptor.
+
+    The value reaches the descriptor calls only after the parser accepts it, and those calls
+    raise OverflowError (os.fstat) or TypeError (os.fdopen) rather than OSError for it, so the
+    parser itself must bound it.
+    """
+    credential_fd = _credential_descriptor(CREDENTIAL.encode("utf-8"))
+    channel_socket, peer = socket.socketpair()
+    valid = {
+        WORKER_CHANNEL_FD_ENV: str(channel_socket.fileno()),
+        WORKER_CREDENTIAL_FD_ENV: str(credential_fd),
+    }
+    try:
+        monkeypatch.setenv(WORKER_MARKER_ENV, "1")
+        for name, value in valid.items():
+            monkeypatch.setenv(name, str(OUT_OF_C_INT_DESCRIPTOR) if name == variable else value)
+        try:
+            take_worker_boot()
+        except (StartRefusal, OverflowError, TypeError) as exc:
+            raised: BaseException | None = exc
+        else:
+            raised = None
+        assert isinstance(raised, StartRefusal), (
+            f"{variable}={OUT_OF_C_INT_DESCRIPTOR} raised {type(raised).__name__}, not a refusal"
+        )
+        assert variable in str(raised)
+    finally:
+        _close_quietly(credential_fd)
+        channel_socket.close()
+        peer.close()
 
 
 def _serve_only(
