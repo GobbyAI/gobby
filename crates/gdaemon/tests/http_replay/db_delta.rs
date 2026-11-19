@@ -128,7 +128,75 @@ pub fn delta(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use crate::http_replay::compare::{comparison_document, first_difference, normalized_document};
+    use crate::http_replay::corpus::{Case, Kind};
+    use crate::http_replay::normalize::{NormalizeError, Window};
+    use serde_json::{Map, json};
+    use time::OffsetDateTime;
+    use time::format_description::well_known::Rfc3339;
+
+    /// The three UUIDs of the parity goldens.
+    const U1: &str = "11111111-1111-4111-8111-111111111111";
+    const U2: &str = "22222222-2222-4222-8222-222222222222";
+    const U3: &str = "33333333-3333-4333-8333-333333333333";
+
+    /// The run window of the goldens: 2023-11-14 22:00 to 23:00 UTC.
+    fn golden_window() -> Window {
+        Window {
+            start: OffsetDateTime::parse("2023-11-14T22:00:00Z", &Rfc3339).expect("start"),
+            end: OffsetDateTime::parse("2023-11-14T23:00:00Z", &Rfc3339).expect("end"),
+        }
+    }
+
+    /// One failure of an observed entry: a delta error or a normalizer error.
+    #[derive(Debug, PartialEq)]
+    enum Failure {
+        Delta(DeltaError),
+        Normalize(NormalizeError),
+    }
+
+    /// A case that declares one db_delta entry, with the entry's recorded value inside it.
+    fn case_with(entry: Value) -> Case {
+        Case {
+            name: "parity-golden".to_owned(),
+            schema_version: 3,
+            kind: Kind::Http,
+            family: "probe".to_owned(),
+            backend: "up".to_owned(),
+            ledger_key: Some("HTTP GET /api/probe/native".to_owned()),
+            request: None,
+            invocation: None,
+            response: None,
+            db_delta: vec![entry],
+            side_effects: Vec::new(),
+            normalizers: Map::new(),
+            mask: json!([]),
+            waiver: None,
+            native_response: None,
+        }
+    }
+
+    /// The comparison document of the recorded entry, as compare.rs builds it.
+    fn expected(case: &Case) -> Value {
+        comparison_document(&json!({}), &[case.db_delta[0]["recorded"].clone()], &[])
+    }
+
+    /// The comparison document of one observed entry, as compare.rs builds it.
+    ///
+    /// RED STAGE: this is today's pipeline. The raw delta is computed first, and compare.rs
+    /// normalizes the changed values afterwards. The green stage replaces the body with
+    /// `table_delta` over the same rows and entry; the tests below do not change.
+    fn observed(case: &Case, before: &[Row], after: &[Row]) -> Result<Value, Failure> {
+        let key: Vec<String> = case.db_delta[0]["key"]
+            .as_array()
+            .expect("key")
+            .iter()
+            .map(|name| name.as_str().expect("column").to_owned())
+            .collect();
+        let raw = delta(&key, &[], before, after).map_err(Failure::Delta)?;
+        normalized_document(case, &json!({}), &[raw], &[], &golden_window())
+            .map_err(Failure::Normalize)
+    }
 
     fn row(value: Value) -> Row {
         value.as_object().expect("row object").clone()
@@ -257,6 +325,221 @@ mod tests {
                     {"key": {"key": "b", "scope": "x"}, "column": "n", "before": 1, "after": 2}
                 ]
             })
+        );
+    }
+
+    // Parity goldens: each expected value is the output of `recorder_v3.table_delta` in the Python
+    // worktree for the case named in its comment (scratch-wpE3a-parity/parity_golden_e3a.json).
+    // Gap tests: 1 (changed only on normalized difference), 2 (changed key is the normalized key),
+    // 3 (uuid ordinals numbered in Python order). The other tests pin behaviour both engines share.
+
+    #[test]
+    fn gap1_unchanged_normalized_column_is_not_reported() {
+        // Golden: unchanged_normalized_column_is_not_reported.
+        let case = case_with(json!({
+            "table": "items", "key": ["id"], "columns": ["id", "updated_at", "value"],
+            "normalizers": {"updated_at": "timestamp"}, "order": "set",
+            "recorded": {"added": [], "removed": [], "changed": [
+                {"key": {"id": 1}, "column": "value", "before": "a", "after": "b"}
+            ]}
+        }));
+        let before = [row(json!({"id": 1, "updated_at": "2023-11-14T22:10:00+00:00", "value": "a"}))];
+        let after = [row(json!({"id": 1, "updated_at": "2023-11-14T22:20:00+00:00", "value": "b"}))];
+        let actual = observed(&case, &before, &after).expect("observed");
+        assert_eq!(first_difference(&expected(&case), &actual), None);
+    }
+
+    #[test]
+    fn gap2_changed_key_is_the_normalized_key() {
+        // Golden: changed_key_is_the_normalized_key.
+        let case = case_with(json!({
+            "table": "owners", "key": ["owner_id"], "columns": ["owner_id", "revision"],
+            "normalizers": {"owner_id": "uuid_ordinal"}, "order": "set",
+            "recorded": {"added": [], "removed": [], "changed": [
+                {"key": {"owner_id": "@uuid:1@"}, "column": "revision", "before": 1, "after": 2}
+            ]}
+        }));
+        let before = [row(json!({"owner_id": U1, "revision": 1}))];
+        let after = [row(json!({"owner_id": U1, "revision": 2}))];
+        let actual = observed(&case, &before, &after).expect("observed");
+        assert_eq!(first_difference(&expected(&case), &actual), None);
+    }
+
+    #[test]
+    fn gap3_changed_pairs_number_all_befores_then_all_afters() {
+        // Golden: changed_pairs_number_all_befores_then_all_afters.
+        let case = case_with(json!({
+            "table": "links", "key": ["id"], "columns": ["id", "owner"],
+            "normalizers": {"owner": "uuid_ordinal"}, "order": "set",
+            "recorded": {"added": [], "removed": [], "changed": [
+                {"key": {"id": 1}, "column": "owner", "before": "@uuid:1@", "after": "@uuid:3@"},
+                {"key": {"id": 2}, "column": "owner", "before": "@uuid:2@", "after": "@uuid:1@"}
+            ]}
+        }));
+        let before = [row(json!({"id": 1, "owner": U1})), row(json!({"id": 2, "owner": U3}))];
+        let after = [row(json!({"id": 1, "owner": U2})), row(json!({"id": 2, "owner": U1}))];
+        let actual = observed(&case, &before, &after).expect("observed");
+        assert_eq!(first_difference(&expected(&case), &actual), None);
+    }
+
+    #[test]
+    fn one_counter_runs_over_added_removed_and_changed_images() {
+        // Golden: one_counter_over_added_removed_and_changed (passes on both engines).
+        let case = case_with(json!({
+            "table": "links", "key": ["id"], "columns": ["id", "owner"],
+            "normalizers": {"owner": "uuid_ordinal"}, "order": "set",
+            "recorded": {
+                "added": [{"id": 7, "owner": "@uuid:1@"}],
+                "removed": [{"id": 8, "owner": "@uuid:2@"}],
+                "changed": [{"key": {"id": 5}, "column": "owner", "before": "@uuid:3@", "after": "@uuid:1@"}]
+            }
+        }));
+        let before = [row(json!({"id": 8, "owner": U1})), row(json!({"id": 5, "owner": U3}))];
+        let after = [row(json!({"id": 5, "owner": U2})), row(json!({"id": 7, "owner": U2}))];
+        let actual = observed(&case, &before, &after).expect("observed");
+        assert_eq!(first_difference(&expected(&case), &actual), None);
+    }
+
+    #[test]
+    fn uuid_numbering_follows_the_row_column_order() {
+        // Golden: uuid_numbering_follows_the_row_column_order (passes on both engines).
+        let case = case_with(json!({
+            "table": "pairs", "key": ["id"], "columns": ["id", "zeta", "alpha"],
+            "normalizers": {"zeta": "uuid_ordinal", "alpha": "uuid_ordinal"}, "order": "set",
+            "recorded": {"added": [{"id": 1, "zeta": "@uuid:1@", "alpha": "@uuid:2@"}],
+                         "removed": [], "changed": []}
+        }));
+        let after = [row(json!({"id": 1, "zeta": U2, "alpha": U1}))];
+        let actual = observed(&case, &[], &after).expect("observed");
+        assert_eq!(first_difference(&expected(&case), &actual), None);
+    }
+
+    #[test]
+    fn an_out_of_window_timestamp_in_an_unchanged_column_is_an_error() {
+        // Golden: out_of_window_unchanged_column_is_an_error (Python raises NormalizationError).
+        let case = case_with(json!({
+            "table": "items", "key": ["id"], "columns": ["id", "updated_at", "value"],
+            "normalizers": {"updated_at": "timestamp"}, "order": "set",
+            "recorded": {"added": [], "removed": [], "changed": []}
+        }));
+        let before = [row(json!({"id": 1, "updated_at": "2023-11-15T00:00:00+00:00", "value": "a"}))];
+        let after = [row(json!({"id": 1, "updated_at": "2023-11-15T00:00:00+00:00", "value": "b"}))];
+        let actual = observed(&case, &before, &after);
+        assert!(matches!(actual, Err(Failure::Normalize(_))), "{actual:?}");
+    }
+
+    #[test]
+    fn a_non_uuid_under_uuid_ordinal_is_an_error() {
+        // Golden: non_uuid_under_uuid_ordinal_is_an_error (Python raises NormalizationError).
+        let case = case_with(json!({
+            "table": "links", "key": ["id"], "columns": ["id", "owner"],
+            "normalizers": {"owner": "uuid_ordinal"}, "order": "set",
+            "recorded": {"added": [], "removed": [], "changed": []}
+        }));
+        let after = [row(json!({"id": 1, "owner": "not-a-uuid"}))];
+        let actual = observed(&case, &[], &after);
+        assert!(matches!(actual, Err(Failure::Normalize(_))), "{actual:?}");
+    }
+
+    #[test]
+    fn monotonic_under_set_order_is_an_error() {
+        // Golden: monotonic_under_set_order_is_an_error (Python raises NormalizationError).
+        let case = case_with(json!({
+            "table": "seqs", "key": ["id"], "columns": ["id", "seq"],
+            "normalizers": {"seq": "monotonic"}, "order": "set",
+            "recorded": {"added": [], "removed": [], "changed": []}
+        }));
+        let after = [row(json!({"id": 1, "seq": 1}))];
+        let actual = observed(&case, &[], &after);
+        assert!(matches!(actual, Err(Failure::Normalize(_))), "{actual:?}");
+    }
+
+    #[test]
+    fn a_timestamp_before_its_after_column_is_an_error() {
+        // Golden: timestamp_after_violated_is_an_error (Python raises NormalizationError).
+        let case = case_with(json!({
+            "table": "stamps", "key": ["id"], "columns": ["id", "created_at", "updated_at"],
+            "normalizers": {"updated_at": {"name": "timestamp", "after": "created_at"}},
+            "order": "set",
+            "recorded": {"added": [], "removed": [], "changed": []}
+        }));
+        let after = [row(json!({
+            "id": 1, "created_at": "2023-11-14T23:00:00+00:00", "updated_at": "2023-11-14T22:30:00+00:00"
+        }))];
+        let actual = observed(&case, &[], &after);
+        assert!(matches!(actual, Err(Failure::Normalize(_))), "{actual:?}");
+    }
+
+    #[test]
+    fn a_timestamp_after_its_after_column_masks_to_ts() {
+        // Golden: timestamp_after_ok_masks.
+        let case = case_with(json!({
+            "table": "stamps", "key": ["id"], "columns": ["id", "created_at", "updated_at"],
+            "normalizers": {"updated_at": {"name": "timestamp", "after": "created_at"}},
+            "order": "set",
+            "recorded": {"added": [{"id": 1, "created_at": "2023-11-14T22:10:00+00:00",
+                                    "updated_at": "@ts@"}],
+                         "removed": [], "changed": []}
+        }));
+        let after = [row(json!({
+            "id": 1, "created_at": "2023-11-14T22:10:00+00:00", "updated_at": "2023-11-14T22:20:00+00:00"
+        }))];
+        let actual = observed(&case, &[], &after).expect("observed");
+        assert_eq!(first_difference(&expected(&case), &actual), None);
+    }
+
+    #[test]
+    fn a_timestamp_only_pair_still_takes_ordinals_and_emits_no_changed_entry() {
+        // Golden: timestamp_only_pair_still_consumes_ordinals.
+        let case = case_with(json!({
+            "table": "owners", "key": ["id"], "columns": ["id", "owner", "updated_at"],
+            "normalizers": {"updated_at": "timestamp", "owner": "uuid_ordinal"}, "order": "set",
+            "recorded": {"added": [], "removed": [], "changed": [
+                {"key": {"id": 2}, "column": "owner", "before": "@uuid:2@", "after": "@uuid:3@"}
+            ]}
+        }));
+        let before = [
+            row(json!({"id": 1, "owner": U1, "updated_at": "2023-11-14T22:10:00+00:00"})),
+            row(json!({"id": 2, "owner": U3, "updated_at": "2023-11-14T22:00:00+00:00"})),
+        ];
+        let after = [
+            row(json!({"id": 1, "owner": U1, "updated_at": "2023-11-14T22:20:00+00:00"})),
+            row(json!({"id": 2, "owner": U2, "updated_at": "2023-11-14T22:00:00+00:00"})),
+        ];
+        let actual = observed(&case, &before, &after).expect("observed");
+        assert_eq!(first_difference(&expected(&case), &actual), None);
+    }
+
+    #[test]
+    fn identity_order_uses_the_python_json_text() {
+        // Golden: identity_order_uses_python_json_text. json.dumps escapes e-acute, so it sorts
+        // before "z" in the key order.
+        let case = case_with(json!({
+            "table": "names", "key": ["name"], "columns": ["name", "v"],
+            "normalizers": {}, "order": "set",
+            "recorded": {"added": [{"name": "\u{e9}", "v": 2}, {"name": "z", "v": 1}],
+                         "removed": [], "changed": []}
+        }));
+        let after = [row(json!({"name": "z", "v": 1})), row(json!({"name": "\u{e9}", "v": 2}))];
+        let actual = observed(&case, &[], &after).expect("observed");
+        assert_eq!(first_difference(&expected(&case), &actual), None);
+    }
+
+    #[test]
+    fn a_duplicate_key_in_one_snapshot_is_an_error() {
+        // Golden: duplicate_key_in_a_snapshot_is_an_error (Python raises RecorderError).
+        let case = case_with(json!({
+            "table": "items", "key": ["id"], "columns": ["id", "v"],
+            "normalizers": {}, "order": "set",
+            "recorded": {"added": [], "removed": [], "changed": []}
+        }));
+        let after = [row(json!({"id": 1, "v": 1})), row(json!({"id": 1, "v": 2}))];
+        let actual = observed(&case, &[], &after);
+        assert_eq!(
+            actual,
+            Err(Failure::Delta(DeltaError::DuplicateKey {
+                key: "1".to_owned()
+            }))
         );
     }
 
