@@ -5,6 +5,7 @@ use super::common;
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::future::Future;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::pin::Pin;
@@ -547,6 +548,8 @@ const WAIVER_ID: &str = "cron.patch-job.schedule-validation";
 const WAIVER_DECISION: &str = ".gobby/plans/gdaemon-cron-family.md#3.2";
 const NATIVE_ID: &str = "runtime.native-only.native-extension";
 const NATIVE_SURFACE: &str = "HTTP GET /api/native-only";
+const KEYED_ID: &str = "mcp.fixture-read.keyed-surface";
+const KEYED_SURFACE: &str = "MCP stdio gobby:fixture_read";
 
 fn manifest() -> WaiverManifest {
     let text = json!({
@@ -558,6 +561,13 @@ fn manifest() -> WaiverManifest {
                 "behaviour": "Rejects an invalid schedule.",
                 "decision": WAIVER_DECISION,
                 "replacement": "Native 422.",
+            },
+            {
+                "id": KEYED_ID,
+                "surface": KEYED_SURFACE,
+                "behaviour": "Rejects an invalid tool argument.",
+                "decision": WAIVER_DECISION,
+                "replacement": "Native tool schema.",
             },
             {
                 "id": NATIVE_ID,
@@ -685,6 +695,102 @@ fn waiver_kind_must_match_its_outcome() {
             .contains("cannot back a NativeExtension record"),
         "{error}"
     );
+}
+
+/// One compare record line carrying a ledger key, as a keyed (MCP, WS or CLI) case writes it.
+fn keyed_line(ts: i64, method: &str, path: &str, key: &str, id: &str) -> String {
+    json!({
+        "ts": ts,
+        "family": "mcp",
+        "method": method,
+        "path": path,
+        "outcome": "waived",
+        "native_status": 200,
+        "proxied_status": 200,
+        "detail": null,
+        "waiver": {"id": id, "decision": WAIVER_DECISION},
+        "ledger_key": key,
+    })
+    .to_string()
+}
+
+/// Appends one raw line to the compare log that `CompareLog` created under `home`.
+fn append_line(home: &Path, line: &str) {
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(log_path(home))
+        .expect("compare log");
+    writeln!(file, "{line}").expect("append record");
+}
+
+#[test]
+fn record_without_a_ledger_key_serializes_as_before() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&record(100, "cron", Outcome::Match));
+
+    let text = std::fs::read_to_string(log_path(home.path())).expect("compare log");
+    assert_eq!(
+        text,
+        "{\"ts\":100,\"family\":\"cron\",\"method\":\"GET\",\"path\":\"/api/x\",\
+         \"outcome\":\"match\",\"native_status\":200,\"proxied_status\":200,\"detail\":null}\n"
+    );
+}
+
+#[test]
+fn keyed_record_keeps_its_ledger_key_when_written_again() {
+    let line = keyed_line(
+        200,
+        "POST",
+        "/api/mcp/gobby/tools/fixture_read",
+        KEYED_SURFACE,
+        KEYED_ID,
+    );
+    let record: Record = serde_json::from_str(&line).expect("keyed record");
+    let written = serde_json::to_value(&record).expect("record json");
+    assert_eq!(written["ledger_key"], json!(KEYED_SURFACE));
+}
+
+#[test]
+fn keyed_record_is_checked_by_its_exact_ledger_key() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&record(100, "cron", Outcome::Match));
+    append_line(
+        home.path(),
+        &keyed_line(
+            200,
+            "POST",
+            "/api/mcp/gobby/tools/fixture_read",
+            KEYED_SURFACE,
+            KEYED_ID,
+        ),
+    );
+
+    let readiness = report(&log_path(home.path()), None, &manifest())
+        .expect("a keyed record whose key is its waiver's surface verifies");
+    assert!(readiness.passes());
+    assert_eq!(
+        readiness.waived.get(KEYED_ID).map(|waived| waived.count),
+        Some(1)
+    );
+}
+
+#[test]
+fn keyed_record_rejects_a_key_outside_the_waiver_surface() {
+    let home = tempfile::tempdir().expect("home");
+    let log = CompareLog::open(home.path()).expect("compare log");
+    log.append(&record(100, "cron", Outcome::Match));
+    // The HTTP waiver covers GET /api/x, but this record's ledger key names a WS message, so
+    // the request's method and path must not decide the match.
+    append_line(
+        home.path(),
+        &keyed_line(200, "GET", "/api/x", "WS message fixture_event", WAIVER_ID),
+    );
+
+    let error = report(&log_path(home.path()), None, &manifest())
+        .expect_err("a key that is not the waiver's surface");
+    assert!(error.to_string().contains("is not waiver"), "{error}");
 }
 
 #[test]
