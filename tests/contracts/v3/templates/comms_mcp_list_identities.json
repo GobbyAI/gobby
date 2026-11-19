@@ -1,0 +1,17 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_list_identities",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:list_identities",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "list_identities",
+    "arguments": {}
+  },
+  "normalizers": {},
+  "mask": []
+}

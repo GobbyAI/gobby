@@ -1,0 +1,64 @@
+{
+  "schema_version": 3,
+  "name": "comms_send",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP POST /api/comms/send",
+  "request": {
+    "method": "POST",
+    "path": "/api/comms/send",
+    "query": {},
+    "headers": {},
+    "body": {
+      "channel_name": "corpus-slack",
+      "content": "corpus message one"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "id": "@uuid:1@",
+      "channel_id": "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+      "direction": "outbound",
+      "content": "corpus message one",
+      "created_at": "@ts@",
+      "identity_id": null,
+      "content_type": "text",
+      "platform_message_id": "1700000000.000100",
+      "platform_thread_id": null,
+      "session_id": null,
+      "status": "sent",
+      "error": null,
+      "metadata_json": {
+        "platform_destination": "C0CORPUS0001"
+      }
+    }
+  },
+  "side_effects": [
+    {
+      "channel": "provider_edge",
+      "match": {
+        "hosts": [
+          "slack.com"
+        ]
+      },
+      "recorded": [
+        {
+          "host": "slack.com",
+          "method": "POST",
+          "path": "/api/chat.postMessage"
+        }
+      ]
+    }
+  ],
+  "normalizers": {
+    "/response/body/id": "uuid_ordinal",
+    "/response/body/created_at": "timestamp"
+  },
+  "mask": []
+}

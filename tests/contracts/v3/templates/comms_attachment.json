@@ -1,0 +1,35 @@
+{
+  "schema_version": 3,
+  "name": "comms_attachment",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP POST /api/comms/attachment",
+  "request": {
+    "method": "POST",
+    "path": "/api/comms/attachment",
+    "query": {},
+    "headers": {},
+    "body": {
+      "channel_name": "corpus-slack",
+      "filename": "corpus-errors.txt",
+      "content": "corpus attachment line one\n",
+      "caption": "corpus caption"
+    }
+  },
+  "side_effects": [
+    {
+      "channel": "provider_edge",
+      "match": {"hosts": ["slack.com", "upload.corpus.test"]}
+    }
+  ],
+  "normalizers": {
+    "/response/body/message/id": "uuid_ordinal",
+    "/response/body/message/created_at": "timestamp",
+    "/response/body/attachment/id": "uuid_ordinal",
+    "/response/body/attachment/message_id": "uuid_ordinal",
+    "/response/body/attachment/created_at": "timestamp"
+  },
+  "mask": []
+}

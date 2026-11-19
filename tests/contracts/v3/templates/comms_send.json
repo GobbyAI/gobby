@@ -1,0 +1,27 @@
+{
+  "schema_version": 3,
+  "name": "comms_send",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP POST /api/comms/send",
+  "request": {
+    "method": "POST",
+    "path": "/api/comms/send",
+    "query": {},
+    "headers": {},
+    "body": {"channel_name": "corpus-slack", "content": "corpus message one"}
+  },
+  "side_effects": [
+    {
+      "channel": "provider_edge",
+      "match": {"hosts": ["slack.com"]}
+    }
+  ],
+  "normalizers": {
+    "/response/body/id": "uuid_ordinal",
+    "/response/body/created_at": "timestamp"
+  },
+  "mask": []
+}

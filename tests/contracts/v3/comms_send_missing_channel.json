@@ -1,0 +1,30 @@
+{
+  "schema_version": 3,
+  "name": "comms_send_missing_channel",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP POST /api/comms/send",
+  "request": {
+    "method": "POST",
+    "path": "/api/comms/send",
+    "query": {},
+    "headers": {},
+    "body": {
+      "channel_name": "corpus-missing",
+      "content": "corpus message missing"
+    }
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "detail": "Channel 'corpus-missing' not found or not active"
+    }
+  },
+  "normalizers": {},
+  "mask": []
+}

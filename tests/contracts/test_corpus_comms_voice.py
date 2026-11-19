@@ -46,26 +46,8 @@ PROVIDER_REACHING_HOSTS: dict[str, tuple[str, ...]] = {
     "comms_attachment": ("slack.com", "upload.corpus.test"),
     "comms_mcp_send_message": ("slack.com",),
 }
-VOICE_STATUS_CASES = ("voice_status", "voice_status_want_tts")
-ENGINE_FIELDS = ("whisper_model", "tts_provider")
-ENGINE_SUFFIXES = frozenset({"engine", "model", "package", "provider"})
-AVAILABILITY_FIELDS = (
-    "stt_available",
-    "stt_reason",
-    "voice_ready",
-    "voice_loading",
-    "stt_warmup_status",
-    "stt_warmup_error",
-    "tts_warmup_status",
-    "tts_warmup_error",
-    "tts_available",
-    "tts_reason",
-    "tts_backend_kind",
-    "tts_capabilities",
-    "transcription_enabled",
-    "translation_enabled",
-)
-VISIBLE_VOICE_FIELDS = frozenset({"enabled", "stt_enabled", "tts_enabled"})
+VOICE_CASES = ("voice_status", "voice_status_want_tts", "voice_transcribe_missing_file")
+VOICE_REFUSAL_BODY = {"error": "grant lacks the required capability", "code": "wrong_capability"}
 WEBHOOK_VERIFY_CASE = "comms_webhook_verify"
 WEBHOOK_RECEIVE_CASE = "comms_webhook_receive"
 README_HEADINGS = (
@@ -140,10 +122,26 @@ def _wait_for_active(
             time.sleep(0.5)
 
 
+class _ClearKeepingEdge(FakeEdge):
+    """A provider edge that keeps the hits each clear discards.
+
+    The recorder daemon clears the edge log once the startup channel is live, so its startup
+    traffic falls outside every capture window. This edge keeps that traffic visible to a test.
+    """
+
+    def __init__(self, root: Path) -> None:
+        super().__init__(root)
+        self.cleared: list[dict[str, Any]] = []
+
+    def clear(self) -> None:
+        self.cleared.extend(self.hits())
+        super().clear()
+
+
 @contextmanager
-def _started_edge(root: Path) -> Iterator[FakeEdge]:
+def _started_edge(root: Path) -> Iterator[_ClearKeepingEdge]:
     """Run a provider edge for the life of the block, so no daemon starts without one."""
-    edge = FakeEdge(root)
+    edge = _ClearKeepingEdge(root)
     edge.start()
     try:
         yield edge
@@ -228,7 +226,7 @@ def test_corpus_slack_channel_is_live_at_the_first_request(tmp_path: Path) -> No
         assert status.get("init_error") is None, (
             f"the startup Slack channel failed to initialize: {status}"
         )
-        arrivals = [hit["host"] for hit in edge.hits()]
+        arrivals = [hit["host"] for hit in [*edge.cleared, *edge.hits()]]
     assert "slack.com" in arrivals, (
         f"the startup Slack channel reached no slack.com through the provider edge: {arrivals}"
     )
@@ -262,20 +260,19 @@ def test_no_comms_or_voice_case_uses_the_dropped_gobby_chat_id() -> None:
 
 
 @pytest.mark.unit
-def test_voice_status_cases_mask_engine_and_availability_fields() -> None:
-    for name in VOICE_STATUS_CASES:
+def test_voice_cases_record_the_grant_refusal_with_no_masks() -> None:
+    """Voice is disabled, so a valid grant lacks the audio capability and the route refuses it.
+
+    The engine and availability fields only appear in a 200 answer, so the recorded refusal
+    carries none of them and no mask resolves. Each voice case presents a runtime grant and
+    records the refusal body in the HTTP response, under the response body prefix.
+    """
+    for name in VOICE_CASES:
         case = _v3_case_named(name)
-        body = case["response"]["body"]
-        assert isinstance(body, dict), f"{name} does not answer a JSON object"
-        masked = set(case["mask"])
-        for field in (*ENGINE_FIELDS, *AVAILABILITY_FIELDS):
-            assert f"/response/{field}" in masked, f"{name} does not mask {field}"
-        for key in body:
-            if key.rsplit("_", 1)[-1] in ENGINE_SUFFIXES:
-                assert f"/response/{key}" in masked, f"{name} does not mask engine field {key}"
-            assert f"/response/{key}" in masked or key in VISIBLE_VOICE_FIELDS, (
-                f"{name} answers {key!r}, which is neither masked nor a visible flag"
-            )
+        assert case["credential"] == "grant", f"{name} does not present a runtime grant"
+        assert case["response"]["status"] == 401, f"{name} did not refuse the grant"
+        assert case["response"]["body"] == VOICE_REFUSAL_BODY, f"{name} answered a different body"
+        assert case["mask"] == [], f"{name} masks a key that its refusal does not carry"
 
 
 @pytest.mark.unit

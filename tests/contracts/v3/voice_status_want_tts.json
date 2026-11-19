@@ -1,0 +1,30 @@
+{
+  "schema_version": 3,
+  "name": "voice_status_want_tts",
+  "kind": "http",
+  "family": "voice",
+  "backend": "up",
+  "credential": "grant",
+  "ledger_key": "HTTP GET /api/voice/status",
+  "request": {
+    "method": "GET",
+    "path": "/api/voice/status",
+    "query": {
+      "want_tts": "true"
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "error": "grant lacks the required capability",
+      "code": "wrong_capability"
+    }
+  },
+  "normalizers": {},
+  "mask": []
+}

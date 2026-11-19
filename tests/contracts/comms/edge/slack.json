@@ -1,0 +1,72 @@
+{
+  "hosts": ["slack.com", "upload.corpus.test"],
+  "default": {
+    "status": 200,
+    "content_type": "application/json",
+    "body": {"ok": true}
+  },
+  "routes": [
+    {
+      "host": "slack.com",
+      "method": "POST",
+      "path": "/api/auth.test",
+      "body": {
+        "ok": true,
+        "url": "https://corpus-workspace.slack.test/",
+        "team": "corpus-team",
+        "user": "corpus-bot",
+        "team_id": "T0CORPUS0001",
+        "user_id": "U0CORPUS0001",
+        "bot_id": "B0CORPUS0001"
+      }
+    },
+    {
+      "host": "slack.com",
+      "method": "POST",
+      "path": "/api/chat.postMessage",
+      "body": {
+        "ok": true,
+        "channel": "C0CORPUS0001",
+        "ts": "1700000000.000100",
+        "message": {"text": "corpus", "ts": "1700000000.000100"}
+      }
+    },
+    {
+      "host": "slack.com",
+      "method": "POST",
+      "path": "/api/files.getUploadURLExternal",
+      "body": {
+        "ok": true,
+        "upload_url": "https://upload.corpus.test/upload/corpus-1",
+        "file_id": "F0CORPUS0001"
+      }
+    },
+    {
+      "host": "upload.corpus.test",
+      "method": "PUT",
+      "path": "/upload/corpus-1",
+      "status": 200,
+      "content_type": "text/plain",
+      "body": ""
+    },
+    {
+      "host": "slack.com",
+      "method": "POST",
+      "path": "/api/files.completeUploadExternal",
+      "body": {
+        "ok": true,
+        "files": [
+          {
+            "id": "F0CORPUS0001",
+            "title": "corpus-errors.txt",
+            "shares": {
+              "public": {
+                "C0CORPUS0001": [{"ts": "1700000000.000200"}]
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

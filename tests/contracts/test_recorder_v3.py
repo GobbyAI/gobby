@@ -356,10 +356,13 @@ def test_v3_recorder_sends_a_runtime_grant_for_a_case_that_declares_one(tmp_path
     """A case whose credential is grant is sent with the runtime grant the daemon issues.
 
     The fake daemon answers the handshake with the pinned grant vector, so the header the case
-    request carries must be that vector's header. The recorder refuses the grant credential today;
-    the refusal is captured and asserted, so the failure names it.
+    request carries must be that vector's header. The handshake is asked once with the operator
+    bearer, and the case request presents that bearer beside the grant. A refusal by the recorder
+    is captured and asserted, so a failure names it.
     """
-    vector = json.loads((corpus_v3.V3_DIR / "grant_encoding.json").read_text())
+    vector_path = corpus_v3.V3_DIR / "grant_encoding.json"
+    assert vector_path.is_file(), f"the pinned grant vector is missing: {vector_path}"
+    vector = json.loads(vector_path.read_text())
     seen: list[httpx.Request] = []
 
     def answer(request: httpx.Request) -> httpx.Response:
@@ -396,9 +399,13 @@ def test_v3_recorder_sends_a_runtime_grant_for_a_case_that_declares_one(tmp_path
     except recorder_v3.RecorderError as error:
         refusal = str(error)
     assert refusal is None, f"the recorder refused a case that declares a grant: {refusal}"
+    handshakes = [request for request in seen if request.url.path == "/api/runtime/handshake"]
+    assert [request.method for request in handshakes] == ["POST"]
+    assert handshakes[0].headers.get("Authorization") == "Bearer probe"
     case_requests = [request for request in seen if request.url.path == "/api/voice/status"]
     assert len(case_requests) == 1
     assert case_requests[0].headers.get("X-Gobby-Runtime-Grant") == vector["header"]
+    assert case_requests[0].headers.get("Authorization") == "Bearer probe"
 
 
 @pytest.mark.unit

@@ -1,0 +1,21 @@
+{
+  "schema_version": 3,
+  "name": "comms_webhook_receive",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "none",
+  "ledger_key": "HTTP POST /api/comms/webhooks/{channel_name}",
+  "request": {
+    "method": "POST",
+    "path": "/api/comms/webhooks/corpus-slack",
+    "query": {},
+    "headers": {
+      "X-Slack-Request-Timestamp": "1700000000",
+      "X-Slack-Signature": "v0=corpus-placeholder"
+    },
+    "body": {"type": "url_verification", "challenge": "corpus-challenge"}
+  },
+  "normalizers": {},
+  "mask": []
+}

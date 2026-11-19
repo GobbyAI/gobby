@@ -1757,7 +1757,14 @@ mod loader_rule_tests {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/contracts/v3/manifest.json");
         let cases = load_manifest(&path).expect("the shipped v3 manifest loads");
-        assert_eq!(cases.len(), 5);
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read the v3 manifest"))
+                .expect("the v3 manifest is JSON");
+        let listed = manifest["cases"]
+            .as_array()
+            .expect("the v3 manifest lists cases")
+            .len();
+        assert_eq!(cases.len(), listed);
     }
 
     #[test]

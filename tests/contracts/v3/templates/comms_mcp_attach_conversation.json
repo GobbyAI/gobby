@@ -1,0 +1,17 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_attach_conversation",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:attach_conversation",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "attach_conversation",
+    "arguments": {"channel": "corpus-slack", "conversation_id": "dm:1001"}
+  },
+  "normalizers": {},
+  "mask": []
+}

@@ -14,16 +14,24 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import time
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 from gobby.storage.api_keys import ensure_local_api_key
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.utils.dev import WORKTREE_DAEMON_OVERRIDE_ENV
-from tests.contracts.recorder_v3_support import ProviderEdgeLog
+from tests.contracts.comms.fake_edge import FakeEdge
+from tests.contracts.recorder_v3_support import (
+    CAPTURE_QUIET_SECONDS,
+    E2E_MACHINE_ID,
+    apply_startup,
+)
 from tests.e2e import conftest as e2e
 from tests.fixtures.gdaemon_binary import build_checkout_gdaemon
 from tests.fixtures.hub_guard import guard_worktree_override
@@ -35,11 +43,12 @@ from tests.fixtures.postgres import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-E2E_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
-# The fixed row id of the startup Slack channel. Empty until the communications startup block is
-# applied before the daemon starts.
-CORPUS_SLACK_CHANNEL_ID = ""
+# The fixed row id of the startup Slack channel, written before the daemon starts.
+CORPUS_SLACK_CHANNEL_ID = "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001"
 SCHEMA_APPLY_TIMEOUT_SECONDS = 300
+LIVE_CHANNEL_CAP_SECONDS = 60.0
+POLL_INTERVAL_SECONDS = 0.5
+PROXY_NO_PROXY = "127.0.0.1,localhost,::1"
 
 
 class RecorderDaemonError(RuntimeError):
@@ -220,20 +229,90 @@ def recorder_daemon(
     base_url: str,
     database_url: str,
     startup: Mapping[str, Any] | None = None,
-    edge: ProviderEdgeLog | None = None,
+    edge: FakeEdge | None = None,
 ) -> Iterator[RecorderDaemon]:
     """Start one isolated daemon on ``database_url`` and stop it on exit.
 
     ``base_url`` is the guarded DATABASE_URL the run derives from; ``database_url`` is the run's
     own database. The caller owns the database and drops it after this context exits. ``startup``
-    (a family's startup block) and ``edge`` (a provider edge) are accepted here but not yet applied.
+    is one family's startup block: its config, channel rows and secrets are written before the
+    daemon starts. ``edge`` is the provider edge the daemon's outbound HTTPS is routed through.
     """
-    with _daemon(database_url, base_url) as daemon:
+    with _daemon(database_url, base_url, startup, edge) as daemon:
         yield daemon
 
 
 @contextmanager
-def _daemon(database_url: str, base_url: str) -> Iterator[RecorderDaemon]:
+def _provider_edge_environment(edge: FakeEdge | None) -> Iterator[None]:
+    """Route this process's HTTPS through the edge while a daemon starts, then restore it.
+
+    The daemon copies the environment when it is spawned, so the variables need to be set only
+    for the start. The loopback addresses stay direct, and the test authority is the trust root.
+    """
+    if edge is None:
+        yield
+        return
+    host, port = edge.address
+    values = {
+        "HTTPS_PROXY": f"http://{host}:{port}",
+        "https_proxy": f"http://{host}:{port}",
+        "NO_PROXY": PROXY_NO_PROXY,
+        "no_proxy": PROXY_NO_PROXY,
+        "SSL_CERT_FILE": str(edge.ca_path()),
+    }
+    previous = {name: os.environ.get(name) for name in values}
+    os.environ.update(values)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+def _await_quiet(edge: FakeEdge) -> None:
+    """Return once the edge log has been unchanged for the quiet period."""
+    last_count = len(edge.hits())
+    last_change = time.monotonic()
+    while time.monotonic() - last_change < CAPTURE_QUIET_SECONDS:
+        time.sleep(0.05)
+        count = len(edge.hits())
+        if count != last_count:
+            last_count, last_change = count, time.monotonic()
+
+
+def _await_live_channel(daemon: RecorderDaemon, edge: FakeEdge) -> None:
+    """Wait until the startup Slack channel is active, then clear the edge log.
+
+    Startup hits (the channel's initialization) fall before any capture window, so the log is
+    cleared only once the channel is live and the edge has been quiet.
+    """
+    deadline = time.monotonic() + LIVE_CHANNEL_CAP_SECONDS
+    status: dict[str, Any] = {}
+    with httpx.Client(
+        base_url=daemon.http_url, headers=daemon.operator_headers(), timeout=10.0
+    ) as client:
+        while True:
+            response = client.get(f"/api/comms/channels/{CORPUS_SLACK_CHANNEL_ID}/status")
+            status = response.json() if response.status_code == 200 else {}
+            if status.get("active") is True and status.get("init_error") is None:
+                break
+            if time.monotonic() >= deadline:
+                raise RecorderDaemonError(f"the startup Slack channel is not live: {status}")
+            time.sleep(POLL_INTERVAL_SECONDS)
+    _await_quiet(edge)
+    edge.clear()
+
+
+@contextmanager
+def _daemon(
+    database_url: str,
+    base_url: str,
+    startup: Mapping[str, Any] | None,
+    edge: FakeEdge | None,
+) -> Iterator[RecorderDaemon]:
     root = Path(tempfile.mkdtemp(prefix="gobby_v3_")).resolve()
     socket_dir = e2e.create_host_socket_dir()
     gen: Any = None
@@ -250,16 +329,23 @@ def _daemon(database_url: str, base_url: str) -> Iterator[RecorderDaemon]:
         _seed_rows(database)
         e2e._seed_e2e_runtime_state(database, root, terminal_host_socket_dir=socket_dir)
         ensure_local_api_key(database, E2E_MACHINE_ID, home / "bootstrap.yaml")
-        with _worktree_override(base_url):
+        if startup is not None:
+            apply_startup(startup, database=database, home=home, machine_id=E2E_MACHINE_ID)
+        with _worktree_override(base_url), _provider_edge_environment(edge):
             gen = e2e._start_daemon_instance(root, (config_path, http_port, ws_port))
             instance = next(gen)
-        yield RecorderDaemon(
+        daemon = RecorderDaemon(
             http_url=instance.http_url,
             ws_port=instance.ws_port,
             home=home,
             project_dir=root,
             pid=instance.pid,
         )
+        if startup is not None and startup.get("channels"):
+            if edge is None:
+                raise RecorderDaemonError("a startup channel needs a provider edge")
+            _await_live_channel(daemon, edge)
+        yield daemon
     finally:
         if gen is not None:
             next(gen, None)

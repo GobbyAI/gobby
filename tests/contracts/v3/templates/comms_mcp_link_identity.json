@@ -1,0 +1,21 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_link_identity",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:link_identity",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "link_identity",
+    "arguments": {
+      "channel": "corpus-slack",
+      "external_user_id": "corpus-user-1",
+      "session_id": "corpus-session"
+    }
+  },
+  "normalizers": {},
+  "mask": []
+}

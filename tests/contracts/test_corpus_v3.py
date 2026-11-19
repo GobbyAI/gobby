@@ -14,6 +14,7 @@ import pytest
 
 from scripts.parity_waivers import DIFF, PASSED, WAIVED, Waiver
 from tests.contracts import corpus_v3, http_corpus, recorder_v3
+from tests.contracts.comms.fake_edge import FakeEdge
 from tests.contracts.http_corpus import CorpusError, classify_replay
 from tests.contracts.recorder_daemon_v3 import recorder_daemon
 
@@ -26,6 +27,42 @@ V3_CASE_FILES = (
     "mcp_stdio_gobby_list_tools.json",
     "ws_terminal_list.json",
     "cli_schema_help.json",
+    "comms_channels_list.json",
+    "comms_channel_create.json",
+    "comms_channel_update.json",
+    "comms_channel_status.json",
+    "comms_send.json",
+    "comms_send_missing_channel.json",
+    "comms_messages.json",
+    "comms_attachment.json",
+    "comms_webhook_verify.json",
+    "comms_webhook_receive.json",
+    "comms_channel_delete.json",
+    "comms_mcp_add_channel.json",
+    "comms_mcp_attach_conversation.json",
+    "comms_mcp_compose_status_report.json",
+    "comms_mcp_detach_conversation.json",
+    "comms_mcp_get_messages.json",
+    "comms_mcp_link_identity.json",
+    "comms_mcp_list_channels.json",
+    "comms_mcp_list_conversation_attachments.json",
+    "comms_mcp_list_identities.json",
+    "comms_mcp_remove_channel.json",
+    "comms_mcp_resolve_operator_conversation.json",
+    "comms_mcp_send_attachment.json",
+    "comms_mcp_send_message.json",
+    "comms_mcp_send_operator_attachment.json",
+    "comms_mcp_send_operator_message.json",
+    "comms_mcp_send_proactive_message.json",
+    "comms_mcp_set_channel_project.json",
+    "comms_mcp_unlink_identity.json",
+    "voice_status.json",
+    "voice_status_want_tts.json",
+    "voice_transcribe_missing_file.json",
+    "voice_mcp_add_vocab.json",
+    "voice_mcp_list_vocab.json",
+    "voice_mcp_remove_vocab.json",
+    "voice_mcp_clear_vocab.json",
 )
 FAMILIES: dict[str, dict[str, str]] = {"probe": {"parity": "proxy", "origin": "python"}}
 # The frozen v3 key order, pinned here independently of the loader.
@@ -652,41 +689,48 @@ def test_v2_directory_keeps_its_unlisted_json_files(tmp_path: Path) -> None:
 
 
 @pytest.fixture(scope="module")
-def v3_self_replay() -> Iterator[dict[str, Any]]:
-    """Replay every schema 3 case, in manifest order, each in its own run database and daemon.
+def v3_replay_edge() -> Iterator[tuple[FakeEdge, Path]]:
+    """One provider edge for every self-replayed case of the module, with its scratch directory.
 
-    A case's daemon starts from empty state, so no case reads another case's writes. A case that
-    cannot run, including one whose daemon cannot start, is stored as its exception and re-raised
-    only by that case's own test.
+    The edge is built before the first case's daemon and stopped after the last, as a recording
+    run builds it. Each daemon clears the edge log once its startup channel is live.
     """
-    waivers = http_corpus.load_replay_waivers()
-    outcomes: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="v3-self-replay-") as scratch:
-        for case in V3_CASES:
-            try:
-                with (
-                    recorder_v3.open_run_database() as run,
-                    recorder_daemon(base_url=run.base_url, database_url=run.url) as daemon,
-                ):
-                    outcomes[case["name"]] = recorder_v3.replay_case(
-                        run,
-                        daemon,
-                        case,
-                        waivers,
-                        operator=daemon.operator_headers(),
-                        scratch=Path(scratch),
-                    )
-            except Exception as error:
-                outcomes[case["name"]] = error
-        yield outcomes
+        edge_root = Path(scratch) / "edge"
+        edge_root.mkdir()
+        edge = FakeEdge(edge_root)
+        edge.start()
+        try:
+            yield edge, Path(scratch)
+        finally:
+            edge.stop()
 
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("case", V3_CASES, ids=lambda case: case["name"])
-def test_v3_proxy_self_replay(case: dict[str, Any], v3_self_replay: dict[str, Any]) -> None:
-    outcome = v3_self_replay[case["name"]]
-    if isinstance(outcome, BaseException):
-        raise outcome
+def test_v3_proxy_self_replay(case: dict[str, Any], v3_replay_edge: tuple[FakeEdge, Path]) -> None:
+    """Replay one schema 3 case in its own run database and daemon.
+
+    The daemon starts from empty state and from the case family's startup block, so no case reads
+    another case's writes, and each case's daemon start counts against its own test only.
+    """
+    edge, scratch = v3_replay_edge
+    startup = recorder_v3.startup_for(case["family"], corpus_v3.load_manifest(corpus_v3.V3_DIR))
+    with (
+        recorder_v3.open_run_database() as run,
+        recorder_daemon(
+            base_url=run.base_url, database_url=run.url, startup=startup, edge=edge
+        ) as daemon,
+    ):
+        outcome = recorder_v3.replay_case(
+            run,
+            daemon,
+            case,
+            http_corpus.load_replay_waivers(),
+            operator=daemon.operator_headers(),
+            scratch=scratch,
+            edge=edge,
+        )
     assert outcome.outcome in (PASSED, WAIVED), case["name"]
 
 

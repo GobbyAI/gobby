@@ -1,0 +1,17 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_unlink_identity",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:unlink_identity",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "unlink_identity",
+    "arguments": {"identity_id": "00000000-0000-4000-8000-0000000000ff"}
+  },
+  "normalizers": {},
+  "mask": []
+}

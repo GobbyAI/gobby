@@ -1,0 +1,70 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_list_channels",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:list_channels",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "list_channels",
+    "arguments": {}
+  },
+  "response": {
+    "success": true,
+    "result": {
+      "channels": [
+        {
+          "id": "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+          "name": "corpus-slack",
+          "type": "slack",
+          "enabled": true,
+          "status": {
+            "name": "corpus-slack",
+            "channel_type": "slack",
+            "status": "active",
+            "active": true,
+            "enabled": true,
+            "supports_webhooks": true,
+            "supports_polling": false,
+            "is_polling": false,
+            "init_error": null,
+            "retry_pending": false,
+            "retry_attempts": 0,
+            "next_retry_at": null
+          },
+          "operator_project_id": null,
+          "project_id": null
+        },
+        {
+          "id": "@uuid:1@",
+          "name": "gobby_chat",
+          "type": "gobby_chat",
+          "enabled": true,
+          "status": {
+            "name": "gobby_chat",
+            "channel_type": "gobby_chat",
+            "status": "active",
+            "active": true,
+            "enabled": true,
+            "supports_webhooks": false,
+            "supports_polling": false,
+            "is_polling": false,
+            "init_error": null,
+            "retry_pending": false,
+            "retry_attempts": 0,
+            "next_retry_at": null
+          },
+          "operator_project_id": null,
+          "project_id": null
+        }
+      ]
+    }
+  },
+  "normalizers": {
+    "/response/result/channels/1/id": "uuid_ordinal"
+  },
+  "mask": []
+}

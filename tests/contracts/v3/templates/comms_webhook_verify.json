@@ -1,0 +1,18 @@
+{
+  "schema_version": 3,
+  "name": "comms_webhook_verify",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "none",
+  "ledger_key": "HTTP GET /api/comms/webhooks/{channel_name}",
+  "request": {
+    "method": "GET",
+    "path": "/api/comms/webhooks/corpus-slack",
+    "query": {"validationToken": "corpus-challenge"},
+    "headers": {},
+    "body": null
+  },
+  "normalizers": {},
+  "mask": []
+}

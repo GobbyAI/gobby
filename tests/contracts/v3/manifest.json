@@ -5,12 +5,69 @@
     "mcp_http_gobby_list_tools.json",
     "mcp_stdio_gobby_list_tools.json",
     "ws_terminal_list.json",
-    "cli_schema_help.json"
+    "cli_schema_help.json",
+    "comms_channels_list.json",
+    "comms_channel_create.json",
+    "comms_channel_update.json",
+    "comms_channel_status.json",
+    "comms_send.json",
+    "comms_send_missing_channel.json",
+    "comms_messages.json",
+    "comms_attachment.json",
+    "comms_webhook_verify.json",
+    "comms_webhook_receive.json",
+    "comms_channel_delete.json",
+    "comms_mcp_add_channel.json",
+    "comms_mcp_attach_conversation.json",
+    "comms_mcp_compose_status_report.json",
+    "comms_mcp_detach_conversation.json",
+    "comms_mcp_get_messages.json",
+    "comms_mcp_link_identity.json",
+    "comms_mcp_list_channels.json",
+    "comms_mcp_list_conversation_attachments.json",
+    "comms_mcp_list_identities.json",
+    "comms_mcp_remove_channel.json",
+    "comms_mcp_resolve_operator_conversation.json",
+    "comms_mcp_send_attachment.json",
+    "comms_mcp_send_message.json",
+    "comms_mcp_send_operator_attachment.json",
+    "comms_mcp_send_operator_message.json",
+    "comms_mcp_send_proactive_message.json",
+    "comms_mcp_set_channel_project.json",
+    "comms_mcp_unlink_identity.json",
+    "voice_status.json",
+    "voice_status_want_tts.json",
+    "voice_transcribe_missing_file.json",
+    "voice_mcp_add_vocab.json",
+    "voice_mcp_list_vocab.json",
+    "voice_mcp_remove_vocab.json",
+    "voice_mcp_clear_vocab.json"
   ],
   "families": {
     "cli": {"parity": "proxy", "origin": "python"},
     "config": {"parity": "proxy", "origin": "python"},
     "mcp": {"parity": "proxy", "origin": "python"},
-    "ws": {"parity": "proxy", "origin": "python"}
+    "ws": {"parity": "proxy", "origin": "python"},
+    "communications": {"parity": "proxy", "origin": "python"},
+    "voice": {"parity": "proxy", "origin": "python"}
+  },
+  "startup": {
+    "communications": {
+      "config": {"communications.enabled": true},
+      "channels": [
+        {
+          "id": "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+          "channel_type": "slack",
+          "name": "corpus-slack",
+          "enabled": true,
+          "config": {
+            "bot_token": "$secret:corpus_slack_bot_token",
+            "signing_secret": "$secret:corpus_slack_signing_secret",
+            "default_destination": "C0CORPUS0001"
+          }
+        }
+      ],
+      "secrets": ["corpus_slack_bot_token", "corpus_slack_signing_secret"]
+    }
   }
 }

@@ -1,0 +1,31 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_get_messages",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:get_messages",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "get_messages",
+    "arguments": {}
+  },
+  "seed": [
+    {
+      "http": {
+        "method": "POST",
+        "path": "/api/comms/send",
+        "credential": "operator",
+        "body": {"channel_name": "corpus-slack", "content": "corpus seed message"}
+      }
+    }
+  ],
+  "normalizers": {
+    "/response/result/messages/0/id": "uuid_ordinal"
+  },
+  "mask": [
+    "/response/result/messages/0/created_at"
+  ]
+}

@@ -42,6 +42,7 @@ from websockets.sync.client import ClientConnection, connect
 
 from scripts.parity_waivers import Waiver
 from tests.contracts import corpus_v3, http_corpus
+from tests.contracts.comms.fake_edge import FakeEdge
 from tests.contracts.http_corpus import CorpusError
 from tests.contracts.normalizers_v3 import (
     Window,
@@ -831,7 +832,7 @@ def _send(
 ) -> Any:
     """Send one case of the given kind and return its raw response, redacted by kind."""
     if kind == "http":
-        headers = recorder_credential_headers(case["credential"], operator)
+        headers = recorder_credential_headers(client, case["credential"], operator)
         request = case["request"]
         headers.update(request["headers"])
         response = client.request(
@@ -884,9 +885,12 @@ def replay_case(
     *,
     operator: Mapping[str, str],
     scratch: Path,
+    edge: ProviderEdgeLog | None = None,
 ) -> http_corpus.ReplayResult:
     """Replay one stored schema 3 case and classify it against its recording or native answer."""
-    observation, _window = _run_case(run, daemon, case, operator=operator, scratch=scratch)
+    observation, _window = _run_case(
+        run, daemon, case, operator=operator, scratch=scratch, edge=edge
+    )
     actual, observed = _classify_inputs(observation)
     return http_corpus.classify_replay(case, actual, waivers, observed=observed)
 
@@ -918,10 +922,13 @@ def record_template(
     *,
     operator: Mapping[str, str],
     scratch: Path,
+    edge: ProviderEdgeLog | None = None,
 ) -> dict[str, Any]:
     """Run one raw template and return the recorded case, keys in the frozen order."""
     case = copy.deepcopy(dict(template))
-    observation, _window = _run_case(run, daemon, case, operator=operator, scratch=scratch)
+    observation, _window = _run_case(
+        run, daemon, case, operator=operator, scratch=scratch, edge=edge
+    )
     if "waiver" in case and str(case["waiver"]).endswith(".native-extension"):
         case.pop("response", None)
     else:
@@ -942,32 +949,66 @@ def read_template(path: Path) -> dict[str, Any]:
     return document
 
 
-def record_in_own_run(template: Mapping[str, Any], *, scratch: Path) -> dict[str, Any]:
+def startup_for(family: str, manifest: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The manifest's startup block for one family, or None when the family has none."""
+    startup: Mapping[str, Any] = manifest.get("startup", {})
+    entry: Mapping[str, Any] | None = startup.get(family)
+    return entry
+
+
+def record_in_own_run(
+    template: Mapping[str, Any],
+    *,
+    scratch: Path,
+    startup: Mapping[str, Any] | None = None,
+    edge: FakeEdge | None = None,
+) -> dict[str, Any]:
     """Record one template in a run database and a daemon of its own.
 
-    No case reads another case's writes, so every case starts from an empty run.
+    No case reads another case's writes, so every case starts from an empty run. The daemon
+    starts from the case family's startup block, if it has one, and routes through the edge.
     """
     with (
         open_run_database() as run,
-        recorder_daemon(base_url=run.base_url, database_url=run.url) as daemon,
+        recorder_daemon(
+            base_url=run.base_url, database_url=run.url, startup=startup, edge=edge
+        ) as daemon,
     ):
         return record_template(
-            run, daemon, template, operator=daemon.operator_headers(), scratch=scratch
+            run,
+            daemon,
+            template,
+            operator=daemon.operator_headers(),
+            scratch=scratch,
+            edge=edge,
         )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Record every template in the templates directory into the corpus directory."""
+    """Record every template in the templates directory into the corpus directory.
+
+    One provider edge serves the whole run, built before the first daemon and stopped after the
+    last. Its test authority lives in the run's scratch directory.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--templates", type=Path, default=TEMPLATE_DIR)
     parser.add_argument("--out", type=Path, default=V3_DIR)
     args = parser.parse_args(argv)
     templates = sorted(args.templates.glob("*.json"))
     scratch = Path(tempfile.mkdtemp(prefix="recorder-v3-"))
-    for template in templates:
-        case = record_in_own_run(read_template(template), scratch=scratch)
-        (args.out / f"{case['name']}.json").write_bytes(case_bytes(case))
-        print(f"recorded {case['name']}", file=sys.stderr)
+    manifest = corpus_v3.load_manifest(V3_DIR)
+    edge = FakeEdge(scratch / "edge")
+    (scratch / "edge").mkdir(parents=True, exist_ok=True)
+    edge.start()
+    try:
+        for template in templates:
+            document = read_template(template)
+            startup = startup_for(str(document.get("family", "")), manifest)
+            case = record_in_own_run(document, scratch=scratch, startup=startup, edge=edge)
+            (args.out / f"{case['name']}.json").write_bytes(case_bytes(case))
+            print(f"recorded {case['name']}", file=sys.stderr)
+    finally:
+        edge.stop()
     return 0
 
 

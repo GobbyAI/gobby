@@ -1,0 +1,17 @@
+{
+  "hosts": ["api.telegram.org"],
+  "default": {
+    "status": 200,
+    "content_type": "application/json",
+    "body": {
+      "ok": true,
+      "result": {
+        "id": 1000001,
+        "is_bot": true,
+        "first_name": "corpus",
+        "username": "corpus_bot"
+      }
+    }
+  },
+  "routes": []
+}

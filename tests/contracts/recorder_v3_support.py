@@ -8,11 +8,21 @@ without a cycle.
 from __future__ import annotations
 
 import time
+import uuid
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
 
+from gobby.communications.models import ChannelConfig
+from gobby.runtime_grants.handshake import encode_grant_header
+from gobby.runtime_grants.schema import GrantBundle
+from gobby.storage.communications import LocalCommunicationsStore
+from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
+from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.secrets import SecretStore
 from tests.contracts import http_corpus
 
 # The quiet period and the cap that bound every capture window. The recorder's other channels
@@ -20,6 +30,12 @@ from tests.contracts import http_corpus
 CAPTURE_QUIET_SECONDS = 0.5
 CAPTURE_CAP_SECONDS = 5.0
 REST_TOOL_PREFIX = "/api/mcp/"
+# The machine and project the recording daemons are built for. The handshake issues a grant for
+# this pair, so the daemon's own machine is the one the grant names.
+E2E_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
+E2E_PROJECT_ID = "00000000-0000-0000-0000-000000000e2e"
+HANDSHAKE_PATH = "/api/runtime/handshake"
+GRANT_HEADER = "X-Gobby-Runtime-Grant"
 
 
 class RecorderError(RuntimeError):
@@ -34,10 +50,76 @@ class ProviderEdgeLog(Protocol):
     def clear(self) -> None: ...
 
 
-def recorder_credential_headers(credential: str, operator: Mapping[str, str]) -> dict[str, str]:
-    """The headers a recorded request sends for its credential. The grant credential is not sent."""
+def apply_startup(
+    entry: Mapping[str, Any],
+    *,
+    database: PostgresHubDatabase,
+    home: Path,
+    machine_id: str,
+) -> None:
+    """Apply one family's startup block before its daemon starts: config, channels, then secrets.
+
+    The config patch is one compare-and-swap at the current revision. Each channel row is written
+    with its fixed id; the store overwrites its timestamps. Each secret gets a value generated at
+    run time, written under the daemon's home so the daemon decrypts it with the same key file.
+    No generated value is returned or recorded.
+    """
+    config: dict[str, Any] = dict(entry.get("config", {}))
+    if config:
+        mutations = ConfigMutations(database)
+        mutations.patch_internal(
+            expected_revision=mutations.repository.current_revision(),
+            patch=ConfigPatch(values=config),
+            source="corpus-startup",
+        )
+    store = LocalCommunicationsStore(database, project_id="", machine_id=machine_id)
+    now = datetime.now(UTC)
+    for row in entry.get("channels", []):
+        store.create_channel(
+            ChannelConfig(
+                id=str(row["id"]),
+                channel_type=str(row["channel_type"]),
+                name=str(row["name"]),
+                enabled=bool(row["enabled"]),
+                config_json=dict(row["config"]),
+                created_at=now,
+                updated_at=now,
+                webhook_secret=None,
+            )
+        )
+    secrets = SecretStore(database, gobby_home=home)
+    for name in entry.get("secrets", []):
+        secrets.set(str(name), f"corpus-fake-{uuid.uuid4()}")
+
+
+def mint_runtime_grant(client: httpx.Client, *, operator: Mapping[str, str]) -> str:
+    """Ask the daemon's handshake for a runtime grant and return its presentation header value.
+
+    The operator bearer authenticates the request. The daemon issues the grant for the recording
+    machine and project, and the header is the grant's canonical encoding.
+    """
+    response = client.post(
+        HANDSHAKE_PATH,
+        json={"machine_id": E2E_MACHINE_ID, "project_id": E2E_PROJECT_ID},
+        headers=dict(operator),
+    )
+    if response.status_code != 200:
+        raise RecorderError(f"the runtime handshake answered HTTP {response.status_code}")
+    grant = GrantBundle.model_validate(response.json()["grant"])
+    return encode_grant_header(grant)
+
+
+def recorder_credential_headers(
+    client: httpx.Client, credential: str, operator: Mapping[str, str]
+) -> dict[str, str]:
+    """The headers a recorded request sends for its credential.
+
+    The grant credential sends the operator bearer with a runtime grant minted by the handshake
+    on the same client, so the grant is the daemon's own and is minted once per request.
+    """
     if credential == "grant":
-        raise RecorderError("the grant credential is not sent by the v3 recorder")
+        header = mint_runtime_grant(client, operator=operator)
+        return {**dict(operator), GRANT_HEADER: header}
     return http_corpus.credential_headers(credential, operator=operator, grant={})
 
 
@@ -49,7 +131,7 @@ def send_seed_http(
     Every seed answers HTTP 200. A seed on the REST tool route must also answer a JSON body whose
     ``success`` is true, because that route answers a tool-level failure with HTTP 200 as well.
     """
-    headers = recorder_credential_headers(step["credential"], operator)
+    headers = recorder_credential_headers(client, step["credential"], operator)
     response = client.request(step["method"], step["path"], headers=headers, json=step.get("body"))
     path = step["path"]
     if response.status_code != 200:
