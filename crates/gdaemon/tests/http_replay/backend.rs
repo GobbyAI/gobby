@@ -70,12 +70,16 @@ pub struct Backends(BTreeMap<String, RouteBackend>);
 
 impl Backends {
     pub fn new<'a>(entries: impl IntoIterator<Item = (&'a str, RouteBackend)>) -> Self {
-        let _ = entries;
-        unimplemented!("not wired: Backends::new")
+        Self(
+            entries
+                .into_iter()
+                .map(|(name, backend)| (name.to_owned(), backend))
+                .collect(),
+        )
     }
 
     pub fn routes(&self) -> &BTreeMap<String, RouteBackend> {
-        unimplemented!("not wired: Backends::routes")
+        &self.0
     }
 }
 
@@ -97,8 +101,13 @@ pub fn native_family<'a>(
     families: &[&'a dyn RouteFamily<FrontDoorState>],
     family: &str,
 ) -> Result<&'a dyn RouteFamily<FrontDoorState>, NoNativeBackend> {
-    let _ = (families, family);
-    unimplemented!("not wired: native_family")
+    families
+        .iter()
+        .copied()
+        .find(|entry| entry.name() == family)
+        .ok_or_else(|| NoNativeBackend {
+            family: family.to_owned(),
+        })
 }
 
 /// Serves `families` with `backends` on a fresh loopback port. Proxied legs go to `target`,
@@ -109,8 +118,21 @@ pub async fn start_listener(
     target: SocketAddr,
     home: &Path,
 ) -> SocketAddr {
-    let _ = (families, backends, target, home);
-    unimplemented!("not wired: start_listener")
+    let auth =
+        Arc::new(AuthState::new("driver-secret".into(), None, Default::default()).expect("auth"));
+    let mut state = FrontDoorState::new(target, BackendState::Down, auth);
+    state.compare_log = Some(Arc::new(CompareLog::open(home).expect("compare log")));
+    let table = RouteTable::new(families, backends.routes(), &state);
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind listener");
+    let addr = listener.local_addr().expect("listener addr");
+    let door = FrontDoor::new(state, table);
+    tokio::spawn(async move {
+        let doors = vec![(listener, door)];
+        let _ = serve_doors(doors, None, HeartbeatHost::new(), std::future::pending()).await;
+    });
+    addr
 }
 
 /// A stub Python backend: answers every request with `stub-answer` and records its method and
