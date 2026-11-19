@@ -1,0 +1,185 @@
+{
+  "schema_version": 3,
+  "name": "mcp_http_gobby_list_tools",
+  "kind": "mcp",
+  "family": "mcp",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP HTTP gobby:list_tools",
+  "invocation": {
+    "transport": "http",
+    "server": "gobby",
+    "tool": "list_tools",
+    "arguments": {
+      "server_name": "gobby-tasks"
+    }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"success\": true,\n  \"tools\": [\n    {\n      \"name\": \"create_task\",\n      \"brief\": \"Create a new task. Requires: title, category; lifecycle requirements come from selected policy.\"\n    },\n    {\n      \"name\": \"get_task\",\n      \"brief\": \"Get task details including dependencies. Requires: task_id\"\n    },\n    {\n      \"name\": \"update_task\",\n      \"brief\": \"Update task fields. Requires: task_id\"\n    },\n    {\n      \"name\": \"list_tasks\",\n      \"brief\": \"List tasks with optional filters.\"\n    },\n    {\n      \"name\": \"close_task\",\n      \"brief\": \"Close a task when its active definition's selected task_close rules allow it. Requires: task_id\"\n    },\n    {\n      \"name\": \"repair_closed_candidate\",\n      \"brief\": \"Correct a CLOSED/VALID task's commit marker to the exact full candidate from its original completed \"\n    },\n    {\n      \"name\": \"reopen_task\",\n      \"brief\": \"Reopen a closed or escalated task. Requires: task_id\"\n    },\n    {\n      \"name\": \"delete_task\",\n      \"brief\": \"Delete a task. Requires: task_id\"\n    },\n    {\n      \"name\": \"add_label\",\n      \"brief\": \"Add a label to a task. Requires: task_id, label\"\n    },\n    {\n      \"name\": \"remove_label\",\n      \"brief\": \"Remove a label from a task. Requires: task_id, label\"\n    },\n    {\n      \"name\": \"claim_task\",\n      \"brief\": \"Claim a task for your session. Requires: task_id\"\n    },\n    {\n      \"name\": \"escalate_task\",\n      \"brief\": \"Escalate a task for human intervention. Requires: task_id, reason\"\n    },\n    {\n      \"name\": \"de_escalate_task\",\n      \"brief\": \"Clear explicit escalation after its owner or coordinator records the resolution. Requires: task_i...\"\n    },\n    {\n      \"name\": \"release_task_claim\",\n      \"brief\": \"Authorized coordinator or holder: release a named seat's claim on an open task. Requires: task_id...\"\n    },\n    {\n      \"name\": \"hand_off_task_claim\",\n      \"brief\": \"With manage_task_claims and declared task scope, move the claim to a session on the same project and\"\n    },\n    {\n      \"name\": \"delegate_task\",\n      \"brief\": \"Delegate a task you filed to another live session. Requires: task_id, delegated_to_session_ref, r...\"\n    },\n    {\n      \"name\": \"link_task_to_session\",\n      \"brief\": \"Link a task to a session. Requires: task_id\"\n    },\n    {\n      \"name\": \"get_session_tasks\",\n      \"brief\": \"Get all tasks associated with a session.\"\n    },\n    {\n      \"name\": \"get_task_sessions\",\n      \"brief\": \"Get all sessions that touched a task. Requires: task_id\"\n    },\n    {\n      \"name\": \"team_progress\",\n      \"brief\": \"Report a team's task progress: each stage's span in seconds, claim-to-close time, and flags (handoff\"\n    },\n    {\n      \"name\": \"get_team\",\n      \"brief\": \"Read a team's admitted binding: its task, branch, worktree, mode, parent team and reviewer seats.\"\n    },\n    {\n      \"name\": \"search_tasks\",\n      \"brief\": \"Search tasks using keyword search. Requires: query\"\n    },\n    {\n      \"name\": \"add_dependency\",\n      \"brief\": \"Add a dependency between tasks. Requires: task_id, depends_on\"\n    },\n    {\n      \"name\": \"remove_dependency\",\n      \"brief\": \"Remove a dependency between tasks. Requires: task_id, depends_on\"\n    },\n    {\n      \"name\": \"get_dependency_tree\",\n      \"brief\": \"Get dependency tree showing upstream blockers and downstream dependents. Requires: task_id\"\n    },\n    {\n      \"name\": \"check_dependency_cycles\",\n      \"brief\": \"Detect circular dependencies in the project.\"\n    },\n    {\n      \"name\": \"list_ready_tasks\",\n      \"brief\": \"List tasks that are open and have no unresolved blocking dependencies.\"\n    },\n    {\n      \"name\": \"list_blocked_tasks\",\n      \"brief\": \"List tasks that are currently blocked by external dependencies (excludes parent tasks blocked by the\"\n    },\n    {\n      \"name\": \"suggest_next_task\",\n      \"brief\": \"Suggest the best next task(s) to work on based on priority, readiness, and complexity.\"\n    },\n    {\n      \"name\": \"update_observed_files\",\n      \"brief\": \"Annotate a task's affected files from its linked commits. Requires: task_id\"\n    },\n    {\n      \"name\": \"backup_tasks\",\n      \"brief\": \"Write current live project tasks to the deterministic JSONL backup at ~/.\"\n    },\n    {\n      \"name\": \"link_commit\",\n      \"brief\": \"Link a git commit to a task. Requires: task_id, commit_sha\"\n    },\n    {\n      \"name\": \"unlink_commit\",\n      \"brief\": \"Unlink a git commit from a task. Requires: task_id, commit_sha, reason\"\n    },\n    {\n      \"name\": \"auto_link_commits\",\n      \"brief\": \"Auto-detect and link commits that mention task IDs in their messages.\"\n    },\n    {\n      \"name\": \"get_task_diff\",\n      \"brief\": \"Get one byte-oriented page of linked task changes. Requires: task_id\"\n    },\n    {\n      \"name\": \"record_attestation\",\n      \"brief\": \"Append authenticated task evidence. Requires: kind, result, summary, task_id\"\n    },\n    {\n      \"name\": \"list_attestations\",\n      \"brief\": \"List immutable task evidence history. Requires: task_id\"\n    }\n  ],\n  \"tool_count\": 37\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "success": true,
+        "tools": [
+          {
+            "name": "create_task",
+            "brief": "Create a new task. Requires: title, category; lifecycle requirements come from selected policy."
+          },
+          {
+            "name": "get_task",
+            "brief": "Get task details including dependencies. Requires: task_id"
+          },
+          {
+            "name": "update_task",
+            "brief": "Update task fields. Requires: task_id"
+          },
+          {
+            "name": "list_tasks",
+            "brief": "List tasks with optional filters."
+          },
+          {
+            "name": "close_task",
+            "brief": "Close a task when its active definition's selected task_close rules allow it. Requires: task_id"
+          },
+          {
+            "name": "repair_closed_candidate",
+            "brief": "Correct a CLOSED/VALID task's commit marker to the exact full candidate from its original completed "
+          },
+          {
+            "name": "reopen_task",
+            "brief": "Reopen a closed or escalated task. Requires: task_id"
+          },
+          {
+            "name": "delete_task",
+            "brief": "Delete a task. Requires: task_id"
+          },
+          {
+            "name": "add_label",
+            "brief": "Add a label to a task. Requires: task_id, label"
+          },
+          {
+            "name": "remove_label",
+            "brief": "Remove a label from a task. Requires: task_id, label"
+          },
+          {
+            "name": "claim_task",
+            "brief": "Claim a task for your session. Requires: task_id"
+          },
+          {
+            "name": "escalate_task",
+            "brief": "Escalate a task for human intervention. Requires: task_id, reason"
+          },
+          {
+            "name": "de_escalate_task",
+            "brief": "Clear explicit escalation after its owner or coordinator records the resolution. Requires: task_i..."
+          },
+          {
+            "name": "release_task_claim",
+            "brief": "Authorized coordinator or holder: release a named seat's claim on an open task. Requires: task_id..."
+          },
+          {
+            "name": "hand_off_task_claim",
+            "brief": "With manage_task_claims and declared task scope, move the claim to a session on the same project and"
+          },
+          {
+            "name": "delegate_task",
+            "brief": "Delegate a task you filed to another live session. Requires: task_id, delegated_to_session_ref, r..."
+          },
+          {
+            "name": "link_task_to_session",
+            "brief": "Link a task to a session. Requires: task_id"
+          },
+          {
+            "name": "get_session_tasks",
+            "brief": "Get all tasks associated with a session."
+          },
+          {
+            "name": "get_task_sessions",
+            "brief": "Get all sessions that touched a task. Requires: task_id"
+          },
+          {
+            "name": "team_progress",
+            "brief": "Report a team's task progress: each stage's span in seconds, claim-to-close time, and flags (handoff"
+          },
+          {
+            "name": "get_team",
+            "brief": "Read a team's admitted binding: its task, branch, worktree, mode, parent team and reviewer seats."
+          },
+          {
+            "name": "search_tasks",
+            "brief": "Search tasks using keyword search. Requires: query"
+          },
+          {
+            "name": "add_dependency",
+            "brief": "Add a dependency between tasks. Requires: task_id, depends_on"
+          },
+          {
+            "name": "remove_dependency",
+            "brief": "Remove a dependency between tasks. Requires: task_id, depends_on"
+          },
+          {
+            "name": "get_dependency_tree",
+            "brief": "Get dependency tree showing upstream blockers and downstream dependents. Requires: task_id"
+          },
+          {
+            "name": "check_dependency_cycles",
+            "brief": "Detect circular dependencies in the project."
+          },
+          {
+            "name": "list_ready_tasks",
+            "brief": "List tasks that are open and have no unresolved blocking dependencies."
+          },
+          {
+            "name": "list_blocked_tasks",
+            "brief": "List tasks that are currently blocked by external dependencies (excludes parent tasks blocked by the"
+          },
+          {
+            "name": "suggest_next_task",
+            "brief": "Suggest the best next task(s) to work on based on priority, readiness, and complexity."
+          },
+          {
+            "name": "update_observed_files",
+            "brief": "Annotate a task's affected files from its linked commits. Requires: task_id"
+          },
+          {
+            "name": "backup_tasks",
+            "brief": "Write current live project tasks to the deterministic JSONL backup at ~/."
+          },
+          {
+            "name": "link_commit",
+            "brief": "Link a git commit to a task. Requires: task_id, commit_sha"
+          },
+          {
+            "name": "unlink_commit",
+            "brief": "Unlink a git commit from a task. Requires: task_id, commit_sha, reason"
+          },
+          {
+            "name": "auto_link_commits",
+            "brief": "Auto-detect and link commits that mention task IDs in their messages."
+          },
+          {
+            "name": "get_task_diff",
+            "brief": "Get one byte-oriented page of linked task changes. Requires: task_id"
+          },
+          {
+            "name": "record_attestation",
+            "brief": "Append authenticated task evidence. Requires: kind, result, summary, task_id"
+          },
+          {
+            "name": "list_attestations",
+            "brief": "List immutable task evidence history. Requires: task_id"
+          }
+        ],
+        "tool_count": 37
+      }
+    }
+  },
+  "mask": []
+}

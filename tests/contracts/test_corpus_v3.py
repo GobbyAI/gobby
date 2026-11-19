@@ -5,15 +5,17 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Callable, Mapping
+import tempfile
+from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from scripts.parity_waivers import DIFF, PASSED, WAIVED, Waiver
-from tests.contracts import corpus_v3
+from tests.contracts import corpus_v3, http_corpus, recorder_v3
 from tests.contracts.http_corpus import CorpusError, classify_replay
+from tests.contracts.recorder_daemon_v3 import recorder_daemon
 
 V2_CASE_COUNT = 16
 FAMILIES: dict[str, dict[str, str]] = {"probe": {"parity": "proxy", "origin": "python"}}
@@ -139,12 +141,13 @@ def _mcp(
     server: str = "gobby",
     tool: str = "list_tasks",
 ) -> dict[str, Any]:
+    transport = "stdio" if ledger_key.startswith("MCP stdio ") else "http"
     return _v3_kind(
         "mcp",
         name=name,
         ledger_key=ledger_key,
-        invocation={"server": server, "tool": tool, "arguments": {}},
-        response={"status": 200, "headers": {}, "body": None},
+        invocation={"transport": transport, "server": server, "tool": tool, "arguments": {}},
+        response={"jsonrpc": "2.0", "id": 2, "result": {}},
     )
 
 
@@ -518,7 +521,9 @@ def test_timestamp_normalizer_may_declare_an_after_column(tmp_path: Path) -> Non
     ],
     ids=["after-on-other-name", "after-outside-db-delta", "pointer-key-required"],
 )
-def test_after_and_pointer_keys_are_checked(tmp_path: Path, case: dict[str, Any], match: str) -> None:
+def test_after_and_pointer_keys_are_checked(
+    tmp_path: Path, case: dict[str, Any], match: str
+) -> None:
     root = _write_corpus(tmp_path, version=3, cases=[case])
     with pytest.raises(CorpusError, match=match):
         corpus_v3.load_cases(root)
@@ -532,21 +537,38 @@ def test_v3_manifest_lists_its_cases_once() -> None:
     assert len(set(names)) == len(names)
 
 
-def _self_replay_outcome(case: Mapping[str, Any]) -> str:
-    """Replay one schema 3 case against the daemon and return its classification.
+@pytest.fixture(scope="module")
+def v3_self_replay() -> Iterator[dict[str, Any]]:
+    """Replay every schema 3 case, in manifest order, against one isolated Python daemon.
 
-    The schema 3 senders arrive with the recorder (C8). Until then this raises, so no case
-    can pass without being replayed.
+    Each case's seed resets the state it reads, so one daemon serves the whole manifest. A case
+    that cannot run is stored as its exception and re-raised only by that case's own test.
     """
-    raise NotImplementedError(
-        f"{case['name']} ({corpus_v3.case_kind(case)}): schema 3 senders arrive with the recorder"
-    )
+    waivers = http_corpus.load_replay_waivers()
+    with tempfile.TemporaryDirectory(prefix="v3-self-replay-") as scratch:
+        with (
+            recorder_v3.open_run_database() as run,
+            recorder_daemon(base_url=run.base_url, database_url=run.url) as daemon,
+        ):
+            operator = daemon.operator_headers()
+            outcomes: dict[str, Any] = {}
+            for case in V3_CASES:
+                try:
+                    outcomes[case["name"]] = recorder_v3.replay_case(
+                        run, daemon, case, waivers, operator=operator, scratch=Path(scratch)
+                    )
+                except Exception as error:
+                    outcomes[case["name"]] = error
+            yield outcomes
 
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("case", V3_CASES, ids=lambda case: case["name"])
-def test_v3_proxy_self_replay(case: dict[str, Any]) -> None:
-    assert _self_replay_outcome(case) in (PASSED, WAIVED), case["name"]
+def test_v3_proxy_self_replay(case: dict[str, Any], v3_self_replay: dict[str, Any]) -> None:
+    outcome = v3_self_replay[case["name"]]
+    if isinstance(outcome, BaseException):
+        raise outcome
+    assert outcome.outcome in (PASSED, WAIVED), case["name"]
 
 
 # Synthetic in-test recordings (C23): no v3 case files are needed. Each recording holds one

@@ -1,0 +1,137 @@
+{
+  "schema_version": 3,
+  "name": "config_values_patch",
+  "kind": "http",
+  "family": "config",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP PATCH /api/config/values",
+  "request": {
+    "method": "PATCH",
+    "path": "/api/config/values",
+    "query": {},
+    "headers": {},
+    "body": {
+      "expected_revision": 1,
+      "values": {
+        "code_index.enabled": true
+      },
+      "unset": []
+    }
+  },
+  "seed": [
+    {
+      "sql": "config_fixture_revision_one.sql"
+    }
+  ],
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "committed": true,
+      "revision": 2,
+      "changed_keys": [
+        "code_index.enabled"
+      ],
+      "apply_status": "applied",
+      "pending_restart_keys": [],
+      "failed_live_keys": {}
+    }
+  },
+  "db_delta": [
+    {
+      "table": "config_state",
+      "key": [
+        "id"
+      ],
+      "columns": [
+        "id",
+        "revision"
+      ],
+      "normalizers": {},
+      "order": "set",
+      "recorded": {
+        "added": [],
+        "removed": [],
+        "changed": [
+          {
+            "key": {
+              "id": true
+            },
+            "column": "revision",
+            "before": 1,
+            "after": 2
+          }
+        ]
+      }
+    },
+    {
+      "table": "config_store",
+      "key": [
+        "key"
+      ],
+      "columns": [
+        "key",
+        "value",
+        "source",
+        "is_secret",
+        "revision"
+      ],
+      "normalizers": {},
+      "order": "set",
+      "recorded": {
+        "added": [],
+        "removed": [],
+        "changed": [
+          {
+            "key": {
+              "key": "code_index.enabled"
+            },
+            "column": "revision",
+            "before": 1,
+            "after": 2
+          },
+          {
+            "key": {
+              "key": "code_index.enabled"
+            },
+            "column": "source",
+            "before": "e2e-fixture",
+            "after": "user"
+          },
+          {
+            "key": {
+              "key": "code_index.enabled"
+            },
+            "column": "value",
+            "before": "false",
+            "after": "true"
+          }
+        ]
+      }
+    }
+  ],
+  "side_effects": [
+    {
+      "channel": "pg_notify",
+      "match": {
+        "channels": [
+          "gobby_config_changed"
+        ]
+      },
+      "normalizers": {
+        "/payload": "monotonic"
+      },
+      "recorded": [
+        {
+          "channel": "gobby_config_changed",
+          "payload": "@seq@"
+        }
+      ]
+    }
+  ],
+  "normalizers": {},
+  "mask": []
+}

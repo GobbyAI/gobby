@@ -1,0 +1,23 @@
+{
+  "schema_version": 3,
+  "name": "ws_terminal_list",
+  "kind": "ws",
+  "family": "ws",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "WS message terminal_list",
+  "invocation": {
+    "frames": [
+      "{\"type\": \"terminal_list\"}"
+    ]
+  },
+  "response": [
+    "{\"client_id\":\"@uuid:1@\",\"conversation_ids\":[],\"latency\":0.0,\"type\":\"connection_established\",\"user_id\":\"20000000-0000-4000-8000-000000000001\"}",
+    "{\"items\":[],\"next_cursor\":null,\"request_id\":null,\"snapshot\":{\"daemon_epoch\":\"@uuid:2@\",\"seq\":0},\"type\":\"terminal_list\"}"
+  ],
+  "normalizers": {
+    "/response/0/client_id": "uuid_ordinal",
+    "/response/1/snapshot/daemon_epoch": "uuid_ordinal"
+  },
+  "mask": []
+}

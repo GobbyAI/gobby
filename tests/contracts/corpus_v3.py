@@ -31,6 +31,7 @@ KINDS = frozenset({"http", "mcp", "ws", "cli"})
 CHANNELS = frozenset({"pg_notify", "ws_publish", "files_home_write"})
 FIELD_NORMALIZERS = frozenset({"uuid_ordinal", "monotonic", "timestamp", "bytes", "none"})
 ORDER_MODES = frozenset({"set", "as_recorded"})
+MCP_TRANSPORTS = frozenset({"http", "stdio"})
 # Design section 7.5.2: keys appear in this order; absent keys are omitted.
 V3_KEY_ORDER = (
     "schema_version",
@@ -214,7 +215,9 @@ def _check_response_presence(case: Mapping[str, Any], file_name: str) -> None:
         if "response" in case:
             raise CorpusError(f"{file_name}: a native-extension waiver cannot carry a response")
     elif "response" not in case:
-        raise CorpusError(f"{file_name}: missing required key 'response' (only a native-extension omits it)")
+        raise CorpusError(
+            f"{file_name}: missing required key 'response' (only a native-extension omits it)"
+        )
 
 
 def _check_optional(case: Mapping[str, Any], name: str, file_name: str) -> None:
@@ -255,6 +258,14 @@ def _check_response(response: Any, kind: str, file_name: str) -> None:
             and isinstance(response.get("exit"), int)
             and isinstance(response.get("stdout"), str)
             and isinstance(response.get("stderr"), str)
+        )
+    elif kind == "mcp":
+        # Both transports record the JSON-RPC message for the tools/call, result or error.
+        valid = (
+            isinstance(response, dict)
+            and response.get("jsonrpc") == "2.0"
+            and isinstance(response.get("id"), int)
+            and ("result" in response) != ("error" in response)
         )
     else:
         valid = isinstance(response, dict) and isinstance(response.get("status"), int)
@@ -319,6 +330,10 @@ def _check_invocation(
             and isinstance(invocation.get("arguments"), dict)
         ):
             raise CorpusError(f"{file_name}: invocation needs a server, a tool and arguments")
+        if invocation.get("transport") not in MCP_TRANSPORTS:
+            raise CorpusError(
+                f"{file_name}: invocation.transport must be one of {sorted(MCP_TRANSPORTS)}"
+            )
         if (invocation["server"], invocation["tool"]) != (key["server"], key["tool"]):
             raise CorpusError(
                 f"{file_name}: invocation {invocation['server']}:{invocation['tool']} "

@@ -1,0 +1,16 @@
+{
+  "schema_version": 3,
+  "name": "mcp_stdio_gobby_list_tools",
+  "kind": "mcp",
+  "family": "mcp",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP stdio gobby:list_tools",
+  "invocation": {
+    "transport": "stdio",
+    "server": "gobby",
+    "tool": "list_tools",
+    "arguments": {"server_name": "gobby-tasks"}
+  },
+  "mask": []
+}

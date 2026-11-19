@@ -1,0 +1,11 @@
+{
+  "schema_version": 3,
+  "name": "cli_schema_help",
+  "kind": "cli",
+  "family": "cli",
+  "backend": "up",
+  "credential": "none",
+  "ledger_key": "CLI gobby schema",
+  "invocation": {"argv": ["schema", "--help"], "stdin": null},
+  "mask": []
+}

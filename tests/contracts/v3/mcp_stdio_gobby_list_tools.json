@@ -1,0 +1,36 @@
+{
+  "schema_version": 3,
+  "name": "mcp_stdio_gobby_list_tools",
+  "kind": "mcp",
+  "family": "mcp",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP stdio gobby:list_tools",
+  "invocation": {
+    "transport": "stdio",
+    "server": "gobby",
+    "tool": "list_tools",
+    "arguments": {
+      "server_name": "gobby-tasks"
+    }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 2,
+    "result": {
+      "content": [
+        {
+          "text": "{\n  \"success\": false,\n  \"error_code\": \"session_credential_unbound\",\n  \"error\": \"no session credential is bound to this CLI process; the session's SessionStart hook must run from this CLI before its MCP tools can act. A Codex TUI attached to Codex's shared app-server daemon cannot be bound to one session: relaunch it with `codex resume --no-daemon <session id>` (or `codex --no-daemon`)\"\n}",
+          "type": "text"
+        }
+      ],
+      "isError": false,
+      "structuredContent": {
+        "success": false,
+        "error_code": "session_credential_unbound",
+        "error": "no session credential is bound to this CLI process; the session's SessionStart hook must run from this CLI before its MCP tools can act. A Codex TUI attached to Codex's shared app-server daemon cannot be bound to one session: relaunch it with `codex resume --no-daemon <session id>` (or `codex --no-daemon`)"
+      }
+    }
+  },
+  "mask": []
+}

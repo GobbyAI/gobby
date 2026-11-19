@@ -22,6 +22,8 @@ import psycopg
 import pytest
 from websockets.sync.server import ServerConnection, serve
 
+from gobby.runtime_grants.handshake import decode_grant_header, encode_grant_header
+from gobby.runtime_grants.schema import GrantBundle
 from tests.contracts import corpus_v3, normalizers_v3, recorder_v3
 from tests.contracts.http_corpus import CorpusError
 from tests.fixtures.hub_guard import HARNESS_DATABASE_PATTERN, HubGuardError, maintenance_url
@@ -298,6 +300,15 @@ def test_ws_publish_capture_keeps_only_the_declared_types() -> None:
         with recorder_v3.ws_publish_capture(f"ws://127.0.0.1:{port}/", ["probe"]) as capture:
             captured = capture.drain()
     assert captured == [{"type": "probe", "n": 1}, {"type": "probe", "n": 2}]
+
+
+@pytest.mark.unit
+def test_grant_encoding_vector_is_byte_stable() -> None:
+    """The runtime grant header that Python encodes is pinned; the Rust encoder must match it."""
+    vector = json.loads((corpus_v3.V3_DIR / "grant_encoding.json").read_text())
+    grant = GrantBundle.model_validate(vector["grant"])
+    assert encode_grant_header(grant) == vector["header"]
+    assert decode_grant_header(vector["header"]) == grant
 
 
 @pytest.mark.unit

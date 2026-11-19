@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "description": "Runtime grant header vector: encode_grant_header of the synthetic grant body.",
+  "grant": {
+    "version": 2,
+    "api_contract": 1,
+    "config_revision": 1,
+    "deployment": {
+      "token": "ffffffffffffffff",
+      "fencing_epoch": 3
+    },
+    "schema_identity": {
+      "runner_protocol": 1,
+      "baseline_version": 420,
+      "baseline_checksum": "e5b08e67d3f5df97cfac96b9b12aac1f4f936a9465220f27b95d6e067e207e3a",
+      "latest_version": 503,
+      "latest_checksum": "f35a846e2726027cbc55aef908a5269ceee49d6feab12a12eb09884799728bd3",
+      "assets_root_hash": "bc0e3f4573e862926ad80660bd5507f7a524f1f397d601a7245ec9db0cced7a8"
+    },
+    "principal": {
+      "kind": "interactive",
+      "machine_id": "21000000-0000-4000-8000-000000000002",
+      "project_id": "00000000-0000-0000-0000-000000000e2e",
+      "execution_id": null,
+      "session_id": "21000000-0000-4000-8000-00000000c0de",
+      "code_overlay_project_id": null
+    },
+    "capabilities": {
+      "postgres": {
+        "mode": "direct",
+        "dsn": "postgresql://gobby_grant_role@127.0.0.1:5432/gobby",
+        "role_name": "gobby_grant_role",
+        "credential_generation": 1,
+        "valid_until": 1700000000
+      },
+      "falkordb": {
+        "mode": "direct",
+        "host": "127.0.0.1",
+        "port": 16379,
+        "password": "unset"
+      },
+      "qdrant": {
+        "mode": "unavailable"
+      },
+      "embed": {
+        "mode": "daemon"
+      },
+      "text_generate": {
+        "mode": "daemon"
+      },
+      "tool_chat": {
+        "mode": "daemon"
+      },
+      "vision_extract": {
+        "mode": "unavailable"
+      },
+      "audio_transcribe": {
+        "mode": "unavailable"
+      },
+      "broker_operations": [
+        {
+          "name": "embed",
+          "method": "POST",
+          "path": "/api/embeddings"
+        }
+      ]
+    },
+    "issued_at": 1699990000,
+    "expires_at": 1700000000,
+    "payload_checksum": "synthetic-vector",
+    "signature": "synthetic-vector"
+  },
+  "header": "eyJhcGlfY29udHJhY3QiOjEsImNhcGFiaWxpdGllcyI6eyJhdWRpb190cmFuc2NyaWJlIjp7Im1vZGUiOiJ1bmF2YWlsYWJsZSJ9LCJicm9rZXJfb3BlcmF0aW9ucyI6W3sibWV0aG9kIjoiUE9TVCIsIm5hbWUiOiJlbWJlZCIsInBhdGgiOiIvYXBpL2VtYmVkZGluZ3MifV0sImVtYmVkIjp7Im1vZGUiOiJkYWVtb24ifSwiZmFsa29yZGIiOnsiaG9zdCI6IjEyNy4wLjAuMSIsIm1vZGUiOiJkaXJlY3QiLCJwYXNzd29yZCI6InVuc2V0IiwicG9ydCI6MTYzNzl9LCJwb3N0Z3JlcyI6eyJjcmVkZW50aWFsX2dlbmVyYXRpb24iOjEsImRzbiI6InBvc3RncmVzcWw6Ly9nb2JieV9ncmFudF9yb2xlQDEyNy4wLjAuMTo1NDMyL2dvYmJ5IiwibW9kZSI6ImRpcmVjdCIsInJvbGVfbmFtZSI6ImdvYmJ5X2dyYW50X3JvbGUiLCJ2YWxpZF91bnRpbCI6MTcwMDAwMDAwMH0sInFkcmFudCI6eyJtb2RlIjoidW5hdmFpbGFibGUifSwidGV4dF9nZW5lcmF0ZSI6eyJtb2RlIjoiZGFlbW9uIn0sInRvb2xfY2hhdCI6eyJtb2RlIjoiZGFlbW9uIn0sInZpc2lvbl9leHRyYWN0Ijp7Im1vZGUiOiJ1bmF2YWlsYWJsZSJ9fSwiY29uZmlnX3JldmlzaW9uIjoxLCJkZXBsb3ltZW50Ijp7ImZlbmNpbmdfZXBvY2giOjMsInRva2VuIjoiZmZmZmZmZmZmZmZmZmZmZiJ9LCJleHBpcmVzX2F0IjoxNzAwMDAwMDAwLCJpc3N1ZWRfYXQiOjE2OTk5OTAwMDAsInBheWxvYWRfY2hlY2tzdW0iOiJzeW50aGV0aWMtdmVjdG9yIiwicHJpbmNpcGFsIjp7ImNvZGVfb3ZlcmxheV9wcm9qZWN0X2lkIjpudWxsLCJleGVjdXRpb25faWQiOm51bGwsImtpbmQiOiJpbnRlcmFjdGl2ZSIsIm1hY2hpbmVfaWQiOiIyMTAwMDAwMC0wMDAwLTQwMDAtODAwMC0wMDAwMDAwMDAwMDIiLCJwcm9qZWN0X2lkIjoiMDAwMDAwMDAtMDAwMC0wMDAwLTAwMDAtMDAwMDAwMDAwZTJlIiwic2Vzc2lvbl9pZCI6IjIxMDAwMDAwLTAwMDAtNDAwMC04MDAwLTAwMDAwMDAwYzBkZSJ9LCJzY2hlbWFfaWRlbnRpdHkiOnsiYXNzZXRzX3Jvb3RfaGFzaCI6ImJjMGUzZjQ1NzNlODYyOTI2YWQ4MDY2MGJkNTUwN2Y3YTUyNGYxZjM5N2Q2MDFhNzI0NWVjOWRiMGNjZWQ3YTgiLCJiYXNlbGluZV9jaGVja3N1bSI6ImU1YjA4ZTY3ZDNmNWRmOTdjZmFjOTZiOWIxMmFhYzFmNGY5MzZhOTQ2NTIyMGYyN2I5NWQ2ZTA2N2UyMDdlM2EiLCJiYXNlbGluZV92ZXJzaW9uIjo0MjAsImxhdGVzdF9jaGVja3N1bSI6ImYzNWE4NDZlMjcyNjAyN2NiYzU1YWVmOTA4YTUyNjljZWVlNDlkNmZlYWIxMmExMmViMDk4ODQ3OTk3MjhiZDMiLCJsYXRlc3RfdmVyc2lvbiI6NTAzLCJydW5uZXJfcHJvdG9jb2wiOjF9LCJzaWduYXR1cmUiOiJzeW50aGV0aWMtdmVjdG9yIiwidmVyc2lvbiI6Mn0K"
+}

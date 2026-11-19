@@ -1,0 +1,15 @@
+{
+  "schema_version": 3,
+  "name": "ws_terminal_list",
+  "kind": "ws",
+  "family": "ws",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "WS message terminal_list",
+  "invocation": {"frames": ["{\"type\": \"terminal_list\"}"]},
+  "normalizers": {
+    "/response/0/client_id": "uuid_ordinal",
+    "/response/1/snapshot/daemon_epoch": "uuid_ordinal"
+  },
+  "mask": []
+}

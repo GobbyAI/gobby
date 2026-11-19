@@ -330,7 +330,7 @@ class ReplayResult:
 
 # Kinds whose responses are HTTP-shaped (status, headers, body). The ws and cli kinds answer
 # with a frame list and an exit/stdout/stderr object, so their responses are redacted whole.
-_HTTP_SHAPED_KINDS = frozenset({"http", "mcp"})
+_HTTP_SHAPED_KINDS = frozenset({"http"})
 
 
 def _case_kind(case: Mapping[str, Any]) -> str:

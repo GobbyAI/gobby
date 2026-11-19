@@ -1,0 +1,46 @@
+{
+  "schema_version": 3,
+  "name": "config_values_patch",
+  "kind": "http",
+  "family": "config",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP PATCH /api/config/values",
+  "request": {
+    "method": "PATCH",
+    "path": "/api/config/values",
+    "query": {},
+    "headers": {},
+    "body": {
+      "expected_revision": 1,
+      "values": {"code_index.enabled": true},
+      "unset": []
+    }
+  },
+  "seed": [{"sql": "config_fixture_revision_one.sql"}],
+  "db_delta": [
+    {
+      "table": "config_state",
+      "key": ["id"],
+      "columns": ["id", "revision"],
+      "normalizers": {},
+      "order": "set"
+    },
+    {
+      "table": "config_store",
+      "key": ["key"],
+      "columns": ["key", "value", "source", "is_secret", "revision"],
+      "normalizers": {},
+      "order": "set"
+    }
+  ],
+  "side_effects": [
+    {
+      "channel": "pg_notify",
+      "match": {"channels": ["gobby_config_changed"]},
+      "normalizers": {"/payload": "monotonic"}
+    }
+  ],
+  "normalizers": {},
+  "mask": []
+}

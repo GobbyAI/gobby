@@ -1,5 +1,16 @@
 {
   "schema_version": 3,
-  "cases": [],
-  "families": {}
+  "cases": [
+    "config_values_patch.json",
+    "mcp_http_gobby_list_tools.json",
+    "mcp_stdio_gobby_list_tools.json",
+    "ws_terminal_list.json",
+    "cli_schema_help.json"
+  ],
+  "families": {
+    "cli": {"parity": "proxy", "origin": "python"},
+    "config": {"parity": "proxy", "origin": "python"},
+    "mcp": {"parity": "proxy", "origin": "python"},
+    "ws": {"parity": "proxy", "origin": "python"}
+  }
 }
