@@ -291,9 +291,10 @@ state inconsistent.
   `ghook`, so other `gobby-core` dependents such as `gclient` must be rebuilt alongside
   them but are promoted separately.
   `land_commit` generates version bumps only when the landing branch is named
-  `0.5.0`, so on `0.9.0` each commit carries its own bumps of managed binary
-  versions, lockfile version entries and managed pins, under D39 of the port map
-  (`docs/port/map-v2.md`). Maintenance version floors derive from the managed pins.
+  `0.5.0`. On `0.9.0` a landing carries no version bump: each changed managed binary
+  gets its version, lockfile version entry and managed pin bumped once, in the cutover
+  that promotes it (ruling 29 in `docs/port/rulings.md`, which overrides D39's
+  per-commit bump). Maintenance version floors derive from the managed pins.
   This covers `gcode`, `gdaemon`, `ghook`, `gclient`, `gmcp`, and `gterm`, including
   unpublished managed binaries; publishing remains separate. Unpublished binaries (`UNPUBLISHED_MANAGED_BINS` in
   `src/gobby/install/version_pins.py`) go through the checkout build on every

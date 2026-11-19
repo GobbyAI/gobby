@@ -404,3 +404,71 @@ Source: AskUserQuestion answers and chat messages in session gobby#19401.
     - not observed: several subagents editing and committing in one checkout under one
       session, and the Workflow tool's worktree isolation. The port session tries each on one
       small leaf before fanning out.
+28. The port session widens its own fan-out (Josh, 2026-11-18 ~22:35 CT, over Telegram to the port
+    session gobby#22918). Asked whether to open several port sessions per wave so that more chunks
+    run at once: "Happy to, but I thought you could do that yourself with ultra code."
+    The port session's reading, which Josh corrects where it is wrong. The one port session of
+    ruling 27 runs every unblocked chunk of a wave at once through the Workflow tool, each chunk in
+    its own worktree. Subagents may make the red and green commits inside their chunk's worktree;
+    the port session rules, validates and lands. No further port session is opened unless the port
+    session asks for one. D23's cap on concurrent chunk sessions does not limit this fan-out; its
+    text is not rewritten.
+29. No version bump per landing (Josh, same exchange). Asked to drop the per-landing bump: "Yes. I
+    thought we fixed that when I ruled that we only care about the version checks during CI."
+    The port session's reading, which Josh corrects where it is wrong. A landing on 0.9.0 carries
+    no managed-binary version bump, lockfile version entry or managed pin. Each changed managed
+    binary is bumped once, in the cutover that promotes it, because the promotion guard needs a new
+    version only at promotion. A local hook or land_commit check that still demands a bump per
+    commit is friction to switch off or fix. This overrides D39's per-commit bump, protocol step
+    8's "lands and bumps" and the protocol's "a landing bumps only gdaemon"; their text is not
+    rewritten. AGENTS.md's Architecture Facts paragraph is corrected with this ruling.
+30. No observation windows until final validation (Josh, same exchange): "We don't need observation
+    windows until after we're done with the port. There are no users except me. We need to be
+    agile." Also, ~22:20 CT, on node key storage and keypair ideas: "No side quests until after the
+    port."
+    The port session's reading, which Josh corrects where it is wrong. A cutover keeps its backup
+    (ruling 17), its announcement, its promotion and its rollback recipe. It has no timed
+    observation window and no landing freeze for one: work continues once the cutover's smoke
+    checks pass. Windows return at the port's final validation, which Josh starts. This overrides
+    the window text of rulings 16 and 17 and the map's window hours until he says otherwise; their
+    text is not rewritten. Ideas that the port does not need are recorded as found-work lines and
+    built after it.
+31. Platforms (Josh, 2026-11-18, over Telegram to the port session). ~19:50 CT: "I'd like to be
+    compatible with Linux and windows x64 and windows arm". ~19:55 CT: "End product, 1.0 needs to
+    work on any os". ~20:00 CT: "Build it like we want compatibility but we can live smoke test
+    after the port. Only macOS tests need to pass 100% right now".
+    The port session's reading, which Josh corrects where it is wrong. The 1.0 product targets
+    macOS, Linux, Windows x64 and Windows arm64. A chunk's gate is green macOS tests. Product code
+    is written for the other platforms: no Unix-only assumption without a cfg branch, and every
+    contract a chunk freezes is platform-neutral or carries a recorded line per platform. No chunk
+    waits on a Linux container run or a Windows proof; each unproven leg is a record line for the
+    smoke test after the port. This overrides the map wherever it says Windows is after 1.0
+    (docs/port/map-v2.md:685, :3085, :3163); its text is not rewritten.
+32. Python flaws and features (Josh, 2026-11-18, over Telegram to the port session). ~13:00 CT:
+    "If it's broken python I don't want to spend a lot of time fixing it. I'd rather note the flaw
+    and make sure it doesn't carry over to the rust port." ~16:20 CT: "to clarify, if it's a
+    feature that doesn't work that doesn't mean cut the feature, it means don't port the bug".
+    ~16:40 CT: "Yeah don't cut features without asking". ~17:25 CT: "The port is yours to handle.
+    My admonition was on dropping features in gobby."
+    The port session's reading, which Josh corrects where it is wrong. A flaw in Python that the
+    port replaces is fixed only when the fix is cheap or the flaw is a regression the chunk made;
+    otherwise it becomes a debt line that names the defect and what Rust must do. A broken feature
+    is still ported, working. No Gobby product feature is dropped or narrowed without asking Josh.
+    Port tooling, harness and process decisions are the port session's to rule on and report.
+33. Worker and node credentials (Josh, 2026-11-18 ~21:38 to ~22:40 CT, over Telegram to the port
+    session). He asked whether the API key is used after the worker handshake and what the hub and
+    node do; the port session answered, and he replied "Ok just wanted confirmation". Later: "If I
+    ever sell a cloud hosted option I will have nodes on machines I don't control."
+    The port session's reading, which Josh corrects where it is wrong. The worker protocol's
+    credential covers the handshake only, so R1 keeps the worker channel bound to one connection
+    and private to the machine, or adds a per-command credential under a new protocol version.
+    That trust model is never reused for a network link. A node sends its API key on every request
+    to the hub in 1.0. No chunk freezes a contract that blocks replacing the node credential
+    later: the hub derives identity from the credential at one front-door seam, never from the
+    request body. Tenant-scoped keys, rotation, a public-CA certificate and keystore storage are
+    record lines, built after the port (ruling 30).
+34. Push at cutovers (Josh, 2026-11-18 ~14:15 CT, over Telegram to the port session): "we don't
+    have to push every few commits. wait until cutovers".
+    The port session's reading, which Josh corrects where it is wrong. A chunk lands on local
+    0.9.0 with land_commit and is not pushed. 0.9.0 is pushed to origin at each cutover. This
+    replaces the push in protocol step 8; its text is not rewritten.

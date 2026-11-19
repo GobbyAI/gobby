@@ -64,7 +64,7 @@ Next owner (`next_owner`), the work item that will own the entry next:
 - `unverified_reason` (construct phases only, R45): non-empty text on a transitive seam that no
   `phase_scope` block reaches in source. It is present exactly when no direct seam reaches the
   seam, and it is never present on a direct seam or on a reached seam.
-- Phase attribution (R45, the marker pins). Each `phase_scope(InitPhase.X)` block of
+- Phase attribution (the marker pins). Each `phase_scope(InitPhase.X)` block of
   `GobbyRunner.create` is read by AST, with the marker itself excluded. The functions a block names
   are its direct seams: a call, a callable passed to `_run_blocking_startup_phase` or
   `asyncio.to_thread`, or a method reached through a typed receiver such as
@@ -88,11 +88,11 @@ Next owner (`next_owner`), the work item that will own the entry next:
   with an empty `stop_owner` has no stop in scope. Each stop owner's body names the service's
   attribute. A start owner's body names it too, or reaches through named references a function that
   stores `runner.<attr>`, because the runner's create phases assign storage and memory services in
-  init helpers (R58, deviation D1). A non-gobby owner is one of the allow-listed library calls.
+  init helpers. A non-gobby owner is one of the allow-listed library calls.
 - `identities`: `name`, `source` (`env`, `pipe`, `file`, `database`, `process`), `producer`,
   `consumers`, `current_owner` (`rust` or `python`, the component that issues the identity
   on the base commit). A Python producer spells its identity: the def's own name, a string
-  constant in its body, or a module constant holding the identity that its body reads (R58).
+  constant in its body, or a module constant holding the identity that its body reads.
 - `errors`: `raised_by`, `exception` or `exit_code`, `effect` (`refusal exit 78`,
   `crash exit 1`, `clean exit 0`, `clean return`, `propagates`).
 - `outside_placements`: `key`, `stop_owner`, `request_driven`, `timing_dependent`, `debt`. One
@@ -112,7 +112,7 @@ Next owner (`next_owner`), the work item that will own the entry next:
 
 `cancel_owner` is the scope that cancels, or awaits to completion, the task. A task whose
 owner is absent records `cancel_owner: null` and `debt: "debt:R0"`. Defects found by the
-inventory are recorded, not fixed, in R0 (R12). The debt lines live in the port record.
+inventory are recorded, not fixed, in R0. The debt lines live in the port record.
 
 ## Cadence
 
