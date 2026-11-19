@@ -2,6 +2,7 @@
 //! its subscriber for its own thread only, so nothing reaches the real logs.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use tracing::Dispatch;
 use tracing_subscriber::Registry;
@@ -12,7 +13,20 @@ use super::*;
 mod epoch;
 mod routing;
 mod settings;
+mod sink;
 mod writer;
+
+/// Held by every test that sends a daemon, hooks or parser record at WARNING or above
+/// through a routed layer. The counter lives in the process registry, which tests on
+/// other threads share, so a counting test holds it across both reads.
+static COUNTED_WARNINGS: Mutex<()> = Mutex::new(());
+
+/// The counted warning lock. A test that failed while holding it does not block the rest.
+fn counted_warnings() -> MutexGuard<'static, ()> {
+    COUNTED_WARNINGS
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The rotation unit of the size keys.
 const MIB: usize = 1024 * 1024;

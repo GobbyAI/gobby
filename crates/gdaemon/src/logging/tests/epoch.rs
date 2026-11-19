@@ -66,7 +66,10 @@ async fn epoch_change_applies_level_at_next_epoch() {
     tracing::info!(target: "gobby.daemon", "info at revision one");
     routed.apply(2, json!({"logging.level": "warning"})).await;
     tracing::info!(target: "gobby.daemon", "info at revision two");
-    tracing::warn!(target: "gobby.daemon", "warning at revision two");
+    {
+        let _counted = counted_warnings();
+        tracing::warn!(target: "gobby.daemon", "warning at revision two");
+    }
 
     let daemon = read(dir.path(), "daemon.log");
     assert!(daemon.contains("info at revision one"), "{daemon}");

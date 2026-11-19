@@ -5,6 +5,7 @@
 //! share it: one layer holds the activated routes once, and until then prints each
 //! record's message to stderr as bare text, which is the text `eprintln!` wrote before.
 
+use std::io::Write as _;
 use std::sync::OnceLock;
 
 use tracing::subscriber::Interest;
@@ -50,9 +51,12 @@ pub(super) fn active_routes() -> Option<RouteHandle> {
 }
 
 /// Writes `line` to stderr as it is, for output whose bytes other programs read.
-#[allow(clippy::print_stderr)]
+///
+/// A failed write is dropped: this is the last reporter of logging's own errors, so
+/// there is nowhere left to report it, and a logging call must never panic its caller.
 pub fn raw_stderr(line: &str) {
-    eprintln!("{line}");
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(stderr, "{line}");
 }
 
 /// The process's one layer.

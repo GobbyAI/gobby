@@ -108,6 +108,9 @@ impl RouteHandle {
 
     /// Writes `event` to its routes, when its target is in the `gobby` namespace and its
     /// level passes.
+    ///
+    /// The fields are recorded with the routes unlocked: recording runs the fields' own
+    /// formatting, which may log a `gobby.*` record that comes back here on this thread.
     pub(crate) fn route(&self, event: &Event<'_>) {
         let metadata = event.metadata();
         let target = metadata.target();
@@ -117,10 +120,9 @@ impl RouteHandle {
         ) else {
             return;
         };
-        let mut routes = self.lock();
         let floor = match surface {
             Surface::Parser => Level::Info,
-            _ => routes.settings.level,
+            _ => self.lock().settings.level,
         };
         if level < floor {
             return;
@@ -139,13 +141,15 @@ impl RouteHandle {
             message: fields.message,
             extras: fields.extras,
         };
-        routes.write(surface, &record, fields.guard_refused);
+        count(surface, record.level);
+        self.lock().write(surface, &record, fields.guard_refused);
     }
 }
 
 impl Routes {
+    /// Writes `record` to its files. The caller counts the source record; the warning
+    /// written here about a rejected parser name is not a source record and is not counted.
     fn write(&mut self, surface: Surface, record: &Record, guard_refused: bool) {
-        count(surface, record.level);
         let primary = match surface {
             Surface::Parser => match classify::parser_cli(&record.target) {
                 Some(cli) => {

@@ -144,7 +144,9 @@ impl SizeRotatingFile {
     }
 
     /// `RotatingFileHandler.shouldRollover`: a non-empty file whose size plus the next
-    /// line would reach the limit. The worker's handler rotates its own files.
+    /// line would reach the limit. CPython never rolls over an empty file (gh-116263),
+    /// even when one line alone reaches the limit. The worker's handler rotates its own
+    /// files.
     fn rotates_before(&self, size: u64, line_bytes: u64) -> bool {
         self.owner == RotationOwner::Gdaemon
             && self.max_bytes > 0

@@ -1,5 +1,4 @@
 use std::process::Command;
-use std::sync::{Mutex, MutexGuard};
 
 use gobby_core::json::{Json, PYTHON, dumps};
 use gobby_core::telemetry::{SampleValue, Telemetry, names::LOGGING_RECORDS_TOTAL};
@@ -18,18 +17,6 @@ fn holders(dir: &Path, message: &str) -> Vec<&'static str> {
         .copied()
         .filter(|name| read(dir, name).contains(message))
         .collect()
-}
-
-/// Held by every test that sends a hooks record at WARNING or above through a routed
-/// layer. The counter lives in the process registry, which tests on other threads share,
-/// so the counting test holds it across both reads.
-static HOOKS_WARNINGS: Mutex<()> = Mutex::new(());
-
-/// The hooks warning lock. A test that failed while holding it does not block the rest.
-fn hooks_warnings() -> MutexGuard<'static, ()> {
-    HOOKS_WARNINGS
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// The `logging_records_total` count for one surface and severity.
@@ -84,11 +71,14 @@ fn non_gobby_targets_are_not_recorded() {
 
     let dir = tempfile::tempdir().expect("temporary logs directory");
     let (dispatch, _handle) = routed(settings_in(dir.path()));
-    with_default(&dispatch, || {
-        tracing::warn!(target: "deadpool.postgres", "dependency pool warning");
-        tracing::warn!(target: "hyper_util::client::legacy", "dependency client warning");
-        tracing::warn!(target: "gobby.daemon", "daemon warning");
-    });
+    {
+        let _counted = counted_warnings();
+        with_default(&dispatch, || {
+            tracing::warn!(target: "deadpool.postgres", "dependency pool warning");
+            tracing::warn!(target: "hyper_util::client::legacy", "dependency client warning");
+            tracing::warn!(target: "gobby.daemon", "daemon warning");
+        });
+    }
 
     let written: String = files_under(dir.path())
         .iter()
@@ -155,7 +145,7 @@ fn warn_and_above_reach_errors_log_and_info_does_not() {
     let (dispatch, _handle) = routed(settings_in(dir.path()));
 
     {
-        let _counted = hooks_warnings();
+        let _counted = counted_warnings();
         with_default(&dispatch, || {
             tracing::info!(target: "gobby.hooks", "hooks info record");
             tracing::warn!(target: "gobby.hooks", "hooks warning record");
@@ -215,10 +205,13 @@ fn parser_target_writes_message_only_at_info_regardless_of_level() {
     };
     let (dispatch, _handle) = routed(settings);
 
-    with_default(&dispatch, || {
-        tracing::info!(target: "gobby.parser_error.codex", "raw parser line");
-        tracing::warn!(target: "gobby.parser_error.codex", "parser warning line");
-    });
+    {
+        let _counted = counted_warnings();
+        with_default(&dispatch, || {
+            tracing::info!(target: "gobby.parser_error.codex", "raw parser line");
+            tracing::warn!(target: "gobby.parser_error.codex", "parser warning line");
+        });
+    }
 
     assert_eq!(
         read(dir.path(), "codex-parser-error.log"),
@@ -252,9 +245,13 @@ fn parser_cli_name_rejects_path_separators() {
     let root = tempfile::tempdir().expect("temporary root");
     let logs = root.path().join("logs");
     let (dispatch, _handle) = routed(settings_in(&logs));
-    with_default(&dispatch, || {
-        tracing::info!(target: "gobby.parser_error.../etc", "escape attempt");
-    });
+    {
+        // The warning about the rejected name is a daemon WARNING record.
+        let _counted = counted_warnings();
+        with_default(&dispatch, || {
+            tracing::info!(target: "gobby.parser_error.../etc", "escape attempt");
+        });
+    }
 
     let daemon = read(&logs, "daemon.log");
     assert!(daemon.contains("escape attempt"), "{daemon}");
@@ -388,7 +385,7 @@ fn text_line_and_json_fields_match_python_layout() {
     let dir = tempfile::tempdir().expect("temporary logs directory");
     let (dispatch, _handle) = routed(settings_in(dir.path()));
     {
-        let _counted = hooks_warnings();
+        let _counted = counted_warnings();
         with_default(&dispatch, || {
             tracing::warn!(target: "gobby.hooks", k = "v", "message");
         });
@@ -409,7 +406,7 @@ fn text_line_and_json_fields_match_python_layout() {
     };
     let (dispatch, _handle) = routed(settings);
     {
-        let _counted = hooks_warnings();
+        let _counted = counted_warnings();
         with_default(&dispatch, || {
             tracing::warn!(target: "gobby.hooks", k = "v", "message");
         });
@@ -436,7 +433,7 @@ fn warn_and_above_count_once_per_source_record() {
     let dir = tempfile::tempdir().expect("temporary logs directory");
     let (dispatch, _handle) = routed(settings_in(dir.path()));
     // No other hooks warning reaches the process registry between the two reads.
-    let _counted = hooks_warnings();
+    let _counted = counted_warnings();
     let warnings_before = record_count("hooks", "WARNING");
     let infos_before = record_count("hooks", "INFO");
 
@@ -448,6 +445,34 @@ fn warn_and_above_count_once_per_source_record() {
 
     assert_eq!(record_count("hooks", "WARNING"), warnings_before + 1);
     assert_eq!(record_count("hooks", "INFO"), infos_before);
+}
+
+#[test]
+fn a_rejected_parser_name_counts_only_its_source_record() {
+    let dir = tempfile::tempdir().expect("temporary logs directory");
+    let (dispatch, _handle) = routed(settings_in(dir.path()));
+    let _counted = counted_warnings();
+    let daemon_before = record_count("daemon", "WARNING");
+    let parser_before = record_count("parser", "WARNING");
+
+    with_default(&dispatch, || {
+        // Each writes a WARNING about its name into daemon.log, which is not a source
+        // record and is not counted.
+        tracing::info!(target: "gobby.parser_error.a/b", "info with a rejected name");
+        tracing::warn!(target: "gobby.parser_error.a/b", "warning with a rejected name");
+    });
+
+    let daemon = read(dir.path(), "daemon.log");
+    assert_eq!(
+        daemon
+            .lines()
+            .filter(|line| line.contains("is not a plain file name"))
+            .count(),
+        2,
+        "{daemon}"
+    );
+    assert_eq!(record_count("daemon", "WARNING"), daemon_before);
+    assert_eq!(record_count("parser", "WARNING"), parser_before + 1);
 }
 
 #[test]

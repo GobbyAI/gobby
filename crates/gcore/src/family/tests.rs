@@ -152,7 +152,7 @@ async fn config_subscribers_see_each_revision() {
     let mut subscriber = ctx.subscribe_config();
     let publisher = ctx.config_publisher();
 
-    publisher.publish(epoch(1, "logging.level", json!("info")));
+    reload_from(&publisher, epoch(1, "logging.level", json!("info"))).await;
     let first = tokio::time::timeout(Duration::from_secs(1), subscriber.changed()).await;
     assert!(
         matches!(first, Ok(Ok(()))),
@@ -160,7 +160,7 @@ async fn config_subscribers_see_each_revision() {
     );
     assert_eq!(subscriber.borrow_and_update().revision, 1);
 
-    publisher.publish(epoch(2, "logging.level", json!("debug")));
+    reload_from(&publisher, epoch(2, "logging.level", json!("debug"))).await;
     let second = tokio::time::timeout(Duration::from_secs(1), subscriber.changed()).await;
     assert!(
         matches!(second, Ok(Ok(()))),
@@ -168,51 +168,124 @@ async fn config_subscribers_see_each_revision() {
     );
     assert_eq!(subscriber.borrow_and_update().revision, 2);
     assert_eq!(ctx.config_epoch().revision, 2);
+
+    // Reading the same stored epoch again changes nothing and notifies no one.
+    reload_from(&publisher, epoch(2, "logging.level", json!("debug"))).await;
+    assert!(!subscriber.has_changed().expect("the publisher is alive"));
 }
 
-#[test]
-fn a_stale_publish_never_reverts_the_epoch() {
+/// Reloads `publisher` from a store whose read returns `stored`.
+async fn reload_from(publisher: &ConfigEpochPublisher, stored: ConfigEpoch) -> bool {
+    publisher
+        .reload(|| async move { Ok::<_, std::convert::Infallible>(stored) })
+        .await
+        .unwrap_or_else(|never| match never {})
+}
+
+#[tokio::test]
+async fn a_lower_stored_revision_read_through_reload_is_published() {
     let ctx = FamilyContext::new(bare_parts(Arc::new(RecordingPublisher::default())));
     let mut subscriber = ctx.subscribe_config();
     let publisher = ctx.config_publisher();
 
-    publisher.publish(epoch(2, "logging.level", json!("debug")));
+    reload_from(&publisher, epoch(5, "logging.level", json!("warning"))).await;
     subscriber.mark_unchanged();
-    // A poll that read revision 1 before revision 2 was published finishes now.
-    publisher.publish(epoch(1, "logging.level", json!("info")));
-    publisher.publish(epoch(2, "logging.level", json!("warning")));
+    // The store was restored to an older revision, so its revision moved backwards.
+    let published = reload_from(&publisher, epoch(3, "logging.level", json!("info"))).await;
 
+    assert!(published, "the restored epoch is reported as published");
     let current = ctx.config_epoch();
-    assert_eq!(current.revision, 2);
+    assert_eq!(current.revision, 3);
     assert_eq!(
         current.active_values.get("logging.level"),
+        Some(&json!("info"))
+    );
+    assert!(subscriber.has_changed().expect("the publisher is alive"));
+
+    // A changed value at the same revision is published too.
+    subscriber.mark_unchanged();
+    reload_from(&publisher, epoch(3, "logging.level", json!("debug"))).await;
+    assert_eq!(
+        ctx.config_epoch().active_values.get("logging.level"),
         Some(&json!("debug"))
     );
-    assert!(
-        !subscriber.has_changed().expect("the publisher is alive"),
-        "a stale or repeated revision must not notify subscribers"
-    );
+    assert!(subscriber.has_changed().expect("the publisher is alive"));
 }
 
-#[test]
-fn concurrent_publishes_end_at_the_highest_revision() {
+/// A stored configuration row that a test changes between reads.
+struct Store {
+    current: Mutex<ConfigEpoch>,
+    reads_started: std::sync::atomic::AtomicUsize,
+}
+
+impl Store {
+    fn read_now(&self) -> ConfigEpoch {
+        self.reads_started
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.current.lock().expect("store row").clone()
+    }
+}
+
+#[tokio::test]
+async fn competing_reloads_end_at_the_store_current_value() {
     let ctx = FamilyContext::new(bare_parts(Arc::new(RecordingPublisher::default())));
     let publisher = ctx.config_publisher();
-    let threads: Vec<_> = (0..4_i64)
-        .map(|lane| {
-            let publisher = Arc::clone(&publisher);
-            std::thread::spawn(move || {
-                for step in (0..50_i64).rev() {
-                    publisher.publish(epoch(step * 4 + lane + 1, "lane", json!(lane)));
-                }
-            })
-        })
-        .collect();
-    for thread in threads {
-        thread.join().expect("publisher thread");
-    }
+    let store = Arc::new(Store {
+        current: Mutex::new(epoch(2, "logging.level", json!("debug"))),
+        reads_started: std::sync::atomic::AtomicUsize::new(0),
+    });
 
-    assert_eq!(ctx.config_epoch().revision, 200);
+    // The first reload reads revision 2 and is held before it can publish.
+    let (release_first, held) = tokio::sync::oneshot::channel::<()>();
+    let (first_read, read_done) = tokio::sync::oneshot::channel::<()>();
+    let first = tokio::spawn({
+        let publisher = Arc::clone(&publisher);
+        let store = Arc::clone(&store);
+        async move {
+            publisher
+                .reload(|| async move {
+                    let stored = store.read_now();
+                    let _ = first_read.send(());
+                    let _ = held.await;
+                    Ok::<_, std::convert::Infallible>(stored)
+                })
+                .await
+        }
+    });
+    read_done.await.expect("the first read ran");
+
+    // The store is restored to revision 1, and a second reload starts.
+    *store.current.lock().expect("store row") = epoch(1, "logging.level", json!("info"));
+    let second = tokio::spawn({
+        let publisher = Arc::clone(&publisher);
+        let store = Arc::clone(&store);
+        async move {
+            publisher
+                .reload(|| async move { Ok::<_, std::convert::Infallible>(store.read_now()) })
+                .await
+        }
+    });
+    for _ in 0..16 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        store
+            .reads_started
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "the second read waits for the first reload to publish"
+    );
+
+    release_first.send(()).expect("the first reload is waiting");
+    let _ = first.await.expect("first reload");
+    let _ = second.await.expect("second reload");
+
+    let current = ctx.config_epoch();
+    assert_eq!(current.revision, 1);
+    assert_eq!(
+        current.active_values.get("logging.level"),
+        Some(&json!("info"))
+    );
 }
 
 #[test]

@@ -89,6 +89,23 @@ fn gdaemon_owned_rotation_matches_rotating_handler_threshold_and_numbering() {
     assert_eq!(read(dir.path(), "hooks.log.1"), "x".repeat(25));
 }
 
+#[test]
+fn an_empty_file_never_rotates_even_when_one_line_reaches_the_limit() {
+    // RotatingFileHandler.shouldRollover returns False when tell() is 0 (CPython
+    // gh-116263), so a first line longer than maxBytes is written without a rollover.
+    let dir = tempfile::tempdir().expect("temporary logs directory");
+    let path = dir.path().join("daemon.log");
+    let file = open(&path, 8, 2, RotationOwner::Gdaemon);
+
+    write(&file, "longer than the limit");
+    assert_eq!(read(dir.path(), "daemon.log"), "longer than the limit\n");
+    assert!(!exists(dir.path(), "daemon.log.1"));
+
+    write(&file, "next");
+    assert_eq!(read(dir.path(), "daemon.log"), "next\n");
+    assert_eq!(read(dir.path(), "daemon.log.1"), "longer than the limit\n");
+}
+
 #[cfg(unix)]
 #[test]
 fn identity_uses_dev_and_ino_on_unix() {

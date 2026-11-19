@@ -1,9 +1,10 @@
 //! The process's configuration epoch: the active configuration revision and its values.
 
+use std::future::Future;
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
-use tokio::sync::watch;
+use tokio::sync::{Mutex, watch};
 
 /// One published revision of the active configuration.
 #[derive(Clone, Debug, PartialEq)]
@@ -26,39 +27,52 @@ impl ConfigEpoch {
 
 /// The one publisher of the process's configuration epoch.
 ///
-/// Revisions only move forward. A publish whose revision is not greater than the current
-/// one is dropped, and the comparison and the swap happen under the channel's own lock, so
-/// a slow read of an older revision that finishes after a newer publish never reverts the
-/// epoch. A publish of the current revision with other values is dropped too.
-///
-/// There is no reset. A publisher starts at the revision of the epoch it was built with,
-/// and a stored revision that moves backwards, such as a restore to an older revision or
-/// a deleted row read as revision zero, is not published until the store passes the
-/// highest revision this publisher has published.
+/// The only way to publish is [`reload`](Self::reload): it takes the publisher's lock,
+/// then reads the stored configuration, then publishes what it read, and holds the lock
+/// until subscribers can see it. Every reader (the poller and the configuration write
+/// path) goes through it, so the last publish is always the latest read, whatever its
+/// revision number. The stored revision can move backwards (a restore to an older
+/// revision, or a deleted row read as revision zero), so revision numbers never decide
+/// what is published.
 pub struct ConfigEpochPublisher {
     tx: watch::Sender<ConfigEpoch>,
+    reads: Mutex<()>,
 }
 
 impl ConfigEpochPublisher {
-    /// Publishes `epoch` when its revision is greater than the current one. Subscribers
-    /// are notified only when the epoch changes.
-    pub fn publish(&self, epoch: ConfigEpoch) {
-        self.tx.send_if_modified(|current| {
-            if epoch.revision > current.revision {
+    /// Takes the publisher's lock, runs `read` (a fresh read of the stored configuration,
+    /// started only once the lock is held), and publishes its epoch when it differs from
+    /// the current one, including a lower revision or the same revision with other values.
+    /// Returns whether subscribers were notified. A failed read publishes nothing.
+    pub async fn reload<E, F, Fut>(&self, read: F) -> Result<bool, E>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<ConfigEpoch, E>>,
+    {
+        let _reading = self.reads.lock().await;
+        let epoch = read().await?;
+        Ok(self.tx.send_if_modified(|current| {
+            if *current == epoch {
+                false
+            } else {
                 *current = epoch;
                 true
-            } else {
-                false
             }
-        });
+        }))
     }
 }
 
 /// The process's configuration channel, seeded with `initial`: the shared publisher and a
-/// receiver that sees each published revision.
+/// receiver that sees each published epoch.
 pub fn config_channel(
     initial: ConfigEpoch,
 ) -> (Arc<ConfigEpochPublisher>, watch::Receiver<ConfigEpoch>) {
     let (tx, rx) = watch::channel(initial);
-    (Arc::new(ConfigEpochPublisher { tx }), rx)
+    (
+        Arc::new(ConfigEpochPublisher {
+            tx,
+            reads: Mutex::new(()),
+        }),
+        rx,
+    )
 }
