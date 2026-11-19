@@ -352,6 +352,56 @@ def test_grant_encoding_vector_is_byte_stable() -> None:
 
 
 @pytest.mark.unit
+def test_v3_recorder_sends_a_runtime_grant_for_a_case_that_declares_one(tmp_path: Path) -> None:
+    """A case whose credential is grant is sent with the runtime grant the daemon issues.
+
+    The fake daemon answers the handshake with the pinned grant vector, so the header the case
+    request carries must be that vector's header. The recorder refuses the grant credential today;
+    the refusal is captured and asserted, so the failure names it.
+    """
+    vector = json.loads((corpus_v3.V3_DIR / "grant_encoding.json").read_text())
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/api/runtime/handshake":
+            return httpx.Response(200, json={"grant": vector["grant"]})
+        return httpx.Response(
+            200, json={"enabled": False, "stt_enabled": False, "tts_enabled": False}
+        )
+
+    case = {
+        "schema_version": 3,
+        "name": "grant_probe",
+        "kind": "http",
+        "family": "voice",
+        "credential": "grant",
+        "ledger_key": "HTTP GET /api/voice/status",
+        "request": {
+            "method": "GET",
+            "path": "/api/voice/status",
+            "query": {},
+            "headers": {},
+            "body": None,
+        },
+        "normalizers": {},
+        "mask": [],
+    }
+    client = httpx.Client(base_url="http://127.0.0.1:9", transport=httpx.MockTransport(answer))
+    refusal: str | None = None
+    try:
+        recorder_v3._send(
+            "http", case, client, None, operator={"Authorization": "Bearer probe"}, scratch=tmp_path
+        )
+    except recorder_v3.RecorderError as error:
+        refusal = str(error)
+    assert refusal is None, f"the recorder refused a case that declares a grant: {refusal}"
+    case_requests = [request for request in seen if request.url.path == "/api/voice/status"]
+    assert len(case_requests) == 1
+    assert case_requests[0].headers.get("X-Gobby-Runtime-Grant") == vector["header"]
+
+
+@pytest.mark.unit
 def test_files_home_capture_reports_created_modified_and_removed_paths(tmp_path: Path) -> None:
     (tmp_path / "changed.txt").write_text("before")
     (tmp_path / "gone.txt").write_text("gone")
