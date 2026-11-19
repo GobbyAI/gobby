@@ -286,6 +286,9 @@ async def test_construction_over_64k_is_refused() -> None:
     refused = WorkerFacade(credential=CREDENTIAL, ops=OPS, create=fake_create())
     reply = await send(refused, pad(handshake, MAX_REQUEST_BYTES + 1))
     assert error_code(reply) == "invalid_request"
+    # The refusal still echoes the valid generation and operation id (R43).
+    assert reply["generation"] == GENERATION
+    assert reply["operation_id"] == "7:1"
     # The refused handshake bound nothing, so a normal one still binds.
     bound = await send(refused, handshake)
     assert bound["result"]["generation"] == GENERATION
@@ -300,6 +303,8 @@ async def test_construction_over_64k_is_refused() -> None:
     await send(over_limit, handshake)
     reply = await send(over_limit, pad(init, MAX_REQUEST_BYTES + 1))
     assert error_code(reply) == "invalid_request"
+    assert reply["generation"] == GENERATION
+    assert reply["operation_id"] == "7:1"
     # Nothing ran: the storage phase is still the next phase.
     reply = await send(over_limit, init)
     assert reply["result"]["status"] == "ready"
@@ -464,6 +469,31 @@ async def test_generation_zero_refused() -> None:
     assert bound["result"]["generation"] == GENERATION
     reply = await send(facade, initialize_bytes("storage_and_config", 0))
     assert error_code(reply) == "invalid_request"
+
+
+async def test_envelope_integers_are_wire_bounded() -> None:
+    # A generation past the wire range is invalid_request: no generation is echoed, and
+    # nothing binds (R54).
+    facade = WorkerFacade(credential=CREDENTIAL, ops=OPS, create=fake_create())
+    too_big = envelope(
+        "handshake", {"credential": CREDENTIAL}, generation=2**64, operation_id="7:1"
+    )
+    reply = await send(facade, too_big)
+    assert error_code(reply) == "invalid_request"
+    assert reply["generation"] is None
+    assert reply["operation_id"] == "7:1"
+    bound = await send(facade, handshake_bytes(GENERATION))
+    assert bound["result"]["generation"] == GENERATION
+
+    # A protocol_version past the wire range is invalid_request, not protocol_mismatch.
+    too_big_version = json.dumps({**_valid_envelope(), "protocol_version": 2**64})
+    reply = await send(facade, too_big_version.encode("utf-8"))
+    assert error_code(reply) == "invalid_request"
+
+    # The top of the wire range is an ordinary generation.
+    top = WorkerFacade(credential=CREDENTIAL, ops=OPS, create=fake_create())
+    reply = await send(top, handshake_bytes(2**64 - 1))
+    assert reply["result"]["generation"] == 2**64 - 1
 
 
 def long_failure() -> None:

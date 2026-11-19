@@ -5,7 +5,7 @@ import json
 import math
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from types import ModuleType
 
 import pytest
@@ -20,7 +20,7 @@ from gobby.terminals.runtime import (
     Suppressed,
 )
 from gobby.terminals.write_coordinator import WriteRequest
-from gobby.worker.decode import DataclassFields
+from gobby.worker.decode import DataclassFields, DecodeError, Int
 from gobby.worker.encode import UnencodableValue, canonical_bytes, encode_value
 
 TERMINAL_JSON: dict[str, object] = {
@@ -185,6 +185,8 @@ def test_datetime_and_path_strings() -> None:
     assert encode_value(datetime(2026, 11, 18, 12, 0, tzinfo=UTC)) == "2026-11-18T12:00:00+00:00"
     assert encode_value(datetime(2026, 11, 18, 12, 0)) == "2026-11-18T12:00:00"
     assert encode_value(PurePosixPath("runs/a.log")) == "runs/a.log"
+    # A path is str(path) in the host-native form: backslashes separate on Windows (R59).
+    assert encode_value(PureWindowsPath("C:/data/gobby")) == "C:\\data\\gobby"
     with pytest.raises(UnencodableValue):
         encode_value(date(2026, 11, 18))
 
@@ -202,6 +204,47 @@ def test_unencodable_values_raise() -> None:
     for value in values:
         with pytest.raises(UnencodableValue):
             encode_value(value)
+
+
+@dataclass
+class WideField:
+    n: int
+
+
+class WideAttr(Exception):
+    def __init__(self) -> None:
+        super().__init__("wide")
+        self.n = 2**64
+
+
+# Out-of-range integers at each depth an encoded value can hold them (R54).
+WIDE_NESTED: list[object] = [
+    [2**64],
+    {"k": 2**64},
+    frozenset({2**64}),
+    WideField(2**64),
+    WideAttr(),
+]
+
+
+@pytest.mark.parametrize("value", [2**64, -(2**63) - 1, *WIDE_NESTED])
+def test_out_of_range_integer_is_unencodable(value: object) -> None:
+    with pytest.raises(UnencodableValue):
+        encode_value(value)
+
+
+@pytest.mark.parametrize("value", [2**64 - 1, -(2**63), 0, -1])
+def test_wire_range_integers_encode_unchanged(value: int) -> None:
+    assert encode_value(value) == value
+    assert encode_value([value]) == [value]
+
+
+def test_int_decoder_refuses_values_outside_wire_range() -> None:
+    assert Int().decode(2**64 - 1) == 2**64 - 1
+    assert Int().decode(-(2**63)) == -(2**63)
+    for value in (2**64, -(2**63) - 1):
+        with pytest.raises(DecodeError):
+            Int().decode(value)
 
 
 def test_canonical_bytes_is_compact_sorted_utf8() -> None:

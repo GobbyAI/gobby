@@ -580,6 +580,12 @@ async def test_unknown_command_after_handshake() -> None:
     assert error_code(await send(facade, raw)) == "unknown_command"
 
 
+async def test_unknown_command_before_handshake_is_not_handshaken() -> None:
+    # Before a handshake binds a generation, any other command is not_handshaken (step 7).
+    facade = WorkerFacade(credential=CREDENTIAL, ops=OPS, create=make_create(Trace()))
+    assert error_code(await send(facade, envelope("frobnicate", {}))) == "not_handshaken"
+
+
 async def test_unknown_op_refused() -> None:
     facade, _ = await ready_facade()
     assert error_code(await send(facade, invoke_bytes("no_such_op"))) == "unknown_command"
@@ -657,6 +663,25 @@ async def test_base_exception_propagates() -> None:
     facade, _ = await ready_facade(ops=ops)
     with pytest.raises(OpStop):
         await facade.handle(invoke_bytes("stop"))
+
+
+async def test_create_that_returns_early_is_a_failed_initialize() -> None:
+    async def create() -> object:
+        # No phase scope runs, so the first phase has nothing to report as ready (R55).
+        return object()
+
+    facade = WorkerFacade(credential=CREDENTIAL, ops=OPS, create=create)
+    await bind(facade)
+    first = await send(facade, initialize_bytes("storage_and_config"))
+    result = first["result"]
+    assert result["status"] == "failed"
+    assert result["next_phase"] is None
+    assert result["message"] == "create returned before every phase ran"
+    assert result["error_type"] == "IncompleteCreate"
+    # The facade is unusable after the failed phase: no later phase runs, and invoke is refused.
+    later = await send(facade, initialize_bytes("content_refusal"))
+    assert error_code(later) == "worker_unusable"
+    assert error_code(await send(facade, invoke_bytes("quick", {}))) == "worker_unusable"
 
 
 async def test_worker_op_binds_no_caller() -> None:
