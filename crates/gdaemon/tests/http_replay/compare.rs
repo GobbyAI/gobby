@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use super::corpus::Case;
 use super::normalize::{
     NormalizeError, Window, escape_token, normalize_document, parse_spec, redact,
+    refuse_monotonic_in_document,
 };
 
 /// The normalizer declarations of an entry, from its `normalizers` object, in declaration order.
@@ -102,6 +103,8 @@ pub fn normalized_document(
     for (pointer, spec) in &case.normalizers {
         rules.push((pointer.clone(), parse_spec(spec, false)?.normalizer));
     }
+    // Response rules are document rules; `monotonic` is a sequence-unit rule of captures only.
+    refuse_monotonic_in_document(&rules)?;
     for (index, entry) in case.side_effects.iter().enumerate() {
         for (pointer, spec) in normalizers_of(entry)? {
             rules.push((

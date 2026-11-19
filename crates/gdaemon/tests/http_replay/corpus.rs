@@ -256,8 +256,37 @@ fn recorded_values(case: &Case, entries: &[Value]) -> Result<Vec<Value>, CorpusE
 
 /// Every case of the manifest at `path` (schema 2 or 3), each listed file parsed by [`parse_case`].
 pub fn load_manifest(path: &std::path::Path) -> Result<Vec<Case>, CorpusError> {
-    let _ = path;
-    unimplemented!("not wired: load_manifest")
+    let label = path.display().to_string();
+    let manifest_error = |detail: String| CorpusError::Shape {
+        case: label.clone(),
+        detail,
+    };
+    let text = std::fs::read(path).map_err(|error| manifest_error(error.to_string()))?;
+    let manifest: Value = serde_json::from_slice(&text)
+        .map_err(|error| manifest_error(format!("manifest is not JSON: {error}")))?;
+    let found = manifest.get("schema_version").and_then(Value::as_u64);
+    match found {
+        Some(schema) if ACCEPTED_SCHEMAS.contains(&schema) => {}
+        _ => return Err(CorpusError::Schema { case: label, found }),
+    }
+    let listed = manifest
+        .get("cases")
+        .and_then(Value::as_array)
+        .ok_or_else(|| manifest_error("manifest has no cases array".to_owned()))?;
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    listed
+        .iter()
+        .map(|entry| {
+            let file = entry
+                .as_str()
+                .ok_or_else(|| manifest_error("manifest case is not a file name".to_owned()))?;
+            let text = std::fs::read(dir.join(file))
+                .map_err(|error| manifest_error(format!("{file}: {error}")))?;
+            let value: Value = serde_json::from_slice(&text)
+                .map_err(|error| manifest_error(format!("{file} is not JSON: {error}")))?;
+            parse_case(&value)
+        })
+        .collect()
 }
 
 #[cfg(test)]

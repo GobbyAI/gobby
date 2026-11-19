@@ -21,7 +21,7 @@ use bytes::Bytes;
 use gobby_core::bootstrap::RouteBackend;
 use gobby_core::route_family::RouteFamily;
 use gobby_daemon::front_door::FrontDoorState;
-use gobby_test_support::corpus_v2::{is_json, request_target};
+use gobby_test_support::corpus_v2::{RESPONSE_HEADER_ALLOWLIST, is_json, request_target};
 use gobby_test_support::listeners::{bind_loopback, local_addr};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
@@ -29,7 +29,7 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
@@ -163,9 +163,9 @@ pub async fn run_leg(
         .ok_or_else(|| shape(format!("{} has no request", case.name)))?;
     let backends = Backends::new([(case.family.as_str(), backend)]);
     let addr = start_listener(families, &backends, target, home).await;
-    let (status, body) = send_request(addr, request).await?;
+    let (status, headers, body) = send_request(addr, request).await?;
     Ok(Observation {
-        response: json!({"status": status, "body": body}),
+        response: json!({"status": status, "headers": headers, "body": body}),
         db_delta: extras.db_delta,
         side_effects: extras.side_effects,
     })
@@ -230,6 +230,18 @@ pub async fn recorded_target_task(recorded: &Value) -> (SocketAddr, JoinHandle<(
     let content_type = recorded["headers"]["content-type"]
         .as_str()
         .map(str::to_owned);
+    let headers: Vec<(String, String)> = recorded["headers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(name, _)| {
+            !matches!(
+                name.as_str(),
+                "content-length" | "transfer-encoding" | "connection"
+            )
+        })
+        .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+        .collect();
     let body: Vec<u8> = match &recorded["body"] {
         Value::Null => Vec::new(),
         Value::String(text) if !is_json(content_type.as_deref()) => text.clone().into_bytes(),
@@ -239,17 +251,17 @@ pub async fn recorded_target_task(recorded: &Value) -> (SocketAddr, JoinHandle<(
     let addr = local_addr(&listener).expect("recorded target addr");
     let task = tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
-            let content_type = content_type.clone();
+            let headers = headers.clone();
             let body = body.clone();
             tokio::spawn(async move {
                 let service = service_fn(move |request: Request<Incoming>| {
-                    let content_type = content_type.clone();
+                    let headers = headers.clone();
                     let body = body.clone();
                     async move {
                         let _ = request.into_body().collect().await;
                         let mut response = Response::builder().status(status);
-                        if let Some(value) = &content_type {
-                            response = response.header("content-type", value);
+                        for (name, value) in &headers {
+                            response = response.header(name.as_str(), value.as_str());
                         }
                         Ok::<_, Infallible>(
                             response
@@ -284,10 +296,10 @@ fn append_line(home: &Path, line: &Value) -> Result<(), DifferentialError> {
 
 /// Send one case request over a fresh connection and read the whole answer. The response is
 /// `(status, body)`: a JSON body when its content type is JSON, otherwise its text.
-async fn send_request(
+pub(super) async fn send_request(
     addr: SocketAddr,
     request: &Value,
-) -> Result<(u16, Value), DifferentialError> {
+) -> Result<(u16, Map<String, Value>, Value), DifferentialError> {
     let method = request["method"]
         .as_str()
         .ok_or_else(|| shape("request has no method"))?;
@@ -325,7 +337,7 @@ async fn send_request(
     parse_response(&raw)
 }
 
-fn parse_response(raw: &[u8]) -> Result<(u16, Value), DifferentialError> {
+fn parse_response(raw: &[u8]) -> Result<(u16, Map<String, Value>, Value), DifferentialError> {
     let split = raw
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -361,7 +373,11 @@ fn parse_response(raw: &[u8]) -> Result<(u16, Value), DifferentialError> {
     } else {
         Value::String(String::from_utf8_lossy(&body).into_owned())
     };
-    Ok((status, value))
+    let headers: Map<String, Value> = RESPONSE_HEADER_ALLOWLIST
+        .iter()
+        .filter_map(|name| Some(((*name).to_owned(), Value::String(header(name)?))))
+        .collect();
+    Ok((status, headers, value))
 }
 
 /// Decode a `chunked` transfer-coding body.

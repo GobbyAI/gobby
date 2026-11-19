@@ -167,9 +167,22 @@ fn parsed(text: &str) -> Value {
     serde_json::from_str(text).expect("delivered frame is JSON")
 }
 
+/// The shared envelope replay (design-v2 section 7.11.2): every case of `cases.json` is replayed
+/// frame by frame. Returns the number of cases replayed.
+pub(super) fn replay_corpus() -> usize {
+    let cases = load_corpus();
+    let count = cases.len();
+    replay_frames(cases);
+    count
+}
+
 #[test]
 fn rust_replays_envelope_corpus() {
-    let cases = load_corpus();
+    replay_corpus();
+}
+
+/// The per-case assertions of the envelope replay.
+fn replay_frames(cases: Vec<Case>) {
     assert!(!cases.is_empty(), "corpus lists no cases");
     for case in cases {
         let mut states: BTreeMap<&str, SubscriptionState> = BTreeMap::new();
@@ -437,10 +450,4 @@ fn broadcast_filter_outside_corpus_domain() {
     }
     assert!(initialized.matches_broadcast(&json!({"type": "hook_event", "event_type": "7"})));
     assert!(initialized.matches_broadcast(&json!({"type": "hook_event", "5": "x"})));
-}
-
-/// The shared envelope replay: every case of `cases.json`, replayed frame by frame as
-/// `rust_replays_envelope_corpus` does. Returns the number of cases replayed.
-pub(super) fn replay_corpus() -> usize {
-    unimplemented!("not wired: ws_envelope_golden::replay_corpus")
 }

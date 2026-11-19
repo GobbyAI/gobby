@@ -65,6 +65,8 @@ pub enum NormalizeError {
     BadOrder(String),
     /// `monotonic` is declared on a table ordered `set`.
     MonotonicNeedsSequence,
+    /// `monotonic` is declared on a document or response value, which is not a sequence unit.
+    MonotonicInDocument { pointer: String },
 }
 
 impl fmt::Display for NormalizeError {
@@ -76,7 +78,10 @@ impl fmt::Display for NormalizeError {
                 write!(f, "timestamp at {pointer} lies outside the run window")
             }
             NormalizeError::NotMonotonic { pointer } => {
-                write!(f, "monotonic sequence does not increase at {pointer}")
+                write!(
+                    f,
+                    "monotonic sequence is not strictly increasing at {pointer}"
+                )
             }
             NormalizeError::NotInteger { pointer } => {
                 write!(f, "monotonic needs an integer at {pointer}")
@@ -90,7 +95,7 @@ impl fmt::Display for NormalizeError {
             NormalizeError::NotTimestamp { pointer } => {
                 write!(
                     f,
-                    "timestamp at {pointer} is not an RFC 3339 value with an offset"
+                    "timestamp at {pointer} is not an ISO-8601 timestamp with a UTC offset"
                 )
             }
             NormalizeError::AfterMissing { pointer } => {
@@ -105,6 +110,12 @@ impl fmt::Display for NormalizeError {
             }
             NormalizeError::MonotonicNeedsSequence => {
                 write!(f, "monotonic needs as_recorded order")
+            }
+            NormalizeError::MonotonicInDocument { pointer } => {
+                write!(
+                    f,
+                    "monotonic needs a sequence unit, not the value at {pointer}"
+                )
             }
         }
     }
@@ -150,6 +161,15 @@ pub fn normalize_document(
     let mut ordinals = Ordinals::default();
     let mut last_sequence: Vec<Option<i128>> = vec![None; rules.len()];
     let mut edits: Vec<(String, Value)> = Vec::new();
+    // An exact pointer must name a leaf (Python: a rule that matches nothing fails the unit); a
+    // wildcard pattern (side-effect captures) may match none.
+    for (pattern, _) in rules {
+        if !pattern.contains('*') && !pointers.iter().any(|pointer| pointer == pattern) {
+            return Err(NormalizeError::NoMatch {
+                pointer: pattern.clone(),
+            });
+        }
+    }
     for pointer in pointers {
         let Some(index) = rules
             .iter()
@@ -161,6 +181,10 @@ pub fn normalize_document(
         let Some(current) = working.pointer(&pointer) else {
             continue;
         };
+        // A masked leaf is `@mask@` whatever it held: the mask wins over the rule.
+        if current == &json!("@mask@") {
+            continue;
+        }
         match normalizer {
             Normalizer::Bytes | Normalizer::NoOp => {}
             Normalizer::UuidOrdinal => match current {
@@ -168,7 +192,7 @@ pub fn normalize_document(
                     let number = ordinals.number(text);
                     edits.push((pointer, json!(format!("@uuid:{number}@"))));
                 }
-                _ => {}
+                _ => return Err(NormalizeError::NotUuid { pointer }),
             },
             Normalizer::Monotonic => {
                 let Some(value) = sequence_value(current) else {
@@ -185,12 +209,13 @@ pub fn normalize_document(
                     Value::String(text) => OffsetDateTime::parse(text, &Rfc3339).ok(),
                     _ => None,
                 };
-                if let Some(parsed) = parsed {
-                    if parsed < window.start || parsed > window.end {
-                        return Err(NormalizeError::OutsideWindow { pointer });
-                    }
-                    edits.push((pointer, json!("@ts@")));
+                let Some(parsed) = parsed else {
+                    return Err(NormalizeError::NotTimestamp { pointer });
+                };
+                if parsed < window.start || parsed > window.end {
+                    return Err(NormalizeError::OutsideWindow { pointer });
                 }
+                edits.push((pointer, json!("@ts@")));
             }
         }
     }
@@ -455,8 +480,93 @@ fn timestamp_at(
 /// Run one normalizer vector (`tests/contracts/normalizer_vectors.json`) as its `kind` says, with
 /// its declared key, order, normalizers and mask, and return the normalized value.
 pub fn run_vector(vector: &Value, window: &Window) -> Result<Value, NormalizeError> {
-    let _ = (vector, window);
-    unimplemented!("not wired: run_vector")
+    let kind = vector["kind"].as_str().unwrap_or_default();
+    let declared = vector["normalizers"]
+        .as_object()
+        .cloned()
+        .unwrap_or_default();
+    match kind {
+        "rows" => {
+            let order = parse_order(vector["order"].as_str().unwrap_or_default())?;
+            let key: Vec<&str> = vector["key"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
+            let mut rows = vector["rows"].as_array().cloned().unwrap_or_default();
+            if order == Order::Set {
+                rows.sort_by_key(|row| {
+                    key.iter()
+                        .map(|column| row[*column].to_string())
+                        .collect::<Vec<String>>()
+                });
+            }
+            let rules = column_rules(&declared, true)?;
+            Ok(Value::Array(normalize_images(
+                &rows, &rules, order, window,
+            )?))
+        }
+        "captures" => {
+            let items = vector["items"].as_array().cloned().unwrap_or_default();
+            let rules = column_rules(&declared, false)?;
+            Ok(Value::Array(normalize_images(
+                &items,
+                &rules,
+                Order::AsRecorded,
+                window,
+            )?))
+        }
+        "document" => {
+            let rules = pointer_rules(&declared)?;
+            refuse_monotonic_in_document(&rules)?;
+            let mask = vector.get("mask").cloned().unwrap_or_else(|| json!([]));
+            normalize_document(&vector["document"], &mask, &rules, window)
+        }
+        other => Err(NormalizeError::UnknownName(other.to_owned())),
+    }
+}
+
+/// The column rules of one unit. A db_delta row names its column (`db_rows`, where a timestamp may
+/// declare `after`); a capture names its field as an RFC 6901 pointer of the item (`/payload`).
+fn column_rules(
+    declared: &serde_json::Map<String, Value>,
+    db_rows: bool,
+) -> Result<Vec<(String, Spec)>, NormalizeError> {
+    declared
+        .iter()
+        .map(|(name, spec)| {
+            let column = if db_rows {
+                name.clone()
+            } else {
+                name.trim_start_matches('/').to_owned()
+            };
+            Ok((column, parse_spec(spec, db_rows)?))
+        })
+        .collect()
+}
+
+/// The pointer rules of a document or of the response, each a leaf normalizer.
+fn pointer_rules(
+    declared: &serde_json::Map<String, Value>,
+) -> Result<Vec<(String, Normalizer)>, NormalizeError> {
+    declared
+        .iter()
+        .map(|(pointer, spec)| Ok((pointer.clone(), parse_spec(spec, false)?.normalizer)))
+        .collect()
+}
+
+/// Refuse `monotonic` in a document: it is a sequence-unit normalizer (Python raises the same).
+pub fn refuse_monotonic_in_document(rules: &[(String, Normalizer)]) -> Result<(), NormalizeError> {
+    match rules
+        .iter()
+        .find(|(_, normalizer)| *normalizer == Normalizer::Monotonic)
+    {
+        Some((pointer, _)) => Err(NormalizeError::MonotonicInDocument {
+            pointer: pointer.clone(),
+        }),
+        None => Ok(()),
+    }
 }
 
 /// The normalizer vector file replayed through [`run_vector`] (design 7.6, H40).
@@ -497,7 +607,9 @@ mod vector_tests {
                 }
                 Some("fail") => {
                     let error = result.expect_err(&format!("{id} must fail"));
-                    let expected = vector["error"].as_str().expect("fail vectors name an error");
+                    let expected = vector["error"]
+                        .as_str()
+                        .expect("fail vectors name an error");
                     let text = error.to_string();
                     assert!(text.contains(expected), "{id}: {text:?} lacks {expected:?}");
                 }

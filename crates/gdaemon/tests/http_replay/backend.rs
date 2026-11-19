@@ -169,7 +169,12 @@ pub async fn stub_target() -> (SocketAddr, Seen) {
                             .expect("seen")
                             .push((parts.method.to_string(), parts.uri.path().to_owned()));
                         let answer = Bytes::from_static(STUB_ANSWER.as_bytes());
-                        Ok::<_, Infallible>(Response::new(Full::new(answer)))
+                        // The native probe answers as text, so the stub carries the same type.
+                        let response = Response::builder()
+                            .header("content-type", "text/plain; charset=utf-8")
+                            .body(Full::new(answer))
+                            .expect("stub response");
+                        Ok::<_, Infallible>(response)
                     }
                 });
                 let _ = http1::Builder::new()
