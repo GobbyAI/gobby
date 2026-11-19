@@ -1,0 +1,357 @@
+{
+  "cases": [
+    {
+      "id": "synthetic-order-priority",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-ORDER-PRIORITY"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-late",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "late"
+            }
+          ],
+          "priority": 200
+        },
+        {
+          "name": "synthetic-early",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "early",
+              "delivery": "eager"
+            }
+          ],
+          "priority": 50
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_observations": [
+            {
+              "category": "general",
+              "message": "late",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-late"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-early"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-late"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-early",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-late",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "early",
+          "context_parts": [
+            [
+              "rule:synthetic-early",
+              "early"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "synthetic-order-trigger-index",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-ORDER-TRIGGER-INDEX"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-beta",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "beta",
+              "delivery": "eager"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-alpha",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "alpha",
+              "delivery": "eager"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-alpha"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-beta"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-alpha",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-beta",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "alpha\n\nbeta",
+          "context_parts": [
+            [
+              "rule:synthetic-alpha",
+              "alpha"
+            ],
+            [
+              "rule:synthetic-beta",
+              "beta"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "synthetic-agg-block",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-AGG-BLOCK"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-first-deny",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "block",
+              "reason": "first denial"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-second-deny",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "block",
+              "reason": "second denial"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "block",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_tool": "Bash",
+          "_last_blocked_rule_name": "aggregated:2-gates",
+          "_last_blocked_reason": "Rule enforced by Gobby: [aggregated:2-gates]\nMultiple gates blocked while retrying Bash.\n1. [synthetic-first-deny] first denial\n2. [synthetic-second-deny] second denial",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "aggregated:2-gates:<token>"
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "metrics_events",
+            "call": "record_events",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-first-deny",
+            "result": "block",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-second-deny",
+            "result": "block",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [aggregated:2-gates]\nMultiple gates blocked while retrying Bash.\n1. [synthetic-first-deny] first denial\n2. [synthetic-second-deny] second denial"
+        }
+      }
+    }
+  ]
+}

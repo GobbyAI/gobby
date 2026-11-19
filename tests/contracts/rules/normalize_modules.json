@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "layer": "rules",
+  "modules": [
+    {
+      "module": "gobby.hooks._ansi_c",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._case_syntax",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_apply_rewrite",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_archives",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_base_commands",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_bindings",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_canonical",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_compound",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_cwd",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_env",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_file_commands",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_git",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_git_apply",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_interpreter_segments",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_mcp",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_metadata",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_notifications",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_operands",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_patch",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_paths",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_pipeline",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_redirects",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_sed",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_segments",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_shell",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_shell_stdin",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_tool_input",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._normalization_tools",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._path_scope",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._provider_shell_syntax",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._shell_execution_words",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks._shell_syntax",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks.checkout_reads",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks.code_navigation",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks.code_navigation_recovery",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks.normalization",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks.provider_launch_guard",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.hooks.tool_outcomes",
+      "goal": "Hook-side normalization: canonical tool and shell fields that rule conditions read."
+    },
+    {
+      "module": "gobby.mcp_proxy._call_tool_wrapper",
+      "goal": "Tool-call wrapper that the normalizer applies before a call reaches a rule."
+    },
+    {
+      "module": "gobby.utils.python_source",
+      "goal": "Source-text helpers used by the normalizer when it inspects a file or snippet."
+    },
+    {
+      "module": "gobby.workflows.engine.command_environment",
+      "goal": "Command matching and selector helpers the rule engine calls per event."
+    },
+    {
+      "module": "gobby.workflows.engine.command_matching",
+      "goal": "Command matching and selector helpers the rule engine calls per event."
+    },
+    {
+      "module": "gobby.workflows.engine.command_matching_heredoc",
+      "goal": "Command matching and selector helpers the rule engine calls per event."
+    },
+    {
+      "module": "gobby.workflows.engine.command_matching_uv",
+      "goal": "Command matching and selector helpers the rule engine calls per event."
+    },
+    {
+      "module": "gobby.workflows.engine.command_matching_variables",
+      "goal": "Command matching and selector helpers the rule engine calls per event."
+    },
+    {
+      "module": "gobby.workflows.selectors",
+      "goal": "Command matching and selector helpers the rule engine calls per event."
+    }
+  ]
+}

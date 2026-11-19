@@ -1,0 +1,344 @@
+{
+  "cases": [
+    {
+      "id": "synthetic-parse-skip",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-PARSE-SKIP"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-corrupt-row",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "block",
+              "reason": "never applies"
+            }
+          ],
+          "corrupt": {
+            "event": "before_tool"
+          }
+        },
+        {
+          "name": "synthetic-valid-row",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "valid"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_observations": [
+            {
+              "category": "general",
+              "message": "valid",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-valid-row"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-valid-row"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-valid-row",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-cond-error-block",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-COND-ERR-BLOCK"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-broken-block",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "block",
+              "reason": "unreachable"
+            }
+          ],
+          "when": "variables['synthetic_missing']['x'] == 1"
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "block",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_tool": "Bash",
+          "_last_blocked_rule_name": "synthetic-broken-block",
+          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-broken-block]\nunreachable",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "synthetic-broken-block:<token>"
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "metrics_events",
+            "call": "record_events",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-broken-block",
+            "result": "block",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [synthetic-broken-block]\nunreachable"
+        }
+      }
+    },
+    {
+      "id": "synthetic-cond-error-nonblock",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-COND-ERR-NONBLOCK"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-broken-observe",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "unreachable"
+            }
+          ],
+          "when": "variables['synthetic_missing']['x'] == 1"
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-deadline",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-DEADLINE"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-deadline-block",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "block",
+              "reason": "deadline block"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "block",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_tool": "Bash",
+          "_last_blocked_rule_name": "synthetic-deadline-block",
+          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-deadline-block]\ndeadline block",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "synthetic-deadline-block:<token>"
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "metrics_events",
+            "call": "record_events",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-deadline-block",
+            "result": "block",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [synthetic-deadline-block]\ndeadline block"
+        }
+      },
+      "deadline": {
+        "seconds": 0.0
+      }
+    }
+  ]
+}

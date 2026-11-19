@@ -1,0 +1,3775 @@
+{
+  "schema_version": 1,
+  "layer": "rules",
+  "platform_record": {
+    "macos": "recorded on darwin arm64 (macOS 27) in the P0-DECISIONS worktree",
+    "linux": "not recorded",
+    "windows-x64": "not recorded",
+    "windows-arm64": "not recorded"
+  },
+  "vectors": [
+    {
+      "id": "entry-tokenize_shell_command",
+      "entry": "gobby.hooks._normalization_shell.tokenize_shell_command",
+      "input": {
+        "args": [
+          "git commit -m 'x y' && gem push x"
+        ]
+      },
+      "expect": [
+        {
+          "value": "git",
+          "quoted": false
+        },
+        {
+          "value": "commit",
+          "quoted": false
+        },
+        {
+          "value": "-m",
+          "quoted": false
+        },
+        {
+          "value": "x y",
+          "quoted": true
+        },
+        {
+          "value": "&&",
+          "quoted": false
+        },
+        {
+          "value": "gem",
+          "quoted": false
+        },
+        {
+          "value": "push",
+          "quoted": false
+        },
+        {
+          "value": "x",
+          "quoted": false
+        }
+      ]
+    },
+    {
+      "id": "entry-scan_shell_command",
+      "entry": "gobby.hooks._normalization_shell.scan_shell_command",
+      "input": {
+        "args": [
+          "echo $(gem push x)"
+        ],
+        "kwargs": {
+          "dialect": "bash"
+        }
+      },
+      "expect": {
+        "tokens": [
+          {
+            "value": "echo",
+            "quoted": false
+          },
+          {
+            "value": "$(gem",
+            "quoted": false
+          },
+          {
+            "value": "push",
+            "quoted": false
+          },
+          {
+            "value": "x)",
+            "quoted": false
+          }
+        ],
+        "spans": [
+          [
+            0,
+            4
+          ],
+          [
+            5,
+            10
+          ],
+          [
+            11,
+            15
+          ],
+          [
+            16,
+            18
+          ]
+        ],
+        "heredocs": []
+      }
+    },
+    {
+      "id": "entry-extract_heredoc_bodies",
+      "entry": "gobby.hooks._normalization_shell.extract_heredoc_bodies",
+      "input": {
+        "args": [
+          "cat <<EOF\nhello\nEOF\n"
+        ]
+      },
+      "expect": [
+        "hello"
+      ]
+    },
+    {
+      "id": "entry-decode_ansi_c_escape",
+      "entry": "gobby.hooks._ansi_c.decode_ansi_c_escape",
+      "input": {
+        "args": [
+          "\\x41b",
+          0
+        ],
+        "kwargs": {
+          "dialect": "bash"
+        }
+      },
+      "expect": [
+        "A",
+        4
+      ]
+    },
+    {
+      "id": "entry-apply_path_scope_metadata",
+      "entry": "gobby.hooks._path_scope.apply_path_scope_metadata",
+      "input": {
+        "args": [
+          {
+            "tool_name": "Edit",
+            "tool_input": {
+              "file_path": "src/a.py"
+            }
+          },
+          {},
+          [
+            "src/a.py"
+          ]
+        ]
+      },
+      "expect": {},
+      "result_from_arg": 1
+    },
+    {
+      "id": "entry-normalize_tool_fields",
+      "entry": "gobby.hooks._normalization_tools.normalize_tool_fields",
+      "input": {
+        "args": [
+          {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "git push origin main"
+            },
+            "cwd": "{repo}",
+            "project_path": "{repo}",
+            "tool_output": "",
+            "is_error": false,
+            "_raw_tool_input": {
+              "command": "git push origin main"
+            },
+            "command": "git push origin main",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_git_mutation": true,
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "succeeded",
+              "provenance": "event.is_error"
+            }
+          }
+        ]
+      },
+      "expect": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "git push origin main"
+        },
+        "cwd": "{repo}",
+        "project_path": "{repo}",
+        "tool_output": "",
+        "is_error": false,
+        "_raw_tool_input": {
+          "command": "git push origin main"
+        },
+        "command": "git push origin main",
+        "canonical_tool_kind": "execute",
+        "canonical_tool_confidence": "high",
+        "canonical_git_mutation": true,
+        "canonical_read_only": false,
+        "canonical_code_navigation_segments": [],
+        "tool_outcome": {
+          "status": "succeeded",
+          "provenance": "event.is_error"
+        }
+      }
+    },
+    {
+      "id": "entry-classify_git_mutation",
+      "entry": "gobby.hooks._normalization_git.classify_git_mutation",
+      "input": {
+        "args": [
+          [
+            "git",
+            "commit",
+            "-m",
+            "x"
+          ],
+          null,
+          null
+        ]
+      },
+      "expect": null
+    },
+    {
+      "id": "entry-executable_command_subjects",
+      "entry": "gobby.workflows.engine.command_matching.executable_command_subjects",
+      "input": {
+        "args": [
+          "git commit -m x && gem push y"
+        ]
+      },
+      "expect": [
+        "git commit -m x",
+        "gem push y"
+      ]
+    },
+    {
+      "id": "entry-command_patterns_match",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "git push origin main"
+        ],
+        "kwargs": {
+          "pattern": "^git\\s+push\\b"
+        }
+      },
+      "expect": true
+    },
+    {
+      "id": "entry-blocks_direct_provider_launch",
+      "entry": "gobby.hooks.provider_launch_guard.blocks_direct_provider_launch",
+      "input": {
+        "args": [
+          "Bash",
+          {
+            "command": "claude -p hi"
+          }
+        ]
+      },
+      "expect": true
+    },
+    {
+      "id": "entry-rule_matches_agent",
+      "entry": "gobby.workflows.selectors.rule_matches_agent",
+      "input": {
+        "args": [
+          null,
+          null
+        ]
+      },
+      "expect": true,
+      "construct": [
+        {
+          "index": 0,
+          "class": "gobby.workflows.agent_models.AgentDefinitionBody",
+          "data": {
+            "name": "synthetic-agent",
+            "prompts": {
+              "agent": "synthetic agent prompt"
+            },
+            "workflows": {
+              "rules": [
+                "synthetic-rule"
+              ],
+              "rule_selectors": {
+                "include": [
+                  "*"
+                ],
+                "exclude": []
+              }
+            }
+          }
+        },
+        {
+          "index": 1,
+          "class": "gobby.storage.definitions.rules.RuleDefinitionRow",
+          "data": {
+            "id": "synthetic-rule-id",
+            "name": "synthetic-rule",
+            "enabled": true,
+            "enabled_pinned": false,
+            "priority": 10,
+            "definition_json": {
+              "event": "before_tool",
+              "effects": [
+                {
+                  "type": "block",
+                  "reason": "synthetic"
+                }
+              ]
+            },
+            "source": "installed",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "updated_at": "2026-01-01T00:00:00+00:00"
+          }
+        }
+      ]
+    },
+    {
+      "id": "negative-test_grouped_case_commands_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "(case x in x) gem push x;; esac)"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_grouped_case_commands_match_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_case_pattern_headers_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "shopt -s extglob\ncase x in @(x|y)) gem push x;; esac"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_case_pattern_headers_match_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_adjacent_case_substitutions_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "echo $(true)$(case y in y) touch x;; esac)"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*touch\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_adjacent_case_substitutions_match_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_case_header_unspaced_keyword_matches_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "case x in(x)gem push x;; esac"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_case_header_unspaced_keyword_matches_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_case_pattern_terminator_boundary_matches_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "case x in x)gem push x;; esac"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_case_pattern_terminator_boundary_matches_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_case_pattern_terminator_controls_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "case x in x) gem push x;; esac"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_case_pattern_terminator_controls_match_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_case_pattern_terminator_quoted_prose_does_not_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "echo \"case x in x)gem push x;; esac\""
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_case_pattern_terminator_quoted_prose_does_not_match_blocks",
+      "expect": false
+    },
+    {
+      "id": "negative-test_invoked_function_body_matches_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "f() (case x in x) gem push x;; esac); f"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_invoked_function_body_matches_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_function_body_literal_does_not_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "printf '%s' 'f() { gem push x; }; f'"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_function_body_literal_does_not_match_blocks",
+      "expect": false
+    },
+    {
+      "id": "negative-test_many_function_definitions_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "f0() { echo 0; }; f1() { echo 1; }; f2() { echo 2; }; f3() { echo 3; }; f4() { echo 4; }; f5() { echo 5; }; f6() { echo 6; }; f7() { echo 7; }; f8() { echo 8; }; f9() { echo 9; }; f10() { echo 10; }; f11() { echo 11; }; f12() { echo 12; }; f13() { echo 13; }; f14() { echo 14; }; f15() { echo 15; }; f16() { echo 16; }; f17() { echo 17; }; f18() { echo 18; }; f19() { echo 19; }; f20() { echo 20; }; f21() { echo 21; }; f22() { echo 22; }; f23() { echo 23; }; f24() { echo 24; }; f25() { echo 25; }; f26() { echo 26; }; f27() { echo 27; }; f28() { echo 28; }; f29() { echo 29; }; f30() { echo 30; }; f31() { echo 31; }; f32() { echo 32; }; f33() { echo 33; }; f34() { echo 34; }; f35() { echo 35; }; f36() { echo 36; }; f37() { echo 37; }; f38() { echo 38; }; f39() { gem push x; }; f39"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_many_function_definitions_match_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_later_case_arm_function_matches_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "case b in a) f() { :; };; b) g() { gem push x; };; esac; g"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_later_case_arm_function_matches_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_nested_wrappers_with_many_functions_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "f7() { :; }; echo $(f6() { :; }; echo $(f5() { :; }; echo $(f4() { :; }; echo $(f3() { :; }; echo $(f2() { :; }; echo $(f1() { :; }; echo $(f0() { :; }; echo $(p0() { echo 0; }; p1() { echo 1; }; p2() { echo 2; }; p3() { echo 3; }; p4() { echo 4; }; p5() { echo 5; }; p6() { echo 6; }; p7() { echo 7; }; p8() { echo 8; }; p9() { echo 9; }; p10() { echo 10; }; p11() { echo 11; }; p12() { echo 12; }; p13() { echo 13; }; p14() { echo 14; }; p15() { echo 15; }; p16() { echo 16; }; p17() { echo 17; }; p18() { echo 18; }; p19() { echo 19; }; p20() { echo 20; }; p21() { echo 21; }; p22() { echo 22; }; p23() { echo 23; }; p24() { echo 24; }; p25() { echo 25; }; p26() { echo 26; }; p27() { echo 27; }; p28() { echo 28; }; p29() { echo 29; }; p30() { echo 30; }; p31() { echo 31; }; p32() { echo 32; }; p33() { echo 33; }; p34() { echo 34; }; p35() { echo 35; }; p36() { echo 36; }; p37() { echo 37; }; p38() { echo 38; }; p39() { echo 39; }; p40() { echo 40; }; p41() { echo 41; }; p42() { echo 42; }; p43() { echo 43; }; p44() { echo 44; }; p45() { echo 45; }; p46() { echo 46; }; p47() { echo 47; }; p48() { echo 48; }; p49() { echo 49; }; p50() { echo 50; }; p51() { echo 51; }; p52() { echo 52; }; p53() { echo 53; }; p54() { echo 54; }; p55() { echo 55; }; p56() { echo 56; }; p57() { echo 57; }; p58() { echo 58; }; p59() { echo 59; }; p60() { echo 60; }; p61() { echo 61; }; p62() { echo 62; }; p63() { echo 63; }; p64() { echo 64; }; p65() { echo 65; }; p66() { echo 66; }; p67() { echo 67; }; p68() { echo 68; }; p69() { echo 69; }; p70() { echo 70; }; p71() { echo 71; }; p72() { echo 72; }; p73() { echo 73; }; p74() { echo 74; }; p75() { echo 75; }; p76() { echo 76; }; p77() { echo 77; }; p78() { echo 78; }; p79() { echo 79; }; p80() { echo 80; }; p81() { echo 81; }; p82() { echo 82; }; p83() { echo 83; }; p84() { echo 84; }; p85() { echo 85; }; p86() { echo 86; }; p87() { echo 87; }; p88() { echo 88; }; p89() { echo 89; }; p90() { echo 90; }; p91() { echo 91; }; p92() { echo 92; }; p93() { echo 93; }; p94() { echo 94; }; p95() { echo 95; }; p96() { echo 96; }; p97() { echo 97; }; p98() { echo 98; }; p99() { echo 99; }; p100() { echo 100; }; p101() { echo 101; }; p102() { echo 102; }; p103() { echo 103; }; p104() { echo 104; }; p105() { echo 105; }; p106() { echo 106; }; p107() { echo 107; }; p108() { echo 108; }; p109() { echo 109; }; p110() { echo 110; }; p111() { echo 111; }; p112() { echo 112; }; p113() { echo 113; }; p114() { echo 114; }; p115() { echo 115; }; p116() { echo 116; }; p117() { echo 117; }; p118() { echo 118; }; p119() { echo 119; }; p120() { echo 120; }; p121() { echo 121; }; p122() { echo 122; }; p123() { echo 123; }; p124() { echo 124; }; p125() { echo 125; }; p126() { echo 126; }; p127() { echo 127; }; p128() { echo 128; }; p129() { echo 129; }; p130() { echo 130; }; p131() { echo 131; }; p132() { echo 132; }; p133() { echo 133; }; p134() { echo 134; }; p135() { echo 135; }; p136() { echo 136; }; p137() { echo 137; }; p138() { echo 138; }; p139() { echo 139; }; p140() { echo 140; }; p141() { echo 141; }; p142() { echo 142; }; p143() { echo 143; }; p144() { echo 144; }; p145() { echo 145; }; p146() { echo 146; }; p147() { echo 147; }; p148() { echo 148; }; p149() { echo 149; }; p150() { echo 150; }; p151() { echo 151; }; p152() { echo 152; }; p153() { echo 153; }; p154() { echo 154; }; p155() { echo 155; }; p156() { echo 156; }; p157() { echo 157; }; p158() { echo 158; }; p159() { echo 159; }; p160() { echo 160; }; p161() { echo 161; }; p162() { echo 162; }; p163() { echo 163; }; p164() { echo 164; }; p165() { echo 165; }; p166() { echo 166; }; p167() { echo 167; }; p168() { echo 168; }; p169() { echo 169; }; p170() { echo 170; }; p171() { echo 171; }; p172() { echo 172; }; p173() { echo 173; }; p174() { echo 174; }; p175() { echo 175; }; p176() { echo 176; }; p177() { echo 177; }; p178() { echo 178; }; p179() { echo 179; }; p180() { echo 180; }; p181() { echo 181; }; p182() { echo 182; }; p183() { echo 183; }; p184() { echo 184; }; p185() { echo 185; }; p186() { echo 186; }; p187() { echo 187; }; p188() { echo 188; }; p189() { echo 189; }; p190() { echo 190; }; p191() { echo 191; }; p192() { echo 192; }; p193() { echo 193; }; p194() { echo 194; }; p195() { echo 195; }; p196() { echo 196; }; p197() { echo 197; }; p198() { echo 198; }; p199() { echo 199; }; p200() { echo 200; }; p201() { echo 201; }; p202() { echo 202; }; p203() { echo 203; }; p204() { echo 204; }; p205() { echo 205; }; p206() { echo 206; }; p207() { echo 207; }; p208() { echo 208; }; p209() { echo 209; }; p210() { echo 210; }; p211() { echo 211; }; p212() { echo 212; }; p213() { echo 213; }; p214() { echo 214; }; p215() { echo 215; }; p216() { echo 216; }; p217() { echo 217; }; p218() { echo 218; }; p219() { echo 219; }; p220() { echo 220; }; p221() { echo 221; }; p222() { echo 222; }; p223() { echo 223; }; p224() { echo 224; }; p225() { echo 225; }; p226() { echo 226; }; p227() { echo 227; }; p228() { echo 228; }; p229() { echo 229; }; p230() { echo 230; }; p231() { echo 231; }; p232() { echo 232; }; p233() { echo 233; }; p234() { echo 234; }; p235() { echo 235; }; p236() { echo 236; }; p237() { echo 237; }; p238() { echo 238; }; p239() { echo 239; }; p240() { echo 240; }; p241() { echo 241; }; p242() { echo 242; }; p243() { echo 243; }; p244() { echo 244; }; p245() { echo 245; }; p246() { echo 246; }; p247() { echo 247; }; p248() { echo 248; }; p249() { echo 249; }; p250() { echo 250; }; p251() { echo 251; }; p252() { echo 252; }; p253() { echo 253; }; p254() { echo 254; }; p255() { echo 255; }; p256() { echo 256; }; p257() { echo 257; }; p258() { echo 258; }; p259() { echo 259; }; p260() { echo 260; }; p261() { echo 261; }; p262() { echo 262; }; p263() { echo 263; }; p264() { echo 264; }; p265() { echo 265; }; p266() { echo 266; }; p267() { echo 267; }; p268() { echo 268; }; p269() { echo 269; }; p270() { echo 270; }; p271() { echo 271; }; p272() { echo 272; }; p273() { echo 273; }; p274() { echo 274; }; p275() { echo 275; }; p276() { echo 276; }; p277() { echo 277; }; p278() { echo 278; }; p279() { echo 279; }; p280() { echo 280; }; p281() { echo 281; }; p282() { echo 282; }; p283() { echo 283; }; p284() { echo 284; }; p285() { echo 285; }; p286() { echo 286; }; p287() { echo 287; }; p288() { echo 288; }; p289() { echo 289; }; p290() { echo 290; }; p291() { echo 291; }; p292() { echo 292; }; p293() { echo 293; }; p294() { echo 294; }; p295() { echo 295; }; p296() { echo 296; }; p297() { echo 297; }; p298() { echo 298; }; p299() { echo 299; }; gem push x))))))))"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_nested_wrappers_with_many_functions_match_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_deep_substitution_function_matches_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "echo $( echo $( echo $( echo $( echo $( echo $( echo $( echo $( f() { gem push x; }; f ) ) ) ) ) ) ) )"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_deep_substitution_function_matches_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_function_continuation_and_heredoc_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "f() \\\n{ gem push x; }; f"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_function_continuation_and_heredoc_match_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_nine_nested_function_definitions_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "f8() { f7() { f6() { f5() { f4() { f3() { f2() { f1() { f0() { gem push x; }; f0; }; f1; }; f2; }; f3; }; f4; }; f5; }; f6; }; f7; }; f8"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_nine_nested_function_definitions_match_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_dollar_pair_quote_commands_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "echo $$'\\' ; gem push x ; echo '\\'"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_dollar_pair_quote_commands_match_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_dollar_pair_quote_literal_does_not_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "echo $$'.txt'"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_dollar_pair_quote_literal_does_not_match_blocks",
+      "expect": false
+    },
+    {
+      "id": "negative-test_case_arm_commands_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "case x in x) gem push x;; esac"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_case_arm_commands_match_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_case_pattern_literals_do_not_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "case x in 'gem push x') true;; esac"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_case_pattern_literals_do_not_match_blocks",
+      "expect": false
+    },
+    {
+      "id": "negative-test_compound_commands_match_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "if true; then gem push x; fi"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_compound_commands_match_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_command_position_group_case_matches_blocks",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "echo hi | (case x in x) gem push x;; esac)"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gem\\s+push\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_command_position_group_case_matches_blocks",
+      "expect": true
+    },
+    {
+      "id": "negative-test_inert_heredoc_prose_cannot_select_a_block",
+      "entry": "gobby.workflows.engine.command_matching.command_patterns_match",
+      "input": {
+        "args": [
+          "cat >> notes.md <<'EOF'\nRun `git commit` in the shared checkout, never `git push --force`.\nEOF"
+        ],
+        "kwargs": {
+          "pattern": "(^|(?<=[;&|(`\\n]))\\s*git\\s+commit\\b",
+          "mask_quoted": false
+        }
+      },
+      "negative_from": "tests/workflows/test_command_matching.py::test_inert_heredoc_prose_cannot_select_a_block",
+      "expect": false
+    },
+    {
+      "id": "negative-test_whole_file_reads_stay_blocked_past_the_scan_limit",
+      "entry": "gobby.hooks.code_navigation_recovery.navigation_requires_index",
+      "setup": {
+        "git_repo": true,
+        "files": {
+          ".gitignore": "web/dist/\ncustom-output/\n",
+          "custom-output/.keep": "",
+          "src/constants.py": "VALUE = 1\n",
+          "src/short.py": {
+            "repeat": "value = 1\n",
+            "count": 5
+          },
+          "src/long.py": {
+            "repeat": "value = 1\n",
+            "count": 60
+          },
+          "src/minified.py": {
+            "repeat": "x = 1;",
+            "count": 50000,
+            "suffix": "\n"
+          }
+        }
+      },
+      "prepare": [
+        "gobby.hooks.normalization.normalize_tool_fields"
+      ],
+      "input": {
+        "args": [
+          {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "cat src/minified.py"
+            },
+            "cwd": "{repo}",
+            "project_path": "{repo}",
+            "tool_output": "",
+            "is_error": false
+          },
+          {},
+          "read"
+        ],
+        "kwargs": {
+          "broad_only": true
+        }
+      },
+      "negative_from": "tests/hooks/test_code_navigation_recovery.py::test_whole_file_reads_stay_blocked_past_the_scan_limit",
+      "expect": true
+    },
+    {
+      "id": "negative-test_unverifiable_bounds_and_variable_paths_stay_blocked",
+      "entry": "gobby.hooks.code_navigation_recovery.navigation_requires_index",
+      "setup": {
+        "git_repo": true,
+        "files": {
+          ".gitignore": "web/dist/\ncustom-output/\n",
+          "custom-output/.keep": "",
+          "src/constants.py": "VALUE = 1\n",
+          "src/short.py": {
+            "repeat": "value = 1\n",
+            "count": 5
+          },
+          "src/long.py": {
+            "repeat": "value = 1\n",
+            "count": 60
+          }
+        }
+      },
+      "prepare": [
+        "gobby.hooks.normalization.normalize_tool_fields"
+      ],
+      "input": {
+        "args": [
+          {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "sed -n \"$(grep -n VALUE src/long.py | cut -d: -f1)p\" src/long.py"
+            },
+            "cwd": "{repo}",
+            "project_path": "{repo}",
+            "tool_output": "",
+            "is_error": false
+          },
+          {},
+          "read"
+        ],
+        "kwargs": {
+          "broad_only": true
+        }
+      },
+      "negative_from": "tests/hooks/test_code_navigation_recovery.py::test_unverifiable_bounds_and_variable_paths_stay_blocked",
+      "expect": true
+    },
+    {
+      "id": "negative-test_unproven_variable_reads_block_in_write_commands",
+      "entry": "gobby.hooks.code_navigation_recovery.navigation_requires_index",
+      "setup": {
+        "git_repo": true,
+        "files": {
+          ".gitignore": "web/dist/\ncustom-output/\n",
+          "custom-output/.keep": "",
+          "src/constants.py": "VALUE = 1\n",
+          "src/short.py": {
+            "repeat": "value = 1\n",
+            "count": 5
+          },
+          "src/long.py": {
+            "repeat": "value = 1\n",
+            "count": 60
+          }
+        }
+      },
+      "prepare": [
+        "gobby.hooks.normalization.normalize_tool_fields"
+      ],
+      "input": {
+        "args": [
+          {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "for f in src/long.py; do f=src/long.py; cat \"$f\"; done; touch /tmp/x"
+            },
+            "cwd": "{repo}",
+            "project_path": "{repo}",
+            "tool_output": "",
+            "is_error": false
+          },
+          {},
+          "read"
+        ],
+        "kwargs": {
+          "broad_only": true
+        }
+      },
+      "negative_from": "tests/hooks/test_code_navigation_recovery.py::test_unproven_variable_reads_block_in_write_commands",
+      "expect": true
+    },
+    {
+      "id": "negative-test_refused_outline_opens_only_requested_read",
+      "entry": "gobby.hooks.code_navigation_recovery.navigation_requires_index",
+      "setup": {
+        "git_repo": true,
+        "files": {
+          ".gitignore": "web/dist/\ncustom-output/\n",
+          "custom-output/.keep": "",
+          "src/constants.py": "VALUE = 1\n",
+          "src/short.py": {
+            "repeat": "value = 1\n",
+            "count": 5
+          },
+          "src/long.py": {
+            "repeat": "value = 1\n",
+            "count": 60
+          }
+        }
+      },
+      "prepare": [
+        "gobby.hooks.normalization.normalize_tool_fields"
+      ],
+      "input": {
+        "args": [
+          {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "cat src/long.py"
+            },
+            "cwd": "{repo}",
+            "project_path": "{repo}",
+            "tool_output": "",
+            "is_error": false
+          },
+          {
+            "code_index_attempts": [
+              {
+                "action": "read",
+                "paths": [
+                  "{repo}/src/long.py"
+                ]
+              }
+            ],
+            "code_index_verified": [],
+            "code_index_recoveries": [
+              {
+                "action": "read",
+                "paths": [
+                  "{repo}/src/long.py"
+                ]
+              }
+            ]
+          },
+          "read"
+        ],
+        "kwargs": {
+          "broad_only": true
+        }
+      },
+      "negative_from": "tests/hooks/test_code_navigation_recovery.py::test_refused_outline_opens_only_requested_read",
+      "expect": false
+    },
+    {
+      "id": "negative-test_a_path_git_refuses_does_not_hide_later_answers",
+      "entry": "gobby.hooks.code_navigation_recovery.navigation_requires_index",
+      "setup": {
+        "git_repo": true,
+        "files": {
+          ".gitignore": "web/dist/\ncustom-output/\n",
+          "custom-output/.keep": "",
+          "src/constants.py": "VALUE = 1\n",
+          "src/short.py": {
+            "repeat": "value = 1\n",
+            "count": 5
+          },
+          "src/long.py": {
+            "repeat": "value = 1\n",
+            "count": 60
+          }
+        },
+        "gitlinks": [
+          "a-sub"
+        ]
+      },
+      "prepare": [
+        "gobby.hooks.normalization.normalize_tool_fields"
+      ],
+      "input": {
+        "args": [
+          {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "rg VALUE custom-output && rg VALUE a-sub/file.py"
+            },
+            "cwd": "{repo}",
+            "project_path": "{repo}",
+            "tool_output": "",
+            "is_error": false
+          },
+          {
+            "turn_written_paths": [
+              "{repo}/a-sub/file.py"
+            ]
+          }
+        ],
+        "kwargs": {}
+      },
+      "negative_from": "tests/hooks/test_code_navigation_recovery.py::test_a_path_git_refuses_does_not_hide_later_answers",
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._ansi_c.opens_ansi_c_quote",
+      "entry": "gobby.hooks._ansi_c.opens_ansi_c_quote",
+      "input": {
+        "args": [
+          "",
+          0
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._case_syntax._balanced_parens_end",
+      "entry": "gobby.hooks._case_syntax._balanced_parens_end",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._case_syntax.case_pattern_end",
+      "entry": "gobby.hooks._case_syntax.case_pattern_end",
+      "input": {
+        "args": [
+          null,
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._case_syntax.pid_parameter_end",
+      "entry": "gobby.hooks._case_syntax.pid_parameter_end",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_apply_rewrite.applies_rewritten_input",
+      "entry": "gobby.hooks._normalization_apply_rewrite.applies_rewritten_input",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_apply_rewrite.build_apply_rewrite",
+      "entry": "gobby.hooks._normalization_apply_rewrite.build_apply_rewrite",
+      "input": {
+        "args": [
+          [],
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": "- <<'<token>'\n<token>\n"
+    },
+    {
+      "id": "required-gobby.hooks._normalization_apply_rewrite.read_validated_patch",
+      "entry": "gobby.hooks._normalization_apply_rewrite.read_validated_patch",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_apply_rewrite.simple_apply_words",
+      "entry": "gobby.hooks._normalization_apply_rewrite.simple_apply_words",
+      "input": {
+        "args": [
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_archives.classify_archive_command",
+      "entry": "gobby.hooks._normalization_archives.classify_archive_command",
+      "input": {
+        "args": [
+          null,
+          [],
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_archives.classify_ditto_command",
+      "entry": "gobby.hooks._normalization_archives.classify_ditto_command",
+      "input": {
+        "args": [
+          [],
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "kind": "write",
+        "paths": [
+          "$UNRESOLVED"
+        ],
+        "write_paths": [
+          "$UNRESOLVED"
+        ],
+        "extra": {
+          "canonical_tree_write_paths": [
+            "$UNRESOLVED"
+          ],
+          "canonical_tree_write_cwds": {},
+          "canonical_tree_write_scope_unknown": false,
+          "_canonical_repo_mutation_scope_unknown": false
+        },
+        "repo_mutation": true,
+        "confidence": "high",
+        "neutral_setup": false,
+        "pure_gcode_navigation": false,
+        "read_only_pipeline_filter": false,
+        "read_only": null,
+        "stdin_program_interpreter": null,
+        "unverified_write_scope": false,
+        "cwd": null,
+        "loop_binding_variable": null,
+        "assignment_bindings": [],
+        "shell_words": [],
+        "shell_raw_words": [],
+        "literal_path_root": null,
+        "navigation_paths": []
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_base_commands.apply_uv_project_redirect",
+      "entry": "gobby.hooks._normalization_base_commands.apply_uv_project_redirect",
+      "input": {
+        "args": [
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": {}
+    },
+    {
+      "id": "required-gobby.hooks._normalization_base_commands.classify_base_command",
+      "entry": "gobby.hooks._normalization_base_commands.classify_base_command",
+      "input": {
+        "args": [
+          [],
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "kind": "execute",
+        "paths": [],
+        "write_paths": [],
+        "extra": null,
+        "repo_mutation": false,
+        "confidence": "high",
+        "neutral_setup": false,
+        "pure_gcode_navigation": false,
+        "read_only_pipeline_filter": false,
+        "read_only": null,
+        "stdin_program_interpreter": null,
+        "unverified_write_scope": false,
+        "cwd": null,
+        "loop_binding_variable": null,
+        "assignment_bindings": [],
+        "shell_words": [],
+        "shell_raw_words": [],
+        "literal_path_root": null,
+        "navigation_paths": []
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_base_commands.execution_context_is_read_only",
+      "entry": "gobby.hooks._normalization_base_commands.execution_context_is_read_only",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "required-gobby.hooks._normalization_base_commands.unresolved_execution_metadata",
+      "entry": "gobby.hooks._normalization_base_commands.unresolved_execution_metadata",
+      "input": {
+        "args": [
+          null,
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_base_commands.unwrap_execution_command",
+      "entry": "gobby.hooks._normalization_base_commands.unwrap_execution_command",
+      "input": {
+        "args": [
+          [],
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "parts": [],
+        "cwd": "",
+        "read_only": true,
+        "directory_proven": true
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_base_commands.xargs_reader",
+      "entry": "gobby.hooks._normalization_base_commands.xargs_reader",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_bindings._literal_assignment_bindings",
+      "entry": "gobby.hooks._normalization_bindings._literal_assignment_bindings",
+      "input": {
+        "args": [
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_bindings._literal_assignment_values",
+      "entry": "gobby.hooks._normalization_bindings._literal_assignment_values",
+      "input": {
+        "args": [
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_bindings._loop_binding_variable_is_stable",
+      "entry": "gobby.hooks._normalization_bindings._loop_binding_variable_is_stable",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_bindings._loop_header_words_are_literal",
+      "entry": "gobby.hooks._normalization_bindings._loop_header_words_are_literal",
+      "input": {
+        "args": [
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "required-gobby.hooks._normalization_bindings._plain_loop_binding_reference",
+      "entry": "gobby.hooks._normalization_bindings._plain_loop_binding_reference",
+      "input": {
+        "args": [
+          null,
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_bindings._raw_shell_word_is_literal",
+      "entry": "gobby.hooks._normalization_bindings._raw_shell_word_is_literal",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_bindings._shell_loop_binding_disqualifications",
+      "entry": "gobby.hooks._normalization_bindings._shell_loop_binding_disqualifications",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_bindings._shell_segment_preserves_loop_binding",
+      "entry": "gobby.hooks._normalization_bindings._shell_segment_preserves_loop_binding",
+      "input": {
+        "args": [
+          [],
+          null
+        ],
+        "kwargs": {
+          "command_is_known": null
+        }
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_canonical._normalize_shell_tool_metadata",
+      "entry": "gobby.hooks._normalization_canonical._normalize_shell_tool_metadata",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_compound.case_arm_tokens",
+      "entry": "gobby.hooks._normalization_compound.case_arm_tokens",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {
+          "case_depth": null,
+          "new_arm": null,
+          "command": null,
+          "spans": {}
+        }
+      },
+      "expect": [
+        [],
+        null,
+        false
+      ]
+    },
+    {
+      "id": "required-gobby.hooks._normalization_compound.case_pattern_process_bodies",
+      "entry": "gobby.hooks._normalization_compound.case_pattern_process_bodies",
+      "input": {
+        "args": [
+          [],
+          [],
+          {},
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [],
+        false
+      ]
+    },
+    {
+      "id": "required-gobby.hooks._normalization_compound.command_substitution_bodies",
+      "entry": "gobby.hooks._normalization_compound.command_substitution_bodies",
+      "input": {
+        "args": [
+          null,
+          []
+        ],
+        "kwargs": {
+          "depth": null
+        }
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_compound.heredoc_substitution_bodies",
+      "entry": "gobby.hooks._normalization_compound.heredoc_substitution_bodies",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {
+          "depth": null
+        }
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_compound.process_substitution_bodies",
+      "entry": "gobby.hooks._normalization_compound.process_substitution_bodies",
+      "input": {
+        "args": [
+          [],
+          {},
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [],
+        []
+      ]
+    },
+    {
+      "id": "required-gobby.hooks._normalization_compound.scan_function_program",
+      "entry": "gobby.hooks._normalization_compound.scan_function_program",
+      "input": {
+        "args": [
+          null,
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_compound.shell_function_bodies",
+      "entry": "gobby.hooks._normalization_compound.shell_function_bodies",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_env.env_directory_operands",
+      "entry": "gobby.hooks._normalization_env.env_directory_operands",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_env.strip_shell_wrappers",
+      "entry": "gobby.hooks._normalization_env.strip_shell_wrappers",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_file_commands.classify_file_command",
+      "entry": "gobby.hooks._normalization_file_commands.classify_file_command",
+      "input": {
+        "args": [
+          null,
+          [],
+          "",
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "kind": "execute",
+        "paths": [],
+        "write_paths": [],
+        "extra": null,
+        "repo_mutation": false,
+        "confidence": "high",
+        "neutral_setup": false,
+        "pure_gcode_navigation": false,
+        "read_only_pipeline_filter": false,
+        "read_only": null,
+        "stdin_program_interpreter": null,
+        "unverified_write_scope": false,
+        "cwd": null,
+        "loop_binding_variable": null,
+        "assignment_bindings": [],
+        "shell_words": [],
+        "shell_raw_words": [],
+        "literal_path_root": null,
+        "navigation_paths": []
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_git.classify_search_segment",
+      "entry": "gobby.hooks._normalization_git.classify_search_segment",
+      "input": {
+        "args": [
+          null,
+          [],
+          "",
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "kind": "search",
+        "paths": [],
+        "write_paths": [],
+        "extra": {
+          "canonical_code_navigation_action": "search",
+          "canonical_code_navigation_broad": true
+        },
+        "repo_mutation": false,
+        "confidence": "high",
+        "neutral_setup": false,
+        "pure_gcode_navigation": false,
+        "read_only_pipeline_filter": false,
+        "read_only": null,
+        "stdin_program_interpreter": null,
+        "unverified_write_scope": false,
+        "cwd": null,
+        "loop_binding_variable": null,
+        "assignment_bindings": [],
+        "shell_words": [],
+        "shell_raw_words": [],
+        "literal_path_root": null,
+        "navigation_paths": []
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_git.git_command_is_read_only",
+      "entry": "gobby.hooks._normalization_git.git_command_is_read_only",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "IndexError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_git.git_environment_parts",
+      "entry": "gobby.hooks._normalization_git.git_environment_parts",
+      "input": {
+        "args": [
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_git.git_mutation_cwd",
+      "entry": "gobby.hooks._normalization_git.git_mutation_cwd",
+      "input": {
+        "args": [
+          [],
+          "",
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "IndexError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_git.git_selector_name",
+      "entry": "gobby.hooks._normalization_git.git_selector_name",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_git.git_selector_setup",
+      "entry": "gobby.hooks._normalization_git.git_selector_setup",
+      "input": {
+        "args": [
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_git_apply.classify_git_apply",
+      "entry": "gobby.hooks._normalization_git_apply.classify_git_apply",
+      "input": {
+        "args": [
+          [],
+          null,
+          "",
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "kind": "write",
+        "paths": [],
+        "write_paths": [],
+        "extra": null,
+        "repo_mutation": true,
+        "confidence": "high",
+        "neutral_setup": false,
+        "pure_gcode_navigation": false,
+        "read_only_pipeline_filter": false,
+        "read_only": null,
+        "stdin_program_interpreter": null,
+        "unverified_write_scope": false,
+        "cwd": null,
+        "loop_binding_variable": null,
+        "assignment_bindings": [],
+        "shell_words": [],
+        "shell_raw_words": [],
+        "literal_path_root": null,
+        "navigation_paths": []
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_interpreter_segments._classify_stdin_python",
+      "entry": "gobby.hooks._normalization_interpreter_segments._classify_stdin_python",
+      "input": {
+        "args": [
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_interpreter_segments._python_write_segment",
+      "entry": "gobby.hooks._normalization_interpreter_segments._python_write_segment",
+      "input": {
+        "args": [
+          null,
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "kind": "write",
+        "paths": [],
+        "write_paths": [],
+        "extra": null,
+        "repo_mutation": true,
+        "confidence": "high",
+        "neutral_setup": false,
+        "pure_gcode_navigation": false,
+        "read_only_pipeline_filter": false,
+        "read_only": null,
+        "stdin_program_interpreter": null,
+        "unverified_write_scope": false,
+        "cwd": null,
+        "loop_binding_variable": null,
+        "assignment_bindings": [],
+        "shell_words": [],
+        "shell_raw_words": [],
+        "literal_path_root": null,
+        "navigation_paths": []
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_mcp._extract_mcp_content_object",
+      "entry": "gobby.hooks._normalization_mcp._extract_mcp_content_object",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_mcp._parse_json_object",
+      "entry": "gobby.hooks._normalization_mcp._parse_json_object",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_mcp._unwrap_mcp_tool_output",
+      "entry": "gobby.hooks._normalization_mcp._unwrap_mcp_tool_output",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_mcp.normalize_mcp_fields",
+      "entry": "gobby.hooks._normalization_mcp.normalize_mcp_fields",
+      "input": {
+        "args": [
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": {}
+    },
+    {
+      "id": "required-gobby.hooks._normalization_metadata._build_canonical_tool_metadata",
+      "entry": "gobby.hooks._normalization_metadata._build_canonical_tool_metadata",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "canonical_tool_kind": null,
+        "canonical_tool_confidence": "high"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_metadata._gate_rewritable_scripts",
+      "entry": "gobby.hooks._normalization_metadata._gate_rewritable_scripts",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_metadata._merge_shell_segment_metadata",
+      "entry": "gobby.hooks._normalization_metadata._merge_shell_segment_metadata",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "canonical_tool_kind": "execute",
+        "canonical_tool_confidence": "high",
+        "canonical_read_only": true
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_metadata._path_is_unresolved",
+      "entry": "gobby.hooks._normalization_metadata._path_is_unresolved",
+      "input": {
+        "args": [
+          null,
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_metadata._unknown_write_metadata",
+      "entry": "gobby.hooks._normalization_metadata._unknown_write_metadata",
+      "input": {
+        "args": [],
+        "kwargs": {}
+      },
+      "expect": {
+        "canonical_tool_kind": "write",
+        "canonical_tool_confidence": "low",
+        "canonical_repo_mutation": true,
+        "canonical_repo_mutation_scope_unknown": true
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_metadata._without_code_index_navigation",
+      "entry": "gobby.hooks._normalization_metadata._without_code_index_navigation",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {}
+    },
+    {
+      "id": "required-gobby.hooks._normalization_notifications._notification_severity_from_payload",
+      "entry": "gobby.hooks._normalization_notifications._notification_severity_from_payload",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_notifications.normalize_notification_input",
+      "entry": "gobby.hooks._normalization_notifications.normalize_notification_input",
+      "input": {
+        "args": [
+          {
+            "notification_type": "general",
+            "message": "Notification event received"
+          }
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "notification_type": "general",
+        "message": "Notification event received"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_notifications.notification_message_from_payload",
+      "entry": "gobby.hooks._normalization_notifications.notification_message_from_payload",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_notifications.notification_type_from_payload",
+      "entry": "gobby.hooks._normalization_notifications.notification_type_from_payload",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._curl_output_paths",
+      "entry": "gobby.hooks._normalization_operands._curl_output_paths",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        false,
+        []
+      ]
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._file_command_operands",
+      "entry": "gobby.hooks._normalization_operands._file_command_operands",
+      "input": {
+        "args": [
+          null,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [],
+        null,
+        false
+      ]
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._file_transfer_paths",
+      "entry": "gobby.hooks._normalization_operands._file_transfer_paths",
+      "input": {
+        "args": [
+          null,
+          [],
+          "",
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._find_has_mutation_predicate",
+      "entry": "gobby.hooks._normalization_operands._find_has_mutation_predicate",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._git_add_positional_args_after",
+      "entry": "gobby.hooks._normalization_operands._git_add_positional_args_after",
+      "input": {
+        "args": [
+          [],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._git_grep_is_revision_scoped",
+      "entry": "gobby.hooks._normalization_operands._git_grep_is_revision_scoped",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._git_restore_positional_args_after",
+      "entry": "gobby.hooks._normalization_operands._git_restore_positional_args_after",
+      "input": {
+        "args": [
+          [],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._grep_is_recursive",
+      "entry": "gobby.hooks._normalization_operands._grep_is_recursive",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._resolve_long_option",
+      "entry": "gobby.hooks._normalization_operands._resolve_long_option",
+      "input": {
+        "args": [
+          null,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._search_command_paths",
+      "entry": "gobby.hooks._normalization_operands._search_command_paths",
+      "input": {
+        "args": [
+          null,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._shell_positional_args_after",
+      "entry": "gobby.hooks._normalization_operands._shell_positional_args_after",
+      "input": {
+        "args": [
+          [],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._sort_output_paths",
+      "entry": "gobby.hooks._normalization_operands._sort_output_paths",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        false,
+        []
+      ]
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._tar_extract_paths",
+      "entry": "gobby.hooks._normalization_operands._tar_extract_paths",
+      "input": {
+        "args": [
+          [],
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        false,
+        [
+          "."
+        ],
+        false
+      ]
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands._truncate_positional_paths",
+      "entry": "gobby.hooks._normalization_operands._truncate_positional_paths",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_operands.rg_preprocessor",
+      "entry": "gobby.hooks._normalization_operands.rg_preprocessor",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_patch.classify_patch",
+      "entry": "gobby.hooks._normalization_patch.classify_patch",
+      "input": {
+        "args": [
+          [],
+          "",
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "kind": "write",
+        "paths": [],
+        "write_paths": [],
+        "extra": null,
+        "repo_mutation": true,
+        "confidence": "high",
+        "neutral_setup": false,
+        "pure_gcode_navigation": false,
+        "read_only_pipeline_filter": false,
+        "read_only": null,
+        "stdin_program_interpreter": null,
+        "unverified_write_scope": false,
+        "cwd": null,
+        "loop_binding_variable": null,
+        "assignment_bindings": [],
+        "shell_words": [],
+        "shell_raw_words": [],
+        "literal_path_root": null,
+        "navigation_paths": []
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths._append_unique_path",
+      "entry": "gobby.hooks._normalization_paths._append_unique_path",
+      "input": {
+        "args": [
+          [],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths._compact_tool_name",
+      "entry": "gobby.hooks._normalization_paths._compact_tool_name",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": ""
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths._extract_apply_patch_text",
+      "entry": "gobby.hooks._normalization_paths._extract_apply_patch_text",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths._extract_change_path",
+      "entry": "gobby.hooks._normalization_paths._extract_change_path",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths._extract_tool_input_paths",
+      "entry": "gobby.hooks._normalization_paths._extract_tool_input_paths",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths._is_structured_file_mutation",
+      "entry": "gobby.hooks._normalization_paths._is_structured_file_mutation",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths._normalize_apply_patch_input",
+      "entry": "gobby.hooks._normalization_paths._normalize_apply_patch_input",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {}
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths._normalize_file_change_input",
+      "entry": "gobby.hooks._normalization_paths._normalize_file_change_input",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths._parse_apply_patch_paths",
+      "entry": "gobby.hooks._normalization_paths._parse_apply_patch_paths",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths._setdefault_tool_input_paths",
+      "entry": "gobby.hooks._normalization_paths._setdefault_tool_input_paths",
+      "input": {
+        "args": [
+          null,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths._structured_write_paths",
+      "entry": "gobby.hooks._normalization_paths._structured_write_paths",
+      "input": {
+        "args": [
+          null,
+          null,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_paths.extract_structured_mutation_paths",
+      "entry": "gobby.hooks._normalization_paths.extract_structured_mutation_paths",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_pipeline._interpreter_reads_program_from_stdin",
+      "entry": "gobby.hooks._normalization_pipeline._interpreter_reads_program_from_stdin",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_pipeline._is_neutral_echo_segment",
+      "entry": "gobby.hooks._normalization_pipeline._is_neutral_echo_segment",
+      "input": {
+        "args": [
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_pipeline._is_read_only_pipeline_stage",
+      "entry": "gobby.hooks._normalization_pipeline._is_read_only_pipeline_stage",
+      "input": {
+        "args": [
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_pipeline._stdin_program_interpreter",
+      "entry": "gobby.hooks._normalization_pipeline._stdin_program_interpreter",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_redirects._extract_redirection_paths",
+      "entry": "gobby.hooks._normalization_redirects._extract_redirection_paths",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_redirects.extract_redirection_paths",
+      "entry": "gobby.hooks._normalization_redirects.extract_redirection_paths",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_redirects.has_mutating_output_redirection",
+      "entry": "gobby.hooks._normalization_redirects.has_mutating_output_redirection",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_redirects.redirect_source_read_metadata",
+      "entry": "gobby.hooks._normalization_redirects.redirect_source_read_metadata",
+      "input": {
+        "args": [
+          null,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_redirects.source_output_destinations",
+      "entry": "gobby.hooks._normalization_redirects.source_output_destinations",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "1": "stdout",
+        "2": "stderr",
+        "stdout": "stdout",
+        "stderr": "stderr"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_redirects.tee_output_channels",
+      "entry": "gobby.hooks._normalization_redirects.tee_output_channels",
+      "input": {
+        "args": [
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_sed.classify_sed_segment",
+      "entry": "gobby.hooks._normalization_sed.classify_sed_segment",
+      "input": {
+        "args": [
+          [],
+          "",
+          [],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "kind": "read",
+        "paths": [],
+        "write_paths": [],
+        "extra": {},
+        "repo_mutation": false,
+        "confidence": "high",
+        "neutral_setup": false,
+        "pure_gcode_navigation": false,
+        "read_only_pipeline_filter": false,
+        "read_only": null,
+        "stdin_program_interpreter": null,
+        "unverified_write_scope": false,
+        "cwd": null,
+        "loop_binding_variable": null,
+        "assignment_bindings": [],
+        "shell_words": [],
+        "shell_raw_words": [],
+        "literal_path_root": null,
+        "navigation_paths": []
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_segments._bound_pipeline_reads",
+      "entry": "gobby.hooks._normalization_segments._bound_pipeline_reads",
+      "input": {
+        "args": [
+          [],
+          [],
+          [],
+          0,
+          0
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_segments._mark_pipeline_read_escape",
+      "entry": "gobby.hooks._normalization_segments._mark_pipeline_read_escape",
+      "input": {
+        "args": [
+          [],
+          [],
+          [],
+          0,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_segments._pipeline_filter_output_line_bound",
+      "entry": "gobby.hooks._normalization_segments._pipeline_filter_output_line_bound",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "IndexError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_segments._split_shell_segments",
+      "entry": "gobby.hooks._normalization_segments._split_shell_segments",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._apply_cd",
+      "entry": "gobby.hooks._normalization_shell._apply_cd",
+      "input": {
+        "args": [
+          "",
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._contains_unexpanded_shell_reference",
+      "entry": "gobby.hooks._normalization_shell._contains_unexpanded_shell_reference",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._get_command_text",
+      "entry": "gobby.hooks._normalization_shell._get_command_text",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._input_redirection_paths",
+      "entry": "gobby.hooks._normalization_shell._input_redirection_paths",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._is_env_assignment",
+      "entry": "gobby.hooks._normalization_shell._is_env_assignment",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._literal_cd_target",
+      "entry": "gobby.hooks._normalization_shell._literal_cd_target",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._looks_file_like",
+      "entry": "gobby.hooks._normalization_shell._looks_file_like",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._looks_path_target",
+      "entry": "gobby.hooks._normalization_shell._looks_path_target",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._quoted_tilde_word",
+      "entry": "gobby.hooks._normalization_shell._quoted_tilde_word",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._rebase_navigation_shell_paths",
+      "entry": "gobby.hooks._normalization_shell._rebase_navigation_shell_paths",
+      "input": {
+        "args": [
+          [],
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._rebase_shell_path",
+      "entry": "gobby.hooks._normalization_shell._rebase_shell_path",
+      "input": {
+        "args": [
+          null,
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._rebase_shell_paths",
+      "entry": "gobby.hooks._normalization_shell._rebase_shell_paths",
+      "input": {
+        "args": [
+          [],
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._shell_positional_args",
+      "entry": "gobby.hooks._normalization_shell._shell_positional_args",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._skip_heredocs",
+      "entry": "gobby.hooks._normalization_shell._skip_heredocs",
+      "input": {
+        "args": [
+          null,
+          [],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._strip_shell_wrappers",
+      "entry": "gobby.hooks._normalization_shell._strip_shell_wrappers",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell._substitution_end",
+      "entry": "gobby.hooks._normalization_shell._substitution_end",
+      "input": {
+        "args": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.backtick_body",
+      "entry": "gobby.hooks._normalization_shell.backtick_body",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.canonicalize_shell_tool_name",
+      "entry": "gobby.hooks._normalization_shell.canonicalize_shell_tool_name",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.has_shell_input_redirection",
+      "entry": "gobby.hooks._normalization_shell.has_shell_input_redirection",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.is_dynamic_program_word",
+      "entry": "gobby.hooks._normalization_shell.is_dynamic_program_word",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.is_fd_duplication_token",
+      "entry": "gobby.hooks._normalization_shell.is_fd_duplication_token",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.is_shell_input_redirection_token",
+      "entry": "gobby.hooks._normalization_shell.is_shell_input_redirection_token",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.is_shell_output_redirection_token",
+      "entry": "gobby.hooks._normalization_shell.is_shell_output_redirection_token",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.is_shell_tool",
+      "entry": "gobby.hooks._normalization_shell.is_shell_tool",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.is_unquoted_shell_control_token",
+      "entry": "gobby.hooks._normalization_shell.is_unquoted_shell_control_token",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.shell_token_values",
+      "entry": "gobby.hooks._normalization_shell.shell_token_values",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.strip_input_redirections",
+      "entry": "gobby.hooks._normalization_shell.strip_input_redirections",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell.strip_output_redirections",
+      "entry": "gobby.hooks._normalization_shell.strip_output_redirections",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._normalization_shell_stdin.shell_stdin_arguments",
+      "entry": "gobby.hooks._normalization_shell_stdin.shell_stdin_arguments",
+      "input": {
+        "args": [
+          null,
+          null,
+          null,
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_tool_input.decode_string_tool_input",
+      "entry": "gobby.hooks._normalization_tool_input.decode_string_tool_input",
+      "input": {
+        "args": [
+          {},
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_tool_input.is_non_object_tool_input",
+      "entry": "gobby.hooks._normalization_tool_input.is_non_object_tool_input",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks._normalization_tool_input.mark_tool_input_unavailable",
+      "entry": "gobby.hooks._normalization_tool_input.mark_tool_input_unavailable",
+      "input": {
+        "args": [
+          {
+            "tool_input_error": {
+              "field": null,
+              "code": null
+            }
+          },
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_tool_input.tool_input_error",
+      "entry": "gobby.hooks._normalization_tool_input.tool_input_error",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_tool_input.tool_input_source",
+      "entry": "gobby.hooks._normalization_tool_input.tool_input_source",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_tools._detect_tool_error",
+      "entry": "gobby.hooks._normalization_tools._detect_tool_error",
+      "input": {
+        "args": [
+          {
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          }
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_tools._set_canonical_tool_metadata",
+      "entry": "gobby.hooks._normalization_tools._set_canonical_tool_metadata",
+      "input": {
+        "args": [
+          {
+            "canonical_code_navigation_segments": []
+          }
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._normalization_tools.normalize_tool_display_fields",
+      "entry": "gobby.hooks._normalization_tools.normalize_tool_display_fields",
+      "input": {
+        "args": [
+          {
+            "canonical_code_navigation_segments": []
+          }
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "canonical_code_navigation_segments": []
+      }
+    },
+    {
+      "id": "required-gobby.hooks._normalization_tools.provider_native_input_updates",
+      "entry": "gobby.hooks._normalization_tools.provider_native_input_updates",
+      "input": {
+        "args": [
+          {},
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": {}
+    },
+    {
+      "id": "required-gobby.hooks._path_scope._is_temp_agent_scratchpad_path",
+      "entry": "gobby.hooks._path_scope._is_temp_agent_scratchpad_path",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._path_scope._is_temp_path",
+      "entry": "gobby.hooks._path_scope._is_temp_path",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._path_scope._shares_git_repository",
+      "entry": "gobby.hooks._path_scope._shares_git_repository",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._path_scope.checkout_root",
+      "entry": "gobby.hooks._path_scope.checkout_root",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._path_scope.code_navigation_may_touch_project",
+      "entry": "gobby.hooks._path_scope.code_navigation_may_touch_project",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {
+          "cwd": null,
+          "project_root": null
+        }
+      },
+      "expect": true
+    },
+    {
+      "id": "required-gobby.hooks._path_scope.current_project_root",
+      "entry": "gobby.hooks._path_scope.current_project_root",
+      "input": {
+        "args": [
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._path_scope.current_tool_cwd",
+      "entry": "gobby.hooks._path_scope.current_tool_cwd",
+      "input": {
+        "args": [
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._path_scope.resolve_tool_path",
+      "entry": "gobby.hooks._path_scope.resolve_tool_path",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks._provider_shell_syntax._prepare",
+      "entry": "gobby.hooks._provider_shell_syntax._prepare",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._shell_execution_words._unwrap",
+      "entry": "gobby.hooks._shell_execution_words._unwrap",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks._shell_execution_words.option_word_count",
+      "entry": "gobby.hooks._shell_execution_words.option_word_count",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._shell_syntax._compound_comparison_operators",
+      "entry": "gobby.hooks._shell_syntax._compound_comparison_operators",
+      "input": {
+        "args": [
+          null,
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._shell_syntax._scan_unquoted_shell_operator",
+      "entry": "gobby.hooks._shell_syntax._scan_unquoted_shell_operator",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._shell_syntax.joined_prefix_end",
+      "entry": "gobby.hooks._shell_syntax.joined_prefix_end",
+      "input": {
+        "args": [
+          null,
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks._shell_syntax.skip_line_continuations",
+      "entry": "gobby.hooks._shell_syntax.skip_line_continuations",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.hooks.checkout_reads.delivery_scope",
+      "entry": "gobby.hooks.checkout_reads.delivery_scope",
+      "input": {
+        "args": [
+          "",
+          null,
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": "<_GeneratorContextManager>"
+    },
+    {
+      "id": "required-gobby.hooks.checkout_reads.event_machine_id",
+      "entry": "gobby.hooks.checkout_reads.event_machine_id",
+      "input": {
+        "args": [],
+        "kwargs": {}
+      },
+      "expect": "<uuid>"
+    },
+    {
+      "id": "required-gobby.hooks.checkout_reads.node_origin",
+      "entry": "gobby.hooks.checkout_reads.node_origin",
+      "input": {
+        "args": [],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks.checkout_reads.path_facts",
+      "entry": "gobby.hooks.checkout_reads.path_facts",
+      "input": {
+        "args": [
+          [
+            "src/long.py",
+            "src/missing.py"
+          ]
+        ],
+        "kwargs": {
+          "cwd": "{repo}"
+        }
+      },
+      "expect": {
+        "raised": "RuntimeError"
+      },
+      "setup": {
+        "git_repo": true,
+        "files": {
+          ".gitignore": "web/dist/\ncustom-output/\n",
+          "custom-output/.keep": "",
+          "src/constants.py": "VALUE = 1\n",
+          "src/short.py": {
+            "repeat": "value = 1\n",
+            "count": 5
+          },
+          "src/long.py": {
+            "repeat": "value = 1\n",
+            "count": 60
+          }
+        }
+      }
+    },
+    {
+      "id": "required-gobby.hooks.checkout_reads.run_git",
+      "entry": "gobby.hooks.checkout_reads.run_git",
+      "input": {
+        "args": [
+          [
+            "rev-parse",
+            "--is-inside-work-tree"
+          ]
+        ],
+        "kwargs": {
+          "cwd": "{repo}",
+          "timeout": 10.0
+        }
+      },
+      "expect": "<CompletedProcess>",
+      "setup": {
+        "git_repo": true,
+        "files": {
+          ".gitignore": "web/dist/\ncustom-output/\n",
+          "custom-output/.keep": "",
+          "src/constants.py": "VALUE = 1\n",
+          "src/short.py": {
+            "repeat": "value = 1\n",
+            "count": 5
+          },
+          "src/long.py": {
+            "repeat": "value = 1\n",
+            "count": 60
+          }
+        }
+      }
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation.count_option_byte_count",
+      "entry": "gobby.hooks.code_navigation.count_option_byte_count",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation.count_option_line_count",
+      "entry": "gobby.hooks.code_navigation.count_option_line_count",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation.find_navigation_metadata",
+      "entry": "gobby.hooks.code_navigation.find_navigation_metadata",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "canonical_code_navigation_action": "enumerate",
+        "canonical_code_navigation_broad": true,
+        "canonical_code_navigation_gcode_supported": true
+      }
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation.gcode_navigation_metadata",
+      "entry": "gobby.hooks.code_navigation.gcode_navigation_metadata",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation.line_count_from_tool_input",
+      "entry": "gobby.hooks.code_navigation.line_count_from_tool_input",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation.search_navigation_metadata",
+      "entry": "gobby.hooks.code_navigation.search_navigation_metadata",
+      "input": {
+        "args": [],
+        "kwargs": {}
+      },
+      "expect": {
+        "canonical_code_navigation_action": "search",
+        "canonical_code_navigation_broad": true
+      }
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation.sed_line_count",
+      "entry": "gobby.hooks.code_navigation.sed_line_count",
+      "input": {
+        "args": [
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation.shell_command_name",
+      "entry": "gobby.hooks.code_navigation.shell_command_name",
+      "input": {
+        "args": [
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": ""
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation.source_read_navigation_metadata",
+      "entry": "gobby.hooks.code_navigation.source_read_navigation_metadata",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {
+          "read_scope": ""
+        }
+      },
+      "expect": {}
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation_recovery.annotate_navigation",
+      "entry": "gobby.hooks.code_navigation_recovery.annotate_navigation",
+      "input": {
+        "args": [
+          {},
+          {
+            "canonical_code_navigation_segments": []
+          }
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation_recovery.annotate_navigation_outcome",
+      "entry": "gobby.hooks.code_navigation_recovery.annotate_navigation_outcome",
+      "input": {
+        "args": [
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.hooks.code_navigation_recovery.gcode_targets",
+      "entry": "gobby.hooks.code_navigation_recovery.gcode_targets",
+      "input": {
+        "args": [
+          [],
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks.provider_launch_guard._piped_to_shell",
+      "entry": "gobby.hooks.provider_launch_guard._piped_to_shell",
+      "input": {
+        "args": [
+          [],
+          0
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks.provider_launch_guard._pipeline_definition_pipes",
+      "entry": "gobby.hooks.provider_launch_guard._pipeline_definition_pipes",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.hooks.provider_launch_guard._python_name",
+      "entry": "gobby.hooks.provider_launch_guard._python_name",
+      "input": {
+        "args": [
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks.provider_launch_guard._python_program",
+      "entry": "gobby.hooks.provider_launch_guard._python_program",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        null,
+        false,
+        []
+      ]
+    },
+    {
+      "id": "required-gobby.hooks.provider_launch_guard._shell_stdin",
+      "entry": "gobby.hooks.provider_launch_guard._shell_stdin",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.hooks.tool_outcomes.classify_raw_tool_result",
+      "entry": "gobby.hooks.tool_outcomes.classify_raw_tool_result",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "status": "failed",
+        "exit_code": null,
+        "provenance": "raw_result.missing"
+      }
+    },
+    {
+      "id": "required-gobby.hooks.tool_outcomes.hook_event_tool_outcome",
+      "entry": "gobby.hooks.tool_outcomes.hook_event_tool_outcome",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "status": "unknown",
+        "exit_code": null,
+        "provenance": null
+      }
+    },
+    {
+      "id": "required-gobby.hooks.tool_outcomes.normalize_tool_outcome",
+      "entry": "gobby.hooks.tool_outcomes.normalize_tool_outcome",
+      "input": {
+        "args": [
+          {
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          }
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "status": "unknown",
+        "exit_code": null,
+        "provenance": null
+      }
+    },
+    {
+      "id": "required-gobby.hooks.tool_outcomes.tool_outcome_from_data",
+      "entry": "gobby.hooks.tool_outcomes.tool_outcome_from_data",
+      "input": {
+        "args": [
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "status": "unknown",
+        "exit_code": null,
+        "provenance": null
+      }
+    },
+    {
+      "id": "required-gobby.mcp_proxy._call_tool_wrapper.call_tool_arguments_refusal",
+      "entry": "gobby.mcp_proxy._call_tool_wrapper.call_tool_arguments_refusal",
+      "input": {
+        "args": [
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.mcp_proxy._call_tool_wrapper.canonical_call_tool_input",
+      "entry": "gobby.mcp_proxy._call_tool_wrapper.canonical_call_tool_input",
+      "input": {
+        "args": [
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": {}
+    },
+    {
+      "id": "required-gobby.mcp_proxy._call_tool_wrapper.canonicalize_call_tool_wrapper",
+      "entry": "gobby.mcp_proxy._call_tool_wrapper.canonicalize_call_tool_wrapper",
+      "input": {
+        "args": [],
+        "kwargs": {
+          "server_name": "",
+          "tool_name": ""
+        }
+      },
+      "expect": {
+        "server_name": null,
+        "tool_name": null,
+        "arguments": null,
+        "session_id": null,
+        "project_id": null,
+        "intent": null
+      }
+    },
+    {
+      "id": "required-gobby.utils.python_source.parse_agent_source",
+      "entry": "gobby.utils.python_source.parse_agent_source",
+      "input": {
+        "args": [
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": "<Module>"
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_environment.command_sets_environment",
+      "entry": "gobby.workflows.engine.command_environment.command_sets_environment",
+      "input": {
+        "args": [
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching._command_tokens",
+      "entry": "gobby.workflows.engine.command_matching._command_tokens",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching._decoded_stages",
+      "entry": "gobby.workflows.engine.command_matching._decoded_stages",
+      "input": {
+        "args": [
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [],
+        {
+          "GOBBY_PS_SHIM": "ps"
+        }
+      ]
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching._pipeline_stages",
+      "entry": "gobby.workflows.engine.command_matching._pipeline_stages",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        []
+      ]
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching._resolve_substitutions",
+      "entry": "gobby.workflows.engine.command_matching._resolve_substitutions",
+      "input": {
+        "args": [
+          "",
+          0,
+          [],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        ""
+      ]
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching._shell_input_scripts",
+      "entry": "gobby.workflows.engine.command_matching._shell_input_scripts",
+      "input": {
+        "args": [
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching._split_segments",
+      "entry": "gobby.workflows.engine.command_matching._split_segments",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching._stage_words",
+      "entry": "gobby.workflows.engine.command_matching._stage_words",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching._wrapper_scripts",
+      "entry": "gobby.workflows.engine.command_matching._wrapper_scripts",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching_heredoc.classify_heredoc_execution",
+      "entry": "gobby.workflows.engine.command_matching_heredoc.classify_heredoc_execution",
+      "input": {
+        "args": [
+          [],
+          null,
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching_heredoc.heredoc_free_text",
+      "entry": "gobby.workflows.engine.command_matching_heredoc.heredoc_free_text",
+      "input": {
+        "args": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "TypeError"
+      }
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching_uv._after_options",
+      "entry": "gobby.workflows.engine.command_matching_uv._after_options",
+      "input": {
+        "args": [
+          [],
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching_uv._language_stage",
+      "entry": "gobby.workflows.engine.command_matching_uv._language_stage",
+      "input": {
+        "args": [
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching_uv._uv_run_argvs",
+      "entry": "gobby.workflows.engine.command_matching_uv._uv_run_argvs",
+      "input": {
+        "args": [
+          null,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching_variables.assignment_prefix",
+      "entry": "gobby.workflows.engine.command_matching_variables.assignment_prefix",
+      "input": {
+        "args": [
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": ""
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching_variables.expand_stage",
+      "entry": "gobby.workflows.engine.command_matching_variables.expand_stage",
+      "input": {
+        "args": [
+          [],
+          {}
+        ],
+        "kwargs": {}
+      },
+      "expect": []
+    },
+    {
+      "id": "required-gobby.workflows.engine.command_matching_variables.initial_names",
+      "entry": "gobby.workflows.engine.command_matching_variables.initial_names",
+      "input": {
+        "args": [],
+        "kwargs": {}
+      },
+      "expect": {
+        "GOBBY_PS_SHIM": "ps"
+      }
+    },
+    {
+      "id": "required-gobby.workflows.selectors.agent_scope_matches",
+      "entry": "gobby.workflows.selectors.agent_scope_matches",
+      "input": {
+        "args": [
+          [],
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.workflows.selectors.binds_named_definition",
+      "entry": "gobby.workflows.selectors.binds_named_definition",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "required-gobby.workflows.selectors.is_mandatory_rule",
+      "entry": "gobby.workflows.selectors.is_mandatory_rule",
+      "input": {
+        "args": [
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.workflows.selectors.resolve_excluded_skills_for_agent",
+      "entry": "gobby.workflows.selectors.resolve_excluded_skills_for_agent",
+      "input": {
+        "args": [
+          null,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.workflows.selectors.resolve_rules_for_agent",
+      "entry": "gobby.workflows.selectors.resolve_rules_for_agent",
+      "input": {
+        "args": [
+          null,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.workflows.selectors.resolve_skills_for_agent",
+      "entry": "gobby.workflows.selectors.resolve_skills_for_agent",
+      "input": {
+        "args": [
+          null,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    },
+    {
+      "id": "required-gobby.workflows.selectors.resolve_variables_for_agent",
+      "entry": "gobby.workflows.selectors.resolve_variables_for_agent",
+      "input": {
+        "args": [
+          null,
+          []
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "raised": "AttributeError"
+      }
+    }
+  ]
+}

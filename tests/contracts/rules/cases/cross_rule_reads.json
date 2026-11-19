@@ -1,0 +1,241 @@
+{
+  "cases": [
+    {
+      "id": "synthetic-setvar-read-later",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-SETVAR-READ-LATER"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-setter",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "set_variable",
+              "variable": "synthetic_flag",
+              "value": true,
+              "delivery": "eager"
+            }
+          ],
+          "priority": 10
+        },
+        {
+          "name": "synthetic-reader",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "read later",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_flag')",
+          "priority": 20
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "synthetic_flag": true
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_variable",
+            "delivery": "eager",
+            "rule": "synthetic-setter"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-reader"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-setter",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-reader",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "read later",
+          "context_parts": [
+            [
+              "rule:synthetic-reader",
+              "read later"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "synthetic-mcpcall-read-later",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-MCPCALL-READ-LATER"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-caller",
+          "event": "before_tool",
+          "priority": 10,
+          "effects": [
+            {
+              "type": "mcp_call",
+              "server": "synthetic-server",
+              "tool": "synthetic-tool",
+              "arguments": {},
+              "inject_result": true,
+              "success_variable": "synthetic_mcp_ok"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-mcp-reader",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "read mcp",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_mcp_ok')",
+          "priority": 20
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "synthetic_mcp_ok": true
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "mcp_call",
+            "delivery": "eager",
+            "rule": "synthetic-caller"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-mcp-reader"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-caller",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-mcp-reader",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "**synthetic-tool result:**\n```json\n\"synthetic-server/synthetic-tool synthetic result\"\n```\n\nread mcp",
+          "context_parts": [
+            [
+              "mcp:synthetic-server/synthetic-tool",
+              "**synthetic-tool result:**\n```json\n\"synthetic-server/synthetic-tool synthetic result\"\n```"
+            ],
+            [
+              "rule:synthetic-mcp-reader",
+              "read mcp"
+            ]
+          ]
+        }
+      },
+      "mcp": true
+    }
+  ]
+}

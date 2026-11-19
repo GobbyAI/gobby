@@ -1,0 +1,474 @@
+{
+  "cases": [
+    {
+      "id": "synthetic-transition-claim",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-TRANS-CLAIM"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": "claim",
+      "rules": [
+        {
+          "name": "synthetic-claim-set",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "set_variable",
+              "variable": "synthetic_claimed",
+              "value": true,
+              "delivery": "eager"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-claim-check",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "block",
+              "reason": "claimed work"
+            }
+          ],
+          "when": "variables.get('synthetic_claimed')"
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "synthetic_claimed": true,
+          "stop_attempts": 1,
+          "_blocked_turn_end_pending": true,
+          "_block_reasons_shown": [
+            "synthetic-claim-check:<token>"
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_variable",
+            "delivery": "eager",
+            "rule": "synthetic-claim-set"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "metrics_events",
+            "call": "record_events",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
+            "event": "before_tool"
+          },
+          {
+            "effect": "set_variable",
+            "delivery": "eager",
+            "rule": "synthetic-claim-set"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-claim-set",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-claim-check",
+            "result": "block",
+            "event": "after_agent"
+          },
+          {
+            "rule": "synthetic-claim-set",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {}
+      },
+      "sequence": [
+        {
+          "type": "after_agent",
+          "source": "claude",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "echo hi"
+            }
+          },
+          "metadata": {}
+        },
+        {
+          "type": "before_tool",
+          "source": "claude",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "echo hi"
+            }
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "id": "synthetic-transition-review-gate",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-TRANS-REVIEW-GATE"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": "review_gate",
+      "rules": [
+        {
+          "name": "synthetic-arm-gate",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "set_variable",
+              "variable": "synthetic_gate",
+              "value": true,
+              "delivery": "eager"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-gate-check",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "block",
+              "reason": "review gate armed"
+            }
+          ],
+          "when": "variables.get('synthetic_gate')"
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "block",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "synthetic_gate": true,
+          "_last_blocked_tool": "Bash",
+          "_last_blocked_rule_name": "synthetic-gate-check",
+          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-gate-check]\nreview gate armed",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "synthetic-gate-check:<token>"
+          ],
+          "consecutive_tool_blocks": 1,
+          "_last_blocked_batch_counted": true
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_variable",
+            "delivery": "eager",
+            "rule": "synthetic-arm-gate"
+          },
+          {
+            "seam": "metrics_events",
+            "call": "record_events",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
+            "event": "before_tool"
+          },
+          {
+            "effect": "set_variable",
+            "delivery": "eager",
+            "rule": "synthetic-arm-gate"
+          },
+          {
+            "seam": "metrics_events",
+            "call": "record_events",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-arm-gate",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-gate-check",
+            "result": "block",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-arm-gate",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-gate-check",
+            "result": "block",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [synthetic-gate-check] (full reason shown earlier this turn — scroll up)."
+        }
+      },
+      "sequence": [
+        {
+          "type": "before_tool",
+          "source": "claude",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "echo hi"
+            }
+          },
+          "metadata": {}
+        }
+      ]
+    },
+    {
+      "id": "synthetic-transition-plan-mode",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-TRANS-PLANMODE"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": "plan_mode",
+      "rules": [
+        {
+          "name": "synthetic-plan-mode-context",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "plan mode active",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_plan_mode')"
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-plan-mode-context"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "event": "before_tool"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-plan-mode-context"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-plan-mode-context",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-plan-mode-context",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "plan mode active",
+          "context_parts": [
+            [
+              "rule:synthetic-plan-mode-context",
+              "plan mode active"
+            ]
+          ]
+        }
+      },
+      "variables": {
+        "synthetic_plan_mode": true
+      },
+      "sequence": [
+        {
+          "type": "before_tool",
+          "source": "claude",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "echo hi"
+            }
+          },
+          "metadata": {}
+        }
+      ]
+    }
+  ]
+}

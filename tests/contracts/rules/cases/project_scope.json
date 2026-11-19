@@ -1,0 +1,240 @@
+{
+  "cases": [
+    {
+      "id": "synthetic-project-two-rows",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-PROJECT-TWO-ROWS"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-project-a",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "project a",
+              "delivery": "eager"
+            }
+          ],
+          "project_id": "a1111111-1111-4111-8111-111111111111"
+        },
+        {
+          "name": "synthetic-project-b",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "project b",
+              "delivery": "eager"
+            }
+          ],
+          "project_id": "b2222222-2222-4222-8222-222222222222"
+        },
+        {
+          "name": "synthetic-global",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "global",
+              "delivery": "eager"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          },
+          "project_id": "a1111111-1111-4111-8111-111111111111"
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-global"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-project-a"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-global",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-project-a",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "global\n\nproject a",
+          "context_parts": [
+            [
+              "rule:synthetic-global",
+              "global"
+            ],
+            [
+              "rule:synthetic-project-a",
+              "project a"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "synthetic-project-none",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-PROJECT-NONE"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-project-a",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "project a",
+              "delivery": "eager"
+            }
+          ],
+          "project_id": "a1111111-1111-4111-8111-111111111111"
+        },
+        {
+          "name": "synthetic-project-b",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "project b",
+              "delivery": "eager"
+            }
+          ],
+          "project_id": "b2222222-2222-4222-8222-222222222222"
+        },
+        {
+          "name": "synthetic-global",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "global",
+              "delivery": "eager"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-global"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-global",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "global",
+          "context_parts": [
+            [
+              "rule:synthetic-global",
+              "global"
+            ]
+          ]
+        }
+      }
+    }
+  ]
+}

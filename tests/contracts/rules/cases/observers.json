@@ -1,0 +1,1176 @@
+{
+  "cases": [
+    {
+      "id": "synthetic-observer-plan-mode-observed",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-PLAN-MODE-OBSERVED"
+      ],
+      "family": null,
+      "observer": "plan_mode",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-plan-mode-observed",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "observed",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_plan_mode_seen')"
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "stop_attempts": 1,
+          "_blocked_turn_end_pending": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-plan-mode-observed"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-plan-mode-observed",
+            "result": "allow",
+            "event": "after_agent"
+          }
+        ],
+        "response": {
+          "context": "observed",
+          "context_parts": [
+            [
+              "rule:synthetic-plan-mode-observed",
+              "observed"
+            ]
+          ]
+        }
+      },
+      "variables": {
+        "synthetic_plan_mode_seen": true
+      }
+    },
+    {
+      "id": "synthetic-observer-plan-mode-notobserved",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-PLAN-MODE-NOTOBSERVED"
+      ],
+      "family": null,
+      "observer": "plan_mode",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-plan-mode-notobserved",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "observed",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_plan_mode_seen')"
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "stop_attempts": 1,
+          "_blocked_turn_end_pending": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [],
+        "response": {}
+      },
+      "variables": {
+        "synthetic_plan_mode_seen": false
+      }
+    },
+    {
+      "id": "synthetic-observer-plan-mode-seamerr",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-PLAN-MODE-SEAMERR"
+      ],
+      "family": null,
+      "observer": "plan_mode",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-plan-mode-seam",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "seam"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [
+        "completion_subscribers"
+      ],
+      "expect": {
+        "outcome_class": "error",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "failed"
+          },
+          {
+            "raised": "SeamFailure"
+          }
+        ],
+        "audit_records": [],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-observer-context-usage-observed",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-CONTEXT-USAGE-OBSERVED"
+      ],
+      "family": null,
+      "observer": "context_usage",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-context-usage-observed",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "observed",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_context_usage_seen')"
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "stop_attempts": 1,
+          "_blocked_turn_end_pending": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-context-usage-observed"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-context-usage-observed",
+            "result": "allow",
+            "event": "after_agent"
+          }
+        ],
+        "response": {
+          "context": "observed",
+          "context_parts": [
+            [
+              "rule:synthetic-context-usage-observed",
+              "observed"
+            ]
+          ]
+        }
+      },
+      "variables": {
+        "synthetic_context_usage_seen": true
+      }
+    },
+    {
+      "id": "synthetic-observer-context-usage-notobserved",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-CONTEXT-USAGE-NOTOBSERVED"
+      ],
+      "family": null,
+      "observer": "context_usage",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-context-usage-notobserved",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "observed",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_context_usage_seen')"
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "stop_attempts": 1,
+          "_blocked_turn_end_pending": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [],
+        "response": {}
+      },
+      "variables": {
+        "synthetic_context_usage_seen": false
+      }
+    },
+    {
+      "id": "synthetic-observer-context-usage-seamerr",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-CONTEXT-USAGE-SEAMERR"
+      ],
+      "family": null,
+      "observer": "context_usage",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-context-usage-seam",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "seam"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [
+        "completion_subscribers"
+      ],
+      "expect": {
+        "outcome_class": "error",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "failed"
+          },
+          {
+            "raised": "SeamFailure"
+          }
+        ],
+        "audit_records": [],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-observer-mcp-observed",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-MCP-OBSERVED"
+      ],
+      "family": null,
+      "observer": "mcp",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-mcp-observed",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "observed",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_mcp_seen')"
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-mcp-observed"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-mcp-observed",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "observed",
+          "context_parts": [
+            [
+              "rule:synthetic-mcp-observed",
+              "observed"
+            ]
+          ]
+        }
+      },
+      "variables": {
+        "synthetic_mcp_seen": true
+      }
+    },
+    {
+      "id": "synthetic-observer-mcp-notobserved",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-MCP-NOTOBSERVED"
+      ],
+      "family": null,
+      "observer": "mcp",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-mcp-notobserved",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "observed",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_mcp_seen')"
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [],
+        "response": {}
+      },
+      "variables": {
+        "synthetic_mcp_seen": false
+      }
+    },
+    {
+      "id": "synthetic-observer-commits-observed",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-COMMITS-OBSERVED"
+      ],
+      "family": null,
+      "observer": "commits",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-commits-observed",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "observed",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_commits_seen')"
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "stop_attempts": 1,
+          "_blocked_turn_end_pending": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-commits-observed"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-commits-observed",
+            "result": "allow",
+            "event": "after_agent"
+          }
+        ],
+        "response": {
+          "context": "observed",
+          "context_parts": [
+            [
+              "rule:synthetic-commits-observed",
+              "observed"
+            ]
+          ]
+        }
+      },
+      "variables": {
+        "synthetic_commits_seen": true
+      }
+    },
+    {
+      "id": "synthetic-observer-commits-notobserved",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-COMMITS-NOTOBSERVED"
+      ],
+      "family": null,
+      "observer": "commits",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-commits-notobserved",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "observed",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_commits_seen')"
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "stop_attempts": 1,
+          "_blocked_turn_end_pending": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [],
+        "response": {}
+      },
+      "variables": {
+        "synthetic_commits_seen": false
+      }
+    },
+    {
+      "id": "synthetic-observer-commits-seamerr",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-COMMITS-SEAMERR"
+      ],
+      "family": null,
+      "observer": "commits",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-commits-seam",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "seam"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [
+        "completion_subscribers"
+      ],
+      "expect": {
+        "outcome_class": "error",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "failed"
+          },
+          {
+            "raised": "SeamFailure"
+          }
+        ],
+        "audit_records": [],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-observer-turn-interrupt-observed",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-TURN-INTERRUPT-OBSERVED"
+      ],
+      "family": null,
+      "observer": "turn_interrupt",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-turn-interrupt-observed",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "observed",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_turn_interrupt_seen')"
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "stop_attempts": 1,
+          "_blocked_turn_end_pending": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-turn-interrupt-observed"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-turn-interrupt-observed",
+            "result": "allow",
+            "event": "after_agent"
+          }
+        ],
+        "response": {
+          "context": "observed",
+          "context_parts": [
+            [
+              "rule:synthetic-turn-interrupt-observed",
+              "observed"
+            ]
+          ]
+        }
+      },
+      "variables": {
+        "synthetic_turn_interrupt_seen": true
+      }
+    },
+    {
+      "id": "synthetic-observer-turn-interrupt-notobserved",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-TURN-INTERRUPT-NOTOBSERVED"
+      ],
+      "family": null,
+      "observer": "turn_interrupt",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-turn-interrupt-notobserved",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "observed",
+              "delivery": "eager"
+            }
+          ],
+          "when": "variables.get('synthetic_turn_interrupt_seen')"
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "stop_attempts": 1,
+          "_blocked_turn_end_pending": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [],
+        "response": {}
+      },
+      "variables": {
+        "synthetic_turn_interrupt_seen": false
+      }
+    },
+    {
+      "id": "synthetic-observer-turn-interrupt-seamerr",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-OBS-TURN-INTERRUPT-SEAMERR"
+      ],
+      "family": null,
+      "observer": "turn_interrupt",
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-turn-interrupt-seam",
+          "event": "turn_end",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "seam"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "after_agent",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [
+        "completion_subscribers"
+      ],
+      "expect": {
+        "outcome_class": "error",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_agent"
+          },
+          {
+            "seam": "coordination_waits",
+            "call": "count_active_waits",
+            "outcome": "ok"
+          },
+          {
+            "seam": "completion_subscribers",
+            "call": "has_active_agent_wait",
+            "outcome": "failed"
+          },
+          {
+            "raised": "SeamFailure"
+          }
+        ],
+        "audit_records": [],
+        "response": {}
+      }
+    }
+  ]
+}

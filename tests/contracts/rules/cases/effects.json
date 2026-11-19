@@ -1,0 +1,1175 @@
+{
+  "cases": [
+    {
+      "id": "synthetic-effect-set-variable",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-set-variable",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "set_variable",
+              "variable": "synthetic_v",
+              "value": "x"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "synthetic_v": "x"
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_variable",
+            "delivery": "eager",
+            "rule": "synthetic-effect-set-variable"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-set-variable",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-effect-inject-context",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-inject-context",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "synthetic context"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-effect-inject-context"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-inject-context",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "synthetic context",
+          "context_parts": [
+            [
+              "rule:synthetic-effect-inject-context",
+              "synthetic context"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "synthetic-effect-set-display-content",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-set-display-content",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "set_display_content",
+              "template": "shown"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_display_content",
+            "delivery": "eager",
+            "rule": "synthetic-effect-set-display-content"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-set-display-content",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "display_content": "shown"
+        }
+      }
+    },
+    {
+      "id": "synthetic-effect-mcp-call",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-mcp-call",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "mcp_call",
+              "server": "synthetic-server",
+              "tool": "synthetic-tool",
+              "arguments": {}
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "mcp_call",
+            "delivery": "eager",
+            "rule": "synthetic-effect-mcp-call"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-mcp-call",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "metadata": {
+            "mcp_calls": [
+              {
+                "server": "synthetic-server",
+                "tool": "synthetic-tool",
+                "arguments": {},
+                "background": false,
+                "inject_result": false,
+                "block_on_failure": false,
+                "block_on_success": false
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "synthetic-effect-observe",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-observe",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "synthetic observation"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_observations": [
+            {
+              "category": "general",
+              "message": "synthetic observation",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-effect-observe"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-effect-observe"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-observe",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-effect-rewrite-input",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-rewrite-input",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "rewrite_input",
+              "input_updates": {
+                "command": "echo rewritten"
+              }
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "rewrite_input",
+            "delivery": "eager",
+            "rule": "synthetic-effect-rewrite-input"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-rewrite-input",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "modified_input": {
+            "command": "echo rewritten"
+          }
+        }
+      }
+    },
+    {
+      "id": "synthetic-effect-set-permission-response",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-set-permission-response",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "set_permission_response",
+              "permission_decision": "allow"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_permission_response",
+            "delivery": "eager",
+            "rule": "synthetic-effect-set-permission-response"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-set-permission-response",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "permission_decision": "allow"
+        }
+      }
+    },
+    {
+      "id": "synthetic-effect-set-retry",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-set-retry",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "set_retry",
+              "retry": true
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_retry",
+            "delivery": "eager",
+            "rule": "synthetic-effect-set-retry"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-set-retry",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "retry": true
+        }
+      }
+    },
+    {
+      "id": "synthetic-effect-set-watch-paths",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-set-watch-paths",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "set_watch_paths",
+              "watch_paths": [
+                "synthetic/path"
+              ]
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_watch_paths",
+            "delivery": "eager",
+            "rule": "synthetic-effect-set-watch-paths"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-set-watch-paths",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "watch_paths": [
+            "synthetic/path"
+          ]
+        }
+      }
+    },
+    {
+      "id": "synthetic-effect-set-worktree-path",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-set-worktree-path",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "set_worktree_path",
+              "worktree_path": "synthetic/worktree"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_worktree_path",
+            "delivery": "eager",
+            "rule": "synthetic-effect-set-worktree-path"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-set-worktree-path",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "worktree_path": "synthetic/worktree"
+        }
+      }
+    },
+    {
+      "id": "synthetic-effect-set-elicitation",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-set-elicitation",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "set_elicitation",
+              "elicitation_action": "accept"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_elicitation",
+            "delivery": "eager",
+            "rule": "synthetic-effect-set-elicitation"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-set-elicitation",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "elicitation_action": "accept"
+        }
+      }
+    },
+    {
+      "id": "synthetic-effect-load-skill",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-load-skill",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "load_skill",
+              "skill": "synthetic-skill"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "load_skill",
+            "delivery": "eager",
+            "rule": "synthetic-effect-load-skill"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-load-skill",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "Load and fully read the skill in its own outer tool result: call_tool(\"gobby-skills\", \"get_skill\", {\"name\":\"synthetic-skill\"}). Then continue.",
+          "context_parts": [
+            [
+              "skill:synthetic-skill",
+              "Load and fully read the skill in its own outer tool result: call_tool(\"gobby-skills\", \"get_skill\", {\"name\":\"synthetic-skill\"}). Then continue."
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "synthetic-effect-run-command",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-run-command",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "run_command",
+              "command": [
+                "synthetic-binary"
+              ]
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "run_command",
+            "delivery": "eager",
+            "rule": "synthetic-effect-run-command"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-run-command",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-effect-proxy-hook",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-proxy-hook",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "proxy_hook",
+              "handler": "synthetic-unknown-handler"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-proxy-hook",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-effect-block",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-effect-block",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "block",
+              "reason": "synthetic block"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "block",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_tool": "Bash",
+          "_last_blocked_rule_name": "synthetic-effect-block",
+          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-effect-block]\nsynthetic block",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "synthetic-effect-block:<token>"
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "metrics_events",
+            "call": "record_events",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-effect-block",
+            "result": "block",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [synthetic-effect-block]\nsynthetic block"
+        }
+      }
+    }
+  ]
+}

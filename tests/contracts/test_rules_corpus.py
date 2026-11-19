@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import json
+import os
 import re
 import shutil
 from collections.abc import Iterable
@@ -22,7 +23,7 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookResponse
-from tests.contracts import rules_corpus
+from tests.contracts import rules_corpus, rules_vectors
 
 CONTRACTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CONTRACTS_DIR.parents[1]
@@ -103,6 +104,14 @@ RESPONSE_FIELDS = (
     "elicitation_error",
     "trigger_action",
     "metadata",
+)
+# system_message, modify_args and trigger_action are set by the adapters and the route
+# handlers, outside RuleEngine.evaluate, so the rule-pass layer cannot set them. The
+# adapter and pipeline layers cover them.
+ENGINE_RESPONSE_FIELDS = tuple(
+    field
+    for field in RESPONSE_FIELDS
+    if field not in ("system_message", "modify_args", "trigger_action")
 )
 
 
@@ -341,7 +350,13 @@ def _synthetic_case(**overrides: Any) -> dict[str, Any]:
         "family": None,
         "observer": None,
         "transition": None,
-        "rules": [{"name": "synthetic-rule", "effects": [{"type": "block", "delivery": "eager"}]}],
+        "rules": [
+            {
+                "name": "synthetic-rule",
+                "event": "before_tool",
+                "effects": [{"type": "block", "reason": "synthetic", "delivery": "eager"}],
+            }
+        ],
         "event": {"type": "before_tool", "metadata": {}},
         "seam_failures": [],
         "expect": {
@@ -481,7 +496,7 @@ def test_corpus_covers_hardcoded_behavior_and_response_fields() -> None:
         for field, value in case["expect"].get("response", {}).items()
         if _response_set(field, value)
     }
-    missing = [field for field in RESPONSE_FIELDS if field not in set_fields]
+    missing = [field for field in ENGINE_RESPONSE_FIELDS if field not in set_fields]
     assert not missing, f"response fields no case sets: {missing}"
 
 
@@ -725,3 +740,16 @@ def test_coverage_negative_cases(tmp_path: Path, axis: str, item: str) -> None:
         case_file.write_text(json.dumps(document))
     with pytest.raises(ValueError, match=re.escape(item)):
         rules_corpus.check_coverage(corpus_copy, axis)
+
+
+@pytest.mark.skipif(os.environ.get(RECORD_ENV) != "1", reason=f"set {RECORD_ENV}=1 to re-record")
+def test_rerecord_committed_corpus() -> None:
+    """Re-record the committed case and vector expect blocks from the live engine."""
+    rules_corpus.record_corpus(CORPUS_DIR)
+    rules_vectors.record_vectors(VECTORS_PATH)
+    _manifest, cases = rules_corpus.load_corpus(CORPUS_DIR)
+    _assert_enough(cases)
+    vectors = json.loads(VECTORS_PATH.read_text())["vectors"]
+    assert len(vectors) >= MIN_NORMALIZE_VECTORS, (
+        f"{len(vectors)} normalizer vectors after re-record; at least {MIN_NORMALIZE_VECTORS} required"
+    )

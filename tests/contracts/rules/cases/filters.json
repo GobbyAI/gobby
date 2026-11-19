@@ -1,0 +1,299 @@
+{
+  "cases": [
+    {
+      "id": "synthetic-agent-scope",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-AGENT-SCOPE"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-in-scope",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "in scope",
+              "delivery": "eager"
+            }
+          ],
+          "agent_scope": [
+            "synthetic-agent"
+          ],
+          "mandatory": true
+        },
+        {
+          "name": "synthetic-out-scope",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "out of scope",
+              "delivery": "eager"
+            }
+          ],
+          "agent_scope": [
+            "synthetic-other"
+          ],
+          "mandatory": true
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "block",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_tool": "Bash",
+          "_last_blocked_rule_name": "unresolved-agent-definition",
+          "_last_blocked_reason": "Rule enforced by Gobby: [unresolved-agent-definition]\nThis session's agent definition 'synthetic-agent' is missing or disabled, so it has no tool authority. Restore or re-enable the definition from the web UI or another session, or reassign this seat. Ending the turn stays allowed.",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "unresolved-agent-definition:<token>"
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [],
+        "response": {
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [unresolved-agent-definition]\nThis session's agent definition 'synthetic-agent' is missing or disabled, so it has no tool authority. Restore or re-enable the definition from the web UI or another session, or reassign this seat. Ending the turn stays allowed."
+        }
+      },
+      "variables": {
+        "_agent_type": "synthetic-agent"
+      }
+    },
+    {
+      "id": "synthetic-audience",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-AUDIENCE"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-autonomous-only",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "autonomous",
+              "delivery": "eager"
+            }
+          ],
+          "audience": "autonomous"
+        },
+        {
+          "name": "synthetic-all-audiences",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "all",
+              "delivery": "eager"
+            }
+          ],
+          "audience": "all"
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-all-audiences"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-all-audiences",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "all",
+          "context_parts": [
+            [
+              "rule:synthetic-all-audiences",
+              "all"
+            ]
+          ]
+        }
+      },
+      "variables": {
+        "_audience": "interactive"
+      }
+    },
+    {
+      "id": "synthetic-active-name",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-ACTIVE-NAME"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-default-tagged",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "default rule",
+              "delivery": "eager"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-untagged",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "untagged rule",
+              "delivery": "eager"
+            }
+          ],
+          "tags": [
+            "synthetic-inactive"
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-default-tagged"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-default-tagged",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "default rule",
+          "context_parts": [
+            [
+              "rule:synthetic-default-tagged",
+              "default rule"
+            ]
+          ]
+        }
+      }
+    }
+  ]
+}

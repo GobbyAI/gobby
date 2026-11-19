@@ -1,0 +1,209 @@
+{
+  "cases": [
+    {
+      "id": "synthetic-cli-internal-before",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-CLI-INTERNAL-BEFORE"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-discovery-group",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "discovery"
+            }
+          ],
+          "group": "progressive-discovery"
+        },
+        {
+          "name": "synthetic-ungrouped",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "ungrouped"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {
+          "_cli_internal_request": true
+        }
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_observations": [
+            {
+              "category": "general",
+              "message": "ungrouped",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-ungrouped"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-ungrouped"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-ungrouped",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {},
+        "skipped_groups": [
+          "progressive-discovery"
+        ]
+      }
+    },
+    {
+      "id": "synthetic-cli-internal-after",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-CLI-INTERNAL-AFTER"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-discovery-group-after",
+          "event": "after_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "discovery"
+            }
+          ],
+          "group": "progressive-discovery"
+        },
+        {
+          "name": "synthetic-ungrouped-after",
+          "event": "after_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "ungrouped"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "after_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {
+          "_cli_internal_request": true
+        }
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "tool_block_pending": false,
+          "_last_blocked_tool": "",
+          "_last_blocked_rule_name": "",
+          "_last_blocked_reason": "",
+          "_last_blocked_recovery_conditions": [],
+          "_last_blocked_batch_counted": false,
+          "consecutive_tool_blocks": 0,
+          "_observations": [
+            {
+              "category": "general",
+              "message": "ungrouped",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-ungrouped-after"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-ungrouped-after"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-ungrouped-after",
+            "result": "allow",
+            "event": "after_tool"
+          }
+        ],
+        "response": {},
+        "skipped_groups": [
+          "progressive-discovery"
+        ]
+      }
+    }
+  ]
+}
