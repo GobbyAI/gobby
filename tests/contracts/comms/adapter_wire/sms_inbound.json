@@ -1,0 +1,50 @@
+{
+  "provider": "sms",
+  "operation": "inbound",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/sms.py",
+  "source_test": "tests/communications/adapters/test_communications_adapters_sms.py::test_verify_webhook",
+  "contract_ref": "https://www.twilio.com/docs/usage/webhooks/webhooks-security",
+  "drive": {
+    "channel": {
+      "name": "corpus-sms",
+      "config": {
+        "auth_token": "$secret:TWILIO_AUTH_TOKEN",
+        "account_sid": "AC00000000000000000000000000000001",
+        "from_number": "+15550000001",
+        "webhook_url": "https://gobby.corpus.test/api/comms/webhooks/corpus-sms"
+      }
+    },
+    "secrets": {
+      "TWILIO_AUTH_TOKEN": "corpus-wire-twilio-auth-token"
+    },
+    "call": "webhook",
+    "webhook": {
+      "body": "AccountSid=AC00000000000000000000000000000001&Body=corpus+sms+inbound&From=%2B15550000002&MessageSid=SM00000000000000000000000000000002&NumMedia=0&To=%2B15550000001",
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-twilio-signature": "Wp/ihFn39/++0C+HNv+AvcEVtLY="
+      }
+    }
+  },
+  "provider_contract": {
+    "responses": []
+  },
+  "exchanges": [],
+  "outcome": {
+    "verified": true,
+    "messages": [
+      {
+        "content": "corpus sms inbound",
+        "content_type": "text",
+        "identity_id": "+15550000002",
+        "platform_message_id": "SM00000000000000000000000000000002",
+        "platform_thread_id": null,
+        "platform_channel_id": "+15550000002",
+        "external_username": "+15550000002"
+      }
+    ]
+  }
+}

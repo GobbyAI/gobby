@@ -1,0 +1,44 @@
+{
+  "provider": "sms",
+  "operation": "attachment",
+  "capture": "refusal",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/sms.py",
+  "source_test": "tests/communications/test_communications_attachments.py::test_sms_send_attachment_requires_url",
+  "contract_ref": "https://www.twilio.com/docs/messaging/api/message-resource#mediaurl",
+  "drive": {
+    "channel": {
+      "name": "corpus-sms",
+      "config": {
+        "auth_token": "$secret:TWILIO_AUTH_TOKEN",
+        "account_sid": "AC00000000000000000000000000000001",
+        "from_number": "+15550000001",
+        "webhook_url": "https://gobby.corpus.test/api/comms/webhooks/corpus-sms"
+      }
+    },
+    "secrets": {
+      "TWILIO_AUTH_TOKEN": "corpus-wire-twilio-auth-token"
+    },
+    "call": "send_attachment",
+    "message": {
+      "content": "corpus sms attachment",
+      "metadata": {
+        "platform_destination": "+15550000002"
+      }
+    },
+    "attachment": {
+      "filename": "corpus-pixel.png",
+      "content_type": "image/png",
+      "content_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=",
+      "platform_url": null
+    }
+  },
+  "provider_contract": {
+    "responses": []
+  },
+  "exchanges": [],
+  "outcome": {
+    "error": "ValueError: SMS/MMS attachments require a publicly accessible platform_url. Twilio fetches media from the URL directly."
+  }
+}

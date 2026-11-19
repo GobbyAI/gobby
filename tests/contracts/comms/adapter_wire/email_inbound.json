@@ -1,0 +1,89 @@
+{
+  "provider": "email",
+  "operation": "inbound",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/email.py",
+  "source_test": "tests/communications/adapters/test_communications_adapters_email.py::TestEmailAdapter::test_poll_with_messages",
+  "contract_ref": "https://www.rfc-editor.org/rfc/rfc3501",
+  "drive": {
+    "channel": {
+      "name": "corpus-email",
+      "config": {
+        "imap_host": "127.0.0.1",
+        "imap_port": 993,
+        "from_address": "gobby@corpus.test",
+        "password": "$secret:EMAIL_PASSWORD"
+      }
+    },
+    "secrets": {
+      "EMAIL_PASSWORD": "corpus-wire-mail-password"
+    },
+    "mailbox": {
+      "user": "gobby@corpus.test",
+      "password": "corpus-wire-mail-password"
+    },
+    "call": "poll"
+  },
+  "provider_contract": {
+    "responses": [
+      {
+        "host": "127.0.0.1",
+        "method": "IMAP",
+        "path": "SELECT",
+        "body": "* 1 EXISTS\n* 1 RECENT\n* FLAGS (\\Seen)"
+      },
+      {
+        "host": "127.0.0.1",
+        "method": "IMAP",
+        "path": "SEARCH",
+        "body": "* SEARCH 1"
+      },
+      {
+        "host": "127.0.0.1",
+        "method": "IMAP",
+        "path": "FETCH",
+        "body": "From: Corpus Sender <sender@corpus.test>\r\nTo: gobby@corpus.test\r\nSubject: corpus email inbound\r\nMessage-ID: <corpus-inbound-1@corpus.test>\r\nContent-Type: text/plain; charset=utf-8\r\n\r\ncorpus email inbound\r\n"
+      }
+    ]
+  },
+  "exchanges": [
+    {
+      "host": "127.0.0.1",
+      "method": "IMAP",
+      "path": "SELECT",
+      "semantic": {
+        "destination": "INBOX",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "127.0.0.1",
+      "method": "IMAP",
+      "path": "SEARCH",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "127.0.0.1",
+      "method": "IMAP",
+      "path": "FETCH",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    }
+  ],
+  "outcome": {
+    "messages": []
+  }
+}

@@ -1,1 +1,10 @@
-{"adapters": {}}
+{
+  "adapters": {
+    "telegram": {"branch": "provider_api_contract", "account": "none", "verified": false},
+    "slack": {"branch": "provider_api_contract", "account": "none", "verified": false},
+    "teams": {"branch": "provider_api_contract", "account": "none", "verified": false},
+    "email": {"branch": "provider_api_contract", "account": "none", "verified": false},
+    "sms": {"branch": "provider_api_contract", "account": "none", "verified": false},
+    "discord": {"branch": "deferred", "account": "none", "verified": false}
+  }
+}

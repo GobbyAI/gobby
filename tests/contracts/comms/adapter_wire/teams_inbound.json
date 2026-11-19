@@ -1,0 +1,109 @@
+{
+  "provider": "teams",
+  "operation": "inbound",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/teams.py",
+  "source_test": "tests/communications/adapters/test_communications_adapters_teams.py::test_verify_webhook_success",
+  "contract_ref": "https://learn.microsoft.com/en-us/azure/bot-service/rest-api/bot-framework-rest-connector-authentication",
+  "drive": {
+    "channel": {
+      "name": "corpus-teams",
+      "config": {
+        "app_id": "$secret:TEAMS_APP_ID",
+        "app_password": "$secret:TEAMS_APP_PASSWORD"
+      }
+    },
+    "secrets": {
+      "TEAMS_APP_ID": "corpus-wire-teams-app-id",
+      "TEAMS_APP_PASSWORD": "corpus-wire-teams-password"
+    },
+    "call": "webhook",
+    "teams_token": {
+      "kid": "corpus-wire-kid",
+      "claims": {
+        "iss": "https://api.botframework.com",
+        "aud": "corpus-wire-teams-app-id",
+        "serviceUrl": "https://smba.trafficmanager.net/amer/"
+      }
+    },
+    "webhook": {
+      "body": "{\"channelId\": \"msteams\", \"conversation\": {\"id\": \"a:1corpus-conversation\", \"tenantId\": \"00000000-0000-4000-8000-000000000001\"}, \"from\": {\"id\": \"29:corpus-user\", \"name\": \"Corpus User\"}, \"id\": \"1700000000001\", \"recipient\": {\"id\": \"28:corpus-wire-teams-app-id\", \"name\": \"corpus bot\"}, \"serviceUrl\": \"https://smba.trafficmanager.net/amer/\", \"text\": \"corpus teams inbound\", \"timestamp\": \"2023-11-14T22:13:20.000Z\", \"type\": \"message\"}",
+      "headers": {
+        "content-type": "application/json",
+        "authorization": "Bearer @REPLAY_TEAMS_TOKEN@"
+      }
+    }
+  },
+  "provider_contract": {
+    "responses": [
+      {
+        "host": "login.microsoftonline.com",
+        "method": "POST",
+        "path": "/botframework.com/oauth2/v2.0/token",
+        "body": {
+          "token_type": "Bearer",
+          "expires_in": 3600,
+          "ext_expires_in": 3600,
+          "access_token": "corpus-wire-teams-access-token"
+        }
+      },
+      {
+        "host": "login.botframework.com",
+        "method": "GET",
+        "path": "/v1/.well-known/keys",
+        "body": {
+          "keys": [
+            {
+              "kty": "RSA",
+              "use": "sig",
+              "kid": "corpus-wire-kid",
+              "alg": "RS256",
+              "n": "@REPLAY_TEAMS_KEY_N@",
+              "e": "@REPLAY_TEAMS_KEY_E@"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "exchanges": [
+    {
+      "host": "login.microsoftonline.com",
+      "method": "POST",
+      "path": "/botframework.com/oauth2/v2.0/token",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "login.botframework.com",
+      "method": "GET",
+      "path": "/v1/.well-known/keys",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    }
+  ],
+  "outcome": {
+    "verified": true,
+    "messages": [
+      {
+        "content": "corpus teams inbound",
+        "content_type": "text",
+        "identity_id": "29:corpus-user",
+        "platform_message_id": "1700000000001",
+        "platform_thread_id": null,
+        "platform_channel_id": "a:1corpus-conversation",
+        "external_username": "Corpus User"
+      }
+    ]
+  }
+}

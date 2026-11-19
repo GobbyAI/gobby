@@ -1,0 +1,90 @@
+{
+  "provider": "slack",
+  "operation": "send",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/slack.py",
+  "source_test": "tests/communications/adapters/test_slack.py::test_send_message_success",
+  "contract_ref": "https://api.slack.com/methods/chat.postMessage",
+  "drive": {
+    "channel": {
+      "name": "corpus-slack",
+      "config": {
+        "bot_token": "$secret:SLACK_BOT_TOKEN",
+        "signing_secret": "$secret:SLACK_SIGNING_SECRET",
+        "default_destination": "C0CORPUS0001"
+      }
+    },
+    "secrets": {
+      "SLACK_BOT_TOKEN": "corpus-wire-slack-bot-token",
+      "SLACK_SIGNING_SECRET": "corpus-wire-slack-signing-secret"
+    },
+    "call": "send_message",
+    "message": {
+      "content": "corpus slack send",
+      "metadata": {
+        "platform_destination": "C0CORPUS0001"
+      }
+    }
+  },
+  "provider_contract": {
+    "responses": [
+      {
+        "host": "slack.com",
+        "method": "POST",
+        "path": "/api/auth.test",
+        "body": {
+          "ok": true,
+          "url": "https://corpus-workspace.slack.com/",
+          "team": "corpus-team",
+          "user": "corpus-bot",
+          "team_id": "T0CORPUS0001",
+          "user_id": "U0CORPUS0001",
+          "bot_id": "B0CORPUS0001"
+        }
+      },
+      {
+        "host": "slack.com",
+        "method": "POST",
+        "path": "/api/chat.postMessage",
+        "body": {
+          "ok": true,
+          "channel": "C0CORPUS0001",
+          "ts": "1700000000.000100",
+          "message": {
+            "text": "corpus slack send",
+            "ts": "1700000000.000100"
+          }
+        }
+      }
+    ]
+  },
+  "exchanges": [
+    {
+      "host": "slack.com",
+      "method": "POST",
+      "path": "/api/auth.test",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "slack.com",
+      "method": "POST",
+      "path": "/api/chat.postMessage",
+      "semantic": {
+        "destination": "C0CORPUS0001",
+        "text": "corpus slack send",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    }
+  ],
+  "outcome": {
+    "message_id": "1700000000.000100"
+  }
+}

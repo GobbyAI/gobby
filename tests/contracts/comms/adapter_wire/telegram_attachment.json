@@ -1,0 +1,146 @@
+{
+  "provider": "telegram",
+  "operation": "attachment",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/telegram.py",
+  "source_test": "tests/communications/adapters/test_telegram.py::test_send_attachment_uses_send_photo_for_images",
+  "contract_ref": "https://core.telegram.org/bots/api#sendphoto",
+  "drive": {
+    "channel": {
+      "name": "corpus-telegram",
+      "config": {
+        "bot_token": "$secret:TELEGRAM_BOT_TOKEN"
+      }
+    },
+    "secrets": {
+      "TELEGRAM_BOT_TOKEN": "1000001:corpus-wire-telegram-token"
+    },
+    "call": "send_attachment",
+    "message": {
+      "content": "corpus telegram attachment",
+      "metadata": {
+        "platform_destination": "1000002"
+      }
+    },
+    "attachment": {
+      "filename": "corpus-pixel.png",
+      "content_type": "image/png",
+      "content_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII="
+    }
+  },
+  "provider_contract": {
+    "responses": [
+      {
+        "host": "api.telegram.org",
+        "method": "POST",
+        "path": "/bot@TELEGRAM_TOKEN@/getMe",
+        "body": {
+          "ok": true,
+          "result": {
+            "id": 1000001,
+            "is_bot": true,
+            "first_name": "corpus",
+            "username": "corpus_bot"
+          }
+        }
+      },
+      {
+        "host": "api.telegram.org",
+        "method": "POST",
+        "path": "/bot@TELEGRAM_TOKEN@/setMyCommands",
+        "body": {
+          "ok": true,
+          "result": true
+        }
+      },
+      {
+        "host": "api.telegram.org",
+        "method": "POST",
+        "path": "/bot@TELEGRAM_TOKEN@/deleteWebhook",
+        "body": {
+          "ok": true,
+          "result": true,
+          "description": "Webhook is already deleted"
+        }
+      },
+      {
+        "host": "api.telegram.org",
+        "method": "POST",
+        "path": "/bot@TELEGRAM_TOKEN@/sendPhoto",
+        "body": {
+          "ok": true,
+          "result": {
+            "message_id": 102,
+            "date": 1700000000,
+            "chat": {
+              "id": -1001000000001,
+              "type": "supergroup",
+              "title": "corpus"
+            },
+            "photo": [
+              {
+                "file_id": "corpus-photo-file",
+                "file_unique_id": "corpus-photo-unique",
+                "width": 1,
+                "height": 1,
+                "file_size": 70
+              }
+            ],
+            "caption": "corpus telegram attachment"
+          }
+        }
+      }
+    ]
+  },
+  "exchanges": [
+    {
+      "host": "api.telegram.org",
+      "method": "POST",
+      "path": "/bot@TELEGRAM_TOKEN@/getMe",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "api.telegram.org",
+      "method": "POST",
+      "path": "/bot@TELEGRAM_TOKEN@/setMyCommands",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "api.telegram.org",
+      "method": "POST",
+      "path": "/bot@TELEGRAM_TOKEN@/deleteWebhook",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "api.telegram.org",
+      "method": "POST",
+      "path": "/bot@TELEGRAM_TOKEN@/sendPhoto",
+      "semantic": {
+        "destination": "1000002",
+        "text": "corpus telegram attachment",
+        "filename": "corpus-pixel.png",
+        "payload_sha256": "43739c566e26fd7cb88f69d3864ea34740372f5ee99acac169e090beffbce5c6"
+      }
+    }
+  ],
+  "outcome": {
+    "message_id": "102"
+  }
+}
