@@ -23,6 +23,7 @@ use std::sync::Arc;
 use axum::body::Body;
 use axum::http::header::{CONNECTION, HeaderName, HeaderValue, UPGRADE};
 use axum::http::{HeaderMap, Request, Response, StatusCode};
+use gobby_core::family::FamilyContext;
 
 use health::BackendState;
 use proxy::ProxyClient;
@@ -47,6 +48,8 @@ pub struct FrontDoorState {
     pub native_ws: NativeWs,
     /// True on the WebSocket-port listener, whose upgrades are the direct entry.
     pub ws_listener: bool,
+    /// The process's family context, which claim handlers read.
+    pub context: Arc<FamilyContext>,
 }
 
 impl FrontDoorState {
@@ -66,6 +69,7 @@ impl FrontDoorState {
             compare_log: None,
             native_ws: NativeWs::new(BroadcastBroker::default(), String::new(), None, target),
             ws_listener: false,
+            context: Arc::new(FamilyContext::unconfigured()),
         }
     }
 

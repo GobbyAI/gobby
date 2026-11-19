@@ -17,6 +17,7 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use futures_util::{Sink, SinkExt};
+use gobby_core::family::{FramePublisher, PublishRefused};
 use serde_json::Value;
 use tokio::sync::Notify;
 use tokio::time::timeout;
@@ -428,6 +429,25 @@ impl BroadcastBroker {
         }
         drop(entries);
         registration.link.retire(reason)
+    }
+}
+
+/// The family frame publisher over a broker: each publication becomes one batch.
+#[derive(Clone)]
+pub struct BroadcastBrokerPublisher {
+    broker: BroadcastBroker,
+}
+
+impl BroadcastBrokerPublisher {
+    pub fn new(broker: BroadcastBroker) -> Self {
+        Self { broker }
+    }
+}
+
+impl FramePublisher for BroadcastBrokerPublisher {
+    fn publish_frames(&self, filter: &Value, frames: Vec<String>) -> Result<(), PublishRefused> {
+        let _ = (&self.broker, filter, frames);
+        Ok(())
     }
 }
 

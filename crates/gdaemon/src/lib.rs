@@ -5,6 +5,7 @@ pub mod front_door;
 pub mod heartbeat;
 pub mod lease;
 pub mod lifecycle;
+pub mod native_pools;
 pub mod node_commands;
 pub mod nodes;
 pub mod pane_detection;

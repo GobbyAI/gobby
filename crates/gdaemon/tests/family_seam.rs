@@ -18,6 +18,9 @@ use axum::body::Body;
 use axum::http::{Method, Request, Response, StatusCode};
 use bytes::Bytes;
 use gobby_core::bootstrap::RouteBackend;
+use gobby_core::family::{
+    ConfigEpoch, ContextParts, DegradedServices, Extensions, FamilyContext, config_channel,
+};
 use gobby_core::route_family::{
     BoxFut, Credential, Gate, Kind, PathMatch, PeerRule, RouteClaim, RouteFamily,
 };
@@ -26,12 +29,16 @@ use gobby_daemon::front_door::health::BackendState;
 use gobby_daemon::front_door::registry::{FAMILIES, selectable, surfaces};
 use gobby_daemon::front_door::routes::{RouteTable, unimplemented_families};
 use gobby_daemon::front_door::{FrontDoor, FrontDoorState};
+use gobby_daemon::websocket::broker::{BroadcastBroker, BroadcastBrokerPublisher, ConnectionId};
+use gobby_daemon::websocket::subscriptions::EntryMode;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::server::conn::http1 as server_http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
+use serde_json::json;
 use tokio::net::TcpListener;
+use tokio_tungstenite::tungstenite::Message;
 
 #[cfg(unix)]
 use gobby_core::bootstrap::RunMode;
@@ -927,4 +934,158 @@ async fn lease_admin_wrong_method_keeps_the_handler_answer() {
         body_text(response).await,
         r#"{"detail":"method not allowed"}"#
     );
+}
+
+static CALLER_CLAIM: &[RouteClaim] = &[RouteClaim {
+    method: None,
+    path: PathMatch::Exact("/fixture/caller"),
+    gate: Gate::AfterRefusal,
+    credential: Credential::AfterAuthenticate,
+    peer: PeerRule::Any,
+    kind: Kind::Any,
+}];
+
+/// A Native family whose authenticated row answers `<caller>|<header>`: the user the
+/// context reads from the request, or `none`, and the user-id header the handler sees.
+struct CallerEcho {
+    runs: AtomicUsize,
+}
+
+impl CallerEcho {
+    fn leak() -> &'static CallerEcho {
+        Box::leak(Box::new(CallerEcho {
+            runs: AtomicUsize::new(0),
+        }))
+    }
+}
+
+impl RouteFamily<FrontDoorState> for CallerEcho {
+    fn name(&self) -> &'static str {
+        "caller_echo"
+    }
+
+    fn prefixes(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn router(&self) -> Router<FrontDoorState> {
+        Router::new()
+    }
+
+    fn default_backend(&self) -> RouteBackend {
+        RouteBackend::Native
+    }
+
+    fn route_claims(&self) -> &'static [RouteClaim] {
+        CALLER_CLAIM
+    }
+
+    fn serve_claim<'a>(
+        &'a self,
+        state: &'a FrontDoorState,
+        _peer: SocketAddr,
+        request: Request<Body>,
+    ) -> BoxFut<'a, Result<Request<Body>, Response<Body>>> {
+        self.runs.fetch_add(1, Ordering::SeqCst);
+        let (parts, _body) = request.into_parts();
+        let caller = state
+            .context
+            .caller(&parts)
+            .map_or_else(|| "none".to_owned(), |caller| caller.user_id);
+        let header = parts
+            .headers
+            .get("x-gobby-user-id")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        Box::pin(async move { Err(Response::new(Body::from(format!("{caller}|{header}")))) })
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn caller_identity_reaches_authenticated_claims_only() {
+    assert!(
+        gobby_core::api_key_format::parse(common::channel::KEY).is_some(),
+        "the fixture key is a checksum-valid API key"
+    );
+    let echo = CallerEcho::leak();
+    let families: [&'static dyn RouteFamily<FrontDoorState>; 1] = [echo];
+    let door = write_door_harness(
+        common::refused_addr().await,
+        BackendStatus::Standby,
+        &families,
+        Some(Arc::new(FixedKey)),
+    );
+    let request = Request::get("/fixture/caller")
+        .header("authorization", format!("Bearer {}", common::channel::KEY))
+        .body(Body::empty())
+        .expect("keyed caller request");
+
+    let response = send(&door, request, loopback_peer()).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_text(response).await, "user-1|user-1");
+    assert_eq!(echo.runs.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn after_authenticate_handler_sees_no_caller_for_headerless() {
+    let echo = CallerEcho::leak();
+    let families: [&'static dyn RouteFamily<FrontDoorState>; 1] = [echo];
+    let state = FrontDoorState::new(common::refused_addr().await, BackendState::Down, auth(None));
+    let door = door(state, &families, &BTreeMap::new());
+
+    let response = send(&door, get("/fixture/caller"), loopback_peer()).await;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_text(response).await, "none|");
+    assert_eq!(echo.runs.load(Ordering::SeqCst), 1);
+}
+
+#[derive(Debug)]
+struct SubscriberGone;
+
+#[tokio::test]
+async fn broker_publisher_delivers_to_a_subscriber() {
+    let broker = BroadcastBroker::default();
+    let (tx, mut received) = tokio::sync::mpsc::unbounded_channel::<Message>();
+    let sink = futures_util::sink::unfold(tx, |tx, message: Message| async move {
+        tx.send(message).map_err(|_| SubscriberGone)?;
+        Ok::<_, SubscriberGone>(tx)
+    });
+    let _registration = broker
+        .register(
+            ConnectionId::new(1),
+            EntryMode::Browser,
+            false,
+            Box::pin(sink),
+            || {},
+        )
+        .expect("a fresh connection registers");
+    let (config_publisher, config) = config_channel(ConfigEpoch::unpublished());
+    let ctx = FamilyContext::new(ContextParts {
+        publisher: Arc::new(BroadcastBrokerPublisher::new(broker.clone())),
+        backend: None,
+        lease: None,
+        budget: None,
+        serve_pool: None,
+        config,
+        home: std::path::PathBuf::new(),
+        degraded: DegradedServices::default(),
+        config_publisher,
+        startup: None,
+        extensions: Extensions::new(),
+    });
+
+    let published = ctx
+        .publisher()
+        .publish_frames(&json!({"type": "fixture_event"}), vec!["frame-1".into()]);
+
+    assert_eq!(published, Ok(()));
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(1), received.recv())
+        .await
+        .ok()
+        .flatten();
+    assert_eq!(frame, Some(Message::text("frame-1")));
 }

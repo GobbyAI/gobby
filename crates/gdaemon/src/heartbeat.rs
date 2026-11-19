@@ -7,6 +7,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
+use gobby_core::family::lifecycle::{JobRun, JobSink};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval_at, timeout};
@@ -119,6 +120,14 @@ impl HeartbeatHost {
             self.running = None;
             result?;
         }
+        Ok(())
+    }
+}
+
+/// Family jobs reach the host through the job sink, with the registration rules of
+/// [`HeartbeatHost::register`]. Starting and stopping stay on the host.
+impl JobSink for HeartbeatHost {
+    fn register_job(&mut self, _name: &str, _interval: Duration, _run: JobRun) -> Result<()> {
         Ok(())
     }
 }

@@ -20,6 +20,9 @@ mod cli_contract;
 #[path = "compare.rs"]
 mod compare;
 
+#[path = "family_lifecycle.rs"]
+mod family_lifecycle;
+
 #[path = "family_seam.rs"]
 mod family_seam;
 
@@ -76,6 +79,9 @@ mod pane_detection_warnings;
 
 #[path = "pid_file_golden.rs"]
 mod pid_file_golden;
+
+#[path = "pool_budget.rs"]
+mod pool_budget;
 
 #[path = "release_workflow.rs"]
 mod release_workflow;

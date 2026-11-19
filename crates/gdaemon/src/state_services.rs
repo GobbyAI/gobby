@@ -7,6 +7,7 @@ mod host_process_fixture;
 use anyhow::{Context, Result};
 use gobby_core::{
     bootstrap::HubDatabaseBootstrap,
+    family::FamilyContext,
     postgres_pool::{Pool, PoolSettings},
 };
 use gobby_terminals::family::{RouteLatch, SupervisorMode};
@@ -115,11 +116,28 @@ impl ActiveServices {
     }
 }
 
+/// Marks the terminal host degraded after its start failed and returns the line that
+/// reports the failure.
+pub(crate) fn report_terminal_host_failure(ctx: &FamilyContext, error: &str) -> String {
+    let _ = (ctx, error);
+    String::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use gobby_terminals::host::{EpochAuthority, EpochBinding, HostFailure, HostOptions};
     use std::{future::Future, pin::Pin};
+
+    #[test]
+    fn report_terminal_host_failure_marks_and_returns_line() {
+        let ctx = FamilyContext::unconfigured();
+
+        let line = report_terminal_host_failure(&ctx, "boom");
+
+        assert_eq!(line, "gdaemon terminal host: boom");
+        assert!(ctx.degraded().contains("gterm_host"));
+    }
 
     struct EmptyAuthority;
     impl EpochAuthority for EmptyAuthority {

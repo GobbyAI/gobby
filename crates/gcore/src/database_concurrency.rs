@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod pool_budget;
+
 pub const BOOTSTRAP_POOL_SIZE: u32 = 2;
 pub const MIN_POOL_SIZE: u32 = 32;
 pub const NATIVE_POOL_MAX_SIZE: u32 = 8;
@@ -101,6 +103,8 @@ pub enum DatabaseConcurrencyError {
     InvalidAutomaticValue { field: &'static str, value: String },
     #[error("{field} must be a positive integer")]
     NonPositiveValue { field: &'static str },
+    #[error("{field} stored value must be the JSON string \"auto\" or a JSON integer")]
+    InvalidStoredValue { field: &'static str },
 }
 
 pub fn resolve_database_concurrency(

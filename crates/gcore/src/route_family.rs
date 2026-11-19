@@ -14,6 +14,8 @@ use axum::http::request::Parts;
 use axum::http::{Method, Request, Response, StatusCode};
 
 use crate::bootstrap::RouteBackend;
+use crate::family::FamilyContext;
+use crate::family::lifecycle::{Activation, HookError, SpawnKind, StopFailure, StopMode};
 
 /// A boxed future that may borrow from the family or the request state for `'a`.
 pub type BoxFut<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -163,8 +165,56 @@ pub trait RouteFamily<S>: Send + Sync {
         })
     }
     /// Lower ranks start first; families with equal ranks keep their registry order.
+    /// Deactivation runs in the reverse of start order.
     fn start_rank(&self) -> u8 {
         0
+    }
+    /// Runs once per process, before admission.
+    fn start<'a>(&'a self, _ctx: &'a FamilyContext) -> BoxFut<'a, Result<(), HookError>> {
+        Box::pin(async { Err(unimplemented_hook()) })
+    }
+    /// Runs once per lease acquisition. Jobs registered through `activation` are staged
+    /// for the lease.
+    fn activate<'a>(
+        &'a self,
+        _activation: &'a mut Activation<'_>,
+    ) -> BoxFut<'a, Result<(), HookError>> {
+        Box::pin(async { Err(unimplemented_hook()) })
+    }
+    /// Runs once per lease release or drain, in reverse start order.
+    fn deactivate<'a>(&'a self, _mode: StopMode) -> BoxFut<'a, Result<(), StopFailure>> {
+        let family = self.name();
+        Box::pin(async move {
+            Err(StopFailure {
+                family,
+                message: String::new(),
+            })
+        })
+    }
+    /// Runs before each worker spawn.
+    fn before_spawn<'a>(
+        &'a self,
+        _ctx: &'a FamilyContext,
+        _spawn: SpawnKind,
+    ) -> BoxFut<'a, Result<(), HookError>> {
+        Box::pin(async { Err(unimplemented_hook()) })
+    }
+    /// Runs after each healthy start or respawn of the worker.
+    fn after_healthy<'a>(&'a self, _ctx: &'a FamilyContext) -> BoxFut<'a, Result<(), HookError>> {
+        Box::pin(async { Err(unimplemented_hook()) })
+    }
+    /// Runs once, when recovery completes.
+    fn recovery_complete<'a>(
+        &'a self,
+        _ctx: &'a FamilyContext,
+    ) -> BoxFut<'a, Result<(), HookError>> {
+        Box::pin(async { Err(unimplemented_hook()) })
+    }
+}
+
+fn unimplemented_hook() -> HookError {
+    HookError::Ordinary {
+        message: String::new(),
     }
 }
 
