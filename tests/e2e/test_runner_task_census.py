@@ -19,15 +19,26 @@ from typing import Any
 import pytest
 
 from tests.e2e import conftest
+from tests.e2e.task_census_recorder import (
+    RECORD_TO_ENV_NAME,
+    census_skip_reason,
+    record_target_problem,
+)
 
-pytestmark = pytest.mark.e2e
+# The fixture was recorded on one host (R38, R41, R57). Off that host the module skips with a
+# reason that names it, and the same checks run on every host through tests/contracts.
+_SKIP_REASON = census_skip_reason()
+pytestmark = [
+    pytest.mark.e2e,
+    pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or ""),
+]
 
 REPO = Path(__file__).resolve().parents[2]
 BOOTSTRAP = REPO / "tests" / "e2e" / "task_census_bootstrap.py"
 BOOTSTRAP_MODULE = "tests.e2e.task_census_bootstrap"
 INVENTORY = REPO / "tests" / "contracts" / "runner_lifecycle.json"
 CENSUS = REPO / "tests" / "contracts" / "runner_census.json"
-RECORD_TO_ENV = "GOBBY_CENSUS_RECORD_TO"
+RECORD_TO_ENV = RECORD_TO_ENV_NAME
 TEST_HUB_URL = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
 SETTLE_TIMEOUT_SECONDS = 120.0
 SETTLE_PAUSE_SECONDS = 2.0
@@ -173,15 +184,17 @@ def test_census_recording(census_boot: Path, tmp_path: Path) -> None:
 
     Without the variable the record goes to the test's own tmp_path, so the boot is still
     captured. The record path must sit outside the real home (R24): the external-write audit
-    watches ~/.gobby, so a recording there fails teardown. The raw records keep the line
+    watches ~/.gobby, so a recording there fails teardown. It must also sit outside the frozen
+    fixture directory tests/contracts (R38), so a re-record cannot rewrite a fixture by accident. The raw records keep the line
     numbers that the normalized census drops; they sit beside the census as <stem>.raw.jsonl.
     """
     from tests.e2e.task_census_recorder import build_census, dumps_fixture
 
     target = os.environ.get(RECORD_TO_ENV)
     record = Path(target).resolve() if target else tmp_path / "census.json"
-    if record.is_relative_to(Path.home().resolve()):
-        pytest.fail(f"{RECORD_TO_ENV} must be outside the real home: {record}")
+    problem = record_target_problem(record, repo=REPO, home=Path.home())
+    if problem is not None:
+        pytest.fail(problem)
     records = _records(census_boot)
     inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
     record.write_text(dumps_fixture(build_census(records, inventory=inventory)), encoding="utf-8")

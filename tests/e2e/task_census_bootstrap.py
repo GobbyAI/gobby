@@ -22,19 +22,117 @@ from pathlib import Path
 from types import FrameType, ModuleType
 from typing import Any, TextIO
 from unittest.mock import patch
+from urllib.parse import urlsplit
+
+if sys.platform != "win32":
+    import pwd
 
 TEST_HUB_URL = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test"
+TEST_HUB_USER = "gobby_test"
+TEST_HUB_PASSWORD = "gobby_test"
+TEST_HUB_PORT = 60892
+TEST_HUB_DATABASE = "gobby_test"
+ISOLATED_DATABASE_PREFIX = "gobby_test_"
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
+BOOTSTRAP_FILE = "bootstrap.yaml"
+DATABASE_URL_KEY = b"database_url:"
 REPO = Path(__file__).resolve().parents[2]
 CENSUS_LOG = Path("logs") / "task-census.jsonl"
 # Switches read by the test process that records the census; they are not part of a boot.
 
 
+def database_url_is_test_hub(url: str | None) -> bool:
+    """Whether a DSN names the isolated test hub (R57).
+
+    The parts are compared, not the string: the user, password, loopback host (127.0.0.1 or
+    localhost), port 60892, and a database that is ``gobby_test`` or an isolated
+    ``gobby_test_*`` database. The query string is ignored, because the e2e bootstrap adds a
+    search-path option to it.
+    """
+    if not url:
+        return False
+    try:
+        parts = urlsplit(url)
+        port = parts.port
+    except ValueError:
+        return False
+    database = parts.path.removeprefix("/")
+    return (
+        parts.scheme == "postgresql"
+        and parts.username == TEST_HUB_USER
+        and parts.password == TEST_HUB_PASSWORD
+        and parts.hostname in LOOPBACK_HOSTS
+        and port == TEST_HUB_PORT
+        and (database == TEST_HUB_DATABASE or database.startswith(ISOLATED_DATABASE_PREFIX))
+    )
+
+
+def bootstrap_database_url(home: Path) -> str | None:
+    """The value of the top-level ``database_url:`` line in ``home``'s bootstrap.yaml.
+
+    Only that line is decoded. Every other line is skipped as raw bytes, so no other field of
+    the file is read or parsed, and an undecodable line elsewhere cannot stop the check.
+    """
+    path = home / BOOTSTRAP_FILE
+    if not path.is_file():
+        return None
+    with path.open("rb") as handle:
+        for raw in handle:
+            if not raw.startswith(DATABASE_URL_KEY):
+                continue
+            try:
+                value = raw[len(DATABASE_URL_KEY) :].decode("utf-8").strip()
+            except UnicodeDecodeError:
+                return None
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+                value = value[1:-1]
+            return value or None
+    return None
+
+
+def unsafe_reason(env: Mapping[str, str], *, operator_home: Path) -> str | None:
+    """Why the census must refuse this environment, or None when the boot is safe.
+
+    Checked in order: the test guard, the DATABASE_URL, GOBBY_HOME (set, and not the operator
+    home or its ``.gobby`` directory), then the home's bootstrap.yaml, which is opened only
+    after the home check passes. Reasons never echo a URL.
+    """
+    if env.get("GOBBY_TEST_PROTECT") != "1":
+        return "task census refused: GOBBY_TEST_PROTECT=1 is required"
+    if not database_url_is_test_hub(env.get("DATABASE_URL")):
+        return "task census refused: DATABASE_URL must be the isolated test hub URL"
+    home_value = env.get("GOBBY_HOME")
+    if not home_value:
+        return "task census refused: GOBBY_HOME must name an isolated home"
+    home = Path(home_value).resolve()
+    operator = operator_home.resolve()
+    live = operator / ".gobby"
+    if home == operator or home == live or home.is_relative_to(live):
+        return "task census refused: GOBBY_HOME is the operator home"
+    url = bootstrap_database_url(home)
+    if url is None:
+        return "task census refused: GOBBY_HOME/bootstrap.yaml names no database_url"
+    if not database_url_is_test_hub(url):
+        return "task census refused: GOBBY_HOME/bootstrap.yaml database_url is not the test hub"
+    return None
+
+
+def real_home() -> Path:
+    """The operator's home from the account database, never from HOME.
+
+    The e2e harness rewrites HOME to the isolated gobby home (so ~/.gobby resolves inside the
+    temp dir), so HOME cannot name the operator. The passwd entry is not affected by HOME.
+    """
+    if sys.platform == "win32":
+        return Path.home()
+    return Path(pwd.getpwuid(os.getuid()).pw_dir)
+
+
 def refuse_unsafe_environment() -> None:
     """Refuse without the test guard or outside the isolated test hub (critique F4)."""
-    if os.environ.get("GOBBY_TEST_PROTECT") != "1":
-        sys.exit("task census refused: GOBBY_TEST_PROTECT=1 is required")
-    if os.environ.get("DATABASE_URL") != TEST_HUB_URL:
-        sys.exit("task census refused: DATABASE_URL must be the isolated test hub URL")
+    reason = unsafe_reason(os.environ, operator_home=real_home())
+    if reason is not None:
+        sys.exit(reason)
 
 
 def _caller_frame() -> FrameType | None:

@@ -9,9 +9,12 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
+RECORD_TO_ENV_NAME = "GOBBY_CENSUS_RECORD_TO"
 POOL_MODULE = "concurrent.futures.thread"
 LOOP_DEFAULT = "loop-default"
 # One timer family, two creator frames: HealthMonitor.start arms the first tick (threading.Timer
@@ -60,6 +63,10 @@ PROFILE_CONFIG = {
     "child_watcher": CENSUS_CHILD_WATCHER,
 }
 PROFILE_BOOTSTRAP = "tests/e2e/task_census_bootstrap.py"
+# The census fixture was recorded on this host (R38, R41, R57). It names no interpreter, so the
+# recorded minor version is pinned here as a named constant and kept out of the profile.
+RECORDED_PLATFORM = "darwin"
+RECORDED_PYTHON = (3, 14)
 # Harness-owned threads: they have no gobby frame, so the skip rule never records them.
 EXCLUDED = (
     {
@@ -543,3 +550,36 @@ def comparison_view(census: Mapping[str, Any]) -> dict[str, Any]:
 def dumps_fixture(census: Mapping[str, Any]) -> str:
     """Canonical text of a census: sorted keys, two-space indent, one trailing newline."""
     return json.dumps(census, indent=2, sort_keys=True) + "\n"
+
+
+def census_skip_reason(
+    platform: str = sys.platform, version: tuple[int, int] = sys.version_info[:2]
+) -> str | None:
+    """Why the census e2e module skips on this host, or None on the recorded host (R57).
+
+    The fixture was recorded on macOS under CPython 3.14. Any other platform, or any other
+    minor version, is skipped with a reason that names the recording host.
+    """
+    if platform == RECORDED_PLATFORM and version == RECORDED_PYTHON:
+        return None
+    recorded = f"macOS (darwin) CPython {RECORDED_PYTHON[0]}.{RECORDED_PYTHON[1]}"
+    return (
+        f"the task census is recorded on the {recorded} host; "
+        f"this run is {platform} CPython {version[0]}.{version[1]}"
+    )
+
+
+def record_target_problem(target: Path, *, repo: Path, home: Path) -> str | None:
+    """Why a census recording may not be written to ``target``, or None when it may.
+
+    A target under the frozen fixture directory ``tests/contracts`` is refused, so a re-record
+    never rewrites a fixture (R38). A target inside the real home is refused, because the
+    external-write audit watches the home (R24, R34). Both roots are parameters.
+    """
+    resolved = target.resolve()
+    frozen = (repo / "tests" / "contracts").resolve()
+    if resolved.is_relative_to(frozen):
+        return f"{RECORD_TO_ENV_NAME} must not name a frozen fixture directory: {resolved}"
+    if resolved.is_relative_to(home.resolve()):
+        return f"{RECORD_TO_ENV_NAME} must be outside the real home: {resolved}"
+    return None

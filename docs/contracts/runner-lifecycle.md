@@ -81,12 +81,18 @@ Next owner (`next_owner`), the work item that will own the entry next:
   `threading.Thread`), `spawned_from` (the scope that calls the periodic `spawn` helper),
   `target` (the coroutine or callable the task runs), `runner_attr`, `name`, `stage`,
   `hub_only`, `cancel_owner`, `condition`, `next_owner`, `cadence`, `one_shot`, `census`,
-  `observed`, `debt`.
+  `observed`, `debt`, `disabled_in_profile` (a recurring entry the census profile turns off, R28),
+  and `runtime_attributed` (the creator is the frame a construct task reports at runtime, R29, not
+  a static call site, so the static site pins skip it).
 - `services`: `id`, `start_owner`, `stop_owner`, `stage`, `hub_only`, `next_owner`. A service
-  with an empty `stop_owner` has no stop in scope.
+  with an empty `stop_owner` has no stop in scope. Each stop owner's body names the service's
+  attribute. A start owner's body names it too, or reaches through named references a function that
+  stores `runner.<attr>`, because the runner's create phases assign storage and memory services in
+  init helpers (R58, deviation D1). A non-gobby owner is one of the allow-listed library calls.
 - `identities`: `name`, `source` (`env`, `pipe`, `file`, `database`, `process`), `producer`,
   `consumers`, `current_owner` (`rust` or `python`, the component that issues the identity
-  on the base commit).
+  on the base commit). A Python producer spells its identity: the def's own name, a string
+  constant in its body, or a module constant holding the identity that its body reads (R58).
 - `errors`: `raised_by`, `exception` or `exit_code`, `effect` (`refusal exit 78`,
   `crash exit 1`, `clean exit 0`, `clean return`, `propagates`).
 - `outside_placements`: `key`, `stop_owner`, `request_driven`, `timing_dependent`, `debt`. One
@@ -127,12 +133,30 @@ after it is frozen, except through a new `inventory_version`.
 
 `tests/contracts/runner_census.json` is recorded from one isolated boot of the genuine runner
 (`tests/e2e/task_census_bootstrap.py`, entered through `gobby.runner._standalone_main`). The
-bootstrap refuses to run unless `GOBBY_TEST_PROTECT=1` and `DATABASE_URL` is the isolated test
-hub, and it never sets `GOBBY_ALLOW_WORKTREE_DAEMON`.
+bootstrap refuses to run unless `GOBBY_TEST_PROTECT=1`, `DATABASE_URL` names the isolated test hub,
+`GOBBY_HOME` is set and is not the operator home or its `.gobby` directory, and the home's
+`bootstrap.yaml` `database_url` names the test hub too. The hub check compares the parsed DSN
+parts, not the string: the user, the password, a loopback host (`127.0.0.1` or `localhost`), port
+`60892`, and a database that is `gobby_test` or an isolated `gobby_test_*` database. The query
+string is ignored. The bootstrap reads only the top-level `database_url:` line and never another
+line of that file, and a refusal never echoes a URL. The bootstrap never sets
+`GOBBY_ALLOW_WORKTREE_DAEMON`.
+
+Host: the fixture was recorded on macOS (darwin) under CPython 3.14 (`RECORDED_PLATFORM` and
+`RECORDED_PYTHON` in `tests/e2e/task_census_recorder.py`). The census e2e module skips elsewhere, on
+any other platform or minor version, with a reason that names that host. The fixture names no
+interpreter, so the recorded minor version is the named constant and is not part of the profile.
+The Linux, Windows and other-interpreter censuses are unrecorded.
 
 Record: each task or thread creation is one JSONL record in `$GOBBY_HOME/logs/task-census.jsonl`
 with `kind`, `stage` (`preflight`, `construct`, `serve`), `creator` (the nearest `gobby.` frame),
 `target` and `name`. Stage markers and one environment record bracket the boot.
+
+The fixture's top-level sections are `profile` (the run mode, the config profile with its disabled
+features, the host inputs and the bootstrap), `environment` (the `GOBBY_*` keys the boot reads or
+sets), `tasks`, `threads`, `executors`, `unobserved` (recurring inventory entries that no boot
+observed, each with creator, target, cadence, condition and cites), `outside_runner_lifecycle` and
+`excluded`.
 
 Key: `(kind, creator, target)`. The line number and the normalized name are not part of the key,
 so a line move never changes the census. Keys are listed in the inventory `census` fields.
@@ -165,7 +189,8 @@ owner, `request_driven`, `timing_dependent` and `debt`, and the recorder emits i
 Status: `tests/contracts/runner_census.json` is frozen. It was recorded from two clean boots, and
 the two recordings were byte-identical. Do not edit it by hand. To re-record after an inventory
 change, run `tests/e2e/test_runner_task_census.py::test_census_recording` twice, each time with
-`GOBBY_CENSUS_RECORD_TO` set to a path outside the real home (without the variable, each run writes
+`GOBBY_CENSUS_RECORD_TO` set to a path outside the real home and outside `tests/contracts`, which the
+recorder refuses (without the variable, each run writes
 to its own pytest `tmp_path`, which is also outside the real home), `cmp` the two files, and copy one over
 `tests/contracts/runner_census.json` in the same commit as the inventory change. A census change
 that is not a re-record of the same boot requires a new `inventory_version`.

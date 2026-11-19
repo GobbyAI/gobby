@@ -3051,7 +3051,7 @@
       "source": "pipe",
       "producer": {
         "module": "gobby.runner_backend",
-        "qualname": "watch_supervisor"
+        "qualname": "supervisor_write_token"
       },
       "consumers": [],
       "current_owner": "rust"
