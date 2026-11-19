@@ -25,6 +25,8 @@ use crate::loopback::{self, LoopbackError, LoopbackGuard};
 use crate::ports::{DaemonPorts, daemon_ports};
 
 mod process;
+#[cfg(all(test, unix))]
+mod teardown_tests;
 mod terminal_host;
 
 pub use process::{GroupWatch, pid_alive};
