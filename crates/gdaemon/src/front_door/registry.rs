@@ -4,9 +4,12 @@
 //! native surfaces the front door claims, and [`selectable`] lists the families the
 //! front door may route to for a given pool.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use gobby_core::bootstrap::RouteBackend;
+use gobby_core::family::lifecycle::ActivationEntry;
 use gobby_core::postgres_pool::Pool;
 use gobby_core::route_family::RouteFamily;
 
@@ -66,4 +69,13 @@ pub fn selectable(
     let mut families = FAMILIES.to_vec();
     families.sort_by_key(|family| family.start_rank());
     families
+}
+
+/// The activation entries of `families`: each family with the backend its route resolves
+/// to, as the routing table resolves it. Surfaces are not families and are not activated.
+pub fn activation_plan(
+    _families: &[&'static dyn RouteFamily<FrontDoorState>],
+    _routes: &BTreeMap<String, RouteBackend>,
+) -> Vec<ActivationEntry<FrontDoorState>> {
+    Vec::new()
 }

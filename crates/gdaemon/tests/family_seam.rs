@@ -27,7 +27,7 @@ use gobby_core::route_family::{
 };
 use gobby_daemon::front_door::auth::{AuthState, KeyResolver, authenticated_headers};
 use gobby_daemon::front_door::health::BackendState;
-use gobby_daemon::front_door::registry::{FAMILIES, selectable, surfaces};
+use gobby_daemon::front_door::registry::{FAMILIES, activation_plan, selectable, surfaces};
 use gobby_daemon::front_door::routes::{RouteTable, unimplemented_families};
 use gobby_daemon::front_door::{FrontDoor, FrontDoorState};
 use gobby_daemon::websocket::broker::{BroadcastBroker, BroadcastBrokerPublisher, ConnectionId};
@@ -1101,4 +1101,95 @@ async fn broker_publisher_delivers_to_a_subscriber() {
         .ok()
         .flatten();
     assert_eq!(frame, Some(Message::text("frame-1")));
+}
+
+#[test]
+fn activation_plan_excludes_surfaces() {
+    let home = Path::new("/nonexistent/gobby-home");
+    let families = selectable(None, home);
+
+    let defaults = activation_plan(&families, &BTreeMap::new());
+    let resolved: Vec<(&str, RouteBackend)> = defaults
+        .iter()
+        .map(|entry| (entry.family.name(), entry.backend))
+        .collect();
+    let expected: Vec<(&str, RouteBackend)> = families
+        .iter()
+        .map(|family| (family.name(), family.default_backend()))
+        .collect();
+    assert_eq!(
+        resolved, expected,
+        "each family once, at its default backend"
+    );
+    let names: Vec<&str> = resolved.iter().map(|(name, _)| *name).collect();
+    assert_eq!(names, ["health", "terminal_ws"], "no surface is activated");
+
+    let routes = BTreeMap::from([("health".to_owned(), RouteBackend::Native)]);
+    let routed = activation_plan(&families, &routes);
+    let health = routed
+        .iter()
+        .find(|entry| entry.family.name() == "health")
+        .map(|entry| entry.backend);
+    assert_eq!(
+        health,
+        Some(RouteBackend::Native),
+        "a route entry decides the backend"
+    );
+}
+
+/// The source text before a file's inline test module.
+fn production_text(source: &str) -> &str {
+    source
+        .split_once("\n#[cfg(test)]\nmod tests {")
+        .map_or(source, |(production, _)| production)
+}
+
+#[test]
+fn serve_builds_families_through_the_registry_and_shares_the_pool() {
+    let serve = production_text(include_str!("../src/serve.rs"));
+
+    for call in ["build_serve(", "family_start::prepare(", "selectable("] {
+        assert!(serve.contains(call), "serve.rs does not call {call}");
+    }
+    assert_eq!(
+        serve.matches("selectable(").count(),
+        1,
+        "serve.rs builds its family list once"
+    );
+    for gone in ["families.push", "RuntimeFamily::new"] {
+        assert!(
+            !serve.contains(gone),
+            "serve.rs still composes families with {gone}"
+        );
+    }
+}
+
+#[test]
+fn terminal_host_failure_calls_the_marker() {
+    let services = production_text(include_str!("../src/state_services.rs"));
+
+    let mentions = services.matches("report_terminal_host_failure(").count();
+    let definitions = services.matches("fn report_terminal_host_failure(").count();
+    assert!(
+        mentions > definitions,
+        "the terminal host's start failure does not call report_terminal_host_failure"
+    );
+    assert!(
+        !services.contains("eprintln!(\"gdaemon terminal host"),
+        "the terminal host failure is still printed directly"
+    );
+}
+
+#[test]
+fn state_services_builds_pools_through_build_set() {
+    let services = production_text(include_str!("../src/state_services.rs"));
+
+    assert!(
+        services.contains("build_set("),
+        "state_services.rs does not build its pools through build_set"
+    );
+    assert!(
+        !services.contains("max_size: 8"),
+        "state_services.rs still sizes a pool at 8"
+    );
 }
