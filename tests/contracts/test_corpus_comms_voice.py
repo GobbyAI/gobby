@@ -26,6 +26,7 @@ import pytest
 
 from scripts.parity_waivers import DIFF, PASSED
 from tests.contracts import corpus_v3, recorder_v3
+from tests.contracts.comms import fake_edge
 from tests.contracts.comms.fake_edge import DECODE_ERROR_KEY, FakeEdge
 from tests.contracts.http_corpus import classify_replay
 from tests.contracts.normalizers_v3 import Window, normalize_captures
@@ -852,3 +853,57 @@ def test_a_refused_send_that_made_a_malformed_provider_request_is_a_difference(
     assert outcome == DIFF, (
         f"a refused send that made a malformed Slack request classifies {outcome}: {observed}"
     )
+
+
+# An arrival whose handling fails at any stage is still logged, by host and method, with a marker
+# naming the stage and the error type. A stalled body read ends at the edge's I/O timeout, which
+# these tests shorten so the read fails in about a second.
+STALLED_READ_TIMEOUT_SECONDS = 1.0
+NESTING_DEPTH = 200_000
+TOKEN_FIELD = b'{"text": "' + RAW_BODY_TOKEN.encode() + b'"'
+
+
+def _slack_post(target: str, body: bytes, length: int) -> bytes:
+    """A JSON Slack POST to ``target`` that declares ``length`` body bytes and sends ``body``."""
+    head = (
+        f"POST {target} HTTP/1.1\r\nHost: slack.com\r\nContent-Type: application/json\r\n"
+        f"Content-Length: {length}\r\nConnection: close\r\n\r\n"
+    )
+    return head.encode("latin-1") + body
+
+
+DEEP_BODY = TOKEN_FIELD + b', "nested": ' + b"[" * NESTING_DEPTH
+# Each arrival, the raw request that makes it, and the marker its capture carries.
+FAILING_ARRIVALS: dict[str, tuple[bytes, str]] = {
+    "payload-too-deep": (
+        _slack_post(MALFORMED_PATH, DEEP_BODY, len(DEEP_BODY)),
+        "payload: RecursionError",
+    ),
+    "target-unparseable": (
+        _slack_post("http://[slack.com/api/chat.postMessage", b"", 0),
+        "target: ValueError",
+    ),
+    "body-read-stalls": (
+        _slack_post(MALFORMED_PATH, TOKEN_FIELD, len(TOKEN_FIELD) + 4096),
+        "body: TimeoutError",
+    ),
+}
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("name", sorted(FAILING_ARRIVALS))
+def test_an_arrival_whose_handling_fails_is_captured_with_its_stage(
+    name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    request, expected_marker = FAILING_ARRIVALS[name]
+    monkeypatch.setattr(fake_edge, "IO_TIMEOUT_SECONDS", STALLED_READ_TIMEOUT_SECONDS)
+    with _started_edge(tmp_path) as edge:
+        _send_through_edge(edge, "slack.com", request)
+        arrivals = edge.hits()
+        captured = ProviderEdgeCapture(edge, ["slack.com"]).hits()
+    signatures = [(item["host"], item["method"]) for item in captured]
+    assert signatures == [("slack.com", "POST")], f"{name}: the arrival was captured as {captured}"
+    assert captured[0].get(DECODE_ERROR_KEY) == expected_marker, (
+        f"{name}: the capture {captured[0]} does not carry the marker {expected_marker!r}"
+    )
+    assert RAW_BODY_TOKEN not in json.dumps(arrivals), f"{name}: the edge log keeps the raw body"
