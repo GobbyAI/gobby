@@ -10,6 +10,7 @@ files. A default run replays and compares the observed blocks with the committed
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import contextlib
 import copy
@@ -17,8 +18,9 @@ import dataclasses
 import json
 import os
 import re
+import subprocess
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
 from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
@@ -27,9 +29,11 @@ from typing import Any
 from unittest import mock
 from uuid import UUID
 
+from gobby.config.features import ToolResultOffloadConfig
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
+from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.storage.coordination_waits import CoordinationWaitManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
@@ -56,6 +60,8 @@ WRITE_LABELS = {"workflow_audit": "workflow_audit_log", "rule_allow_audit": "rul
 _UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 _ISO_TIME = re.compile(r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:?\d{2}|Z)?")
 _ABS_PATH = re.compile(r"/(?:Users|home|private|tmp|var)/\S*")
+# A drive-letter checkout path, as a Windows runner prints it (C:\Users\...).
+_WINDOWS_PATH = re.compile(r"[A-Za-z]:\\\S*")
 # A random 16-hex token, such as the heredoc delimiter secrets.token_hex(8) draws per call.
 _RANDOM_TOKEN = re.compile(r"\b[0-9a-f]{16}\b")
 
@@ -82,7 +88,7 @@ def _scrub_text(text: str) -> str:
     text = _UUID.sub("<uuid>", text)
     text = _ISO_TIME.sub("<timestamp>", text)
     text = _RANDOM_TOKEN.sub("<token>", text)
-    return _ABS_PATH.sub("<path>", text)
+    return _WINDOWS_PATH.sub("<path>", _ABS_PATH.sub("<path>", text))
 
 
 def _jsonable(value: Any) -> Any:
@@ -93,6 +99,8 @@ def _jsonable(value: Any) -> Any:
         return value if value == value and abs(value) != float("inf") else str(value)
     if isinstance(value, str):
         return _scrub_text(value)
+    if isinstance(value, bytes):
+        return _scrub_text(value.decode("utf-8", errors="replace"))
     if isinstance(value, Enum):
         return _jsonable(value.value)
     if isinstance(value, UUID):
@@ -112,6 +120,14 @@ def _jsonable(value: Any) -> Any:
         return sorted((_jsonable(item) for item in value), key=repr)
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return _jsonable(dataclasses.asdict(value))
+    if isinstance(value, subprocess.CompletedProcess):
+        return {
+            "returncode": value.returncode,
+            "stdout": _jsonable(value.stdout),
+            "stderr": _jsonable(value.stderr),
+        }
+    if isinstance(value, ast.AST):
+        return _scrub_text(ast.dump(value, include_attributes=False))
     if hasattr(value, "model_dump"):
         return _jsonable(value.model_dump(mode="json"))
     return f"<{type(value).__name__}>"
@@ -317,8 +333,87 @@ async def _run_events(
     return response, initial, variables, error
 
 
+CALLER_KIND = "seam_caller"
+
+
+async def _run_background_delivery(db: PostgresHubDatabase, spec: Mapping[str, Any]) -> Any:
+    """Drive the background run_command delivery that hands its output to the next turn."""
+    engine = RuleEngine(db, metrics_event_store=MetricsEventStore(db))
+    await engine._run_command_then_deliver(
+        [str(part) for part in spec["command"]],
+        str(spec["cwd"]),
+        b"{}",
+        float(spec["timeout_seconds"]),
+        project_id=None,
+        skill=None,
+        script=None,
+        rule_name=str(spec["rule_name"]),
+        rule_id=str(spec["rule_id"]),
+        platform_session_id=str(spec["platform_session_id"]),
+    )
+    return None
+
+
+async def _run_tool_result_offload(db: PostgresHubDatabase, spec: Mapping[str, Any]) -> Any:
+    """Drive the MCP proxy's offload of an oversized successful tool result."""
+    config = ToolResultOffloadConfig(
+        threshold_chars=int(spec["threshold_chars"]),
+        max_envelope_chars=int(spec["max_envelope_chars"]),
+    )
+    offloader = ToolResultOffloader(ToolResultStore(db, config), db, config, lambda: None)
+    return await offloader.maybe_offload(
+        server_name=str(spec["server_name"]),
+        tool_name=str(spec["tool_name"]),
+        result=str(spec["result"]) * int(spec.get("repeat", 1)),
+        session_id=str(spec["session_id"]),
+        intent=None,
+        project_id=str(spec["project_id"]),
+    )
+
+
+CALLERS: dict[str, Callable[[PostgresHubDatabase, Mapping[str, Any]], Awaitable[Any]]] = {
+    "background_delivery": _run_background_delivery,
+    "tool_result_offload": _run_tool_result_offload,
+}
+
+
+async def _guarded_call(
+    caller: Callable[[PostgresHubDatabase, Mapping[str, Any]], Awaitable[Any]],
+    db: PostgresHubDatabase,
+    spec: Mapping[str, Any],
+) -> tuple[Any, str | None]:
+    try:
+        return await caller(db, spec), None
+    except Exception as exc:
+        return None, type(exc).__name__
+
+
+def _observe_caller(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Run a ``seam_caller`` case: one real caller with its seams wrapped, not the rule engine."""
+    recorder = _Recorder(set(case.get("seam_failures", [])))
+    caller = CALLERS[str(case["caller"])]
+    with _hub_database() as db:
+        with contextlib.ExitStack() as stack:
+            _patched_recorder(recorder, stack)
+            returned, error = asyncio.run(_guarded_call(caller, db, case["input"]))
+    if error is not None:
+        recorder.effect_log.append({"raised": error})
+    expect: dict[str, Any] = {
+        "outcome_class": "error" if error is not None else "allow",
+        "eager_variable_delta": {},
+        "on_receipt_payload": None,
+        "effect_log": recorder.effect_log,
+        "audit_records": recorder.audit_records,
+        "response": {},
+        "returned": _jsonable(returned),
+    }
+    return expect, recorder.effect_log
+
+
 def _observe(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Run one case and return ``(expect block, effect log)``."""
+    if case.get("kind") == CALLER_KIND:
+        return _observe_caller(case)
     recorder = _Recorder(set(case.get("seam_failures", [])))
     with _hub_database() as db:
         _seed_rules(db, case["rules"])

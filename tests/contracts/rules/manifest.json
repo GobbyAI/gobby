@@ -2,7 +2,8 @@
   "schema_version": 1,
   "layer": "rules",
   "case_kinds": [
-    "rule_pass"
+    "rule_pass",
+    "seam_caller"
   ],
   "seams": [
     "rule_definitions",
@@ -217,6 +218,11 @@
       "review_gate",
       "plan_mode"
     ]
+  },
+  "response_field_owners": {
+    "system_message": "adapters",
+    "modify_args": "adapters",
+    "trigger_action": "none"
   },
   "platform_record": {
     "macos": "recorded on darwin arm64 (macOS 27) in the P0-DECISIONS worktree",

@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,8 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookResponse
-from tests.contracts import rules_corpus, rules_vectors
+from gobby.storage.tool_results import ToolResultStore
+from tests.contracts import rules_corpus, rules_recorder, rules_vectors
 
 CONTRACTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = CONTRACTS_DIR.parents[1]
@@ -105,13 +107,19 @@ RESPONSE_FIELDS = (
     "trigger_action",
     "metadata",
 )
-# system_message, modify_args and trigger_action are set by the adapters and the route
-# handlers, outside RuleEngine.evaluate, so the rule-pass layer cannot set them. The
-# adapter and pipeline layers cover them.
+MANIFEST_PATH = CORPUS_DIR / "manifest.json"
+RESPONSE_FIELD_OWNER_KEY = "response_field_owners"
+RESPONSE_OWNER_LAYERS = ("adapters", "pipeline", "none")
+# Fields no rule-pass case can set. Each names the layer that covers it, and the manifest
+# records the same owners; "none" means no production code writes the field today.
+RESPONSE_FIELD_OWNERS: dict[str, str] = json.loads(MANIFEST_PATH.read_text()).get(
+    RESPONSE_FIELD_OWNER_KEY, {}
+)
+# A field whose owner is "none" or whose layer emits it has no rule-pass writer; the source scan
+# below fails the day a writer appears, so the owner is revisited with it.
+FIELDS_WITHOUT_RULE_PRODUCER = ("modify_args", "trigger_action")
 ENGINE_RESPONSE_FIELDS = tuple(
-    field
-    for field in RESPONSE_FIELDS
-    if field not in ("system_message", "modify_args", "trigger_action")
+    field for field in RESPONSE_FIELDS if field not in RESPONSE_FIELD_OWNERS
 )
 
 
@@ -444,16 +452,54 @@ def _gobby_imported_names() -> dict[str, set[str]]:
     return imported
 
 
-def _negative_test_names(path: Path) -> set[str]:
+def _negative_test_functions(path: Path) -> dict[str, ast.FunctionDef]:
     tree = ast.parse(path.read_text(), filename=str(path))
     relative = path.relative_to(REPO_ROOT).as_posix()
     return {
-        f"{relative}::{node.name}"
+        f"{relative}::{node.name}": node
         for node in ast.walk(tree)
         if isinstance(node, ast.FunctionDef)
         and node.name.startswith("test_")
         and any(word in node.name.lower() for word in NEGATIVE_WORDS)
     }
+
+
+def _negative_test_names(path: Path) -> set[str]:
+    return set(_negative_test_functions(path))
+
+
+def _parametrize_combinations(function: ast.FunctionDef) -> int:
+    """Return how many cases the function's own ``parametrize`` marks generate."""
+    combinations = 1
+    for decorator in function.decorator_list:
+        if (
+            isinstance(decorator, ast.Call)
+            and ast.unparse(decorator.func) == "pytest.mark.parametrize"
+        ):
+            values = decorator.args[1]
+            if not isinstance(values, ast.List | ast.Tuple):
+                raise AssertionError(f"{function.name}: parametrize values are not a literal list")
+            combinations *= len(values.elts)
+    return combinations
+
+
+def _writers_of(field: str) -> list[str]:
+    """Return ``file:line`` for each call keyword or attribute assignment that names ``field``."""
+    found: list[str] = []
+    for path in sorted((SRC_DIR / "gobby").rglob("*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        location = path.relative_to(REPO_ROOT).as_posix()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                if any(keyword.arg == field for keyword in node.keywords):
+                    found.append(f"{location}:{node.lineno}")
+            elif isinstance(node, ast.Assign | ast.AugAssign | ast.AnnAssign):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                if any(
+                    isinstance(target, ast.Attribute) and target.attr == field for target in targets
+                ):
+                    found.append(f"{location}:{node.lineno}")
+    return found
 
 
 def test_loader_rejects_stale_schema_version(tmp_path: Path) -> None:
@@ -619,12 +665,27 @@ def test_python_normalizer_replays_vectors() -> None:
     entries = {vector["entry"].rsplit(".", 1)[-1] for vector in vectors}
     unexercised = [name for name in NORMALIZER_ENTRY_POINTS if name not in entries]
     assert not unexercised, f"entry points with no vector: {unexercised}"
-    mismatched = [
+    mismatched = _replay_mismatches([vector for vector in vectors if not vector.get("setup")])
+    assert not mismatched, f"normalizer output differs for vectors: {mismatched}"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="fixture repositories run git init and use POSIX checkouts"
+)
+def test_python_normalizer_replays_fixture_vectors() -> None:
+    vectors = json.loads(VECTORS_PATH.read_text())["vectors"]
+    fixtures = [vector for vector in vectors if vector.get("setup")]
+    assert fixtures, "no normalizer vector builds a fixture repository"
+    mismatched = _replay_mismatches(fixtures)
+    assert not mismatched, f"normalizer output differs for fixture vectors: {mismatched}"
+
+
+def _replay_mismatches(vectors: list[dict[str, Any]]) -> list[str]:
+    return [
         vector["id"]
         for vector in vectors
         if rules_corpus.replay_normalizer_vector(vector) != vector["expect"]
     ]
-    assert not mismatched, f"normalizer output differs for vectors: {mismatched}"
 
 
 def test_vectors_cover_every_cross_module_function() -> None:
@@ -753,3 +814,177 @@ def test_rerecord_committed_corpus() -> None:
     assert len(vectors) >= MIN_NORMALIZE_VECTORS, (
         f"{len(vectors)} normalizer vectors after re-record; at least {MIN_NORMALIZE_VECTORS} required"
     )
+
+
+def test_response_field_owners_cover_every_field_the_rules_cannot_set() -> None:
+    manifest = json.loads(MANIFEST_PATH.read_text())
+    owners = manifest.get(RESPONSE_FIELD_OWNER_KEY)
+    assert owners, f"the manifest names no {RESPONSE_FIELD_OWNER_KEY}"
+    required = set(manifest["required"]["response_field"])
+    assert required.isdisjoint(owners), (
+        f"fields both required and owned: {sorted(required & set(owners))}"
+    )
+    assert required | set(owners) == set(RESPONSE_FIELDS), (
+        f"fields with no owner: {sorted(set(RESPONSE_FIELDS) - required - set(owners))}"
+    )
+    unknown = {
+        field: owner for field, owner in owners.items() if owner not in RESPONSE_OWNER_LAYERS
+    }
+    assert not unknown, f"unknown owner layers: {unknown}"
+    assert set(RESPONSE_FIELDS) == {field.name for field in dataclasses.fields(HookResponse)}
+
+
+@pytest.mark.parametrize("field", FIELDS_WITHOUT_RULE_PRODUCER)
+def test_fields_without_a_rule_producer_have_no_src_writer(field: str) -> None:
+    writers = _writers_of(field)
+    assert not writers, f"{field} is now written in src at {writers}; give it an owner layer"
+
+
+def test_negative_vectors_cover_every_parametrize_combination() -> None:
+    vectors = json.loads(VECTORS_PATH.read_text())["vectors"]
+    counts: dict[str, int] = {}
+    for vector in vectors:
+        if vector.get("negative_from"):
+            counts[vector["negative_from"]] = counts.get(vector["negative_from"], 0) + 1
+    short: dict[str, tuple[int, int]] = {}
+    for relative in NEGATIVE_TEST_FILES:
+        for key, function in _negative_test_functions(REPO_ROOT / relative).items():
+            expected = _parametrize_combinations(function)
+            if counts.get(key, 0) != expected:
+                short[key] = (counts.get(key, 0), expected)
+    assert not short, f"replayed (vectors, combinations) per negative test: {short}"
+
+
+def test_nested_wrapper_vectors_record_the_scan_budget() -> None:
+    key = (
+        "tests/workflows/test_command_matching.py::"
+        "test_nested_wrappers_with_many_functions_match_blocks"
+    )
+    vectors = [
+        vector
+        for vector in json.loads(VECTORS_PATH.read_text())["vectors"]
+        if vector.get("negative_from") == key
+    ]
+    assert vectors, "no nested-wrapper negative vectors"
+    for vector in vectors:
+        assert vector.get("scan_budget", {}).get("factor") == 96, (
+            f"{vector['id']} carries no 96x scan budget"
+        )
+        assert vector["expect"] == {
+            "result": True,
+            "scan_within_budget": True,
+            "scan_observed": True,
+        }, f"{vector['id']} does not record the budget outcome"
+
+
+def _failed_seam_entry(seam: str, entry: dict[str, Any]) -> bool:
+    label = rules_recorder.WRITE_LABELS.get(seam)
+    expected = {"write": label} if label else {"seam": seam}
+    return entry.get("outcome") == "failed" and all(
+        entry.get(key) == value for key, value in expected.items()
+    )
+
+
+def test_every_seam_failure_case_records_a_failed_seam_call() -> None:
+    cases = _load_committed_cases()
+    _assert_enough(cases)
+    unfired = [
+        f"{case['id']}:{seam}"
+        for case in cases
+        for seam in case.get("seam_failures", [])
+        if not any(_failed_seam_entry(seam, entry) for entry in case["expect"]["effect_log"])
+    ]
+    assert not unfired, f"injected seam failures that never fire: {unfired}"
+
+
+def test_loader_rejects_manifest_seam_without_a_real_attribute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_corpus(tmp_path, cases=[_synthetic_case()])
+    manifest_path = tmp_path / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["seams"] = [*manifest["seams"], "no_such_seam"]
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="no_such_seam"):
+        rules_corpus.load_corpus(tmp_path)
+    attribute_root = tmp_path / "attribute"
+    _write_corpus(attribute_root, cases=[_synthetic_case()])
+    real_registry = rules_recorder.seam_registry
+
+    def registry_with_missing_attribute() -> dict[str, tuple[object, str]]:
+        return {
+            **real_registry(),
+            "tool_results": (ToolResultStore, "no_such_method"),
+        }
+
+    monkeypatch.setattr(rules_recorder, "seam_registry", registry_with_missing_attribute)
+    with pytest.raises(ValueError, match="no_such_method"):
+        rules_corpus.load_corpus(attribute_root)
+
+
+def test_bundled_loader_accepts_file_level_group_and_audience(tmp_path: Path) -> None:
+    grouped = tmp_path / "grouped.yaml"
+    grouped.write_text(
+        yaml.safe_dump(
+            {
+                "group": "synthetic-group",
+                "audience": "synthetic-audience",
+                "sources": ["claude"],
+                "rules": {
+                    "synthetic-rule": {
+                        "event": "before_tool",
+                        "effects": [{"type": "block", "reason": "synthetic"}],
+                    }
+                },
+            }
+        )
+    )
+    body = rules_corpus.load_rule_body(grouped)["rules"]["synthetic-rule"]["body"]
+    assert body.get("group") == "synthetic-group", f"file-level group lost: {body}"
+    assert body.get("audience") == "synthetic-audience", f"file-level audience lost: {body}"
+    stray = tmp_path / "stray.yaml"
+    stray.write_text(yaml.safe_dump({"bogus_top_level": 1, "rules": {"synthetic-rule": {}}}))
+    with pytest.raises(ValueError, match="bogus_top_level"):
+        rules_corpus.load_rule_body(stray)
+
+
+def test_recorder_scrubs_windows_checkout_paths() -> None:
+    text = rules_recorder._scrub_text(r"opened C:\Users\runner\work\repo\app.py now")
+    assert "runner" not in text and "<path>" in text, text
+
+
+_SCRUB_MARKERS = frozenset({"<uuid>", "<timestamp>", "<token>", "<path>", "<volatile>"})
+
+
+def _string_leaves(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _string_leaves(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _string_leaves(item)
+
+
+def test_expects_name_no_bare_type_placeholder() -> None:
+    vectors = json.loads(VECTORS_PATH.read_text())["vectors"]
+    recorded = [(vector["id"], vector["expect"]) for vector in vectors]
+    recorded += [(case["id"], case["expect"]) for case in _load_committed_cases()]
+    bare = sorted(
+        f"{name}: {leaf}"
+        for name, expect in recorded
+        for leaf in _string_leaves(expect)
+        if re.fullmatch(r"<[A-Za-z_]\w*>", leaf) and leaf not in _SCRUB_MARKERS
+    )
+    assert not bare, f"expects that pin a bare type name instead of their output: {bare}"
+
+
+def test_normalizer_replay_fails_loudly_on_a_missing_entry_point() -> None:
+    vector = {
+        "id": "probe-missing-entry",
+        "entry": "gobby.hooks.checkout_reads.no_such_function_for_test",
+        "input": {"args": [], "kwargs": {}},
+    }
+    with pytest.raises(AttributeError):
+        rules_vectors.replay_vector(vector)

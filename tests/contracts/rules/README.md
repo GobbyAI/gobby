@@ -9,10 +9,16 @@ run over synthetic rules, plus the normalizer functions the rule conditions read
   event, and carries an `expect` block: outcome class, eager variable delta, the staged
   receipt payload, the effect log, the audit records, the non-default response fields and
   any skipped groups.
+- A case of kind `seam_caller` drives one real caller of a seam instead of the rule engine,
+  because the engine never reaches that seam: `background_delivery` runs the background
+  run-command delivery, `tool_result_offload` runs the MCP proxy's result offload. Its
+  `expect` adds the caller's `returned` value.
 - `normalize_vectors.json` holds the normalizer vectors. Eleven entry points each have a
-  vector, every cross-module function in `normalize_modules.json` has one, and 27 negative
-  tests from `tests/workflows/test_command_matching.py` and
-  `tests/hooks/test_code_navigation_recovery.py` replay through their vectors.
+  vector, every cross-module function in `normalize_modules.json` has one, and every
+  parametrize combination of the 27 negative tests in `tests/workflows/test_command_matching.py`
+  and `tests/hooks/test_code_navigation_recovery.py` replays through its own vector. A
+  vector with `scan_budget` meters the scanner it names and records whether the scan stayed
+  within the test's budget.
 - `normalize_modules.json` lists the 46 normalizer modules the vectors cover, with a goal
   clause for each.
 

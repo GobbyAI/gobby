@@ -397,7 +397,7 @@
     },
     {
       "id": "synthetic-seam-fail-inter-session-messages",
-      "kind": "rule_pass",
+      "kind": "seam_caller",
       "provenance": "synthetic",
       "scenario_ids": [
         "S-SEAM-FAIL-INTER-SESSION-MESSAGES"
@@ -405,91 +405,48 @@
       "family": null,
       "observer": null,
       "transition": null,
-      "rules": [
-        {
-          "name": "synthetic-seam-block",
-          "event": "before_tool",
-          "effects": [
-            {
-              "type": "block",
-              "reason": "seam block"
-            }
-          ]
-        }
-      ],
-      "event": {
-        "type": "before_tool",
-        "source": "claude",
-        "data": {
-          "tool_name": "Bash",
-          "tool_input": {
-            "command": "echo hi"
-          }
-        },
-        "metadata": {}
+      "caller": "background_delivery",
+      "input": {
+        "command": [
+          "/bin/sh",
+          "-c",
+          "echo '{\"additionalContext\": \"synthetic\"}'"
+        ],
+        "cwd": "/",
+        "timeout_seconds": 30,
+        "rule_name": "synthetic-seam-background",
+        "rule_id": "synthetic-rule-id",
+        "platform_session_id": "11111111-1111-4111-8111-111111111111"
       },
+      "rules": [],
+      "event": {},
       "seam_failures": [
         "inter_session_messages"
       ],
       "expect": {
-        "outcome_class": "block",
-        "eager_variable_delta": {
-          "project": {
-            "name": "Unknown",
-            "id": "unknown",
-            "path": ""
-          },
-          "_gobby_feedback_survey_active": false,
-          "_last_blocked_tool": "Bash",
-          "_last_blocked_rule_name": "synthetic-seam-block",
-          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-seam-block]\nseam block",
-          "_last_blocked_recovery_conditions": [],
-          "_block_reasons_shown": [
-            "synthetic-seam-block:<token>"
-          ]
-        },
+        "outcome_class": "allow",
+        "eager_variable_delta": {},
         "on_receipt_payload": null,
         "effect_log": [
-          {
-            "event": "before_tool"
-          },
-          {
-            "seam": "rule_definitions",
-            "call": "list_by_event",
-            "outcome": "ok"
-          },
-          {
-            "seam": "metrics_events",
-            "call": "record_events",
-            "outcome": "ok"
-          },
-          {
-            "write": "rule_eval",
-            "call": "record_rule_evaluation",
-            "outcome": "ok"
-          },
           {
             "write": "workflow_audit_log",
             "call": "log",
             "outcome": "ok"
-          }
-        ],
-        "audit_records": [
+          },
           {
-            "rule": "synthetic-seam-block",
-            "result": "block",
-            "event": "before_tool"
+            "seam": "inter_session_messages",
+            "call": "create_message",
+            "outcome": "failed"
           }
         ],
-        "response": {
-          "decision": "block",
-          "reason": "Rule enforced by Gobby: [synthetic-seam-block]\nseam block"
-        }
+        "audit_records": [],
+        "response": {},
+        "returned": null
       }
     },
     {
       "id": "synthetic-seam-fail-tool-results",
-      "kind": "rule_pass",
+      "kind": "seam_caller",
       "provenance": "synthetic",
       "scenario_ids": [
         "S-SEAM-FAIL-TOOL-RESULTS"
@@ -497,85 +454,48 @@
       "family": null,
       "observer": null,
       "transition": null,
-      "rules": [
-        {
-          "name": "synthetic-seam-block",
-          "event": "before_tool",
-          "effects": [
-            {
-              "type": "block",
-              "reason": "seam block"
-            }
-          ]
-        }
-      ],
-      "event": {
-        "type": "before_tool",
-        "source": "claude",
-        "data": {
-          "tool_name": "Bash",
-          "tool_input": {
-            "command": "echo hi"
-          }
-        },
-        "metadata": {}
+      "caller": "tool_result_offload",
+      "input": {
+        "server_name": "synthetic-server",
+        "tool_name": "synthetic-tool",
+        "result": "synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic",
+        "session_id": "synthetic-session",
+        "project_id": "synthetic-project",
+        "repeat": 4,
+        "threshold_chars": 2500,
+        "max_envelope_chars": 2000
       },
+      "rules": [],
+      "event": {},
       "seam_failures": [
         "tool_results"
       ],
       "expect": {
-        "outcome_class": "block",
-        "eager_variable_delta": {
-          "project": {
-            "name": "Unknown",
-            "id": "unknown",
-            "path": ""
-          },
-          "_gobby_feedback_survey_active": false,
-          "_last_blocked_tool": "Bash",
-          "_last_blocked_rule_name": "synthetic-seam-block",
-          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-seam-block]\nseam block",
-          "_last_blocked_recovery_conditions": [],
-          "_block_reasons_shown": [
-            "synthetic-seam-block:<token>"
-          ]
-        },
+        "outcome_class": "allow",
+        "eager_variable_delta": {},
         "on_receipt_payload": null,
         "effect_log": [
           {
-            "event": "before_tool"
-          },
-          {
-            "seam": "rule_definitions",
-            "call": "list_by_event",
-            "outcome": "ok"
-          },
-          {
-            "seam": "metrics_events",
-            "call": "record_events",
-            "outcome": "ok"
-          },
-          {
-            "write": "rule_eval",
-            "call": "record_rule_evaluation",
-            "outcome": "ok"
-          },
-          {
-            "write": "workflow_audit_log",
-            "call": "log",
-            "outcome": "ok"
+            "seam": "tool_results",
+            "call": "save",
+            "outcome": "failed"
           }
         ],
-        "audit_records": [
-          {
-            "rule": "synthetic-seam-block",
-            "result": "block",
-            "event": "before_tool"
-          }
-        ],
-        "response": {
-          "decision": "block",
-          "reason": "Rule enforced by Gobby: [synthetic-seam-block]\nseam block"
+        "audit_records": [],
+        "response": {},
+        "returned": {
+          "offloaded": true,
+          "server_name": "synthetic-server",
+          "tool_name": "synthetic-tool",
+          "content_kind": "text",
+          "total_chars": 3556,
+          "stored_chars": 0,
+          "retrieval_available": false,
+          "guidance": "Output exceeded 2500 chars. Storage failed, so retrieval is unavailable; the omitted tail cannot be retrieved from Gobby. The source system still holds the original.",
+          "structure": {
+            "type": "text"
+          },
+          "preview": "synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic syntheticsynthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic synthetic syn"
         }
       }
     },

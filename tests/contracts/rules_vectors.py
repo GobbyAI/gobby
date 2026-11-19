@@ -14,16 +14,23 @@ of positional ``args`` and keyword ``kwargs``, all JSON-native. Optional fields:
   ``*_at`` strings parsed as datetimes.
 - ``result_from_arg``: the index of an argument to return instead of the call's result,
   for functions that mutate their arguments and return None.
+- ``scan_budget``: ``{"target": "<module>.<scanner>", "factor": N}``. The scanner named by
+  ``target`` is metered during the call; the expect block then carries ``result`` plus
+  ``scan_within_budget`` (characters scanned at most N times the input length) and
+  ``scan_observed`` (at least the input length was scanned).
 - ``negative_from``: the test function whose assertion the vector replays.
 
-A function that raises is recorded as ``{"raised": <type name>}``. The expect block is
-the output scrubbed by ``rules_recorder._jsonable``, so volatile values and checkout
-paths compare equal across runs.
+A function that raises is recorded as ``{"raised": <type name>}``. Names, prepare steps and
+constructed arguments resolve before the call, so a missing entry point is an error, not a
+recorded output. A returned context manager is entered and its yielded value is recorded.
+The expect block is the output scrubbed by ``rules_recorder._jsonable``, so volatile values
+and checkout paths compare equal across runs.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import importlib
 import inspect
@@ -31,9 +38,11 @@ import json
 import os
 import subprocess
 import tempfile
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from tests.contracts import rules_recorder
 
@@ -96,23 +105,64 @@ async def _await(awaitable: Any) -> Any:
     return await awaitable
 
 
+class _ScanMeter:
+    """Counts the characters a metered scanner receives during one replay."""
+
+    def __init__(self, subject: str, factor: int) -> None:
+        self.subject_length = len(subject)
+        self.limit = factor * len(subject)
+        self.scanned = 0
+
+    def wrap(self, original: Callable[..., Any]) -> Callable[..., Any]:
+        def metered(subject: str, *args: Any, **kwargs: Any) -> Any:
+            self.scanned += len(subject)
+            return original(subject, *args, **kwargs)
+
+        return metered
+
+    def outcome(self) -> dict[str, bool]:
+        return {
+            "scan_within_budget": self.scanned <= self.limit,
+            "scan_observed": self.scanned >= self.subject_length,
+        }
+
+
 def _call(vector: dict[str, Any], repo: Path | None) -> Any:
     arguments = _substitute(vector.get("input", {}), repo)
     args = list(arguments.get("args", []))
     kwargs = dict(arguments.get("kwargs", {}))
-    try:
-        for spec in vector.get("construct", []):
-            args[spec["index"]] = _build(spec)
-        for name in vector.get("prepare", []):
-            resolve_entry(name)(args[0])
-        result = resolve_entry(vector["entry"])(*args, **kwargs)
-        if inspect.isawaitable(result):
-            result = asyncio.run(_await(result))
-    except Exception as exc:
-        return {"raised": type(exc).__name__}
+    # Resolve everything the call needs before the try: a missing entry point or prepare step,
+    # or a fixture that does not build, must fail the replay rather than be recorded as output.
+    for spec in vector.get("construct", []):
+        args[spec["index"]] = _build(spec)
+    prepares = [resolve_entry(name) for name in vector.get("prepare", [])]
+    entry = resolve_entry(vector["entry"])
+    budget = vector.get("scan_budget")
+    meter = _ScanMeter(str(args[0]), budget["factor"]) if budget else None
+    with contextlib.ExitStack() as stack:
+        if budget is not None and meter is not None:
+            module_name, _, attribute = budget["target"].rpartition(".")
+            module = importlib.import_module(module_name)
+            stack.enter_context(
+                mock.patch.object(module, attribute, meter.wrap(getattr(module, attribute)))
+            )
+        try:
+            for prepare in prepares:
+                prepare(args[0])
+            result = entry(*args, **kwargs)
+            if inspect.isawaitable(result):
+                result = asyncio.run(_await(result))
+            if isinstance(result, contextlib.AbstractContextManager):
+                with result as entered:
+                    result = entered
+        except Exception as exc:
+            return {"raised": type(exc).__name__}
     if "result_from_arg" in vector:
         result = args[vector["result_from_arg"]]
-    return rules_recorder._jsonable(result)
+    value = rules_recorder._jsonable(result)
+    if meter is not None:
+        return {"result": value, **meter.outcome()}
+    return value
 
 
 def replay_vector(vector: dict[str, Any]) -> Any:

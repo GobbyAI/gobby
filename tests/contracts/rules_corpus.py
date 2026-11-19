@@ -45,7 +45,10 @@ SKIPPED_GROUPS_KEY = "skipped_groups"
 RESPONSE_KEY = "response"
 EFFECT_TYPES: tuple[str, ...] = tuple(get_args(RuleEffect.model_fields["type"].annotation))
 DELIVERY_CLASSES: tuple[str, ...] = tuple(get_args(RuleEffect.model_fields["delivery"].annotation))
-BUNDLED_TOP_LEVEL_KEYS = frozenset({"rules", "version", "tags", "description"})
+# The file-level keys the engine's file loader reads (workflows/sync_rules.py) besides rules.
+BUNDLED_TOP_LEVEL_KEYS = frozenset(
+    {"rules", "version", "tags", "description", "group", "audience", "sources"}
+)
 _LABELLED_ID = re.compile(r"^S-(FAM|OBS)-(.+)-(?:ALLOW|BLOCK|SEAMERR|OBSERVED|NOTOBSERVED)$")
 
 
@@ -103,8 +106,9 @@ def validate_case(case: dict[str, Any]) -> None:
 def load_corpus(corpus_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Return ``(manifest, cases)`` for a corpus directory.
 
-    Validates ``schema_version``, case kinds and seam names against the manifest and
-    raises ``ValueError`` naming the offender.
+    Validates ``schema_version``, case kinds and seam names against the manifest, and checks
+    every registry seam against the real attribute it wraps. Raises ``ValueError`` naming
+    the offender.
     """
     manifest_path = corpus_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text())
@@ -113,7 +117,15 @@ def load_corpus(corpus_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]
         raise ValueError(
             f"{manifest_path.name}: schema_version {version!r} is not {SCHEMA_VERSION}"
         )
+    registry = seam_registry()
+    for kind, (owner, attribute) in registry.items():
+        if not hasattr(owner, attribute):
+            owner_name = getattr(owner, "__name__", type(owner).__name__)
+            raise ValueError(f"seam {kind!r}: {owner_name} has no attribute {attribute!r} to wrap")
     seams = set(manifest.get("seams", []))
+    unknown_seams = sorted(seams - set(registry))
+    if unknown_seams:
+        raise ValueError(f"{manifest_path.name}: seam(s) not in the seam registry: {unknown_seams}")
     kinds = set(manifest.get("case_kinds", []))
     cases: list[dict[str, Any]] = []
     seen: set[str] = set()
