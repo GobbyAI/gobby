@@ -5,11 +5,13 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Debug;
+use std::time::Duration;
 
 use gobby_core::schema::SchemaIdentityContract;
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::{Value, json};
+use tokio::time::timeout;
 
 use super::{
     ACCEPTED_WORKER_PROTOCOL_VERSIONS, ChannelError, ErrorBody, GenerationSource, HandshakeField,
@@ -56,7 +58,11 @@ impl ScriptedChannel {
 }
 
 impl WorkerChannel for ScriptedChannel {
-    async fn exchange(&mut self, request: &[u8]) -> Result<Vec<u8>, ChannelError> {
+    async fn exchange(
+        &mut self,
+        request: &[u8],
+        _reply_limit: usize,
+    ) -> Result<Vec<u8>, ChannelError> {
         self.requests.push(request.to_vec());
         self.replies
             .pop_front()
@@ -392,6 +398,34 @@ async fn handshake_lost_reply_is_unknown_and_not_resent() {
     assert_eq!(outcome.generation, 7);
     assert_eq!(outcome.operation_id, "7:1");
     assert_eq!(channel.requests.len(), 1, "a lost reply is never resent");
+}
+
+/// A peer that never answers.
+struct SilentChannel;
+
+impl WorkerChannel for SilentChannel {
+    async fn exchange(
+        &mut self,
+        _request: &[u8],
+        _reply_limit: usize,
+    ) -> Result<Vec<u8>, ChannelError> {
+        std::future::pending().await
+    }
+}
+
+/// A handshake whose peer never answers ends at its deadline as an unknown outcome. The clock is
+/// paused, so the 120 second bound is virtual time, and a wait with no deadline never returns.
+#[tokio::test(start_paused = true)]
+async fn handshake_without_answer_is_channel_error_at_deadline() {
+    let outcome = timeout(
+        Duration::from_secs(120),
+        perform_handshake(&mut SilentChannel, &mut session_at(7), CREDENTIAL),
+    )
+    .await;
+    assert!(
+        matches!(outcome, Ok(Err(WorkerCallError::Unknown(_)))),
+        "a silent peer ends the handshake as an unknown outcome at its deadline: {outcome:?}"
+    );
 }
 
 #[cfg(unix)]

@@ -11,6 +11,7 @@
 
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use gobby_core::schema::SchemaIdentityContract;
 use serde::Deserialize;
@@ -27,6 +28,14 @@ pub const ACCEPTED_WORKER_PROTOCOL_VERSIONS: &[u32] = &[1];
 pub const MAX_WORKER_REQUEST_BYTES: usize = 65_536;
 /// Bound for invoke requests (the hook route's bound).
 pub const MAX_DOMAIN_OP_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+/// Bound for handshake and initialize replies. A larger frame is a channel error.
+pub const MAX_WORKER_REPLY_BYTES: usize = 65_536;
+/// Bound for invoke replies. A larger frame is a channel error.
+pub const MAX_DOMAIN_OP_REPLY_BYTES: usize = 16 * 1024 * 1024;
+/// Longest a handshake may wait for its reply before the wait is a channel error.
+pub const HANDSHAKE_REPLY_DEADLINE: Duration = Duration::from_secs(60);
+/// Longest an initialize or invoke may wait for its reply before the wait is a channel error.
+pub const COMMAND_REPLY_DEADLINE: Duration = Duration::from_secs(300);
 
 const HANDSHAKE: &str = "handshake";
 const INITIALIZE: &str = "initialize";
@@ -177,9 +186,11 @@ pub struct ChannelError;
 
 /// One request-reply exchange with the worker. A caller performs one exchange per command.
 pub trait WorkerChannel {
+    /// Sends `request` and returns the reply, which is at most `reply_limit` bytes.
     fn exchange(
         &mut self,
         request: &[u8],
+        reply_limit: usize,
     ) -> impl Future<Output = Result<Vec<u8>, ChannelError>> + Send;
 }
 
@@ -337,6 +348,7 @@ pub async fn perform_handshake<C: WorkerChannel>(
         HANDSHAKE,
         json!({ "credential": credential }),
         MAX_WORKER_REQUEST_BYTES,
+        MAX_WORKER_REPLY_BYTES,
     )
     .await?;
     let value = into_result(&call, reply)?;
@@ -358,6 +370,7 @@ pub async fn perform_initialize<C: WorkerChannel>(
         INITIALIZE,
         json!({ "phase": phase }),
         MAX_WORKER_REQUEST_BYTES,
+        MAX_WORKER_REPLY_BYTES,
     )
     .await?;
     let value = into_result(&call, reply)?;
@@ -379,6 +392,7 @@ pub async fn perform_invoke<C: WorkerChannel>(
         INVOKE,
         json!({ "op": op, "params": params }),
         MAX_DOMAIN_OP_REQUEST_BYTES,
+        MAX_DOMAIN_OP_REPLY_BYTES,
     )
     .await?;
     into_result(&call, reply)
@@ -390,7 +404,8 @@ async fn exchange<C: WorkerChannel>(
     session: &mut WorkerSession,
     command: &'static str,
     body: Value,
-    limit: usize,
+    request_limit: usize,
+    reply_limit: usize,
 ) -> Result<(Call, Reply), WorkerCallError> {
     let call = Call {
         command,
@@ -406,14 +421,14 @@ async fn exchange<C: WorkerChannel>(
     })
     .to_string()
     .into_bytes();
-    if request.len() > limit {
+    if request.len() > request_limit {
         return Err(WorkerCallError::RequestTooLarge {
             bytes: request.len(),
-            limit,
+            limit: request_limit,
         });
     }
     let reply_bytes = channel
-        .exchange(&request)
+        .exchange(&request, reply_limit)
         .await
         .map_err(|ChannelError| call.unknown())?;
     let reply = read_reply(&reply_bytes, &call).map_err(|violation| call.violation(violation))?;

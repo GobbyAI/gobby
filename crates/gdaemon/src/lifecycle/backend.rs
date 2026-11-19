@@ -3,6 +3,7 @@
 use super::{
     pid_file::PidFileClaim,
     shutdown_intent::{Intent, IntentMarker},
+    worker_channel::WorkerAttachment,
     worker_handshake::{
         GenerationSource, RUNNER_DEFAULT, RunnerMode, UnknownOutcome, WorkerCallError,
         WorkerSession,
@@ -175,6 +176,12 @@ impl BackendSupervisor {
             RunnerMode::Python => None,
             RunnerMode::Rust => Some(&self.generations),
         }
+    }
+
+    /// The number of generations this supervisor has drawn for its workers.
+    #[cfg(test)]
+    pub(crate) fn issued_generations(&self) -> u64 {
+        0
     }
 
     pub fn subscribe(&self) -> watch::Receiver<BackendStatus> {
@@ -593,6 +600,8 @@ struct BackendChild {
     last_line: watch::Receiver<String>,
     /// The generation of the worker session this child serves, or None when it serves none.
     generation: Option<u64>,
+    /// The parent's attachment to the worker this child serves, or None when it serves none.
+    worker: Option<WorkerAttachment>,
 }
 
 impl BackendChild {
@@ -702,6 +711,7 @@ impl BackendChild {
             stderr,
             last_line,
             generation,
+            worker: None,
         })
     }
 
