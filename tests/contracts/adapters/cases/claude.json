@@ -210,8 +210,8 @@
         "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
         "cwd": "/srv/app",
         "permission_mode": "default",
-        "prompt": "/review",
-        "expanded_prompt": "Review the staged diff."
+        "prompt": "/summarize-diff",
+        "expanded_prompt": "Summarize the staged diff."
       },
       "expect": {
         "event": {
@@ -225,8 +225,8 @@
             "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
             "cwd": "/srv/app",
             "permission_mode": "default",
-            "prompt": "/review",
-            "expanded_prompt": "Review the staged diff.",
+            "prompt": "/summarize-diff",
+            "expanded_prompt": "Summarize the staged diff.",
             "canonical_code_navigation_segments": []
           },
           "machine_id": null,

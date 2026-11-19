@@ -8,15 +8,18 @@ pipeline reads.
   collaborators that are injected but never read (`unread_collaborators`), the required
   scenarios, the sources and the platform record.
 - `cases/handlers.json`: one `event` case per handler-map event type, delivered from a native
-  provider payload. An event no adapter produces (`before_tool_selection`) is delivered as the
-  hook event itself and says why in `reason`.
+  provider payload. An event type that no adapter the hooks route builds maps a hook to
+  (`before_tool_selection`, listed only by the abstract ACP base adapter) is delivered as the
+  hook event itself and says why in `reason`; a test fails if a routed adapter maps it.
 - `cases/session_start.json`: session start for resumed, cleared and compacted sessions.
 - `cases/edge.json`: a first prompt that activates a deferred session, a node delivery whose
   session has no row, a blocking webhook, a synthetic rule block that short-circuits the
   handler, and a resume whose response carries the session banner.
 - `cases/failures.json`: one `collaborator_failure` case per collaborator kind. The failure
   lives only in `failing_collaborator` and `failure`; removing those keys leaves the healthy
-  twin, whose outcome differs.
+  twin, whose outcome differs. A collaborator that is injected but never read (`call_tool`)
+  has a failing case too: it records the healthy response, and the reach check makes the
+  case's handler read the collaborator, which must change the outcome.
 
 Each case may carry `setup` deliveries, run with recording off, that bring the session to the
 state the case needs. `expect` holds the event type, the non-default response fields, the

@@ -413,7 +413,7 @@
           "status": 200,
           "json": {
             "decision": "block",
-            "reason": "Pushes to main need review."
+            "reason": "Pushes to main need a passing build."
           }
         }
       },
@@ -421,14 +421,14 @@
         "event_type": "before_tool",
         "response": {
           "decision": "block",
-          "reason": "Pushes to main need review."
+          "reason": "Pushes to main need a passing build."
         },
         "native_output": {
           "continue": true,
           "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "deny",
-            "permissionDecisionReason": "Pushes to main need review."
+            "permissionDecisionReason": "Pushes to main need a passing build."
           }
         },
         "collaborator_calls": [

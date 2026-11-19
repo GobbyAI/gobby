@@ -29,7 +29,7 @@ import re
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal, cast
 from unittest import mock
 
 from fastapi import FastAPI
@@ -47,6 +47,9 @@ from gobby.servers.routes.mcp.hooks import create_hooks_router
 from gobby.utils import machine_id as machine_id_module
 from tests.contracts.rules_recorder import RECORD_ENV, _jsonable
 
+if TYPE_CHECKING:
+    from gobby.servers.http import HTTPServer
+
 ADAPTERS: dict[str, Any] = {
     "claude": ClaudeCodeAdapter,
     "codex": CodexHooksAdapter,
@@ -59,7 +62,7 @@ TRANSLATION_METHODS = ("translate_to_hook_event", "translate_from_hook_response"
 # The hub's machine id during a replay, and the paired node a node-origin case comes from.
 HUB_MACHINE_ID = "7a1e2b3c-4d5e-4f60-8172-839405162738"
 NODE_MACHINE_ID = "0f1e2d3c-4b5a-4968-8776-655443322110"
-GIT_VERDICT_DECISIONS = {"allow": "allow", "block": "block"}
+GIT_VERDICT_DECISIONS: dict[str, Literal["allow", "block"]] = {"allow": "allow", "block": "block"}
 _SUPPORTED = re.compile(r"Supported: (.*)$")
 
 
@@ -103,7 +106,7 @@ def _git_output(case: Mapping[str, Any]) -> dict[str, Any]:
     adapter = GitAdapter()
     observed = _event_output(adapter, case)
     response = HookResponse(
-        decision=GIT_VERDICT_DECISIONS[case["verdict"]],  # type: ignore[arg-type]
+        decision=GIT_VERDICT_DECISIONS[case["verdict"]],
         reason=case.get("reason"),
     )
     output = adapter.translate_from_hook_response(response, hook_type=case["hook_type"])
@@ -121,7 +124,9 @@ def _counting(calls: list[str], name: str, method: Callable[..., Any]) -> Callab
 def _refusal_output(case: Mapping[str, Any]) -> dict[str, Any]:
     calls: list[str] = []
     app = FastAPI()
-    app.include_router(create_hooks_router(SimpleNamespace(services=None)))  # type: ignore[arg-type]
+    # The route refuses these requests before it needs a real server, so a stand-in serves.
+    server = cast("HTTPServer", SimpleNamespace(services=None))
+    app.include_router(create_hooks_router(server))
     app.state.hook_manager = SimpleNamespace()
     with contextlib.ExitStack() as stack:
         for name, adapter in ADAPTERS.items():

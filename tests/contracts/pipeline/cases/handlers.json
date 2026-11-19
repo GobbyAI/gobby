@@ -488,8 +488,8 @@
         "cwd": "<project>",
         "machine_id": "<machine>",
         "permission_mode": "default",
-        "prompt": "/review",
-        "expanded_prompt": "Review the staged diff."
+        "prompt": "/summarize-diff",
+        "expanded_prompt": "Summarize the staged diff."
       },
       "collaborator_script": [],
       "expect": {
@@ -3689,7 +3689,6 @@
             ],
             "modelName": "gemini-3-flash-agent",
             "initialNumSteps": 1,
-            "cwd": "<project>",
             "machine_id": "<machine>",
             "source": "startup"
           }
@@ -3706,10 +3705,8 @@
             ],
             "modelName": "gemini-3-flash-agent",
             "initialNumSteps": 1,
-            "cwd": "<project>",
             "machine_id": "<machine>",
-            "invocationNum": 0,
-            "prompt": "Add a docstring."
+            "invocationNum": 0
           }
         }
       ],
@@ -3724,7 +3721,6 @@
         ],
         "modelName": "gemini-3-flash-agent",
         "initialNumSteps": 1,
-        "cwd": "<project>",
         "machine_id": "<machine>",
         "invocationNum": 0
       },
@@ -3832,7 +3828,7 @@
           ]
         }
       },
-      "reason": "no provider adapter produces before_tool_selection",
+      "reason": "no adapter the hooks route builds maps a hook to before_tool_selection; only the abstract ACP base adapter, whose source raises NotImplementedError, lists BeforeToolSelection",
       "collaborator_script": [],
       "expect": {
         "event_type": "before_tool_selection",

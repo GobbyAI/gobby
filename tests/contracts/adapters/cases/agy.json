@@ -78,8 +78,7 @@
         ],
         "modelName": "gemini-3-flash-agent",
         "initialNumSteps": 1,
-        "invocationNum": 0,
-        "prompt": "Add a docstring to the parser."
+        "invocationNum": 0
       },
       "expect": {
         "event": {
@@ -97,7 +96,6 @@
             "modelName": "gemini-3-flash-agent",
             "initialNumSteps": 1,
             "invocationNum": 0,
-            "prompt": "Add a docstring to the parser.",
             "session_id": "<uuid>",
             "transcript_path": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
             "workspace_paths": [
@@ -143,7 +141,6 @@
           "/srv/app"
         ],
         "modelName": "gemini-3-flash-agent",
-        "initialNumSteps": 1,
         "stepIdx": 2,
         "toolCall": {
           "name": "run_command",
@@ -166,7 +163,6 @@
               "/srv/app"
             ],
             "modelName": "gemini-3-flash-agent",
-            "initialNumSteps": 1,
             "stepIdx": 2,
             "toolCall": {
               "name": "run_command",
@@ -183,7 +179,6 @@
             "artifact_directory_path": "/srv/agy/brain/<uuid>",
             "model": "gemini-3-flash-agent",
             "step_idx": 2,
-            "initial_num_steps": 1,
             "tool_name": "Bash",
             "tool_input": {
               "CommandLine": "go test ./...",
@@ -237,15 +232,14 @@
           "/srv/app"
         ],
         "modelName": "gemini-3-flash-agent",
-        "initialNumSteps": 1,
+        "error": "",
         "stepIdx": 2,
         "toolCall": {
           "name": "run_command",
           "args": {
             "CommandLine": "go test ./..."
           }
-        },
-        "toolResult": "ok  \tparser\t0.2s\nThe command exited with code 0."
+        }
       },
       "expect": {
         "event": {
@@ -261,7 +255,7 @@
               "/srv/app"
             ],
             "modelName": "gemini-3-flash-agent",
-            "initialNumSteps": 1,
+            "error": "",
             "stepIdx": 2,
             "toolCall": {
               "name": "run_command",
@@ -270,7 +264,6 @@
                 "command": "go test ./..."
               }
             },
-            "toolResult": "ok  \tparser\t0.2s\nThe command exited with code 0.",
             "session_id": "<uuid>",
             "transcript_path": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
             "workspace_paths": [
@@ -279,7 +272,6 @@
             "artifact_directory_path": "/srv/agy/brain/<uuid>",
             "model": "gemini-3-flash-agent",
             "step_idx": 2,
-            "initial_num_steps": 1,
             "tool_name": "Bash",
             "tool_input": {
               "CommandLine": "go test ./...",
@@ -337,8 +329,7 @@
         ],
         "modelName": "gemini-3-flash-agent",
         "initialNumSteps": 1,
-        "invocationNum": 0,
-        "executionNum": 1
+        "invocationNum": 0
       },
       "expect": {
         "event": {
@@ -356,7 +347,6 @@
             "modelName": "gemini-3-flash-agent",
             "initialNumSteps": 1,
             "invocationNum": 0,
-            "executionNum": 1,
             "session_id": "<uuid>",
             "transcript_path": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
             "workspace_paths": [
@@ -366,7 +356,6 @@
             "model": "gemini-3-flash-agent",
             "invocation_num": 0,
             "initial_num_steps": 1,
-            "execution_num": 1,
             "cwd": "/srv/app",
             "canonical_code_navigation_segments": []
           },
@@ -403,8 +392,9 @@
           "/srv/app"
         ],
         "modelName": "gemini-3-flash-agent",
-        "initialNumSteps": 1,
-        "terminationReason": "completed",
+        "error": "",
+        "executionNum": 0,
+        "terminationReason": "NO_TOOL_CALL",
         "fullyIdle": true
       },
       "expect": {
@@ -421,8 +411,9 @@
               "/srv/app"
             ],
             "modelName": "gemini-3-flash-agent",
-            "initialNumSteps": 1,
-            "terminationReason": "completed",
+            "error": "",
+            "executionNum": 0,
+            "terminationReason": "NO_TOOL_CALL",
             "fullyIdle": true,
             "session_id": "<uuid>",
             "transcript_path": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
@@ -431,8 +422,8 @@
             ],
             "artifact_directory_path": "/srv/agy/brain/<uuid>",
             "model": "gemini-3-flash-agent",
-            "initial_num_steps": 1,
-            "termination_reason": "completed",
+            "execution_num": 0,
+            "termination_reason": "NO_TOOL_CALL",
             "fully_idle": true,
             "cwd": "/srv/app",
             "canonical_code_navigation_segments": []

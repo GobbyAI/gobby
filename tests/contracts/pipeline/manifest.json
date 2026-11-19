@@ -18,6 +18,7 @@
     "progress_tracker",
     "session_end_auto_link_worker",
     "skill_manager",
+    "call_tool",
     "workflow_config_resolver",
     "get_machine_id",
     "resolve_project_id",
@@ -29,7 +30,7 @@
     "broadcaster"
   ],
   "unread_collaborators": {
-    "call_tool": "injected into EventHandlers by the factory, but no handler reads it"
+    "call_tool": "injected into EventHandlers by the factory, but no handler reads it; its failing case records the healthy response"
   },
   "required": {
     "scenario": [

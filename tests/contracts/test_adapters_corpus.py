@@ -37,7 +37,7 @@ from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl import hooks_adapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
-from gobby.adapters.git import GitAdapter
+from gobby.adapters.git import GIT_TOOL_NAME, GitAdapter
 from gobby.adapters.grok import GrokAdapter
 from gobby.servers.routes.mcp.hooks import SUPPORTED_HOOK_SOURCES
 from gobby.sessions.transcripts import agy as agy_transcripts
@@ -61,6 +61,7 @@ CASE_KINDS = ("inbound", "outbound", "node_origin", "git_verdict", "route_refusa
 # modify_args, so each of these needs an outbound case of its own, whatever the source.
 ADAPTER_OWNED_RESPONSE_FIELDS = ("system_message", "modify_args")
 GIT_VERDICTS = ("allow", "block")
+GIT_GUARD_HOOK = "PreToolUse"
 ROUTE_REFUSALS = ("unknown_source", "malformed_payload")
 REFUSAL_STATUS = 400
 TRANSLATION_METHODS = ("translate_to_hook_event", "translate_from_hook_response")
@@ -355,6 +356,15 @@ def test_git_source_covers_event_and_both_verdicts() -> None:
     verdicts = {case.get("verdict") for case in git_cases}
     missing = [verdict for verdict in GIT_VERDICTS if verdict not in verdicts]
     assert not missing, f"git source lacks verdict(s): {missing}"
+    # The installed guard posts the hook type and payload names below (git_hooks installer).
+    not_guard = [
+        case["id"]
+        for case in git_cases
+        if case.get("hook_type") != GIT_GUARD_HOOK
+        or case["payload"].get("hook_event_name") != GIT_GUARD_HOOK
+        or case["payload"].get("tool_name") != GIT_TOOL_NAME
+    ]
+    assert not not_guard, f"git cases that do not carry the guard's payload: {not_guard}"
 
 
 def test_unknown_source_and_malformed_payload_refused() -> None:

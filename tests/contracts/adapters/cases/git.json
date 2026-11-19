@@ -5,18 +5,20 @@
       "kind": "git_verdict",
       "source": "git",
       "provenance": "synthetic",
-      "hook_type": "pre-commit",
+      "hook_type": "PreToolUse",
       "payload": {
         "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
         "cwd": "/srv/app",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "git commit"
+        },
         "staged_paths": [
           "src/parser.py",
           "tests/test_parser.py"
         ],
-        "integration_branch": "main",
-        "tool_input": {
-          "command": "git commit -m 'Add the parser test'"
-        }
+        "integration_branch": "main"
       },
       "verdict": "allow",
       "expect": {
@@ -28,7 +30,7 @@
           "data": {
             "tool_name": "Bash",
             "tool_input": {
-              "command": "git commit -m 'Add the parser test'"
+              "command": "git commit"
             },
             "staged_paths": [
               "src/parser.py",
@@ -62,18 +64,20 @@
       "kind": "git_verdict",
       "source": "git",
       "provenance": "synthetic",
-      "hook_type": "pre-commit",
+      "hook_type": "PreToolUse",
       "payload": {
         "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
         "cwd": "/srv/app",
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "git commit"
+        },
         "staged_paths": [
           "src/parser.py",
           "tests/test_parser.py"
         ],
-        "integration_branch": "main",
-        "tool_input": {
-          "command": "git commit -m 'Add the parser test'"
-        }
+        "integration_branch": "main"
       },
       "verdict": "block",
       "reason": "Commits to main need a linked task.",
@@ -86,7 +90,7 @@
           "data": {
             "tool_name": "Bash",
             "tool_input": {
-              "command": "git commit -m 'Add the parser test'"
+              "command": "git commit"
             },
             "staged_paths": [
               "src/parser.py",

@@ -31,7 +31,8 @@ from gobby.hooks.events import HookEventType
 from gobby.hooks.factory import HookManagerComponents
 from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.session_lookup import SessionLookupService
-from tests.contracts import pipeline_corpus
+from gobby.servers.routes.mcp.hooks import SUPPORTED_HOOK_SOURCES
+from tests.contracts import pipeline_corpus, pipeline_recorder
 
 CONTRACTS_DIR = Path(__file__).resolve().parent
 CORPUS_DIR = CONTRACTS_DIR / "pipeline"
@@ -39,7 +40,7 @@ MIN_CASES = 8
 CASE_KINDS = ("event", "collaborator_failure")
 # Every collaborator the pipeline names, by the attribute it is injected through. Each name must
 # be a real parameter or field of the handler, manager or component types (checked below), and
-# each is one the handlers call while handling an event, so a failing one can change a response.
+# each has a failing case. A failure of a collaborator the handlers read must change the response.
 COLLABORATOR_KINDS = (
     "session_manager",
     "workflow_handler",
@@ -53,6 +54,7 @@ COLLABORATOR_KINDS = (
     "progress_tracker",
     "session_end_auto_link_worker",
     "skill_manager",
+    "call_tool",
     "workflow_config_resolver",
     "get_machine_id",
     "resolve_project_id",
@@ -63,8 +65,10 @@ COLLABORATOR_KINDS = (
     "webhook_dispatcher",
     "broadcaster",
 )
-# Injected into EventHandlers but read by no handler, so no failure of it can reach a response.
-# The guard below fails once a handler reads it, and the kind then needs a failing case.
+# Collaborator kinds injected into EventHandlers but read by no handler, by the handler attribute
+# that stores them. Each still has a failing case, recorded with the healthy response, and the
+# reach check makes the case's handler read the attribute: the outcome must then change, so the
+# case fails the replay as soon as a real handler starts reading the collaborator.
 UNREAD_COLLABORATORS = {"call_tool": "_call_tool"}
 HOOKS_SOURCE = CONTRACTS_DIR.parents[1] / "src" / "gobby" / "hooks"
 REQUIRED_SCENARIOS = (
@@ -232,7 +236,7 @@ def test_pipeline_corpus_has_required_cases() -> None:
 def test_unread_collaborators_stay_unread() -> None:
     manifest, _cases = pipeline_corpus.load_corpus(CORPUS_DIR)
     assert set(manifest.get("unread_collaborators", {})) == set(UNREAD_COLLABORATORS)
-    assert not set(UNREAD_COLLABORATORS) & set(COLLABORATOR_KINDS)
+    assert set(UNREAD_COLLABORATORS) <= set(COLLABORATOR_KINDS)
     sources = sorted(HOOKS_SOURCE.rglob("*.py"))
     assert sources, f"no hook sources under {HOOKS_SOURCE}"
     reads: list[str] = []
@@ -244,7 +248,7 @@ def test_unread_collaborators_stay_unread() -> None:
                 declared = stripped.startswith(f"{attribute}:")
                 if re.search(rf"\b{attribute}\b", line) and not (stored or declared):
                     reads.append(f"{path.relative_to(HOOKS_SOURCE)}:{number}")
-    assert not reads, f"handlers now read an unread collaborator; give it a failing case: {reads}"
+    assert not reads, f"handlers now read an unread collaborator; re-record its case: {reads}"
 
 
 def test_rerecord_committed_corpus() -> None:
@@ -280,7 +284,19 @@ def test_failing_collaborator_yields_recorded_response() -> None:
     assert not mismatched, f"failing-collaborator cases with other responses: {mismatched}"
 
 
-def test_failing_collaborator_changes_the_healthy_outcome() -> None:
+def _reading_handler(handler: Any, attribute: str) -> Any:
+    """Wrap a handler method so it reads ``attribute`` from the handlers before it runs."""
+
+    def reading(handlers: EventHandlers, *args: object, **kwargs: object) -> object:
+        getattr(handlers, attribute)
+        return handler(handlers, *args, **kwargs)
+
+    return reading
+
+
+def test_failing_collaborator_changes_the_healthy_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     failing = [case for case in _committed_cases() if case.get("kind") == "collaborator_failure"]
     assert len(failing) >= len(COLLABORATOR_KINDS), (
         f"{len(failing)} failing-collaborator cases; at least {len(COLLABORATOR_KINDS)} required"
@@ -295,10 +311,46 @@ def test_failing_collaborator_changes_the_healthy_outcome() -> None:
     )
     unreached: list[str] = []
     for case in failing:
+        kind = str(case.get("failing_collaborator"))
         healthy = {key: value for key, value in case.items() if key not in FAILURE_INJECTION_KEYS}
-        if _outcome({**healthy, "kind": "event"}) == case["expect"]:
-            unreached.append(f"{case['id']}: {case.get('failing_collaborator')}")
+        healthy_outcome = _outcome({**healthy, "kind": "event"})
+        if kind not in UNREAD_COLLABORATORS:
+            if healthy_outcome == case["expect"]:
+                unreached.append(f"{case['id']}: {kind}")
+            continue
+        # No handler reads this kind, so its failure equals the healthy twin, and making the
+        # case's handler read the attribute must change the outcome.
+        if healthy_outcome != case["expect"]:
+            unreached.append(f"{case['id']}: unread {kind} changed the healthy outcome")
+        handler = _handler_names().get(str(case.get("event_type")))
+        if handler is None:
+            unreached.append(f"{case['id']}: event type has no handler")
+            continue
+        with monkeypatch.context() as patch:
+            original = getattr(EventHandlers, handler)
+            patch.setattr(
+                EventHandlers, handler, _reading_handler(original, UNREAD_COLLABORATORS[kind])
+            )
+            if _outcome(case) == case["expect"]:
+                unreached.append(f"{case['id']}: unchanged when {handler} reads {kind}")
     assert not unreached, f"collaborator failures that never reach the pipeline: {unreached}"
+
+
+def test_direct_events_are_types_no_routed_adapter_produces() -> None:
+    assert set(pipeline_recorder.ADAPTERS) == set(SUPPORTED_HOOK_SOURCES)
+    produced = {
+        event.value
+        for adapter in pipeline_recorder.ADAPTERS.values()
+        for event in getattr(adapter, "EVENT_MAP", {}).values()
+    }
+    assert produced, "no routed adapter maps any hook type"
+    direct = [case for case in _committed_cases() if "event" in case]
+    routable = [
+        f"{case['id']}: {case['event']['type']}"
+        for case in direct
+        if case["event"]["type"] in produced
+    ]
+    assert not routable, f"direct event cases that a routed adapter could deliver: {routable}"
 
 
 def test_pipeline_cases_change_outcome_when_their_path_is_broken(
