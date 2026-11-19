@@ -56,12 +56,12 @@ from tests.contracts.recorder_v3_support import (
     CAPTURE_QUIET_SECONDS,
     ProviderEdgeCapture,
     ProviderEdgeLog,
-    RecorderError,
     recorded_db_delta,
     recorder_credential_headers,
     send_mcp_rest,
-    send_seed_http,
 )
+from tests.contracts.recorder_v3_support import RecorderError as RecorderError
+from tests.contracts.recorder_v3_support import send_seed_http as send_seed_http
 from tests.e2e import conftest as e2e
 from tests.fixtures.hub_guard import (
     HARNESS_DATABASE_PATTERN,

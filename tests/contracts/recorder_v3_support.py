@@ -109,7 +109,7 @@ def recorded_db_delta(value: Mapping[str, Any], case_name: str) -> dict[str, Any
         ):
             raise RecorderError(
                 f"{case_name}: a changed value in secret-keyed column {column!r} cannot be "
-                "recorded; the case needs a decision (V5)"
+                "recorded; the case needs a decision"
             )
         changed.append({**item, "key": http_corpus.redact_secrets(item["key"])})
     return {
