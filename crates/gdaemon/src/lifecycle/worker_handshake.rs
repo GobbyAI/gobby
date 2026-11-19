@@ -134,12 +134,21 @@ pub struct ErrorBody {
     pub message: String,
 }
 
+/// A field of the handshake result that failed its check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandshakeField {
+    ProtocolVersion,
+    Generation,
+    Commands,
+}
+
 /// A reply that failed envelope or handshake validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolViolation {
     ProtocolMismatch { got: u64 },
     GenerationMismatch { expected: u64, got: u64 },
     OperationMismatch,
+    ResultMismatch(HandshakeField),
     Malformed,
 }
 
@@ -156,6 +165,8 @@ pub enum WorkerCallError {
     Protocol(ProtocolViolation),
     /// The worker answered with an error.
     Refused(ErrorBody),
+    /// An invoke answered `op_failed`: the op ran and may have had a partial effect.
+    OpFailed(ErrorBody),
 }
 
 /// The handshake result. `schema_identity` is returned as JSON and compared by R1.

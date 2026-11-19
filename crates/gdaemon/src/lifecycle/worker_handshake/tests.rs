@@ -527,3 +527,7 @@ async fn invalid_reply_is_unknown_for_initialize_and_invoke() {
     assert_eq!(unknown_outcome(err).command, "invoke");
     assert_eq!(channel.requests.len(), 2);
 }
+
+/// Reply-validation tests (R56), in a sibling file so this module stays small.
+#[path = "reply_tests.rs"]
+mod reply_tests;
