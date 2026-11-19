@@ -1,0 +1,1946 @@
+{
+  "environment": {
+    "gobby_env_keys": [
+      "GOBBY_HOME",
+      "GOBBY_TEST_PROTECT"
+    ]
+  },
+  "excluded": [
+    {
+      "cite": "tests/e2e/readiness_bootstrap.py:56",
+      "name": "pytest-parent-watch",
+      "reason": "started by the readiness harness; no gobby frame"
+    },
+    {
+      "cite": "tests/e2e/readiness_bootstrap.py:113",
+      "name": "startup-module-watch",
+      "reason": "started by the readiness harness; no gobby frame"
+    }
+  ],
+  "executors": [
+    {
+      "cancel_owner": null,
+      "cite": "src/gobby/agents/terminal_delivery.py:53",
+      "creator": "gobby.agents.terminal_delivery:<module>",
+      "debt": "debt:R0",
+      "max_workers": 1,
+      "prefix": "gobby-terminal-delivery",
+      "stage": "preflight",
+      "submitters": []
+    },
+    {
+      "cancel_owner": null,
+      "cite": "src/gobby/agents/workspace_backups.py:61",
+      "creator": "gobby.agents.workspace_backups:<module>",
+      "debt": "debt:R0",
+      "max_workers": 1,
+      "prefix": "gobby-workspace-backup",
+      "stage": "construct",
+      "submitters": []
+    },
+    {
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_run_async_shutdown_cleanup",
+      "cite": "src/gobby/config/runtime.py:114",
+      "creator": "gobby.config.runtime:ConfigRuntime.__init__",
+      "debt": null,
+      "max_workers": 2,
+      "prefix": "gobby-config-constructor",
+      "stage": "construct",
+      "submitters": [
+        "gobby.config.runtime:ConfigRuntime._run_constructor",
+        "gobby.config.runtime:ConfigRuntime._run_db"
+      ]
+    },
+    {
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_run_async_shutdown_cleanup",
+      "cite": "src/gobby/config/runtime.py:110",
+      "creator": "gobby.config.runtime:ConfigRuntime.__init__",
+      "debt": null,
+      "max_workers": 2,
+      "prefix": "gobby-config-db",
+      "stage": "construct",
+      "submitters": [
+        "gobby.config.runtime:ConfigRuntime._run_constructor",
+        "gobby.config.runtime:ConfigRuntime._run_db"
+      ]
+    },
+    {
+      "cancel_owner": null,
+      "cite": "src/gobby/hooks/adapter_execution.py:36",
+      "creator": "gobby.hooks.adapter_execution:<module>",
+      "debt": "debt:R0",
+      "max_workers": 16,
+      "prefix": "gobby-hook-adapter",
+      "stage": "preflight",
+      "submitters": []
+    },
+    {
+      "cancel_owner": "gobby.hooks.session_end_auto_link:SessionEndAutoLinkWorker.shutdown",
+      "cite": "src/gobby/hooks/session_end_auto_link.py:44",
+      "creator": "gobby.hooks.session_end_auto_link:SessionEndAutoLinkWorker.__init__",
+      "debt": null,
+      "max_workers": 1,
+      "prefix": "gobby-session-end-auto-link",
+      "stage": "serve",
+      "submitters": []
+    },
+    {
+      "cancel_owner": null,
+      "cite": "src/gobby/hooks/shell_execution.py:94",
+      "creator": "gobby.hooks.shell_execution:<module>",
+      "debt": "debt:R0",
+      "max_workers": 2,
+      "prefix": "gobby-hook-script-read",
+      "stage": "preflight",
+      "submitters": []
+    },
+    {
+      "cancel_owner": null,
+      "cite": "src/gobby/mcp_proxy/services/output_repair.py:117",
+      "creator": "gobby.mcp_proxy.services.output_repair:<module>",
+      "debt": "debt:R0",
+      "max_workers": 1,
+      "prefix": "output-repair-dispatch",
+      "stage": "preflight",
+      "submitters": []
+    },
+    {
+      "cancel_owner": null,
+      "cite": "src/gobby/runner_init/embedding_lease.py:28",
+      "creator": "gobby.runner_init.embedding_lease:<module>",
+      "debt": "debt:R0",
+      "max_workers": 1,
+      "prefix": "gobby-embedding-lease-renew",
+      "stage": "preflight",
+      "submitters": [
+        "gobby.runner_init.embedding_lease:_ManagedEmbeddingLease.activate"
+      ]
+    },
+    {
+      "cancel_owner": "gobby.runner_shutdown_storage:_shutdown_database_concurrency",
+      "cite": "src/gobby/storage/concurrency.py:173",
+      "creator": "gobby.storage.concurrency:CoverageExecutor.__init__",
+      "debt": null,
+      "max_workers": 4,
+      "prefix": "gobby-plan-coverage",
+      "stage": "construct",
+      "submitters": []
+    },
+    {
+      "cancel_owner": "opentelemetry.sdk.resources:get_aggregated_resources",
+      "cite": "src/gobby/telemetry/exporters.py:12",
+      "creator": "gobby.telemetry.exporters:<module>",
+      "debt": null,
+      "max_workers": 4,
+      "prefix": "",
+      "stage": "preflight",
+      "submitters": [
+        "gobby.telemetry.exporters:<module>"
+      ]
+    },
+    {
+      "cancel_owner": "opentelemetry.sdk.resources:get_aggregated_resources",
+      "cite": "src/gobby/telemetry/providers.py:91",
+      "creator": "gobby.telemetry.providers:get_meter_provider",
+      "debt": null,
+      "max_workers": 4,
+      "prefix": "",
+      "stage": "construct",
+      "submitters": [
+        "gobby.telemetry.providers:get_meter_provider"
+      ]
+    },
+    {
+      "cancel_owner": "opentelemetry.sdk.resources:get_aggregated_resources",
+      "cite": "src/gobby/telemetry/providers.py:49",
+      "creator": "gobby.telemetry.providers:get_tracer_provider",
+      "debt": null,
+      "max_workers": 4,
+      "prefix": "",
+      "stage": "construct",
+      "submitters": [
+        "gobby.telemetry.providers:get_tracer_provider"
+      ]
+    },
+    {
+      "cancel_owner": null,
+      "cite": "src/gobby/terminals/operator_lane.py:25",
+      "creator": "gobby.terminals.operator_lane:<module>",
+      "debt": "debt:R0",
+      "max_workers": 8,
+      "prefix": "operator-lane",
+      "stage": "preflight",
+      "submitters": []
+    },
+    {
+      "cancel_owner": null,
+      "cite": "src/gobby/terminals/operator_lane.py:29",
+      "creator": "gobby.terminals.operator_lane:<module>",
+      "debt": "debt:R0",
+      "max_workers": 8,
+      "prefix": "workspace-inventory",
+      "stage": "preflight",
+      "submitters": []
+    },
+    {
+      "cancel_owner": "gobby.runner_shutdown_storage:_shutdown_database_concurrency",
+      "cite": "src/gobby/threaded_executor.py:63",
+      "creator": "gobby.threaded_executor:ManagedThreadPoolExecutor.__init__",
+      "debt": null,
+      "max_workers": 32,
+      "prefix": "gobby-db",
+      "stage": "construct",
+      "submitters": [
+        "gobby.threaded_executor:ManagedThreadPoolExecutor.submit"
+      ]
+    },
+    {
+      "cancel_owner": null,
+      "cite": "src/gobby/workflows/engine/_offload.py:25",
+      "creator": "gobby.workflows.engine._offload:<module>",
+      "debt": "debt:R0",
+      "max_workers": 16,
+      "prefix": "rule-engine",
+      "stage": "construct",
+      "submitters": [
+        "gobby.workflows.engine._offload:offload"
+      ]
+    },
+    {
+      "cancel_owner": null,
+      "cite": "src/gobby/workflows/engine/_offload.py:29",
+      "creator": "gobby.workflows.engine._offload:<module>",
+      "debt": "debt:R0",
+      "max_workers": 16,
+      "prefix": "rule-loop",
+      "stage": "construct",
+      "submitters": [
+        "gobby.workflows.engine._offload:offload"
+      ]
+    },
+    {
+      "cancel_owner": "gobby.workflows.evaluation_runtime:WorkflowEvaluationRuntime.shutdown",
+      "cite": "src/gobby/workflows/evaluation_runtime.py:175",
+      "creator": "gobby.workflows.evaluation_runtime:WorkflowEvaluationRuntime._run_loop",
+      "debt": null,
+      "max_workers": 8,
+      "prefix": "gobby-workflow-blocking",
+      "stage": "serve",
+      "submitters": []
+    },
+    {
+      "cancel_owner": null,
+      "cite": "src/gobby/workflows/loader_sync.py:55",
+      "creator": "gobby.workflows.loader_sync:PipelineLoaderSyncMixin._get_sync_executor",
+      "debt": "debt:R0",
+      "max_workers": 1,
+      "prefix": "",
+      "stage": "construct",
+      "submitters": [
+        "gobby.workflows.loader_sync:PipelineLoaderSyncMixin._run_sync"
+      ]
+    },
+    {
+      "cancel_owner": "gobby.runner:_StandaloneEventLoop.shutdown_default_executor",
+      "cite": null,
+      "creator": "loop-default",
+      "debt": null,
+      "max_workers": null,
+      "prefix": "asyncio",
+      "stage": "preflight",
+      "submitters": [
+        "gobby.agents.sandbox_reaper:sweep_sandbox_run_roots",
+        "gobby.events.coordination_waits:CoordinationWaitService.recover",
+        "gobby.events.coordination_waits:CoordinationWaitService.start",
+        "gobby.hooks.inbox:drain_hook_inbox_barrier",
+        "gobby.hooks.quarantine_retention:hook_quarantine_retention_loop",
+        "gobby.llm.model_registry:fetch_models_async",
+        "gobby.mcp_proxy.oauth_keepalive:refresh_due_oauth_servers",
+        "gobby.memory.vectorstore_client:VectorStoreClient.call",
+        "gobby.memory.vectorstore_client:VectorStoreClient.initialize_locked",
+        "gobby.runner:GobbyRunner.create",
+        "gobby.runner:main",
+        "gobby.runner:run_gobby",
+        "gobby.runner_lifecycle_agents:_reap_orphaned_srt_runners_on_startup",
+        "gobby.runner_lifecycle_subsystems:_resume_dead_handoff_dispatches",
+        "gobby.runner_lifecycle_subsystems:_run_tracked_start_async",
+        "gobby.runner_maintenance.storage_hygiene:cleanup_chat_attachments_loop.<locals>.cleanup_once",
+        "gobby.sessions.daemon_notices:send_daemon_notice",
+        "gobby.sessions.lifecycle:SessionLifecycleManager._expire_loop",
+        "gobby.sessions.lifecycle:SessionLifecycleManager._purge_soft_deleted_definitions",
+        "gobby.sessions.transcript_processing:TranscriptProcessingMixin._process_pending_transcripts",
+        "gobby.storage.definitions.notifications:DefinitionRevisionListener._load_persistent_revisions",
+        "gobby.tasks.transcript_evidence_pool:prewarm_transcript_evidence_pool",
+        "gobby.terminals.composer_ledger:persist_ledger",
+        "gobby.terminals.host_reconcile:reconcile_host_inventory"
+      ]
+    }
+  ],
+  "outside_runner_lifecycle": [
+    {
+      "cadence": {
+        "config_key": null,
+        "default": null,
+        "param": null,
+        "seconds": null,
+        "source": "src/gobby/servers/_app_lifecycle.py:183",
+        "wake": "event"
+      },
+      "cite": "src/gobby/servers/_app_lifecycle.py:183",
+      "creator": "gobby.servers._app_lifecycle:create_lifespan.<locals>.lifespan.<locals>._broadcast_session_change.<locals>._schedule",
+      "debt": null,
+      "key": null,
+      "observed": false,
+      "stop_owner": null,
+      "target": "gobby.servers.websocket.broadcast:BroadcastMixin.broadcast_session_event"
+    },
+    {
+      "cadence": null,
+      "cite": "src/gobby/servers/_app_lifecycle.py:246",
+      "creator": "gobby.servers.routes.llm:start_vision_temp_cleanup_task",
+      "debt": null,
+      "key": "task|gobby.servers.routes.llm:start_vision_temp_cleanup_task|gobby.servers.routes.llm:_vision_temp_cleanup_loop",
+      "observed": true,
+      "stop_owner": "gobby.servers.routes.llm:stop_vision_temp_cleanup_task",
+      "target": "gobby.servers.routes.llm:_vision_temp_cleanup_loop"
+    },
+    {
+      "cadence": null,
+      "cite": "src/gobby/servers/_app_lifecycle.py:277",
+      "creator": "gobby.servers._app_lifecycle:create_lifespan.<locals>.lifespan",
+      "debt": null,
+      "key": null,
+      "observed": false,
+      "stop_owner": null,
+      "target": "gobby.servers._app_lifecycle:create_lifespan.<locals>.lifespan.<locals>._sync_existing_codex_sessions"
+    },
+    {
+      "cadence": null,
+      "cite": "src/gobby/servers/_app_lifecycle.py:307",
+      "creator": "gobby.agents.interactive_attention_monitor:InteractiveAttentionMonitor.start",
+      "debt": null,
+      "key": "task|gobby.agents.interactive_attention_monitor:InteractiveAttentionMonitor.start|gobby.agents.interactive_attention_monitor:InteractiveAttentionMonitor._poll_loop",
+      "observed": true,
+      "stop_owner": "gobby.agents.interactive_attention_monitor:InteractiveAttentionMonitor.stop",
+      "target": "gobby.agents.interactive_attention_monitor:InteractiveAttentionMonitor._poll_loop"
+    },
+    {
+      "cadence": null,
+      "cite": "src/gobby/servers/_app_lifecycle.py:332",
+      "creator": "gobby.sessions.liveness_monitor:SessionLivenessMonitor.start",
+      "debt": null,
+      "key": "task|gobby.sessions.liveness_monitor:SessionLivenessMonitor.start|gobby.sessions.liveness_monitor:SessionLivenessMonitor._poll_loop",
+      "observed": true,
+      "stop_owner": "gobby.sessions.liveness_monitor:SessionLivenessMonitor.stop",
+      "target": "gobby.sessions.liveness_monitor:SessionLivenessMonitor._poll_loop"
+    },
+    {
+      "cadence": null,
+      "cite": "src/gobby/servers/_app_lifecycle.py:98",
+      "creator": "gobby.workflows.evaluation_runtime:WorkflowEvaluationRuntime.__init__",
+      "debt": null,
+      "key": "thread|gobby.workflows.evaluation_runtime:WorkflowEvaluationRuntime.__init__|gobby.workflows.evaluation_runtime:WorkflowEvaluationRuntime._run_loop",
+      "observed": true,
+      "stop_owner": "gobby.workflows.evaluation_runtime:WorkflowEvaluationRuntime.shutdown",
+      "target": "gobby.workflows.evaluation_runtime:WorkflowEvaluationRuntime._run_loop"
+    },
+    {
+      "cite": null,
+      "creator": "gobby.agents.lifecycle_monitor:AgentLifecycleMonitor.start",
+      "debt": null,
+      "key": "task|gobby.agents.lifecycle_monitor:AgentLifecycleMonitor.start|gobby.agents.lifecycle_monitor:AgentLifecycleMonitor._check_loop",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "gobby.agents.lifecycle_monitor:AgentLifecycleMonitor.stop",
+      "target": "gobby.agents.lifecycle_monitor:AgentLifecycleMonitor._check_loop",
+      "timing_dependent": false
+    },
+    {
+      "cite": null,
+      "creator": "gobby.agents.terminal_delivery:shielded_terminal_delivery",
+      "debt": null,
+      "key": "task|gobby.agents.terminal_delivery:shielded_terminal_delivery|gobby.agents.agent_cleanup:AgentCleanupHandler.run_acknowledged_stale_sweeps.<locals>.operation",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "gobby.runner_lifecycle_shutdown:_settle_terminal_delivery_barrier",
+      "target": "gobby.agents.agent_cleanup:AgentCleanupHandler.run_acknowledged_stale_sweeps.<locals>.operation",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.events.coordination_waits:CoordinationWaitService.start",
+      "debt": null,
+      "key": "task|gobby.events.coordination_waits:CoordinationWaitService.start|gobby.events.coordination_waits:CoordinationWaitService._consume",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "gobby.events.coordination_waits:CoordinationWaitService.stop",
+      "target": "gobby.events.coordination_waits:CoordinationWaitService._consume",
+      "timing_dependent": false
+    },
+    {
+      "cite": null,
+      "creator": "gobby.events.coordination_waits:CoordinationWaitService.start",
+      "debt": null,
+      "key": "task|gobby.events.coordination_waits:CoordinationWaitService.start|gobby.events.coordination_waits:CoordinationWaitService._listen",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "gobby.events.coordination_waits:CoordinationWaitService.stop",
+      "target": "gobby.events.coordination_waits:CoordinationWaitService._listen",
+      "timing_dependent": false
+    },
+    {
+      "cite": null,
+      "creator": "gobby.llm.model_registry:fetch_models_async",
+      "debt": null,
+      "key": "task|gobby.llm.model_registry:fetch_models_async|anyio._core._tasks:TaskHandle._run_coro",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "anyio._core._sockets:connect_tcp",
+      "target": "anyio._core._tasks:TaskHandle._run_coro",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.runner:main",
+      "debt": "debt:R0",
+      "key": "task|gobby.runner:main|asyncio.selector_events:BaseSelectorEventLoop._accept_connection2",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": null,
+      "target": "asyncio.selector_events:BaseSelectorEventLoop._accept_connection2",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.runner:main",
+      "debt": null,
+      "key": "task|gobby.runner:main|uvicorn.protocols.http.httptools_impl:RequestResponseCycle.run_asgi",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "gobby.runner_http_shutdown:_cancel_remaining_request_tasks",
+      "target": "uvicorn.protocols.http.httptools_impl:RequestResponseCycle.run_asgi",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.runner:main",
+      "debt": null,
+      "key": "task|gobby.runner:main|uvicorn.protocols.websockets.websockets_sansio_impl:WebSocketsSansIOProtocol.run_asgi",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "gobby.runner_http_shutdown:_cancel_remaining_request_tasks",
+      "target": "uvicorn.protocols.websockets.websockets_sansio_impl:WebSocketsSansIOProtocol.run_asgi",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.servers.http:HTTPServer._capture_runtime_epoch",
+      "debt": null,
+      "key": "task|gobby.servers.http:HTTPServer._capture_runtime_epoch|anyio._core._tasks:TaskHandle._run_coro",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "starlette.middleware.base:BaseHTTPMiddleware.__call__",
+      "target": "anyio._core._tasks:TaskHandle._run_coro",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.servers.middleware.auth:AuthMiddleware.dispatch",
+      "debt": null,
+      "key": "task|gobby.servers.middleware.auth:AuthMiddleware.dispatch|anyio._core._tasks:TaskHandle._run_coro",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "starlette.middleware.base:BaseHTTPMiddleware.__call__",
+      "target": "anyio._core._tasks:TaskHandle._run_coro",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.servers.middleware.project_context:ProjectContextMiddleware.dispatch",
+      "debt": null,
+      "key": "task|gobby.servers.middleware.project_context:ProjectContextMiddleware.dispatch|anyio._core._tasks:TaskHandle._run_coro",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "starlette.middleware.base:BaseHTTPMiddleware.__call__",
+      "target": "anyio._core._tasks:TaskHandle._run_coro",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.servers.provider_model_discovery:get_cli_version",
+      "debt": null,
+      "key": "task|gobby.servers.provider_model_discovery:get_cli_version|asyncio.subprocess:Process._noop",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "gobby.servers.provider_model_discovery:get_cli_version",
+      "target": "asyncio.subprocess:Process._noop",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.servers.provider_model_discovery:get_cli_version",
+      "debt": null,
+      "key": "task|gobby.servers.provider_model_discovery:get_cli_version|asyncio.subprocess:Process._read_stream",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "gobby.servers.provider_model_discovery:get_cli_version",
+      "target": "asyncio.subprocess:Process._read_stream",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.servers.websocket.chat.backends.codex:CodexWebChatBackend.start",
+      "debt": null,
+      "key": "task|gobby.servers.websocket.chat.backends.codex:CodexWebChatBackend.start|gobby.servers.websocket.chat.backends.codex:CodexWebChatBackend._start_inner",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "gobby.servers.websocket.chat.backends.codex:CodexWebChatBackend.stop",
+      "target": "gobby.servers.websocket.chat.backends.codex:CodexWebChatBackend._start_inner",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.servers.websocket.native_publish:NativePublisher.bind",
+      "debt": null,
+      "key": "task|gobby.servers.websocket.native_publish:NativePublisher.bind|anyio._core._tasks:TaskHandle._run_coro",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "anyio._core._sockets:connect_tcp",
+      "target": "anyio._core._tasks:TaskHandle._run_coro",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.sessions.lifecycle:SessionLifecycleManager.start",
+      "debt": null,
+      "key": "task|gobby.sessions.lifecycle:SessionLifecycleManager.start|gobby.sessions.lifecycle:SessionLifecycleManager._expire_loop",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "gobby.sessions.lifecycle:SessionLifecycleManager.stop",
+      "target": "gobby.sessions.lifecycle:SessionLifecycleManager._expire_loop",
+      "timing_dependent": false
+    },
+    {
+      "cite": null,
+      "creator": "gobby.sessions.lifecycle:SessionLifecycleManager.start",
+      "debt": null,
+      "key": "task|gobby.sessions.lifecycle:SessionLifecycleManager.start|gobby.sessions.lifecycle:SessionLifecycleManager._process_loop",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "gobby.sessions.lifecycle:SessionLifecycleManager.stop",
+      "target": "gobby.sessions.lifecycle:SessionLifecycleManager._process_loop",
+      "timing_dependent": false
+    },
+    {
+      "cite": null,
+      "creator": "gobby.storage.hub.async_ops:run_bounded_db",
+      "debt": null,
+      "key": "task|gobby.storage.hub.async_ops:run_bounded_db|gobby.storage.hub.async_ops:_run_child",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "gobby.storage.hub.async_ops:run_bounded_db",
+      "target": "gobby.storage.hub.async_ops:_run_child",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.telemetry.middleware:TelemetryMiddleware.dispatch",
+      "debt": null,
+      "key": "task|gobby.telemetry.middleware:TelemetryMiddleware.dispatch|anyio._core._tasks:TaskHandle._run_coro",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "starlette.middleware.base:BaseHTTPMiddleware.__call__",
+      "target": "anyio._core._tasks:TaskHandle._run_coro",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.terminals.host_client:HostClient.__init__",
+      "debt": null,
+      "key": "task|gobby.terminals.host_client:HostClient.__init__|gobby.terminals.host_client:HostClient._reader_loop",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "gobby.terminals.host_client:HostClient._close_generation",
+      "target": "gobby.terminals.host_client:HostClient._reader_loop",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.terminals.host_events:collect_gap_cut",
+      "debt": null,
+      "key": "task|gobby.terminals.host_events:collect_gap_cut|gobby.terminals.host_client:HostClient.list_inventory",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "gobby.terminals.host_events:collect_gap_cut",
+      "target": "gobby.terminals.host_client:HostClient.list_inventory",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.terminals.host_events:collect_gap_cut",
+      "debt": null,
+      "key": "task|gobby.terminals.host_events:collect_gap_cut|gobby.terminals.host_events:HostEventStream.__anext__",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "gobby.terminals.host_events:collect_gap_cut",
+      "target": "gobby.terminals.host_events:HostEventStream.__anext__",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.utils.spawn:create_subprocess_exec",
+      "debt": null,
+      "key": "task|gobby.utils.spawn:create_subprocess_exec|asyncio.base_subprocess:BaseSubprocessTransport._connect_pipes",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "gobby.servers.provider_model_discovery:get_cli_version",
+      "target": "asyncio.base_subprocess:BaseSubprocessTransport._connect_pipes",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.hooks.health_monitor:HealthMonitor.start",
+      "debt": null,
+      "key": "thread|gobby.hooks.health_monitor:HealthMonitor.start|threading:Timer.run",
+      "observed": true,
+      "request_driven": true,
+      "stop_owner": "gobby.hooks.hook_manager:HookManager.shutdown_async",
+      "target": "threading:Timer.run",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.memory.vectorstore:_new_qdrant_client",
+      "debt": "debt:R0",
+      "key": "thread|gobby.memory.vectorstore:_new_qdrant_client|qdrant_client.qdrant_remote:QdrantRemote._check_compatibility",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": null,
+      "target": "qdrant_client.qdrant_remote:QdrantRemote._check_compatibility",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.runner_gate:acquire_runner_gate",
+      "debt": null,
+      "key": "thread|gobby.runner_gate:acquire_runner_gate|asyncio.unix_events:_ThreadedChildWatcher._do_waitpid",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "gobby.runner_gate:acquire_runner_gate",
+      "target": "asyncio.unix_events:_ThreadedChildWatcher._do_waitpid",
+      "timing_dependent": false
+    },
+    {
+      "cite": null,
+      "creator": "gobby.tasks.transcript_evidence_pool:prewarm_transcript_evidence_pool.<locals>.submit_probes",
+      "debt": null,
+      "key": "thread|gobby.tasks.transcript_evidence_pool:prewarm_transcript_evidence_pool.<locals>.submit_probes|concurrent.futures.process:_ExecutorManagerThread.run",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "gobby.runner_lifecycle_shutdown:_shutdown_child_processes",
+      "target": "concurrent.futures.process:_ExecutorManagerThread.run",
+      "timing_dependent": true
+    },
+    {
+      "cite": null,
+      "creator": "gobby.utils.spawn:create_subprocess_exec",
+      "debt": null,
+      "key": "thread|gobby.utils.spawn:create_subprocess_exec|asyncio.unix_events:_ThreadedChildWatcher._do_waitpid",
+      "observed": true,
+      "request_driven": false,
+      "stop_owner": "gobby.servers.provider_model_discovery:get_cli_version",
+      "target": "asyncio.unix_events:_ThreadedChildWatcher._do_waitpid",
+      "timing_dependent": true
+    }
+  ],
+  "profile": {
+    "bootstrap": "tests/e2e/task_census_bootstrap.py",
+    "config_profile": {
+      "agy_stub": {
+        "output": "agy 1.0.0",
+        "path": "census-bin/agy"
+      },
+      "child_watcher": "threaded",
+      "cpu_count": 16,
+      "disabled": [
+        "code_index",
+        "memory_dream"
+      ],
+      "fixture": "tests/e2e/conftest.py:e2e_config",
+      "lines": "1093-1212"
+    },
+    "name": "e2e-hub",
+    "route": "e2e-census",
+    "run_mode": "python"
+  },
+  "tasks": [
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:stop_restart_recovery",
+      "creator": "gobby.hooks.background_tasks:create_background_task",
+      "debt": null,
+      "key": {
+        "creator": "gobby.hooks.background_tasks:create_background_task",
+        "kind": "task",
+        "target": "gobby.hooks.inbox:_replay_inbox_holding_lock"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.hooks.inbox:_replay_inbox_holding_lock"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": null,
+      "creator": "gobby.hooks.background_tasks:create_background_task",
+      "debt": "debt:R0",
+      "key": {
+        "creator": "gobby.hooks.background_tasks:create_background_task",
+        "kind": "task",
+        "target": "gobby.workflows.engine.core:RuleEngine.prewarm_skill_scripts"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.workflows.engine.core:RuleEngine.prewarm_skill_scripts"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.mcp_proxy.connection_cleanup:finalize_disconnect_all",
+      "creator": "gobby.mcp_proxy.client_manager.connections:connect_all",
+      "debt": null,
+      "key": {
+        "creator": "gobby.mcp_proxy.client_manager.connections:connect_all",
+        "kind": "task",
+        "target": "gobby.mcp_proxy.manager:MCPClientManager._monitor_health"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.mcp_proxy.manager:MCPClientManager._monitor_health"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner:_run_blocking_startup_phase",
+      "creator": "gobby.runner:_run_blocking_startup_phase",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner:_run_blocking_startup_phase",
+        "kind": "task",
+        "target": "asyncio.threads:to_thread"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "construct",
+      "target": "asyncio.threads:to_thread"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner:main",
+      "creator": "gobby.runner:main",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner:main",
+        "kind": "task",
+        "target": "gobby.runner:run_gobby"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "preflight",
+      "target": "gobby.runner:run_gobby"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_init.services:_build_message_processor.<locals>.activate",
+      "creator": "gobby.runner:main",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner:main",
+        "kind": "task",
+        "target": "gobby.sessions.processor_lifecycle:ProcessorLifecycleMixin.start"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "construct",
+      "target": "gobby.sessions.processor_lifecycle:ProcessorLifecycleMixin.start"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_gate:acquire_runner_gate",
+      "creator": "gobby.runner_gate:acquire_runner_gate",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_gate:acquire_runner_gate",
+        "kind": "task",
+        "target": "asyncio.base_subprocess:BaseSubprocessTransport._connect_pipes"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "asyncio.base_subprocess:BaseSubprocessTransport._connect_pipes"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_gate:acquire_runner_gate",
+      "creator": "gobby.runner_gate:acquire_runner_gate",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_gate:acquire_runner_gate",
+        "kind": "task",
+        "target": "asyncio.subprocess:Process._feed_stdin"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "asyncio.subprocess:Process._feed_stdin"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_gate:acquire_runner_gate",
+      "creator": "gobby.runner_gate:acquire_runner_gate",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_gate:acquire_runner_gate",
+        "kind": "task",
+        "target": "asyncio.subprocess:Process._read_stream"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "asyncio.subprocess:Process._read_stream"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": null,
+      "creator": "gobby.runner_init.mcp_stack:schedule_scoped_embedding_backfill",
+      "debt": "debt:R0",
+      "key": {
+        "creator": "gobby.runner_init.mcp_stack:schedule_scoped_embedding_backfill",
+        "kind": "task",
+        "target": "gobby.runner_init.mcp_stack:schedule_scoped_embedding_backfill.<locals>._run"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "construct",
+      "target": "gobby.runner_init.mcp_stack:schedule_scoped_embedding_backfill.<locals>._run"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_run_graceful_shutdown_sequence",
+      "creator": "gobby.runner_lifecycle:_serve_http",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle:_serve_http",
+        "kind": "task",
+        "target": "asyncio.base_events:BaseEventLoop._create_server_getaddrinfo"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "asyncio.base_events:BaseEventLoop._create_server_getaddrinfo"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_run_graceful_shutdown_sequence",
+      "creator": "gobby.runner_lifecycle:_serve_http",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle:_serve_http",
+        "kind": "task",
+        "target": "uvicorn.lifespan.on:LifespanOn.main"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "uvicorn.lifespan.on:LifespanOn.main"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_run_graceful_shutdown_sequence",
+      "creator": "gobby.runner_lifecycle:run_daemon",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle:run_daemon",
+        "kind": "task",
+        "target": "gobby.runner_lifecycle:_serve_http"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_lifecycle:_serve_http"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_shutdown_websocket_server",
+      "creator": "gobby.servers.websocket.native_publish:NativePublisher._spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.servers.websocket.native_publish:NativePublisher._spawn",
+        "kind": "task",
+        "target": "gobby.servers.websocket.native_publish:NativePublisher._sample_loop_lag"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.servers.websocket.native_publish:NativePublisher._sample_loop_lag"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_shutdown_websocket_server",
+      "creator": "gobby.servers.websocket.server:WebSocketServer.start",
+      "debt": null,
+      "key": {
+        "creator": "gobby.servers.websocket.server:WebSocketServer.start",
+        "kind": "task",
+        "target": "gobby.servers.websocket.session_control:SessionControlMixin._cleanup_idle_sessions"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.servers.websocket.session_control:SessionControlMixin._cleanup_idle_sessions"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.sessions.processor_lifecycle:ProcessorLifecycleMixin.stop",
+      "creator": "gobby.sessions.processor_lifecycle:ProcessorLifecycleMixin.start",
+      "debt": null,
+      "key": {
+        "creator": "gobby.sessions.processor_lifecycle:ProcessorLifecycleMixin.start",
+        "kind": "task",
+        "target": "gobby.sessions.processor_lifecycle:ProcessorLifecycleMixin._loop"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "construct",
+      "target": "gobby.sessions.processor_lifecycle:ProcessorLifecycleMixin._loop"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_shutdown_websocket_server",
+      "creator": "gobby.terminals.leases:TerminalLeaseRegistry.start_lifecycle_publication",
+      "debt": null,
+      "key": {
+        "creator": "gobby.terminals.leases:TerminalLeaseRegistry.start_lifecycle_publication",
+        "kind": "task",
+        "target": "gobby.terminals.leases:TerminalLeaseRegistry._run_lifecycle_publication"
+      },
+      "names": [
+        "Task"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.terminals.leases:TerminalLeaseRegistry._run_lifecycle_publication"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 60,
+        "param": "interval_seconds",
+        "seconds": 60,
+        "source": "src/gobby/runner_maintenance/storage_hygiene.py:171",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.storage_hygiene:expire_approval_timeouts_loop"
+      },
+      "names": [
+        "approval-timeout-expiry"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.storage_hygiene:expire_approval_timeouts_loop"
+    },
+    {
+      "cadence": {
+        "config_key": "bin_freshness.interval_seconds",
+        "default": 3600.0,
+        "param": null,
+        "seconds": 3600.0,
+        "source": "src/gobby/config/bin_freshness.py:19",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.binaries:bin_freshness_loop"
+      },
+      "names": [
+        "bin-freshness"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.binaries:bin_freshness_loop"
+    },
+    {
+      "cadence": {
+        "config_key": "chat.attachment_gc_interval_minutes",
+        "default": 60,
+        "param": null,
+        "seconds": 3600,
+        "source": "src/gobby/config/features.py:349",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.storage_hygiene:cleanup_chat_attachments_loop"
+      },
+      "names": [
+        "chat-attachment-cleanup"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.storage_hygiene:cleanup_chat_attachments_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 86400,
+        "param": "interval_seconds",
+        "seconds": 86400,
+        "source": "src/gobby/runner_maintenance/messaging.py:138",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.messaging:cleanup_comms_messages_loop"
+      },
+      "names": [
+        "comms-message-cleanup"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.messaging:cleanup_comms_messages_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 1.0,
+        "param": "interval",
+        "seconds": 1.0,
+        "source": "src/gobby/terminals/composer_ledger.py:823",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_run_async_shutdown_cleanup",
+      "creator": "gobby.runner_lifecycle_subsystems:_start_terminal_host",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_subsystems:_start_terminal_host",
+        "kind": "task",
+        "target": "gobby.terminals.composer_ledger:persist_ledger"
+      },
+      "names": [
+        "composer-ledger-persist"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.terminals.composer_ledger:persist_ledger"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.config.runtime:ConfigRuntime.close",
+      "creator": "gobby.config.runtime:ConfigRuntime.start",
+      "debt": null,
+      "key": {
+        "creator": "gobby.config.runtime:ConfigRuntime.start",
+        "kind": "task",
+        "target": "gobby.config.runtime:ConfigRuntime._listen"
+      },
+      "names": [
+        "config-runtime-listener"
+      ],
+      "observed": true,
+      "stage": "construct",
+      "target": "gobby.config.runtime:ConfigRuntime._listen"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 30.0,
+        "param": "revision_poll_interval",
+        "seconds": 30.0,
+        "source": "src/gobby/config/runtime.py:811",
+        "wake": "timer"
+      },
+      "cancel_owner": "gobby.config.runtime:ConfigRuntime.close",
+      "creator": "gobby.config.runtime:ConfigRuntime.start",
+      "debt": null,
+      "key": {
+        "creator": "gobby.config.runtime:ConfigRuntime.start",
+        "kind": "task",
+        "target": "gobby.config.runtime:ConfigRuntime._poll_revisions"
+      },
+      "names": [
+        "config-runtime-revision-poll"
+      ],
+      "observed": true,
+      "stage": "construct",
+      "target": "gobby.config.runtime:ConfigRuntime._poll_revisions"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_stop_started_services",
+      "creator": "gobby.scheduler.scheduler:CronScheduler.start",
+      "debt": null,
+      "key": {
+        "creator": "gobby.scheduler.scheduler:CronScheduler.start",
+        "kind": "task",
+        "target": "gobby.scheduler.scheduler:CronScheduler._check_loop"
+      },
+      "names": [
+        "cron-scheduler-check"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.scheduler.scheduler:CronScheduler._check_loop"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_stop_started_services",
+      "creator": "gobby.scheduler.scheduler:CronScheduler.start",
+      "debt": null,
+      "key": {
+        "creator": "gobby.scheduler.scheduler:CronScheduler.start",
+        "kind": "task",
+        "target": "gobby.scheduler.scheduler:CronScheduler._cleanup_loop"
+      },
+      "names": [
+        "cron-scheduler-cleanup"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.scheduler.scheduler:CronScheduler._cleanup_loop"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_run_async_shutdown_cleanup",
+      "creator": "gobby.storage.definitions.notifications:DefinitionRevisionListener.start",
+      "debt": null,
+      "key": {
+        "creator": "gobby.storage.definitions.notifications:DefinitionRevisionListener.start",
+        "kind": "task",
+        "target": "gobby.storage.definitions.notifications:DefinitionRevisionListener._listen"
+      },
+      "names": [
+        "definition-revision-listener"
+      ],
+      "observed": true,
+      "stage": "construct",
+      "target": "gobby.storage.definitions.notifications:DefinitionRevisionListener._listen"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_run_async_shutdown_cleanup",
+      "creator": "gobby.storage.definitions.notifications:DefinitionRevisionListener.start",
+      "debt": null,
+      "key": {
+        "creator": "gobby.storage.definitions.notifications:DefinitionRevisionListener.start",
+        "kind": "task",
+        "target": "gobby.storage.definitions.notifications:DefinitionRevisionListener._poll"
+      },
+      "names": [
+        "definition-revision-poll"
+      ],
+      "observed": true,
+      "stage": "construct",
+      "target": "gobby.storage.definitions.notifications:DefinitionRevisionListener._poll"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 1,
+        "param": "interval_hours",
+        "seconds": 3600,
+        "source": "src/gobby/runner_maintenance/isolation.py:57",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.isolation:cleanup_expired_isolation_loop"
+      },
+      "names": [
+        "expired-isolation-cleanup"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.isolation:cleanup_expired_isolation_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 60.0,
+        "param": "interval_seconds",
+        "seconds": 60.0,
+        "source": "src/gobby/servers/generation_endpoint_health.py:19",
+        "wake": "event"
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks",
+        "kind": "task",
+        "target": "gobby.servers.generation_endpoint_health:GenerationEndpointHealthCoordinator.run"
+      },
+      "names": [
+        "generation-endpoint-health"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.servers.generation_endpoint_health:GenerationEndpointHealthCoordinator.run"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_run_async_shutdown_cleanup",
+      "creator": "gobby.terminals.host_event_reader:arm_events",
+      "debt": null,
+      "key": {
+        "creator": "gobby.terminals.host_event_reader:arm_events",
+        "kind": "task",
+        "target": "gobby.terminals.host_event_reader:event_reader_loop"
+      },
+      "names": [
+        "gterm-host-events"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.terminals.host_event_reader:event_reader_loop"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_run_async_shutdown_cleanup",
+      "creator": "gobby.terminals.host_manager:TerminalHostManager._arm_health",
+      "debt": null,
+      "key": {
+        "creator": "gobby.terminals.host_manager:TerminalHostManager._arm_health",
+        "kind": "task",
+        "target": "gobby.terminals.host_manager:TerminalHostManager._health_loop"
+      },
+      "names": [
+        "gterm-host-health"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.terminals.host_manager:TerminalHostManager._health_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 60,
+        "param": "interval_seconds",
+        "seconds": 60,
+        "source": "src/gobby/runner_maintenance/messaging.py:21",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:stop_restart_recovery",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.messaging:drain_hook_inbox_loop"
+      },
+      "names": [
+        "hook-inbox-drain"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.messaging:drain_hook_inbox_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 3600,
+        "param": "interval_seconds",
+        "seconds": 3600,
+        "source": "src/gobby/runner_maintenance/messaging.py:35",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.messaging:hook_quarantine_retention_loop"
+      },
+      "names": [
+        "hook-quarantine-retention"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.messaging:hook_quarantine_retention_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 3600,
+        "param": "interval_seconds",
+        "seconds": 3600,
+        "source": "src/gobby/runner_maintenance/messaging.py:51",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.messaging:hook_receipt_retention_loop"
+      },
+      "names": [
+        "hook-receipt-retention"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.messaging:hook_receipt_retention_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": null,
+        "param": null,
+        "seconds": 86400,
+        "source": "src/gobby/runner_maintenance/telemetry_loops.py:90",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.telemetry_loops:loop_progress_cleanup_loop"
+      },
+      "names": [
+        "loop-progress-cleanup"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.telemetry_loops:loop_progress_cleanup_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 60.0,
+        "param": "KEEPALIVE_TICK_SECONDS",
+        "seconds": 60.0,
+        "source": "src/gobby/mcp_proxy/oauth_keepalive.py:238",
+        "wake": "timer"
+      },
+      "cancel_owner": "gobby.runner_init.services:_build_mcp_manager.<locals>._dispose_mcp_manager",
+      "creator": "gobby.mcp_proxy.oauth_keepalive:_replace_keepalive_task",
+      "debt": null,
+      "key": {
+        "creator": "gobby.mcp_proxy.oauth_keepalive:_replace_keepalive_task",
+        "kind": "task",
+        "target": "gobby.mcp_proxy.oauth_keepalive:oauth_keepalive_loop"
+      },
+      "names": [
+        "mcp-oauth-keepalive"
+      ],
+      "observed": true,
+      "stage": "construct",
+      "target": "gobby.mcp_proxy.oauth_keepalive:oauth_keepalive_loop"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.memory.manager:MemoryManager.close",
+      "creator": "gobby.memory.manager:MemoryManager.schedule_background_task",
+      "debt": null,
+      "key": {
+        "creator": "gobby.memory.manager:MemoryManager.schedule_background_task",
+        "kind": "task",
+        "target": "gobby.memory.facade:MemoryManagerFacadeMethods.repair_secondary_scope_projections"
+      },
+      "names": [
+        "memory-projection-scope-repair"
+      ],
+      "observed": true,
+      "stage": "construct",
+      "target": "gobby.memory.facade:MemoryManagerFacadeMethods.repair_secondary_scope_projections"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 86400,
+        "param": "interval_seconds",
+        "seconds": 86400,
+        "source": "src/gobby/runner_maintenance_recurring.py:193",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance_recurring:memory_reconcile_loop"
+      },
+      "names": [
+        "memory-reconcile"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance_recurring:memory_reconcile_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 60,
+        "param": "interval_seconds",
+        "seconds": 60,
+        "source": "src/gobby/runner_maintenance/telemetry_loops.py:121",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.telemetry_loops:metric_snapshot_loop"
+      },
+      "names": [
+        "metric-snapshot"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.telemetry_loops:metric_snapshot_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 86400,
+        "param": "interval_seconds",
+        "seconds": 86400,
+        "source": "src/gobby/runner_maintenance_recurring.py:151",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance_recurring:metrics_archive_loop"
+      },
+      "names": [
+        "metrics-archive"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance_recurring:metrics_archive_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 86400,
+        "param": "interval_seconds",
+        "seconds": 86400,
+        "source": "src/gobby/runner_maintenance_recurring.py:70",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance_recurring:metrics_cleanup_loop"
+      },
+      "names": [
+        "metrics-cleanup"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance_recurring:metrics_cleanup_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 86400,
+        "param": "interval_seconds",
+        "seconds": 86400,
+        "source": "src/gobby/runner_model_metadata_refresh.py:23",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_model_metadata_refresh:model_metadata_refresh_loop"
+      },
+      "names": [
+        "model-metadata-refresh"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_model_metadata_refresh:model_metadata_refresh_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 300.0,
+        "param": "interval_seconds",
+        "seconds": 300.0,
+        "source": "src/gobby/runner_maintenance_resources.py:28",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance_resources:resource_monitor_loop"
+      },
+      "names": [
+        "resource-monitor"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance_resources:resource_monitor_loop"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:stop_restart_recovery",
+      "creator": "gobby.runner_lifecycle_subsystems:init_subsystems",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_subsystems:init_subsystems",
+        "kind": "task",
+        "target": "gobby.runner_lifecycle_subsystems:_recover_after_restart"
+      },
+      "names": [
+        "restart-recovery"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_lifecycle_subsystems:_recover_after_restart"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_agents:_reap_orphaned_srt_runners_on_startup",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_agents:_reap_orphaned_srt_runners_on_startup",
+        "kind": "task",
+        "target": "gobby.runner_lifecycle_agents:_sweep_sandbox_run_roots_on_startup"
+      },
+      "names": [
+        "sandbox-run-root-sweep"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_lifecycle_agents:_sweep_sandbox_run_roots_on_startup"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 86400,
+        "param": "interval_seconds",
+        "seconds": 86400,
+        "source": "src/gobby/runner_maintenance/storage_hygiene.py:69",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.storage_hygiene:purge_deleted_skills_loop"
+      },
+      "names": [
+        "skill-retention-purge"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.storage_hygiene:purge_deleted_skills_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 86400,
+        "param": "interval_seconds",
+        "seconds": 86400,
+        "source": "src/gobby/runner_maintenance/telemetry_loops.py:24",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.telemetry_loops:span_cleanup_loop"
+      },
+      "names": [
+        "span-cleanup"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.telemetry_loops:span_cleanup_loop"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:stop_restart_recovery",
+      "creator": "gobby.runner_lifecycle:run_daemon",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle:run_daemon",
+        "kind": "task",
+        "target": "gobby.runner_lifecycle:_init_subsystems"
+      },
+      "names": [
+        "subsystem-init"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_lifecycle:_init_subsystems"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner:run_gobby",
+      "creator": "gobby.runner:run_gobby",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner:run_gobby",
+        "kind": "task",
+        "target": "gobby.runner_backend:watch_supervisor"
+      },
+      "names": [
+        "supervisor-liveness"
+      ],
+      "observed": true,
+      "stage": "preflight",
+      "target": "gobby.runner_backend:watch_supervisor"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_stop_started_services",
+      "creator": "gobby.system_automation:SystemAutomationLoop.start",
+      "debt": null,
+      "key": {
+        "creator": "gobby.system_automation:SystemAutomationLoop.start",
+        "kind": "task",
+        "target": "gobby.system_automation:SystemAutomationLoop._run_loop"
+      },
+      "names": [
+        "system-automation-loop"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.system_automation:SystemAutomationLoop._run_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 3600,
+        "param": "interval_seconds",
+        "seconds": 3600,
+        "source": "src/gobby/runner_maintenance/storage_hygiene.py:26",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.storage_hygiene:sweep_test_schemas_loop"
+      },
+      "names": [
+        "test-schema-sweep"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.storage_hygiene:sweep_test_schemas_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 86400,
+        "param": "interval_seconds",
+        "seconds": 86400,
+        "source": "src/gobby/runner_maintenance_recurring.py:110",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance_recurring:tool_result_cleanup_loop"
+      },
+      "names": [
+        "tool-result-cleanup"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance_recurring:tool_result_cleanup_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": null,
+        "param": null,
+        "seconds": 86400,
+        "source": "src/gobby/runner_maintenance/telemetry_loops.py:55",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.telemetry_loops:unmodeled_observation_cleanup_loop"
+      },
+      "names": [
+        "unmodeled-observation-cleanup"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.telemetry_loops:unmodeled_observation_cleanup_loop"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_shutdown_websocket_server",
+      "creator": "gobby.runner_lifecycle_subsystems:_start_websocket_server",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_subsystems:_start_websocket_server",
+        "kind": "task",
+        "target": "gobby.servers.websocket.server:WebSocketServer.start"
+      },
+      "names": [
+        "websocket-server"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.servers.websocket.server:WebSocketServer.start"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 86400,
+        "param": "interval_seconds",
+        "seconds": 86400,
+        "source": "src/gobby/runner_maintenance_audit.py:25",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance_audit:workflow_audit_cleanup_loop"
+      },
+      "names": [
+        "workflow-audit-cleanup"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance_audit:workflow_audit_cleanup_loop"
+    },
+    {
+      "cadence": null,
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:stop_restart_recovery",
+      "creator": "gobby.runner_lifecycle_subsystems:init_subsystems",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_subsystems:init_subsystems",
+        "kind": "task",
+        "target": "gobby.runner_lifecycle_subsystems:_recover_deleting_worktrees_after_start"
+      },
+      "names": [
+        "worktree-delete-recovery"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_lifecycle_subsystems:_recover_deleting_worktrees_after_start"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 6,
+        "param": "interval_hours",
+        "seconds": 21600,
+        "source": "src/gobby/runner_maintenance/messaging.py:89",
+        "wake": null
+      },
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:_cancel_periodic_tasks",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+      "debt": null,
+      "key": {
+        "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks.<locals>.spawn",
+        "kind": "task",
+        "target": "gobby.runner_maintenance.messaging:cleanup_zombie_messages_loop"
+      },
+      "names": [
+        "zombie-message-cleanup"
+      ],
+      "observed": true,
+      "stage": "serve",
+      "target": "gobby.runner_maintenance.messaging:cleanup_zombie_messages_loop"
+    }
+  ],
+  "threads": [
+    {
+      "cancel_owner": "gobby.runner_shutdown_storage:_shutdown_database_concurrency",
+      "creator": "gobby.storage.concurrency_watchdog:DatabaseSaturationWatchdog.start",
+      "daemon": true,
+      "debt": null,
+      "key": {
+        "creator": "gobby.storage.concurrency_watchdog:DatabaseSaturationWatchdog.start",
+        "kind": "thread",
+        "target": "gobby.storage.concurrency_watchdog:DatabaseSaturationWatchdog._run"
+      },
+      "name": [
+        "gobby-db-watchdog"
+      ]
+    },
+    {
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:shutdown_daemon_services",
+      "creator": "gobby.storage.hub.postgres:PostgresHubDatabase.open",
+      "daemon": true,
+      "debt": null,
+      "key": {
+        "creator": "gobby.storage.hub.postgres:PostgresHubDatabase.open",
+        "kind": "thread",
+        "target": "psycopg_pool.sched:Scheduler.run"
+      },
+      "name": [
+        "pool-scheduler"
+      ]
+    },
+    {
+      "cancel_owner": "gobby.runner_lifecycle_shutdown:shutdown_daemon_services",
+      "creator": "gobby.storage.hub.postgres:PostgresHubDatabase.open",
+      "daemon": true,
+      "debt": null,
+      "key": {
+        "creator": "gobby.storage.hub.postgres:PostgresHubDatabase.open",
+        "kind": "thread",
+        "target": "psycopg_pool.pool:ConnectionPool.worker"
+      },
+      "name": [
+        "pool-worker"
+      ]
+    }
+  ],
+  "unobserved": [
+    {
+      "cadence": {
+        "config_key": "code_index.maintenance_interval_seconds",
+        "default": 3600,
+        "param": null,
+        "seconds": 3600,
+        "source": "src/gobby/config/code_index.py:69",
+        "wake": null
+      },
+      "cites": [
+        "src/gobby/config/code_index.py:69"
+      ],
+      "condition": "spawned only when the runner has a code indexer (code_index profile)",
+      "creator": "gobby.runner_startup_code_index:_start_code_index_tasks",
+      "disabled_in_profile": true,
+      "id": "code-index-maintenance",
+      "target": "gobby.code_index.maintenance:code_index_maintenance_loop"
+    },
+    {
+      "cadence": {
+        "config_key": "code_index.sync_worker_interval_seconds",
+        "default": 5.0,
+        "param": null,
+        "seconds": 5.0,
+        "source": "src/gobby/config/code_index.py:141",
+        "wake": null
+      },
+      "cites": [
+        "src/gobby/config/code_index.py:141"
+      ],
+      "condition": "spawned only when the runner has a code indexer (code_index profile)",
+      "creator": "gobby.runner_startup_code_index:_start_code_index_tasks",
+      "disabled_in_profile": true,
+      "id": "code-index-sync-worker",
+      "target": "gobby.code_index.sync_worker:sync_worker_loop"
+    },
+    {
+      "cadence": {
+        "config_key": null,
+        "default": 86400.0,
+        "param": "interval_seconds",
+        "seconds": 86400.0,
+        "source": "src/gobby/providers/capabilities/refresh.py:26",
+        "wake": null
+      },
+      "cites": [
+        "src/gobby/providers/capabilities/refresh.py:26"
+      ],
+      "condition": "spawned only when provider_capability_service exists and provider_capabilities.refresh_enabled is set",
+      "creator": "gobby.runner_lifecycle_periodic:start_periodic_tasks",
+      "disabled_in_profile": false,
+      "id": "provider-capability-refresh",
+      "target": "gobby.providers.capabilities.refresh:CapabilityRefreshCoordinator.run"
+    }
+  ]
+}
