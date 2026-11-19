@@ -6,7 +6,8 @@
 //! caller to reconcile. Requests are built here, so their bytes equal the
 //! corpus bytes (`tests/contracts/worker_protocol.json`). Replies are checked
 //! against the contract before they reach the caller: the envelope, the error
-//! object, the handshake result, and the initialize result's per-status table.
+//! object, each command's own error codes, the handshake result, and the
+//! initialize result's per-status table.
 
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -66,6 +67,37 @@ const ERROR_CODES: [(&str, Option<&str>); 10] = [
     ("worker_unusable", Some("worker is unusable")),
     ("not_ready", Some("worker is not ready")),
     (OP_FAILED, None),
+];
+/// The error codes the handshake may carry, from the contract's guard table. The envelope
+/// steps (`invalid_request`, `protocol_mismatch`) apply to every command.
+const HANDSHAKE_ERROR_CODES: [&str; 5] = [
+    "invalid_request",
+    "protocol_mismatch",
+    "unauthorized",
+    "stale_generation",
+    OP_FAILED,
+];
+/// The error codes initialize may carry. A failed phase is a result, not an error, so
+/// `op_failed` is not in this set.
+const INITIALIZE_ERROR_CODES: [&str; 6] = [
+    "invalid_request",
+    "protocol_mismatch",
+    "not_handshaken",
+    "stale_generation",
+    "worker_unusable",
+    "phase_out_of_order",
+];
+/// The error codes invoke may carry: the guard steps of invoke, and `op_failed` from the
+/// error code table.
+const INVOKE_ERROR_CODES: [&str; 8] = [
+    "invalid_request",
+    "protocol_mismatch",
+    "not_handshaken",
+    "stale_generation",
+    "worker_unusable",
+    "not_ready",
+    "unknown_command",
+    OP_FAILED,
 ];
 
 /// Which runner the worker serves. The compiled default is Python until the cutover commit.
@@ -195,7 +227,8 @@ pub enum WorkerCallError {
     Unknown(UnknownOutcome),
     /// A handshake reply failed validation.
     Protocol(ProtocolViolation),
-    /// The worker answered with an error.
+    /// The worker answered with an error from the command's own set of codes. A code outside
+    /// that set is a violation, never a refusal.
     Refused(ErrorBody),
     /// An invoke answered `op_failed`: the op ran and may have had a partial effect.
     OpFailed(ErrorBody),
@@ -424,10 +457,26 @@ fn check_error(error: Value) -> Result<ErrorBody, ProtocolViolation> {
     Ok(body)
 }
 
-/// The result of a validated reply, or the error it carries, as the command reports it.
+/// Whether the contract lets `command` carry `code`. A command with no set carries nothing.
+fn command_may_carry(command: &str, code: &str) -> bool {
+    let codes: &[&str] = match command {
+        HANDSHAKE => &HANDSHAKE_ERROR_CODES,
+        INITIALIZE => &INITIALIZE_ERROR_CODES,
+        INVOKE => &INVOKE_ERROR_CODES,
+        _ => return false,
+    };
+    codes.contains(&code)
+}
+
+/// The result of a validated reply, or the error it carries, as the command reports it. An
+/// error code outside the command's set is a violation: Protocol for a handshake, and an
+/// unknown outcome for initialize and invoke (the effect may have happened).
 fn into_result(call: &Call, reply: Reply) -> Result<Value, WorkerCallError> {
     match reply {
         Reply::Success(value) => Ok(value),
+        Reply::Refusal(body) if !command_may_carry(call.command, &body.code) => {
+            Err(call.violation(ProtocolViolation::Malformed))
+        }
         Reply::Refusal(body) if call.command == INVOKE && body.code == OP_FAILED => {
             Err(WorkerCallError::OpFailed(body))
         }
