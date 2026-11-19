@@ -22,6 +22,11 @@ use gobby_daemon::front_door::health::{HealthFamily, SERVED_BY_HEADER};
 use gobby_daemon::front_door::routes::{FAMILIES, RouteFamily, unimplemented_families};
 use gobby_daemon::front_door::waivers::{WaiverManifest, is_native_extension, surface_matches};
 use gobby_daemon::serve::{PublicListener, serve};
+use gobby_test_support::corpus_v2::{
+    CORPUS_DIR, RESPONSE_HEADER_ALLOWLIST, apply_masks, is_json, load_all_cases, load_manifest,
+    normalized_response, read_json, redact_secrets, request_target,
+};
+use gobby_test_support::listeners::{bind_loopback, local_addr};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Incoming;
 use hyper::header::HeaderMap;
@@ -30,74 +35,12 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use serde_json::{Map, Value, json};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 
-const CORPUS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/contracts/http");
-const MASK: &str = "@mask@";
-const SECRET: &str = "@secret@";
-const RESPONSE_HEADER_ALLOWLIST: &[&str] = &[
-    "cache-control",
-    "content-type",
-    "retry-after",
-    "x-gobby-user-id",
-    "x-gobby-machine-id",
-    "x-gobby-key-id",
-];
-const SECRET_KEYS: &[&str] = &[
-    "dsn",
-    "password",
-    "api_key",
-    "token",
-    "deployment_token",
-    "payload_checksum",
-    "signature",
-    "proof",
-];
 /// The gdaemon-authored family: its typed 503 covers every proxied path, so it is not
 /// a `RouteFamily` and the parity precheck exempts it.
 const SYNTHETIC_FAMILY: &str = "front_door";
 const NATIVE_CHALLENGE_FAMILY: &str = "runtime_challenge";
-
-fn read_json(path: &Path) -> Value {
-    let text = std::fs::read_to_string(path)
-        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-    serde_json::from_str(&text).unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
-}
-
-fn load_manifest() -> Value {
-    read_json(&Path::new(CORPUS_DIR).join("manifest.json"))
-}
-
-/// Every manifest case in order, rejecting any whose `schema_version` differs.
-fn load_all_cases(manifest: &Value) -> Vec<Value> {
-    assert_eq!(manifest["schema_version"], 2, "key-cutover corpus version");
-    let version = &manifest["schema_version"];
-    let families = manifest["families"].as_object().expect("manifest families");
-    manifest["cases"]
-        .as_array()
-        .expect("manifest cases")
-        .iter()
-        .map(|file| {
-            let file = file.as_str().expect("case file name");
-            let case = read_json(&Path::new(CORPUS_DIR).join(file));
-            assert_eq!(
-                &case["schema_version"], version,
-                "{file}: schema_version differs from the manifest"
-            );
-            let family = case["family"].as_str().expect("case family");
-            assert!(
-                families.contains_key(family),
-                "{file}: family {family:?} is not in the manifest"
-            );
-            assert!(
-                matches!(case["backend"].as_str(), Some("up" | "down")),
-                "{file}: backend {:?} is neither \"up\" nor \"down\"",
-                case["backend"]
-            );
-            case
-        })
-        .collect()
-}
 
 fn family_field<'a>(manifest: &'a Value, family: &str, field: &str) -> &'a str {
     manifest["families"][family][field]
@@ -111,75 +54,6 @@ fn parity(value: &str) -> RouteBackend {
         "native" => RouteBackend::Native,
         other => panic!("unknown parity {other:?}"),
     }
-}
-
-fn redact_secrets(value: &mut Value) {
-    match value {
-        Value::Object(object) => {
-            for (key, item) in object.iter_mut() {
-                if SECRET_KEYS.contains(&key.as_str()) {
-                    *item = Value::String(SECRET.to_owned());
-                } else {
-                    redact_secrets(item);
-                }
-            }
-        }
-        Value::Array(items) => items.iter_mut().for_each(redact_secrets),
-        _ => {}
-    }
-}
-
-/// Replace each pointed-at value with `MASK`; a pointer to an absent field is a no-op.
-fn apply_masks(document: &mut Value, pointers: &Value) {
-    for pointer in pointers.as_array().expect("mask list") {
-        let pointer = pointer.as_str().expect("mask pointer");
-        assert!(
-            pointer.starts_with('/'),
-            "mask pointer {pointer:?} must start with '/'"
-        );
-        if let Some(value) = document.pointer_mut(pointer) {
-            *value = Value::String(MASK.to_owned());
-        }
-    }
-}
-
-/// Redact then mask a `{"response": ...}` document and return its response.
-fn normalized_response(mut document: Value, mask: &Value) -> Value {
-    redact_secrets(&mut document["response"]["body"]);
-    apply_masks(&mut document, mask);
-    document["response"].take()
-}
-
-fn is_json(content_type: Option<&str>) -> bool {
-    content_type.is_some_and(|value| value.starts_with("application/json"))
-}
-
-fn percent_encode(text: &str) -> String {
-    text.bytes()
-        .map(|byte| {
-            if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-                char::from(byte).to_string()
-            } else {
-                format!("%{byte:02X}")
-            }
-        })
-        .collect()
-}
-
-fn request_target(request: &Value) -> String {
-    let path = request["path"].as_str().expect("request path");
-    let query = request["query"].as_object().expect("request query");
-    if query.is_empty() {
-        return path.to_owned();
-    }
-    let pairs: Vec<String> = query
-        .iter()
-        .map(|(key, value)| {
-            let value = value.as_str().expect("query values are strings");
-            format!("{}={}", percent_encode(key), percent_encode(value))
-        })
-        .collect();
-    format!("{path}?{}", pairs.join("&"))
 }
 
 /// What the stub backend received.
@@ -211,8 +85,8 @@ fn recorded_response(recorded: &Value) -> Response<Full<Bytes>> {
 
 /// A loopback backend that logs every request and answers with the case's recording.
 async fn stub_backend(case: &Value) -> (SocketAddr, SeenLog) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind stub");
-    let addr = listener.local_addr().expect("stub addr");
+    let listener = bind_loopback(0).await.expect("bind stub");
+    let addr = local_addr(&listener).expect("stub addr");
     let seen: SeenLog = Arc::default();
     let log = Arc::clone(&seen);
     let recorded = case.get("response").cloned();
@@ -266,10 +140,8 @@ async fn start_front_door(
         "database_url: postgresql://test@127.0.0.1/test\napi_key: corpus-test-api-key\n",
     )
     .expect("write bootstrap");
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind front door");
-    let addr = listener.local_addr().expect("front door addr");
+    let listener = bind_loopback(0).await.expect("bind front door");
+    let addr = local_addr(&listener).expect("front door addr");
     tokio::spawn(async move {
         let _home = home;
         serve(
