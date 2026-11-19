@@ -43,7 +43,7 @@ fn mode_name(mode: GuardMode) -> &'static str {
 
 /// Write a vector's rehearsal profile under `dir` and return the path to pass (the design's
 /// `_materialize_profile`). Git does not store modes, so the test sets them here.
-fn materialize_profile(spec: &Value, dir: &Path) -> Option<PathBuf> {
+pub(super) fn materialize_profile(spec: &Value, dir: &Path) -> Option<PathBuf> {
     if spec.is_null() {
         return None;
     }
