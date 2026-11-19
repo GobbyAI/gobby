@@ -14,6 +14,7 @@ from uuid import uuid4
 import pytest
 
 from gobby.agents.agent_workspaces import predecessor_folder_readable
+from gobby.agents.workspace_projects import workspace_project_name
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -30,9 +31,9 @@ from tests.fixtures.isolated_checkout import init_git_checkout
 
 pytestmark = pytest.mark.unit
 
-PROJECT = "11111111-1111-4111-8111-111111111111"
+PROJECT = "fixture-project"
 SESSION_ID = "33333333-3333-4333-8333-333333333333"
-TEMPLATE = "~/.gobby/agents_workspaces/<project_id>/<definition>/<session>/"
+TEMPLATE = "~/.gobby/agents_workspaces/<project-name>/<definition>/<session>/"
 
 
 @pytest.mark.parametrize("exempt", [True, False])
@@ -54,7 +55,7 @@ async def test_read_scope_selector_can_exempt_a_synthetic_seat(
         exclude=["name:fixture-read-scope"] if exempt else [],
     )
     project_id: str = sample_project["id"]
-    anchor = root / project_id
+    anchor = _anchor(temp_db, root, project_id)
     variables = _seat(anchor, agent_type, 50)
     caller = _register(
         temp_db,
@@ -235,6 +236,17 @@ def _shell(command: str, project: Path) -> dict[str, Any]:
         "cwd": str(project),
         "project_path": str(project),
     }
+
+
+def _anchor(db: HubDatabase, root: Path, project_id: str) -> Path:
+    """The project's anchor, named by its registered project name.
+
+    Resolving the name records the ownership receipt before the test creates any folder
+    under the anchor; a folder without a receipt is refused.
+    """
+    anchor = root / workspace_project_name(db, project_id)
+    assert (root / f"{anchor.name}.git" / "workspace-project.json").is_file()
+    return anchor
 
 
 def _seat(
@@ -2068,7 +2080,7 @@ async def test_predecessor_case_alias_keeps_live_holder_and_sequence_guards(
     sample_project: dict[str, Any],
 ) -> None:
     project_id: str = sample_project["id"]
-    anchor = root / project_id
+    anchor = _anchor(temp_db, root, project_id)
     own = anchor / "fixture-helper" / "session-40"
     own.mkdir(parents=True)
     alias_root = root.with_name(root.name.upper())
@@ -2088,7 +2100,7 @@ async def test_predecessor_case_alias_keeps_live_holder_and_sequence_guards(
     (anchor / "README.md").write_text("Shared workspace guide")
     readme = await _decide(
         workspace_read_engine,
-        _read(alias_root / project_id / "readme.md", tmp_path),
+        _read(alias_root / anchor.name / "readme.md", tmp_path),
         variables,
         caller,
     )
@@ -2109,7 +2121,7 @@ async def test_predecessor_case_alias_keeps_live_holder_and_sequence_guards(
             folder=folder,
             persistent=True,
         )
-        alias = alias_root / project_id / "FIXTURE-HELPER" / f"SESSION-{seq}" / "notes.md"
+        alias = alias_root / anchor.name / "FIXTURE-HELPER" / f"SESSION-{seq}" / "notes.md"
         response = await _decide(workspace_read_engine, _read(alias, tmp_path), variables, caller)
         assert response.decision == decision, (seq, response.reason)
         if decision == "block":
@@ -2127,7 +2139,7 @@ async def test_read_scope_by_persistence(
     project = tmp_path / "checkout"
     project.mkdir()
     project_id: str = sample_project["id"]
-    anchor = root / project_id
+    anchor = _anchor(temp_db, root, project_id)
 
     def tilde(path: Path) -> str:
         return "~/" + str(path.relative_to(root.parents[1]))
@@ -2251,7 +2263,7 @@ async def test_exemptions_and_variable_protection(
         seq=7,
         status="active",
         agent_type="fixture-helper",
-        folder=root / sample_project["id"] / "fixture-helper" / "session-7",
+        folder=_anchor(temp_db, root, sample_project["id"]) / "fixture-helper" / "session-7",
         persistent=True,
     )
     sessions = SessionManager(temp_db)
@@ -2295,7 +2307,7 @@ def test_predecessor_eligibility(
     root: Path, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     project_id: str = sample_project["id"]
-    anchor = root / project_id
+    anchor = _anchor(temp_db, root, project_id)
     sessions = SessionManager(temp_db)
 
     def folder(definition: str, seq: int) -> Path:
@@ -2376,7 +2388,7 @@ async def test_placeholder_template_in_commit_message_is_not_a_read(
     project = tmp_path / "checkout"
     project.mkdir()
     project_id: str = sample_project["id"]
-    anchor = root / project_id
+    anchor = _anchor(temp_db, root, project_id)
     worker = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
@@ -2403,7 +2415,7 @@ async def test_concrete_reads_of_other_session_folders_stay_refused(
     project = tmp_path / "checkout"
     project.mkdir()
     project_id: str = sample_project["id"]
-    anchor = root / project_id
+    anchor = _anchor(temp_db, root, project_id)
     worker = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
@@ -2416,7 +2428,7 @@ async def test_concrete_reads_of_other_session_folders_stay_refused(
     )
     # Concrete paths carrying real ids: a sibling session, and a folder of another project.
     sibling = anchor / "fixture-worker" / "session-51" / "notes.md"
-    other_project = root / "22222222-2222-4222-8222-222222222222"
+    other_project = root / "fixture-other-project"
     foreign = other_project / "fixture-worker" / "session-9" / "notes.md"
     for refused in (sibling, foreign):
         for data in (
@@ -2445,7 +2457,7 @@ async def test_own_and_predecessor_folders_stay_readable(
     project = tmp_path / "checkout"
     project.mkdir()
     project_id: str = sample_project["id"]
-    anchor = root / project_id
+    anchor = _anchor(temp_db, root, project_id)
     helper = _seat(anchor, "fixture-helper", 40, persistent=True)
     successor = _register(
         temp_db,
@@ -2490,7 +2502,7 @@ async def test_shell_wrapped_reads_of_other_session_folders_stay_refused(
     project = tmp_path / "checkout"
     project.mkdir()
     project_id: str = sample_project["id"]
-    anchor = root / project_id
+    anchor = _anchor(temp_db, root, project_id)
     worker = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
@@ -2599,7 +2611,7 @@ async def test_quoted_heredoc_bodies_and_quoted_text_judge_concrete_foreign_path
     project = tmp_path / "checkout"
     project.mkdir()
     project_id: str = sample_project["id"]
-    anchor = root / project_id
+    anchor = _anchor(temp_db, root, project_id)
     worker = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,
@@ -2655,7 +2667,7 @@ async def test_own_folder_heredoc_after_mkdir_is_allowed_and_python_c_judges_lit
     project = tmp_path / "checkout"
     project.mkdir()
     project_id: str = sample_project["id"]
-    anchor = root / project_id
+    anchor = _anchor(temp_db, root, project_id)
     worker = _seat(anchor, "fixture-worker", 50)
     caller = _register(
         temp_db,

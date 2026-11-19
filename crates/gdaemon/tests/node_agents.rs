@@ -3420,25 +3420,3 @@ fn srt_workspace_accepts_system_project_names() -> Result<()> {
     );
     Ok(())
 }
-
-#[test]
-fn srt_workspace_refuses_unmigrated_history() -> Result<()> {
-    let corpus = srt_corpus()?;
-    let inputs = srt_case_inputs(&corpus, "claude-agent-workspace")?;
-    let root = tempfile::tempdir()?;
-    let tree = SrtTree::new(&root.path().join("legacy-workspace"))?;
-    tree.materialize(&inputs)?;
-    let policy_inputs = srt_policy_inputs(&tree, &inputs)?;
-    let legacy = policy_inputs
-        .gobby_home
-        .join("agents_workspaces")
-        .join(&policy_inputs.project_id);
-    std::fs::create_dir_all(&legacy)?;
-    std::fs::write(legacy.join("notes.md"), "retained history")?;
-    assert!(resolve_srt_policy(&policy_inputs).is_err());
-    assert_eq!(
-        std::fs::read_to_string(legacy.join("notes.md"))?,
-        "retained history"
-    );
-    Ok(())
-}

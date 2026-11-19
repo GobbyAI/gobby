@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -16,15 +15,16 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def project_id(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+def project_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> str:
+    """A registered-style project name; workspaces are anchored by name, never by id."""
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
-    return str(uuid.uuid4())
+    return "fixture-backup-project"
 
 
 async def test_workspace_scan_keeps_calling_loop_responsive(
-    project_id: str, monkeypatch: pytest.MonkeyPatch
+    project_name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    anchor = agent_workspaces.ensure_workspace(project_id)
+    anchor = agent_workspaces.ensure_workspace(project_name)
     (anchor / "notes.md").write_text("evidence\n")
     entered = threading.Event()
     release = threading.Event()
@@ -40,7 +40,7 @@ async def test_workspace_scan_keeps_calling_loop_responsive(
             returned.set()
 
     monkeypatch.setattr(agent_workspaces, "_eligible_paths", blocked_filter)
-    commit = asyncio.create_task(agent_workspaces.commit_workspace(project_id, "timer"))
+    commit = asyncio.create_task(agent_workspaces.commit_workspace(project_name, "timer"))
     try:
         assert await asyncio.to_thread(entered.wait, 5)
         # This coroutine must run while filtering remains blocked in the worker.
@@ -51,9 +51,9 @@ async def test_workspace_scan_keeps_calling_loop_responsive(
 
 
 async def test_generated_trees_are_absent_from_git_status(
-    project_id: str, monkeypatch: pytest.MonkeyPatch
+    project_name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    anchor = agent_workspaces.ensure_workspace(project_id)
+    anchor = agent_workspaces.ensure_workspace(project_name)
     folders = (
         "fixture-worker/session-1/target-gclient/debug/incremental",
         "fixture-worker/session-1/node_modules/package",
@@ -77,7 +77,7 @@ async def test_generated_trees_are_absent_from_git_status(
         return result
 
     monkeypatch.setattr(agent_workspaces, "_git", capture)
-    assert await agent_workspaces.commit_workspace(project_id, "pre_compact")
+    assert await agent_workspaces.commit_workspace(project_name, "pre_compact")
     assert statuses
     assert all("artifact-" not in status for status in statuses)
     assert any("notes.md" in status for status in statuses)
