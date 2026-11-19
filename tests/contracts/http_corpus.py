@@ -40,6 +40,7 @@ PARITY_VALUES = frozenset({"proxy", "native"})
 ORIGIN_VALUES = frozenset({"python", "gdaemon"})
 BACKEND_VALUES = frozenset({"up", "down"})
 CREDENTIALS = frozenset({"none", "operator", "grant"})
+SCHEMA_VERSIONS = frozenset({2, 3})
 RESPONSE_HEADER_ALLOWLIST = (
     "cache-control",
     "content-type",
@@ -90,11 +91,14 @@ def load_cases(corpus_dir: Path = CORPUS_DIR) -> list[dict[str, Any]]:
 
     Those are the ``backend: up`` cases of ``origin: python`` families, because the
     e2e backend is always up; ``down`` cases are hand-authored and replayed by gdaemon.
-    Rejects any case whose ``schema_version`` differs from the manifest's, whose family
-    the manifest lacks, or whose ``backend`` is missing or neither ``up`` nor ``down``.
+    Rejects a manifest whose ``schema_version`` is neither 2 nor 3, any case whose
+    ``schema_version`` differs from the manifest's, whose family the manifest lacks, or
+    whose ``backend`` is missing or neither ``up`` nor ``down``.
     """
     manifest = load_manifest(corpus_dir)
     version = manifest["schema_version"]
+    if not isinstance(version, int) or version not in SCHEMA_VERSIONS:
+        raise CorpusError(f"manifest schema_version {version!r} is neither 2 nor 3")
     families: Mapping[str, Mapping[str, str]] = manifest["families"]
     cases: list[dict[str, Any]] = []
     for file_name in manifest["cases"]:

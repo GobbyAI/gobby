@@ -136,28 +136,28 @@ def test_loader_rejects_missing_or_invalid_backend(tmp_path: Path) -> None:
     good.mkdir()
     _write_corpus(
         good,
-        version=1,
+        version=2,
         families=SYNTHETIC_FAMILIES,
         cases=[
-            _synthetic_case("health_ok", "health"),
-            _synthetic_case("health_backend_down", "health", backend="down"),
-            _synthetic_case("front_door_backend_down", "front_door", backend="down"),
-            _synthetic_case("front_door_up", "front_door"),
+            _synthetic_case("health_ok", "health", version=2),
+            _synthetic_case("health_backend_down", "health", version=2, backend="down"),
+            _synthetic_case("front_door_backend_down", "front_door", version=2, backend="down"),
+            _synthetic_case("front_door_up", "front_door", version=2),
         ],
     )
     assert [case["name"] for case in http_corpus.load_cases(good)] == ["health_ok"]
 
-    missing = _synthetic_case("health_missing", "health")
+    missing = _synthetic_case("health_missing", "health", version=2)
     del missing["backend"]
-    invalid = [_synthetic_case("health_sideways", "health", backend="sideways")]
+    invalid = [_synthetic_case("health_sideways", "health", version=2, backend="sideways")]
     for label, value in (("null", None), ("number", 0), ("list", []), ("object", {})):
-        case = _synthetic_case(f"health_{label}", "health")
+        case = _synthetic_case(f"health_{label}", "health", version=2)
         case["backend"] = value
         invalid.append(case)
     for case in (missing, *invalid):
         bad = tmp_path / case["name"]
         bad.mkdir()
-        _write_corpus(bad, version=1, families=SYNTHETIC_FAMILIES, cases=[case])
+        _write_corpus(bad, version=2, families=SYNTHETIC_FAMILIES, cases=[case])
         with pytest.raises(http_corpus.CorpusError, match=rf"^{case['name']}\.json: backend"):
             http_corpus.load_cases(bad)
 
