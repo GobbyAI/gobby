@@ -326,6 +326,7 @@ class ReplayResult:
     outcome: str
     waiver: str | None = None
     decision: str | None = None
+    pointer: str | None = None
 
 
 def _normalized_response(case: Mapping[str, Any], response: Mapping[str, Any]) -> dict[str, Any]:
@@ -338,6 +339,8 @@ def classify_replay(
     case: Mapping[str, Any],
     actual: Mapping[str, Any],
     waivers: Mapping[str, Waiver],
+    *,
+    observed: Mapping[str, Any] | None = None,
 ) -> ReplayResult:
     """Classify one replayed case against Python, or against its native contract when waived.
 

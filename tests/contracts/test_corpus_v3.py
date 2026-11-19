@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from scripts.parity_waivers import PASSED, WAIVED
+from scripts.parity_waivers import DIFF, PASSED, WAIVED, Waiver
 from tests.contracts import corpus_v3
-from tests.contracts.http_corpus import CorpusError
+from tests.contracts.http_corpus import CorpusError, classify_replay
 
 V2_CASE_COUNT = 16
 FAMILIES: dict[str, dict[str, str]] = {"probe": {"parity": "proxy", "origin": "python"}}
@@ -467,3 +468,144 @@ def _self_replay_outcome(case: Mapping[str, Any]) -> str:
 @pytest.mark.parametrize("case", V3_CASES, ids=lambda case: case["name"])
 def test_v3_proxy_self_replay(case: dict[str, Any]) -> None:
     assert _self_replay_outcome(case) in (PASSED, WAIVED), case["name"]
+
+
+# Synthetic in-test recordings (C23): no v3 case files are needed. Each recording holds one
+# db_delta entry and one pg_notify side effect, and a replay returns the recorded values.
+RECORDED_DB_DELTA: dict[str, Any] = {
+    "added": [{"id": 2, "state": "new"}],
+    "removed": [{"id": 3, "state": "old"}],
+    "changed": [{"key": {"id": 1}, "column": "state", "before": "new", "after": "done"}],
+}
+RECORDED_CAPTURES: list[dict[str, Any]] = [
+    {"channel": "gobby_config_changed", "payload": {"key": "probe.setting"}}
+]
+WAIVER_ID = "parity.probe.surface-match"
+SELF_REPLAY_BUILDERS = [
+    pytest.param(_v3_http, id="http"),
+    pytest.param(_mcp, id="mcp"),
+    pytest.param(_ws, id="ws"),
+    pytest.param(_cli, id="cli"),
+]
+CITED_BUILDERS = [
+    pytest.param(_v3_http, "HTTP GET /api/probe", id="http"),
+    pytest.param(_mcp, "MCP HTTP gobby:list_tasks", id="mcp"),
+    pytest.param(_ws, "WS message ping", id="ws"),
+    pytest.param(_cli, "CLI gobby status", id="cli"),
+]
+
+
+def _changed_db_column(observed: dict[str, Any]) -> dict[str, Any]:
+    observed["db_delta"][0]["changed"][0]["after"] = "failed"
+    return observed
+
+
+def _removed_db_row(observed: dict[str, Any]) -> dict[str, Any]:
+    observed["db_delta"][0]["removed"] = []
+    return observed
+
+
+def _dropped_pg_notify(observed: dict[str, Any]) -> dict[str, Any]:
+    observed["side_effects"][0] = []
+    return observed
+
+
+def _changed_side_effect(observed: dict[str, Any]) -> dict[str, Any]:
+    observed["side_effects"][0][0]["payload"]["key"] = "other.setting"
+    return observed
+
+
+MUTATIONS = [
+    pytest.param(_changed_db_column, id="changed-db-column"),
+    pytest.param(_removed_db_row, id="removed-db-row"),
+    pytest.param(_dropped_pg_notify, id="dropped-pg-notify"),
+    pytest.param(_changed_side_effect, id="changed-side-effect"),
+]
+
+
+def _with_recording(case: dict[str, Any]) -> dict[str, Any]:
+    """Give a case one db_delta entry and one pg_notify side effect, each with its recording."""
+    case["db_delta"] = [
+        {**_delta(columns=["id", "state"]), "recorded": copy.deepcopy(RECORDED_DB_DELTA)}
+    ]
+    case["side_effects"] = [
+        {
+            "channel": "pg_notify",
+            "match": {"channels": ["gobby_config_changed"]},
+            "normalizers": {},
+            "recorded": copy.deepcopy(RECORDED_CAPTURES),
+        }
+    ]
+    return _ordered(case)
+
+
+def _replayed(case: Mapping[str, Any]) -> dict[str, Any]:
+    """The observation an unchanged replay of the recording returns, in entry order."""
+    return {
+        "db_delta": [copy.deepcopy(entry["recorded"]) for entry in case["db_delta"]],
+        "side_effects": [copy.deepcopy(entry["recorded"]) for entry in case["side_effects"]],
+    }
+
+
+def _cited(
+    build: Callable[[], dict[str, Any]], surface: str
+) -> tuple[dict[str, Any], dict[str, Waiver]]:
+    case = _with_recording(build())
+    case["waiver"] = WAIVER_ID
+    case["native_response"] = copy.deepcopy(case["response"])
+    waiver = Waiver(
+        id=WAIVER_ID, surface=surface, behaviour="probe", decision="#25938", replacement="probe"
+    )
+    return _ordered(case), {WAIVER_ID: waiver}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("build", SELF_REPLAY_BUILDERS)
+def test_unchanged_recording_passes_on_self_replay(build: Callable[[], dict[str, Any]]) -> None:
+    case = _with_recording(build())
+    result = classify_replay(case, case["response"], {}, observed=_replayed(case))
+    assert result.outcome == PASSED
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("build", SELF_REPLAY_BUILDERS)
+@pytest.mark.parametrize("mutate", MUTATIONS)
+def test_changed_recording_diffs_on_self_replay(
+    build: Callable[[], dict[str, Any]], mutate: Callable[[dict[str, Any]], dict[str, Any]]
+) -> None:
+    case = _with_recording(build())
+    result = classify_replay(case, case["response"], {}, observed=mutate(_replayed(case)))
+    assert result.outcome == DIFF
+
+
+@pytest.mark.unit
+def test_diff_names_the_first_differing_json_pointer() -> None:
+    case = _with_recording(_v3_http())
+    observed = _changed_db_column(_replayed(case))
+    result = classify_replay(case, case["response"], {}, observed=observed)
+    assert result.outcome == DIFF
+    assert result.pointer == "/db_delta/0/recorded/changed/0/after"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("build", "surface"), CITED_BUILDERS)
+def test_unchanged_recording_is_waived_on_cited_classify(
+    build: Callable[[], dict[str, Any]], surface: str
+) -> None:
+    case, waivers = _cited(build, surface)
+    result = classify_replay(case, case["native_response"], waivers, observed=_replayed(case))
+    assert result.outcome == WAIVED
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("build", "surface"), CITED_BUILDERS)
+@pytest.mark.parametrize("mutate", MUTATIONS)
+def test_changed_recording_diffs_on_cited_classify(
+    build: Callable[[], dict[str, Any]],
+    surface: str,
+    mutate: Callable[[dict[str, Any]], dict[str, Any]],
+) -> None:
+    case, waivers = _cited(build, surface)
+    observed = mutate(_replayed(case))
+    result = classify_replay(case, case["native_response"], waivers, observed=observed)
+    assert result.outcome == DIFF
