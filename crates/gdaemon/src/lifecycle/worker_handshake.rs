@@ -1,7 +1,7 @@
-//! Rust side of the private worker protocol (R0 frozen contract, protocol v1).
+//! Rust side of the private worker protocol (frozen contract, protocol v1).
 //!
-//! Dormant in R0: `RUNNER_DEFAULT` is Python, so the supervisor performs no
-//! exchange, and R1 wires the call site. Each call makes exactly one exchange
+//! Under the Python default the supervisor performs no exchange. In Rust mode it
+//! runs the handshake for each spawned worker. Each call makes exactly one exchange
 //! and never resends. A reply lost on any command is an unknown outcome for the
 //! caller to reconcile. Requests are built here, so their bytes equal the
 //! corpus bytes (`tests/contracts/worker_protocol.json`). Replies are checked
@@ -12,6 +12,7 @@
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use gobby_core::schema::SchemaIdentityContract;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -243,12 +244,23 @@ pub enum HandshakeOutcome {
     Crash,
 }
 
-/// Classifies a failed handshake. Until the classification lands, every failure is a crash.
-pub fn handshake_outcome(_error: &WorkerCallError) -> HandshakeOutcome {
-    HandshakeOutcome::Crash
+/// Classifies a failed handshake. An unknown outcome (no answer, a closed channel, a framing
+/// error or a deadline) is a crash: the child ends and the next spawn takes a new generation.
+/// Every other failure is sticky: the reply arrived and the worker refused it or broke the
+/// contract, so the supervisor refuses rather than respawning the same backend.
+pub fn handshake_outcome(error: &WorkerCallError) -> HandshakeOutcome {
+    match error {
+        WorkerCallError::Unknown(_) => HandshakeOutcome::Crash,
+        WorkerCallError::CredentialMissing
+        | WorkerCallError::RequestTooLarge { .. }
+        | WorkerCallError::Protocol(_)
+        | WorkerCallError::Refused(_)
+        | WorkerCallError::OpFailed(_) => HandshakeOutcome::Sticky,
+    }
 }
 
-/// The handshake result. `schema_identity` is returned as JSON and compared by R1.
+/// The handshake result. `schema_identity` is returned as JSON and compared with the installed
+/// schema contract before the session is bound.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandshakeResult {
@@ -541,8 +553,9 @@ fn into_result(call: &Call, reply: Reply) -> Result<Value, WorkerCallError> {
     }
 }
 
-/// Checks the handshake result's `protocol_version`, `generation` and `commands`.
-/// `schema_identity` is returned as JSON and compared by R1.
+/// Checks the handshake result's `protocol_version`, `generation`, `commands` and
+/// `schema_identity`. The identity must equal the installed schema contract. Key order is
+/// ignored by the JSON comparison. If the contract cannot be serialized, nothing matches.
 fn check_handshake(call: &Call, result: &HandshakeResult) -> Result<(), ProtocolViolation> {
     if result.protocol_version != WORKER_PROTOCOL_VERSION {
         return Err(ProtocolViolation::ResultMismatch(
@@ -556,6 +569,12 @@ fn check_handshake(call: &Call, result: &HandshakeResult) -> Result<(), Protocol
     }
     if result.commands != HANDSHAKE_COMMANDS {
         return Err(ProtocolViolation::ResultMismatch(HandshakeField::Commands));
+    }
+    let installed = serde_json::to_value(SchemaIdentityContract::embedded());
+    if !installed.is_ok_and(|expected| result.schema_identity == expected) {
+        return Err(ProtocolViolation::ResultMismatch(
+            HandshakeField::SchemaIdentity,
+        ));
     }
     Ok(())
 }
@@ -621,14 +640,14 @@ fn message_within_limit(message: Option<&str>) -> bool {
 
 #[cfg(unix)]
 impl BackendSupervisor {
-    /// Runs the handshake for the compiled runner default.
+    /// Runs the handshake for the supervisor's runner mode.
     pub async fn handshake_worker<C: WorkerChannel>(
         &self,
         channel: &mut C,
         session: &mut WorkerSession,
         credential: &str,
     ) -> Result<WorkerHandshake, WorkerCallError> {
-        self.handshake_worker_for(RUNNER_DEFAULT, channel, session, credential)
+        self.handshake_worker_for(self.runner_mode(), channel, session, credential)
             .await
     }
 

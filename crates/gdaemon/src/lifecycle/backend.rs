@@ -3,7 +3,10 @@
 use super::{
     pid_file::PidFileClaim,
     shutdown_intent::{Intent, IntentMarker},
-    worker_handshake::{GenerationSource, RUNNER_DEFAULT, RunnerMode},
+    worker_handshake::{
+        GenerationSource, RUNNER_DEFAULT, RunnerMode, UnknownOutcome, WorkerCallError,
+        WorkerSession,
+    },
 };
 use crate::lease::{ActiveDaemonLease, NamedGuard, NamedLock};
 use anyhow::{Context, Result, bail, ensure};
@@ -121,6 +124,10 @@ pub struct BackendSupervisor {
     /// The reason the supervisor is waiting now (a lease-lock holder or the backend's exit),
     /// or None when it is not waiting. The front door reports it beside the backend state.
     wait: watch::Sender<Option<String>>,
+    /// Which runner the spawned workers serve. Only Rust mode runs the handshake.
+    mode: RunnerMode,
+    /// Assigns the generation of each worker session this supervisor spawns.
+    generations: GenerationSource,
 }
 
 impl BackendSupervisor {
@@ -141,7 +148,7 @@ impl BackendSupervisor {
         lease: Option<Arc<NamedLock<ActiveDaemonLease>>>,
         pid_claim: PidFileClaim,
         config: BackendConfig,
-        _mode: RunnerMode,
+        mode: RunnerMode,
     ) -> Self {
         let (state, _) = watch::channel(BackendStatus::Standby);
         let (wait, _) = watch::channel(None);
@@ -151,12 +158,23 @@ impl BackendSupervisor {
             config,
             state,
             wait,
+            mode,
+            generations: GenerationSource::default(),
         }
     }
 
     /// The runner mode the worker handshake runs for.
     pub fn runner_mode(&self) -> RunnerMode {
-        RunnerMode::Python
+        self.mode
+    }
+
+    /// The generation source for a spawned worker: Some only in Rust mode, where each spawn
+    /// draws a generation and runs the handshake. Python spawns draw none.
+    fn spawn_generations(&self) -> Option<&GenerationSource> {
+        match self.mode {
+            RunnerMode::Python => None,
+            RunnerMode::Rust => Some(&self.generations),
+        }
     }
 
     pub fn subscribe(&self) -> watch::Receiver<BackendStatus> {
@@ -271,7 +289,7 @@ impl BackendSupervisor {
             if shutdown_requested(shutdown) {
                 return Ok(SupervisorExit::Stopped);
             }
-            let mut backend = BackendChild::spawn(&self.config, None).await?;
+            let mut backend = BackendChild::spawn(&self.config, self.spawn_generations()).await?;
             let started_at = Instant::now();
             let pid = backend.child.id().context("spawned backend has no PID")?;
             self.state.send_replace(BackendStatus::Starting { pid });
@@ -344,6 +362,18 @@ impl BackendSupervisor {
                     },
                 });
                 return Ok(SupervisorExit::Refused);
+            }
+            // A worker generation whose child ended here never answered its handshake, which
+            // supervision does not run yet. Its reply is lost, an unknown outcome: a crash.
+            if let Some(generation) = backend.worker_generation() {
+                let lost = WorkerCallError::Unknown(UnknownOutcome {
+                    command: "handshake",
+                    generation,
+                    operation_id: format!("{generation}:1"),
+                });
+                if let Some(exit) = self.handle_handshake_failure(&lost) {
+                    return Ok(exit);
+                }
             }
             // The child is gone: report it down until the next spawn or stop, not starting.
             self.state.send_replace(BackendStatus::Stopped);
@@ -561,13 +591,22 @@ struct BackendChild {
     _write_token: TokenLease,
     stderr: JoinHandle<io::Result<()>>,
     last_line: watch::Receiver<String>,
+    /// The generation of the worker session this child serves, or None when it serves none.
+    generation: Option<u64>,
 }
 
 impl BackendChild {
-    async fn spawn(
-        config: &BackendConfig,
-        _generations: Option<&GenerationSource>,
-    ) -> Result<Self> {
+    async fn spawn(config: &BackendConfig, generations: Option<&GenerationSource>) -> Result<Self> {
+        // The generation is drawn before the child starts, so the child serves the value its
+        // session was given. A source that yields no session is a spawn failure.
+        let generation = match generations {
+            Some(source) => {
+                let session = WorkerSession::spawn(source)
+                    .map_err(|error| anyhow::anyhow!("worker session: {error:?}"))?;
+                Some(session.generation())
+            }
+            None => None,
+        };
         let (reader, writer) = std::io::pipe()?;
         let read_fd = reader.as_raw_fd();
         // The secret rides its own pipe, filled and closed before spawn so the
@@ -662,12 +701,13 @@ impl BackendChild {
             _write_token: write_token,
             stderr,
             last_line,
+            generation,
         })
     }
 
     /// The generation of the worker session this child serves, or None when it serves none.
     fn worker_generation(&self) -> Option<u64> {
-        None
+        self.generation
     }
 
     async fn finish_stderr(&mut self) {

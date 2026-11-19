@@ -91,6 +91,30 @@
         "result": {"n": -9223372036854775808}
       },
       "expect": "accepted"
+    },
+    {
+      "name": "invoke_digit_run_inside_string_accepted",
+      "command": "invoke",
+      "generation": 7,
+      "reply": {
+        "protocol_version": 1,
+        "generation": 7,
+        "operation_id": "7:1",
+        "result": {"s": "18446744073709551616999999999999999999999"}
+      },
+      "expect": "accepted"
+    },
+    {
+      "name": "invoke_escaped_quote_keeps_digit_run_inside_string_accepted",
+      "command": "invoke",
+      "generation": 7,
+      "reply": {
+        "protocol_version": 1,
+        "generation": 7,
+        "operation_id": "7:1",
+        "result": {"s": "a\"18446744073709551616"}
+      },
+      "expect": "accepted"
     }
   ]
 }

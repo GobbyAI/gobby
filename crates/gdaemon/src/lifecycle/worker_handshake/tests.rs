@@ -1,4 +1,4 @@
-//! Tests for the Rust side of the worker handshake (R0 contract, protocol v1).
+//! Tests for the Rust side of the worker handshake (frozen contract, protocol v1).
 //!
 //! The corpus at `tests/contracts/worker_protocol.json` is frozen. These tests
 //! read its exact bytes and never edit it.
@@ -69,7 +69,9 @@ fn corpus() -> Value {
     serde_json::from_str(&text).expect("worker protocol corpus is JSON")
 }
 
-/// The exact bytes of one corpus entry. `list` is `cases` or `responses`.
+/// The exact bytes of one corpus entry. `list` is `cases` or `responses`. The corpus names the
+/// installed schema identity by the placeholder `"$schema_identity"`, which is replaced here
+/// with the installed identity, so the frozen bytes stay unchanged.
 fn corpus_text(list: &str, name: &str, field: &str) -> Vec<u8> {
     let corpus = corpus();
     let entries = corpus["versions"][0][list]
@@ -82,8 +84,8 @@ fn corpus_text(list: &str, name: &str, field: &str) -> Vec<u8> {
     entry[field]
         .as_str()
         .expect("corpus bytes are a string")
-        .as_bytes()
-        .to_vec()
+        .replace("\"$schema_identity\"", &installed_identity_text())
+        .into_bytes()
 }
 
 fn case_request(name: &str) -> Vec<u8> {
@@ -205,7 +207,7 @@ async fn handshake_accepted_round_trip() {
     assert_eq!(result.protocol_version, 1);
     assert_eq!(result.generation, 7);
     assert_eq!(result.commands, ["handshake", "initialize", "invoke"]);
-    assert_eq!(result.schema_identity, json!("$schema_identity"));
+    assert_eq!(result.schema_identity, installed_identity());
 }
 
 #[tokio::test]
@@ -662,6 +664,6 @@ fn packaged_identity_equals_embedded_contract() {
     assert_eq!(packaged, installed_identity());
 }
 
-/// Reply-validation tests (R56), in a sibling file so this module stays small.
+/// Reply-validation tests, in a sibling file so this module stays small.
 #[path = "reply_tests.rs"]
 mod reply_tests;
