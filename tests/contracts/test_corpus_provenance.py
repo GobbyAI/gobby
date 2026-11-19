@@ -8,6 +8,7 @@ check runs against the files as committed.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,9 @@ import pytest
 CONTRACTS_DIR = Path(__file__).resolve().parent
 PLATFORM_KEYS = frozenset({"macos", "linux", "windows-x64", "windows-arm64"})
 RECORD_COMMAND = "GOBBY_CORPUS_RECORD=1"
-PATH_MARKERS = ("/Users/", "/home/", "/private/var/", "C:\\Users\\", "/transcripts/")
+PATH_MARKERS = ("/Users/", "/home/", "/private/var/", "/transcripts/")
+# A Windows user path as JSON text stores it: every backslash is doubled.
+WINDOWS_USER_PATH = re.compile(r"[A-Za-z]:\\+Users\\+")
 
 # Minimum committed case counts. Rules: one case for each required scenario ID (92).
 # Adapters: one inbound and one outbound case for each of the five adapters (10), four
@@ -79,8 +82,10 @@ def test_committed_corpus_is_synthetic(layer: str) -> None:
     assert not not_synthetic, f"{layer} cases without synthetic provenance: {not_synthetic}"
     for path in sorted(LAYERS[layer]["dir"].rglob("*.json")):
         text = path.read_text()
-        markers = [marker for marker in PATH_MARKERS if marker in text]
-        assert not markers, f"{path.name} holds absolute or transcript path markers: {markers}"
+        found = [marker for marker in PATH_MARKERS if marker in text]
+        if WINDOWS_USER_PATH.search(text):
+            found.append("Windows user path")
+        assert not found, f"{path.name} holds absolute or transcript path markers: {found}"
 
 
 @pytest.mark.parametrize("layer", LAYER_NAMES)

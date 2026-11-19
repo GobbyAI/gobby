@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import dataclasses
 import json
+import os
 import re
 import shutil
 from collections.abc import Iterable
@@ -32,7 +33,8 @@ VECTORS_PATH = CORPUS_DIR / "normalize_vectors.json"
 MODULES_PATH = CORPUS_DIR / "normalize_modules.json"
 README_PATH = CORPUS_DIR / "README.md"
 BUNDLED_WORKFLOWS_DIR = SRC_DIR / "gobby" / "install" / "shared" / "workflows"
-RECORD_COMMAND = "GOBBY_CORPUS_RECORD=1"
+RECORD_ENV = "GOBBY_CORPUS_RECORD"
+RECORD_COMMAND = f"{RECORD_ENV}=1"
 REPLAY_TARGET = "tests/contracts/test_rules_corpus.py"
 
 EFFECT_TYPES = (
@@ -79,6 +81,8 @@ FAMILIES = (
     "session_target",
 )
 OBSERVERS = ("plan_mode", "context_usage", "mcp", "commits", "turn_interrupt")
+# An observer that performs an external read (git, transcript or session store) needs a
+# seam-error case. The tuple is written out by hand; nothing else derives it.
 SEAM_READING_OBSERVERS = ("plan_mode", "context_usage", "commits", "turn_interrupt")
 RESPONSE_FIELDS = (
     "decision",
@@ -123,6 +127,9 @@ EXPECT_KEYS = (
     "effect_log",
     "audit_records",
 )
+# Optional expect key, present only on a case whose event skips a declared rule group.
+SKIPPED_GROUPS_KEY = "skipped_groups"
+OPTIONAL_EXPECT_KEYS = (SKIPPED_GROUPS_KEY,)
 LABEL_AXES = (("family", FAMILIES, "S-FAM-"), ("observer", OBSERVERS, "S-OBS-"))
 
 
@@ -186,8 +193,10 @@ HARDCODED_CASE_IDS = (
     "S-HARDCODED-COMMIT-REVIEW-DEFAULT",
     "S-HARDCODED-BLOCKED-TOOL-RETRY",
     "S-HARDCODED-AFTER-TOOL-RECOVERY",
+    "S-HARDCODED-AFTER-TOOL-STEP",
     "S-HARDCODED-BATCH-RESET",
-    "S-HARDCODED-AUTO-DISCOVER",
+    "S-HARDCODED-AUTO-DISCOVER-SERVERS",
+    "S-HARDCODED-AUTO-DISCOVER-PROXY-SELF-CALL",
     "S-HARDCODED-TURN-END-ATTEMPTS",
     "S-HARDCODED-STOP-GATES",
     "S-HARDCODED-LATE-MCP-INJECTION",
@@ -519,7 +528,7 @@ def test_cli_internal_request_skips_declared_group() -> None:
         case = next(case for case in cases if scenario_id in case["scenario_ids"])
         assert case["event"]["type"] == event_type, case["id"]
         assert case["event"]["metadata"].get("_cli_internal_request") is True, case["id"]
-        skipped = set(case["expect"].get("skipped_groups", []))
+        skipped = set(case["expect"].get(SKIPPED_GROUPS_KEY, []))
         declared = {rule["group"] for rule in case["rules"] if "group" in rule}
         assert skipped and skipped <= declared, f"{case['id']} skips no group its rules declare"
         assert any(rule.get("group") not in skipped for rule in case["rules"]), case["id"]
@@ -538,6 +547,49 @@ def test_exporter_records_through_recorder() -> None:
     _assert_enough(cases)
     empty_log = [case["id"] for case in cases if not case["expect"].get("effect_log")]
     assert not empty_log, f"cases with an empty effect log: {empty_log}"
+
+
+def test_seam_registry_matches_required_kinds() -> None:
+    registry_kinds = set(rules_corpus.seam_registry())
+    required_kinds = set(SEAM_KINDS)
+    registry_only = sorted(registry_kinds - required_kinds)
+    list_only = sorted(required_kinds - registry_kinds)
+    assert not registry_only and not list_only, (
+        f"registry-only seam kinds: {registry_only}; kinds in SEAM_KINDS only: {list_only}"
+    )
+    failure_ids = {f"S-SEAM-FAIL-{_upper_id(kind)}" for kind in registry_kinds}
+    unrequired = sorted(failure_ids - set(SEAM_FAIL_IDS))
+    unregistered = sorted(set(SEAM_FAIL_IDS) - failure_ids)
+    assert not unrequired and not unregistered, (
+        f"registry kinds with no required failure ID: {unrequired}; "
+        f"required failure IDs with no registry kind: {unregistered}"
+    )
+
+
+def _record_corpus(root: Path) -> None:
+    """Write each case's effect_log from the recorder when GOBBY_CORPUS_RECORD is 1."""
+    if os.environ.get(RECORD_ENV) != "1":
+        return
+    for path in sorted((root / "cases").glob("*.json")):
+        document = json.loads(path.read_text())
+        for case in document["cases"]:
+            case["expect"]["effect_log"] = rules_corpus.record_case(case)
+        path.write_text(json.dumps(document))
+
+
+def test_record_branch_writes_case_through_recorder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(RECORD_ENV, "1")
+    case = _synthetic_case()
+    _write_corpus(tmp_path, cases=[case])
+    _record_corpus(tmp_path)
+    written = json.loads((tmp_path / "cases" / "synthetic.json").read_text())["cases"]
+    logged = rules_corpus.record_case(case)
+    assert logged, "the recorder logs no seam call for the synthetic case"
+    assert written[0]["expect"]["effect_log"] == logged, (
+        "the record branch did not persist the recorder's effect log"
+    )
 
 
 def test_python_normalizer_replays_vectors() -> None:
