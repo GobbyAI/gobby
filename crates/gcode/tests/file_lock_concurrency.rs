@@ -18,6 +18,7 @@ mod serial_db {
         root: tempfile::TempDir,
         home: PathBuf,
         database_url: String,
+        principal: test_env::TestPrincipal,
         project_id: String,
     }
 
@@ -53,14 +54,16 @@ mod serial_db {
             assert!(git_status.success(), "git init should succeed");
             test_env::seed_test_checkout(&mut conn, &project_id, root.path())
                 .expect("seed test checkout");
-            test_env::seed_test_principal_binding(&mut conn, &project_id)
-                .expect("seed managed principal binding");
+            let principal =
+                test_env::seed_test_principal_binding(&mut conn, &database_url, &project_id)
+                    .expect("seed managed principal binding");
 
             let home = isolated_gobby_home(root.path());
             Self {
                 root,
                 home,
                 database_url,
+                principal,
                 project_id,
             }
         }
@@ -86,7 +89,7 @@ mod serial_db {
                 &mut command,
                 &self.home,
                 &self.project_id,
-                gobby_core::grant::DirectConnections::postgres(&self.database_url),
+                gobby_core::grant::DirectConnections::postgres(self.principal.database_url()),
             );
             command.output().expect("run gcode index")
         }
@@ -343,7 +346,9 @@ mod serial_db {
             let mut grant = gobby_core::grant::managed_direct_grant(
                 &self.parent.project_id,
                 machine.trim(),
-                &gobby_core::grant::DirectConnections::postgres(&self.parent.database_url),
+                &gobby_core::grant::DirectConnections::postgres(
+                    self.parent.principal.database_url(),
+                ),
             );
             grant.principal.code_overlay_project_id = Some(self.overlay_id.clone());
             let path = gobby_core::grant::write_managed_bootstrap(

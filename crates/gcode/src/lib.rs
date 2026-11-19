@@ -26,7 +26,7 @@ mod projection;
 mod schema;
 mod search;
 #[doc(hidden)]
-#[cfg(any(test, feature = "test-support", gcode_postgres_tests))]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_env;
 mod utils;
 mod vector;

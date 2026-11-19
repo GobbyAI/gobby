@@ -274,39 +274,132 @@ pub fn seed_test_checkout(
     Ok(())
 }
 
-/// Binds the managed grant's DSN role to exactly one live principal for `project_id`.
-/// The hub's RLS helpers fail closed on zero or duplicate live bindings, so the
-/// fixture replaces any prior binding for the project rather than stacking one.
+/// Deployment token the test principal is issued under. The managed path never reads it
+/// back; the issuance function only requires it to be non-empty.
+const TEST_PRINCIPAL_DEPLOYMENT_TOKEN: &str = "gcode-test-deployment";
+
+/// A managed principal issued for one test project through the production issuance
+/// function. Its binding is keyed on the login role the DSN authenticates as, so the
+/// managed grant carries [`TestPrincipal::database_url`]. Dropping it removes the
+/// binding and the role.
+pub struct TestPrincipal {
+    admin_database_url: String,
+    role_name: String,
+    database_url: String,
+}
+
+impl TestPrincipal {
+    /// DSN that authenticates as the issued role on the admin database.
+    pub fn database_url(&self) -> &str {
+        &self.database_url
+    }
+}
+
+impl Drop for TestPrincipal {
+    fn drop(&mut self) {
+        let mut admin = match gobby_core::postgres::connect_readwrite(&self.admin_database_url) {
+            Ok(admin) => admin,
+            Err(err) => {
+                eprintln!(
+                    "TestPrincipal: connect failed for role {}: {err:#}",
+                    self.role_name
+                );
+                return;
+            }
+        };
+        if let Err(err) = admin.execute(
+            "DELETE FROM gobby_agent_auth.principal_bindings WHERE role_name::TEXT = $1",
+            &[&self.role_name],
+        ) {
+            eprintln!(
+                "TestPrincipal: binding cleanup failed for role {}: {}",
+                self.role_name,
+                describe_db_error(&err)
+            );
+        }
+        let drop_role = format!("DROP ROLE IF EXISTS {}", quote_ident(&self.role_name));
+        if let Err(err) = admin.batch_execute(&drop_role) {
+            eprintln!(
+                "TestPrincipal: role cleanup failed for role {}: {}",
+                self.role_name,
+                describe_db_error(&err)
+            );
+        }
+    }
+}
+
+/// Issues the managed principal for `project_id` through the production issuance
+/// function and returns the DSN the managed grant carries for it. The fixture replaces
+/// any prior binding for the project rather than stacking one; the hub's RLS helpers
+/// fail closed on zero or duplicate live bindings.
+///
+/// The admin session cannot be the principal. The binding is keyed on `session_user`,
+/// and the binding trigger claims the bound role with COMMENT ON ROLE, which PostgreSQL
+/// refuses for a superuser role (the hub's admin role is one). Production never binds a
+/// superuser: every issuer creates a NOSUPERUSER login role, and the issuer holds the
+/// ADMIN option that the claim needs on roles it created.
 pub fn seed_test_principal_binding(
     client: &mut postgres::Client,
+    admin_database_url: &str,
     project_id: &str,
-) -> Result<(), String> {
+) -> Result<TestPrincipal, String> {
     let machine_id = gobby_core::machine::read_local_machine_id()
         .map_err(|error| format!("read local machine id: {error:#}"))?;
     let machine_id = uuid::Uuid::parse_str(&machine_id)
         .map_err(|error| format!("parse local machine id {machine_id:?}: {error}"))?;
     let project_uuid = uuid::Uuid::parse_str(project_id)
         .map_err(|error| format!("parse test project id {project_id:?}: {error}"))?;
-    let managed_execution_id = uuid::Uuid::new_v5(
-        &uuid::Uuid::NAMESPACE_URL,
-        format!("gcode-test-principal:{project_id}").as_bytes(),
-    );
     client
         .execute(
             "DELETE FROM gobby_agent_auth.principal_bindings WHERE project_id = $1",
             &[&project_uuid],
         )
         .map_err(|error| format!("clear prior principal binding: {error}"))?;
-    client
-        .execute(
-            "INSERT INTO gobby_agent_auth.principal_bindings
-             (role_name, owner_kind, managed_execution_id, project_id,
-              issuing_machine_id, expires_at, credential_generation)
-             VALUES (session_user, 'agent_run', $1, $2, $3, now() + interval '1 hour', 1)",
-            &[&managed_execution_id, &project_uuid, &machine_id],
+    let password = uuid::Uuid::new_v4().simple().to_string();
+    let role_name: String = client
+        .query_one(
+            "SELECT role_name::TEXT
+             FROM gobby_agent_auth.issue_or_reuse_interactive_principal(
+                 $1, $2, $3, NULL, now() + interval '1 hour', $4, NULL)",
+            &[
+                &TEST_PRINCIPAL_DEPLOYMENT_TOKEN,
+                &machine_id,
+                &project_uuid,
+                &password,
+            ],
         )
-        .map_err(|error| format!("seed managed principal binding: {error}"))?;
-    Ok(())
+        .map_err(|error| format!("issue managed principal: {}", describe_db_error(&error)))?
+        .get(0);
+    Ok(TestPrincipal {
+        admin_database_url: admin_database_url.to_string(),
+        database_url: database_url_as_role(admin_database_url, &role_name, &password),
+        role_name,
+    })
+}
+
+/// The same database and host as `admin_database_url`, authenticated as `role_name`.
+pub fn database_url_as_role(admin_database_url: &str, role_name: &str, password: &str) -> String {
+    let mut url = reqwest::Url::parse(admin_database_url).expect("test database URL is a URL");
+    url.set_username(role_name)
+        .expect("set the issued role as the DSN user");
+    url.set_password(Some(password))
+        .expect("set the issued role password");
+    url.to_string()
+}
+
+fn quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// The server's message and detail, which `postgres::Error`'s own display omits.
+fn describe_db_error(error: &postgres::Error) -> String {
+    match error.as_db_error() {
+        Some(db) => match db.detail() {
+            Some(detail) => format!("{}: {detail}", db.message()),
+            None => db.message().to_string(),
+        },
+        None => error.to_string(),
+    }
 }
 
 /// Collection the production code-symbol lifecycle writes for `project_id`.
@@ -380,6 +473,21 @@ mod tests {
     const TEST_HUB: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test";
     const GCODE_NAMESPACE_HUB: &str =
         "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test";
+
+    // The managed grant's DSN must authenticate as the issued login role while keeping
+    // the admin database: the seeded binding is keyed on session_user.
+    #[test]
+    fn managed_dsn_authenticates_as_the_issued_role_on_the_admin_database() {
+        let dsn = database_url_as_role(
+            GCODE_NAMESPACE_HUB,
+            "gobby_ix_probe_role",
+            "fixture-password",
+        );
+        let config: postgres::Config = dsn.parse().expect("managed DSN parses");
+        assert_eq!(config.get_user(), Some("gobby_ix_probe_role"));
+        assert_eq!(config.get_password(), Some("fixture-password".as_bytes()));
+        assert_eq!(config.get_dbname(), Some("gobby_gcode_test"));
+    }
 
     #[test]
     #[serial_test::serial(serial_db)]
