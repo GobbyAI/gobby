@@ -335,11 +335,8 @@ def test_settle_terminal_context_replaces_only_a_pending_marker(
         assert row.terminal_context == {"cwd": "/work/repos/gobby", **stored}
         return
     assert settled is not None
-    assert settled.terminal_context == {
-        "cwd": "/work/repos/gobby",
-        "marker": "won",
-        "gobby_terminal_id": "a07635eb-e9c1-523f-81af-071a764ef106",
-    }
+    # No terminal row is bound to this session, so the pane id is held back.
+    assert settled.terminal_context == {"cwd": "/work/repos/gobby", "marker": "won"}
     assert row.terminal_context == settled.terminal_context
 
 

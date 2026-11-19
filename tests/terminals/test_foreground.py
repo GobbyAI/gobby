@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -20,6 +22,7 @@ from gobby.terminals.foreground import (
     foreground_executables,
     foreground_node_script,
     process_shell,
+    process_tty,
     shell_cwds,
     shell_pid,
 )
@@ -245,3 +248,30 @@ def test_executable_path_is_none_when_no_absolute_image_is_readable(outcome: obj
         else:
             process.return_value.exe.return_value = outcome
         assert _executable_path(4242) is None
+
+
+def test_a_missing_device_map_cache_is_logged_once_rather_than_ignored(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A psutil without the private map cache cannot reread new ptys; that must be visible."""
+    monkeypatch.setattr(psutil, "_psposix", SimpleNamespace(), raising=False)
+    foreground._warn_terminal_map_cache_missing.cache_clear()
+    reads: list[None] = []
+
+    class _NoTty:
+        def terminal(self) -> str | None:
+            reads.append(None)
+            return None
+
+    try:
+        with caplog.at_level(logging.WARNING, logger=foreground.logger.name):
+            assert process_tty(_NoTty()) is None
+            assert process_tty(_NoTty()) is None
+    finally:
+        foreground._warn_terminal_map_cache_missing.cache_clear()
+
+    # Each read still retries once, and the warning names the missing API once.
+    assert len(reads) == 4
+    warnings = [record for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "get_terminal_map.cache_clear" in warnings[0].getMessage()

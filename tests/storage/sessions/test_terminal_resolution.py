@@ -16,6 +16,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager
+from gobby.terminal_context import CODEX_CLEAR_ORIGIN_KEY, CODEX_CLEAR_ORIGIN_PENDING
 
 LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
 
@@ -157,6 +158,62 @@ def test_pane_id_merges_once_the_same_hook_binds_its_row(
     stored = session_manager.get(session.id)
     assert stored is not None
     assert stored.terminal_context == hook_context
+
+
+def _live_native_pane(terminals: TerminalManager, project_id: str) -> str:
+    """A native pane with a recorded shell and no session bound to it."""
+    terminal_id = str(uuid4())
+    terminal = terminals.create_pending(
+        terminal_id=terminal_id,
+        project_id=project_id,
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal_id,
+    )
+    assert terminal.attempt_started_at is not None
+    assert (
+        terminals.record_process(
+            terminal_id,
+            {"pgid": 101, "host_terminal_id": terminal_id},
+            attempt_generation=terminal.attempt_generation,
+            attempt_started_at=terminal.attempt_started_at,
+        )
+        is not None
+    )
+    return terminal_id
+
+
+@pytest.mark.parametrize("bound", [False, True], ids=["unbound", "bound"])
+def test_clear_origin_settle_merges_a_pane_id_only_for_its_bound_row(
+    session_manager: SessionManager, sample_project: dict[str, Any], bound: bool
+) -> None:
+    terminals = TerminalManager(session_manager.db)
+    terminal_id = _live_native_pane(terminals, sample_project["id"])
+    session = _register_terminal(
+        session_manager,
+        sample_project["id"],
+        "clear-origin-settle",
+        terminal_context={"cwd": "/repo", CODEX_CLEAR_ORIGIN_KEY: CODEX_CLEAR_ORIGIN_PENDING},
+    )
+    if bound:
+        assert terminals.bind_session(terminal_id, session.id, session.project_id) is not None
+    # A /clear successor's later hook settles its origin with the pane's environment.
+    settled = session_manager.settle_terminal_context(
+        session.id,
+        {"cwd": "/repo", "gobby_terminal_id": terminal_id, CODEX_CLEAR_ORIGIN_KEY: "codex_vscode"},
+        marker_key=CODEX_CLEAR_ORIGIN_KEY,
+        pending=CODEX_CLEAR_ORIGIN_PENDING,
+    )
+    assert settled is not None
+    stored = settled.terminal_context or {}
+    assert stored.get(CODEX_CLEAR_ORIGIN_KEY) == "codex_vscode"
+    resolved = terminals.resolve_live_for_session(settled)
+    if bound:
+        assert stored.get("gobby_terminal_id") == terminal_id
+        assert resolved is not None and resolved.id == terminal_id
+    else:
+        assert "gobby_terminal_id" not in stored
+        assert resolved is None
 
 
 @pytest.fixture(autouse=True)

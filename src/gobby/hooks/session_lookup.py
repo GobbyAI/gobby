@@ -448,14 +448,21 @@ class SessionLookupService:
         if search.owner is not None and (settled.terminal_context or {}).get("parent_pid"):
             if search.thread_id:
                 sync_codex_seat(search.thread_id, settled.terminal_context)
-            settled = self._take_over_cleared_seat(settled)
+            settled = self._take_over_cleared_seat(
+                settled, (terminal_context or {}).get("gobby_terminal_id")
+            )
         return settled
 
-    def _take_over_cleared_seat(self, successor: Session) -> Session:
+    def _take_over_cleared_seat(self, successor: Session, pane_terminal_id: Any) -> Session:
         """Hand a late-adopted /clear successor its predecessor's seat and pane.
 
-        SessionStart does the same when the rollout already exists at that time.
+        ``pane_terminal_id`` is the hook's pane id, which the settle held back until
+        this bind proves it. SessionStart does the same when the rollout already
+        exists at that time.
         """
+        bind_context = dict(successor.terminal_context or {})
+        if pane_terminal_id is not None:
+            bind_context["gobby_terminal_id"] = pane_terminal_id
         try:
             self._session_manager.bind_native_clear_successor(successor.id)
             bind_discovered_terminal(
@@ -463,7 +470,7 @@ class SessionLookupService:
                 self._logger,
                 session_id=successor.id,
                 project_id=successor.project_id,
-                terminal_context=successor.terminal_context,
+                terminal_context=bind_context,
                 session_manager=self._session_manager,
             )
         except Exception as exc:
@@ -749,6 +756,12 @@ class SessionLookupService:
             machine_id=machine_id,
             startup_thread=startup_thread,
         )
+        if terminal_context is not None:
+            # No bind has proven the pane yet. This hook's activation binds it from the
+            # event's own context, and a successful bind writes the id back.
+            terminal_context = {
+                key: value for key, value in terminal_context.items() if key != "gobby_terminal_id"
+            }
         platform_session_id = self._session_manager.register_session(
             external_id=external_id,
             machine_id=machine_id,

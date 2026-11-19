@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -21,6 +22,7 @@ from gobby.storage.session_activity import SessionActivityResolution
 from gobby.storage.session_models import Session
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.terminals import TerminalManager
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -597,10 +599,8 @@ def test_materialized_row_uses_normalized_deferred_identity() -> None:
         transcript_path="/tmp/transcript.jsonl",
         source="claude",
         project_path="/work/repos/gobby",
-        terminal_context={
-            "gobby_terminal_id": "1e557198-09a7-56ec-ba24-bb707c6faf68",
-            "cwd": "/work/repos/gobby",
-        },
+        # The pane id waits for the activation bind to prove it.
+        terminal_context={"cwd": "/work/repos/gobby"},
     )
 
 
@@ -785,6 +785,67 @@ def test_same_source_recovery_of_a_live_row_does_not_claim_a_mismatch() -> None:
     assert len(infos) == 1
     template, _ = infos[0]
     assert "source mismatch" not in template
+
+
+def test_first_seen_thread_registers_without_its_unbound_pane_id(
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    temp_db: HubDatabase,
+) -> None:
+    """A thread first seen by a tool hook stores no pane id its row is not bound to.
+
+    Registration runs before any bind proof, so a stored pane id would let the wake
+    path reach a pane the bind may still refuse. The hook keeps its own context, so
+    the same hook's activation still binds from it.
+    """
+    with patch("gobby.utils.machine_id._cached_machine_id", _REAL_MACHINE_ID):
+        project_id = isolated_checkout_factory(temp_db, "first-seen-project").project.id
+        storage_sessions = SessionManager(temp_db)
+        terminals = TerminalManager(temp_db)
+        pane_id = str(uuid4())
+        pane = terminals.create_pending(
+            terminal_id=pane_id,
+            project_id=project_id,
+            backend="native",
+            ownership="gobby",
+            spawn_key=pane_id,
+        )
+        assert pane.attempt_started_at is not None
+        assert (
+            terminals.record_process(
+                pane_id,
+                {"pgid": 101, "host_terminal_id": pane_id},
+                attempt_generation=pane.attempt_generation,
+                attempt_started_at=pane.attempt_started_at,
+            )
+            is not None
+        )
+        session_manager = cast(HookSessionManager, storage_sessions)
+        service = SessionLookupService(
+            session_manager=session_manager,
+            session_coordinator=SessionCoordinator(session_storage=session_manager),
+            session_task_manager=SessionTaskManager(temp_db),
+            resolve_project_id=lambda *_: project_id,
+            logger=logging.getLogger("tests.session_lookup.first_seen"),
+        )
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id="first-seen-claude-session",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"terminal_context": {"gobby_terminal_id": pane_id}},
+            machine_id=_REAL_MACHINE_ID,
+            metadata={},
+        )
+
+        resolved = service.resolve(event)
+
+        assert isinstance(resolved, str) and resolved
+        assert event.metadata["_session_just_materialized"] is True
+        stored = storage_sessions.get(resolved)
+        assert stored is not None
+        assert "gobby_terminal_id" not in (stored.terminal_context or {})
+        assert terminals.resolve_live_for_session(stored) is None
+        assert event.data["terminal_context"]["gobby_terminal_id"] == pane_id
 
 
 def test_expired_session_recovery_reports_status_through_the_real_path(

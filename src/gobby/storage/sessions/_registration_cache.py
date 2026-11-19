@@ -285,14 +285,7 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
             return None
 
         current_ctx = current.terminal_context or {}
-        incoming = {key: value for key, value in terminal_context.items() if value is not None}
-        pane_terminal_id = incoming.get("gobby_terminal_id")
-        if (
-            pane_terminal_id is not None
-            and pane_terminal_id != current_ctx.get("gobby_terminal_id")
-            and not _terminal_bound_to_session(self.db, pane_terminal_id, session_id)
-        ):
-            del incoming["gobby_terminal_id"]
+        incoming = _admitted_context(self.db, terminal_context, current_ctx, session_id)
         if not incoming or all(current_ctx.get(key) == value for key, value in incoming.items()):
             return current
 
@@ -324,12 +317,15 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
         The merge applies only while the stored ``marker_key`` still reads ``pending`` and
         no process is recorded. Returns ``None`` when another writer settled it
         first, so that writer's stored result stands. Otherwise returns the updated
-        session.
+        session. A ``gobby_terminal_id`` merges only as ``backfill_terminal_context``
+        admits it.
         """
         current = self.get(session_id)
         if current is None:
             return None
-        incoming = {key: value for key, value in terminal_context.items() if value is not None}
+        incoming = _admitted_context(
+            self.db, terminal_context, current.terminal_context or {}, session_id
+        )
         with self.db.transaction() as conn:
             won = conn.execute(
                 """
@@ -359,6 +355,28 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
                 (utc_now(), session_id),
             )
         return _publish_terminal_context(self, session_id)
+
+
+def _admitted_context(
+    db: HubDatabase,
+    terminal_context: dict[str, Any],
+    current_ctx: dict[str, Any],
+    session_id: str,
+) -> dict[str, Any]:
+    """The non-null keys of an incoming context that a merge may write.
+
+    A pane's ``gobby_terminal_id`` is held back unless it is already stored or its row
+    is bound to this session, so an unproven or refused route never persists.
+    """
+    incoming = {key: value for key, value in terminal_context.items() if value is not None}
+    pane_terminal_id = incoming.get("gobby_terminal_id")
+    if (
+        pane_terminal_id is not None
+        and pane_terminal_id != current_ctx.get("gobby_terminal_id")
+        and not _terminal_bound_to_session(db, pane_terminal_id, session_id)
+    ):
+        del incoming["gobby_terminal_id"]
+    return incoming
 
 
 def _terminal_bound_to_session(db: HubDatabase, terminal_id: object, session_id: str) -> bool:

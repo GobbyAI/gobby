@@ -15,6 +15,7 @@ would be wrong the moment the user ran anything. Resolution costs a single
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import subprocess
@@ -213,12 +214,28 @@ class _HasTerminal(Protocol):
     def terminal(self) -> str | None: ...
 
 
+@functools.cache
+def _warn_terminal_map_cache_missing() -> None:
+    """Say once per process that the device map cannot be reread."""
+    logger.warning(
+        "psutil %s has no psutil._psposix.get_terminal_map.cache_clear; panes on pty "
+        "nodes created after its device map was built report no tty and cannot bind",
+        psutil.__version__,
+    )
+
+
 def _clear_terminal_map_cache() -> None:
-    """Drop psutil's device-to-tty map, which it otherwise keeps for the process lifetime."""
+    """Drop psutil's device-to-tty map, which it otherwise keeps for the process lifetime.
+
+    The map is private psutil API. Without it a long-lived process sees no tty for new
+    pty nodes, so its absence is logged rather than ignored.
+    """
     posix = getattr(psutil, "_psposix", None)
     cache_clear = getattr(getattr(posix, "get_terminal_map", None), "cache_clear", None)
-    if callable(cache_clear):
-        cache_clear()
+    if not callable(cache_clear):
+        _warn_terminal_map_cache_missing()
+        return
+    cache_clear()
 
 
 def process_tty(process: _HasTerminal) -> str | None:
