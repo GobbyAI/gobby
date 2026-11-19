@@ -96,6 +96,12 @@ installer, git or a CLI's config home (`GOBBY_`, `CLAUDE`, `CODEX_`, `GROK_`,
 config and `/dev/null` as its global config. The environment, `Path.home`, the
 clock and the umask are restored when the recording ends.
 
+The native binary resolver (`resolve_native_bin_or_default` in
+`src/gobby/utils/native_bin.py`) is not patched. Isolation comes from the two checks
+above instead: the native bin directory resolves under the root, where the
+recorder writes only the ghook version stamp and no binary, and no `ghook` resolves on the recording PATH, so the resolver falls back to
+the bare command name and the installers write `ghook`, as the golden shows.
+
 `test_install_recorder_writes_only_under_temp_home` proves it: it snapshots a
 sentinel HOME (with `.claude`, `.codex` and `.gitconfig`) and a file beside the
 recording root before and after recording, and observes this interpreter's writes to

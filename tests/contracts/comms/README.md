@@ -4,7 +4,9 @@ The communications and voice recordings never reach a provider. Each run starts 
 provider edge, `fake_edge.py`, and points the daemon's HTTPS at it. The edge is a CONNECT proxy on
 `127.0.0.1` that terminates TLS with a per-run test certificate authority and never forwards
 upstream. The authority lives in the run's scratch directory and is trusted through
-`SSL_CERT_FILE`.
+`SSL_CERT_FILE`, and it mints a leaf certificate for each CONNECT host on first use. The IMAP
+listener speaks implicit TLS and the SMTP listener speaks STARTTLS, both with a certificate for
+`127.0.0.1`.
 
 Scripts in `edge/` give the replies for each provider host:
 
@@ -15,17 +17,18 @@ Scripts in `edge/` give the replies for each provider host:
 - `email.json`: the mailbox login that the IMAP and SMTP listeners accept.
 
 A host no script names answers HTTP 200 with `{"ok": true}`, and that host is still logged.
-The test authority mints a leaf certificate for each CONNECT host on first use. The IMAP listener
-speaks implicit TLS and the SMTP listener speaks STARTTLS, both with a certificate for
-`127.0.0.1`.
 
-Every request through the proxy is logged as host, method and path, in arrival order. A Telegram
-bot token in a path is replaced with `/bot@TELEGRAM_TOKEN@` before it is logged. The CONNECT itself is
-not logged.
+Every request through the proxy is logged in arrival order as its host, method and path and four
+sanitized `semantic` fields read from the request (`http_semantics` in `fake_edge.py`):
+`destination`, `text`, `filename` and `payload_sha256` (the SHA-256 of the uploaded bytes). A
+field the request does not send is the empty string. Headers and raw bodies are never logged. A
+Telegram bot token in a path is replaced with `/bot@TELEGRAM_TOKEN@` before it is logged. The
+CONNECT itself is not logged. A v3 case's `provider_edge` capture is that ordered list, so a port
+that sends a different destination, text or attachment with the same reply is a difference.
 
-`credential_scan.py` checks every committed v3 case and every edge script for Slack and Telegram
-token shapes listed in `SHAPES`. It reports the file and the shape, never a
-matched value.
+`credential_scan.py` checks every committed v3 case, every edge script and every adapter wire
+fixture for the Slack and Telegram token shapes listed in `SHAPES`. It reports the file and the
+shape, never a matched value.
 
 ## Adapter wire recordings
 
@@ -56,10 +59,13 @@ clock or generated ids) for an inbound, or the error for a refusal.
   connect port is moved to the edge. An SMTP submission is recorded as host `127.0.0.1`,
   method `SMTP`, path `DATA`; the IMAP mailbox commands as method `IMAP` with the command as
   path. The generated Message-ID is pinned to the drive's value.
-- `email_inbound` records a Python defect: aioimaplib returns the fetched message as a
-  `bytearray`, and the adapter accepts only `bytes`, so every polled message is dropped and
-  never marked seen. The fixture shows three mailbox commands and no messages. It goes red, and
-  is re-recorded, when the adapter is fixed.
+- `email_inbound` records a known-bad Python result, not a contract: aioimaplib returns the
+  fetched message as a `bytearray`, and the adapter accepts only `bytes`, so every polled
+  message is dropped and never marked seen. The fixture shows three mailbox commands and no
+  messages. A port must not reproduce it: the Rust email adapter delivers each polled message
+  and marks it seen, and its replay of this fixture is expected to differ on the outcome and on
+  the missing `STORE`. The fixture goes red, and is re-recorded, when the Python adapter is
+  fixed.
 - The Slack webhook is verified with the adapter's clock frozen at the drive's instant, so the
   signature check passes on every replay.
 - The Teams webhook token is signed with a key pair minted for each replay. The fixture holds
