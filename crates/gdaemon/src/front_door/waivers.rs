@@ -127,7 +127,7 @@ fn is_uppercase_method(method: &str) -> bool {
 }
 
 /// The surface a replayed case presents to the matcher: an HTTP request, or the exact ledger key
-/// of an MCP, WS or CLI case (design-v2 section 7.7.1).
+/// of an MCP, WS or CLI case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaseSurface<'a> {
     Http { method: &'a str, path: &'a str },

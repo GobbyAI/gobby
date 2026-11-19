@@ -1,6 +1,6 @@
-//! Loopback-only mode: the proof and its control (design-v2 section 6.2 C17, sections 7.4.5-7.4.7;
-//! rulings H9, H26, H30, H32, H56). Four tests need an unsandboxed shell and are `#[ignore]`d:
-//! protocol step 6 runs them and they fail, never skip, when they cannot prove. The rest run in
+//! Loopback-only mode: the proof and its control.
+//! Four tests need an unsandboxed shell and are `#[ignore]`d:
+//! The ignored tests fail, never skip, when they cannot prove. The rest run in
 //! every shell. Probe classes are read from `tests/fixtures/loopback_probe.py`.
 
 use std::fmt::Debug;
@@ -21,7 +21,7 @@ const REPO_ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
 const SERVER_NAME: &str = "offhost";
 const SAMPLE_TOOL: &str = "ping";
 
-/// The design's profile, one rule per line (section 7.4.2).
+/// The Seatbelt profile the mode runs under, one rule per line.
 const EXPECTED_PROFILE: &str = "(version 1)\n(allow default)\n(deny network-outbound)\n(allow network-outbound (remote ip \"localhost:*\"))\n(allow network-outbound (remote unix-socket (path-regex #\"^/\")))\n";
 
 fn must<T, E: Debug>(result: Result<T, E>, what: &str) -> T {
@@ -37,7 +37,7 @@ fn probe_script() -> PathBuf {
 
 /// The class a blocked connect reports on this platform: `eperm` on macOS (the Seatbelt verdict).
 /// A Linux namespace with no route fails the connect with ENETUNREACH, which the probe files as
-/// `other` (Found Work: the Linux blocked class is unproven until the post-port smoke test).
+/// `other` (the Linux blocked class is unproven until the post-port smoke test).
 fn blocked_class() -> &'static str {
     if cfg!(target_os = "macos") {
         "eperm"
@@ -74,7 +74,7 @@ fn probe_class(target: SocketAddr, wrapped: bool) -> String {
 }
 
 /// What the daemon's registration answer holds when its own connection got past TCP with the mode
-/// off: the daemon made the HTTP attempt and the destination answered. The step-6 run measured
+/// off: the daemon made the HTTP attempt and the destination answered. A measured run got
 /// `HTTP connection failed: Not Found` against the default gateway; the words after the prefix
 /// depend on the destination, so only the prefix is required, with the connect-failure text absent.
 const POST_CONNECT_TEXT: &str = "HTTP connection failed: ";
@@ -119,7 +119,7 @@ fn daemon_connect_failure(daemon: &FullDaemon, target: SocketAddrV4) -> Attempt 
     }
 }
 
-// Non-ignored: the design's profile, argv, planner and target rules, and the probe.
+// Non-ignored: the profile, argv, planner and target rules, and the probe.
 
 #[test]
 fn profile_is_the_design_text() {
@@ -334,7 +334,7 @@ fn sandbox_probe_matches_profile() {
 #[ignore = "protocol step 6 proof: run from an unsandboxed shell with cargo nextest run -p gobby-daemon --test suite --run-ignored only -E 'binary(suite) & test(/^loopback_network::/)'; a default run prints these as skipped with this reason"]
 fn control_connects_mode_off() {
     let target = must(loopback::offhost_target(), "an off-host destination");
-    // The control proves the destination answers TCP with the mode off, in this run (H9).
+    // The control proves the destination answers TCP with the mode off, in this run.
     let precondition = probe_class(SocketAddr::V4(target), false);
     assert_eq!(
         precondition, "connected",

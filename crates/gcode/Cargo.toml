@@ -42,7 +42,7 @@ required-features = ["test-support"]
 [dependencies]
 # Internal
 gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres", "falkor", "qdrant", "search", "indexing", "graph-analytics"] }
-# Test-only: the `test-support` feature compiles the test_env module outside `cargo test` (H37).
+# Test-only: the `test-support` feature compiles the test_env module outside `cargo test`.
 gobby-test-support = { path = "../gtest-support", optional = true }
 
 # CLI
@@ -122,5 +122,5 @@ syn = { version = "2", features = ["full"] }
 temp-env = "0.3.6"
 gobby-test-support = { path = "../gtest-support" }
 # Integration targets (tests/evidence.rs) call test_env from the library built without cfg(test);
-# this self dev-dependency enables the test-support feature for them (H37 follow-up).
+# this self dev-dependency enables the test-support feature for them.
 gobby-code = { path = ".", features = ["test-support"] }

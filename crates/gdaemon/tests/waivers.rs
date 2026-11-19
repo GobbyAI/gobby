@@ -1,4 +1,4 @@
-//! Waiver matching for the four case kinds (design-v2 section 7.7 and 7.8).
+//! Waiver matching for the four case kinds.
 //!
 //! The vector file is shared with the Python matcher in `scripts/parity_waivers.py`, so both
 //! engines must return the same answer for every row. Cited cases run against fixture manifests
@@ -56,7 +56,7 @@ fn manifest(entries: &[(&str, &str)]) -> WaiverManifest {
         .expect("fixture waiver manifest parses")
 }
 
-/// Design section 7.8 for a cited case, restated over the production matcher: the cited waiver
+/// The rule for a cited case, restated over the production matcher: the cited waiver
 /// must cover the case (else the citation errors), and only the native answer waives it.
 fn cited_outcome(
     manifest: &WaiverManifest,

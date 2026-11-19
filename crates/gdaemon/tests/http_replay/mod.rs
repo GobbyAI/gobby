@@ -1,7 +1,7 @@
 //! Replay driver for the v2 and v3 corpus.
 //!
 //! Each corpus case is observed through its own transport in proxy mode, and the observation is
-//! classified by the rule of design-v2 section 7.8. The golden adapters that replay the existing
+//! classified against the case's recording. The golden adapters that replay the existing
 //! fixture files through this driver live in `adapters`.
 //!
 //! Proxy self-replay is the fixture-validity gate. The observation is the recording itself, with
@@ -49,7 +49,7 @@ const TEXT_FIN: u8 = 0x81;
 /// How long a WS observation waits for more bytes after the expected reply before it stops.
 const QUIET: Duration = Duration::from_millis(200);
 
-/// The classification of one replay (design 7.8): the Rust names of `passed`, `diff`, `waived`
+/// The classification of one replay: the Rust names of `passed`, `diff`, `waived`
 /// and `native-extension`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Replay {
@@ -140,7 +140,7 @@ pub async fn observe(
     }
 }
 
-/// Classify one observation of `case` against the case's recording (design 7.8). The recorded
+/// Classify one observation of `case` against the case's recording. The recorded
 /// side and the observed side both carry the case's masks, so a masked value is equal on both.
 pub fn classify(
     case: &Case,
@@ -226,7 +226,7 @@ fn recorded_response(case: &Case) -> Result<Value, DriverError> {
         .ok_or_else(|| shape(format!("{}: no recorded response", case.name)))
 }
 
-/// The surface a case presents to the waiver matcher (design 7.7.1).
+/// The surface a case presents to the waiver matcher.
 fn surface_of(case: &Case) -> Result<CaseSurface<'_>, DriverError> {
     match case.kind {
         Kind::Http => {
@@ -359,7 +359,7 @@ async fn observe_ws(
         .map_err(|_| shape("the WS backend did not report its client leg"))?
         .map_err(|_| shape("the WS backend's capture was dropped"))?;
     // The backend must receive exactly the invocation's frames: a front door that rewrites them
-    // is a failed replay, not a match (fix3 V22).
+    // is a failed replay, not a match.
     if capture.received != client {
         return Err(shape("client leg changed the invocation frames"));
     }
@@ -371,8 +371,8 @@ async fn observe_ws(
 }
 
 /// Reads what else arrives on `stream` after the expected bytes: until the peer closes, or until it
-/// stays quiet for [`QUIET`], bounded by [`TIMEOUT`]. A surplus frame is then observed, not dropped
-/// (fix3 V25).
+/// stays quiet for [`QUIET`], bounded by [`TIMEOUT`]. A surplus frame is then observed,
+/// not dropped.
 async fn read_until_quiet<S: tokio::io::AsyncRead + Unpin>(
     stream: &mut S,
     buffer: &mut Vec<u8>,
@@ -762,7 +762,7 @@ fn cited_kinds_replay_waived() {
             "behaviour": "The case answers its native contract.", "decision": "#25938",
             "replacement": "The asserted native_response."
         }));
-        // Keys in the order the loader requires (design 7.5.2): request or invocation, then
+        // Keys in the order the loader requires: request or invocation, then
         // response, the declared entries, mask, waiver and native_response.
         let mut case = serde_json::Map::new();
         for (key, value) in [

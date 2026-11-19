@@ -237,7 +237,7 @@ def test_sweep_keeps_a_database_whose_pid_is_alive() -> None:
         _drop_database(url, name)
 
 
-# C3: every worktree-daemon override site consults the guard. This block is the C3 red set.
+# Every worktree-daemon override site consults the guard. The tests below pin that rule.
 
 _LIVE_HUB_URL = "postgresql://gobby:gobby@localhost:60891/gobby"
 # Refused by R3 (wrong port), and never the live hub: the live coordinates stay out of

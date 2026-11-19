@@ -89,7 +89,7 @@ fn database_url_for_name(database_url: &str, name: &str) -> String {
 }
 
 /// The one environment read of the resolver: `DATABASE_URL` through the shared guard entry,
-/// with the database name replaced by gcode's own `gobby_gcode_test` namespace on that hub (H25).
+/// with the database name replaced by gcode's own `gobby_gcode_test` namespace on that hub.
 fn database_url_from(env: &dyn Fn(&str) -> Option<String>) -> Result<String, DbUrlError> {
     database_url_with_env(env)
         .map(|base| database_url_for_name(&base, GCODE_POSTGRES_TEST_DATABASE))
@@ -520,7 +520,7 @@ mod tests {
         );
     }
 
-    // The gcode-only variable is retired: DATABASE_URL is the one source (H7).
+    // The gcode-only variable is retired: DATABASE_URL is the one source.
     #[test]
     #[serial_test::serial(serial_db)]
     fn test_env_ignores_the_retired_gcode_variable() {

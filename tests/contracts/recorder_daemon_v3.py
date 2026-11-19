@@ -3,7 +3,7 @@
 The launch route is tests/e2e/conftest.py's: the same gdaemon front door over the Python
 runner, the same readiness and cleanup helpers, and the same environment. This module only
 replaces the pytest fixtures that wrap them (``postgres_db``, ``e2e_config``) with plain
-context managers, so the recorder runs without pytest. Teardown follows design section 7.3.6:
+context managers, so the recorder runs without pytest. Teardown follows this order:
 the daemon tree stops first, then the caller drops the per-run database.
 """
 
@@ -196,7 +196,7 @@ def _worktree_override(base_url: str) -> Iterator[None]:
     """Allow the linked-worktree daemon for this run only, when the hub guard accepts the base.
 
     The daemon refuses a linked worktree unless GOBBY_ALLOW_WORKTREE_DAEMON is set. The guard
-    sets it only for an accepted base URL (H4), and the previous value is restored on exit.
+    sets it only for an accepted base URL, and the previous value is restored on exit.
     """
     previous = os.environ.get(WORKTREE_DAEMON_OVERRIDE_ENV)
     if not guard_worktree_override(os.environ, base_url, None):

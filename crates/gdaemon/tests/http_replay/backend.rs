@@ -1,4 +1,4 @@
-//! Driver backend selection and the compare listener (design-v2 sections 7.9 and 7.10).
+//! Driver backend selection and the compare listener.
 //!
 //! The driver passes each family's backend to the listener as a constructor argument, in the
 //! `front_door.routes` map that `RouteTable::new` reads. The compare listener is built from the
@@ -195,7 +195,7 @@ pub async fn stub_target_task() -> (SocketAddr, Seen, JoinHandle<()>) {
 
 /// A relay between the front door and a WS stub. It forwards the upgrade head unchanged, passes
 /// each later client chunk through `rewrite_client`, and after the stub's end of stream waits
-/// briefly and writes `late_reply` to the client (design-v2 section 7.11.1; fix3 V22 and V25).
+/// briefly and writes `late_reply` to the client.
 #[derive(Debug, Clone, Default)]
 pub struct WsHop {
     /// Rewrites each client chunk after the upgrade head. `None` forwards the client bytes as sent.

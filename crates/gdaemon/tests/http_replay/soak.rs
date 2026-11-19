@@ -1,4 +1,4 @@
-// Seeded soak loop in Compare mode (design-v2 sections 7.10 and H12).
+// Seeded soak loop in Compare mode.
 //
 // Iteration `i` runs every scored case once, in the order `order_for(seed, i, n)` gives. Each
 // iteration has its own home, so its compare log is fresh. Its records are checked against the

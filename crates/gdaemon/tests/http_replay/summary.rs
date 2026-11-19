@@ -1,4 +1,4 @@
-// Compare-report summary of a soak run (design-v2 section 7.10, H12).
+// Compare-report summary of a soak run.
 //
 // The summary reads the run's front-door compare log through the shipped `gdaemon
 // compare-report` command, so the pass verdict is the command's own. A run passes when the

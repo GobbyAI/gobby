@@ -1,5 +1,5 @@
-//! Per-run databases on the test hub: create, teardown drop WITH FORCE, and the dead-pid sweep
-//! (design-v2 section 7.2). Rehearsal mode uses the profile's database as it is and touches
+//! Per-run databases on the test hub: create, teardown drop WITH FORCE, and the dead-pid sweep.
+//! Rehearsal mode uses the profile's database as it is and touches
 //! nothing: no connection, no create, no drop, no sweep.
 
 use std::fmt;

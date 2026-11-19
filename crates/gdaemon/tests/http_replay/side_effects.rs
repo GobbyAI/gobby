@@ -1,4 +1,4 @@
-//! Side-effect captures (design-v2 sections 7.5.6 and 7.6; H44).
+//! Side-effect captures.
 //!
 //! `files_home_write` snapshots `<home>/files` (each regular file's path relative to `files`, and
 //! the SHA-256 of its bytes) before and after a request. Mtime is not used. The captures are the

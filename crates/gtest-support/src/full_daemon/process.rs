@@ -197,7 +197,7 @@ impl Drop for GroupWatch {
     }
 }
 
-/// Windows: no process group in plain std, so the watchdog is unbuilt. `start` refuses (H46).
+/// Windows: no process group in plain std, so the watchdog is unbuilt. `start` refuses.
 #[cfg(windows)]
 #[derive(Debug)]
 pub struct GroupWatch;

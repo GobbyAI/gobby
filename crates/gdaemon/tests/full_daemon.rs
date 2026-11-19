@@ -1,6 +1,6 @@
-//! Full-daemon harness tests (design-v2 sections 6.2 C14-C15 and 7.3): this checkout's gdaemon
+//! Full-daemon harness tests: this checkout's gdaemon
 //! and Python worker on a per-run database of the isolated test hub. Database-backed tests print
-//! the skip line and return when `DATABASE_URL` is unset (H18).
+//! the skip line and return when `DATABASE_URL` is unset.
 
 use std::fs;
 #[cfg(unix)]
@@ -30,7 +30,7 @@ const PROJECT_ID: &str = "00000000-0000-0000-0000-000000000e2e";
 /// A loopback test hub on a port that is not shared, so a rehearsal profile may name it.
 const REHEARSAL_URL: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:61503/gobby_test";
 const REHEARSAL_PORT: u16 = 61503;
-/// The 13 v2 cases the full daemon replays on code defaults (section 7.3.7), in manifest order.
+/// The 13 v2 cases the full daemon replays on code defaults, in manifest order.
 const DORMANCY_CASES: [&str; 13] = [
     "health_ok",
     "config_schema",
@@ -244,7 +244,7 @@ fn refused_database_url_fails_before_any_override_is_set() {
     );
 }
 
-/// Set in the re-executed test binary, which plays the owner that dies without teardown (H60).
+/// Set in the re-executed test binary, which plays the owner that dies without teardown.
 const OWNER_CHILD: &str = "GOBBY_HARNESS_OWNER_CHILD";
 
 /// A process the test starts in a run's root. Killed and reaped on drop, so a failing assertion
@@ -282,7 +282,7 @@ fn teardown_fails_and_stops_a_process_left_in_the_run_root() {
     assert!(!pid_alive(pid), "teardown must stop the stray {pid}");
 }
 
-/// H50: a start whose readiness never passes tears down the worker it had started, and reports
+/// A start whose readiness never passes tears down the worker it had started, and reports
 /// the pids it held. The worker must be running when readiness fails, so the test proves the
 /// teardown reached a live worker and not an empty launch.
 #[test]
@@ -404,7 +404,7 @@ fn failed_start_stops_a_worker_recorded_before_gdaemon_died() {
     }
 }
 
-/// H60: when the process that owns a daemon dies without teardown, the daemon's groups and the
+/// When the process that owns a daemon dies without teardown, the daemon's groups and the
 /// terminal host still stop. The test re-executes this binary as the owner, which starts a
 /// daemon, reports its pids, and exits with no Drop and no teardown. The watchdog must then stop
 /// all three.

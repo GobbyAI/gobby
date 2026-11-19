@@ -1,5 +1,5 @@
-//! Generic loopback listener helpers shared by the gdaemon test targets (design-v2 section 4.2,
-//! H36). This crate has no `gobby-*` dependency, so only the bind and address parts live here.
+//! Generic loopback listener helpers shared by the gdaemon test targets. This crate has no
+//! `gobby-*` dependency, so only the bind and address parts live here.
 //! Helpers that serve a front door stay with the gdaemon tests.
 
 use std::net::{Ipv4Addr, SocketAddr};

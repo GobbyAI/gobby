@@ -1,4 +1,4 @@
-//! Differential mode (design-v2 section 7.10; H12).
+//! Differential mode.
 //!
 //! One case runs twice: once through the front door with the proxy backend for its family, and
 //! once with the native backend of that family. Both legs are normalized into comparison
@@ -8,7 +8,7 @@
 //!
 //! Scope of a leg: the response is observed over HTTP. The `db_delta` and side-effect values of
 //! each leg come from the caller (`Extras`), because their observers need a database or a
-//! listener that only the full-daemon leg has. At landing no native family writes (FW-7).
+//! listener that only the full-daemon leg has. No native family writes yet.
 
 use std::convert::Infallible;
 use std::error::Error;
@@ -57,7 +57,7 @@ pub enum Verdict {
     /// The family has no native backend, so no leg ran.
     NoNativeBackend,
     /// The native leg's request reached the proxy target: the native family did not answer the
-    /// path itself, so the legs show no native parity and the run is never a match (fix3 V24).
+    /// path itself, so the legs show no native parity and the run is never a match.
     NativeFallthrough,
 }
 
@@ -202,7 +202,7 @@ pub async fn run_differential(
     } else {
         let proxied = run_leg(case, families, RouteBackend::Proxy, target, home, proxy).await?;
         // The native leg's proxy target is a tripwire. A request that reaches it was not answered
-        // by the native family, so the legs show no native parity (fix3 V24).
+        // by the native family, so the legs show no native parity.
         let (tripwire, reached, task) = stub_target_task().await;
         let native_leg =
             run_leg(case, families, RouteBackend::Native, tripwire, home, native).await;
@@ -649,8 +649,8 @@ mod tests {
         )
         .await
         .expect("runs");
-        // Open item (fix3 V24): the health family's native leg is `proxy::forward` to the proxy
-        // target, so this is a fall-through, not native parity. Recorded with FW-S4.
+        // Open item: the health family's native leg is `proxy::forward` to the proxy
+        // target, so this is a fall-through, not native parity.
         assert_eq!(verdict, Verdict::NativeFallthrough);
         assert_eq!(
             verdict_lines(home.path())[0]["outcome"],
@@ -689,8 +689,8 @@ mod tests {
         )
         .await
         .expect("runs");
-        // Open item (fix3 V24): the native health leg falls through to the proxy target, so the
-        // backend-down case is a fall-through too. Recorded with FW-S4.
+        // Open item: the native health leg falls through to the proxy target, so the
+        // backend-down case is a fall-through too.
         assert_eq!(verdict, Verdict::NativeFallthrough);
     }
 

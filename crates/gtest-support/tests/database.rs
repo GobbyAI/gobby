@@ -1,5 +1,5 @@
-//! Per-run database lifecycle on the test hub (design-v2 section 7.2). Tests that touch the hub
-//! skip with a printed line when DATABASE_URL is unset (ruling H18); the sweep refusals need no hub.
+//! Per-run database lifecycle on the test hub. Tests that touch the hub
+//! skip with a printed line when DATABASE_URL is unset; the sweep refusals need no hub.
 
 use std::future::Future;
 use std::io::ErrorKind;
@@ -24,7 +24,7 @@ use gobby_test_support::hub_guard::{
 
 use super::guard::materialize_profile;
 
-/// The hub URL, or `None` after printing why the test is skipped (ruling H18).
+/// The hub URL, or `None` after printing why the test is skipped.
 fn test_hub_url() -> Option<String> {
     match database_url_for_tests() {
         Ok(url) => Some(url),

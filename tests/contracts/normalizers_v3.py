@@ -1,4 +1,4 @@
-"""Field normalizers for the v3 corpus: the closed set of design section 7.6.
+"""Field normalizers for the v3 corpus: a closed set of rules.
 
 A normalization unit is one response document (``normalize_document``), the rows of one db_delta
 entry (``normalize_rows``) or the captures of one side-effect entry (``normalize_captures``).

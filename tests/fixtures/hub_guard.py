@@ -11,7 +11,7 @@ guard reads too. The rules, first failing rule refuses:
   set): the owner-private profile names the same user and database on its own port.
 - ARG: the URL, or a per-run name, is missing or malformed.
 
-R1 (GOBBY_TEST_PROTECT) is retired: no rule requires it (ruling H27).
+R1 (GOBBY_TEST_PROTECT) is retired: no rule requires it.
 """
 
 from __future__ import annotations

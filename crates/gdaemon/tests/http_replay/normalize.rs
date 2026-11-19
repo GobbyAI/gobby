@@ -1,4 +1,4 @@
-//! Field normalizers of the corpus v3 closed set (design-v2 section 7.6; H10, H16, H40, H73).
+//! Field normalizers of the corpus v3 closed set.
 //!
 //! The port of `tests/contracts/normalizers_v3.py`. A normalization unit is one document, one
 //! side-effect entry's captures, or one db_delta table's images, and each unit has its own
@@ -30,7 +30,7 @@ pub enum Normalizer {
     Timestamp,
 }
 
-/// The run window that a `timestamp` value must lie within (section 7.6).
+/// The run window that a `timestamp` value must lie within.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Window {
     pub start: OffsetDateTime,
@@ -551,7 +551,7 @@ fn pointer_specs(
 #[path = "normalize_tests.rs"]
 mod tests;
 
-/// The normalizer vector file replayed through [`run_vector`] (design 7.6, H40).
+/// The normalizer vector file replayed through [`run_vector`].
 #[cfg(test)]
 mod vector_tests {
     use super::{Window, run_vector};

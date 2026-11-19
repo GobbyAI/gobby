@@ -1,6 +1,6 @@
-//! The v2 request sender of the full-daemon harness (design-v2 sections 4.2 and 7.3.4): one corpus
+//! The v2 request sender of the full-daemon harness: one corpus
 //! case over blocking HTTP, and the response-only classifier. The client never reads proxy
-//! settings from the environment (ruling H40), so a local proxy setting cannot reroute a replay.
+//! settings from the environment, so a local proxy setting cannot reroute a replay.
 
 use std::fmt;
 use std::io::Read;
@@ -48,7 +48,7 @@ impl fmt::Display for SendError {
 
 impl std::error::Error for SendError {}
 
-/// The blocking client for the replay. Proxy settings from the environment are ignored (H40),
+/// The blocking client for the replay. Proxy settings from the environment are ignored,
 /// redirects are not followed, so a 3xx is captured as the daemon sent it.
 pub fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()

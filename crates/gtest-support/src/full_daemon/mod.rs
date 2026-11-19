@@ -1,4 +1,4 @@
-//! Full-daemon harness (design-v2 section 7.3): gdaemon and its Python worker on temporary ports,
+//! Full-daemon harness: gdaemon and its Python worker on temporary ports,
 //! against an isolated per-run database. Process control lives in `process`; the detached gterm
 //! host lives in `terminal_host`.
 
@@ -35,10 +35,10 @@ use terminal_host::{
     terminal_host_children, worker_of,
 };
 
-/// The readiness URL path the daemon must answer 200 on (section 7.3.5).
+/// The readiness URL path the daemon must answer 200 on.
 const READY_PATH: &str = "/api/auth/status";
 
-/// The line a database-backed test prints when `DATABASE_URL` is unset (ruling H18).
+/// The line a database-backed test prints when `DATABASE_URL` is unset.
 pub const SKIP_LINE: &str =
     "skipped: DATABASE_URL is unset (P0-HARNESS needs the isolated test hub)";
 
@@ -46,9 +46,9 @@ pub const SKIP_LINE: &str =
 const MACHINE_ID: &str = "21000000-0000-4000-8000-000000000002";
 /// Ready ceiling, the e2e fixture's (tests/e2e/conftest.py:70-71).
 const READY_CEILING: Duration = Duration::from_secs(300);
-/// Grace for gdaemon after SIGTERM (section 7.3.6 step 2).
+/// Grace for gdaemon after SIGTERM.
 const DAEMON_GRACE: Duration = Duration::from_secs(30);
-/// Grace for the Python worker after SIGTERM (section 7.3.6 step 3).
+/// Grace for the Python worker after SIGTERM.
 const WORKER_GRACE: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(100);
 
@@ -62,7 +62,7 @@ const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 #[cfg(windows)]
 const SYSTEM_PATH: &str = "";
 
-/// The test hub URL from `lookup`, or the skip line printed and `None` returned (H18).
+/// The test hub URL from `lookup`, or the skip line printed and `None` returned.
 pub fn test_hub_url_or_skip(lookup: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     match lookup("DATABASE_URL") {
         Some(url) if !url.trim().is_empty() => Some(url),
@@ -76,7 +76,7 @@ pub fn test_hub_url_or_skip(lookup: &dyn Fn(&str) -> Option<String>) -> Option<S
 /// A failure to start, operate or stop the full daemon.
 #[derive(Debug)]
 pub enum FullDaemonError {
-    /// The DATABASE_URL guard or a rehearsal profile refused the launch (design 7.1).
+    /// The DATABASE_URL guard or a rehearsal profile refused the launch.
     Guard(HubGuardError),
     /// The per-run database could not be created, dropped or swept.
     Database(DatabaseError),
@@ -91,7 +91,7 @@ pub enum FullDaemonError {
     /// Readiness was not reached, or the child exited first.
     Ready(String),
     /// A start failed after gdaemon was spawned. Teardown ran before this was returned, so the
-    /// pids are dead unless `teardown` names the step that failed (H50).
+    /// pids are dead unless `teardown` names the step that failed.
     FailedStart {
         /// Why the start failed.
         reason: String,
@@ -104,7 +104,7 @@ pub enum FullDaemonError {
     },
     /// A teardown step failed.
     Teardown(String),
-    /// The platform has no mechanism for this harness yet (H46: refuse, never skip).
+    /// The platform has no mechanism for this harness yet (the harness refuses, never skips).
     Unsupported(String),
 }
 
@@ -147,7 +147,7 @@ impl From<DatabaseError> for FullDaemonError {
     }
 }
 
-/// A stop or drop step, in the order teardown performs them (section 7.3.6).
+/// A stop or drop step, in the order teardown performs them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TeardownStep {
     /// gdaemon's process group was signalled and exited.
@@ -208,7 +208,7 @@ pub struct FullDaemonBuilder<'a> {
 }
 
 impl FullDaemonBuilder<'_> {
-    /// Run gdaemon under the loopback-only mode (section 7.4): outbound connections other than
+    /// Run gdaemon under the loopback-only mode: outbound connections other than
     /// loopback fail. The wrapper is built by `crate::loopback` and refuses where it has no
     /// mechanism.
     pub fn loopback_only(mut self) -> Self {
@@ -236,7 +236,7 @@ impl FullDaemonBuilder<'_> {
         self
     }
 
-    /// Start from a rehearsal profile (section 7.1.2 R4): the base URL is used as it is, with no
+    /// Start from a rehearsal profile: the base URL is used as it is, with no
     /// create, drop or schema apply.
     pub fn rehearsal_profile(mut self, path: &Path) -> Self {
         self.profile = Some(path.to_path_buf());
@@ -293,7 +293,7 @@ impl FullDaemonBuilder<'_> {
                 FullDaemonError::Io("no free daemon port layout after 20 tries".into())
             })?;
 
-        // The run database exists only after the guard accepted the base URL (section 7.2).
+        // The run database exists only after the guard accepted the base URL.
         let database = match guard.mode {
             GuardMode::TestHub => Some(start_run_database(&guard)?),
             GuardMode::Rehearsal => None,
@@ -358,7 +358,7 @@ impl FullDaemonBuilder<'_> {
         ])
         .to_string();
         // Loopback-only: the harness ports and the database port cross the namespace, and the
-        // daemon's own outbound network is limited to loopback (section 7.4.2).
+        // daemon's own outbound network is limited to loopback.
         let (mut command, relays) = if loopback {
             let inbound = [ports.http, ports.websocket];
             let outbound = [database_port(&database_url)?];
@@ -395,7 +395,7 @@ impl FullDaemonBuilder<'_> {
         daemon.daemon_pid = child.id();
         daemon.child = Some(child);
         // The watchdog starts before readiness, so a test that dies at any later point still
-        // stops gdaemon's groups and the gterm host (section 7.3.6, H60).
+        // stops gdaemon's groups and the gterm host.
         daemon.watch = Some(GroupWatch::start(
             daemon.daemon_pid,
             &host_dir.join("gterm.pid"),
@@ -416,7 +416,7 @@ impl FullDaemonBuilder<'_> {
 }
 
 /// Maps a loopback refusal or failure to the harness error. A missing mechanism is unsupported
-/// on this host, so it is reported as such rather than as a missing file (H46).
+/// on this host, so it is reported as such rather than as a missing file.
 fn loopback_error(error: LoopbackError) -> FullDaemonError {
     match &error {
         LoopbackError::Mechanism(_) => FullDaemonError::Unsupported(error.to_string()),
@@ -447,7 +447,7 @@ fn database_port(database_url: &str) -> Result<u16, FullDaemonError> {
 }
 
 /// A running gdaemon and Python worker. Dropping it stops both process groups before the run
-/// database is dropped (H45), so a panicking test leaves no process and no database behind.
+/// database is dropped, so a panicking test leaves no process and no database behind.
 pub struct FullDaemon {
     root: Option<TempDir>,
     host_dir: Option<TempDir>,
@@ -690,7 +690,7 @@ fn open_log(path: &Path) -> Result<File, FullDaemonError> {
 }
 
 /// The child environment: a fixed PATH, the checkout's source root, and no inherited variables
-/// beyond LANG, LC_ALL and TMPDIR (design 7.3.2). Provider keys are blanked as the e2e fixture
+/// beyond LANG, LC_ALL and TMPDIR. Provider keys are blanked as the e2e fixture
 /// blanks them.
 fn daemon_environment(repo_root: &Path, python: &Path, home: &Path) -> Vec<(String, String)> {
     let mut env = vec![
@@ -775,7 +775,7 @@ fn random_hex() -> String {
         .collect()
 }
 
-/// `gdaemon schema apply` against the run database (section 7.3.3).
+/// `gdaemon schema apply` against the run database.
 fn schema_apply(gdaemon: &Path, project: &Path, database_url: &str) -> Result<(), FullDaemonError> {
     let output = Command::new(gdaemon)
         .args(["schema", "apply"])

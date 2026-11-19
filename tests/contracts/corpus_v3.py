@@ -34,7 +34,7 @@ CHANNELS = frozenset({"pg_notify", "ws_publish", "files_home_write"})
 FIELD_NORMALIZERS = frozenset({"uuid_ordinal", "monotonic", "timestamp", "bytes", "none"})
 ORDER_MODES = frozenset({"set", "as_recorded"})
 MCP_TRANSPORTS = frozenset({"http", "stdio"})
-# Design section 7.5.2: keys appear in this order; absent keys are omitted.
+# Keys appear in this order; absent keys are omitted.
 V3_KEY_ORDER = (
     "schema_version",
     "name",
@@ -54,7 +54,8 @@ V3_KEY_ORDER = (
     "waiver",
     "native_response",
 )
-# ``response`` is required unless the cited waiver is a native-extension (H44; see _check_response_presence).
+# ``response`` is required unless the cited waiver is a native-extension
+# (see _check_response_presence).
 V3_REQUIRED_KEYS = frozenset(
     {
         "schema_version",
@@ -229,7 +230,7 @@ def _is_native_extension(case: Mapping[str, Any]) -> bool:
 
 
 def _check_response_presence(case: Mapping[str, Any], file_name: str) -> None:
-    """H44: a native-extension citation has no Python response; every other case has one."""
+    """A native-extension citation has no Python response; every other case has one."""
     if _is_native_extension(case):
         if "response" in case:
             raise CorpusError(f"{file_name}: a native-extension waiver cannot carry a response")

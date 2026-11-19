@@ -1,4 +1,4 @@
-"""One TCP connect, classified, for the loopback-only proof (design-v2 section 7.4.5).
+"""One TCP connect, classified, for the loopback-only proof.
 
 Usage: python loopback_probe.py <host:port> <out-file>
 

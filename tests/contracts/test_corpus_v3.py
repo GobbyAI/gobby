@@ -28,7 +28,7 @@ V3_CASE_FILES = (
     "cli_schema_help.json",
 )
 FAMILIES: dict[str, dict[str, str]] = {"probe": {"parity": "proxy", "origin": "python"}}
-# The frozen v3 key order (design section 7.5.2), pinned here independently of the loader.
+# The frozen v3 key order, pinned here independently of the loader.
 V3_CASE_ORDER = (
     "schema_version",
     "name",
@@ -211,7 +211,7 @@ def test_v2_corpus_bytes_match_the_digests_taken_at_head() -> None:
         assert _sha256(corpus_v3.V2_DIR / name) == digest, name
 
 
-# C38: the ledger and waiver manifest is frozen in this chunk (protocol line 17, design section 13.2).
+# The ledger and waiver manifest is frozen for this change.
 # Each digest is the SHA-256 of that file at the worktree HEAD when this guard was written.
 LEDGER_DIGESTS: dict[str, str] = {
     "docs/contracts/parity-waivers.json": (
@@ -682,7 +682,7 @@ def test_v3_proxy_self_replay(case: dict[str, Any], v3_self_replay: dict[str, An
     assert outcome.outcome in (PASSED, WAIVED), case["name"]
 
 
-# Synthetic in-test recordings (C23): no v3 case files are needed. Each recording holds one
+# Synthetic in-test recordings: no v3 case files are needed. Each recording holds one
 # db_delta entry and one pg_notify side effect, and a replay returns the recorded values.
 RECORDED_DB_DELTA: dict[str, Any] = {
     "added": [{"id": 2, "state": "new"}],

@@ -1,4 +1,4 @@
-//! Free loopback ports for a full-daemon launch (design-v2 sections 4.2, 7.1.5 and 7.3.4).
+//! Free loopback ports for a full-daemon launch.
 //!
 //! The front door and the Python backend listen on a pair (`port` and `port + 100`), and the
 //! WebSocket listener uses the same layout. Ports the shared stack owns and the isolated test hub

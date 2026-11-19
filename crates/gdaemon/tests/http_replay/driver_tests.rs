@@ -1,4 +1,4 @@
-//! Driver tests through `observe` and `classify` (fix3 review rounds V22, V23, V25 and V30).
+//! Driver tests through `observe` and `classify`.
 //!
 //! Each observation runs a real transport: the CLI case runs a probe script in place of the
 //! `gobby` entry point, the WS case goes through the front door to a stub, and a hop between them

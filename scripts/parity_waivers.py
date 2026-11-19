@@ -135,7 +135,7 @@ def surface_matches(
     An ``http`` case uses the ``HTTP`` template rule and ignores ``key``. An ``mcp``, ``ws`` or
     ``cli`` case matches only the exact ledger key it carries, so an HTTP surface never covers a
     keyed case and a keyed surface never covers an HTTP case. A call without ``kind`` is an
-    ``http`` call only when it names no ``key``; a keyed call must say its kind (H39).
+    ``http`` call only when it names no ``key``; a keyed call must say its kind.
     """
     if kind is None:
         if key:

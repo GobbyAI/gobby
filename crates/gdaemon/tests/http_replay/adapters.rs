@@ -1,4 +1,4 @@
-//! Golden adapters (design-v2 section 7.11, H2).
+//! Golden adapters.
 //!
 //! Each adapter loads an existing fixture file unchanged and replays it through the v3 driver.
 //! No fixture is re-recorded and no fixture byte changes.
@@ -41,7 +41,7 @@ fn read_value(path: &Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).expect("read json")).expect("parse json")
 }
 
-/// What one terminal fixture's replay observed (fix3 V28): the bytes the backend received after its
+/// What one terminal fixture's replay observed: the bytes the backend received after its
 /// upgrade head, and the bytes the client received.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TerminalReplay {
@@ -49,7 +49,7 @@ pub struct TerminalReplay {
     pub client_received: Vec<u8>,
 }
 
-/// The byte comparisons of one terminal fixture (design 7.11.1): the client leg reaches the backend
+/// The byte comparisons of one terminal fixture: the client leg reaches the backend
 /// unchanged, and the reply reaches the client unchanged.
 pub fn check_terminal_replay(
     client: &[u8],

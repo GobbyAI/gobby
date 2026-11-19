@@ -1,10 +1,10 @@
-//! Loopback-only mode (design-v2 section 7.4; rulings H8, H9, H23, H30, H32, H46, H56).
+//! Loopback-only mode.
 //!
 //! A harness-side wrapper that runs gdaemon with outbound network limited to loopback. macOS
 //! wraps the process in a Seatbelt profile through `sandbox-exec`. Linux runs it in a network
 //! namespace, with socat relays for the harness ports and the database port. Windows refuses:
-//! plain std has no network isolation there, so the mode fails closed (H46). The mode is a
-//! harness-side wrapper only; no production key reads it (H8, D37).
+//! plain std has no network isolation there, so the mode fails closed. The mode is a
+//! harness-side wrapper only; no production key reads it (D37).
 
 use std::fmt;
 use std::fs;
@@ -16,33 +16,33 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-/// The macOS sandbox launcher the wrapper uses (section 7.4.2).
+/// The macOS sandbox launcher the wrapper uses.
 pub const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 
-/// The off-host port the default gateway target uses (section 7.4.4).
+/// The off-host port the default gateway target uses.
 pub const OFFHOST_DEFAULT_PORT: u16 = 80;
 
-/// The environment variable that overrides the off-host target: `host:port` (section 7.4.4).
+/// The environment variable that overrides the off-host target: `host:port`.
 pub const OFFHOST_TARGET_ENV: &str = "GOBBY_HARNESS_OFFHOST_TARGET";
 
-/// No mechanism on this platform (section 7.4.1). Windows fails closed with this text (H46).
+/// No mechanism on this platform. Windows fails closed with this text.
 pub const ERR_NO_MECHANISM: &str = "loopback-only mode has no mechanism on this platform";
 
 /// macOS without `/usr/bin/sandbox-exec`.
 pub const ERR_NO_SANDBOX_EXEC: &str =
     "loopback-only mode needs /usr/bin/sandbox-exec, which is missing";
 
-/// Linux without `unshare -rn` or `bwrap --unshare-net`: refuse, never run unprotected (H23).
+/// Linux without `unshare -rn` or `bwrap --unshare-net`: refuse, never run unprotected.
 pub const ERR_NO_NAMESPACE_TOOL: &str = "loopback-only mode refuses to start: neither unshare -rn nor bwrap --unshare-net can create a network namespace on this host";
 
-/// Linux without `socat`, so the relays that cross the namespace boundary cannot run (H23).
+/// Linux without `socat`, so the relays that cross the namespace boundary cannot run.
 pub const ERR_NO_RELAY_TOOL: &str = "loopback-only mode refuses to start: socat is missing, so the harness and database ports cannot cross the namespace boundary";
 
-/// No validated off-host destination (section 7.4.4; H9: never a pass by skipping).
+/// No validated off-host destination (never a pass by skipping).
 pub const ERR_NO_OFFHOST: &str = "no off-host destination; measured behaviour reported";
 
 /// The text the daemon reports when its external connect fails before TCP completes, measured in
-/// the step-6 run. The Python transport reports every such failure (blocked by the mode, refused,
+/// a real run. The Python transport reports every such failure (blocked by the mode, refused,
 /// timed out) with this one text and no errno, so the daemon-level proof shows that the connect
 /// failed, and the probe proves the blocked class.
 pub const EXTERNAL_CONNECT_FAILED_TEXT: &str = "All connection attempts failed";
@@ -129,7 +129,7 @@ pub enum NamespaceTool {
     Bwrap,
 }
 
-/// Chooses the mechanism, or refuses with the clear error for it (fail closed, H23, H46).
+/// Chooses the mechanism, or refuses with the clear error for it (fail closed).
 pub fn plan(platform: Platform, tools: Tools) -> Result<Plan, LoopbackError> {
     match platform {
         Platform::MacOs if tools.sandbox_exec => Ok(Plan::SandboxExec),
@@ -144,12 +144,12 @@ pub fn plan(platform: Platform, tools: Tools) -> Result<Plan, LoopbackError> {
     }
 }
 
-/// The exact Seatbelt profile text (section 7.4.2), one rule per line.
+/// The exact Seatbelt profile text, one rule per line.
 pub fn macos_profile() -> &'static str {
     "(version 1)\n(allow default)\n(deny network-outbound)\n(allow network-outbound (remote ip \"localhost:*\"))\n(allow network-outbound (remote unix-socket (path-regex #\"^/\")))\n"
 }
 
-/// The `sandbox-exec` argv that runs `program args` under `profile` (section 7.4.2).
+/// The `sandbox-exec` argv that runs `program args` under `profile`.
 pub fn sandbox_exec_argv(profile: &str, program: &Path, args: &[String]) -> Vec<String> {
     let mut argv = vec![
         SANDBOX_EXEC.to_owned(),
@@ -162,7 +162,7 @@ pub fn sandbox_exec_argv(profile: &str, program: &Path, args: &[String]) -> Vec<
 }
 
 /// Accepts an off-host destination: a routable IPv4 literal, not loopback, not unspecified, not
-/// a local interface address, and a non-zero port (section 7.4.4).
+/// a local interface address, and a non-zero port.
 pub fn validate_offhost(
     target: SocketAddrV4,
     local: &[Ipv4Addr],
@@ -188,7 +188,7 @@ pub fn validate_offhost(
 }
 
 /// Chooses the off-host destination: the environment override first, then the default gateway at
-/// [`OFFHOST_DEFAULT_PORT`]. Each choice is validated (section 7.4.4).
+/// [`OFFHOST_DEFAULT_PORT`]. Each choice is validated.
 pub fn select_offhost(
     env_value: Option<&str>,
     gateway: Option<Ipv4Addr>,

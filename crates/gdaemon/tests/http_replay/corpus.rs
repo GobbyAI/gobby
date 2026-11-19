@@ -1,13 +1,12 @@
-//! Reads one corpus case of schema 2 or 3 into the typed view the replay driver uses (design-v2
-//! sections 7.5.1, 7.5.2, 7.5.5 and 7.5.6; H1, H14, H16, H44).
+//! Reads one corpus case of schema 2 or 3 into the typed view the replay driver uses.
 //!
 //! The loader refuses every case shape that the Python loader refuses (`tests/contracts/
-//! corpus_v3.py`, fix3 V27). `parse_case` checks one case's own shape. `load_manifest` adds the
+//! corpus_v3.py`). `parse_case` checks one case's own shape. `load_manifest` adds the
 //! file-level rules: the file stem, the family and the manifest's families, and, for a schema 3
-//! manifest, that it lists every case file of its directory (fix3 V6).
+//! manifest, that it lists every case file of its directory.
 //!
 //! The recording of a schema 3 case keeps each `db_delta` and `side_effects` value under
-//! `recorded` at its declaration index (H44). `recorded_db_delta` and `recorded_side_effects`
+//! `recorded` at its declaration index. `recorded_db_delta` and `recorded_side_effects`
 //! read those values back in declaration order.
 
 use std::fmt;
@@ -16,7 +15,7 @@ use std::path::Path;
 use gobby_daemon::front_door::waivers::is_native_extension;
 use serde_json::{Map, Value, json};
 
-/// The schema versions the loader accepts (H1): v2 files as they are, and v3 files.
+/// The schema versions the loader accepts: v2 files as they are, and v3 files.
 pub const ACCEPTED_SCHEMAS: [u64; 2] = [2, 3];
 
 /// The manifest file name in every corpus directory.
@@ -26,7 +25,7 @@ const MANIFEST_FILE: &str = "manifest.json";
 /// (Python `V3_NON_CASE_FILES`).
 const V3_NON_CASE_FILES: [&str; 1] = ["grant_encoding.json"];
 
-/// Schema 3 keys in the order the loader requires (design 7.5.2; Python `V3_KEY_ORDER`).
+/// Schema 3 keys in the order the loader requires (Python `V3_KEY_ORDER`).
 const V3_KEY_ORDER: [&str; 17] = [
     "schema_version",
     "name",
@@ -66,7 +65,7 @@ const MCP_TRANSPORTS: [&str; 2] = ["http", "stdio"];
 const PARITY_VALUES: [&str; 2] = ["proxy", "native"];
 const ORIGIN_VALUES: [&str; 2] = ["python", "gdaemon"];
 
-/// The case kinds (design 7.5.2). Schema 2 cases are all `Http`.
+/// The case kinds. Schema 2 cases are all `Http`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Http,
@@ -84,7 +83,7 @@ pub struct Case {
     pub family: String,
     /// `up` or `down`.
     pub backend: String,
-    /// The exact ledger key (H14). Present on every schema 3 case; absent on schema 2 cases.
+    /// The exact ledger key. Present on every schema 3 case; absent on schema 2 cases.
     pub ledger_key: Option<String>,
     /// The request of an HTTP case, in the recorded request shape.
     pub request: Option<Value>,
@@ -317,7 +316,7 @@ fn is_seed_step(step: &Value) -> bool {
         .is_some_and(|map| map.len() == 1 && map.keys().all(|key| key == "http" || key == "sql"))
 }
 
-/// The schema 3 order rules of one `db_delta` entry (Python `_check_db_delta`, H16): the table, the
+/// The schema 3 order rules of one `db_delta` entry (Python `_check_db_delta`): the table, the
 /// key and the columns are declared, `order` is `set` or `as_recorded`, `as_recorded` needs a
 /// non-empty `order_by`, and `set` refuses one.
 fn check_db_delta(case: &str, entry: &Value) -> Result<(), CorpusError> {
@@ -632,7 +631,7 @@ enum KeyParts<'a> {
     },
 }
 
-/// Parses a ledger key of `kind` (H14): `HTTP <METHOD> <template>`, `MCP <server>:<tool>` or
+/// Parses a ledger key of `kind`: `HTTP <METHOD> <template>`, `MCP <server>:<tool>` or
 /// `MCP HTTP|stdio <server>:<tool>`, `WS message <type>` and `CLI gobby <verb>`. A keyed MCP name
 /// other than `gobby` is refused (Python `_check_ledger_key`).
 fn parse_key<'a>(case: &str, kind: Kind, key: &'a str) -> Result<KeyParts<'a>, CorpusError> {
@@ -870,7 +869,7 @@ fn is_integer(value: &Value) -> bool {
     value.is_i64() || value.is_u64()
 }
 
-/// The `recorded` value of each declared entry, in declaration order (H44).
+/// The `recorded` value of each declared entry, in declaration order.
 fn recorded_values(case: &Case, entries: &[Value]) -> Result<Vec<Value>, CorpusError> {
     entries
         .iter()
@@ -885,7 +884,7 @@ fn recorded_values(case: &Case, entries: &[Value]) -> Result<Vec<Value>, CorpusE
 
 /// Every case of the manifest at `path` (schema 2 or 3), each listed file parsed by [`parse_case`]
 /// and checked against its name, its schema version and its manifest's families (Python
-/// `_validate_case`). A schema 3 manifest must also list every case file of its directory (V6).
+/// `_validate_case`). A schema 3 manifest must also list every case file of its directory.
 pub fn load_manifest(path: &Path) -> Result<Vec<Case>, CorpusError> {
     let label = path.display().to_string();
     let manifest_error = |detail: String| CorpusError::Shape {
@@ -974,7 +973,7 @@ fn read_case_file(path: &Path, file: &str) -> Result<Value, CorpusError> {
     }
 }
 
-/// Python V6 (`_check_listed_files`): a schema 3 directory lists every `.json` file in it. Each file
+/// Python `_check_listed_files`: a schema 3 directory lists every `.json` file in it. Each file
 /// is the manifest, a listed case, or a declared non-case vector; any other `.json` file is refused.
 fn check_listing(dir: &Path, listed: &[&str]) -> Result<(), CorpusError> {
     let label = dir.display().to_string();
@@ -1362,7 +1361,7 @@ mod manifest_tests {
     }
 }
 
-/// The refusals of the Python loader (`tests/contracts/corpus_v3.py`), one rule per test (fix3 V27).
+/// The refusals of the Python loader (`tests/contracts/corpus_v3.py`), one rule per test.
 #[cfg(test)]
 mod loader_rule_tests {
     use super::{Kind, load_manifest, parse_case};
@@ -1445,7 +1444,7 @@ mod loader_rule_tests {
 
     #[test]
     fn a_keyed_mcp_transport_must_be_the_invocation_transport() {
-        // Python V7: "MCP stdio gobby:<tool>" names the stdio transport of its invocation.
+        // The Python loader: "MCP stdio gobby:<tool>" names the stdio transport of its invocation.
         let response = json!({"jsonrpc": "2.0", "id": 1, "result": {}});
         let mismatched = kind_case(
             "mcp",
@@ -1664,7 +1663,7 @@ mod loader_rule_tests {
 
     #[test]
     fn a_v3_manifest_must_list_every_case_file() {
-        // Python V6: a case file in the v3 directory that the manifest does not list is refused.
+        // Python: a case file in the v3 directory that the manifest does not list is refused.
         let dir = tempfile::tempdir().expect("dir");
         let mut listed = http_case();
         listed["name"] = json!("a");
@@ -1697,7 +1696,7 @@ mod loader_rule_tests {
 
     #[test]
     fn a_v3_manifest_refuses_an_unlisted_json_file_that_is_not_a_declared_vector() {
-        // Python V6: any .json file that is neither listed nor declared is refused, with or without
+        // Python: any .json file that is neither listed nor declared is refused, with or without
         // a ledger_key.
         let dir = tempfile::tempdir().expect("dir");
         let mut listed = http_case();

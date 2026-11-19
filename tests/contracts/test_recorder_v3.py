@@ -520,7 +520,7 @@ def test_stdio_wrapper_health_probe_reaches_only_the_injected_daemon(tmp_path: P
 def test_rehearsal_profile_is_refused_before_any_sweep(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """H6: rehearsal mode creates and sweeps nothing; the Python recorder only refuses it."""
+    """Rehearsal mode creates and sweeps nothing; the Python recorder only refuses it."""
 
     def no_sweep(url: str) -> list[str]:
         raise AssertionError("the recorder swept dead runs in rehearsal mode (H6)")

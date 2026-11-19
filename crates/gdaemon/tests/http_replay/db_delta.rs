@@ -1,4 +1,4 @@
-//! Row deltas in the recorded shape (design-v2 sections 7.5.5 and 7.6; H16, H44, H66).
+//! Row deltas in the recorded shape.
 //!
 //! `table_delta` ports `recorder_v3.table_delta`. Both snapshots of a declared table are keyed by
 //! the entry's key columns, and a row is added, removed or in both. A row in both is a pair only

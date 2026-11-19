@@ -1,9 +1,9 @@
 //! The v2 HTTP contract corpus (`tests/contracts/http/`): loader, secret redaction, masks and
-//! response normalization (design-v2 section 4.2).
+//! response normalization.
 //!
 //! Copied from `crates/gdaemon/tests/http_contracts.rs` (its loader and normalizer, with the
 //! `RouteBackend` parity reader left behind so the crate has no `gobby-*` dependency). The two
-//! copies must agree; `http_contracts.rs` switches to this module in the C29 commit.
+//! copies must agree; `http_contracts.rs` switches to this module in a later change.
 
 use std::path::Path;
 

@@ -1,5 +1,5 @@
 //! Verdict tests for the DATABASE_URL guard, driven by the shared vector file that the Python
-//! guard also reads (design-v2 section 7.1.4). Each vector gets the verdict and rule it names.
+//! guard also reads. Each vector gets the verdict and rule it names.
 
 use std::collections::HashMap;
 use std::fs;
@@ -57,8 +57,8 @@ fn mode_name(mode: GuardMode) -> &'static str {
     }
 }
 
-/// Write a vector's rehearsal profile under `dir` and return the path to pass (the design's
-/// `_materialize_profile`). Git does not store modes, so the test sets them here.
+/// Write a vector's rehearsal profile under `dir` and return the path to pass (the Python
+/// fixture's `_materialize_profile`). Git does not store modes, so the test sets them here.
 pub(super) fn materialize_profile(spec: &Value, dir: &Path) -> Option<PathBuf> {
     if spec.is_null() {
         return None;

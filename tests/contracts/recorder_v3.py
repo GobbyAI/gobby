@@ -6,7 +6,7 @@ database at teardown. ``recorder_daemon_v3`` starts the daemon on that database.
 
 Per case, in order: seeds run (not asserted), the before-snapshot of every db_delta table is
 taken, capture listeners open, the request is sent, captures drain, the after-snapshot is taken.
-Every observed value is normalized by normalizers_v3 before it is compared or recorded (H44).
+Every observed value is normalized by normalizers_v3 before it is compared or recorded.
 
 Run as a module to record: ``uv run --no-sync python -m tests.contracts.recorder_v3``. It reads
 the unrecorded templates in ``tests/contracts/v3/templates`` raw and writes the recorded cases to
@@ -105,7 +105,7 @@ def open_run_database(
     guard: HubGuard = check_test_hub(url, source)
     assert url is not None
     if guard.mode is GuardMode.REHEARSAL:
-        # H6: a rehearsal run creates and drops nothing and sweeps nothing. The Python recorder
+        # A rehearsal run creates and drops nothing and sweeps nothing. The Python recorder
         # has no rehearsal path, so it refuses before the sweep and before any connection.
         raise RecorderError("rehearsal profiles are not built on the Python recorder (H6)")
     sweep_dead_runs(url)
@@ -126,7 +126,7 @@ def open_run_database(
             )
 
 
-# Seeds (design 7.5.4): ordered, applied before the before-snapshot, results not asserted.
+# Seeds: ordered, applied before the before-snapshot, results not asserted.
 
 
 def apply_seed(
@@ -154,7 +154,7 @@ def apply_seed(
             raise RecorderError(f"seed step {index} is neither sql nor http")
 
 
-# DB deltas (design 7.5.5): a snapshot per entry, then a diff over normalized images.
+# DB deltas: a snapshot per entry, then a diff over normalized images.
 
 
 def _columns(connection: psycopg.Connection[Any], entry: Mapping[str, Any]) -> list[str]:
@@ -250,7 +250,7 @@ def table_delta(
     }
 
 
-# Captures (design 7.5.6): every listener opens before the request and drains after it.
+# Captures: every listener opens before the request and drains after it.
 
 
 class _Drainer:
@@ -455,7 +455,7 @@ def files_captures(delta: Mapping[str, list[str]]) -> list[dict[str, str]]:
     ]
 
 
-# Senders (design 7.5.2): one per kind. Each returns the raw answer for normalization.
+# Senders: one per kind. Each returns the raw answer for normalization.
 
 
 def _credential_headers(credential: str, operator: Mapping[str, str]) -> dict[str, str]:
@@ -862,7 +862,7 @@ def _recorded_db_delta(value: Mapping[str, Any], case_name: str) -> dict[str, An
     Added and removed rows are redacted in full, the same rule the comparison applies to both
     sides, so the stored value and the comparison agree. A changed value in a secret-keyed column,
     or one that carries a secret-keyed field, is refused: writing it would commit the secret, and
-    masking it would hide its change from the comparison (V5). A decision is needed for those.
+    masking it would hide its change from the comparison. A decision is needed for those.
     """
     changed: list[dict[str, Any]] = []
     for item in value["changed"]:
@@ -888,7 +888,7 @@ def _recorded_entries(case: dict[str, Any], observation: Observation) -> None:
     """Attach redacted recorded values to the case's db_delta and side_effects entries, in place.
 
     Redaction runs after normalization, as the comparison does, and captures are redacted in full
-    (design 7.6: every body and capture).
+    (every body and capture).
     """
     case_name = str(case.get("name", ""))
     for entry, value in zip(case.get("db_delta", []), observation.db_delta, strict=True):

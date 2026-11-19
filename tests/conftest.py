@@ -161,7 +161,7 @@ def _allow_worktree_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
     Agents run these tests from linked worktrees; without the override every
     ``gobby start``/``runner.main`` test would hit the refusal (#21031). The override
     is set only when tests/fixtures/hub_guard.py accepts DATABASE_URL as the isolated
-    test hub, so a run against the live hub gets the refusal instead (ruling H4).
+    test hub, so a run against the live hub gets the refusal instead.
     """
     from gobby.utils.dev import WORKTREE_DAEMON_OVERRIDE_ENV
     from tests.fixtures.hub_guard import guard_worktree_override

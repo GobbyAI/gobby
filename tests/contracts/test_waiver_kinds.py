@@ -1,6 +1,6 @@
 """Waiver matching for the four case kinds: the HTTP template rule and exact ledger keys.
 
-The vector file is shared with the Rust matcher (design section 7.7.4), so its shape is pinned
+The vector file is shared with the Rust matcher, so its shape is pinned
 here. Cited cases run against fixture manifests written into a temporary directory; the
 committed waiver manifest is never read or changed.
 """
@@ -81,7 +81,7 @@ def _cited_outcome(
     native: dict[str, object],
     actual: dict[str, object],
 ) -> str:
-    """Restate the cited rule of design section 7.8 over the matcher: only the native answer waives."""
+    """Restate the cited rule over the matcher: only the native answer waives."""
     parity_waivers.cite_waiver(waivers, WAIVER_ID, kind=kind, key=key, method=method, path=path)
     return WAIVED if actual == native else DIFF
 

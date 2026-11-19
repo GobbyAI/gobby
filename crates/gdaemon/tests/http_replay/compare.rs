@@ -1,4 +1,4 @@
-//! The comparison set and the first-difference rule (design-v2 sections 7.5.5, 7.6 and 7.8; H10).
+//! The comparison set and the first-difference rule.
 //!
 //! A comparison set is one document in case coordinates: `response`, then `db_delta[i].recorded`,
 //! then `side_effects[i].recorded`. The recording and the observation are both put in this shape,
@@ -97,7 +97,7 @@ fn capture_rules(entry: &Value) -> Result<Vec<(String, Spec)>, NormalizeError> {
 /// `normalize_captures` and `_comparison`), with each unit normalized on its own counter.
 ///
 /// The response is one unit: it is redacted, an HTTP response is masked before its rules (Python
-/// observes the masked answer, H73), and then the case's pointer rules run on `{"response": ...}`.
+/// observes the masked answer), and then the case's pointer rules run on `{"response": ...}`.
 /// Each side-effect entry is one sequence unit of captures, normalized before any redaction. The
 /// `db_delta` values must already be the output of `db_delta::table_delta`, which normalizes each
 /// entry as its own unit. The assembled document is redacted, and the case's masks apply last, for

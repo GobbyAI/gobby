@@ -1,9 +1,9 @@
-//! DATABASE_URL guard for test code that writes the test hub (design-v2 section 7.1).
+//! DATABASE_URL guard for test code that writes the test hub.
 //!
 //! Verdicts and rule names equal `tests/fixtures/hub_guard.py`; both engines read
 //! `tests/fixtures/hub_guard_vectors.json`. The first failing rule refuses:
 //! R2 redirect variables, R3 URL identity, R4 rehearsal profile, ARG missing or malformed input.
-//! R1 (`GOBBY_TEST_PROTECT`) is retired (ruling H27).
+//! R1 (`GOBBY_TEST_PROTECT`) is retired.
 
 use std::fmt;
 use std::fs::{self, File};
@@ -16,7 +16,7 @@ use serde_json::{Map, Value};
 use tokio_postgres::Config;
 use tokio_postgres::config::Host;
 
-/// The isolated test hub's port (ruling H5). Only the test-hub mode checks it.
+/// The isolated test hub's port. Only the test-hub mode checks it.
 pub const TEST_HUB_PORT: u16 = 60892;
 pub const TEST_HUB_USER: &str = "gobby_test";
 pub const TEST_HUB_DBNAME: &str = "gobby_test";
@@ -79,7 +79,7 @@ impl std::error::Error for HubGuardError {}
 /// Why `database_url_for_tests` returned no URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DbUrlError {
-    /// `DATABASE_URL` is not set; Rust tests skip with a printed line (ruling H18).
+    /// `DATABASE_URL` is not set; Rust tests skip with a printed line.
     Unset,
     Refused(HubGuardError),
 }
