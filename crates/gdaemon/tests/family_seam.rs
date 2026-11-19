@@ -174,6 +174,95 @@ static LOOPBACK_CLAIM: &[RouteClaim] = &[RouteClaim {
     kind: Kind::Any,
 }];
 
+/// A named family with a start rank whose claim rows answer with its name.
+struct Ranked {
+    name: &'static str,
+    rank: u8,
+    claims: &'static [RouteClaim],
+    runs: AtomicUsize,
+}
+
+impl Ranked {
+    fn leak(name: &'static str, rank: u8, claims: &'static [RouteClaim]) -> &'static Ranked {
+        Box::leak(Box::new(Ranked {
+            name,
+            rank,
+            claims,
+            runs: AtomicUsize::new(0),
+        }))
+    }
+
+    fn runs(&self) -> usize {
+        self.runs.load(Ordering::SeqCst)
+    }
+}
+
+impl RouteFamily<FrontDoorState> for Ranked {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn prefixes(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn router(&self) -> Router<FrontDoorState> {
+        Router::new()
+    }
+
+    fn default_backend(&self) -> RouteBackend {
+        RouteBackend::Native
+    }
+
+    fn route_claims(&self) -> &'static [RouteClaim] {
+        self.claims
+    }
+
+    fn start_rank(&self) -> u8 {
+        self.rank
+    }
+
+    fn serve_claim<'a>(
+        &'a self,
+        _state: &'a FrontDoorState,
+        _peer: SocketAddr,
+        _request: Request<Body>,
+    ) -> BoxFut<'a, Result<Request<Body>, Response<Body>>> {
+        Box::pin(async move {
+            self.runs.fetch_add(1, Ordering::SeqCst);
+            Err(marker_response(StatusCode::OK, self.name))
+        })
+    }
+}
+
+static TIE_CLAIM: &[RouteClaim] = &[RouteClaim {
+    method: None,
+    path: PathMatch::Exact("/fixture/tie"),
+    gate: Gate::BeforeRefusal,
+    credential: Credential::Unchecked,
+    peer: PeerRule::Any,
+    kind: Kind::Any,
+}];
+
+static TIE_SEGMENT_CLAIM: &[RouteClaim] = &[RouteClaim {
+    method: None,
+    path: PathMatch::Segment("/fixture/tie"),
+    gate: Gate::BeforeRefusal,
+    credential: Credential::Unchecked,
+    peer: PeerRule::Any,
+    kind: Kind::Any,
+}];
+
+/// The same row the machines surface declares, so the two tie on specificity.
+static MACHINES_TWIN_CLAIM: &[RouteClaim] = &[RouteClaim {
+    method: None,
+    path: PathMatch::Segment("/api/machines"),
+    gate: Gate::AfterRefusal,
+    credential: Credential::AfterAuthenticate,
+    peer: PeerRule::Any,
+    kind: Kind::Any,
+}];
+
 /// Accepts any key and names one fixed identity.
 #[cfg(unix)]
 struct FixedKey;
@@ -428,6 +517,67 @@ async fn loopback_only_claim_refuses_remote_peer() {
         assert_eq!(body_text(response).await, "loopback");
     }
     assert_eq!(fixture.runs(), 2);
+}
+
+#[tokio::test]
+async fn equal_specificity_claims_go_to_the_lower_start_rank() {
+    let state = FrontDoorState::new(common::refused_addr().await, BackendState::Down, auth(None));
+
+    // Equal ranks keep list order.
+    let first = Ranked::leak("first", 1, TIE_CLAIM);
+    let second = Ranked::leak("second", 1, TIE_CLAIM);
+    let families: [&'static dyn RouteFamily<FrontDoorState>; 2] = [first, second];
+    let table = RouteTable::new(&families, &BTreeMap::new(), &state);
+    assert_eq!(
+        table.claim_owner(&Method::GET, "/fixture/tie", false),
+        Some("first")
+    );
+
+    // A more specific row wins even when its family starts later.
+    let segment = Ranked::leak("segment", 0, TIE_SEGMENT_CLAIM);
+    let exact = Ranked::leak("exact", 3, TIE_CLAIM);
+    let families: [&'static dyn RouteFamily<FrontDoorState>; 2] = [segment, exact];
+    let table = RouteTable::new(&families, &BTreeMap::new(), &state);
+    assert_eq!(
+        table.claim_owner(&Method::GET, "/fixture/tie", false),
+        Some("exact")
+    );
+
+    // At equal specificity the lower rank wins. The later-starting family is listed
+    // first, so list order alone would pick it.
+    let late = Ranked::leak("late", 2, TIE_CLAIM);
+    let early = Ranked::leak("early", 1, TIE_CLAIM);
+    let families: [&'static dyn RouteFamily<FrontDoorState>; 2] = [late, early];
+    let table = RouteTable::new(&families, &BTreeMap::new(), &state);
+    assert_eq!(
+        table.claim_owner(&Method::GET, "/fixture/tie", false),
+        Some("early")
+    );
+
+    let door = door(state, &families, &BTreeMap::new());
+    let response = send(&door, get("/fixture/tie"), loopback_peer()).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_text(response).await, "early");
+    assert_eq!((early.runs(), late.runs()), (1, 0));
+}
+
+#[tokio::test]
+async fn a_fixed_surface_keeps_an_equal_specificity_claim_from_a_later_rank() {
+    let twin = Ranked::leak("machines_twin", 1, MACHINES_TWIN_CLAIM);
+    let families: [&'static dyn RouteFamily<FrontDoorState>; 1] = [twin];
+    let state = FrontDoorState::new(common::refused_addr().await, BackendState::Down, auth(None));
+    let table = RouteTable::new(&families, &BTreeMap::new(), &state);
+
+    // Supplied families precede the fixed surfaces in the table, so list order alone would
+    // hand the machines path to the twin. The machines surface starts at rank 0.
+    assert_eq!(
+        table.claim_owner(&Method::GET, "/api/machines", false),
+        Some("machines")
+    );
+    assert_eq!(
+        table.claim_owner(&Method::GET, "/api/machines/m-1", false),
+        Some("machines")
+    );
 }
 
 #[test]
