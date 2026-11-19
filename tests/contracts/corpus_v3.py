@@ -51,6 +51,7 @@ V3_KEY_ORDER = (
     "waiver",
     "native_response",
 )
+# ``response`` is required unless the cited waiver is a native-extension (H44; see _check_response_presence).
 V3_REQUIRED_KEYS = frozenset(
     {
         "schema_version",
@@ -60,7 +61,6 @@ V3_REQUIRED_KEYS = frozenset(
         "backend",
         "credential",
         "ledger_key",
-        "response",
         "mask",
     }
 )
@@ -174,6 +174,7 @@ def _validate_schema_3(case: Mapping[str, Any], file_name: str) -> None:
     kind = case["kind"]
     if kind not in KINDS:
         raise CorpusError(f"{file_name}: unknown kind {kind!r}")
+    _check_response_presence(case, file_name)
     if kind == "http":
         if "request" not in case:
             raise CorpusError(f"{file_name}: request is required for kind http")
@@ -188,7 +189,8 @@ def _validate_schema_3(case: Mapping[str, Any], file_name: str) -> None:
     key_match = _check_ledger_key(case, kind, file_name)
     if kind != "http":
         _check_invocation(case, kind, key_match, file_name)
-    _check_response(case["response"], kind, file_name)
+    if "response" in case:
+        _check_response(case["response"], kind, file_name)
     _check_mask_shape(case, file_name)
     for name in ("seed", "db_delta", "side_effects", "normalizers", "waiver"):
         if name in case:
@@ -200,6 +202,21 @@ def _validate_schema_3(case: Mapping[str, Any], file_name: str) -> None:
     _check_mask_resolves(case, file_name)
 
 
+def _is_native_extension(case: Mapping[str, Any]) -> bool:
+    """A waiver id ends in ``.native-extension`` exactly as ``Waiver.native_extension`` reads it."""
+    waiver = case.get("waiver")
+    return isinstance(waiver, str) and waiver.endswith(".native-extension")
+
+
+def _check_response_presence(case: Mapping[str, Any], file_name: str) -> None:
+    """H44: a native-extension citation has no Python response; every other case has one."""
+    if _is_native_extension(case):
+        if "response" in case:
+            raise CorpusError(f"{file_name}: a native-extension waiver cannot carry a response")
+    elif "response" not in case:
+        raise CorpusError(f"{file_name}: missing required key 'response' (only a native-extension omits it)")
+
+
 def _check_optional(case: Mapping[str, Any], name: str, file_name: str) -> None:
     value = case[name]
     if name == "waiver":
@@ -207,6 +224,7 @@ def _check_optional(case: Mapping[str, Any], name: str, file_name: str) -> None:
             raise CorpusError(f"{file_name}: waiver must be a waiver id")
     elif name == "normalizers":
         _check_normalizers(value, file_name)
+        _check_pointer_keys(value, file_name)
     elif name == "seed":
         if not isinstance(value, list) or not all(_is_seed_step(step) for step in value):
             raise CorpusError(f"{file_name}: each seed step is one http or sql object")
@@ -340,12 +358,40 @@ def _frame_type(frame: str, file_name: str) -> Any:
     return decoded.get("type")
 
 
-def _check_normalizers(normalizers: Any, file_name: str) -> None:
+def _check_normalizers(normalizers: Any, file_name: str, *, allow_after: bool = False) -> None:
+    """Validate a normalizer map: each value is a name, or ``{"name", "after"}`` for timestamp.
+
+    ``after`` names a sibling column and is legal only where ``allow_after`` says so (db_delta).
+    """
     if not isinstance(normalizers, dict):
         raise CorpusError(f"{file_name}: normalizers must be an object")
-    for name in normalizers.values():
-        if not isinstance(name, str) or name not in FIELD_NORMALIZERS:
-            raise CorpusError(f"{file_name}: normalizer {name!r} is not a field normalizer")
+    for spec in normalizers.values():
+        _, after = _normalizer_spec(spec, file_name)
+        if after is not None and not allow_after:
+            raise CorpusError(f"{file_name}: 'after' is declared only on db_delta normalizers")
+
+
+def _normalizer_spec(spec: Any, file_name: str) -> tuple[str, str | None]:
+    if isinstance(spec, str):
+        name, after = spec, None
+    elif isinstance(spec, dict) and set(spec) <= {"name", "after"} and "name" in spec:
+        name, after = spec["name"], spec.get("after")
+        if after is not None and (not isinstance(after, str) or not after):
+            raise CorpusError(f"{file_name}: normalizer 'after' must name a column")
+    else:
+        raise CorpusError(f"{file_name}: normalizer {spec!r} is not a field normalizer")
+    if not isinstance(name, str) or name not in FIELD_NORMALIZERS:
+        raise CorpusError(f"{file_name}: normalizer {name!r} is not a field normalizer")
+    if after is not None and name != "timestamp":
+        raise CorpusError(f"{file_name}: only the timestamp normalizer takes 'after'")
+    return name, after
+
+
+def _check_pointer_keys(normalizers: Mapping[str, Any], file_name: str) -> None:
+    """Case-level and side-effect normalizer keys are RFC 6901 pointers (see normalizers_v3)."""
+    for pointer in normalizers:
+        if not pointer.startswith("/"):
+            raise CorpusError(f"{file_name}: normalizer key {pointer!r} must be a JSON pointer")
 
 
 def _check_db_delta(entry: Any, file_name: str) -> None:
@@ -362,7 +408,7 @@ def _check_db_delta(entry: Any, file_name: str) -> None:
         isinstance(columns, list) and columns and all(isinstance(col, str) for col in columns)
     ):
         raise CorpusError(f"{file_name}: db_delta {table} columns must be 'all' or a list")
-    _check_normalizers(entry.get("normalizers", {}), file_name)
+    _check_normalizers(entry.get("normalizers", {}), file_name, allow_after=True)
     if "order" not in entry:
         raise CorpusError(f"{file_name}: db_delta {table} order is required")
     order = entry["order"]
@@ -387,3 +433,4 @@ def _check_side_effect(effect: Any, file_name: str) -> None:
     ):
         raise CorpusError(f"{file_name}: side effect needs a known channel and a match object")
     _check_normalizers(effect.get("normalizers", {}), file_name)
+    _check_pointer_keys(effect.get("normalizers", {}), file_name)

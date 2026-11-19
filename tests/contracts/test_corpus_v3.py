@@ -445,6 +445,85 @@ def test_normalizer_names_are_the_closed_field_set(tmp_path: Path) -> None:
         corpus_v3.load_cases(root)
 
 
+NATIVE_WAIVER = "wv-probe-native.native-extension"
+BEHAVIOUR_WAIVER = "wv-probe-behaviour.behaviour"
+
+
+def _without_response(case: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in case.items() if key != "response"}
+
+
+@pytest.mark.unit
+def test_response_is_required_unless_the_waiver_is_native_extension(tmp_path: Path) -> None:
+    case = _without_response(_v3_http(waiver=BEHAVIOUR_WAIVER, native_response={"status": 200}))
+    root = _write_corpus(tmp_path, version=3, cases=[case])
+    with pytest.raises(CorpusError, match="missing required key 'response'"):
+        corpus_v3.load_cases(root)
+
+
+@pytest.mark.unit
+def test_native_extension_case_loads_without_a_python_response(tmp_path: Path) -> None:
+    case = _without_response(_v3_http(waiver=NATIVE_WAIVER, native_response={"status": 200}))
+    root = _write_corpus(tmp_path, version=3, cases=[case])
+    assert [loaded["name"] for loaded in corpus_v3.load_cases(root)] == ["probe_http"]
+
+
+@pytest.mark.unit
+def test_native_extension_case_cannot_carry_a_python_response(tmp_path: Path) -> None:
+    case = _v3_http(waiver=NATIVE_WAIVER, native_response={"status": 200})
+    root = _write_corpus(tmp_path, version=3, cases=[case])
+    with pytest.raises(CorpusError, match="native-extension waiver cannot carry a response"):
+        corpus_v3.load_cases(root)
+
+
+@pytest.mark.unit
+def test_timestamp_normalizer_may_declare_an_after_column(tmp_path: Path) -> None:
+    entry = {
+        "table": "probe_rows",
+        "key": ["id"],
+        "columns": ["id", "created_at", "updated_at"],
+        "normalizers": {"updated_at": {"name": "timestamp", "after": "created_at"}},
+        "order": "set",
+    }
+    root = _write_corpus(tmp_path, version=3, cases=[_v3_http(db_delta=[entry])])
+    assert corpus_v3.load_cases(root)[0]["db_delta"] == [entry]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("case", "match"),
+    [
+        (
+            _v3_http(
+                db_delta=[
+                    {
+                        "table": "probe_rows",
+                        "key": ["id"],
+                        "columns": "all",
+                        "normalizers": {"id": {"name": "uuid_ordinal", "after": "x"}},
+                        "order": "set",
+                    }
+                ]
+            ),
+            "only the timestamp normalizer takes 'after'",
+        ),
+        (
+            _v3_http(normalizers={"/response/body/at": {"name": "timestamp", "after": "x"}}),
+            "'after' is declared only on db_delta normalizers",
+        ),
+        (
+            _v3_http(normalizers={"response/body/at": "timestamp"}),
+            "must be a JSON pointer",
+        ),
+    ],
+    ids=["after-on-other-name", "after-outside-db-delta", "pointer-key-required"],
+)
+def test_after_and_pointer_keys_are_checked(tmp_path: Path, case: dict[str, Any], match: str) -> None:
+    root = _write_corpus(tmp_path, version=3, cases=[case])
+    with pytest.raises(CorpusError, match=match):
+        corpus_v3.load_cases(root)
+
+
 @pytest.mark.unit
 def test_v3_manifest_lists_its_cases_once() -> None:
     manifest = corpus_v3.load_manifest(corpus_v3.V3_DIR)

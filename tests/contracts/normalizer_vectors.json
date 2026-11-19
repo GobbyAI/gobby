@@ -1,0 +1,244 @@
+{
+  "schema_version": 1,
+  "description": "Adversarial vectors for the v3 field normalizers (design section 7.6, H40). Python reads them in tests/contracts/test_recorder_v3.py; Rust reads them in C36-C37. Kinds: rows (a db_delta table, normalize_rows), captures (a side-effect capture list, normalize_captures), document (a response or any single document, normalize_document). A pass vector pins the normalized value exactly; a fail vector pins a substring of the NormalizationError message.",
+  "window": {"start": "2026-03-01T12:00:00+00:00", "end": "2026-03-01T12:00:05+00:00"},
+  "vectors": [
+    {
+      "id": "N01",
+      "kind": "rows",
+      "key": ["id"],
+      "order": "set",
+      "normalizers": {},
+      "rows": [{"id": "alpha", "note": "x"}, {"id": "beta", "note": "y"}],
+      "expect": "pass",
+      "normalized": [{"id": "alpha", "note": "x"}, {"id": "beta", "note": "y"}]
+    },
+    {
+      "id": "N02",
+      "kind": "rows",
+      "key": ["id"],
+      "order": "set",
+      "normalizers": {},
+      "rows": [{"id": "beta", "note": "y"}, {"id": "alpha", "note": "x"}],
+      "expect": "pass",
+      "normalized": [{"id": "alpha", "note": "x"}, {"id": "beta", "note": "y"}]
+    },
+    {
+      "id": "N03",
+      "kind": "rows",
+      "key": ["name"],
+      "order": "set",
+      "normalizers": {"ref": "uuid_ordinal"},
+      "rows": [
+        {"name": "b", "ref": "5f1c2a4e-9d3b-4c7a-8e21-0a1b2c3d4e5f"},
+        {"name": "a", "ref": "0e9d8c7b-6a59-4f3e-8d2c-1b0a9f8e7d6c"}
+      ],
+      "expect": "pass",
+      "normalized": [
+        {"name": "a", "ref": "@uuid:1@"},
+        {"name": "b", "ref": "@uuid:2@"}
+      ]
+    },
+    {
+      "id": "N04",
+      "kind": "rows",
+      "key": ["name"],
+      "order": "set",
+      "normalizers": {"ref": "uuid_ordinal"},
+      "rows": [
+        {"name": "a", "ref": "0e9d8c7b-6a59-4f3e-8d2c-1b0a9f8e7d6c"},
+        {"name": "b", "ref": "5f1c2a4e-9d3b-4c7a-8e21-0a1b2c3d4e5f"}
+      ],
+      "expect": "pass",
+      "normalized": [
+        {"name": "a", "ref": "@uuid:1@"},
+        {"name": "b", "ref": "@uuid:2@"}
+      ]
+    },
+    {
+      "id": "N05",
+      "kind": "rows",
+      "key": ["id"],
+      "order": "as_recorded",
+      "normalizers": {"seq": "monotonic"},
+      "rows": [
+        {"id": "a", "seq": 1},
+        {"id": "b", "seq": 2},
+        {"id": "c", "seq": 5}
+      ],
+      "expect": "pass",
+      "normalized": [
+        {"id": "a", "seq": "@seq@"},
+        {"id": "b", "seq": "@seq@"},
+        {"id": "c", "seq": "@seq@"}
+      ]
+    },
+    {
+      "id": "N06",
+      "kind": "rows",
+      "key": ["id"],
+      "order": "as_recorded",
+      "normalizers": {"seq": "monotonic"},
+      "rows": [{"id": "a", "seq": 2}, {"id": "b", "seq": 1}],
+      "expect": "fail",
+      "error": "strictly increasing"
+    },
+    {
+      "id": "N07",
+      "kind": "rows",
+      "key": ["id"],
+      "order": "set",
+      "normalizers": {"at": "timestamp"},
+      "rows": [{"id": "a", "at": "2026-03-01T12:00:02+00:00"}],
+      "expect": "pass",
+      "normalized": [{"id": "a", "at": "@ts@"}]
+    },
+    {
+      "id": "N08",
+      "kind": "rows",
+      "key": ["id"],
+      "order": "set",
+      "normalizers": {"at": "timestamp"},
+      "rows": [{"id": "a", "at": "2026-03-01T11:59:59+00:00"}],
+      "expect": "fail",
+      "error": "outside the run window"
+    },
+    {
+      "id": "N09",
+      "kind": "rows",
+      "key": ["id"],
+      "order": "set",
+      "normalizers": {
+        "created_at": "timestamp",
+        "updated_at": {"name": "timestamp", "after": "created_at"}
+      },
+      "rows": [
+        {
+          "id": "a",
+          "created_at": "2026-03-01T12:00:03+00:00",
+          "updated_at": "2026-03-01T12:00:02+00:00"
+        }
+      ],
+      "expect": "fail",
+      "error": "is earlier than"
+    },
+    {
+      "id": "N10",
+      "kind": "rows",
+      "key": ["id"],
+      "order": "set",
+      "normalizers": {
+        "created_at": "timestamp",
+        "updated_at": {"name": "timestamp", "after": "created_at"}
+      },
+      "rows": [
+        {
+          "id": "a",
+          "created_at": "2026-03-01T12:00:01+00:00",
+          "updated_at": "2026-03-01T12:00:02+00:00"
+        }
+      ],
+      "expect": "pass",
+      "normalized": [{"id": "a", "created_at": "@ts@", "updated_at": "@ts@"}]
+    },
+    {
+      "id": "N11",
+      "kind": "rows",
+      "key": ["id"],
+      "order": "set",
+      "normalizers": {"seq": "monotonic"},
+      "rows": [{"id": "a", "seq": 1}, {"id": "b", "seq": 2}],
+      "expect": "fail",
+      "error": "monotonic needs as_recorded order"
+    },
+    {
+      "id": "N12",
+      "kind": "rows",
+      "key": ["id"],
+      "order": "as_recorded",
+      "normalizers": {"ref": "uuid_ordinal"},
+      "rows": [
+        {"id": "a", "ref": "0e9d8c7b-6a59-4f3e-8d2c-1b0a9f8e7d6c"},
+        {"id": "b", "ref": "0e9d8c7b-6a59-4f3e-8d2c-1b0a9f8e7d6c"}
+      ],
+      "expect": "pass",
+      "normalized": [
+        {"id": "a", "ref": "@uuid:1@"},
+        {"id": "b", "ref": "@uuid:1@"}
+      ]
+    },
+    {
+      "id": "N13",
+      "kind": "captures",
+      "normalizers": {"/payload": "monotonic"},
+      "items": [
+        {"channel": "probe_channel", "payload": "4"},
+        {"channel": "probe_channel", "payload": "5"}
+      ],
+      "expect": "pass",
+      "normalized": [
+        {"channel": "probe_channel", "payload": "@seq@"},
+        {"channel": "probe_channel", "payload": "@seq@"}
+      ]
+    },
+    {
+      "id": "N14",
+      "kind": "captures",
+      "normalizers": {"/payload": "monotonic"},
+      "items": [
+        {"channel": "probe_channel", "payload": "5"},
+        {"channel": "probe_channel", "payload": "4"}
+      ],
+      "expect": "fail",
+      "error": "strictly increasing"
+    },
+    {
+      "id": "N15",
+      "kind": "document",
+      "normalizers": {"/response/body/id": "uuid_ordinal"},
+      "document": {"response": {"body": {"id": "5f1c2a4e-9d3b-4c7a-8e21-0a1b2c3d4e5f"}}},
+      "expect": "pass",
+      "normalized": {"response": {"body": {"id": "@uuid:1@"}}}
+    },
+    {
+      "id": "N16",
+      "kind": "document",
+      "normalizers": {"/response/body/count": "monotonic"},
+      "document": {"response": {"body": {"count": 3}}},
+      "expect": "fail",
+      "error": "monotonic needs a sequence"
+    },
+    {
+      "id": "N17",
+      "kind": "document",
+      "normalizers": {"/response/missing": "none"},
+      "document": {"response": {"body": {}}},
+      "expect": "fail",
+      "error": "matches nothing"
+    },
+    {
+      "id": "N18",
+      "kind": "document",
+      "normalizers": {"/response/body/at": "timestamp"},
+      "document": {"response": {"body": {"at": "yesterday"}}},
+      "expect": "fail",
+      "error": "is not an ISO-8601 timestamp"
+    },
+    {
+      "id": "N19",
+      "kind": "document",
+      "normalizers": {"/response/body/at": "timestamp"},
+      "document": {"response": {"body": {"at": "2026-03-01T12:00:01+00:00"}}},
+      "expect": "pass",
+      "normalized": {"response": {"body": {"at": "@ts@"}}}
+    },
+    {
+      "id": "N20",
+      "kind": "document",
+      "normalizers": {"/body": "bytes", "/status": "none"},
+      "document": {"body": "\\x0a", "status": 200},
+      "expect": "pass",
+      "normalized": {"body": "\\x0a", "status": 200}
+    }
+  ]
+}
