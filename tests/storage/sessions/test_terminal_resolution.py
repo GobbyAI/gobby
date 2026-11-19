@@ -20,15 +20,18 @@ from gobby.storage.terminals import TerminalManager
 LOCAL_MACHINE_ID = "20000000-0000-4000-8000-000000000001"
 
 
-@pytest.mark.parametrize("prebound", [False, True], ids=["context-fallback", "previously-bound"])
-def test_tty_mismatch_session_resolves_no_terminal(
-    session_manager: SessionManager, sample_project: dict[str, Any], prebound: bool
-) -> None:
+def _refuse_tty_mismatch_bind(
+    session_manager: SessionManager, project_id: str, *, prebound: bool
+) -> tuple[TerminalManager, Session, str, dict[str, Any]]:
+    """Register a seat whose CLI tty differs from its pane's, and refuse its bind.
+
+    Returns the terminal manager, the session, the pane id and the context the hook sent.
+    """
     terminals = TerminalManager(session_manager.db)
     terminal_id = str(uuid4())
     terminal = terminals.create_pending(
         terminal_id=terminal_id,
-        project_id=sample_project["id"],
+        project_id=project_id,
         backend="native",
         ownership="gobby",
         spawn_key=terminal_id,
@@ -44,8 +47,9 @@ def test_tty_mismatch_session_resolves_no_terminal(
         is not None
     )
     context = {"gobby_terminal_id": terminal_id, "parent_pid": 202, "tty": "/dev/ttys002"}
+    hook_context = dict(context)
     session = _register_terminal(
-        session_manager, sample_project["id"], "tty-mismatch", terminal_context=context
+        session_manager, project_id, "tty-mismatch", terminal_context=context
     )
     if prebound:
         assert terminals.bind_session(terminal_id, session.id, session.project_id) is not None
@@ -66,6 +70,33 @@ def test_tty_mismatch_session_resolves_no_terminal(
             )
             is None
         )
+    return terminals, session, terminal_id, hook_context
+
+
+@pytest.mark.parametrize("prebound", [False, True], ids=["context-fallback", "previously-bound"])
+def test_tty_mismatch_session_resolves_no_terminal(
+    session_manager: SessionManager, sample_project: dict[str, Any], prebound: bool
+) -> None:
+    terminals, session, terminal_id, _ = _refuse_tty_mismatch_bind(
+        session_manager, sample_project["id"], prebound=prebound
+    )
+    stored = session_manager.get(session.id)
+    assert stored is not None
+    assert stored.terminal_context == {"parent_pid": 202, "tty": "/dev/ttys002"}
+    assert terminals.resolve_live_for_session(stored) is None
+    unchanged = terminals.get(terminal_id)
+    assert unchanged is not None and unchanged.session_id is None
+
+
+@pytest.mark.parametrize("prebound", [False, True], ids=["context-fallback", "previously-bound"])
+def test_refused_route_stays_refused_after_the_next_hook_backfill(
+    session_manager: SessionManager, sample_project: dict[str, Any], prebound: bool
+) -> None:
+    terminals, session, terminal_id, hook_context = _refuse_tty_mismatch_bind(
+        session_manager, sample_project["id"], prebound=prebound
+    )
+    # The next hook from the same pane sends the same environment-derived context.
+    session_manager.backfill_terminal_context(session.id, dict(hook_context))
     stored = session_manager.get(session.id)
     assert stored is not None
     assert stored.terminal_context == {"parent_pid": 202, "tty": "/dev/ttys002"}
