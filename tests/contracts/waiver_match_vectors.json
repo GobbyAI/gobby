@@ -8,6 +8,7 @@
     {"surface": "HTTP PATCH /api/cron/jobs/{job_id}", "method": "PATCH", "path": "/api/other/job-1", "expect": false},
     {"surface": "HTTP PATCH /api/cron/jobs/{job_id}", "method": "PATCH", "path": "/api/cron/jobs/", "expect": false},
     {"surface": "HTTP PATCH /api/cron/jobs/{job_id}", "method": "PATCH", "path": "/api/cron/jobs/job-1/extra", "expect": false},
+    {"surface": "HTTP patch /api/cron/jobs/{job_id}", "method": "patch", "path": "/api/cron/jobs/job-1", "expect": false},
     {"surface": "MCP HTTP gobby:fixture_read", "method": "POST", "path": "/api/mcp/gobby/tools/fixture_read", "expect": false},
     {"surface": "CLI gobby fixture list", "method": "GET", "path": "/api/fixture/list", "expect": false},
     {"surface": "WS message fixture_event", "method": "GET", "path": "/ws", "expect": false}
