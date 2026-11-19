@@ -61,9 +61,19 @@
           "path": "@HOME@/.codex/skills/gobby/SKILL.md",
           "mode": "0644",
           "source": "skills/gobby/SKILL.md"
+        },
+        {
+          "path": "@HOME@/.gobby/hooks/validate_settings.py",
+          "mode": "0755",
+          "source": "hooks/validate_settings.py"
         }
       ],
       "grok": [
+        {
+          "path": "@HOME@/.gobby/hooks/validate_settings.py",
+          "mode": "0755",
+          "source": "hooks/validate_settings.py"
+        },
         {
           "path": "@HOME@/.grok/config.toml",
           "mode": "0644",
@@ -82,6 +92,11 @@
       ],
       "droid": [
         {
+          "path": "@HOME@/.agents/skills/gobby/SKILL.md",
+          "mode": "0644",
+          "source": "skills/gobby/SKILL.md"
+        },
+        {
           "path": "@HOME@/.factory/hooks.json",
           "mode": "0600",
           "text": "{\n  \"PreToolUse\": [\n    {\n      \"matcher\": \"*\",\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=PreToolUse\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"PostToolUse\": [\n    {\n      \"matcher\": \"*\",\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=PostToolUse\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"UserPromptSubmit\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=UserPromptSubmit\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"Notification\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=Notification\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"Stop\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=Stop\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"SubagentStop\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=SubagentStop\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"PreCompact\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=PreCompact\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"SessionStart\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=SessionStart\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"SessionEnd\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=SessionEnd --enqueue-only\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ]\n}\n"
@@ -90,6 +105,11 @@
           "path": "@HOME@/.factory/mcp.json",
           "mode": "0600",
           "text": "{\n  \"mcpServers\": {\n    \"gobby\": {\n      \"command\": \"@HOME@/.gobby/bin/gmcp\",\n      \"args\": [],\n      \"type\": \"stdio\"\n    }\n  }\n}\n"
+        },
+        {
+          "path": "@HOME@/.gobby/hooks/validate_settings.py",
+          "mode": "0755",
+          "source": "hooks/validate_settings.py"
         }
       ],
       "agy": [
@@ -107,6 +127,11 @@
           "path": "@HOME@/.gemini/skills/gobby/SKILL.md",
           "mode": "0644",
           "source": "skills/gobby/SKILL.md"
+        },
+        {
+          "path": "@HOME@/.gobby/hooks/validate_settings.py",
+          "mode": "0755",
+          "source": "hooks/validate_settings.py"
         }
       ],
       "git-hooks": [
@@ -161,7 +186,7 @@
           "text": "{\n  \"projects\": {\n    \"@HOME@/.gobby\": {\n      \"hasTrustDialogAccepted\": true\n    }\n  }\n}\n"
         },
         {
-          "path": "@HOME@/.claude.json.1767225600.backup",
+          "path": "@HOME@/.claude.json.1767225601.backup",
           "disposition": "created",
           "mode": "0600",
           "text": "{\n  \"mcpServers\": {\n    \"gobby\": {\n      \"command\": \"@HOME@/.gobby/bin/gmcp\",\n      \"args\": []\n    }\n  },\n  \"projects\": {\n    \"@HOME@/.gobby\": {\n      \"hasTrustDialogAccepted\": true\n    }\n  }\n}\n"
@@ -183,7 +208,7 @@
           "text": "{}"
         },
         {
-          "path": "@HOME@/.claude/settings.json.1767225600.backup",
+          "path": "@HOME@/.claude/settings.json.1767225601.backup",
           "disposition": "created",
           "mode": "0600",
           "text": "{\n  \"hooks\": {\n    \"SessionStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=session-start\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"Setup\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=setup\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"InstructionsLoaded\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=instructions-loaded\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"UserPromptSubmit\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=user-prompt-submit\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"UserPromptExpansion\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=user-prompt-expansion\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PreToolUse\": [\n      {\n        \"matcher\": \"*\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=pre-tool-use\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PermissionRequest\": [\n      {\n        \"matcher\": \"*\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=permission-request\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PostToolUse\": [\n      {\n        \"matcher\": \"*\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=post-tool-use\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PostToolUseFailure\": [\n      {\n        \"matcher\": \"*\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=post-tool-use-failure\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PostToolBatch\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=post-tool-batch\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PermissionDenied\": [\n      {\n        \"matcher\": \"*\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=permission-denied\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"Notification\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=notification\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"MessageDisplay\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=message-display\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"SubagentStart\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=subagent-start\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"SubagentStop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=subagent-stop\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"TaskCreated\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=task-created\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"TaskCompleted\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=task-completed\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"Stop\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=stop\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"StopFailure\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=stop-failure\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"TeammateIdle\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=teammate-idle\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"ConfigChange\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=config-change\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"CwdChanged\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=cwd-changed\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"DirectoryAdded\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=directory-added\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"FileChanged\": [\n      {\n        \"matcher\": \".envrc|.env\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=file-changed\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"WorktreeCreate\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=worktree-create\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"WorktreeRemove\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=worktree-remove\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PreCompact\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=pre-compact\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PostCompact\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=post-compact\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PreModelSwitch\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=pre-model-switch\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PostModelSwitch\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=post-model-switch\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"SessionEnd\": [\n      {\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=session-end\",\n            \"timeout\": 60\n          }\n        ]\n      }\n    ],\n    \"Elicitation\": [\n      {\n        \"matcher\": \"*\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=elicitation\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"ElicitationResult\": [\n      {\n        \"matcher\": \"*\",\n        \"hooks\": [\n          {\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=claude --type=elicitation-result\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ]\n  },\n  \"autoMemoryEnabled\": false,\n  \"statusLine\": {\n    \"type\": \"command\",\n    \"command\": \"ghook --gobby-owned --cli=claude --type=statusline\"\n  }\n}"
@@ -210,7 +235,13 @@
         },
         {
           "path": "@HOME@/.codex/config.toml.1767225600.backup",
-          "disposition": "modified",
+          "disposition": "kept",
+          "mode": "0644",
+          "text": "[features]\nhooks = true\nworktrees = false\n\n[hooks.state.\"@HOME@/.codex/hooks.json:pre_tool_use:0:0\"]\ntrusted_hash = \"sha256:cd3e98e569889f969d73f1631bdfc6b9c1feddbdb2962fe4db23eaa7f1ec6a6f\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:permission_request:0:0\"]\ntrusted_hash = \"sha256:4f1fa15b653554bd61f3019a6dac5980174bed3a51793ebfe7579ce5b0ed476e\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:post_tool_use:0:0\"]\ntrusted_hash = \"sha256:e60f40b2b6c3a6d8c6c68f2b85d0042d343173186c4a0234252875aabf0e79c2\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:pre_compact:0:0\"]\ntrusted_hash = \"sha256:812ce9be28ed58c18532f6396b92f24e690fad76882d0fb9ced390cec7465854\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:post_compact:0:0\"]\ntrusted_hash = \"sha256:45de9197d69ed25e724fc1963bf0365fba19afa4d304b0f92deb4a164b2889e2\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:session_start:0:0\"]\ntrusted_hash = \"sha256:afe741f29f654f0ebd0abaa6d9d80ba3a977fec2ffcbaa51045e9b8f617afa00\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:subagent_start:0:0\"]\ntrusted_hash = \"sha256:76baaa430fade4dd2f4106547e6df9aa888f201ca2be92232f57beb41d5102d0\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:user_prompt_submit:0:0\"]\ntrusted_hash = \"sha256:3ff4438c89523aecba24e96226537e01cdf6cce6c6879276af6a502e43d1d094\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:subagent_stop:0:0\"]\ntrusted_hash = \"sha256:ea8274387705dde06a42c72ba9f5163e13817c3286308dca5244e5a241b63936\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:stop:0:0\"]\ntrusted_hash = \"sha256:5ed560c6f185a8d16389ba53c44d4c57e0ea108a0bfb7467fd33af534a2486dc\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:interrupt:0:0\"]\ntrusted_hash = \"sha256:7ee4011e19c63ee5ee80404ab9c79bcd3e3d48012472059d6f8ac6051775afe4\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:session_end:0:0\"]\ntrusted_hash = \"sha256:7d48c86996bda3b9be7eb5b5de948e6372c2ce5d564131926ba5e2a810dd5724\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:pre_model_request:0:0\"]\ntrusted_hash = \"sha256:d61b748a7a45823867756ae20e6e324c30f4b036d31647eecd9bf7e0b90afb6e\"\n\n[hooks.state.\"@HOME@/.codex/hooks.json:post_model_request:0:0\"]\ntrusted_hash = \"sha256:43270db8d384cd4466086f3beea11059e75811c07a0852e8f55e022ea137ee5a\"\n"
+        },
+        {
+          "path": "@HOME@/.codex/config.toml.1767225601.backup",
+          "disposition": "created",
           "mode": "0644",
           "text": "[features]\nworktrees = false\n\n[mcp_servers.gobby]\ncommand = \"@HOME@/.gobby/bin/gmcp\"\nargs = []\nrequired = true\nstartup_timeout_sec = 120\ntool_timeout_sec = 360\ndefault_tools_approval_mode = \"approve\"\n\n[projects.\"@HOME@/.gobby\"]\ntrust_level = \"trusted\"\n\n[tui]\n\"screen_reader_detection_done\" = true\n\n[tui.model_availability_nux]\n\"gpt-6.1-sol\" = 4\n"
         },
@@ -229,9 +260,21 @@
           "disposition": "kept",
           "mode": "0644",
           "source": "skills/gobby/SKILL.md"
+        },
+        {
+          "path": "@HOME@/.gobby/hooks/validate_settings.py",
+          "disposition": "kept",
+          "mode": "0755",
+          "source": "hooks/validate_settings.py"
         }
       ],
       "grok": [
+        {
+          "path": "@HOME@/.gobby/hooks/validate_settings.py",
+          "disposition": "kept",
+          "mode": "0755",
+          "source": "hooks/validate_settings.py"
+        },
         {
           "path": "@HOME@/.grok/config.toml",
           "disposition": "kept",
@@ -251,13 +294,19 @@
       ],
       "droid": [
         {
+          "path": "@HOME@/.agents/skills/gobby/SKILL.md",
+          "disposition": "kept",
+          "mode": "0644",
+          "source": "skills/gobby/SKILL.md"
+        },
+        {
           "path": "@HOME@/.factory/hooks.json",
           "disposition": "modified",
           "mode": "0600",
           "text": "{}\n"
         },
         {
-          "path": "@HOME@/.factory/hooks.json.1767225600.backup",
+          "path": "@HOME@/.factory/hooks.json.1767225601.backup",
           "disposition": "created",
           "mode": "0600",
           "text": "{\n  \"PreToolUse\": [\n    {\n      \"matcher\": \"*\",\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=PreToolUse\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"PostToolUse\": [\n    {\n      \"matcher\": \"*\",\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=PostToolUse\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"UserPromptSubmit\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=UserPromptSubmit\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"Notification\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=Notification\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"Stop\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=Stop\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"SubagentStop\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=SubagentStop\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"PreCompact\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=PreCompact\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"SessionStart\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=SessionStart\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ],\n  \"SessionEnd\": [\n    {\n      \"hooks\": [\n        {\n          \"type\": \"command\",\n          \"command\": \"ghook --gobby-owned --cli=droid --type=SessionEnd --enqueue-only\",\n          \"timeout\": 120\n        }\n      ]\n    }\n  ]\n}\n"
@@ -269,10 +318,16 @@
           "text": "{}\n"
         },
         {
-          "path": "@HOME@/.factory/mcp.json.1767225600.backup",
+          "path": "@HOME@/.factory/mcp.json.1767225601.backup",
           "disposition": "created",
           "mode": "0600",
           "text": "{\n  \"mcpServers\": {\n    \"gobby\": {\n      \"command\": \"@HOME@/.gobby/bin/gmcp\",\n      \"args\": [],\n      \"type\": \"stdio\"\n    }\n  }\n}\n"
+        },
+        {
+          "path": "@HOME@/.gobby/hooks/validate_settings.py",
+          "disposition": "kept",
+          "mode": "0755",
+          "source": "hooks/validate_settings.py"
         }
       ],
       "agy": [
@@ -283,7 +338,7 @@
           "text": "{}\n"
         },
         {
-          "path": "@HOME@/.gemini/config/hooks.json.1767225600.backup",
+          "path": "@HOME@/.gemini/config/hooks.json.1767225601.backup",
           "disposition": "created",
           "mode": "0600",
           "text": "{\n  \"gobby\": {\n    \"SessionStart\": [\n      {\n        \"name\": \"gobby-session-start\",\n        \"type\": \"command\",\n        \"command\": \"ghook --gobby-owned --cli=agy --type=SessionStart\",\n        \"timeout\": 120\n      }\n    ],\n    \"PreInvocation\": [\n      {\n        \"name\": \"gobby-pre-invocation\",\n        \"type\": \"command\",\n        \"command\": \"ghook --gobby-owned --cli=agy --type=PreInvocation\",\n        \"timeout\": 120\n      }\n    ],\n    \"PreToolUse\": [\n      {\n        \"matcher\": \"*\",\n        \"hooks\": [\n          {\n            \"name\": \"gobby-pre-tool-use\",\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=agy --type=PreToolUse\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PostToolUse\": [\n      {\n        \"matcher\": \"*\",\n        \"hooks\": [\n          {\n            \"name\": \"gobby-post-tool-use\",\n            \"type\": \"command\",\n            \"command\": \"ghook --gobby-owned --cli=agy --type=PostToolUse\",\n            \"timeout\": 120\n          }\n        ]\n      }\n    ],\n    \"PostInvocation\": [\n      {\n        \"name\": \"gobby-post-invocation\",\n        \"type\": \"command\",\n        \"command\": \"ghook --gobby-owned --cli=agy --type=PostInvocation\",\n        \"timeout\": 120\n      }\n    ],\n    \"Stop\": [\n      {\n        \"name\": \"gobby-stop\",\n        \"type\": \"command\",\n        \"command\": \"ghook --gobby-owned --cli=agy --type=Stop\",\n        \"timeout\": 120\n      }\n    ]\n  }\n}\n"
@@ -295,7 +350,7 @@
           "text": "{}\n"
         },
         {
-          "path": "@HOME@/.gemini/config/mcp_config.json.1767225600.backup",
+          "path": "@HOME@/.gemini/config/mcp_config.json.1767225601.backup",
           "disposition": "created",
           "mode": "0600",
           "text": "{\n  \"mcpServers\": {\n    \"gobby\": {\n      \"command\": \"@HOME@/.gobby/bin/gmcp\",\n      \"args\": [],\n      \"type\": \"stdio\"\n    }\n  }\n}\n"
@@ -305,6 +360,12 @@
           "disposition": "kept",
           "mode": "0644",
           "source": "skills/gobby/SKILL.md"
+        },
+        {
+          "path": "@HOME@/.gobby/hooks/validate_settings.py",
+          "disposition": "kept",
+          "mode": "0755",
+          "source": "hooks/validate_settings.py"
         }
       ],
       "git-hooks": [

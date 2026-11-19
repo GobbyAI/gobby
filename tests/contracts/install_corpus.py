@@ -1,9 +1,11 @@
 """Record the install golden tree: what `gobby install` writes on a temporary HOME.
 
-The recorder installs, then uninstalls, the six components claude, codex, grok, droid,
-agy and git-hooks, one at a time and in that order, against a temporary HOME, a
-temporary GOBBY_HOME and a temporary git project. The provider CLIs are absent by
-design: PATH holds a recorder-owned empty directory and the directory of git only.
+The recorder takes each of the six components claude, codex, grok, droid, agy and
+git-hooks on its own fresh root (``<root>/<component>``): a temporary HOME, a temporary
+GOBBY_HOME and a temporary git project, where it installs that one component and then
+uninstalls it. A component's install entries are therefore every path it writes, never
+a delta over another component's install. The provider CLIs are absent by design: PATH
+holds a recorder-owned empty directory and the directory of git only.
 
 Golden document (``tests/contracts/install/golden_tree.json``)::
 
@@ -20,7 +22,8 @@ or ``@PYTHON@``, so no host path is written. Entries of each component are sorte
 path.
 
 An install entry is the state of one path that the component's install step created or
-changed: ``path``, ``mode`` (an octal string such as ``"0644"``, POSIX only) and
+changed: ``path``, ``mode`` (an octal string such as ``"0644"``, recorded on POSIX
+and omitted on Windows) and
 exactly one content key. ``text`` holds UTF-8 content after placeholder normalization,
 ``sha256`` the digest of other bytes, and ``source`` names the file under
 ``src/gobby/install/shared/`` whose bytes the installed file equals. A ``source``
@@ -29,7 +32,7 @@ equal the bundled file it names, so bundled content is checked, not excluded, an
 bytes are not copied into the golden.
 
 An uninstall entry gives the disposition of one path after that component's uninstall
-step, relative to the state just before the step. Every path of the component's install
+step, relative to the state its install step left. Every path of the component's install
 entries has one: ``removed`` (absent after the step), ``kept`` (unchanged) or
 ``modified`` (content or mode changed). A path the uninstall step creates that its
 install entries do not name is ``created``. ``kept``, ``modified`` and ``created``
@@ -45,11 +48,12 @@ A missing or extra entry is named by the pointer of the entry itself.
 Recording conditions, beyond HOME and PATH: the environment is cleared of every
 variable that redirects an installer (the Gobby, provider CLI, git and XDG prefixes),
 git reads no system or global config, the umask is 022, and ``time.time`` returns a
-fixed instant, because the installers name their backups by the clock. The
-existing install that component runs need is a ghook version stamp under the temporary
-GOBBY_HOME, holding the workspace ghook crate version, since no ghook binary is on
-PATH. The recording root is resolved first, so it has one spelling. Every step must
-report success; a failed step stops the recording.
+fixed instant during the install step and one second later during the uninstall step,
+because the installers name their backups by the clock and real steps do not share a
+second. The existing install that component runs need is a ghook version stamp under
+each temporary GOBBY_HOME, holding the workspace ghook crate version, since no ghook
+binary is on PATH. The recording root is resolved first, so it has one spelling. Every
+step must report success; a failed step stops the recording.
 """
 
 from __future__ import annotations
@@ -57,12 +61,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
 import sys
 import tomllib
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -113,15 +118,28 @@ ABSENT_COMMANDS: tuple[str, ...] = (
 GHOOK_MANIFEST = REPO_ROOT / "crates" / "ghook" / "Cargo.toml"
 
 type Snapshot = dict[str, tuple[int, bytes]]
+type BundledIndex = dict[str, list[str]]
 
 
 @dataclass(frozen=True)
 class InstallRecording:
-    """One recording: the golden document and the temporary roots it was taken under."""
+    """One recording: the golden document and each component's own temporary root."""
 
     golden: dict[str, Any] = field(default_factory=dict)
-    home: Path = Path("")
-    project: Path = Path("")
+    roots: dict[str, Path] = field(default_factory=dict)
+
+
+class _StepClock:
+    """The recording clock: fixed within a step, one second later for the next step."""
+
+    def __init__(self) -> None:
+        self._now = RECORDING_CLOCK
+
+    def time(self) -> float:
+        return self._now
+
+    def advance(self) -> None:
+        self._now += 1.0
 
 
 class InstallRecordingError(RuntimeError):
@@ -137,7 +155,9 @@ def _ghook_version() -> str:
 
 
 @contextmanager
-def _isolated_process(home: Path, path_dir: Path, git_dir: Path) -> Iterator[None]:
+def _isolated_process(
+    home: Path, path_dir: Path, git_dir: Path, clock: _StepClock
+) -> Iterator[None]:
     """Point HOME, GOBBY_HOME, PATH, the clock and the umask at the recording."""
     environment = {
         key: value for key, value in os.environ.items() if not key.startswith(CLEARED_ENV_PREFIXES)
@@ -157,7 +177,7 @@ def _isolated_process(home: Path, path_dir: Path, git_dir: Path) -> Iterator[Non
         with (
             mock.patch.dict(os.environ, environment, clear=True),
             mock.patch.object(Path, "home", return_value=home),
-            mock.patch("time.time", return_value=RECORDING_CLOCK),
+            mock.patch("time.time", new=clock.time),
         ):
             yield
     finally:
@@ -205,17 +225,22 @@ def _snapshot(roots: Mapping[str, Path]) -> Snapshot:
     return snapshot
 
 
+def _bundled_index() -> BundledIndex:
+    """Every bundled file's path under BUNDLED_ROOT, keyed by its content digest."""
+    bundled: BundledIndex = {}
+    for path in sorted(BUNDLED_ROOT.rglob("*")):
+        if path.is_file() and not path.is_symlink():
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            bundled.setdefault(digest, []).append(path.relative_to(BUNDLED_ROOT).as_posix())
+    return bundled
+
+
 class _Encoder:
     """Turn one installed file into its golden fields."""
 
-    def __init__(self, replacements: list[tuple[str, str]]) -> None:
+    def __init__(self, bundled: BundledIndex, replacements: list[tuple[str, str]]) -> None:
         self._replacements = replacements
-        self._bundled: dict[str, list[str]] = {}
-        for path in sorted(BUNDLED_ROOT.rglob("*")):
-            if path.is_file() and not path.is_symlink():
-                digest = hashlib.sha256(path.read_bytes()).hexdigest()
-                relative = path.relative_to(BUNDLED_ROOT).as_posix()
-                self._bundled.setdefault(digest, []).append(relative)
+        self._bundled = bundled
 
     def normalize(self, text: str) -> str:
         for value, placeholder in self._replacements:
@@ -240,7 +265,8 @@ class _Encoder:
         return sorted(candidates, key=lambda candidate: (-shared_tail(candidate), candidate))[0]
 
     def fields(self, key: str, mode: int, data: bytes) -> dict[str, str]:
-        entry = {"mode": f"{mode:04o}"}
+        # Windows has no POSIX mode bits, so the mode is recorded on POSIX only (D-29).
+        entry: dict[str, str] = {} if sys.platform == "win32" else {"mode": f"{mode:04o}"}
         source = self._source(key, data)
         if source is not None:
             entry["source"] = source
@@ -308,12 +334,54 @@ def _require_success(phase: str, component: str, results: Mapping[str, Any]) -> 
         raise InstallRecordingError(f"{phase} of {component} failed: {detail}")
 
 
-def record_install_tree(root: Path) -> InstallRecording:
-    """Install and uninstall the six components under ``root`` and return the golden."""
+def _record_component(
+    component: str, root: Path, git: str, bundled: BundledIndex
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Install, then uninstall, one component on the fresh root ``root``."""
     from gobby.cli.install_components import run_install_components, run_uninstall_components
     from gobby.cli.runtime import CliRuntime
     from gobby.config.app import DaemonConfig
 
+    home = root / "home"
+    project = root / "project"
+    path_dir = root / "path"
+    for directory in (home, project, path_dir):
+        directory.mkdir(parents=True)
+    clock = _StepClock()
+    with _isolated_process(home, path_dir, Path(git).parent, clock):
+        _assert_contained(root, home)
+        stamp = home / ".gobby" / "bin" / ".ghook-version"
+        stamp.parent.mkdir(parents=True)
+        stamp.write_text(_ghook_version() + "\n", encoding="utf-8")
+        subprocess.run(  # nosec B603 # git resolved by the caller, fixed argv
+            [git, "init", "-q", str(project)], check=True, capture_output=True
+        )
+        roots = {"@HOME@": home, "@PROJECT@": project}
+        encoder = _Encoder(bundled, _replacements(home, project))
+        runtime = CliRuntime(None, config=DaemonConfig())
+        before = _snapshot(roots)
+        results = run_install_components(
+            [component],
+            project_path=project,
+            no_interactive=True,
+            embedding=None,
+            runtime=runtime,
+        )
+        _require_success("install", component, results)
+        installed_snapshot = _snapshot(roots)
+        install = _install_entries(before, installed_snapshot, encoder)
+        clock.advance()
+        results = run_uninstall_components([component], project_path=project, runtime=runtime)
+        _require_success("uninstall", component, results)
+        installed = [entry["path"] for entry in install]
+        uninstall = _uninstall_entries(installed, installed_snapshot, _snapshot(roots), encoder)
+        if any(path_dir.iterdir()):
+            raise InstallRecordingError(f"a step wrote into the recording PATH {path_dir}")
+    return install, uninstall
+
+
+def record_install_tree(root: Path) -> InstallRecording:
+    """Install and uninstall each of the six components on its own root under ``root``."""
     git = shutil.which("git")
     if git is None:
         raise InstallRecordingError(
@@ -327,50 +395,35 @@ def record_install_tree(root: Path) -> InstallRecording:
     root = root.resolve()
     if any(root.iterdir()):
         raise InstallRecordingError(f"the recording root {root} is not empty")
-    home = root / "home"
-    project = root / "project"
-    path_dir = root / "path"
-    for directory in (home, project, path_dir):
-        directory.mkdir()
-
-    with _isolated_process(home, path_dir, Path(git).parent):
-        _assert_contained(root, home)
-        stamp = home / ".gobby" / "bin" / ".ghook-version"
-        stamp.parent.mkdir(parents=True)
-        stamp.write_text(_ghook_version() + "\n", encoding="utf-8")
-        subprocess.run(  # nosec B603 # git resolved above, fixed argv
-            [git, "init", "-q", str(project)], check=True, capture_output=True
+    bundled = _bundled_index()
+    install: dict[str, list[dict[str, str]]] = {}
+    uninstall: dict[str, list[dict[str, str]]] = {}
+    component_roots: dict[str, Path] = {}
+    for component in INSTALL_COMPONENTS:
+        component_roots[component] = root / component
+        install[component], uninstall[component] = _record_component(
+            component, component_roots[component], git, bundled
         )
-        roots = {"@HOME@": home, "@PROJECT@": project}
-        encoder = _Encoder(_replacements(home, project))
-        runtime = CliRuntime(None, config=DaemonConfig())
-        install: dict[str, list[dict[str, str]]] = {}
-        uninstall: dict[str, list[dict[str, str]]] = {}
-        for component in INSTALL_COMPONENTS:
-            before = _snapshot(roots)
-            results = run_install_components(
-                [component],
-                project_path=project,
-                no_interactive=True,
-                embedding=None,
-                runtime=runtime,
-            )
-            _require_success("install", component, results)
-            install[component] = _install_entries(before, _snapshot(roots), encoder)
-        for component in INSTALL_COMPONENTS:
-            before = _snapshot(roots)
-            results = run_uninstall_components([component], project_path=project, runtime=runtime)
-            _require_success("uninstall", component, results)
-            installed = [entry["path"] for entry in install[component]]
-            uninstall[component] = _uninstall_entries(installed, before, _snapshot(roots), encoder)
-        if any(path_dir.iterdir()):
-            raise InstallRecordingError(f"a step wrote into the recording PATH {path_dir}")
-
     golden = {
         "components": list(INSTALL_COMPONENTS),
         "phases": {"install": install, "uninstall": uninstall},
     }
-    return InstallRecording(golden=golden, home=home, project=project)
+    return InstallRecording(golden=golden, roots=component_roots)
+
+
+def host_path_occurrences(text: str, values: Iterable[str]) -> list[str]:
+    """The host values that ``text`` carries as a path, sorted.
+
+    A value counts where it starts a path (no path-name character before it) and ends
+    at a separator, whitespace, a JSON string quote or escape, or the end of the text.
+    So a recorded ``/tmp/x/home`` or a bare ``"/tmp"`` counts, while ``/var/tmp/x`` and
+    the shell default ``${TMPDIR:-/tmp}`` in a bundled hook template do not.
+    """
+    found = set()
+    for value in values:
+        if value and re.search(rf"(?<![\w.~-]){re.escape(value)}(?=[/\\\"\s]|$)", text):
+            found.add(value)
+    return sorted(found)
 
 
 def encode_golden(golden: Mapping[str, Any]) -> str:

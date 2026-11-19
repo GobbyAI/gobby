@@ -30,6 +30,7 @@ from tests.contracts.install_corpus import (
     REPO_ROOT,
     encode_golden,
     golden_differences,
+    host_path_occurrences,
     record_install_tree,
 )
 from tests.fixtures.external_write_audit import observe_writes
@@ -125,8 +126,24 @@ def test_golden_has_no_host_paths() -> None:
         str(REPO_ROOT),
         str(Path.home()),
     }
-    for value in sorted(host_values):
-        assert value not in text, f"{GOLDEN_PATH} carries the host path {value}"
+    assert host_path_occurrences(text, host_values) == [], f"{GOLDEN_PATH} carries host paths"
+
+
+HOST_PATH_CASES: dict[str, tuple[str, list[str]]] = {
+    "recorded_path_under_temp": ('{"path": "/tmp/pytest-of-ci/home/.claude"}', ["/tmp"]),
+    "bare_temp_string": ('{"cwd": "/tmp"}', ["/tmp"]),
+    "temp_before_whitespace": ('{"command": "cd /tmp && ls"}', ["/tmp"]),
+    "temp_at_end_of_text_line": ('{"text": "TMP=/tmp\\nrun"}', ["/tmp"]),
+    "shell_default_in_hook_template": ('"$(mktemp -d \\"${TMPDIR:-/tmp}/gobby.XXXXXX\\")"', []),
+    "other_directory_ending_in_temp": ('{"path": "/var/tmp/cache"}', []),
+    "longer_sibling_name": ('{"path": "/tmpfiles/x"}', []),
+}
+
+
+@pytest.mark.parametrize("case", sorted(HOST_PATH_CASES))
+def test_host_path_occurrences_finds_host_paths_not_substrings(case: str) -> None:
+    text, expected = HOST_PATH_CASES[case]
+    assert host_path_occurrences(text, {"/tmp"}) == expected
 
 
 def test_golden_components_match_declared_scope() -> None:
@@ -293,16 +310,23 @@ def test_install_recorder_writes_only_under_temp_home(
     with observe_writes(REPO_ROOT) as repo_audit, observe_writes(sentinel) as home_audit:
         recording = record_install_tree(root)
 
-    assert recording.home.is_relative_to(root), (
-        f"the recording HOME {recording.home} is not under {root}"
+    assert set(recording.roots) == set(INSTALL_COMPONENTS), (
+        f"the recording has roots for {sorted(recording.roots)}, not {sorted(INSTALL_COMPONENTS)}"
     )
-    assert recording.project.is_relative_to(root), (
-        f"the recording project {recording.project} is not under {root}"
+    assert len(set(recording.roots.values())) == len(INSTALL_COMPONENTS), (
+        f"two components share a recording root: {recording.roots}"
     )
-    assert recording.home.is_dir(), f"the recording HOME {recording.home} does not exist"
-    assert any(path.is_file() for path in recording.home.rglob("*")), (
-        f"the recording wrote nothing under {recording.home}"
-    )
+    for component, component_root in sorted(recording.roots.items()):
+        home = component_root / "home"
+        assert component_root.is_relative_to(root.resolve()), (
+            f"the {component} recording root {component_root} is not under {root}"
+        )
+        assert (component_root / "project" / ".git").is_dir(), (
+            f"the {component} recording project under {component_root} is not a git checkout"
+        )
+        assert any(path.is_file() for path in home.rglob("*")), (
+            f"the {component} recording wrote nothing under {home}"
+        )
     assert repo_audit.writes == []
     assert home_audit.writes == []
     assert _tree(tmp_path, skip=root) == before
