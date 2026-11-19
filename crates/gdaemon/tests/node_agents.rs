@@ -3390,6 +3390,38 @@ fn srt_workspace_refuses_unsafe_project_names() -> Result<()> {
 }
 
 #[test]
+fn srt_workspace_accepts_system_project_names() -> Result<()> {
+    // Project-less sessions register under a system project such as `_personal`, so a
+    // leading underscore anchors the workspace like any other registered name.
+    let corpus = srt_corpus()?;
+    let inputs = srt_case_inputs(&corpus, "claude-agent-workspace")?;
+    let root = tempfile::tempdir()?;
+    let tree = SrtTree::new(&root.path().join("system-project-names"))?;
+    tree.materialize(&inputs)?;
+    let mut policy_inputs = srt_policy_inputs(&tree, &inputs)?;
+    policy_inputs.project_name = "_personal".to_owned();
+    let resolved = resolve_srt_policy(&policy_inputs);
+    assert!(
+        resolved.is_ok(),
+        "refused _personal: {:?}",
+        resolved.as_ref().err()
+    );
+    let policy = resolved?;
+    let anchor = tree
+        .path("gobby_home")
+        .join("agents_workspaces")
+        .join("_personal");
+    let grants = &policy.sandbox.extra_write_paths;
+    assert!(
+        grants
+            .iter()
+            .any(|grant| Path::new(grant).starts_with(&anchor)),
+        "no write grant under {anchor:?}: {grants:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn srt_workspace_refuses_unmigrated_history() -> Result<()> {
     let corpus = srt_corpus()?;
     let inputs = srt_case_inputs(&corpus, "claude-agent-workspace")?;
