@@ -202,6 +202,42 @@ def test_v2_corpus_bytes_match_the_digests_taken_at_head() -> None:
         assert _sha256(corpus_v3.V2_DIR / name) == digest, name
 
 
+# C38: the ledger and waiver manifest is frozen in this chunk (protocol line 17, design section 13.2).
+# Each digest is the SHA-256 of that file at the worktree HEAD when this guard was written.
+LEDGER_DIGESTS: dict[str, str] = {
+    "docs/contracts/parity-waivers.json": (
+        "1a53dacac2848b1e0f8989f876d8f7b27c1afc641c6fb7fc2348f15d24551c6a"
+    ),
+    "docs/contracts/parity-ledger.md": (
+        "80ca3158a414ae23e95dee02fe9df6909d5c140cbbbcd95e3d68c029d3173a37"
+    ),
+}
+
+
+def _ledger_mismatches(root: Path) -> list[str]:
+    return [name for name, digest in LEDGER_DIGESTS.items() if _sha256(root / name) != digest]
+
+
+@pytest.mark.unit
+def test_ledger_and_waiver_manifest_match_the_digests_taken_at_head() -> None:
+    assert _ledger_mismatches(recorder_v3.REPO_ROOT) == [], (
+        "the ledger and waiver manifest must not change in a chunk landing (design section 13.2)"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name", sorted(LEDGER_DIGESTS))
+def test_ledger_guard_reports_a_copy_with_one_flipped_byte(tmp_path: Path, name: str) -> None:
+    for other in LEDGER_DIGESTS:
+        copy = tmp_path / other
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        copy.write_bytes((recorder_v3.REPO_ROOT / other).read_bytes())
+    flipped = bytearray((tmp_path / name).read_bytes())
+    flipped[-1] ^= 0x01
+    (tmp_path / name).write_bytes(bytes(flipped))
+    assert _ledger_mismatches(tmp_path) == [name]
+
+
 @pytest.mark.unit
 def test_loader_reads_the_v2_and_v3_manifests_in_order() -> None:
     assert corpus_v3.load_manifest(corpus_v3.V2_DIR)["schema_version"] == 2
