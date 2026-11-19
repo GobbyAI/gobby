@@ -4,13 +4,14 @@
 //! exchange, and R1 wires the call site. Each call makes exactly one exchange
 //! and never resends. A reply lost on any command is an unknown outcome for the
 //! caller to reconcile. Requests are built here, so their bytes equal the
-//! corpus bytes (`tests/contracts/worker_protocol.json`).
+//! corpus bytes (`tests/contracts/worker_protocol.json`). Replies are checked
+//! against the contract before they reach the caller: the envelope, the error
+//! object, the handshake result, and the initialize result's per-status table.
 
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 #[cfg(unix)]
@@ -28,12 +29,43 @@ pub const MAX_DOMAIN_OP_REQUEST_BYTES: usize = 16 * 1024 * 1024;
 const HANDSHAKE: &str = "handshake";
 const INITIALIZE: &str = "initialize";
 const INVOKE: &str = "invoke";
+const OP_FAILED: &str = "op_failed";
 const ENVELOPE_KEYS: [&str; 5] = [
     "protocol_version",
     "generation",
     "operation_id",
     "result",
     "error",
+];
+/// The handshake result's `commands`, sorted (contract 5.5).
+const HANDSHAKE_COMMANDS: [&str; 3] = [HANDSHAKE, INITIALIZE, INVOKE];
+/// The initialize phases in declaration order (contract 5.4).
+const INIT_PHASES: [&str; 5] = [
+    "storage_and_config",
+    "content_refusal",
+    "startup_content",
+    "config_runtime",
+    "runtime_services",
+];
+/// The keys of an initialize result. All five are always present.
+const PHASE_REPLY_KEYS: [&str; 5] = ["phase", "status", "next_phase", "message", "error_type"];
+/// Messages are capped at this many characters, counted as characters (contract 5.3).
+const MAX_MESSAGE_CHARS: usize = 2048;
+/// Every error code with its fixed message. `op_failed` carries a dynamic message.
+const ERROR_CODES: [(&str, Option<&str>); 10] = [
+    ("invalid_request", Some("invalid request")),
+    ("protocol_mismatch", Some("protocol version not accepted")),
+    ("unauthorized", Some("credential refused")),
+    ("not_handshaken", Some("no handshake for this worker")),
+    (
+        "stale_generation",
+        Some("generation does not match the bound generation"),
+    ),
+    ("unknown_command", Some("unknown command")),
+    ("phase_out_of_order", Some("phase is not the next phase")),
+    ("worker_unusable", Some("worker is unusable")),
+    ("not_ready", Some("worker is not ready")),
+    (OP_FAILED, None),
 ];
 
 /// Which runner the worker serves. The compiled default is Python until the cutover commit.
@@ -198,10 +230,37 @@ pub enum WorkerHandshake {
     Ready(HandshakeResult),
 }
 
-/// A reply whose envelope passed validation, with its one payload.
+/// A reply whose envelope passed validation: its result, or its error object.
 enum Reply {
     Success(Value),
-    Refusal(Value),
+    Refusal(ErrorBody),
+}
+
+/// One exchange's identity, kept so a failed validation can name its command.
+struct Call {
+    command: &'static str,
+    generation: u64,
+    operation_id: String,
+}
+
+impl Call {
+    fn unknown(&self) -> WorkerCallError {
+        WorkerCallError::Unknown(UnknownOutcome {
+            command: self.command,
+            generation: self.generation,
+            operation_id: self.operation_id.clone(),
+        })
+    }
+
+    /// A handshake reply that fails validation is a protocol violation. For the other
+    /// commands the effect may already have happened, so the outcome is unknown.
+    fn violation(&self, violation: ProtocolViolation) -> WorkerCallError {
+        if self.command == HANDSHAKE {
+            WorkerCallError::Protocol(violation)
+        } else {
+            self.unknown()
+        }
+    }
 }
 
 /// Sends the handshake. The credential must be nonempty.
@@ -213,14 +272,19 @@ pub async fn perform_handshake<C: WorkerChannel>(
     if credential.is_empty() {
         return Err(WorkerCallError::CredentialMissing);
     }
-    round_trip(
+    let (call, reply) = exchange(
         channel,
         session,
         HANDSHAKE,
         json!({ "credential": credential }),
         MAX_WORKER_REQUEST_BYTES,
     )
-    .await
+    .await?;
+    let value = into_result(&call, reply)?;
+    let result: HandshakeResult =
+        serde_json::from_value(value).map_err(|_| call.violation(ProtocolViolation::Malformed))?;
+    check_handshake(&call, &result).map_err(|violation| call.violation(violation))?;
+    Ok(result)
 }
 
 /// Sends the construction command for one initialize phase.
@@ -229,14 +293,18 @@ pub async fn perform_initialize<C: WorkerChannel>(
     session: &mut WorkerSession,
     phase: &str,
 ) -> Result<PhaseReply, WorkerCallError> {
-    round_trip(
+    let (call, reply) = exchange(
         channel,
         session,
         INITIALIZE,
         json!({ "phase": phase }),
         MAX_WORKER_REQUEST_BYTES,
     )
-    .await
+    .await?;
+    let value = into_result(&call, reply)?;
+    let reply = decode_phase_reply(value).map_err(|violation| call.violation(violation))?;
+    check_phase_reply(&reply, phase).map_err(|violation| call.violation(violation))?;
+    Ok(reply)
 }
 
 /// Sends a domain op invocation and returns its encoded result.
@@ -246,34 +314,34 @@ pub async fn perform_invoke<C: WorkerChannel>(
     op: &str,
     params: Value,
 ) -> Result<Value, WorkerCallError> {
-    round_trip(
+    let (call, reply) = exchange(
         channel,
         session,
         INVOKE,
         json!({ "op": op, "params": params }),
         MAX_DOMAIN_OP_REQUEST_BYTES,
     )
-    .await
+    .await?;
+    into_result(&call, reply)
 }
 
 /// Builds one request, checks its bound, makes one exchange and validates the reply.
-async fn round_trip<C, T>(
+async fn exchange<C: WorkerChannel>(
     channel: &mut C,
     session: &mut WorkerSession,
     command: &'static str,
     body: Value,
     limit: usize,
-) -> Result<T, WorkerCallError>
-where
-    C: WorkerChannel,
-    T: DeserializeOwned,
-{
-    let generation = session.generation;
-    let operation_id = session.next_operation_id();
+) -> Result<(Call, Reply), WorkerCallError> {
+    let call = Call {
+        command,
+        generation: session.generation,
+        operation_id: session.next_operation_id(),
+    };
     let request = json!({
         "protocol_version": WORKER_PROTOCOL_VERSION,
-        "generation": generation,
-        "operation_id": operation_id,
+        "generation": call.generation,
+        "operation_id": call.operation_id,
         "command": command,
         "body": body,
     })
@@ -285,48 +353,16 @@ where
             limit,
         });
     }
-    let reply_bytes = match channel.exchange(&request).await {
-        Ok(bytes) => bytes,
-        Err(ChannelError) => return Err(unknown(command, generation, &operation_id)),
-    };
-    let reply = match read_reply(&reply_bytes, generation, &operation_id) {
-        Ok(reply) => reply,
-        Err(violation) => {
-            return Err(reply_violation(
-                command,
-                generation,
-                &operation_id,
-                violation,
-            ));
-        }
-    };
-    match reply {
-        Reply::Refusal(error) => match serde_json::from_value::<ErrorBody>(error) {
-            Ok(body) => Err(WorkerCallError::Refused(body)),
-            Err(_) => Err(reply_violation(
-                command,
-                generation,
-                &operation_id,
-                ProtocolViolation::Malformed,
-            )),
-        },
-        Reply::Success(value) => serde_json::from_value::<T>(value).map_err(|_| {
-            reply_violation(
-                command,
-                generation,
-                &operation_id,
-                ProtocolViolation::Malformed,
-            )
-        }),
-    }
+    let reply_bytes = channel
+        .exchange(&request)
+        .await
+        .map_err(|ChannelError| call.unknown())?;
+    let reply = read_reply(&reply_bytes, &call).map_err(|violation| call.violation(violation))?;
+    Ok((call, reply))
 }
 
-/// Validates the reply envelope in the order the contract states.
-fn read_reply(
-    bytes: &[u8],
-    generation: u64,
-    operation_id: &str,
-) -> Result<Reply, ProtocolViolation> {
+/// Validates the envelope in the order the contract states, then the error object.
+fn read_reply(bytes: &[u8], call: &Call) -> Result<Reply, ProtocolViolation> {
     let parsed: Value = serde_json::from_slice(bytes).map_err(|_| ProtocolViolation::Malformed)?;
     let Value::Object(mut fields) = parsed else {
         return Err(ProtocolViolation::Malformed);
@@ -337,9 +373,9 @@ fn read_reply(
     {
         return Err(ProtocolViolation::Malformed);
     }
-    let reply = match (fields.remove("result"), fields.remove("error")) {
-        (Some(value), None) => Reply::Success(value),
-        (None, Some(value)) => Reply::Refusal(value),
+    let payload = match (fields.remove("result"), fields.remove("error")) {
+        (Some(value), None) => Ok(value),
+        (None, Some(value)) => Err(value),
         _ => return Err(ProtocolViolation::Malformed),
     };
     let version = fields
@@ -353,39 +389,128 @@ fn read_reply(
         .get("generation")
         .and_then(Value::as_u64)
         .ok_or(ProtocolViolation::Malformed)?;
-    if got != generation {
+    if got != call.generation {
         return Err(ProtocolViolation::GenerationMismatch {
-            expected: generation,
+            expected: call.generation,
             got,
         });
     }
     match fields.get("operation_id").and_then(Value::as_str) {
-        Some(id) if id == operation_id => Ok(reply),
-        Some(_) => Err(ProtocolViolation::OperationMismatch),
-        None => Err(ProtocolViolation::Malformed),
+        Some(id) if id == call.operation_id => {}
+        Some(_) => return Err(ProtocolViolation::OperationMismatch),
+        None => return Err(ProtocolViolation::Malformed),
+    }
+    match payload {
+        Ok(value) => Ok(Reply::Success(value)),
+        Err(error) => check_error(error).map(Reply::Refusal),
     }
 }
 
-/// A failed reply is a protocol violation for the handshake and an unknown outcome otherwise.
-fn reply_violation(
-    command: &'static str,
-    generation: u64,
-    operation_id: &str,
-    violation: ProtocolViolation,
-) -> WorkerCallError {
-    if command == HANDSHAKE {
-        WorkerCallError::Protocol(violation)
+/// Checks an error object: exactly `code` and `message`, a code from the contract,
+/// the fixed text for every code that has one, and a message within the limit.
+fn check_error(error: Value) -> Result<ErrorBody, ProtocolViolation> {
+    let body: ErrorBody =
+        serde_json::from_value(error).map_err(|_| ProtocolViolation::Malformed)?;
+    let fixed = ERROR_CODES
+        .iter()
+        .find(|(code, _)| *code == body.code.as_str())
+        .map(|(_, fixed)| *fixed)
+        .ok_or(ProtocolViolation::Malformed)?;
+    if fixed.is_some_and(|text| text != body.message)
+        || body.message.chars().count() > MAX_MESSAGE_CHARS
+    {
+        return Err(ProtocolViolation::Malformed);
+    }
+    Ok(body)
+}
+
+/// The result of a validated reply, or the error it carries, as the command reports it.
+fn into_result(call: &Call, reply: Reply) -> Result<Value, WorkerCallError> {
+    match reply {
+        Reply::Success(value) => Ok(value),
+        Reply::Refusal(body) if call.command == INVOKE && body.code == OP_FAILED => {
+            Err(WorkerCallError::OpFailed(body))
+        }
+        Reply::Refusal(body) => Err(WorkerCallError::Refused(body)),
+    }
+}
+
+/// Checks the handshake result's `protocol_version`, `generation` and `commands`.
+/// `schema_identity` is returned as JSON and compared by R1.
+fn check_handshake(call: &Call, result: &HandshakeResult) -> Result<(), ProtocolViolation> {
+    if result.protocol_version != WORKER_PROTOCOL_VERSION {
+        return Err(ProtocolViolation::ResultMismatch(
+            HandshakeField::ProtocolVersion,
+        ));
+    }
+    if result.generation != call.generation {
+        return Err(ProtocolViolation::ResultMismatch(
+            HandshakeField::Generation,
+        ));
+    }
+    if result.commands != HANDSHAKE_COMMANDS {
+        return Err(ProtocolViolation::ResultMismatch(HandshakeField::Commands));
+    }
+    Ok(())
+}
+
+/// Decodes an initialize result. It must carry exactly the five keys, the optional ones included.
+fn decode_phase_reply(value: Value) -> Result<PhaseReply, ProtocolViolation> {
+    let Value::Object(fields) = &value else {
+        return Err(ProtocolViolation::Malformed);
+    };
+    let complete = fields.len() == PHASE_REPLY_KEYS.len()
+        && PHASE_REPLY_KEYS.iter().all(|key| fields.contains_key(*key));
+    if !complete {
+        return Err(ProtocolViolation::Malformed);
+    }
+    let reply: PhaseReply =
+        serde_json::from_value(value).map_err(|_| ProtocolViolation::Malformed)?;
+    Ok(reply)
+}
+
+/// Checks an initialize result against the per-status table (contract, phases and statuses).
+/// `ready` names the successor of the requested phase, or null after the last phase.
+fn check_phase_reply(reply: &PhaseReply, requested: &str) -> Result<(), ProtocolViolation> {
+    if reply.phase != requested {
+        return Err(ProtocolViolation::Malformed);
+    }
+    let fits = match reply.status.as_str() {
+        "ready" => {
+            let index = INIT_PHASES
+                .iter()
+                .position(|phase| *phase == requested)
+                .ok_or(ProtocolViolation::Malformed)?;
+            let successor = INIT_PHASES.get(index + 1).copied();
+            reply.next_phase.as_deref() == successor
+                && reply.message.is_none()
+                && reply.error_type.is_none()
+        }
+        "refused" => {
+            reply.next_phase.is_none()
+                && reply.error_type.is_none()
+                && message_within_limit(reply.message.as_deref())
+        }
+        "failed" => {
+            reply.next_phase.is_none()
+                && reply
+                    .error_type
+                    .as_deref()
+                    .is_some_and(|name| !name.is_empty())
+                && message_within_limit(reply.message.as_deref())
+        }
+        _ => false,
+    };
+    if fits {
+        Ok(())
     } else {
-        unknown(command, generation, operation_id)
+        Err(ProtocolViolation::Malformed)
     }
 }
 
-fn unknown(command: &'static str, generation: u64, operation_id: &str) -> WorkerCallError {
-    WorkerCallError::Unknown(UnknownOutcome {
-        command,
-        generation,
-        operation_id: operation_id.to_owned(),
-    })
+/// A refused or failed phase carries a message of at most 2,048 characters.
+fn message_within_limit(message: Option<&str>) -> bool {
+    message.is_some_and(|text| text.chars().count() <= MAX_MESSAGE_CHARS)
 }
 
 #[cfg(unix)]

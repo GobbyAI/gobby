@@ -27,7 +27,11 @@ fn envelope(operation_id: &str, key: &str, payload: Value) -> Vec<u8> {
 }
 
 fn error_reply(operation_id: &str, code: &str, message: &str) -> Vec<u8> {
-    envelope(operation_id, "error", json!({ "code": code, "message": message }))
+    envelope(
+        operation_id,
+        "error",
+        json!({ "code": code, "message": message }),
+    )
 }
 
 fn phase_result(
@@ -416,7 +420,9 @@ async fn invoke_op_failed_is_its_own_variant() {
 #[tokio::test]
 async fn invoke_not_ready_stays_refused() {
     let reply = error_reply("7:1", "not_ready", "worker is not ready");
-    let err = invoke_answer(reply).await.expect_err("not ready is an error");
+    let err = invoke_answer(reply)
+        .await
+        .expect_err("not ready is an error");
     assert_eq!(refusal(err).code, "not_ready");
 }
 
@@ -453,7 +459,9 @@ async fn handshake_result_generation_must_match_the_session() {
     assert!(
         matches!(
             err,
-            WorkerCallError::Protocol(ProtocolViolation::ResultMismatch(HandshakeField::Generation))
+            WorkerCallError::Protocol(ProtocolViolation::ResultMismatch(
+                HandshakeField::Generation
+            ))
         ),
         "{err:?}"
     );
