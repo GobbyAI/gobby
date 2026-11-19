@@ -188,6 +188,24 @@ async fn a_late_ws_frame_after_the_reply_is_observed_and_is_a_diff() {
     assert!(matches!(replay, Replay::Diff { .. }), "{replay:?}");
 }
 
+#[tokio::test]
+async fn a_client_frame_sent_after_the_reply_is_refused() {
+    // The client sends one more frame after the stub's reply. The front door forwards it, so the
+    // backend's client leg is longer than the invocation and the replay must not match.
+    let (_, case) = v3_case("ws_terminal_list.json");
+    let home = tempfile::tempdir().expect("home");
+    let mut transports = Transports::recorded();
+    transports.ws_after_reply = frame(TEXT_FIN, br#"{"type":"terminal_list"}"#, true);
+    match observe(&case, home.path(), &open_window(), &transports).await {
+        Err(DriverError::Shape(detail)) => assert!(detail.contains("client leg"), "{detail}"),
+        Err(other) => panic!("a surplus client frame must be a shape error, got {other:?}"),
+        Ok(observed) => panic!(
+            "a surplus client frame must be refused, but the observation classifies as {:?}",
+            classify(&case, &no_waivers(), &observed, &open_window())
+        ),
+    }
+}
+
 #[test]
 fn a_waiver_surface_of_another_kind_is_a_waiver_error() {
     // A WS case cited by an HTTP-shaped surface, and a CLI case cited by an HTTP-shaped surface.

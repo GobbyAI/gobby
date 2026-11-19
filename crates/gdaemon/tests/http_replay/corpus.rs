@@ -1051,6 +1051,18 @@ mod tests {
     }
 
     #[test]
+    fn a_v2_response_must_be_an_http_response_like_python() {
+        // Python _validate_schema_2 checks the response as http: a dict with an integer status.
+        let base: Value = serde_json::from_str(HEALTH_OK).expect("json");
+        for response in [json!([]), json!({"status": "200"})] {
+            let mut value = base.clone();
+            value["response"] = response.clone();
+            let error = parse_case(&value).expect_err(&format!("{response} is refused"));
+            assert!(error.to_string().contains("wrong shape"), "{response}: {error}");
+        }
+    }
+
+    #[test]
     fn schema_must_be_two_or_three() {
         for schema in [1_u64, 4] {
             let value = json!({

@@ -251,3 +251,66 @@ pub fn stop_worker(pid: u32, grace: Duration) {
         signal_group(pid, false);
     }
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Child, Command, Stdio};
+    use std::time::Duration;
+
+    use super::*;
+
+    /// A `sleep` the test started in its own process group, killed and reaped on drop.
+    struct Sleeper(Child);
+
+    impl Sleeper {
+        fn start() -> Self {
+            let child = Command::new("sleep")
+                .arg("600")
+                .process_group(0)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn sleep");
+            Self(child)
+        }
+
+        fn pid(&self) -> u32 {
+            self.0.id()
+        }
+
+        fn running(&mut self) -> bool {
+            matches!(self.0.try_wait(), Ok(None))
+        }
+    }
+
+    impl Drop for Sleeper {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn stop_worker_does_not_signal_a_pid_with_another_start_time() {
+        let mut sleeper = Sleeper::start();
+        let recorded = Identity {
+            pid: sleeper.pid(),
+            start: "Thu Jan  1 00:00:00 1970".to_owned(),
+        };
+        stop_worker(&recorded, Duration::from_millis(200));
+        assert!(
+            sleeper.running(),
+            "a worker whose start time differs from the recorded one must not be signalled"
+        );
+    }
+
+    #[test]
+    fn stop_worker_stops_the_process_its_identity_names() {
+        let mut sleeper = Sleeper::start();
+        let identity = Identity::observe(sleeper.pid()).expect("the sleep is alive");
+        stop_worker(&identity, Duration::from_secs(5));
+        assert!(!sleeper.running(), "the identified worker must be stopped");
+    }
+}

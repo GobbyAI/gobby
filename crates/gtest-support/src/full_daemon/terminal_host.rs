@@ -298,3 +298,101 @@ pub(super) fn worker_of(daemon_pid: u32) -> Option<u32> {
 pub(super) fn worker_of(_daemon_pid: u32) -> Option<u32> {
     None
 }
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Child, Command, Stdio};
+    use std::time::Duration;
+
+    use super::super::FullDaemon;
+    use super::*;
+
+    /// A `sleep` the test started in its own process group, killed and reaped on drop.
+    struct Owned(Child);
+
+    impl Owned {
+        fn spawn(program: &Path, dir: &Path) -> Self {
+            let child = Command::new(program)
+                .arg("600")
+                .current_dir(dir)
+                .process_group(0)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("spawn sleep");
+            Self(child)
+        }
+
+        fn pid(&self) -> u32 {
+            self.0.id()
+        }
+    }
+
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    #[test]
+    fn teardown_leaves_a_recorded_pid_that_is_not_a_gterm_host() {
+        let outside = tempfile::tempdir().expect("tempdir");
+        let sleeper = Owned::spawn(Path::new("/bin/sleep"), outside.path());
+        let host_dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            host_dir.path().join("gterm.pid"),
+            sleeper.pid().to_string(),
+        )
+        .expect("write gterm.pid");
+        let root = tempfile::tempdir().expect("tempdir");
+        let root_canonical = fs::canonicalize(root.path()).expect("canonical root");
+        let daemon = FullDaemon {
+            root: Some(root),
+            host_dir: Some(host_dir),
+            keep: false,
+            database: None,
+            database_name: None,
+            child: None,
+            daemon_pid: 0,
+            worker_pid: None,
+            front_door: String::new(),
+            operator_key: String::new(),
+            ready_ceiling: Duration::from_secs(1),
+            readiness_path: String::new(),
+            watch: None,
+            relays: None,
+            root_canonical,
+        };
+        let result = daemon.teardown();
+        assert!(
+            result.is_ok(),
+            "teardown must not signal a recorded pid that is not a gterm host: {result:?}"
+        );
+        assert!(
+            pid_alive(sleeper.pid()),
+            "the non-gterm process named by gterm.pid must survive teardown"
+        );
+    }
+
+    /// A copy of `sleep` under the gterm name, so the process reads as a gterm host.
+    fn gterm_named_sleep(dir: &Path) -> PathBuf {
+        let program = dir.join("gterm");
+        fs::copy("/bin/sleep", &program).expect("copy sleep under the gterm name");
+        program
+    }
+
+    #[test]
+    fn live_terminal_hosts_keeps_a_live_gterm_and_drops_the_rest() {
+        let tools = tempfile::tempdir().expect("tempdir");
+        let gterm = Owned::spawn(&gterm_named_sleep(tools.path()), tools.path());
+        let plain = Owned::spawn(Path::new("/bin/sleep"), tools.path());
+        let mut dead_child = Command::new("true").spawn().expect("spawn true");
+        let dead = dead_child.id();
+        dead_child.wait().expect("reap true");
+        let kept = live_terminal_hosts(&[dead, plain.pid(), gterm.pid()]);
+        assert_eq!(kept, vec![gterm.pid()], "only the live gterm host is kept");
+    }
+}

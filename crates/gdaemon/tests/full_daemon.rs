@@ -258,6 +258,24 @@ impl Drop for Stray {
     }
 }
 
+/// Whether the teardown error text names `pid`. The stray pids print as a bracketed list.
+fn error_names_pid(text: &str, pid: u32) -> bool {
+    text.contains(&pid.to_string())
+}
+
+#[test]
+fn teardown_error_names_whole_pids() {
+    let text = "processes of the run outlived its orderly teardown and were stopped: [1234]";
+    assert!(
+        !error_names_pid(text, 123),
+        "pid 123 is not named by the list [1234]"
+    );
+    assert!(error_names_pid(text, 1234), "pid 1234 is named by [1234]");
+    let both = "were stopped: [123, 1234]";
+    assert!(error_names_pid(both, 1234), "1234 is named in [123, 1234]");
+    assert!(error_names_pid(both, 123), "123 is named in [123, 1234]");
+}
+
 /// Teardown treats any process left in the run's root as a failure of the run and stops it. A
 /// terminal host or worker that survives its orderly stop is the case this guards: the host is
 /// found by cwd even when its pid file was never written.
@@ -276,7 +294,7 @@ fn teardown_fails_and_stops_a_process_left_in_the_run_root() {
     let pid = stray.0.id();
     let result = daemon.teardown();
     assert!(
-        matches!(&result, Err(FullDaemonError::Teardown(text)) if text.contains(&pid.to_string())),
+        matches!(&result, Err(FullDaemonError::Teardown(text)) if error_names_pid(text, pid)),
         "teardown must fail naming the stray {pid}, got {result:?}"
     );
     assert!(!pid_alive(pid), "teardown must stop the stray {pid}");

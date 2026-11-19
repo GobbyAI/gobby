@@ -373,6 +373,18 @@ fn control_connects_mode_off() {
 #[ignore = "protocol step 6 proof: run from an unsandboxed shell with cargo nextest run -p gobby-daemon --test suite --run-ignored only -E 'binary(suite) & test(/^loopback_network::/)'; a default run prints these as skipped with this reason"]
 fn daemon_outbound_fails_mode_on() {
     let target = must(loopback::offhost_target(), "an off-host destination");
+    // The destination must answer TCP with the mode off, and the wrapped probe must be blocked.
+    // Without both, a refused or unreachable destination would give the same connect-failure text.
+    assert_eq!(
+        probe_class(SocketAddr::V4(target), false),
+        "connected",
+        "no usable off-host destination; measured behaviour reported"
+    );
+    assert_eq!(
+        probe_class(SocketAddr::V4(target), true),
+        blocked_class(),
+        "the mode must block the off-host connect itself, not a refusal"
+    );
     let daemon = must(
         FullDaemon::builder(Path::new(GDAEMON), Path::new(REPO_ROOT))
             .seed(python_seed)

@@ -16,7 +16,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,6 +27,7 @@ import psycopg
 import pytest
 from websockets.sync.server import ServerConnection, serve
 
+from gobby.config.bootstrap import load_bootstrap
 from gobby.runtime_grants.handshake import decode_grant_header, encode_grant_header
 from gobby.runtime_grants.schema import GrantBundle
 from gobby.utils.daemon_url import resolve_daemon_url
@@ -424,6 +425,52 @@ def test_cli_sender_env_points_at_the_per_run_daemon(
     assert resolve_daemon_url(env=env) == PER_RUN_URL
 
 
+OPERATOR_PORTS = (60887, 60888)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "sealed", [recorder_v3._stdio_env, recorder_v3._cli_env], ids=["stdio", "cli"]
+)
+def test_sealed_home_bootstrap_names_closed_ports_and_loads(
+    tmp_path: Path, sealed: Callable[[Path, str], dict[str, str]]
+) -> None:
+    """The sealed home's bootstrap.yaml is mode 0600, loads, and names no operator port.
+
+    Without GOBBY_DAEMON_URL, a bootstrap reader in the sealed home dials a closed port,
+    never the operator's daemon on 60887 or 60888.
+    """
+    home = tmp_path / "home"
+    env = sealed(home, PER_RUN_URL)
+    path = home / "bootstrap.yaml"
+    assert path.exists()
+    assert path.stat().st_mode & 0o777 == 0o600
+    bootstrap = load_bootstrap(str(path))
+    assert bootstrap.daemon_port not in OPERATOR_PORTS
+    assert bootstrap.websocket_port not in OPERATOR_PORTS
+    assert bootstrap.database_url is None
+    without_url = {key: value for key, value in env.items() if key != "GOBBY_DAEMON_URL"}
+    assert resolve_daemon_url(path, env=without_url) == f"http://127.0.0.1:{bootstrap.daemon_port}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "sealed", [recorder_v3._stdio_env, recorder_v3._cli_env], ids=["stdio", "cli"]
+)
+def test_a_home_with_its_own_bootstrap_keeps_those_bytes(
+    tmp_path: Path, sealed: Callable[[Path, str], dict[str, str]]
+) -> None:
+    """A per-run daemon's home already holds its bootstrap.yaml; sealing leaves it unchanged."""
+    home = tmp_path / "home"
+    home.mkdir()
+    own = "daemon_port: 61234\nwebsocket_port: 61235\n"
+    path = home / "bootstrap.yaml"
+    path.write_text(own)
+    path.chmod(0o600)
+    sealed(home, PER_RUN_URL)
+    assert path.read_text() == own
+
+
 class _HealthDaemon:
     """An ephemeral HTTP listener that answers every GET 200 and records its paths."""
 
@@ -611,6 +658,39 @@ def test_a_changed_secret_keyed_column_is_refused_at_record_time() -> None:
         side_effects=[[]],
     )
     with pytest.raises(recorder_v3.RecorderError, match="deployment_token"):
+        recorder_v3._recorded_entries(case, observation)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("before", "after"),
+    [({"token": "raw"}, "plain"), ("plain", {"token": "raw"})],
+    ids=["before-carries-a-secret-key", "after-carries-a-secret-key"],
+)
+def test_a_changed_value_carrying_a_secret_key_is_refused_at_record_time(
+    before: Any, after: Any
+) -> None:
+    """A non-secret column is refused when either side of the change holds a secret-keyed field."""
+    case = _record_case()
+    observation = recorder_v3.Observation(
+        response={"status": 200, "headers": {}, "body": None},
+        db_delta=[
+            {
+                "added": [],
+                "removed": [],
+                "changed": [
+                    {
+                        "key": {"id": "alpha"},
+                        "column": "config",
+                        "before": before,
+                        "after": after,
+                    }
+                ],
+            }
+        ],
+        side_effects=[[]],
+    )
+    with pytest.raises(recorder_v3.RecorderError, match="cannot be recorded"):
         recorder_v3._recorded_entries(case, observation)
 
 

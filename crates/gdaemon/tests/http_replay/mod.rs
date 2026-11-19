@@ -95,6 +95,9 @@ pub struct Transports {
     pub ws_reply: Option<Vec<String>>,
     /// A relay between the front door and the WS stub, when set.
     pub ws_hop: Option<WsHop>,
+    /// Bytes the WS client sends on the same connection after the stub's reply. Empty for the
+    /// recording.
+    pub ws_after_reply: Vec<u8>,
 }
 
 impl Transports {
@@ -104,6 +107,7 @@ impl Transports {
             gobby: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.venv/bin/gobby"),
             ws_reply: None,
             ws_hop: None,
+            ws_after_reply: Vec::new(),
         }
     }
 }
@@ -353,6 +357,11 @@ async fn observe_ws(
     )
     .await
     .map_err(|_| shape("the WS reply timed out"))?;
+    if !transports.ws_after_reply.is_empty() {
+        tokio::io::AsyncWriteExt::write_all(&mut stream, &transports.ws_after_reply)
+            .await
+            .map_err(DriverError::Io)?;
+    }
     read_until_quiet(&mut stream, &mut received).await?;
     let capture = tokio::time::timeout(TIMEOUT, captured)
         .await
