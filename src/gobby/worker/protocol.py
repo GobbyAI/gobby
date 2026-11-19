@@ -25,7 +25,7 @@ from pydantic import (
     model_validator,
 )
 
-from gobby.worker.encode import canonical_bytes
+from gobby.worker.encode import WIRE_INT_MAX, canonical_bytes
 from gobby.worker.phase_ids import InitPhase, PhaseStatus
 
 __all__ = [
@@ -153,8 +153,8 @@ class Request(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    protocol_version: int = Field(ge=1)
-    generation: int = Field(ge=1)
+    protocol_version: int = Field(ge=1, le=WIRE_INT_MAX)
+    generation: int = Field(ge=1, le=WIRE_INT_MAX)
     operation_id: str = Field(min_length=1, max_length=MAX_OPERATION_ID_CHARS)
     command: str
     body: dict[str, Any] = Field(default_factory=dict)
@@ -300,7 +300,9 @@ def echo_fields(parsed: Mapping[str, object]) -> tuple[int | None, str | None]:
     """
     generation = parsed.get("generation")
     operation_id = parsed.get("operation_id")
-    echo_generation = generation if type(generation) is int and generation >= 1 else None
+    echo_generation = (
+        generation if type(generation) is int and 1 <= generation <= WIRE_INT_MAX else None
+    )
     echo_operation = (
         operation_id
         if isinstance(operation_id, str) and 1 <= len(operation_id) <= MAX_OPERATION_ID_CHARS

@@ -101,11 +101,16 @@ class WorkerFacade:
         body = parse_body(HandshakeBody, request.body, **_echo_of(request))
         if not self._authorized(body.credential):
             raise _refusal(request, ErrorCode.UNAUTHORIZED)
-        if self._generation is None:
-            self._generation = request.generation
-        elif self._generation != request.generation:
+        if self._generation is not None and self._generation != request.generation:
             raise _refusal(request, ErrorCode.STALE_GENERATION)
-        return result_response(_handshake_result(self._generation), **_echo_of(request))
+        try:
+            result = _handshake_result(request.generation)
+        except Exception as exc:
+            # A schema identity that cannot be loaded is a server fault (R53). The handshake
+            # binds nothing, so the next command is not_handshaken.
+            raise _refusal(request, ErrorCode.OP_FAILED, "schema identity unavailable") from exc
+        self._generation = request.generation
+        return result_response(result, **_echo_of(request))
 
     def _authorized(self, credential: str) -> bool:
         if not self._credential:

@@ -8,7 +8,7 @@ The corpus in tests/contracts/worker_protocol.json is the frozen contract
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -79,7 +79,7 @@ CORPUS_PATH = _TESTS_DIR / "contracts" / "worker_protocol.json"
 DOC_PATH = _TESTS_DIR.parent / "docs" / "contracts" / "worker-protocol.md"
 
 Step = Callable[[], Awaitable[None]]
-Create = Callable[[], Awaitable[object]]
+Create = Callable[[], Coroutine[Any, Any, object]]
 
 
 def load_corpus() -> dict[str, Any]:

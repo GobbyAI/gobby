@@ -421,7 +421,9 @@ async def test_schema_identity_fault_is_op_failed_and_binds_nothing(
     assert reply["error"]["message"] == "schema identity unavailable"
     assert reply["generation"] == GENERATION
     assert reply["operation_id"] == OPERATION_ID
-    later = await send(facade, envelope("initialize", {"phase": InitPhase.STORAGE_AND_CONFIG.value}))
+    later = await send(
+        facade, envelope("initialize", {"phase": InitPhase.STORAGE_AND_CONFIG.value})
+    )
     assert error_code(later) == "not_handshaken"
     monkeypatch.undo()
     bound = await send(facade, envelope("handshake", {"credential": CREDENTIAL}))

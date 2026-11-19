@@ -115,7 +115,9 @@ def test_dataclass_result_has_type_and_fields() -> None:
 def test_nested_dataclass_has_no_type() -> None:
     assert encode_value(Inner(x=7)) == {"x": 7, "_type": "Inner"}
     outer = Sample(name="n", when=datetime(2026, 1, 1), tags=frozenset(), inner=Inner(x=1))
-    assert encode_value(outer)["inner"] == {"x": 1}
+    encoded = encode_value(outer)
+    assert isinstance(encoded, dict)
+    assert encoded["inner"] == {"x": 1}
 
 
 def test_dataclass_field_named_type_fails_call() -> None:

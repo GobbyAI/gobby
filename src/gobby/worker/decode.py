@@ -17,6 +17,8 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Protocol
 
+from gobby.worker.encode import WIRE_INT_MAX, WIRE_INT_MIN
+
 
 class DecodeError(Exception):
     """A JSON value does not match its spec."""
@@ -39,6 +41,8 @@ class Int:
     def decode(self, value: object) -> int:
         if not isinstance(value, int) or isinstance(value, bool):
             raise DecodeError("expected an integer")
+        if not WIRE_INT_MIN <= value <= WIRE_INT_MAX:
+            raise DecodeError("integer outside the wire range")
         return value
 
 
@@ -130,8 +134,9 @@ class DataclassFields:
         cls = self._resolve()
         try:
             return cls(**decoded)
-        except (TypeError, ValueError) as exc:
-            # The constructor or __post_init__ rejected values that each field accepted.
+        except Exception as exc:
+            # The constructor or __post_init__ rejected values that each field accepted. Any
+            # Exception is the client's value, not a server fault, so it is invalid_request (R53).
             raise DecodeError(f"constructor rejected the value: {exc}") from exc
 
     def _resolve(self) -> type:
@@ -139,7 +144,11 @@ class DataclassFields:
             module_name, separator, qualname = str(self._target).partition(":")
             if not separator or not module_name or not qualname:
                 raise TypeError(f"dataclass target must be 'module:Class': {self._target!r}")
-            found: object = importlib.import_module(module_name)
+            try:
+                found: object = importlib.import_module(module_name)
+            except Exception as exc:
+                # A module that fails on import is a registration fault of any class (R53).
+                raise TypeError(f"dataclass module does not import: {module_name}: {exc}") from exc
             for part in qualname.split("."):
                 found = getattr(found, part, None)
             if not (isinstance(found, type) and dataclasses.is_dataclass(found)):

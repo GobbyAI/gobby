@@ -67,8 +67,10 @@ def _resolve_path(path: str, declared: frozenset[str]) -> Callable[..., object]:
         raise OpRegistrationError(f"op path must be 'module:qualname': {path!r}")
     try:
         found: object = importlib.import_module(module_name)
-    except ImportError as exc:
-        raise OpRegistrationError(f"op module does not import: {module_name}") from exc
+    except Exception as exc:
+        # A module that fails on import is a registration fault of any class, not only a
+        # missing module (R53). The text names the module and the failure.
+        raise OpRegistrationError(f"op module does not import: {module_name}: {exc}") from exc
     for part in qualname.split("."):
         found = getattr(found, part, None)
     if not callable(found):

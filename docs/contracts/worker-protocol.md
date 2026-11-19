@@ -22,14 +22,14 @@ A request is a JSON object with these keys and no others:
 
 | Key | Type | Rule |
 |---|---|---|
-| `protocol_version` | int | at least 1. A value other than an accepted version is `protocol_mismatch`. |
-| `generation` | int | at least 1. Zero is `invalid_request`. |
+| `protocol_version` | int | from 1 to 2^64 - 1 (18,446,744,073,709,551,615). A value outside that range is `invalid_request`. A value in range that is not an accepted version is `protocol_mismatch`. |
+| `generation` | int | from 1 to 2^64 - 1 (18,446,744,073,709,551,615). Zero or a value outside that range is `invalid_request`. |
 | `operation_id` | str | 1 to 128 characters. Convention `"<generation>:<seq>"`, `seq` from 1. |
-| `command` | str | `handshake`, `initialize` or `invoke`. Any other string is `unknown_command`. |
+| `command` | str | `handshake`, `initialize` or `invoke`. Any other string is `unknown_command` once a handshake is bound. Before a handshake it is `not_handshaken` (step 7). |
 | `body` | object | default `{}`. Its shape is checked per command. |
 
 Integers are strict: a bool is refused where an int is expected, and a string
-`"7"` is refused. A missing required key or an unknown key is `invalid_request`.
+`"7"` is refused. Integers are in the wire range `[-2^63, 2^64 - 1]` only (R54, see Bounds). A missing required key or an unknown key is `invalid_request`.
 
 ## Response envelope
 
@@ -40,7 +40,7 @@ A response is a JSON object with `protocol_version` (always 1 in R0), `generatio
 - `error`: `{"code": <ErrorCode>, "message": <str>}`. The message is at most 2,048 characters.
 
 Echo rule. `generation` and `operation_id` are echoed only from a parsed request whose own
-value passes its own envelope rule. An unknown key does not prevent the echo. An
+value passes its own envelope rule (an integer outside the wire range does not). An unknown key does not prevent the echo. An
 `operation_id` that cannot be written as UTF-8 (a lone surrogate from a JSON escape) fails
 that rule, so it is not echoed and the request is `invalid_request`. A request that is not
 parsed (over 16 MiB, or not JSON) is answered with both fields null.
@@ -66,7 +66,9 @@ Example, a handshake accepted:
   yielding 0). The first handshake binds it.
 - A repeated handshake with the bound generation returns the same result and changes no state.
 - A handshake or any other command with a different generation is `stale_generation`.
-- Auth is checked before generation, so an unauthenticated caller learns no generation.
+- Generations are sequential integers that start at 1. They are not secret (R59). The
+  credential admits a handshake: the handshake checks auth before it compares generations,
+  and a refused handshake binds nothing.
 - One worker process serves one generation.
 
 ## Credential and handshake
@@ -84,6 +86,12 @@ Example, a handshake accepted:
   `handshake`, `initialize`, `invoke`) and `schema_identity`, which is the release-pinned
   identity `expected_schema_identity()`. Rust returns `schema_identity` as an opaque value
   and does not compare it (R1 compares).
+- Only the handshake carries the credential. `initialize` and `invoke` carry none. After a
+  handshake binds, later commands are admitted by transport peer admission, which R1 owns,
+  not by this contract (R59).
+- A handshake whose schema identity cannot be loaded is `op_failed` with the message
+  `schema identity unavailable`. It binds no generation, so the next command is
+  `not_handshaken`.
 
 ## Commands and guard order
 
@@ -96,7 +104,7 @@ The facade applies these steps in order. The first failing step decides the resp
 | 3 | Command is `handshake` or `initialize` and the request is over 65,536 bytes (`MAX_REQUEST_BYTES`) | `invalid_request` |
 | 4 | Envelope (table above) | `invalid_request` |
 | 5 | `protocol_version` is not accepted | `protocol_mismatch` |
-| 6 | `handshake`: body shape, then credential, then bind or same-generation result | `invalid_request`, `unauthorized`, `stale_generation` |
+| 6 | `handshake`: body shape, then credential, then generation, then the result. The generation binds only after the result is built. | `invalid_request`, `unauthorized`, `stale_generation`, `op_failed` |
 | 7 | No handshake bound (any other command, including unknown ones) | `not_handshaken` |
 | 8 | Generation differs from the bound generation | `stale_generation` |
 | 9 | Command is not `initialize` or `invoke` | `unknown_command` |
@@ -123,10 +131,16 @@ An `initialize` result has these keys, always present: `phase` (the requested ph
 |---|---|---|---|---|
 | `ready` | the phase completed | the following phase, or null on the last phase | null | null |
 | `refused` | the phase raised `StartRefusal`; its rollback succeeded | null | `str(exc)`, at most 2,048 characters | null |
-| `failed` | the phase raised another `Exception`, or its rollback failed | null | `str(exc)`, or `rollback failed: ...`, at most 2,048 characters | the exception class name |
+| `failed` | the phase raised another `Exception`, or its rollback failed | null | `str(exc)`, or `rollback failed: ...`, at most 2,048 characters | the exception class name, or `IncompleteCreate` when `create` returned before every phase ran (R55) |
 
 A refused or failed phase does not advance the next phase. The facade becomes unusable after
 a refused or failed phase. A refused or failed phase reports `next_phase` as null.
+
+A `create` that returns before every phase scope has run (R55) makes the phase being settled
+`failed`, with `next_phase` null, the message `create returned before every phase ran`, and
+the error type `IncompleteCreate`. No exception exists for that case, so the error type is
+this fixed name. The facade is unusable from then on, so every later `initialize` and
+`invoke` is `worker_unusable`.
 
 Construction (R44): `WorkerFacade` builds a phase driver whose gate creates futures on the
 running event loop. Construct the facade inside a running loop, from async code, never from
@@ -135,7 +149,7 @@ synchronous setup. The constructor takes `credential`, `ops` (default: the op ta
 is omitted, `config_path` and `verbose` for the real `GobbyRunner.create`.
 
 Not-ready gating (R7): an `invoke` is refused with `not_ready` until the handshake has bound
-and all five phases have reported `ready`. After a refused, failed or cancelled phase the
+and all five phases have reported `ready`. After a refused, failed, cancelled or early-returning phase the
 facade is unusable, and every later `initialize` and `invoke` is `worker_unusable`.
 
 ## Bounds
@@ -144,6 +158,12 @@ facade is unusable, and every later `initialize` and `invoke` is `worker_unusabl
 |---|---|---|---|
 | `MAX_REQUEST_BYTES` | 65,536 bytes | `handshake` and `initialize` requests | `invalid_request` after the command is read; 65,536 bytes is accepted, 65,537 is refused |
 | `DOMAIN_OP_MAX_REQUEST_BYTES` | 16 MiB (16,777,216 bytes) | every request; invoke carries the tool arguments | `invalid_request` before any parse; 16 MiB is accepted, one byte more is refused |
+
+Integers on the wire are in `[-2^63, 2^64 - 1]` only (R54). A result that holds an integer
+outside that range is `op_failed`. A request whose `generation` or `protocol_version` is outside
+it is `invalid_request`, and its echo leaves out the generation. A domain parameter outside it
+is `invalid_request`. Rust reads these integers as `u64` or `i64`, so no value outside the
+range crosses the wire.
 
 Python and Rust keep separate constants. The Rust constant `MAX_DOMAIN_OP_REQUEST_BYTES`
 is not shared with the hook ingress bound, which is private to its module.
@@ -161,10 +181,13 @@ is not shared with the hook ingress bound, which is private to its module.
 | `phase_out_of_order` | `phase is not the next phase` | an `initialize` for a phase that is not next, or a repeat |
 | `worker_unusable` | `worker is unusable` | a refused, failed or cancelled phase has made the facade unusable |
 | `not_ready` | `worker is not ready` | an `invoke` before the handshake and every phase are ready |
-| `op_failed` | dynamic, at most 2,048 characters | an op raised an `Exception`, returned an unencodable value, or a registration fault occurred |
+| `op_failed` | dynamic, at most 2,048 characters, or `schema identity unavailable` | an op raised an `Exception`, returned an unencodable value (including an integer outside the wire range), a registration fault occurred, or the handshake could not load its schema identity |
 
-Registration faults (`OpRegistrationError`, `TypeError`, `ImportError` from a broken
-registration) map to `op_failed`, never to `invalid_request` (R31). The fault is a server fault.
+Registration faults map to `op_failed`, never to `invalid_request` (R31). They are the
+`OpRegistrationError`, `TypeError`, `ImportError` and `NameError` raised by a broken
+registration. An op module or dataclass module whose import raises any `Exception` is a
+registration fault of the same kind (R53). The fault is a server fault, and it fails only the
+call that hit it.
 
 ## Op table and invoke
 
@@ -176,18 +199,21 @@ registration) map to `op_failed`, never to `invalid_request` (R31). The fault is
   `ops.py` loads no module an op names.
 - Each parameter has a decoder: `Str`, `Int`, `Bool`, `Optional`, `IsoDatetime`,
   `Literal`, `JsonObject`, `Anything`, `DataclassFields`. A value the decoder refuses is
-  `invalid_request`.
+  `invalid_request`. An `Int` outside the wire range is refused (R54). A dataclass whose
+  constructor or `__post_init__` raises any `Exception` is `invalid_request` too (R53).
 - Sync and async functions are both allowed. A sync op runs inline on the worker loop and
   blocks every other invoke until it returns. An async op holds up no other invoke, and its
   futures resolve on the worker loop (R4).
 - An op that raises an `Exception` is `op_failed` with `str(exc)`. An op that raises a
   `BaseException` propagates with no response.
-- Result encoding (`encode_value`): `None`, bool, int, str and finite floats as is; an Enum
+- Result encoding (`encode_value`): `None`, bool, str and finite floats as is; an int in
+  `[-2^63, 2^64 - 1]` as is (R54); an Enum
   as its value; a dataclass through `dataclasses.asdict` with `_type` set to its class name
-  at the top level only; a datetime as its ISO string; a path as its string; a set or
+  at the top level only; a datetime as its ISO string; a path as `str(path)` in the host's form, with backslashes separating on Windows and forward
+slashes on POSIX (R59); a set or
   frozenset as a list sorted by canonical text; a tuple or list as an array; an exception as
   `_type` plus its attributes (`vars`), or `_type` alone when it has no `__dict__`.
-  Anything else (bytes, arbitrary objects, functions, modules, non-finite floats, dicts with
+  Anything else (bytes, arbitrary objects, functions, modules, non-finite floats, ints outside the wire range, dicts with
   non-str keys, a dataclass field or dict key named `_type`) is `op_failed`. So is a value
   whose canonical text cannot be written as UTF-8 (a lone surrogate) or that nests past the
   recursion limit. The facade probes the canonical writer before it answers.
@@ -243,6 +269,8 @@ R1 owns the live boot, and this contract does not wire it. R1 owns:
 - wiring the `GenerationSource` into the supervisor's spawn path;
 - comparing the returned `schema_identity` with the installed identity;
 - the real credential source, which the facade receives as its `credential`;
+- authenticating each post-handshake peer, or binding each command to a per-handshake secret,
+  before a command is served. The handshake credential does not cover later commands (R60);
 - reconciling unknown outcomes for lifecycle phases;
 - the runner-mode switch that selects the Rust handshake. `RUNNER_DEFAULT` is `Python` at R0
   landing, so the Rust handshake stays dormant until the compiled default is Rust.

@@ -20,6 +20,10 @@ from gobby.worker.gate import _ACTIVE, PhaseGate
 from gobby.worker.phase_ids import PHASE_ORDER, InitPhase, PhaseStatus
 
 _MESSAGE_LIMIT: Final = 2048
+# A create that returns before every phase scope ran (R55). No exception exists for it, so its
+# error type is this fixed name.
+_EARLY_RETURN_MESSAGE: Final = "create returned before every phase ran"
+_EARLY_RETURN_TYPE: Final = "IncompleteCreate"
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,8 +137,15 @@ class PhaseDriver:
                     raise asyncio.CancelledError
                 error = task.exception()
                 if error is None:
-                    self._next += 1
-                    return PhaseOutcome(PhaseStatus.READY, None, None, None)
+                    if phase is PHASE_ORDER[-1] and gate.completed == list(PHASE_ORDER):
+                        self._next += 1
+                        return PhaseOutcome(PhaseStatus.READY, None, None, None)
+                    # create returned before every phase scope ran (R55): this phase fails, and
+                    # the facade is unusable from here on.
+                    gate.unusable = True
+                    return PhaseOutcome(
+                        PhaseStatus.FAILED, None, _EARLY_RETURN_MESSAGE, _EARLY_RETURN_TYPE
+                    )
                 gate.unusable = True
                 if not isinstance(error, Exception):
                     raise error

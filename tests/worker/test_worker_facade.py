@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -47,7 +47,7 @@ CORPUS_PATH = _TESTS_DIR / "contracts" / "worker_protocol.json"
 INVENTORY_PATH = _TESTS_DIR / "contracts" / "runner_lifecycle.json"
 
 Step = Callable[[], Awaitable[None]]
-Create = Callable[[], Awaitable[object]]
+Create = Callable[[], Coroutine[Any, Any, object]]
 
 # Synthetic op state. Events are created inside each test, on the test's loop.
 _EVENTS: dict[str, asyncio.Event] = {}

@@ -16,10 +16,15 @@ import math
 from collections.abc import Mapping
 from datetime import datetime
 from pathlib import PurePath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 
 if TYPE_CHECKING:
     from _typeshed import DataclassInstance
+
+# The wire carries integers in this closed range only (R54). Rust reads them as u64 or i64,
+# so a value outside it would change silently on the Rust side.
+WIRE_INT_MIN: Final = -(2**63)
+WIRE_INT_MAX: Final = 2**64 - 1
 
 
 class UnencodableValue(Exception):
@@ -30,7 +35,11 @@ def encode_value(value: object) -> object:
     """Return ``value`` as JSON-compatible data, or raise ``UnencodableValue``."""
     if isinstance(value, enum.Enum):
         return encode_value(value.value)
-    if value is None or isinstance(value, bool | int | str):
+    if value is None or isinstance(value, bool | str):
+        return value
+    if isinstance(value, int):
+        if not WIRE_INT_MIN <= value <= WIRE_INT_MAX:
+            raise UnencodableValue("integer outside the wire range")
         return value
     if isinstance(value, float):
         if not math.isfinite(value):
