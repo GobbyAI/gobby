@@ -11,6 +11,7 @@ use anyhow::Result;
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, Response, StatusCode};
 use gobby_core::api_key_format;
+use gobby_core::family::IDENTITY_ENTRY_HEADERS;
 use gobby_core::postgres_pool::Pool;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,7 +124,7 @@ impl AuthState {
     }
 
     pub async fn authenticate(&self, headers: &mut HeaderMap) -> Result<(), Box<Response<Body>>> {
-        for name in IDENTITY_HEADERS {
+        for name in authenticated_headers() {
             headers.remove(name);
         }
         let Some(authorization) = headers.get("authorization") else {
@@ -147,7 +148,7 @@ impl AuthState {
             .await
             .map_err(|_| resolver_unavailable())?
             .ok_or_else(missing_auth)?;
-        for (name, value) in IDENTITY_HEADERS.into_iter().zip([
+        for (name, value) in authenticated_headers().zip([
             identity.user_id.as_str(),
             identity.machine_id.as_str(),
             identity.key_id.as_str(),
@@ -163,12 +164,17 @@ impl AuthState {
     }
 }
 
-const IDENTITY_HEADERS: [&str; 4] = [
-    "x-gobby-user-id",
-    "x-gobby-machine-id",
-    "x-gobby-key-id",
-    "x-gobby-front-door",
-];
+/// The header carrying the front-door secret, which proves to the backend that a request
+/// passed the front door. Checks that run before authentication read it; authentication
+/// removes a client's value and writes its own only for a resolved API key.
+pub const FRONT_DOOR_PROOF_HEADER: &str = "x-gobby-front-door";
+
+/// The headers authentication writes, in order: the caller identity, then the proof.
+pub fn authenticated_headers() -> impl Iterator<Item = &'static str> {
+    IDENTITY_ENTRY_HEADERS
+        .into_iter()
+        .chain([FRONT_DOOR_PROOF_HEADER])
+}
 
 fn missing_auth() -> Box<Response<Body>> {
     Box::new(rejection(

@@ -25,7 +25,7 @@ use gobby_core::family::{
 use gobby_core::route_family::{
     BoxFut, Credential, Gate, Kind, PathMatch, PeerRule, RouteClaim, RouteFamily,
 };
-use gobby_daemon::front_door::auth::{AuthState, KeyResolver};
+use gobby_daemon::front_door::auth::{AuthState, KeyResolver, authenticated_headers};
 use gobby_daemon::front_door::health::BackendState;
 use gobby_daemon::front_door::registry::{FAMILIES, selectable, surfaces};
 use gobby_daemon::front_door::routes::{RouteTable, unimplemented_families};
@@ -723,16 +723,7 @@ fn front_door_handle_has_no_hand_wired_surface() {
 
 #[test]
 fn identity_header_names_agree() {
-    let source = include_str!("../src/front_door/auth.rs");
-    let (_, list) = source
-        .split_once("const IDENTITY_HEADERS: [&str; 4] = [")
-        .expect("authentication names the headers it writes");
-    let (list, _) = list.split_once("];").expect("the header list ends");
-    let written: Vec<&str> = list
-        .split(',')
-        .map(|item| item.trim().trim_matches('"'))
-        .filter(|item| !item.is_empty())
-        .collect();
+    let written: Vec<&str> = authenticated_headers().collect();
 
     let mut expected: Vec<&str> = IDENTITY_ENTRY_HEADERS.to_vec();
     expected.push("x-gobby-front-door");

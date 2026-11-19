@@ -212,10 +212,12 @@ const FORWARDING_HEADERS: [&str; 6] = [
 
 /// Replace every forwarding header with the transport's own view: the peer's
 /// IP in `X-Forwarded-For` and the scheme in `X-Forwarded-Proto`. A client
-/// `Connection` field naming a forwarding header is dropped from it, or the
-/// downstream hop-by-hop strip would delete the observed values. Client-supplied
-/// identity headers are dropped too, so only authentication writes them; the
-/// front-door proof stays for the checks that run before authentication.
+/// `Connection` token naming a forwarding header, an identity header or the
+/// front-door proof is dropped from it, in any letter case, or the downstream
+/// hop-by-hop strip would delete the observed values and what authentication
+/// writes. Client-supplied identity headers are dropped too, so only
+/// authentication writes them; the front-door proof stays for the checks that run
+/// before authentication, which removes a client's value.
 fn observe_peer(headers: &mut HeaderMap, peer: SocketAddr, https: bool) {
     for name in FORWARDING_HEADERS {
         headers.remove(name);
@@ -230,7 +232,8 @@ fn observe_peer(headers: &mut HeaderMap, peer: SocketAddr, https: bool) {
         .filter(|token| {
             !token.is_empty()
                 && !FORWARDING_HEADERS
-                    .iter()
+                    .into_iter()
+                    .chain(auth::authenticated_headers())
                     .any(|n| token.eq_ignore_ascii_case(n))
         })
         .map(str::to_owned)
