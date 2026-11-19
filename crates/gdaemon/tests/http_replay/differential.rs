@@ -723,4 +723,46 @@ mod tests {
             json!({"case": "line", "family": "probe", "outcome": "match", "pointer": null})
         );
     }
+
+    #[test]
+    fn a_duplicated_allowlisted_header_joins_its_values_as_httpx_does() {
+        // Golden (Python http_corpus.normalize_response over httpx): retry-after 1 and 2 join as
+        // "1, 2"; date is not on the allowlist and is absent.
+        let raw = b"HTTP/1.1 200 OK\r\nRetry-After: 1\r\nretry-after: 2\r\ncontent-type: application/json\r\nDate: Tue, 01 Mar 2026 12:00:00 GMT\r\ncontent-length: 2\r\n\r\n{}";
+        let (status, headers, body) = parse_response(raw).expect("the response parses");
+        assert_eq!(status, 200);
+        assert_eq!(headers["retry-after"], json!("1, 2"));
+        assert!(!headers.contains_key("date"));
+        assert_eq!(body, json!({}));
+    }
+
+    #[test]
+    fn a_header_only_difference_between_the_legs_is_a_diff_at_the_header() {
+        // Golden (Python _first_difference): /response/headers/retry-after.
+        let case = http_case("hdr", "health", "up", "/api/health");
+        let proxy = observation(json!({"status": 200, "headers": {"retry-after": "1"}, "body": null}));
+        let native = observation(json!({"status": 200, "headers": {"retry-after": "2"}, "body": null}));
+        let verdict = compare_legs(&case, &wide_window(), &proxy, &native).expect("the legs compare");
+        assert_eq!(
+            verdict,
+            Verdict::Diff {
+                pointer: "/response/headers/retry-after".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn a_missing_allowlisted_header_is_a_diff_at_its_header() {
+        // Golden (Python _first_difference): /response/headers/cache-control.
+        let case = http_case("hdr", "health", "up", "/api/health");
+        let proxy = observation(json!({"status": 200, "headers": {"cache-control": "no-store"}, "body": null}));
+        let native = observation(json!({"status": 200, "headers": {}, "body": null}));
+        let verdict = compare_legs(&case, &wide_window(), &proxy, &native).expect("the legs compare");
+        assert_eq!(
+            verdict,
+            Verdict::Diff {
+                pointer: "/response/headers/cache-control".to_owned()
+            }
+        );
+    }
 }

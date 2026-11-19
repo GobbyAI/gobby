@@ -397,7 +397,7 @@ mod tests {
 
 #[cfg(test)]
 mod manifest_tests {
-    use super::{Kind, load_manifest};
+    use super::{Kind, load_manifest, parse_case};
     use serde_json::{Value, json};
     use std::path::PathBuf;
 
@@ -440,5 +440,206 @@ mod manifest_tests {
         std::fs::write(&path, json!({"schema_version": 4, "cases": []}).to_string())
             .expect("write manifest");
         assert!(load_manifest(&path).is_err(), "schema 4 is refused");
+    }
+
+    /// A minimal schema 3 HTTP case with the given mask, `db_delta` and response body.
+    fn v3_case(mask: Value, db_delta: Value, body: Value) -> Value {
+        json!({
+            "schema_version": 3,
+            "name": "h16_probe",
+            "kind": "http",
+            "family": "health",
+            "backend": "up",
+            "credential": "none",
+            "ledger_key": "HTTP GET /api/health",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "response": {"status": 200, "headers": {}, "body": body},
+            "db_delta": db_delta,
+            "mask": mask
+        })
+    }
+
+    /// A `db_delta` list holding one table entry with the given extra fields.
+    fn db_delta_with(extra: Value) -> Value {
+        let mut entry = json!({
+            "table": "t",
+            "key": ["id"],
+            "columns": "all",
+            "recorded": {"added": [], "removed": [], "changed": []}
+        });
+        for (name, value) in extra.as_object().expect("extra fields are an object") {
+            entry[name.as_str()] = value.clone();
+        }
+        json!([entry])
+    }
+
+    #[test]
+    fn a_db_delta_entry_without_an_order_is_a_loader_error() {
+        // Golden (Python corpus_v3._check_db_delta): "db_delta t order is required".
+        let value = v3_case(json!([]), db_delta_with(json!({})), json!({}));
+        let error = parse_case(&value).expect_err("an undeclared order");
+        assert!(
+            error.to_string().contains("db_delta t order is required"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_db_delta_order_must_be_set_or_as_recorded() {
+        // Golden: "db_delta t order must be 'set' or 'as_recorded'".
+        let value = v3_case(json!([]), db_delta_with(json!({"order": "bogus"})), json!({}));
+        let error = parse_case(&value).expect_err("an unknown order");
+        assert!(
+            error
+                .to_string()
+                .contains("db_delta t order must be 'set' or 'as_recorded'"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn order_by_is_refused_with_set_and_required_with_as_recorded() {
+        // Golden: "db_delta t order_by is not allowed with order 'set'" and "... is required with
+        // order 'as_recorded'".
+        let set_with_order_by = v3_case(
+            json!([]),
+            db_delta_with(json!({"order": "set", "order_by": ["id"]})),
+            json!({}),
+        );
+        let error = parse_case(&set_with_order_by).expect_err("set with order_by");
+        assert!(
+            error
+                .to_string()
+                .contains("db_delta t order_by is not allowed with order 'set'"),
+            "{error}"
+        );
+        let as_recorded_bare = v3_case(
+            json!([]),
+            db_delta_with(json!({"order": "as_recorded"})),
+            json!({}),
+        );
+        let error = parse_case(&as_recorded_bare).expect_err("as_recorded without order_by");
+        assert!(
+            error
+                .to_string()
+                .contains("db_delta t order_by is required with order 'as_recorded'"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_declared_order_loads() {
+        // Golden (Python _check_db_delta): set alone, and as_recorded with order_by, are accepted.
+        for extra in [
+            json!({"order": "set"}),
+            json!({"order": "as_recorded", "order_by": ["id"]}),
+        ] {
+            let value = v3_case(json!([]), db_delta_with(extra), json!({}));
+            parse_case(&value).expect("a declared order loads");
+        }
+    }
+
+    #[test]
+    fn a_mask_pointer_must_resolve_in_a_schema_3_case() {
+        // Golden (Python corpus_v3._check_mask_resolves): an unresolved pointer is refused.
+        let value = v3_case(json!(["/response/body/x"]), json!([]), json!({}));
+        let error = parse_case(&value).expect_err("an unresolved mask");
+        assert!(
+            error
+                .to_string()
+                .contains("mask '/response/body/x' matches no recorded field"),
+            "{error}"
+        );
+        let resolved = v3_case(json!(["/response/body/x"]), json!([]), json!({"x": 1}));
+        parse_case(&resolved).expect("a resolved mask loads");
+    }
+
+    #[test]
+    fn a_mask_pointer_must_start_with_a_slash() {
+        // Golden (Python): "mask pointer '' must start with '/'".
+        let value = v3_case(json!([""]), json!([]), json!({}));
+        let error = parse_case(&value).expect_err("an empty pointer");
+        assert!(
+            error
+                .to_string()
+                .contains("mask pointer '' must start with '/'"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn the_slash_pointer_names_the_empty_key_and_matches_nothing() {
+        // Golden (Python _resolves): "/" reads the key "", which the case does not have.
+        let value = v3_case(json!(["/"]), json!([]), json!({}));
+        let error = parse_case(&value).expect_err("the slash pointer");
+        assert!(
+            error
+                .to_string()
+                .contains("mask '/' matches no recorded field"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn list_indexes_resolve_only_as_plain_digits() {
+        // Golden (Python _resolves: token.isdigit()): "01" resolves index 1; "+1" does not.
+        let leading_zero = v3_case(
+            json!(["/response/body/list/01"]),
+            json!([]),
+            json!({"list": [1, 2]}),
+        );
+        parse_case(&leading_zero).expect("index 01 resolves to index 1");
+        let signed = v3_case(
+            json!(["/response/body/list/+1"]),
+            json!([]),
+            json!({"list": [1, 2]}),
+        );
+        let error = parse_case(&signed).expect_err("index +1 does not resolve");
+        assert!(
+            error
+                .to_string()
+                .contains("mask '/response/body/list/+1' matches no recorded field"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn dict_keys_and_escaped_tokens_resolve_as_python_resolves_them() {
+        // Golden (Python _resolves): a digit token is a dict key on a dict; ~1 is "/" and ~0 is "~".
+        let digit_key = v3_case(json!(["/response/body/map/0"]), json!([]), json!({"map": {"0": 1}}));
+        parse_case(&digit_key).expect("digit key on a dict resolves");
+        let slash_key = v3_case(json!(["/response/body/a~1b"]), json!([]), json!({"a/b": 1}));
+        parse_case(&slash_key).expect("~1 escapes a slash");
+        let tilde_key = v3_case(json!(["/response/body/a~0b"]), json!([]), json!({"a~b": 1}));
+        parse_case(&tilde_key).expect("~0 escapes a tilde");
+    }
+
+    #[test]
+    fn a_mask_into_a_scalar_matches_no_field() {
+        // Golden (Python _resolves): a scalar has no child "x".
+        let value = v3_case(json!(["/response/body/n/x"]), json!([]), json!({"n": 1}));
+        let error = parse_case(&value).expect_err("a scalar has no children");
+        assert!(
+            error
+                .to_string()
+                .contains("mask '/response/body/n/x' matches no recorded field"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_schema_2_mask_that_matches_nothing_stays_a_no_op() {
+        // Golden (Python: the schema 2 loader is unchanged): an unresolved schema 2 mask loads.
+        let value = json!({
+            "schema_version": 2,
+            "name": "v2_probe",
+            "family": "health",
+            "backend": "up",
+            "credential": "none",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "response": {"status": 200, "headers": {}, "body": {}},
+            "mask": ["/response/body/x"]
+        });
+        parse_case(&value).expect("a schema 2 case loads with an unresolved mask");
     }
 }

@@ -257,4 +257,357 @@ mod tests {
         .expect("the observed values normalize");
         assert_eq!(first_difference(&expected, &actual), None);
     }
+
+    use super::super::corpus::Kind;
+    use serde_json::Map;
+    use time::OffsetDateTime;
+    use time::format_description::well_known::Rfc3339;
+
+    const U1: &str = "11111111-1111-4111-8111-111111111111";
+    const U2: &str = "22222222-2222-4222-8222-222222222222";
+    const UPPER: &str = "AABBCCDD-EEFF-4011-8122-334455667788";
+
+    fn wide() -> Window {
+        Window {
+            start: OffsetDateTime::parse("2020-01-01T00:00:00Z", &Rfc3339).expect("start"),
+            end: OffsetDateTime::parse("2030-01-01T00:00:00Z", &Rfc3339).expect("end"),
+        }
+    }
+
+    /// A synthetic case: its kind, its mask, its document `normalizers` (an object) and its raw
+    /// side-effect entries, each of which may carry its own `normalizers`.
+    fn case_of(kind: Kind, mask: Value, normalizers: Value, side_effects: Vec<Value>) -> Case {
+        Case {
+            name: "synthetic".to_owned(),
+            schema_version: 2,
+            kind,
+            family: "probe".to_owned(),
+            backend: "up".to_owned(),
+            ledger_key: None,
+            request: None,
+            invocation: None,
+            response: None,
+            db_delta: Vec::new(),
+            side_effects,
+            normalizers: normalizers.as_object().cloned().unwrap_or_else(Map::new),
+            mask,
+            waiver: None,
+            native_response: None,
+        }
+    }
+
+    #[test]
+    fn a_response_and_a_capture_each_number_their_uuid_from_one() {
+        // Golden (Python golden_f4.py, recorder_v3._normalize_response and normalize_captures): the
+        // response and each capture entry are separate units with their own counters, so the
+        // response UUID and a different capture UUID are both @uuid:1@.
+        let case = case_of(
+            Kind::Mcp,
+            json!([]),
+            json!({"/response/body/id": "uuid_ordinal"}),
+            vec![json!({"normalizers": {"/owner": "uuid_ordinal"}})],
+        );
+        let normalized = normalized_document(
+            &case,
+            &json!({"body": {"id": U1}}),
+            &[],
+            &[json!([{"owner": U2}])],
+            &wide(),
+        );
+        assert_eq!(
+            normalized,
+            Ok(json!({
+                "response": {"body": {"id": "@uuid:1@"}},
+                "db_delta": [],
+                "side_effects": [{"recorded": [{"owner": "@uuid:1@"}]}]
+            }))
+        );
+    }
+
+    #[test]
+    fn a_mask_applies_after_the_rules_on_a_non_http_case() {
+        // Golden (Python _comparison, mcp): first takes ordinal 1 and is masked afterwards, so
+        // second is @uuid:2@.
+        let case = case_of(
+            Kind::Mcp,
+            json!(["/response/result/first"]),
+            json!({
+                "/response/result/first": "uuid_ordinal",
+                "/response/result/second": "uuid_ordinal"
+            }),
+            Vec::new(),
+        );
+        let normalized = normalized_document(
+            &case,
+            &json!({"result": {"first": U1, "second": U2}}),
+            &[],
+            &[],
+            &wide(),
+        );
+        assert_eq!(
+            normalized,
+            Ok(json!({
+                "response": {"result": {"first": "@mask@", "second": "@uuid:2@"}},
+                "db_delta": [],
+                "side_effects": []
+            }))
+        );
+    }
+
+    #[test]
+    fn an_http_answer_is_masked_before_its_rules_as_python_observes_it() {
+        // Golden (Python recorder_v3._send, http_corpus.normalize_response): the mask runs before
+        // the rules, so the rule refuses "@mask@" at /response/body/result/first.
+        let case = case_of(
+            Kind::Http,
+            json!(["/response/body/result/first"]),
+            json!({
+                "/response/body/result/first": "uuid_ordinal",
+                "/response/body/result/second": "uuid_ordinal"
+            }),
+            Vec::new(),
+        );
+        let response = json!({
+            "status": 200,
+            "headers": {},
+            "body": {"result": {"first": U1, "second": U2}}
+        });
+        assert_eq!(
+            normalized_document(&case, &response, &[], &[], &wide()),
+            Err(NormalizeError::NotUuid {
+                pointer: "/response/body/result/first".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn an_http_mask_on_a_container_refuses_a_none_rule_under_it() {
+        // Golden (Python, http): the masked body is "@mask@", so /response/body/id matches nothing.
+        let case = case_of(
+            Kind::Http,
+            json!(["/response/body"]),
+            json!({"/response/body/id": "none"}),
+            Vec::new(),
+        );
+        let response = json!({"status": 200, "headers": {}, "body": {"id": U1}});
+        assert_eq!(
+            normalized_document(&case, &response, &[], &[], &wide()),
+            Err(NormalizeError::NoMatch {
+                pointer: "/response/body/id".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn a_mask_on_a_container_keeps_a_none_rule_on_its_leaf_for_a_non_http_case() {
+        // Golden (Python, mcp): the rule matches the leaf, then the container is masked.
+        let case = case_of(
+            Kind::Mcp,
+            json!(["/response/body"]),
+            json!({"/response/body/id": "none"}),
+            Vec::new(),
+        );
+        let normalized = normalized_document(&case, &json!({"body": {"id": U1}}), &[], &[], &wide());
+        assert_eq!(
+            normalized,
+            Ok(json!({
+                "response": {"body": "@mask@"},
+                "db_delta": [],
+                "side_effects": []
+            }))
+        );
+    }
+
+    #[test]
+    fn a_masked_wrong_typed_value_is_refused_as_python_refuses_it() {
+        // Golden (Python, mcp): "uuid_ordinal needs a canonical UUID at /response/x".
+        let case = case_of(
+            Kind::Mcp,
+            json!(["/response/x"]),
+            json!({"/response/x": "uuid_ordinal"}),
+            Vec::new(),
+        );
+        assert_eq!(
+            normalized_document(&case, &json!({"x": "not-a-uuid"}), &[], &[], &wide()),
+            Err(NormalizeError::NotUuid {
+                pointer: "/response/x".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn a_capture_is_normalized_before_it_is_redacted() {
+        // Golden (Python): normalize_captures runs in _run_case, redact_secrets in _comparison.
+        let case = case_of(
+            Kind::Mcp,
+            json!([]),
+            json!({}),
+            vec![json!({"normalizers": {"/password": "uuid_ordinal"}})],
+        );
+        let normalized = normalized_document(
+            &case,
+            &json!({"ok": true}),
+            &[],
+            &[json!([{"password": U1}])],
+            &wide(),
+        );
+        assert_eq!(
+            normalized,
+            Ok(json!({
+                "response": {"ok": true},
+                "db_delta": [],
+                "side_effects": [{"recorded": [{"password": "@secret@"}]}]
+            }))
+        );
+    }
+
+    #[test]
+    fn a_response_is_redacted_before_its_rules_as_python_redacts_it() {
+        // Golden (Python _normalize_response): the secret key is redacted first, so the uuid rule
+        // refuses "@secret@" at /response/password.
+        let case = case_of(
+            Kind::Mcp,
+            json!([]),
+            json!({"/response/password": "uuid_ordinal"}),
+            Vec::new(),
+        );
+        assert_eq!(
+            normalized_document(&case, &json!({"password": U1}), &[], &[], &wide()),
+            Err(NormalizeError::NotUuid {
+                pointer: "/response/password".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn a_capture_sequence_is_checked_across_items() {
+        // Golden (Python normalize_captures): "4" then "5" become @seq@; "5" then "4" is refused.
+        let case = case_of(
+            Kind::Mcp,
+            json!([]),
+            json!({}),
+            vec![json!({"normalizers": {"/p": "monotonic"}})],
+        );
+        let rising = normalized_document(
+            &case,
+            &json!({}),
+            &[],
+            &[json!([{"p": "4"}, {"p": "5"}])],
+            &wide(),
+        );
+        assert_eq!(
+            rising,
+            Ok(json!({
+                "response": {},
+                "db_delta": [],
+                "side_effects": [{"recorded": [{"p": "@seq@"}, {"p": "@seq@"}]}]
+            }))
+        );
+        let falling = normalized_document(
+            &case,
+            &json!({}),
+            &[],
+            &[json!([{"p": "5"}, {"p": "4"}])],
+            &wide(),
+        )
+        .expect_err("a falling sequence");
+        assert!(
+            falling.to_string().contains("strictly increasing"),
+            "{falling}"
+        );
+    }
+
+    #[test]
+    fn a_scalar_capture_item_is_refused() {
+        // Golden (Python): "captures[0] must be an object".
+        let case = case_of(
+            Kind::Mcp,
+            json!([]),
+            json!({}),
+            vec![json!({"normalizers": {"/payload": "none"}})],
+        );
+        let error = normalized_document(&case, &json!({}), &[], &[json!([5])], &wide())
+            .expect_err("a scalar item cannot be normalized");
+        assert!(
+            error
+                .to_string()
+                .contains("captures[0] must be an object"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_capture_rule_that_matches_nothing_in_one_item_fails_the_entry() {
+        // Golden (Python): "normalizer pointer captures[1]/payload matches nothing".
+        let case = case_of(
+            Kind::Mcp,
+            json!([]),
+            json!({}),
+            vec![json!({"normalizers": {"/payload": "monotonic"}})],
+        );
+        let error = normalized_document(
+            &case,
+            &json!({}),
+            &[],
+            &[json!([{"payload": "4"}, {"other": 1}])],
+            &wide(),
+        )
+        .expect_err("item 1 has no payload");
+        assert!(
+            error
+                .to_string()
+                .contains("captures[1]/payload matches nothing"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_empty_capture_list_never_raises() {
+        // Golden (Python): normalize_captures([], rules) returns [].
+        let case = case_of(
+            Kind::Mcp,
+            json!([]),
+            json!({}),
+            vec![json!({"normalizers": {"/payload": "monotonic"}})],
+        );
+        assert_eq!(
+            normalized_document(&case, &json!({}), &[], &[json!([])], &wide()),
+            Ok(json!({
+                "response": {},
+                "db_delta": [],
+                "side_effects": [{"recorded": []}]
+            }))
+        );
+    }
+
+    #[test]
+    fn an_uppercase_uuid_in_a_capture_is_refused_at_its_capture_pointer() {
+        // Golden (Python): "uuid_ordinal needs a canonical UUID at captures[0]/owner".
+        let case = case_of(
+            Kind::Mcp,
+            json!([]),
+            json!({}),
+            vec![json!({"normalizers": {"/owner": "uuid_ordinal"}})],
+        );
+        let error = normalized_document(&case, &json!({}), &[], &[json!([{"owner": UPPER}])], &wide())
+            .expect_err("an uppercase UUID");
+        assert!(error.to_string().contains("captures[0]/owner"), "{error}");
+    }
+
+    #[test]
+    fn a_monotonic_response_rule_is_refused() {
+        // Golden (Python normalize_document): "monotonic needs a sequence at /response/x".
+        let case = case_of(
+            Kind::Mcp,
+            json!([]),
+            json!({"/response/x": "monotonic"}),
+            Vec::new(),
+        );
+        assert_eq!(
+            normalized_document(&case, &json!({"x": 3}), &[], &[], &wide()),
+            Err(NormalizeError::MonotonicInDocument {
+                pointer: "/response/x".to_owned()
+            })
+        );
+    }
 }
