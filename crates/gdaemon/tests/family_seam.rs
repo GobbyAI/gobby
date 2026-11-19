@@ -21,7 +21,7 @@ use gobby_core::bootstrap::RouteBackend;
 use gobby_core::route_family::{
     BoxFut, Credential, Gate, Kind, PathMatch, PeerRule, RouteClaim, RouteFamily,
 };
-use gobby_daemon::front_door::auth::{AuthState, KeyIdentity, KeyResolver, ResolveFuture};
+use gobby_daemon::front_door::auth::{AuthState, KeyResolver};
 use gobby_daemon::front_door::health::BackendState;
 use gobby_daemon::front_door::registry::{FAMILIES, selectable, surfaces};
 use gobby_daemon::front_door::routes::{RouteTable, unimplemented_families};
@@ -35,6 +35,12 @@ use tokio::net::TcpListener;
 
 #[cfg(unix)]
 use gobby_core::bootstrap::RunMode;
+#[cfg(unix)]
+use gobby_core::postgres_pool::{Pool, PoolSettings};
+#[cfg(unix)]
+use gobby_daemon::front_door::auth::{KeyIdentity, ResolveFuture};
+#[cfg(unix)]
+use gobby_daemon::lease::{ActiveDaemonLease, NamedLock};
 #[cfg(unix)]
 use gobby_daemon::lifecycle::backend::BackendStatus;
 #[cfg(unix)]
@@ -169,8 +175,10 @@ static LOOPBACK_CLAIM: &[RouteClaim] = &[RouteClaim {
 }];
 
 /// Accepts any key and names one fixed identity.
+#[cfg(unix)]
 struct FixedKey;
 
+#[cfg(unix)]
 impl KeyResolver for FixedKey {
     fn resolve<'a>(&'a self, _key_hash: &'a str) -> ResolveFuture<'a> {
         Box::pin(async {
@@ -431,6 +439,18 @@ fn registry_file_lists_one_family_per_line_alphabetically() {
         .collect();
     assert_eq!(selected, ["health", "terminal_ws"]);
 
+    let mut ranked: Vec<(u8, usize, &str)> = FAMILIES
+        .iter()
+        .enumerate()
+        .map(|(index, family)| (family.start_rank(), index, family.name()))
+        .collect();
+    ranked.sort_by_key(|(rank, index, _)| (*rank, *index));
+    let ranked: Vec<&str> = ranked.into_iter().map(|(_, _, name)| name).collect();
+    assert_eq!(
+        selected, ranked,
+        "selection is start_rank, then registry order"
+    );
+
     let surface_names: Vec<&str> = surfaces().iter().map(|family| family.name()).collect();
     let expected: Vec<&str> = if cfg!(unix) {
         vec![
@@ -521,10 +541,11 @@ async fn eight_surfaces_are_registered_families() {
 #[test]
 fn front_door_handle_has_no_hand_wired_surface() {
     let source = include_str!("../src/front_door/mod.rs");
-    let backend_door = source
-        .split("if request.uri().path().starts_with(\"/_gobby/\")")
-        .nth(1)
-        .expect("backend door branch");
+    // The Node door arm keeps its own branches and ends at its relay forward. Every line
+    // after that arm is the backend door, which must not wire a surface directly.
+    let (_, backend_door) = source
+        .split_once("node.relay.forward(request).await")
+        .expect("node door arm");
     for call in [
         "publish::handle(",
         "terminal_api::handle(",
@@ -617,13 +638,28 @@ async fn fixed_surface_names_in_routes_do_not_change_answers() {
 
 #[tokio::test]
 async fn terminal_relay_stays_splice_for_unclaimed_upgrades() {
-    let state = FrontDoorState::new(common::refused_addr().await, BackendState::Down, auth(None));
+    let refused_state =
+        FrontDoorState::new(common::refused_addr().await, BackendState::Down, auth(None));
+    let refused_door = door(refused_state, FAMILIES, &BTreeMap::new());
+    let refused = send(
+        &refused_door,
+        upgrade_request("/api/terminals/ws"),
+        loopback_peer(),
+    )
+    .await;
+    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        body_text(refused)
+            .await
+            .contains(r#""status":"unavailable""#)
+    );
+
+    // A reachable backend answers the upgrade itself, which shows the request was spliced.
+    let state = FrontDoorState::new(stub_backend().await, BackendState::Down, auth(None));
     let door = door(state, FAMILIES, &BTreeMap::new());
-
-    let response = send(&door, upgrade_request("/api/terminals/ws"), loopback_peer()).await;
-
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert!(response.headers().get("x-fixture").is_none());
+    let spliced = send(&door, upgrade_request("/api/terminals/ws"), loopback_peer()).await;
+    assert_eq!(spliced.status(), StatusCode::OK);
+    assert_eq!(body_text(spliced).await, "backend");
 }
 
 #[tokio::test]
@@ -650,7 +686,12 @@ async fn encoded_spelling_of_a_claimed_path_is_proxied() {
         loopback_peer(),
     )
     .await;
-    assert_ne!(body_text(plain).await, "backend");
+    // The challenge handler refuses an empty body itself; the spelling is never proxied.
+    assert_eq!(plain.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_text(plain).await,
+        r#"{"detail":"invalid challenge request"}"#
+    );
 }
 
 #[cfg(unix)]
@@ -688,4 +729,52 @@ async fn lease_admin_wrong_method_keeps_the_handler_answer() {
         assert_eq!(response.status(), StatusCode::CONFLICT, "{method}");
         assert!(body_text(response).await.contains("no singleton lease"));
     }
+
+    // With a lease held, the handler's method switch answers. A POST to the status route is
+    // refused before any database access, so the lease needs only a pool that is never dialed.
+    let pool = Pool::build(
+        "postgresql://gobby@127.0.0.1:1/unused",
+        PoolSettings {
+            max_size: 2,
+            application_name: "gobby-gdaemon-family-seam".into(),
+            acquire_timeout: std::time::Duration::from_secs(1),
+        },
+    )
+    .expect("lazy pool");
+    let lease = ActiveDaemonLease::new(
+        Arc::new(pool),
+        "family-seam",
+        "family-seam-token",
+        RunMode::Hub,
+    )
+    .expect("lease");
+    let lease_state = Some(lease.subscribe());
+    let (_status, backend) = tokio::sync::watch::channel(BackendStatus::Standby);
+    let runtime = Arc::new(RuntimeState {
+        mode: RunMode::Hub,
+        lease: Some(Arc::new(NamedLock::new(lease))),
+        lease_state,
+        backend,
+        backend_wait: tokio::sync::watch::channel(None).1,
+        write_token: TokenSlot::default(),
+        terminal_route: Default::default(),
+    });
+    let mut state = FrontDoorState::new(
+        common::refused_addr().await,
+        BackendState::Down,
+        auth(Some(Arc::new(FixedKey))),
+    );
+    state.runtime = Some(runtime);
+    let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
+    let leased = FrontDoor::new(state, table);
+    let wrong_method = Request::post("/api/admin/lease/status")
+        .header("authorization", keyed.as_str())
+        .body(Body::empty())
+        .expect("keyed post");
+    let response = send(&leased, wrong_method, loopback_peer()).await;
+    assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert_eq!(
+        body_text(response).await,
+        r#"{"detail":"method not allowed"}"#
+    );
 }
