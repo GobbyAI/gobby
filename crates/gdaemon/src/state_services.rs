@@ -83,7 +83,7 @@ impl ActiveServices {
                 )
                 .with_write_route(&options, Arc::new(writes), token);
                 if let Err(error) = family.start().await {
-                    eprintln!("gdaemon terminal host: {error}");
+                    tracing::warn!(target: "gobby.daemon", "gdaemon terminal host: {error}");
                 }
                 services.terminals = Some(family);
             }
@@ -265,7 +265,7 @@ mod tests {
                 exit_grace: Duration::from_secs(60),
                 report_interval: Duration::from_secs(60),
                 lease_lock_limit: Duration::from_secs(120),
-                reporter: Arc::new(|line: &str| eprintln!("{line}")),
+                reporter: Arc::new(|line: &str| crate::logging::raw_stderr(line)),
             };
             for key in ["UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR"] {
                 let path = std::path::PathBuf::from(

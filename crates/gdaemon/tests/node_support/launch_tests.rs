@@ -902,6 +902,9 @@ fn codex_symlink_seed_is_refused_with_a_warning() -> Result<()> {
 // test-quality: allow UNCONDITIONAL_SKIP -- not a test: the child process that codex_symlink_seed_is_refused_with_a_warning runs with --ignored to capture the launch warning
 #[ignore = "subprocess helper for capturing the launch trust warning"]
 async fn codex_symlink_warning_child() -> Result<()> {
+    // The trust warning is a record; with no subscriber it is dropped, and the parent
+    // test reads it from this child's stderr.
+    gobby_daemon::logging::install_pre_config();
     let mut fixture = LaunchFixture::new().await?;
     fixture.payload.provider = "codex".into();
     fixture.payload.provider_args.clear();

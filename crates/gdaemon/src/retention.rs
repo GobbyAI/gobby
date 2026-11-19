@@ -29,11 +29,17 @@ pub(crate) async fn run(pool: Pool, machine_id: uuid::Uuid, mut stop: watch::Rec
             return;
         }
         match run_cycle(&pool, &mut stop).await {
-            Ok(report) => eprintln!(
+            Ok(report) => tracing::info!(
+                target: "gobby.retention",
                 "gdaemon token_events retention owner={} deleted={} batches={}",
-                report.owner, report.deleted, report.batches
+                report.owner,
+                report.deleted,
+                report.batches
             ),
-            Err(error) => eprintln!("gdaemon token_events retention failed: {error:#}"),
+            Err(error) => tracing::warn!(
+                target: "gobby.retention",
+                "gdaemon token_events retention failed: {error:#}"
+            ),
         }
         delay = until_daily_run(SystemTime::now());
     }
@@ -78,7 +84,8 @@ async fn cycle_at(
         }
         report.deleted += deleted;
         report.batches += 1;
-        eprintln!(
+        tracing::info!(
+            target: "gobby.retention",
             "gdaemon token_events retention batch={} deleted={deleted}",
             report.batches
         );

@@ -117,7 +117,10 @@ impl CommandReceiver {
             Some(sender) => {
                 let _ = sender.send(reply);
             }
-            None => eprintln!("dropping node reply without a pending request: {id}"),
+            None => tracing::warn!(
+                target: "gobby.nodes.registry",
+                "dropping node reply without a pending request: {id}"
+            ),
         }
     }
 }

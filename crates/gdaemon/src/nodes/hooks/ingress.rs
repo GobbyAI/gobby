@@ -146,7 +146,10 @@ pub async fn forward_claimed(
     let response = forward(node, ledger, envelope_id, request)
         .await
         .unwrap_or_else(|error| {
-            eprintln!("node hook {envelope_id} forwarding failed: {error:#}");
+            tracing::warn!(
+                target: "gobby.hooks",
+                "node hook {envelope_id} forwarding failed: {error:#}"
+            );
             json_response(StatusCode::SERVICE_UNAVAILABLE, json!({"status":"retry"}))
         });
     HubOutcome::new(response)
@@ -246,7 +249,10 @@ impl Renewal {
                     Ok(true) => (),
                     Ok(false) => break,
                     Err(error) => {
-                        eprintln!("node hook {id} lease renewal failed: {error:#}");
+                        tracing::warn!(
+                            target: "gobby.hooks",
+                            "node hook {id} lease renewal failed: {error:#}"
+                        );
                         break;
                     }
                 }
@@ -294,7 +300,10 @@ impl Drop for DeliveryBody {
             let node = self.node.clone();
             tokio::spawn(async move {
                 if let Err(error) = receipts::release_receipt(&node, &receipt).await {
-                    eprintln!("node hook undelivered receipt release failed: {error:#}");
+                    tracing::warn!(
+                        target: "gobby.hooks",
+                        "node hook undelivered receipt release failed: {error:#}"
+                    );
                 }
             });
         }

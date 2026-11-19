@@ -39,14 +39,20 @@ pub(super) fn prewarm(
     if let Some(parent) = destination.parent()
         && let Err(error) = create_private_dir(parent)
     {
-        eprintln!("gdaemon: failed to prepare the run pre-commit cache: {error}");
+        tracing::warn!(
+            target: "gobby.nodes.agents.sandbox",
+            "gdaemon: failed to prepare the run pre-commit cache: {error}"
+        );
         return;
     }
     if !consume_spare(managed_root, destination)
         && let Err(error) = clone_store(&source, destination)
     {
         // The store is only a prewarm; pre-commit rebuilds hooks into an empty cache.
-        eprintln!("gdaemon: failed to prewarm pre-commit store: {error}");
+        tracing::warn!(
+            target: "gobby.nodes.agents.sandbox",
+            "gdaemon: failed to prewarm pre-commit store: {error}"
+        );
         let _ = remove_store(destination);
     }
     // Consuming a spare also starts its replacement, as `_prewarm_pre_commit_store` does.
@@ -70,7 +76,10 @@ fn consume_spare(managed_root: &Path, destination: &Path) -> bool {
         Ok(()) => true,
         Err(error) if error.kind() == io::ErrorKind::NotFound => false,
         Err(error) => {
-            eprintln!("gdaemon: failed to consume pre-commit store spare: {error}");
+            tracing::warn!(
+                target: "gobby.nodes.agents.sandbox",
+                "gdaemon: failed to consume pre-commit store spare: {error}"
+            );
             false
         }
     }
@@ -99,14 +108,18 @@ fn apfs_clone(source: &Path, destination: &Path) -> bool {
     {
         Ok(output) if output.status.success() => true,
         Ok(output) => {
-            eprintln!(
+            tracing::warn!(
+                target: "gobby.nodes.agents.sandbox",
                 "gdaemon: APFS clone of pre-commit store failed, copying instead: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             );
             false
         }
         Err(error) => {
-            eprintln!("gdaemon: APFS clone of pre-commit store failed, copying instead: {error}");
+            tracing::warn!(
+                target: "gobby.nodes.agents.sandbox",
+                "gdaemon: APFS clone of pre-commit store failed, copying instead: {error}"
+            );
             false
         }
     }
@@ -193,7 +206,10 @@ fn schedule_spare(source: PathBuf, managed_root: PathBuf) {
     {
         Ok(handle) => *worker = Some(handle),
         Err(error) => {
-            eprintln!("gdaemon: failed to start pre-commit store spare replenisher: {error}")
+            tracing::warn!(
+                target: "gobby.nodes.agents.sandbox",
+                "gdaemon: failed to start pre-commit store spare replenisher: {error}"
+            )
         }
     }
 }
@@ -203,10 +219,16 @@ fn replenish_spare(source: &Path, managed_root: &Path) {
     let spare = managed_root.join(SPARE_NAME);
     let temporary = managed_root.join(SPARE_TEMP_NAME);
     if let Err(error) = try_replenish(source, managed_root, &spare, &temporary) {
-        eprintln!("gdaemon: failed to replenish pre-commit store spare: {error}");
+        tracing::warn!(
+            target: "gobby.nodes.agents.sandbox",
+            "gdaemon: failed to replenish pre-commit store spare: {error}"
+        );
     }
     if let Err(error) = remove_store(&temporary) {
-        eprintln!("gdaemon: failed to remove partial pre-commit store spare: {error}");
+        tracing::warn!(
+            target: "gobby.nodes.agents.sandbox",
+            "gdaemon: failed to remove partial pre-commit store spare: {error}"
+        );
     }
 }
 

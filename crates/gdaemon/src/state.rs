@@ -72,7 +72,8 @@ impl NodeServices {
             match crate::nodes::agents::sandbox::runtime::verify_srt_installation(home) {
                 Ok(installation) => installation,
                 Err(error) => {
-                    eprintln!(
+                    tracing::warn!(
+                        target: "gobby.daemon",
                         "gdaemon node: SRT install unverified, managed spawns refused: {error}"
                     );
                     // An empty root is the unverified sentinel; spawn refuses it.
@@ -204,7 +205,10 @@ impl RuntimeState {
                 {
                     Ok(acquired) => acquired,
                     Err(error) => {
-                        eprintln!("gdaemon lease acquisition: {error:#}");
+                        tracing::warn!(
+                            target: "gobby.daemon",
+                            "gdaemon lease acquisition: {error:#}"
+                        );
                         false
                     }
                 };

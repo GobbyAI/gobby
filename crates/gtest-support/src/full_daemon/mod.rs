@@ -386,7 +386,8 @@ impl FullDaemonBuilder<'_> {
             .env("GOBBY_ALLOW_WORKTREE_DAEMON", "1")
             .current_dir(&project)
             .stdin(Stdio::null())
-            .stdout(open_log(&home.join("logs/daemon.log"))?)
+            // Routed logging writes logs/daemon.log itself, so the stdout capture has its own file.
+            .stdout(open_log(&home.join("logs/daemon_stdout.log"))?)
             .stderr(open_log(&home.join("logs/daemon_error.log"))?);
         // gdaemon leads its own process group, so teardown can signal the whole group (Unix).
         #[cfg(unix)]

@@ -74,14 +74,20 @@ pub async fn deliver(node: Arc<NodeServices>, run_id: String, prompt: String) {
     match stop {
         Stop::Cancelled => {}
         Stop::Indeterminate(error) => {
-            eprintln!("node codex prompt {run_id}: write outcome unknown, not retried: {error}");
+            tracing::warn!(
+                target: "gobby.nodes.agents",
+                "node codex prompt {run_id}: write outcome unknown, not retried: {error}"
+            );
         }
         Stop::Failed { code, detail } => {
             if cancelled(&node, &run_id).await {
                 return;
             }
             if let Err(error) = report(&node, &run_id, code, &detail, &probe.pane).await {
-                eprintln!("node codex prompt {run_id}: failure report not delivered: {error:#}");
+                tracing::warn!(
+                    target: "gobby.nodes.agents",
+                    "node codex prompt {run_id}: failure report not delivered: {error:#}"
+                );
             }
         }
     }
@@ -100,7 +106,10 @@ pub fn schedule(agents: &NodeAgents, payload: &SpawnPayload) {
     // Watches the delivery task so a panic or runtime abort is logged rather than dropped.
     tokio::spawn(async move {
         if let Err(error) = delivery.await {
-            eprintln!("node codex prompt {run_id}: delivery ended abnormally: {error}");
+            tracing::warn!(
+                target: "gobby.nodes.agents",
+                "node codex prompt {run_id}: delivery ended abnormally: {error}"
+            );
         }
     });
 }

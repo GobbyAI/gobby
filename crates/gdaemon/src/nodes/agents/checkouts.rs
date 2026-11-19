@@ -17,7 +17,10 @@ const REGISTER_DEADLINE: Duration = Duration::from_secs(10);
 pub fn observe_hook_cwd(node: Arc<NodeServices>, cwd: PathBuf) {
     tokio::spawn(async move {
         if let Err(error) = register(&node, &cwd).await {
-            eprintln!("warning: checkout registration: {error:#}");
+            tracing::warn!(
+                target: "gobby.nodes.agents",
+                "warning: checkout registration: {error:#}"
+            );
         }
     });
 }

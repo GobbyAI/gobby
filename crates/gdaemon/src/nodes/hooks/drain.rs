@@ -42,7 +42,11 @@ pub async fn drain_once(node: &NodeServices, ledger: &Ledger) -> Result<()> {
     let paths = tokio::task::spawn_blocking(move || hook_paths(&inbox)).await??;
     for path in paths {
         if let Err(error) = drain_file(node, ledger, &path, lock.clone()).await {
-            eprintln!("node hook drain retaining {}: {error:#}", path.display());
+            tracing::warn!(
+                target: "gobby.hooks",
+                "node hook drain retaining {}: {error:#}",
+                path.display()
+            );
         }
     }
     Ok(())
@@ -533,7 +537,8 @@ impl DrainClaim {
 impl Drop for DrainClaim {
     fn drop(&mut self) {
         if let Err(error) = self.restore() {
-            eprintln!(
+            tracing::warn!(
+                target: "gobby.hooks",
                 "node hook drain retaining claim {}: {error}",
                 self.path.display()
             );

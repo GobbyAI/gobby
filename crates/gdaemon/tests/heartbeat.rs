@@ -135,6 +135,9 @@ async fn failing_job_leaves_siblings_running() -> Result<()> {
 
 #[tokio::test(start_paused = true)]
 async fn panicking_job_runs_again_and_leaves_siblings_running() -> Result<()> {
+    // The job failure is a record; with no subscriber it is dropped, and
+    // panic_is_logged_with_the_registrant_name reads it from this test's stderr.
+    gobby_daemon::logging::install_pre_config();
     let mut host = HeartbeatHost::new();
     let attempts = Arc::new(AtomicUsize::new(0));
     let calls = Arc::clone(&attempts);

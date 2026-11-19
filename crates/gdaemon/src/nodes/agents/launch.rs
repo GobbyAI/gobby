@@ -199,7 +199,11 @@ fn prepare(
     }
     if let Err(error) = seed_trust(&payload.provider, &context.home, cwd) {
         // A trust store that cannot be written only warns; the launch goes on.
-        eprintln!("warning: {} trust seed failed: {error:#}", payload.provider);
+        tracing::warn!(
+            target: "gobby.nodes.agents",
+            "warning: {} trust seed failed: {error:#}",
+            payload.provider
+        );
     }
     let prompt_file = write_prompt_file(gobby_home, run_id, &payload.prompt)?;
     let sandbox = prepare_sandbox(gobby_home, context, run_id, payload, cwd, &prompt_file)?;
@@ -514,7 +518,10 @@ pub(super) async fn record_failure(
         Some(record) => match workspace::remove(&record).await {
             Ok(()) => true,
             Err(error) => {
-                eprintln!("gdaemon node: keeping removal record for run {run_id}: {error:#}");
+                tracing::warn!(
+                    target: "gobby.nodes.agents",
+                    "gdaemon node: keeping removal record for run {run_id}: {error:#}"
+                );
                 false
             }
         },
@@ -590,7 +597,10 @@ fn remove_prompt_file(path: &Path) -> std::io::Result<()> {
 pub async fn watch_exits(agents: &NodeAgents) -> anyhow::Result<()> {
     loop {
         if let Err(error) = watch_once(agents).await {
-            eprintln!("warning: host exit watch restarting: {error:#}");
+            tracing::warn!(
+                target: "gobby.nodes.agents",
+                "warning: host exit watch restarting: {error:#}"
+            );
         }
         tokio::time::sleep(WATCH_RETRY).await;
     }

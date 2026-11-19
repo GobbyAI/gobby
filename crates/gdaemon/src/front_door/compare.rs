@@ -91,7 +91,10 @@ impl CompareLog {
         if let Err(error) = result
             && !self.write_failed.swap(true, Ordering::Relaxed)
         {
-            eprintln!("gdaemon serve: front-door compare log write failed: {error}");
+            tracing::warn!(
+                target: "gobby.front_door",
+                "gdaemon serve: front-door compare log write failed: {error}"
+            );
         }
     }
 }

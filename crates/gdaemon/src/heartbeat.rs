@@ -195,7 +195,11 @@ async fn supervise(
                     match timeout(SHUTDOWN_GRACE, &mut run.0).await {
                         Ok(result) => report(&job.name, result),
                         Err(_) => {
-                            eprintln!("gdaemon heartbeat job {} exceeded shutdown grace; aborting", job.name);
+                            tracing::warn!(
+                                target: "gobby.heartbeat",
+                                "gdaemon heartbeat job {} exceeded shutdown grace; aborting",
+                                job.name
+                            );
                             run.0.abort();
                             let _ = (&mut run.0).await;
                         }
@@ -212,7 +216,13 @@ async fn supervise(
 fn report(name: &str, result: Result<Result<()>, tokio::task::JoinError>) {
     match result {
         Ok(Ok(())) => {}
-        Ok(Err(error)) => eprintln!("gdaemon heartbeat job {name} failed: {error:#}"),
-        Err(error) => eprintln!("gdaemon heartbeat job {name} failed: {error}"),
+        Ok(Err(error)) => tracing::warn!(
+            target: "gobby.heartbeat",
+            "gdaemon heartbeat job {name} failed: {error:#}"
+        ),
+        Err(error) => tracing::warn!(
+            target: "gobby.heartbeat",
+            "gdaemon heartbeat job {name} failed: {error}"
+        ),
     }
 }

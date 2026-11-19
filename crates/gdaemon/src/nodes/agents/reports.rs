@@ -152,7 +152,7 @@ pub async fn report_loop(node: Arc<NodeServices>) {
     loop {
         node.agents.changed.notified().await;
         if let Err(error) = report_once(&node).await {
-            eprintln!("warning: node report: {error:#}");
+            tracing::warn!(target: "gobby.nodes.agents", "warning: node report: {error:#}");
         }
     }
 }

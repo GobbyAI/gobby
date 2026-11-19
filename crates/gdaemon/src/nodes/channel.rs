@@ -100,11 +100,15 @@ pub async fn key_tick<S: Sink<Message> + Unpin>(
         }
         Ok(Ok(true)) => false,
         Ok(Err(error)) => {
-            eprintln!("node channel key recheck unproven: {error:#}");
+            tracing::warn!(
+                target: "gobby.nodes.channel",
+                "node channel key recheck unproven: {error:#}"
+            );
             false
         }
         Err(_) => {
-            eprintln!(
+            tracing::warn!(
+                target: "gobby.nodes.channel",
                 "node channel key recheck timed out after {:?}; budget {:?}; pool {:?}",
                 started.elapsed(),
                 deadline.saturating_duration_since(started),
@@ -299,7 +303,10 @@ async fn hub_channel(mut socket: WebSocket, nodes: Arc<HubNodes>, machine: Uuid,
                 let text = match serde_json::to_string(&command) {
                     Ok(text) => text,
                     Err(error) => {
-                        eprintln!("could not encode node command: {error}");
+                        tracing::warn!(
+                            target: "gobby.nodes.channel",
+                            "could not encode node command: {error}"
+                        );
                         break;
                     }
                 };
@@ -318,7 +325,10 @@ async fn hub_channel(mut socket: WebSocket, nodes: Arc<HubNodes>, machine: Uuid,
                     Message::Close(_) => break,
                     Message::Text(text) => match serde_json::from_str(&text) {
                         Ok(reply) => commands.resolve(reply),
-                        Err(error) => eprintln!("dropping malformed node reply: {error}"),
+                        Err(error) => tracing::warn!(
+                            target: "gobby.nodes.channel",
+                            "dropping malformed node reply: {error}"
+                        ),
                     },
                     Message::Ping(_) if last_write.elapsed() >= timing.heartbeat_write && write.is_finished() => {
                         last_write = Instant::now();
@@ -419,7 +429,10 @@ pub async fn run_client(node: Arc<crate::state::NodeServices>, timing: ChannelTi
         } else if let Err(error) = attempt
             && !failure_reported
         {
-            eprintln!("node channel connection failed; retrying with backoff: {error:#}");
+            tracing::warn!(
+                target: "gobby.nodes.channel",
+                "node channel connection failed; retrying with backoff: {error:#}"
+            );
             failure_reported = true;
         }
         tokio::time::sleep(backoff).await;
