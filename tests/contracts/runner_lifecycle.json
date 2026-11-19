@@ -14,6 +14,21 @@
       "owner": "src/gobby/runner.py::GobbyRunner.create",
       "hub_only": false,
       "next_owner": "R2",
+      "seam_notes": {
+        "open_storage_and_config": {
+          "module": "gobby.runner_init.storage",
+          "qualname": "open_storage_and_config",
+          "unobserved_reason": "Creates no task or thread in its own body (src/gobby/runner_init/storage.py, open_storage_and_config). It builds the hub database through init_hub_database; the pool threads that database starts are censused under PostgresHubDatabase.open."
+        },
+        "_run_blocking_startup_phase": {
+          "module": "gobby.runner",
+          "qualname": "_run_blocking_startup_phase"
+        },
+        "PostgresHubDatabase.open": {
+          "module": "gobby.storage.hub.postgres",
+          "qualname": "PostgresHubDatabase.open"
+        }
+      },
       "seams": [
         "open_storage_and_config",
         "_run_blocking_startup_phase",
@@ -26,6 +41,13 @@
       "owner": "src/gobby/runner.py::GobbyRunner.create",
       "hub_only": false,
       "next_owner": "R2",
+      "seam_notes": {
+        "bundled_content_refusal": {
+          "module": "gobby.runner_init.storage",
+          "qualname": "bundled_content_refusal",
+          "unobserved_reason": "Runs on the loop default executor, submitted by asyncio.to_thread inside GobbyRunner.create; the census keys that submission to the loop-default executor row, and the function creates no task or thread."
+        }
+      },
       "seams": [
         "bundled_content_refusal"
       ]
@@ -36,6 +58,17 @@
       "owner": "src/gobby/runner.py::GobbyRunner.create",
       "hub_only": false,
       "next_owner": "R2",
+      "seam_notes": {
+        "init_startup_content": {
+          "module": "gobby.runner_init.storage",
+          "qualname": "init_startup_content",
+          "unobserved_reason": "Runs under the startup-phase wrapper. It creates no task or thread in its own body (src/gobby/runner_init/storage.py, init_startup_content), so the census has no row under this creator."
+        },
+        "_run_blocking_startup_phase": {
+          "module": "gobby.runner",
+          "qualname": "_run_blocking_startup_phase"
+        }
+      },
       "seams": [
         "init_startup_content",
         "_run_blocking_startup_phase"
@@ -47,6 +80,22 @@
       "owner": "src/gobby/runner.py::GobbyRunner.create",
       "hub_only": false,
       "next_owner": "R2",
+      "seam_notes": {
+        "ConfigRuntime.start": {
+          "module": "gobby.config.runtime",
+          "qualname": "ConfigRuntime.start"
+        },
+        "bootstrap_overlaid_config": {
+          "module": "gobby.config._loading",
+          "qualname": "bootstrap_overlaid_config",
+          "unobserved_reason": "A pure model merge and validation (src/gobby/config/_loading.py, bootstrap_overlaid_config). It creates no task, thread or executor."
+        },
+        "configure_build_root": {
+          "module": "gobby.agents.build_root",
+          "qualname": "configure_build_root",
+          "unobserved_reason": "Installs the build root into module state and returns it (src/gobby/agents/build_root.py, configure_build_root). It creates no task, thread or executor."
+        }
+      },
       "seams": [
         "ConfigRuntime.start",
         "bootstrap_overlaid_config",
@@ -59,6 +108,41 @@
       "owner": "src/gobby/runner.py::GobbyRunner.create",
       "hub_only": false,
       "next_owner": "R2",
+      "seam_notes": {
+        "_initialize_runtime_services": {
+          "module": "gobby.runner",
+          "qualname": "GobbyRunner._initialize_runtime_services",
+          "unobserved_reason": "A delegator (GobbyRunner._initialize_runtime_services). The database executor it sizes is an executor row, not a task creator, and the tasks and threads it starts are censused under their own creators."
+        },
+        "main": {
+          "module": "gobby.runner",
+          "qualname": "main"
+        },
+        "ProcessorLifecycleMixin.start": {
+          "module": "gobby.sessions.processor_lifecycle",
+          "qualname": "ProcessorLifecycleMixin.start"
+        },
+        "MemoryManager.schedule_background_task": {
+          "module": "gobby.memory.manager",
+          "qualname": "MemoryManager.schedule_background_task"
+        },
+        "_replace_keepalive_task": {
+          "module": "gobby.mcp_proxy.oauth_keepalive",
+          "qualname": "_replace_keepalive_task"
+        },
+        "schedule_scoped_embedding_backfill": {
+          "module": "gobby.runner_init.mcp_stack",
+          "qualname": "schedule_scoped_embedding_backfill"
+        },
+        "DefinitionRevisionListener.start": {
+          "module": "gobby.storage.definitions.notifications",
+          "qualname": "DefinitionRevisionListener.start"
+        },
+        "DatabaseSaturationWatchdog.start": {
+          "module": "gobby.storage.concurrency_watchdog",
+          "qualname": "DatabaseSaturationWatchdog.start"
+        }
+      },
       "seams": [
         "_initialize_runtime_services",
         "main",

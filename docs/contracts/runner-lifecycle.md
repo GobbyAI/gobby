@@ -51,6 +51,16 @@ Next owner (`next_owner`), the work item that will own the entry next:
 - `phases`: `id`, `stage`, `owner`, `hub_only`, `next_owner`, `seams`. Construct phases are
   owned by `GobbyRunner.create` (the statements stay in `create`). `hub_only` ids equal
   `HUB_ONLY_STARTUP_PHASES`.
+- `seam_notes` (construct phases only, R36): one entry per name in `seams`, holding `module` and
+  `qualname`, the definition the seam resolves to (checked by AST). An `unobserved_reason`
+  (non-empty text) is present exactly when no construct-stage census row has that definition as
+  its creator. A census row is construct-stage when an inventory task with stage `construct`
+  lists its key, since thread rows carry no stage. Executor rows are not task creators.
+  The construct seam targets equal the functions named by `GobbyRunner.create`'s phase statements
+  (imports, top-level functions of `runner.py`, and `self.<method>` calls; a
+  `self.<attr>.<method>` chain is not named) united with the construct task and thread creators in
+  the census. Only the first part is derived from source. A seam that neither a statement names nor
+  the census creates fails that pin, so adding one is a deliberate change to the rule.
 - `tasks`: `id`, `creator` (the scope that calls `create_task`, `ensure_future`, or
   `threading.Thread`), `spawned_from` (the scope that calls the periodic `spawn` helper),
   `target` (the coroutine or callable the task runs), `runner_attr`, `name`, `stage`,
