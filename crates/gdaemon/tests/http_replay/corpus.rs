@@ -229,9 +229,7 @@ pub fn parse_case(value: &Value) -> Result<Case, CorpusError> {
     {
         check_ledger_key(&name, kind, key, request.as_ref(), invocation.as_ref())?;
     }
-    if let Some(response) = &response
-        && schema_version == 3
-    {
+    if let Some(response) = &response {
         check_response(&name, kind, response)?;
     }
     if schema_version == 3 {
@@ -1057,8 +1055,12 @@ mod tests {
         for response in [json!([]), json!({"status": "200"})] {
             let mut value = base.clone();
             value["response"] = response.clone();
-            let error = parse_case(&value).expect_err(&format!("{response} is refused"));
-            assert!(error.to_string().contains("wrong shape"), "{response}: {error}");
+            let error = parse_case(&value)
+                .expect_err("a schema 2 response that is not an http response is refused");
+            assert!(
+                error.to_string().contains("wrong shape"),
+                "{response}: {error}"
+            );
         }
     }
 

@@ -52,6 +52,47 @@ fn is_zombie(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+/// A process named by its pid and its start time as `ps` prints it. The kernel gives a reused pid a
+/// later start time, so an identity taken earlier tells the old process from the new one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identity {
+    /// The process id.
+    pub pid: u32,
+    /// The start time read when the identity was taken.
+    start: String,
+}
+
+impl Identity {
+    /// The identity of the process with this pid now, or `None` when no process has that pid.
+    pub fn observe(pid: u32) -> Option<Self> {
+        let start = start_time(pid)?;
+        Some(Self { pid, start })
+    }
+
+    /// Whether the process with this pid still has the start time this identity recorded.
+    pub fn is_same_process(&self) -> bool {
+        start_time(self.pid).as_deref() == Some(self.start.as_str())
+    }
+}
+
+/// The start time `ps` prints for `pid`, or `None` when no process has that pid.
+#[cfg(unix)]
+fn start_time(pid: u32) -> Option<String> {
+    let output = Command::new("ps")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .output()
+        .ok()?;
+    let start = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (!start.is_empty()).then_some(start)
+}
+
+/// Plain std reads no start time on Windows, so no identity is taken there and nothing is signalled
+/// through one. The harness refuses to start on Windows before any process it would stop exists.
+#[cfg(windows)]
+fn start_time(_pid: u32) -> Option<String> {
+    None
+}
+
 /// Asks a process group (Unix) or a process tree (Windows) to stop. `graceful` sends SIGTERM on
 /// Unix; Windows has no graceful signal in plain std, so it always force-stops the tree.
 #[cfg(unix)]
@@ -240,15 +281,19 @@ pub fn stop_daemon(child: &mut Child, grace: Duration) -> Result<(), FullDaemonE
     }
 }
 
-/// Stops the worker's group, waiting up to `grace` for it to exit before the forced stop.
-pub fn stop_worker(pid: u32, grace: Duration) {
-    signal_group(pid, true);
+/// Stops the worker's group, waiting up to `grace` for it to exit before the forced stop. Nothing
+/// is signalled unless the process at the worker's pid is still the one recorded at readiness.
+pub fn stop_worker(worker: &Identity, grace: Duration) {
+    if !worker.is_same_process() {
+        return;
+    }
+    signal_group(worker.pid, true);
     let deadline = Instant::now() + grace;
-    while pid_alive(pid) && Instant::now() < deadline {
+    while worker.is_same_process() && pid_alive(worker.pid) && Instant::now() < deadline {
         sleep(POLL);
     }
-    if pid_alive(pid) {
-        signal_group(pid, false);
+    if worker.is_same_process() && pid_alive(worker.pid) {
+        signal_group(worker.pid, false);
     }
 }
 

@@ -51,6 +51,7 @@ from tests.contracts.normalizers_v3 import (
     normalize_images,
 )
 from tests.contracts.recorder_daemon_v3 import recorder_daemon
+from tests.e2e import conftest as e2e
 from tests.fixtures.hub_guard import (
     HARNESS_DATABASE_PATTERN,
     GuardMode,
@@ -545,13 +546,45 @@ def _rpc_message(response: httpx.Response, rpc_id: int) -> dict[str, Any]:
     raise RecorderError(f"no MCP reply with id {rpc_id} in a {response.status_code} response")
 
 
+def _seal_home(home: Path) -> None:
+    """Write the home's bootstrap.yaml at mode 0600 when the home has none.
+
+    The file names two loopback ports that were free when it was written and lie outside the
+    operator's range, a files home under the home and no database URL, so a bootstrap reader
+    that ignores GOBBY_DAEMON_URL does not dial the operator's default port. A home that already
+    has a bootstrap.yaml keeps it: the per-run daemon's home holds that daemon's own file.
+    """
+    path = home / "bootstrap.yaml"
+    if path.exists():
+        return
+    files_home = home / "files"
+    files_home.mkdir(parents=True, exist_ok=True)
+    text = (
+        "datastore_mode: local\n"
+        "bind_host: 127.0.0.1\n"
+        f"daemon_port: {e2e.find_free_port()}\n"
+        f"websocket_port: {e2e.find_free_port()}\n"
+        f"files_home: {files_home}\n"
+    )
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return
+    with os.fdopen(descriptor, "w") as handle:
+        handle.write(text)
+    path.chmod(0o600)
+
+
 def _stdio_env(home: Path, daemon_url: str) -> dict[str, str]:
     """The stdio wrapper's environment: its isolated home, the test fence and the per-run daemon.
 
-    Without GOBBY_DAEMON_URL the wrapper dials its default daemon, which on this machine is the
-    operator's live daemon. GOBBY_TEST_PROTECT with GOBBY_HOME limits its daemon scan to the
-    processes whose command line names this home, so no other daemon is found or started.
+    The home is sealed first (see _seal_home). GOBBY_DAEMON_URL points the wrapper at the per-run
+    daemon. Without it the wrapper's dial comes from the home's bootstrap.yaml, which names
+    ports outside the operator's range. GOBBY_TEST_PROTECT with GOBBY_HOME limits its
+    daemon scan to the processes whose command line names this home, so no other daemon is found
+    or started.
     """
+    _seal_home(home)
     return {
         "PATH": os.environ.get("PATH", ""),
         "HOME": str(home),
@@ -640,8 +673,11 @@ def send_ws(ws_url: str, frames: Sequence[str], *, operator: Mapping[str, str]) 
 def _cli_env(home: Path, daemon_url: str) -> dict[str, str]:
     """The CLI's sealed environment: a temporary home, the test fence and the per-run daemon URL.
 
-    GOBBY_DAEMON_URL keeps any daemon call on the per-run daemon, never the default port.
+    The home is sealed first (see _seal_home). GOBBY_DAEMON_URL sends resolver-based daemon
+    calls to the per-run daemon. A caller that reads its port from bootstrap.yaml directly
+    gets a port outside the operator's range, never the default port.
     """
+    _seal_home(home)
     return {
         "PATH": f"{REPO_ROOT / '.venv' / 'bin'}:/usr/bin:/bin:/usr/sbin:/sbin",
         "HOME": str(home),

@@ -358,17 +358,22 @@ async fn observe_ws(
     .await
     .map_err(|_| shape("the WS reply timed out"))?;
     if !transports.ws_after_reply.is_empty() {
-        tokio::io::AsyncWriteExt::write_all(&mut stream, &transports.ws_after_reply)
-            .await
-            .map_err(DriverError::Io)?;
+        tokio::time::timeout(
+            TIMEOUT,
+            tokio::io::AsyncWriteExt::write_all(&mut stream, &transports.ws_after_reply),
+        )
+        .await
+        .map_err(|_| shape("the client frame after the reply timed out"))?
+        .map_err(DriverError::Io)?;
     }
     read_until_quiet(&mut stream, &mut received).await?;
     let capture = tokio::time::timeout(TIMEOUT, captured)
         .await
         .map_err(|_| shape("the WS backend did not report its client leg"))?
         .map_err(|_| shape("the WS backend's capture was dropped"))?;
-    // The backend must receive exactly the invocation's frames: a front door that rewrites them
-    // is a failed replay, not a match.
+    // The backend's capture holds the client bytes it read up to the end of the client leg or its
+    // quiet window. A rewritten invocation, or a frame the client sent after the reply that arrived
+    // inside that window, is a failed replay.
     if capture.received != client {
         return Err(shape("client leg changed the invocation frames"));
     }

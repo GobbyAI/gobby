@@ -28,11 +28,11 @@ mod process;
 mod terminal_host;
 
 pub use process::{GroupWatch, pid_alive};
-use process::{stop_daemon, stop_worker};
+use process::{Identity, stop_daemon, stop_worker};
 pub use terminal_host::processes_in_run;
 use terminal_host::{
-    ensure_gterm, install_gterm, read_host_pid, stop_strays, stop_terminal_host,
-    terminal_host_children, worker_of,
+    ensure_gterm, install_gterm, live_terminal_hosts, read_host_pid, stop_strays,
+    stop_terminal_host, terminal_host_children, worker_of,
 };
 
 /// The readiness URL path the daemon must answer 200 on.
@@ -318,7 +318,7 @@ impl FullDaemonBuilder<'_> {
             database_name,
             child: None,
             daemon_pid: 0,
-            worker_pid: None,
+            worker: None,
             front_door: format!("http://127.0.0.1:{}", ports.http),
             operator_key: String::new(),
             ready_ceiling,
@@ -404,8 +404,8 @@ impl FullDaemonBuilder<'_> {
         if let Err(reason) = wait_ready(&mut daemon, &home) {
             return Err(daemon.abort_start(reason));
         }
-        daemon.worker_pid = worker_of(daemon.daemon_pid);
-        if daemon.worker_pid.is_none() {
+        daemon.worker = worker_of(daemon.daemon_pid).and_then(Identity::observe);
+        if daemon.worker.is_none() {
             let reason = FullDaemonError::Ready(
                 "readiness passed but no worker process group leader is a child of gdaemon".into(),
             );
@@ -456,7 +456,8 @@ pub struct FullDaemon {
     database_name: Option<String>,
     child: Option<Child>,
     daemon_pid: u32,
-    worker_pid: Option<u32>,
+    /// The Python worker, recorded at readiness with the start time that identifies it.
+    worker: Option<Identity>,
     front_door: String,
     operator_key: String,
     ready_ceiling: Duration,
@@ -519,7 +520,7 @@ impl FullDaemon {
         hosts.extend(terminal_host_children(self.daemon_pid));
         hosts.sort_unstable();
         hosts.dedup();
-        hosts
+        live_terminal_hosts(&hosts)
     }
 
     /// The gdaemon process id.
@@ -529,7 +530,7 @@ impl FullDaemon {
 
     /// The Python worker's process id, recorded at readiness.
     pub fn worker_pid(&self) -> Option<u32> {
-        self.worker_pid
+        self.worker.as_ref().map(|worker| worker.pid)
     }
 
     /// The detached gterm host's process id, from the `gterm.pid` it wrote in its socket directory.
@@ -553,7 +554,7 @@ impl FullDaemon {
     /// before the error is returned, so the reported pids are dead unless teardown failed.
     fn abort_start(mut self, reason: FullDaemonError) -> FullDaemonError {
         let daemon_pid = self.daemon_pid;
-        let worker_pid = self.worker_pid.or_else(|| worker_of(daemon_pid));
+        let worker_pid = self.worker_pid().or_else(|| worker_of(daemon_pid));
         let teardown = self.shutdown().err().map(|error| error.to_string());
         FullDaemonError::FailedStart {
             reason: reason.to_string(),
@@ -573,9 +574,9 @@ impl FullDaemon {
         // Read while gdaemon still runs: a worker is found through its parent, and a stopped
         // gdaemon's children are reparented where they cannot be found.
         let worker = self
-            .worker_pid
+            .worker
             .take()
-            .or_else(|| worker_of(self.daemon_pid));
+            .or_else(|| worker_of(self.daemon_pid).and_then(Identity::observe));
         let hosts = self.terminal_host_candidates();
         if let Some(mut child) = self.child.take() {
             match stop_daemon(&mut child, DAEMON_GRACE) {
@@ -583,7 +584,7 @@ impl FullDaemon {
                 Err(error) => first_error = first_error.or(Some(error)),
             }
         }
-        if let Some(worker) = worker {
+        if let Some(worker) = &worker {
             stop_worker(worker, WORKER_GRACE);
             steps.push(TeardownStep::WorkerStopped);
         }
@@ -598,14 +599,20 @@ impl FullDaemon {
         // The relays carry traffic only for gdaemon, which has stopped by now.
         self.relays = None;
         let processes_alive_at_drop = pid_alive(self.daemon_pid)
-            || worker.is_some_and(pid_alive)
-            || hosts.iter().any(|&host| pid_alive(host));
+            || worker.as_ref().is_some_and(Identity::is_same_process)
+            || !live_terminal_hosts(&hosts).is_empty();
         // Anything left in the run's root or in its process groups outlived the orderly stops
         // above. It is stopped here and fails the teardown, so a leak cannot pass as a clean run.
         if live_run {
-            let groups: Vec<u32> = [self.daemon_pid, worker.unwrap_or(0)]
+            // The worker and host groups are swept only while their leaders are still the processes
+            // the harness identified: a leader that has exited may have left its pid to another one.
+            let worker_group = worker
+                .as_ref()
+                .filter(|worker| worker.is_same_process())
+                .map_or(0, |worker| worker.pid);
+            let groups: Vec<u32> = [self.daemon_pid, worker_group]
                 .into_iter()
-                .chain(hosts.iter().copied())
+                .chain(live_terminal_hosts(&hosts))
                 .collect();
             let strays = processes_in_run(&self.root_canonical, &groups);
             if !strays.is_empty() {
@@ -832,8 +839,8 @@ fn wait_ready(daemon: &mut FullDaemon, home: &Path) -> Result<(), FullDaemonErro
         }
         // Record the worker while gdaemon lives: once gdaemon exits, the worker is reparented and
         // no later lookup by parent can find it.
-        if daemon.worker_pid.is_none() {
-            daemon.worker_pid = worker_of(daemon.daemon_pid);
+        if daemon.worker.is_none() {
+            daemon.worker = worker_of(daemon.daemon_pid).and_then(Identity::observe);
         }
         if get_status(&url).ok() == Some(200) {
             return Ok(());

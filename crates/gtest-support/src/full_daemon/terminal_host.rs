@@ -15,7 +15,7 @@ use std::time::Instant;
 use super::POLL;
 #[cfg(unix)]
 use super::process::NAME_COLUMN;
-use super::process::{pid_alive, signal_pid};
+use super::process::{Identity, pid_alive, signal_pid};
 use super::{FullDaemonError, WORKER_GRACE};
 
 /// The gterm binary file name for this platform (`gterm` or `gterm.exe`).
@@ -172,6 +172,15 @@ pub fn read_host_pid(socket_dir: &Path) -> Option<u32> {
         .ok()
 }
 
+/// The pids that are live gterm hosts. A pid that is gone, or that another process holds now, is
+/// dropped, so no process group is ever built from it.
+pub fn live_terminal_hosts(pids: &[u32]) -> Vec<u32> {
+    pids.iter()
+        .copied()
+        .filter(|&pid| pid_alive(pid) && is_gterm_host(pid))
+        .collect()
+}
+
 /// Stops a live gterm host: SIGTERM, then the forced stop after the grace period. Returns whether
 /// a live host was actually signalled, which decides whether the teardown step is recorded.
 pub fn stop_terminal_host(pid: u32) -> bool {
@@ -183,7 +192,8 @@ pub fn stop_terminal_host(pid: u32) -> bool {
     while pid_alive(pid) && Instant::now() < deadline {
         sleep(POLL);
     }
-    if pid_alive(pid) {
+    // The forced stop goes out only while the pid still names a gterm host.
+    if pid_alive(pid) && is_gterm_host(pid) {
         signal_pid(pid, false);
     }
     true
@@ -262,18 +272,25 @@ fn cwd_pids(_root: &Path) -> Vec<u32> {
 }
 
 /// Stops processes that outlived the run's orderly teardown: SIGTERM, the grace period, then
-/// SIGKILL for any still alive.
+/// SIGKILL for any still alive. Each pid is identified before the first signal, and each signal
+/// goes out only while the process is still that one, so a pid reused during the grace period is
+/// left alone.
 pub(super) fn stop_strays(pids: &[u32]) {
-    for &pid in pids {
-        signal_pid(pid, true);
+    let strays: Vec<Identity> = pids.iter().copied().filter_map(Identity::observe).collect();
+    for stray in &strays {
+        signal_pid(stray.pid, true);
     }
     let deadline = Instant::now() + WORKER_GRACE;
-    while pids.iter().any(|&pid| pid_alive(pid)) && Instant::now() < deadline {
+    while strays
+        .iter()
+        .any(|stray| pid_alive(stray.pid) && stray.is_same_process())
+        && Instant::now() < deadline
+    {
         sleep(POLL);
     }
-    for &pid in pids {
-        if pid_alive(pid) {
-            signal_pid(pid, false);
+    for stray in &strays {
+        if pid_alive(stray.pid) && stray.is_same_process() {
+            signal_pid(stray.pid, false);
         }
     }
 }
@@ -342,11 +359,8 @@ mod tests {
         let outside = tempfile::tempdir().expect("tempdir");
         let sleeper = Owned::spawn(Path::new("/bin/sleep"), outside.path());
         let host_dir = tempfile::tempdir().expect("tempdir");
-        fs::write(
-            host_dir.path().join("gterm.pid"),
-            sleeper.pid().to_string(),
-        )
-        .expect("write gterm.pid");
+        fs::write(host_dir.path().join("gterm.pid"), sleeper.pid().to_string())
+            .expect("write gterm.pid");
         let root = tempfile::tempdir().expect("tempdir");
         let root_canonical = fs::canonicalize(root.path()).expect("canonical root");
         let daemon = FullDaemon {
@@ -357,7 +371,7 @@ mod tests {
             database_name: None,
             child: None,
             daemon_pid: 0,
-            worker_pid: None,
+            worker: None,
             front_door: String::new(),
             operator_key: String::new(),
             ready_ceiling: Duration::from_secs(1),
@@ -377,22 +391,17 @@ mod tests {
         );
     }
 
-    /// A copy of `sleep` under the gterm name, so the process reads as a gterm host.
-    fn gterm_named_sleep(dir: &Path) -> PathBuf {
-        let program = dir.join("gterm");
-        fs::copy("/bin/sleep", &program).expect("copy sleep under the gterm name");
-        program
-    }
-
     #[test]
-    fn live_terminal_hosts_keeps_a_live_gterm_and_drops_the_rest() {
-        let tools = tempfile::tempdir().expect("tempdir");
-        let gterm = Owned::spawn(&gterm_named_sleep(tools.path()), tools.path());
-        let plain = Owned::spawn(Path::new("/bin/sleep"), tools.path());
+    fn live_terminal_hosts_drops_a_dead_pid_and_a_process_that_is_not_gterm() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let plain = Owned::spawn(Path::new("/bin/sleep"), dir.path());
         let mut dead_child = Command::new("true").spawn().expect("spawn true");
         let dead = dead_child.id();
         dead_child.wait().expect("reap true");
-        let kept = live_terminal_hosts(&[dead, plain.pid(), gterm.pid()]);
-        assert_eq!(kept, vec![gterm.pid()], "only the live gterm host is kept");
+        let kept = live_terminal_hosts(&[dead, plain.pid()]);
+        assert!(
+            kept.is_empty(),
+            "neither pid is a live gterm host: {kept:?}"
+        );
     }
 }

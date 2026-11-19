@@ -161,14 +161,19 @@ pub async fn refused_addr() -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, 1))
 }
 
-/// What a raw WS backend saw: its upgrade request head and every byte after it.
+/// The quiet window a WS backend waits for, after its reply, before it reports the client leg.
+const CLIENT_QUIET: Duration = Duration::from_millis(200);
+
+/// What a raw WS backend saw: its upgrade request head, then every client byte after the head
+/// through the end of the client leg or its quiet window.
 pub struct WsCapture {
     pub request_head: String,
     pub received: Vec<u8>,
 }
 
 /// A raw WebSocket backend for one connection. It answers the upgrade with 101 and
-/// `permessage-deflate`, reads exactly `expect_len` bytes, writes `reply`, then closes.
+/// `permessage-deflate`, reads `expect_len` bytes, writes `reply`, then reads on until the client
+/// leg ends, goes quiet for [`CLIENT_QUIET`], or [`TIMEOUT`] passes, and reports every byte it read.
 pub async fn ws_backend(
     expect_len: usize,
     reply: Vec<u8>,
@@ -193,7 +198,22 @@ pub async fn ws_backend(
             received.extend_from_slice(&chunk[..read]);
         }
         stream.write_all(&reply).await.expect("write reply");
-        stream.shutdown().await.expect("shutdown");
+        // The stub's end of stream goes out with its reply. Client bytes that still arrive after
+        // it are part of the client leg. A timeout, an end of stream or a read error ends the leg;
+        // the bytes read so far are still reported.
+        let _ = stream.shutdown().await;
+        let deadline = tokio::time::Instant::now() + TIMEOUT;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let mut chunk = [0_u8; 4096];
+            match tokio::time::timeout(CLIENT_QUIET.min(remaining), stream.read(&mut chunk)).await {
+                Ok(Ok(read)) if read > 0 => received.extend_from_slice(&chunk[..read]),
+                _ => break,
+            }
+        }
         let _ = done.send(WsCapture {
             request_head,
             received,

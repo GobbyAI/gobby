@@ -619,7 +619,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn health_matches_its_native_answer_when_the_backend_is_up() {
+    async fn health_native_leg_falls_through_when_the_backend_is_up() {
         let case = v2_case("health_ok.json");
         let recorded = case.response.clone().expect("recorded response");
         let target = recorded_target(&recorded).await;
@@ -659,7 +659,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn health_matches_its_native_answer_when_the_backend_is_down() {
+    async fn health_native_leg_falls_through_when_the_backend_is_down() {
         let case = v2_case("health_backend_down.json");
         let recorded = case.response.clone().expect("recorded response");
         let target = refused_addr().await;

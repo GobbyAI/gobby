@@ -258,9 +258,14 @@ impl Drop for Stray {
     }
 }
 
-/// Whether the teardown error text names `pid`. The stray pids print as a bracketed list.
+/// Whether the teardown error text names `pid` as a whole number in its bracketed pid list.
 fn error_names_pid(text: &str, pid: u32) -> bool {
-    text.contains(&pid.to_string())
+    text.rsplit_once('[')
+        .and_then(|(_, rest)| rest.split_once(']'))
+        .is_some_and(|(list, _)| {
+            list.split(',')
+                .any(|item| item.trim().parse::<u32>() == Ok(pid))
+        })
 }
 
 #[test]

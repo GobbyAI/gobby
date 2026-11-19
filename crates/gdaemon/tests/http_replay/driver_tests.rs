@@ -1,9 +1,13 @@
 //! Driver tests through `observe` and `classify`.
 //!
 //! Each observation runs a real transport: the CLI case runs a probe script in place of the
-//! `gobby` entry point, the WS case goes through the front door to a stub, and a hop between them
-//! rewrites or adds bytes. Each test would fail if an observer were replaced by an echo of the
-//! recording, because the observed value must come from the transport.
+//! `gobby` entry point, and the WS case goes through the front door to a stub, with a hop that
+//! rewrites bytes or a client that sends a frame after the reply. Five tests assert a value that
+//! only the transport can produce, so each fails if `observe` were replaced by an echo of the
+//! recording: the rewritten client leg, the CLI stdout, the stub's reply, the late frame, and the
+//! client frame sent after the reply. `a_ws_client_leg_without_a_hop_is_the_invocation` is a
+//! control and passes under an echo by design. The three waiver and native-extension tests call
+//! `classify` alone, so they never reach `observe`.
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};

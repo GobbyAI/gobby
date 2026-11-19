@@ -15,7 +15,6 @@ import re
 import subprocess
 import sys
 import threading
-import time
 from collections.abc import Callable, Iterator, Mapping
 from datetime import datetime
 from pathlib import Path
@@ -374,7 +373,6 @@ def test_stdio_sender_env_points_at_the_per_run_daemon(
 ) -> None:
     """The wrapper's environment names the per-run home, the fence and the per-run daemon URL.
 
-    Without GOBBY_DAEMON_URL the wrapper dials the operator's live daemon (127.0.0.1:60887).
     The fake Popen raises after recording the environment, so no process starts.
     """
     captured: dict[str, Any] = {}
@@ -432,13 +430,13 @@ OPERATOR_PORTS = (60887, 60888)
 @pytest.mark.parametrize(
     "sealed", [recorder_v3._stdio_env, recorder_v3._cli_env], ids=["stdio", "cli"]
 )
-def test_sealed_home_bootstrap_names_closed_ports_and_loads(
+def test_sealed_home_bootstrap_names_no_operator_port_and_loads(
     tmp_path: Path, sealed: Callable[[Path, str], dict[str, str]]
 ) -> None:
     """The sealed home's bootstrap.yaml is mode 0600, loads, and names no operator port.
 
-    Without GOBBY_DAEMON_URL, a bootstrap reader in the sealed home dials a closed port,
-    never the operator's daemon on 60887 or 60888.
+    Without GOBBY_DAEMON_URL, a bootstrap reader in the sealed home resolves a port other than
+    the operator's 60887 or 60888. The test does not dial it.
     """
     home = tmp_path / "home"
     env = sealed(home, PER_RUN_URL)
@@ -476,13 +474,14 @@ class _HealthDaemon:
 
     def __init__(self) -> None:
         self.paths: list[str] = []
-        self._lock = threading.Lock()
+        self._lock = threading.Condition()
         paths, lock = self.paths, self._lock
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self) -> None:
                 with lock:
                     paths.append(self.path)
+                    lock.notify_all()
                 body = b'{"status": "ok"}'
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
@@ -497,9 +496,10 @@ class _HealthDaemon:
         self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
 
-    def seen(self) -> list[str]:
+    def wait_for(self, path: str, timeout: float) -> bool:
+        """Block until a GET for ``path`` arrives or the timeout passes; True when it arrived."""
         with self._lock:
-            return list(self.paths)
+            return self._lock.wait_for(lambda: path in self.paths, timeout)
 
     def close(self) -> None:
         self._server.shutdown()
@@ -512,7 +512,8 @@ def test_stdio_wrapper_health_probe_reaches_only_the_injected_daemon(tmp_path: P
 
     A stand-in process whose argv names the per-run home and ``gobby.runner`` satisfies the
     fence, so the wrapper finds a running daemon and never reaches the start branch. The
-    ephemeral listener is the only daemon it can reach.
+    wrapper dials the ephemeral listener named by GOBBY_DAEMON_URL. The test observes only that
+    listener; the sealed home's bootstrap.yaml is covered by its own test.
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -549,10 +550,7 @@ def test_stdio_wrapper_health_probe_reaches_only_the_injected_daemon(tmp_path: P
             replies: dict[int, dict[str, Any]] = {}
             while recorder_v3.MCP_CALL_ID not in replies:
                 replies.update(recorder_v3._stdio_reply(lines))
-            deadline = time.monotonic() + 60
-            while "/api/health" not in health.seen() and time.monotonic() < deadline:
-                time.sleep(0.1)
-            assert "/api/health" in health.seen()
+            assert health.wait_for("/api/health", timeout=60.0)
         finally:
             if wrapper is not None:
                 wrapper.kill()
