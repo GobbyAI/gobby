@@ -84,6 +84,7 @@ if TYPE_CHECKING:
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.host_manager import TerminalHostManager
     from gobby.terminals.services import TerminalServices
+    from gobby.worker.channel import WorkerBoot
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.executor import WorktreeDeleteExecutor
@@ -393,6 +394,7 @@ async def run_gobby(
     config_path: Path | None = None,
     verbose: bool = False,
     ownership_resolution: PidOwnershipResolution | None = None,
+    worker: WorkerBoot | None = None,
 ) -> None:
     from contextlib import suppress
 
