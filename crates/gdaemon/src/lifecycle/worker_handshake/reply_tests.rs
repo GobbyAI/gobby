@@ -10,8 +10,8 @@ use super::{
 };
 use crate::lifecycle::worker_handshake::{
     ErrorBody, HandshakeField, HandshakeResult, MAX_DOMAIN_OP_REQUEST_BYTES,
-    MAX_WORKER_REQUEST_BYTES, PhaseReply, ProtocolViolation, WorkerCallError, WorkerSession,
-    perform_handshake, perform_initialize, perform_invoke,
+    MAX_WORKER_REQUEST_BYTES, PhaseReply, ProtocolViolation, UnknownOutcome, WorkerCallError,
+    WorkerSession, perform_handshake, perform_initialize, perform_invoke,
 };
 
 /// One reply envelope for request generation 7, with `payload` under `key`.
@@ -433,6 +433,198 @@ async fn handshake_op_failed_stays_refused() {
     let body = refusal(err);
     assert_eq!(body.code, "op_failed");
     assert_eq!(body.message, "schema identity unavailable");
+}
+
+// Error codes per command. The contract's guard table gives each command its own set of
+// codes. A code outside a command's set is a violation: Protocol for a handshake, and an
+// unknown outcome for initialize and invoke.
+
+/// Answers one error reply to a handshake.
+async fn handshake_error(code: &str, message: &str) -> WorkerCallError {
+    handshake_answer_error(error_reply("7:1", code, message)).await
+}
+
+/// Answers one error reply to an initialize for the first phase.
+async fn initialize_error(code: &str, message: &str) -> WorkerCallError {
+    let mut channel = ScriptedChannel::replying([Ok(error_reply("7:1", code, message))]);
+    perform_initialize(&mut channel, &mut session_at(7), "storage_and_config")
+        .await
+        .expect_err("an error reply is an error")
+}
+
+/// Answers one error reply to an invoke.
+async fn invoke_error(code: &str, message: &str) -> WorkerCallError {
+    invoke_answer(error_reply("7:1", code, message))
+        .await
+        .expect_err("an error reply is an error")
+}
+
+#[tokio::test]
+async fn handshake_accepts_its_own_error_codes() {
+    let cases = [
+        ("invalid_request", "invalid request"),
+        ("protocol_mismatch", "protocol version not accepted"),
+        ("unauthorized", "credential refused"),
+        (
+            "stale_generation",
+            "generation does not match the bound generation",
+        ),
+        ("op_failed", "schema identity unavailable"),
+    ];
+    for (code, message) in cases {
+        let body = refusal(handshake_error(code, message).await);
+        assert_eq!(body.code, code);
+        assert_eq!(body.message, message);
+    }
+}
+
+#[tokio::test]
+async fn handshake_error_code_outside_its_set_is_protocol_violation() {
+    let cases = [
+        ("not_handshaken", "no handshake for this worker"),
+        ("unknown_command", "unknown command"),
+        ("phase_out_of_order", "phase is not the next phase"),
+        ("worker_unusable", "worker is unusable"),
+        ("not_ready", "worker is not ready"),
+    ];
+    for (code, message) in cases {
+        let err = handshake_error(code, message).await;
+        assert!(
+            matches!(err, WorkerCallError::Protocol(ProtocolViolation::Malformed)),
+            "{code}: {err:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn initialize_accepts_its_own_error_codes() {
+    let cases = [
+        ("invalid_request", "invalid request"),
+        ("protocol_mismatch", "protocol version not accepted"),
+        ("not_handshaken", "no handshake for this worker"),
+        (
+            "stale_generation",
+            "generation does not match the bound generation",
+        ),
+        ("worker_unusable", "worker is unusable"),
+        ("phase_out_of_order", "phase is not the next phase"),
+    ];
+    for (code, message) in cases {
+        let body = refusal(initialize_error(code, message).await);
+        assert_eq!(body.code, code);
+        assert_eq!(body.message, message);
+    }
+}
+
+#[tokio::test]
+async fn initialize_error_code_outside_its_set_is_unknown() {
+    let cases = [
+        ("unauthorized", "credential refused"),
+        ("unknown_command", "unknown command"),
+        ("not_ready", "worker is not ready"),
+        ("op_failed", "boom"),
+    ];
+    for (code, message) in cases {
+        let outcome = unknown_outcome(initialize_error(code, message).await);
+        assert_eq!(outcome.command, "initialize", "{code}");
+        assert_eq!(outcome.operation_id, "7:1", "{code}");
+    }
+}
+
+/// An `op_failed` reply to initialize is the unknown outcome, never a refusal (R66).
+#[tokio::test]
+async fn initialize_op_failed_is_unknown() {
+    let outcome = unknown_outcome(initialize_error("op_failed", "boom").await);
+    assert_eq!(
+        outcome,
+        UnknownOutcome {
+            command: "initialize",
+            generation: 7,
+            operation_id: "7:1".to_owned(),
+        }
+    );
+}
+
+#[tokio::test]
+async fn invoke_accepts_its_own_error_codes() {
+    let cases = [
+        ("invalid_request", "invalid request"),
+        ("protocol_mismatch", "protocol version not accepted"),
+        ("not_handshaken", "no handshake for this worker"),
+        (
+            "stale_generation",
+            "generation does not match the bound generation",
+        ),
+        ("worker_unusable", "worker is unusable"),
+        ("not_ready", "worker is not ready"),
+        ("unknown_command", "unknown command"),
+    ];
+    for (code, message) in cases {
+        let body = refusal(invoke_error(code, message).await);
+        assert_eq!(body.code, code);
+        assert_eq!(body.message, message);
+    }
+    match invoke_error("op_failed", "boom").await {
+        WorkerCallError::OpFailed(body) => assert_eq!(body.code, "op_failed"),
+        other => panic!("expected OpFailed, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn invoke_error_code_outside_its_set_is_unknown() {
+    let cases = [
+        ("unauthorized", "credential refused"),
+        ("phase_out_of_order", "phase is not the next phase"),
+    ];
+    for (code, message) in cases {
+        let outcome = unknown_outcome(invoke_error(code, message).await);
+        assert_eq!(outcome.command, "invoke", "{code}");
+        assert_eq!(outcome.operation_id, "7:1", "{code}");
+    }
+}
+
+// Failed phase outcomes the Python side sends. Each is a result with status failed, not an error.
+
+#[tokio::test]
+async fn initialize_failed_incomplete_create_is_a_failed_outcome() {
+    let failed = phase_result(
+        "runtime_services",
+        "failed",
+        Value::Null,
+        json!("create returned before every phase ran"),
+        json!("IncompleteCreate"),
+    );
+    let reply = answer_initialize("runtime_services", failed)
+        .await
+        .expect("a failed phase is a result");
+    assert_eq!(reply.status, "failed");
+    assert_eq!(reply.next_phase, None);
+    assert_eq!(
+        reply.message.as_deref(),
+        Some("create returned before every phase ran")
+    );
+    assert_eq!(reply.error_type.as_deref(), Some("IncompleteCreate"));
+}
+
+#[tokio::test]
+async fn initialize_failed_phase_order_violation_is_a_failed_outcome() {
+    let failed = phase_result(
+        "startup_content",
+        "failed",
+        Value::Null,
+        json!("create entered a phase out of order"),
+        json!("PhaseOrderViolation"),
+    );
+    let reply = answer_initialize("startup_content", failed)
+        .await
+        .expect("a failed phase is a result");
+    assert_eq!(reply.status, "failed");
+    assert_eq!(reply.next_phase, None);
+    assert_eq!(
+        reply.message.as_deref(),
+        Some("create entered a phase out of order")
+    );
+    assert_eq!(reply.error_type.as_deref(), Some("PhaseOrderViolation"));
 }
 
 // Handshake result checks.
