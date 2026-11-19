@@ -110,17 +110,32 @@ RESPONSE_FIELDS = (
 MANIFEST_PATH = CORPUS_DIR / "manifest.json"
 RESPONSE_FIELD_OWNER_KEY = "response_field_owners"
 RESPONSE_OWNER_LAYERS = ("adapters", "pipeline", "none")
-# Fields no rule-pass case can set. Each names the layer that covers it, and the manifest
-# records the same owners; "none" means no production code writes the field today.
-RESPONSE_FIELD_OWNERS: dict[str, str] = json.loads(MANIFEST_PATH.read_text()).get(
-    RESPONSE_FIELD_OWNER_KEY, {}
-)
-# A field whose owner is "none" or whose layer emits it has no rule-pass writer; the source scan
-# below fails the day a writer appears, so the owner is revisited with it.
-FIELDS_WITHOUT_RULE_PRODUCER = ("modify_args", "trigger_action")
+# The three response fields no rule-pass case can set, each with the layer that covers it.
+# This constant is the contract: the manifest repeats it, so a JSON-only edit cannot move a
+# field into the rule-pass layer. "none" means no production code writes the field.
+RESPONSE_FIELD_OWNERS: dict[str, str] = {
+    "system_message": "adapters",
+    "modify_args": "adapters",
+    "trigger_action": "none",
+}
 ENGINE_RESPONSE_FIELDS = tuple(
     field for field in RESPONSE_FIELDS if field not in RESPONSE_FIELD_OWNERS
 )
+# A field whose owner is "none" has no producer in Python, so no src writer may name it.
+FIELDS_WITHOUT_RULE_PRODUCER = tuple(
+    field for field, owner in RESPONSE_FIELD_OWNERS.items() if owner == "none"
+)
+UNUSED_FIELD_WRITE_FORMS = {
+    "attribute_assign": 'resp.trigger_action = "synthetic"\n',
+    "keyword_argument": 'HookResponse(trigger_action="synthetic")\n',
+    "augmented_assign": 'resp.trigger_action += "synthetic"\n',
+    "setattr_call": 'setattr(resp, "trigger_action", "synthetic")\n',
+    "unpacked_keywords": 'HookResponse(**{"trigger_action": "synthetic"})\n',
+}
+UNUSED_FIELD_READ = "value = resp.trigger_action\n"
+RELAXING_EDITS = ("move-owned-field-to-required", "relabel-owner-layer")
+BUILTIN_SCALAR_NAMES = frozenset({"str", "int", "bool", "bytes"})
+BUILTIN_CONTAINER_NAMES = frozenset({"list", "tuple", "dict", "Optional"})
 
 
 def _response_defaults() -> dict[str, Any]:
@@ -483,12 +498,23 @@ def _parametrize_combinations(function: ast.FunctionDef) -> int:
     return combinations
 
 
-def _writers_of(field: str) -> list[str]:
-    """Return ``file:line`` for each call keyword or attribute assignment that names ``field``."""
+def _display_path(path: Path) -> str:
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return path.name
+
+
+def _writers_of(field: str, paths: Iterable[Path] | None = None) -> list[str]:
+    """Return ``file:line`` for each call keyword or attribute assignment that names ``field``.
+
+    ``paths`` defaults to every module under ``src/gobby``.
+    """
     found: list[str] = []
-    for path in sorted((SRC_DIR / "gobby").rglob("*.py")):
+    sources = sorted((SRC_DIR / "gobby").rglob("*.py")) if paths is None else list(paths)
+    for path in sources:
         tree = ast.parse(path.read_text(), filename=str(path))
-        location = path.relative_to(REPO_ROOT).as_posix()
+        location = _display_path(path)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 if any(keyword.arg == field for keyword in node.keywords):
@@ -517,6 +543,15 @@ def test_corpus_covers_effect_types_and_delivery() -> None:
     missing_deliveries = [name for name in DELIVERY_CLASSES if name not in deliveries]
     assert not missing_types, f"effect types no case produces: {missing_types}"
     assert not missing_deliveries, f"delivery classes no case uses: {missing_deliveries}"
+
+
+def test_effect_type_helper_reads_the_recorder_effect_key() -> None:
+    case = _synthetic_case()
+    case["expect"]["effect_log"] = [
+        {"effect": "run_command", "delivery": "eager", "rule": "synthetic-rule"}
+    ]
+    types = _effect_types(case)
+    assert types == {"block", "run_command"}, f"effect types read from the log: {sorted(types)}"
 
 
 def test_corpus_has_required_scenarios() -> None:
@@ -816,28 +851,72 @@ def test_rerecord_committed_corpus() -> None:
     )
 
 
-def test_response_field_owners_cover_every_field_the_rules_cannot_set() -> None:
-    manifest = json.loads(MANIFEST_PATH.read_text())
+def _owner_findings(manifest: dict[str, Any]) -> list[str]:
+    """Return what the response-field owner check finds wrong with a manifest."""
     owners = manifest.get(RESPONSE_FIELD_OWNER_KEY)
-    assert owners, f"the manifest names no {RESPONSE_FIELD_OWNER_KEY}"
+    if not owners:
+        return [f"the manifest names no {RESPONSE_FIELD_OWNER_KEY}"]
+    findings: list[str] = []
     required = set(manifest["required"]["response_field"])
-    assert required.isdisjoint(owners), (
-        f"fields both required and owned: {sorted(required & set(owners))}"
-    )
-    assert required | set(owners) == set(RESPONSE_FIELDS), (
-        f"fields with no owner: {sorted(set(RESPONSE_FIELDS) - required - set(owners))}"
-    )
+    overlap = sorted(required & set(owners))
+    if overlap:
+        findings.append(f"fields both required and owned: {overlap}")
+    if required | set(owners) != set(RESPONSE_FIELDS):
+        unowned = sorted(set(RESPONSE_FIELDS) - required - set(owners))
+        findings.append(f"fields with no owner: {unowned}")
     unknown = {
         field: owner for field, owner in owners.items() if owner not in RESPONSE_OWNER_LAYERS
     }
-    assert not unknown, f"unknown owner layers: {unknown}"
+    if unknown:
+        findings.append(f"unknown owner layers: {unknown}")
+    return findings
+
+
+def test_response_field_owners_cover_every_field_the_rules_cannot_set() -> None:
+    manifest = json.loads(MANIFEST_PATH.read_text())
+    findings = _owner_findings(manifest)
+    assert not findings, "; ".join(findings)
     assert set(RESPONSE_FIELDS) == {field.name for field in dataclasses.fields(HookResponse)}
+
+
+def _relaxed_manifest(edit: str) -> dict[str, Any]:
+    """Return the manifest after a JSON-only edit that moves a field without touching the pins."""
+    manifest: dict[str, Any] = json.loads(MANIFEST_PATH.read_text())
+    owners = manifest[RESPONSE_FIELD_OWNER_KEY]
+    if edit == "move-owned-field-to-required":
+        owners.pop("trigger_action")
+        manifest["required"]["response_field"].append("trigger_action")
+    elif edit == "relabel-owner-layer":
+        owners["modify_args"] = "pipeline"
+    else:
+        raise ValueError(f"unknown edit {edit!r}")
+    return manifest
+
+
+@pytest.mark.parametrize("edit", RELAXING_EDITS)
+def test_owner_check_rejects_a_json_only_relaxation(edit: str) -> None:
+    findings = _owner_findings(_relaxed_manifest(edit))
+    assert findings, f"the owner check accepts the relaxed manifest ({edit}) with no finding"
 
 
 @pytest.mark.parametrize("field", FIELDS_WITHOUT_RULE_PRODUCER)
 def test_fields_without_a_rule_producer_have_no_src_writer(field: str) -> None:
     writers = _writers_of(field)
     assert not writers, f"{field} is now written in src at {writers}; give it an owner layer"
+
+
+def test_unused_field_guard_flags_every_write_form(tmp_path: Path) -> None:
+    unflagged: list[str] = []
+    for name, source in UNUSED_FIELD_WRITE_FORMS.items():
+        fixture = tmp_path / f"{name}.py"
+        fixture.write_text(source)
+        if not _writers_of("trigger_action", [fixture]):
+            unflagged.append(name)
+    assert not unflagged, f"the guard misses these write forms of trigger_action: {unflagged}"
+    read_only = tmp_path / "read_only.py"
+    read_only.write_text(UNUSED_FIELD_READ)
+    flagged = _writers_of("trigger_action", [read_only])
+    assert not flagged, f"the guard flags a read of trigger_action: {flagged}"
 
 
 def test_negative_vectors_cover_every_parametrize_combination() -> None:
@@ -988,3 +1067,79 @@ def test_normalizer_replay_fails_loudly_on_a_missing_entry_point() -> None:
     }
     with pytest.raises(AttributeError):
         rules_vectors.replay_vector(vector)
+
+
+def _is_builtin_annotation(node: ast.expr | None) -> bool:
+    """True for str, int, bool and bytes, list, tuple, dict or Optional of those, and X | None."""
+    if isinstance(node, ast.Name):
+        return node.id in BUILTIN_SCALAR_NAMES
+    if isinstance(node, ast.Constant):
+        return node.value is None or node.value is Ellipsis
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+        return _is_builtin_annotation(node.left) and _is_builtin_annotation(node.right)
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+        if node.value.id not in BUILTIN_CONTAINER_NAMES:
+            return False
+        inner = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+        return all(_is_builtin_annotation(item) for item in inner)
+    return False
+
+
+def _builtin_signature_entries() -> list[str]:
+    """Return ``module.function`` for each listed module-level function with builtin parameters.
+
+    A function with no parameters is left out: it takes no input that could be non-empty.
+    """
+    entries: list[str] = []
+    for listed in json.loads(MODULES_PATH.read_text())["modules"]:
+        module = listed["module"]
+        path = SRC_DIR / (module.replace(".", "/") + ".py")
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            params = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+            params = [param for param in params if param.arg not in ("self", "cls")]
+            if params and all(_is_builtin_annotation(param.annotation) for param in params):
+                entries.append(f"{module}.{node.name}")
+    return entries
+
+
+def _is_substantive(vector: dict[str, Any]) -> bool:
+    """A vector counts when its input is non-empty and its expectation is not a raised error."""
+    arguments = vector.get("input", {})
+    values = [*arguments.get("args", []), *arguments.get("kwargs", {}).values()]
+    expect = vector.get("expect")
+    raised = isinstance(expect, dict) and "raised" in expect
+    return any(bool(value) for value in values) and not raised
+
+
+def test_every_builtin_signature_function_has_a_substantive_vector() -> None:
+    entries = _builtin_signature_entries()
+    assert entries, "no listed normalizer function has an all-builtin signature"
+    vectors = json.loads(VECTORS_PATH.read_text())["vectors"]
+    substantive = {vector["entry"] for vector in vectors if _is_substantive(vector)}
+    missing = sorted(entry for entry in entries if entry not in substantive)
+    assert not missing, f"all-builtin functions with no substantive vector: {missing}"
+
+
+def test_no_two_combinations_of_one_test_replay_the_same_input() -> None:
+    """Two vectors of one negative test may not replay the same input.
+
+    Two different tests may share an input, since each needs its own vector for coverage.
+    """
+    vectors = json.loads(VECTORS_PATH.read_text())["vectors"]
+    groups: dict[str, list[str]] = {}
+    for vector in vectors:
+        key = json.dumps(
+            [
+                vector.get("negative_from"),
+                vector["entry"],
+                vector.get("input"),
+                vector.get("setup"),
+            ],
+            sort_keys=True,
+        )
+        groups.setdefault(key, []).append(vector["id"])
+    repeated = [ids for ids in groups.values() if len(ids) > 1]
+    assert not repeated, f"combinations that replay the same input: {repeated}"
