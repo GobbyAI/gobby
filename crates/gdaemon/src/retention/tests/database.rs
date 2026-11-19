@@ -1,9 +1,44 @@
 use super::*;
 use gobby_core::postgres_pool::PoolSettings;
+use gobby_test_support::hub_guard::DbUrlError;
 use tokio_postgres::{Client, NoTls};
 
 const CUTOFF: &str = "2026-04-11T12:00:00Z";
 const SESSION: &str = "11111111-1111-4111-8111-111111111111";
+const DATABASE_URL_ENV: &str = "GOBBY_SCHEMA_TEST_DATABASE_URL";
+const TEST_HUB: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test";
+const LIVE_HUB: &str = "postgresql://gobby:gobby@localhost:60891/gobby";
+
+/// The one environment read of this file. Still reads the retired name (red commit).
+fn database_url_from(env: &dyn Fn(&str) -> Option<String>) -> Result<String, DbUrlError> {
+    env(DATABASE_URL_ENV).ok_or(DbUrlError::Unset)
+}
+
+/// The test hub from the process environment, or `None` after printing a skip line.
+fn test_database_url() -> Option<String> {
+    match database_url_from(&|name| std::env::var(name).ok()) {
+        Ok(url) => Some(url),
+        Err(DbUrlError::Unset) => {
+            eprintln!("skipped: DATABASE_URL is not set");
+            None
+        }
+        Err(error) => panic!("{error}"),
+    }
+}
+
+#[test]
+fn database_url_comes_from_the_shared_entry() {
+    let only_database_url = |name: &str| (name == "DATABASE_URL").then(|| TEST_HUB.to_string());
+    assert_eq!(
+        database_url_from(&only_database_url),
+        Ok(TEST_HUB.to_string())
+    );
+    let live_hub = |name: &str| (name == "DATABASE_URL").then(|| LIVE_HUB.to_string());
+    assert!(matches!(
+        database_url_from(&live_hub),
+        Err(DbUrlError::Refused(_))
+    ));
+}
 
 struct Fixture {
     admin: Client,
@@ -15,8 +50,7 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Result<Option<Self>> {
-        let Ok(database_url) = std::env::var("GOBBY_SCHEMA_TEST_DATABASE_URL") else {
-            eprintln!("skipped: GOBBY_SCHEMA_TEST_DATABASE_URL is unset");
+        let Some(database_url) = test_database_url() else {
             return Ok(None);
         };
         let config: tokio_postgres::Config = database_url.parse()?;

@@ -12,6 +12,37 @@ use gobby_terminals::repository::{self, Backend, Ownership, State, Terminal};
 use serde_json::json;
 use uuid::Uuid;
 
+const DATABASE_URL_ENV: &str = "GOBBY_TERMINALS_TEST_DATABASE_URL";
+
+/// The one environment read of the terminal tests. Still reads the retired name (red commit).
+pub fn database_url_from(
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<String, gobby_test_support::hub_guard::DbUrlError> {
+    env(DATABASE_URL_ENV).ok_or(gobby_test_support::hub_guard::DbUrlError::Unset)
+}
+
+/// The isolated test hub from the process environment, or an error when it is unset or refused.
+pub fn test_database_url() -> anyhow::Result<String> {
+    Ok(database_url_from(&|name| std::env::var(name).ok())?)
+}
+
+#[test]
+fn database_url_comes_from_the_shared_entry() {
+    use gobby_test_support::hub_guard::DbUrlError;
+    const TEST_HUB: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test";
+    const LIVE_HUB: &str = "postgresql://gobby:gobby@localhost:60891/gobby";
+    let only_database_url = |name: &str| (name == "DATABASE_URL").then(|| TEST_HUB.to_string());
+    assert_eq!(
+        database_url_from(&only_database_url),
+        Ok(TEST_HUB.to_string())
+    );
+    let live_hub = |name: &str| (name == "DATABASE_URL").then(|| LIVE_HUB.to_string());
+    assert!(matches!(
+        database_url_from(&live_hub),
+        Err(DbUrlError::Refused(_))
+    ));
+}
+
 pub struct Hub {
     url: String,
     schema: String,
@@ -20,7 +51,7 @@ pub struct Hub {
 
 impl Hub {
     pub async fn new() -> anyhow::Result<Self> {
-        let url = std::env::var("GOBBY_TERMINALS_TEST_DATABASE_URL")?;
+        let url = test_database_url()?;
         anyhow::ensure!(
             url == "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
             "reconciliation tests require the explicitly selected isolated test hub"

@@ -25,7 +25,7 @@ struct Hub {
 
 impl Hub {
     async fn new() -> anyhow::Result<Self> {
-        let url = std::env::var("GOBBY_TERMINALS_TEST_DATABASE_URL")?;
+        let url = crate::common::test_database_url()?;
         anyhow::ensure!(
             url == TEST_HUB,
             "write coordinator tests require the explicitly selected isolated test hub"

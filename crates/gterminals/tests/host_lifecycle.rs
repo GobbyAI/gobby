@@ -385,7 +385,7 @@ struct OwnedHubSchema {
 
 impl OwnedHubSchema {
     async fn new() -> anyhow::Result<Self> {
-        let admin_url = std::env::var("GOBBY_TERMINALS_TEST_DATABASE_URL")?;
+        let admin_url = crate::common::test_database_url()?;
         anyhow::ensure!(
             admin_url.starts_with("postgresql://gobby_test:gobby_test@127.0.0.1:60892/")
                 && admin_url.ends_with("/gobby_test"),

@@ -87,8 +87,21 @@ fn database_url_for_name(database_url: &str, name: &str) -> String {
     }
 }
 
+/// The one environment read of the resolver. Still reads the retired name (red commit):
+/// the shared entry maps `DATABASE_URL` onto the `gobby_gcode_test` namespace (H25).
+fn database_url_from(
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Result<String, gobby_test_support::hub_guard::DbUrlError> {
+    env(GCODE_POSTGRES_TEST_DATABASE_URL_ENV)
+        .ok_or(gobby_test_support::hub_guard::DbUrlError::Unset)
+}
+
 fn postgres_test_database_url_from_sources() -> Option<String> {
-    non_empty_env(GCODE_POSTGRES_TEST_DATABASE_URL_ENV)
+    match database_url_from(&non_empty_env) {
+        Ok(url) => Some(url),
+        Err(gobby_test_support::hub_guard::DbUrlError::Unset) => None,
+        Err(error) => panic!("{error}"),
+    }
 }
 
 fn non_empty_env(name: &str) -> Option<String> {
@@ -347,6 +360,22 @@ mod tests {
             })
             .collect::<Vec<_>>();
         temp_env::with_vars(vars, closure)
+    }
+
+    #[test]
+    fn database_url_comes_from_the_shared_entry_into_the_gcode_namespace() {
+        const TEST_HUB: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test";
+        const LIVE_HUB: &str = "postgresql://gobby:gobby@localhost:60891/gobby";
+        let only_database_url = |name: &str| (name == "DATABASE_URL").then(|| TEST_HUB.to_string());
+        assert_eq!(
+            database_url_from(&only_database_url),
+            Ok("postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test".to_string())
+        );
+        let live_hub = |name: &str| (name == "DATABASE_URL").then(|| LIVE_HUB.to_string());
+        assert!(matches!(
+            database_url_from(&live_hub),
+            Err(gobby_test_support::hub_guard::DbUrlError::Refused(_))
+        ));
     }
 
     #[test]
