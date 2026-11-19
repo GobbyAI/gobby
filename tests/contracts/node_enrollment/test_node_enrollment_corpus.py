@@ -319,10 +319,9 @@ def _checked_enrollment_routes(cases: list[dict[str, Any]]) -> set[tuple[str, st
     lines = _plan_lines()
     cited: set[tuple[str, str]] = set()
     for case in cases:
-        routes = _case_routes(case)
-        assert routes == set(ROUTE_ANCHORS.get(case["id"], frozenset())), (
-            f"case {case['id']} carries routes {sorted(routes)}"
-        )
+        routes = {_route_key(*route) for route in _case_routes(case)}
+        expected = {_route_key(*route) for route in ROUTE_ANCHORS.get(case["id"], frozenset())}
+        assert routes == expected, f"case {case['id']} carries routes {sorted(routes)}"
         for item in case.get("http", []):
             key = _route_key(item["method"], item["path"])
             assert key in declared, f"case {case['id']} names the undeclared route {key}"

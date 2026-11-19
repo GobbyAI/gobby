@@ -54,6 +54,10 @@
     ]
   },
   "normalizers": {
+    "/response/body": {
+      "name": "unordered",
+      "key": "name"
+    },
     "/response/body/1/id": "uuid_ordinal"
   },
   "mask": [

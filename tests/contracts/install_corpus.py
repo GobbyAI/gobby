@@ -265,7 +265,7 @@ class _Encoder:
         return sorted(candidates, key=lambda candidate: (-shared_tail(candidate), candidate))[0]
 
     def fields(self, key: str, mode: int, data: bytes) -> dict[str, str]:
-        # Windows has no POSIX mode bits, so the mode is recorded on POSIX only (D-29).
+        # Windows has no POSIX mode bits, so the mode is recorded on POSIX only.
         entry: dict[str, str] = {} if sys.platform == "win32" else {"mode": f"{mode:04o}"}
         source = self._source(key, data)
         if source is not None:
@@ -415,13 +415,15 @@ def host_path_occurrences(text: str, values: Iterable[str]) -> list[str]:
     """The host values that ``text`` carries as a path, sorted.
 
     A value counts where it starts a path (no path-name character before it) and ends
-    at a separator, whitespace, a JSON string quote or escape, or the end of the text.
-    So a recorded ``/tmp/x/home`` or a bare ``"/tmp"`` counts, while ``/var/tmp/x`` and
-    the shell default ``${TMPDIR:-/tmp}`` in a bundled hook template do not.
+    at a separator, whitespace, a JSON string quote or escape, a shell single quote, a
+    PATH-list colon, a comma, a closing parenthesis, or the end of the text. So a recorded
+    ``/tmp/x/home``, a bare ``"/tmp"``, ``cd '/tmp'`` and ``PATH=/tmp:/usr/bin`` count,
+    while ``/var/tmp/x`` and the shell default ``${TMPDIR:-/tmp}`` in a bundled hook
+    template do not.
     """
     found = set()
     for value in values:
-        if value and re.search(rf"(?<![\w.~-]){re.escape(value)}(?=[/\\\"\s]|$)", text):
+        if value and re.search(rf"(?<![\w.~-]){re.escape(value)}(?=[/\\\"'\s:,)]|$)", text):
             found.add(value)
     return sorted(found)
 

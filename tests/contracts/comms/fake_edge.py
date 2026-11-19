@@ -5,15 +5,21 @@ terminates TLS with a test certificate authority, mints a leaf certificate for e
 demand, answers each request from the scripts in ``edge/`` and never forwards upstream. An IMAP
 server with implicit TLS and an SMTP server with STARTTLS serve the email adapter's mailbox.
 
-Every request through the proxy is logged, in arrival order, as host, method and path. The CONNECT
-itself is not logged. A Telegram bot token in a path is replaced before the log keeps the path.
-Any host or path no script names answers HTTP 200 with a generic JSON body.
+Every request through the proxy is logged, in arrival order, as host, method, path and its
+sanitized ``semantic`` fields (``http_semantics``): the destination, the message text, the
+attachment filename and the SHA-256 of the uploaded bytes. Headers and raw bodies are never
+logged, so no request credential reaches the log. The CONNECT itself is not logged. A Telegram bot
+token in a path is replaced before the log keeps the path. Any host or path no script names
+answers HTTP 200 with a generic JSON body.
 """
 
 from __future__ import annotations
 
 import base64
 import datetime as dt
+import email
+import email.policy
+import hashlib
 import ipaddress
 import json
 import re
@@ -26,7 +32,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, BinaryIO
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -43,6 +49,11 @@ IO_TIMEOUT_SECONDS = 30.0
 MAX_LINE_BYTES = 65536
 TELEGRAM_BOT_PATH = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
 TELEGRAM_BOT_MARKER = "/bot@TELEGRAM_TOKEN@"
+# The sanitized fields kept for each provider request, and the request fields they are read from.
+SEMANTIC_FIELDS = ("destination", "text", "filename", "payload_sha256")
+DESTINATION_KEYS = ("channel", "channel_id", "chat_id", "To")
+TEXT_KEYS = ("text", "initial_comment", "caption", "Body")
+TEAMS_ACTIVITY_PATH = re.compile(r".*/v3/conversations/([^/]+)/activities")
 
 
 @dataclass(frozen=True)
@@ -61,6 +72,86 @@ class _Script:
 
 
 UNSCRIPTED_REPLY = _Reply(200, "application/json", b'{"ok": true}')
+
+
+def empty_semantic() -> dict[str, str]:
+    """The semantic fields of a request that sends none of them."""
+    return dict.fromkeys(SEMANTIC_FIELDS, "")
+
+
+def payload_digest(payload: bytes | None) -> str:
+    """The SHA-256 hex digest of uploaded bytes, or empty text when nothing was uploaded."""
+    return hashlib.sha256(payload).hexdigest() if payload else ""
+
+
+def _decode_http_body(
+    content_type: str, body: bytes
+) -> tuple[dict[str, Any], list[tuple[str, bytes]]]:
+    """The named fields and the uploaded files (filename, bytes) of one request body."""
+    kind = content_type.split(";", 1)[0].strip().lower()
+    if not body:
+        return {}, []
+    if kind == "application/json":
+        document = json.loads(body)
+        return (document if isinstance(document, dict) else {}), []
+    if kind == "application/x-www-form-urlencoded":
+        return dict(parse_qsl(body.decode("utf-8"), keep_blank_values=True)), []
+    if kind == "multipart/form-data":
+        head = f"Content-Type: {content_type}\r\n\r\n".encode("latin-1")
+        parsed = email.message_from_bytes(head + body, policy=email.policy.default)
+        fields: dict[str, Any] = {}
+        files: list[tuple[str, bytes]] = []
+        for part in parsed.iter_parts():
+            data = part.get_payload(decode=True)
+            payload = data if isinstance(data, bytes) else b""
+            filename = part.get_filename()
+            if filename:
+                files.append((filename, payload))
+            else:
+                name = part.get_param("name", header="content-disposition")
+                fields[str(name)] = payload.decode("utf-8")
+        return fields, files
+    return {}, []
+
+
+def _first_text(fields: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = fields.get(key)
+        if isinstance(value, str | int) and not isinstance(value, bool):
+            return str(value)
+    return ""
+
+
+def http_semantics(method: str, path: str, headers: dict[str, str], body: bytes) -> dict[str, str]:
+    """The sanitized semantic fields of one HTTP provider request.
+
+    ``headers`` are keyed by lowercase name. Only the content type is read from them, so no
+    credential header reaches the result.
+    """
+    fields, files = _decode_http_body(headers.get("content-type", ""), body)
+    semantic = empty_semantic()
+    semantic["destination"] = _first_text(fields, DESTINATION_KEYS)
+    activity = TEAMS_ACTIVITY_PATH.fullmatch(path)
+    if not semantic["destination"] and activity is not None:
+        semantic["destination"] = unquote(activity.group(1))
+    semantic["text"] = _first_text(fields, TEXT_KEYS)
+    payload: bytes | None = None
+    if files:
+        semantic["filename"], payload = files[0]
+    else:
+        semantic["filename"] = _first_text(fields, ("filename",))
+        completed = fields.get("files")
+        if isinstance(completed, str):
+            listed = json.loads(completed)
+            if isinstance(listed, list) and listed and isinstance(listed[0], dict):
+                semantic["filename"] = str(listed[0].get("title", ""))
+        cards = fields.get("attachments")
+        if isinstance(cards, list) and cards and isinstance(cards[0], dict):
+            payload = json.dumps(cards[0].get("content"), sort_keys=True).encode("utf-8")
+        elif method == "PUT":
+            payload = body
+    semantic["payload_sha256"] = payload_digest(payload)
+    return semantic
 
 
 def _encode_body(body: Any) -> bytes:
@@ -329,9 +420,9 @@ class FakeEdge:
         return self._root / CA_FILE
 
     def hits(self) -> list[dict[str, Any]]:
-        """Every arrival since the last clear, in arrival order, as host, method and path."""
+        """Every arrival since the last clear, in arrival order: host, method, path, semantic."""
         with self._hits_lock:
-            return [dict(hit) for hit in self._hits]
+            return [{**hit, "semantic": dict(hit["semantic"])} for hit in self._hits]
 
     def clear(self) -> None:
         """Forget every arrival so far."""
@@ -365,10 +456,12 @@ class FakeEdge:
             return script.default
         return UNSCRIPTED_REPLY
 
-    def _log(self, host: str, method: str, path: str) -> None:
+    def _log(self, host: str, method: str, path: str, semantic: dict[str, str]) -> None:
         logged = TELEGRAM_BOT_PATH.sub(TELEGRAM_BOT_MARKER, path)
         with self._hits_lock:
-            self._hits.append({"host": host, "method": method, "path": logged})
+            self._hits.append(
+                {"host": host, "method": method, "path": logged, "semantic": dict(semantic)}
+            )
 
     def _serve_proxy_client(self, conn: socket.socket) -> None:
         assert self._authority is not None
@@ -402,9 +495,9 @@ class FakeEdge:
                 request_line, headers = head
                 method, _, rest = request_line.partition(" ")
                 target = rest.rpartition(" ")[0] or rest
-                _read_body(reader, headers)
+                body = _read_body(reader, headers)
                 path = urlsplit(target).path or "/"
-                self._log(host, method, path)
+                self._log(host, method, path, http_semantics(method, path, headers, body))
                 _write_reply(tls, self._reply_for(host, method, path))
                 if headers.get("connection", "").lower() == "close":
                     return

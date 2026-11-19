@@ -13,6 +13,15 @@
     "headers": {},
     "body": {"channel_name": "corpus-slack", "content": "corpus message one"}
   },
+  "db_delta": [
+    {
+      "table": "comms_messages",
+      "key": ["id"],
+      "columns": ["id", "channel_id", "direction", "content", "content_type", "platform_message_id", "status"],
+      "normalizers": {"id": "uuid_ordinal"},
+      "order": "set"
+    }
+  ],
   "side_effects": [
     {
       "channel": "provider_edge",

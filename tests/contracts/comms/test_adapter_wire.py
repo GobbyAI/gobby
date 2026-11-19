@@ -39,7 +39,6 @@ import hmac
 import ipaddress
 import json
 import os
-import re
 import socket
 import ssl
 import threading
@@ -50,7 +49,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, BinaryIO
 from unittest import mock
-from urllib.parse import parse_qsl, unquote, urlencode, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 import aioimaplib
 import aiosmtplib
@@ -70,6 +69,7 @@ from gobby.communications.models import ChannelConfig, CommsAttachment, CommsMes
 from tests.contracts.comms.fake_edge import (
     LOOPBACK,
     MAX_LINE_BYTES,
+    SEMANTIC_FIELDS,
     TELEGRAM_BOT_MARKER,
     TELEGRAM_BOT_PATH,
     FakeEdge,
@@ -81,6 +81,9 @@ from tests.contracts.comms.fake_edge import (
     _smtp_greeting,
     _SmtpSession,
     _write_reply,
+    empty_semantic,
+    http_semantics,
+    payload_digest,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -94,7 +97,6 @@ EXPECTED_FIXTURES = frozenset(f"{p}_{o}" for p in PROVIDERS for o in OPERATIONS)
 PROVENANCE_KEYS = ("source_file", "source_test", "contract_ref", "oracle")
 CAPTURE_KINDS = ("exchange", "refusal")
 REFUSAL_FIXTURES = frozenset({"sms_attachment"})
-SEMANTIC_FIELDS = ("destination", "text", "filename", "payload_sha256")
 
 
 @dataclass(frozen=True)
@@ -192,9 +194,6 @@ def record_wire_fixtures(out_dir: Path, edge_root: Path) -> list[Path]:
 UNSCRIPTED_HTTP_REPLY = _Reply(404, "application/json", b'{"ok": false, "error": "unscripted"}')
 LOOPBACK_NO_PROXY = "127.0.0.1,localhost,::1"
 PROXY_VARIABLES = ("HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy")
-DESTINATION_KEYS = ("channel", "channel_id", "chat_id", "To")
-TEXT_KEYS = ("text", "initial_comment", "caption", "Body")
-TEAMS_ACTIVITY_PATH = re.compile(r".*/v3/conversations/([^/]+)/activities")
 IMAP_MAILBOX_COMMANDS = frozenset({"SELECT", "SEARCH", "FETCH", "STORE"})
 TEAMS_TOKEN_MARKER = "@REPLAY_TEAMS_TOKEN@"
 TEAMS_KEY_MARKERS = {"n": "@REPLAY_TEAMS_KEY_N@", "e": "@REPLAY_TEAMS_KEY_E@"}
@@ -208,84 +207,10 @@ ADAPTERS: dict[str, type[BaseChannelAdapter]] = {
 }
 
 
-def _empty_semantic() -> dict[str, str]:
-    return dict.fromkeys(SEMANTIC_FIELDS, "")
-
-
-def _digest(payload: bytes | None) -> str:
-    return hashlib.sha256(payload).hexdigest() if payload else ""
-
-
-def _decode_http_body(
-    content_type: str, body: bytes
-) -> tuple[dict[str, Any], list[tuple[str, bytes]]]:
-    """The named fields and the uploaded files (filename, bytes) of one request body."""
-    kind = content_type.split(";", 1)[0].strip().lower()
-    if not body:
-        return {}, []
-    if kind == "application/json":
-        document = json.loads(body)
-        return (document if isinstance(document, dict) else {}), []
-    if kind == "application/x-www-form-urlencoded":
-        return dict(parse_qsl(body.decode("utf-8"), keep_blank_values=True)), []
-    if kind == "multipart/form-data":
-        head = f"Content-Type: {content_type}\r\n\r\n".encode("latin-1")
-        parsed = email.message_from_bytes(head + body, policy=email.policy.default)
-        fields: dict[str, Any] = {}
-        files: list[tuple[str, bytes]] = []
-        for part in parsed.iter_parts():
-            data = part.get_payload(decode=True)
-            payload = data if isinstance(data, bytes) else b""
-            filename = part.get_filename()
-            if filename:
-                files.append((filename, payload))
-            else:
-                name = part.get_param("name", header="content-disposition")
-                fields[str(name)] = payload.decode("utf-8")
-        return fields, files
-    return {}, []
-
-
-def _first_text(fields: dict[str, Any], keys: tuple[str, ...]) -> str:
-    for key in keys:
-        value = fields.get(key)
-        if isinstance(value, str | int) and not isinstance(value, bool):
-            return str(value)
-    return ""
-
-
-def _http_semantics(method: str, path: str, headers: dict[str, str], body: bytes) -> dict[str, str]:
-    """The sanitized semantic fields of one HTTP provider request."""
-    fields, files = _decode_http_body(headers.get("content-type", ""), body)
-    semantic = _empty_semantic()
-    semantic["destination"] = _first_text(fields, DESTINATION_KEYS)
-    activity = TEAMS_ACTIVITY_PATH.fullmatch(path)
-    if not semantic["destination"] and activity is not None:
-        semantic["destination"] = unquote(activity.group(1))
-    semantic["text"] = _first_text(fields, TEXT_KEYS)
-    payload: bytes | None = None
-    if files:
-        semantic["filename"], payload = files[0]
-    else:
-        semantic["filename"] = _first_text(fields, ("filename",))
-        completed = fields.get("files")
-        if isinstance(completed, str):
-            listed = json.loads(completed)
-            if isinstance(listed, list) and listed and isinstance(listed[0], dict):
-                semantic["filename"] = str(listed[0].get("title", ""))
-        cards = fields.get("attachments")
-        if isinstance(cards, list) and cards and isinstance(cards[0], dict):
-            payload = json.dumps(cards[0].get("content"), sort_keys=True).encode("utf-8")
-        elif method == "PUT":
-            payload = body
-    semantic["payload_sha256"] = _digest(payload)
-    return semantic
-
-
 def _mail_semantics(message_bytes: bytes) -> dict[str, str]:
     """The sanitized semantic fields of one SMTP submission."""
     message = email.message_from_bytes(message_bytes, policy=email.policy.default)
-    semantic = _empty_semantic()
+    semantic = empty_semantic()
     semantic["destination"] = str(message.get("To", ""))
     if not isinstance(message, EmailMessage):
         return semantic
@@ -295,7 +220,7 @@ def _mail_semantics(message_bytes: bytes) -> dict[str, str]:
     for attachment in message.iter_attachments():
         data = attachment.get_payload(decode=True)
         semantic["filename"] = str(attachment.get_filename() or "")
-        semantic["payload_sha256"] = _digest(data if isinstance(data, bytes) else None)
+        semantic["payload_sha256"] = payload_digest(data if isinstance(data, bytes) else None)
         break
     return semantic
 
@@ -356,7 +281,7 @@ class WireEdge(FakeEdge):
                 body = _read_body(reader, headers)
                 path = TELEGRAM_BOT_PATH.sub(TELEGRAM_BOT_MARKER, urlsplit(target).path or "/")
                 scripted = self.take(
-                    host, method, path, _http_semantics(method, path, headers, body)
+                    host, method, path, http_semantics(method, path, headers, body)
                 )
                 reply = UNSCRIPTED_HTTP_REPLY if scripted is None else _reply_from(scripted)
                 _write_reply(tls, reply)
@@ -386,7 +311,7 @@ class WireEdge(FakeEdge):
                 tls.sendall(_imap_reply(tag, verb, arguments, self._mailbox_login))
 
     def _imap_mailbox_reply(self, tag: str, verb: str, arguments: str) -> bytes:
-        semantic = _empty_semantic()
+        semantic = empty_semantic()
         if verb == "SELECT":
             semantic["destination"] = arguments.strip('"')
         scripted = self.take(LOOPBACK, "IMAP", verb, semantic)
@@ -866,6 +791,10 @@ def _label_problems(stem: str, fixture: dict[str, Any]) -> list[str]:
         return [*problems, f"{stem}.json has no exchanges list"]
     if stem in REFUSAL_FIXTURES and capture != "refusal":
         problems.append(f"{stem}.json is not labelled a refusal")
+    if capture == "refusal" and stem not in REFUSAL_FIXTURES:
+        problems.append(
+            f"{stem}.json is labelled a refusal, but only {sorted(REFUSAL_FIXTURES)} refuse"
+        )
     if capture == "refusal":
         if exchanges != []:
             problems.append(f"the refusal {stem}.json records provider requests")
@@ -914,6 +843,12 @@ def _contract_problems(stem: str, fixture: dict[str, Any]) -> list[str]:
         return [*problems, f"{stem}.json has no provider_contract.responses list"]
     if fixture.get("capture") == "refusal" and responses != []:
         problems.append(f"the refusal {stem}.json scripts provider responses")
+    if (
+        fixture.get("capture") == "exchange"
+        and fixture.get("operation") != "inbound"
+        and not responses
+    ):
+        problems.append(f"the {fixture.get('operation')} {stem}.json scripts no provider response")
     for index, response in enumerate(responses):
         if not isinstance(response, dict):
             problems.append(f"{stem}.json response {index} is not an object")

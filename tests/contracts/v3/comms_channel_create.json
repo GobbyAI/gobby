@@ -90,7 +90,13 @@
         {
           "host": "slack.com",
           "method": "POST",
-          "path": "/api/auth.test"
+          "path": "/api/auth.test",
+          "semantic": {
+            "destination": "",
+            "text": "",
+            "filename": "",
+            "payload_sha256": ""
+          }
         }
       ]
     }

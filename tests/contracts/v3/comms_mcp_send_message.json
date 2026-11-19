@@ -22,6 +22,42 @@
       "error": null
     }
   },
+  "db_delta": [
+    {
+      "table": "comms_messages",
+      "key": [
+        "id"
+      ],
+      "columns": [
+        "id",
+        "channel_id",
+        "direction",
+        "content",
+        "content_type",
+        "platform_message_id",
+        "status"
+      ],
+      "normalizers": {
+        "id": "uuid_ordinal"
+      },
+      "order": "set",
+      "recorded": {
+        "added": [
+          {
+            "id": "@uuid:1@",
+            "channel_id": "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+            "direction": "outbound",
+            "content": "corpus message two",
+            "content_type": "text",
+            "platform_message_id": "1700000000.000100",
+            "status": "sent"
+          }
+        ],
+        "removed": [],
+        "changed": []
+      }
+    }
+  ],
   "side_effects": [
     {
       "channel": "provider_edge",
@@ -34,7 +70,13 @@
         {
           "host": "slack.com",
           "method": "POST",
-          "path": "/api/chat.postMessage"
+          "path": "/api/chat.postMessage",
+          "semantic": {
+            "destination": "C0CORPUS0001",
+            "text": "corpus message two",
+            "filename": "",
+            "payload_sha256": ""
+          }
         }
       ]
     }

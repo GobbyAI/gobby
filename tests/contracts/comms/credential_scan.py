@@ -1,8 +1,9 @@
-"""Credential-shape scan over the communications and voice corpus and the provider edge scripts.
+"""Credential-shape scan over the communications and voice corpus, the provider edge scripts and
+the adapter wire fixtures.
 
 A committed case holds ``$secret:`` references only. The scan flags Slack bot tokens, Telegram bot
-tokens and the generated fake-secret marker wherever they appear in a committed case or an edge
-script. A finding names the file and the shape, never the matched value. The scan never reads the
+tokens and the generated fake-secret marker wherever they appear in a committed case, an edge
+script or an adapter wire fixture. A finding names the file and the shape, never the matched value. The scan never reads the
 secret store.
 """
 
@@ -13,6 +14,8 @@ from dataclasses import dataclass, field
 
 from tests.contracts import corpus_v3
 from tests.contracts.comms.fake_edge import EDGE_DIR
+
+WIRE_DIR = EDGE_DIR.parent / "adapter_wire"
 
 SHAPES: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("slack_bot_token", re.compile(r"\bxox[abposr]-[0-9A-Za-z-]{10,}")),
@@ -32,15 +35,21 @@ class ScanReport:
 
 
 def scan_corpus() -> ScanReport:
-    """Scan every v3 case file and every edge script."""
+    """Scan every v3 case file, every edge script and every adapter wire fixture."""
     manifest = corpus_v3.load_manifest(corpus_v3.V3_DIR)
     case_paths = [corpus_v3.V3_DIR / name for name in manifest["cases"]]
     edge_paths = sorted(EDGE_DIR.glob("*.json"))
+    wire_paths = sorted(WIRE_DIR.glob("*.json"))
     findings: list[str] = []
-    for path in [*case_paths, *edge_paths]:
+    for path in [*case_paths, *edge_paths, *wire_paths]:
         text = path.read_text(encoding="utf-8")
         findings.extend(f"{path.name}: {shape}" for shape in find_credential_shapes(text))
-    return ScanReport(case_files=len(case_paths), edge_files=len(edge_paths), findings=findings)
+    return ScanReport(
+        case_files=len(case_paths),
+        edge_files=len(edge_paths),
+        wire_files=len(wire_paths),
+        findings=findings,
+    )
 
 
 def find_credential_shapes(text: str) -> list[str]:

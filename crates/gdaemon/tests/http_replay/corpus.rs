@@ -15,6 +15,8 @@ use std::path::Path;
 use gobby_daemon::front_door::waivers::is_native_extension;
 use serde_json::{Map, Value, json};
 
+use super::normalize::parse_unordered;
+
 /// The schema versions the loader accepts: v2 files as they are, and v3 files.
 pub const ACCEPTED_SCHEMAS: [u64; 2] = [2, 3];
 
@@ -304,7 +306,7 @@ fn check_v3_optional(value: &Value, case: &str) -> Result<(), CorpusError> {
         }
     }
     if let Some(normalizers) = value.get("normalizers") {
-        check_normalizers(normalizers, case, false)?;
+        check_normalizers(normalizers, case, false, true)?;
         check_pointer_keys(normalizers, case)?;
     }
     for entry in entries(value, case, "db_delta")? {
@@ -352,7 +354,7 @@ fn check_db_delta(case: &str, entry: &Value) -> Result<(), CorpusError> {
         ));
     }
     if let Some(normalizers) = object.get("normalizers") {
-        check_normalizers(normalizers, case, true)?;
+        check_normalizers(normalizers, case, true, false)?;
     }
     let order = match object.get("order") {
         None => return Err(shape(case, format!("db_delta {table} order is required"))),
@@ -399,7 +401,7 @@ fn check_side_effect(case: &str, effect: &Value) -> Result<(), CorpusError> {
         ));
     }
     if let Some(normalizers) = object.and_then(|map| map.get("normalizers")) {
-        check_normalizers(normalizers, case, false)?;
+        check_normalizers(normalizers, case, false, false)?;
         check_pointer_keys(normalizers, case)?;
     }
     Ok(())
@@ -407,15 +409,27 @@ fn check_side_effect(case: &str, effect: &Value) -> Result<(), CorpusError> {
 
 /// A normalizer map (Python `_check_normalizers`): each value names a field normalizer, or is
 /// `{"name", "after"}` where `after` is legal only on a `db_delta` normalizer and only for timestamps.
+/// A case's own map (`allow_unordered`) may also declare a response collection
+/// `{"name": "unordered", "key": <field>}`, which the comparison sorts by that field.
 fn check_normalizers(
     normalizers: &Value,
     case: &str,
     allow_after: bool,
+    allow_unordered: bool,
 ) -> Result<(), CorpusError> {
     let map = normalizers
         .as_object()
         .ok_or_else(|| shape(case, "normalizers must be an object"))?;
     for spec in map.values() {
+        if allow_unordered && let Some(key) = parse_unordered(spec) {
+            key.map_err(|_| {
+                shape(
+                    case,
+                    format!("normalizer {spec} needs exactly a name and a key field"),
+                )
+            })?;
+            continue;
+        }
         let (_, after) = normalizer_spec(spec, case)?;
         if after.is_some() && !allow_after {
             return Err(shape(

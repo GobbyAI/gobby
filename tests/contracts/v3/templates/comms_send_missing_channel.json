@@ -13,6 +13,21 @@
     "headers": {},
     "body": {"channel_name": "corpus-missing", "content": "corpus message missing"}
   },
+  "db_delta": [
+    {
+      "table": "comms_messages",
+      "key": ["id"],
+      "columns": ["id", "channel_id", "direction", "content", "content_type", "platform_message_id", "status"],
+      "normalizers": {"id": "uuid_ordinal"},
+      "order": "set"
+    }
+  ],
+  "side_effects": [
+    {
+      "channel": "provider_edge",
+      "match": {"hosts": ["slack.com"]}
+    }
+  ],
   "normalizers": {},
   "mask": []
 }

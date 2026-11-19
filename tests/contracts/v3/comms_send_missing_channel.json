@@ -25,6 +25,43 @@
       "detail": "Channel 'corpus-missing' not found or not active"
     }
   },
+  "db_delta": [
+    {
+      "table": "comms_messages",
+      "key": [
+        "id"
+      ],
+      "columns": [
+        "id",
+        "channel_id",
+        "direction",
+        "content",
+        "content_type",
+        "platform_message_id",
+        "status"
+      ],
+      "normalizers": {
+        "id": "uuid_ordinal"
+      },
+      "order": "set",
+      "recorded": {
+        "added": [],
+        "removed": [],
+        "changed": []
+      }
+    }
+  ],
+  "side_effects": [
+    {
+      "channel": "provider_edge",
+      "match": {
+        "hosts": [
+          "slack.com"
+        ]
+      },
+      "recorded": []
+    }
+  ],
   "normalizers": {},
   "mask": []
 }

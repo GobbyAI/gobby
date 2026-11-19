@@ -5,6 +5,27 @@
   "command_frames": [],
   "cases": [
     {
+      "id": "2.1.1",
+      "kind": "node_install",
+      "command": "gdaemon node release-info",
+      "plan_line": 613,
+      "anchor_text": "- 2.1.1 - `gdaemon node release-info --json` prints the crate version and `node_commands::CONTRACT_VERSION` in the sandbox, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::release_info_reports_version_and_contract_without_python`."
+    },
+    {
+      "id": "2.2.1",
+      "kind": "node_install",
+      "command": "gclient node install",
+      "plan_line": 654,
+      "anchor_text": "- 2.2.1 - With no daemon URL or token available, `gclient node install` and `gclient node enroll` exec the sibling `gdaemon node <verb>` with every argument unchanged and return its exit status. test: `crates/gclient/tests/node_verbs.rs::node_setup_verbs_exec_sibling_gdaemon`."
+    },
+    {
+      "id": "2.2.2",
+      "kind": "node_install",
+      "command": "gclient node install",
+      "plan_line": 655,
+      "anchor_text": "- 2.2.2 - A missing sibling `gdaemon` exits 2 naming the expected path. test: `crates/gclient/tests/node_verbs.rs::node_setup_verbs_name_missing_gdaemon`."
+    },
+    {
       "id": "2.3.1",
       "kind": "enrollment",
       "command": "gobby node enroll",

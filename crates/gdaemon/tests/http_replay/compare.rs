@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 
 use super::corpus::{Case, Kind};
 use super::normalize::{
-    NormalizeError, Spec, Window, escape_token, normalize_document, normalize_items, parse_spec,
-    redact,
+    NormalizeError, Spec, Window, document_rules, escape_token, normalize_document,
+    normalize_items, parse_spec, redact, sort_collections,
 };
 
 /// The normalizer declarations of an entry, from its `normalizers` object, in declaration order.
@@ -96,8 +96,9 @@ fn capture_rules(entry: &Value) -> Result<Vec<(String, Spec)>, NormalizeError> {
 /// The normalized comparison document of one case observation (Python `_normalize_response`,
 /// `normalize_captures` and `_comparison`), with each unit normalized on its own counter.
 ///
-/// The response is one unit: it is redacted, an HTTP response is masked before its rules (Python
-/// observes the masked answer), and then the case's pointer rules run on `{"response": ...}`.
+/// The response is one unit: it is redacted, its `unordered` collections are sorted by their key
+/// field, an HTTP response is masked before its rules (Python observes the masked answer), and then
+/// the case's field rules run on `{"response": ...}`.
 /// Each side-effect entry is one sequence unit of captures, normalized before any redaction. The
 /// `db_delta` values must already be the output of `db_delta::table_delta`, which normalizes each
 /// entry as its own unit. The assembled document is redacted, and the case's masks apply last, for
@@ -110,12 +111,10 @@ pub fn normalized_document(
     window: &Window,
 ) -> Result<Value, NormalizeError> {
     let mut unit = json!({"response": redact(response)});
+    let (collections, response_rules) = document_rules(&case.normalizers)?;
+    sort_collections(&mut unit, &collections)?;
     if matches!(case.kind, Kind::Http) {
         corpus_v2::apply_masks(&mut unit, &case.mask);
-    }
-    let mut response_rules = Vec::new();
-    for (pointer, spec) in &case.normalizers {
-        response_rules.push((pointer.clone(), parse_spec(spec, false)?.normalizer));
     }
     let normalized = normalize_document(&unit, &json!([]), &response_rules, window)?;
 

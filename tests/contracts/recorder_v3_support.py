@@ -202,10 +202,14 @@ def recorded_db_delta(value: Mapping[str, Any], case_name: str) -> dict[str, Any
 
 
 class ProviderEdgeCapture:
-    """The arrivals at one provider edge for the listed hosts, as host, method and path only.
+    """The arrivals at one provider edge for the listed hosts, in arrival order.
 
+    Each capture item is the request signature (host, method and path) and the arrival's
+    sanitized ``semantic`` fields: destination, text, attachment filename and the SHA-256 of the
+    uploaded bytes. An arrival logged with no ``semantic`` (an edge that keeps signatures only)
+    is captured as its signature, which then differs from a recording that carries semantics.
     Entering the capture clears the edge log, so the window holds only the arrivals its request
-    makes. Headers and bodies are never kept.
+    makes. Headers and raw bodies are never kept.
     """
 
     def __init__(self, edge: ProviderEdgeLog, hosts: Sequence[str]) -> None:
@@ -221,7 +225,12 @@ class ProviderEdgeCapture:
 
     def hits(self) -> list[dict[str, Any]]:
         return [
-            {"host": arrival["host"], "method": arrival["method"], "path": arrival["path"]}
+            {
+                "host": arrival["host"],
+                "method": arrival["method"],
+                "path": arrival["path"],
+                **({"semantic": dict(arrival["semantic"])} if "semantic" in arrival else {}),
+            }
             for arrival in self._edge.hits()
             if arrival["host"] in self._hosts
         ]

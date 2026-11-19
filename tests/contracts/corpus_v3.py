@@ -33,12 +33,14 @@ KINDS = frozenset({"http", "mcp", "ws", "cli"})
 CHANNELS = frozenset({"pg_notify", "ws_publish", "files_home_write", "provider_edge"})
 FIELD_NORMALIZERS = frozenset({"uuid_ordinal", "monotonic", "timestamp", "bytes", "none"})
 ORDER_MODES = frozenset({"set", "as_recorded"})
+UNORDERED = "unordered"
 MCP_TRANSPORTS = frozenset({"http", "stdio", "rest"})
 # The startup block (schema 3 manifest): the keys of one family's entry and of one channel row.
 STARTUP_KEYS = frozenset({"config", "channels", "secrets"})
 STARTUP_CHANNEL_KEYS = frozenset({"id", "channel_type", "name", "enabled", "config"})
 SECRET_REFERENCE = "$secret:"
 _SECRET_NAME = re.compile(r"[a-z][a-z0-9_]*")
+_ROUTE_PARAMETER = re.compile(r"\{[^{}/]+\}")
 _UUID_TEXT = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # Keys appear in this order; absent keys are omitted.
 V3_KEY_ORDER = (
@@ -267,7 +269,7 @@ def _check_optional(case: Mapping[str, Any], name: str, file_name: str) -> None:
         if not isinstance(value, str):
             raise CorpusError(f"{file_name}: waiver must be a waiver id")
     elif name == "normalizers":
-        _check_normalizers(value, file_name)
+        _check_normalizers(value, file_name, allow_unordered=True)
         _check_pointer_keys(value, file_name)
     elif name == "seed":
         if not isinstance(value, list) or not all(_is_seed_step(step) for step in value):
@@ -353,9 +355,33 @@ def _check_ledger_key(case: Mapping[str, Any], kind: str, file_name: str) -> dic
                 f"{file_name}: ledger_key method {match['method']!r} differs from "
                 f"request method {method!r}"
             )
+        path = case["request"]["path"]
+        if not _path_matches_template(path, match["template"]):
+            raise CorpusError(
+                f"{file_name}: ledger_key route {match['template']!r} does not match "
+                f"request path {path!r} segment by segment"
+            )
     if kind == "mcp" and match["transport"] and match["server"] != "gobby":
         raise CorpusError(f"{file_name}: ledger_key {key!r} needs the gobby server")
     return dict(match.groupdict())
+
+
+def _path_matches_template(path: str, template: str) -> bool:
+    """A request path matches a route template segment by segment.
+
+    A literal segment must be equal, and a ``{parameter}`` segment matches exactly one non-empty
+    path segment, so a request to another route of the same method gets no coverage credit.
+    """
+    segments, pattern = path.split("/"), template.split("/")
+    if len(segments) != len(pattern):
+        return False
+    for segment, expected in zip(segments, pattern, strict=True):
+        if _ROUTE_PARAMETER.fullmatch(expected):
+            if not segment:
+                return False
+        elif segment != expected:
+            return False
+    return True
 
 
 def _check_invocation(
@@ -420,14 +446,25 @@ def _frame_type(frame: str, file_name: str) -> Any:
     return decoded.get("type")
 
 
-def _check_normalizers(normalizers: Any, file_name: str, *, allow_after: bool = False) -> None:
+def _check_normalizers(
+    normalizers: Any, file_name: str, *, allow_after: bool = False, allow_unordered: bool = False
+) -> None:
     """Validate a normalizer map: each value is a name, or ``{"name", "after"}`` for timestamp.
 
     ``after`` names a sibling column and is legal only where ``allow_after`` says so (db_delta).
+    A case's own normalizers (``allow_unordered``) may also declare a response collection
+    ``{"name": "unordered", "key": "<field>"}``, which normalizers_v3 sorts by that field.
     """
     if not isinstance(normalizers, dict):
         raise CorpusError(f"{file_name}: normalizers must be an object")
     for spec in normalizers.values():
+        if allow_unordered and isinstance(spec, dict) and spec.get("name") == UNORDERED:
+            key = spec.get("key")
+            if set(spec) != {"name", "key"} or not isinstance(key, str) or not key:
+                raise CorpusError(
+                    f"{file_name}: normalizer {spec!r} needs exactly a name and a key field"
+                )
+            continue
         _, after = _normalizer_spec(spec, file_name)
         if after is not None and not allow_after:
             raise CorpusError(f"{file_name}: 'after' is declared only on db_delta normalizers")

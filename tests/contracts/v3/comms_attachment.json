@@ -54,6 +54,42 @@
       }
     }
   },
+  "db_delta": [
+    {
+      "table": "comms_messages",
+      "key": [
+        "id"
+      ],
+      "columns": [
+        "id",
+        "channel_id",
+        "direction",
+        "content",
+        "content_type",
+        "platform_message_id",
+        "status"
+      ],
+      "normalizers": {
+        "id": "uuid_ordinal"
+      },
+      "order": "set",
+      "recorded": {
+        "added": [
+          {
+            "id": "@uuid:1@",
+            "channel_id": "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+            "direction": "outbound",
+            "content": "corpus caption",
+            "content_type": "attachment",
+            "platform_message_id": "1700000000.000200",
+            "status": "sent"
+          }
+        ],
+        "removed": [],
+        "changed": []
+      }
+    }
+  ],
   "side_effects": [
     {
       "channel": "provider_edge",
@@ -67,17 +103,35 @@
         {
           "host": "slack.com",
           "method": "POST",
-          "path": "/api/files.getUploadURLExternal"
+          "path": "/api/files.getUploadURLExternal",
+          "semantic": {
+            "destination": "",
+            "text": "",
+            "filename": "corpus-errors.txt",
+            "payload_sha256": ""
+          }
         },
         {
           "host": "upload.corpus.test",
           "method": "PUT",
-          "path": "/upload/corpus-1"
+          "path": "/upload/corpus-1",
+          "semantic": {
+            "destination": "",
+            "text": "",
+            "filename": "",
+            "payload_sha256": "d5f5536929050d2d40529d1cda6dec93cbdec2246cc4034a4266d08ce1f11842"
+          }
         },
         {
           "host": "slack.com",
           "method": "POST",
-          "path": "/api/files.completeUploadExternal"
+          "path": "/api/files.completeUploadExternal",
+          "semantic": {
+            "destination": "C0CORPUS0001",
+            "text": "corpus caption",
+            "filename": "corpus-errors.txt",
+            "payload_sha256": ""
+          }
         }
       ]
     }

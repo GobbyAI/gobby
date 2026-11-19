@@ -26,6 +26,10 @@ Normalizers (names are exact):
 - ``bytes`` and ``none``: identity. ``bytes`` marks terminal, envelope and grant fields.
 - ``set`` is not a field normalizer. A db_delta table with ``order: "set"`` is sorted by its key
   (by the JSON text of each key value, in key order) before its unit is normalized.
+- ``unordered`` is a collection rule of a document, declared ``{"name": "unordered", "key":
+  "<field>"}`` on the pointer of a list. A list read from an unordered query is sorted by the JSON
+  text of each item's ``key`` field before the document's field rules and the case's masks apply,
+  so positional pointers address the sorted list and row order is not compared.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ from uuid import UUID
 
 FIELD_NORMALIZERS = frozenset({"uuid_ordinal", "monotonic", "timestamp", "bytes", "none"})
 ORDER_MODES = frozenset({"set", "as_recorded"})
+UNORDERED = "unordered"
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _INTEGER_TEXT = re.compile(r"-?[0-9]+")
 
@@ -264,12 +269,48 @@ def _check_monotonic(items: Sequence[Any], pointers: Sequence[str], where: str) 
             container[token] = "@seq@"
 
 
+def unordered_key(spec: Any) -> str | None:
+    """The key field of an ``unordered`` collection rule, or None when ``spec`` is not one.
+
+    A spec named ``unordered`` must be exactly ``{"name": "unordered", "key": "<field>"}``.
+    """
+    if not (isinstance(spec, Mapping) and spec.get("name") == UNORDERED):
+        return None
+    key = spec.get("key")
+    if set(spec) != {"name", "key"} or not isinstance(key, str) or not key:
+        raise NormalizationError(f"normalizer {dict(spec)!r} needs exactly a name and a key field")
+    return key
+
+
+def _sort_collection(document: Any, pointer: str, key: str) -> None:
+    """Sort the list at ``pointer`` in place by the JSON text of each item's ``key`` field."""
+    found = _parent_and_token(document, pointer) if pointer else None
+    if found is None:
+        raise NormalizationError(f"normalizer pointer {pointer} matches nothing")
+    container, token = found
+    items = container[int(token) if isinstance(container, list) else token]
+    if not isinstance(items, list):
+        raise NormalizationError(f"unordered needs a list at {pointer}")
+    for index, item in enumerate(items):
+        if not (isinstance(item, Mapping) and key in item):
+            raise NormalizationError(f"unordered key {key!r} is missing at {pointer}/{index}")
+    items.sort(key=lambda item: json.dumps(item[key]))
+
+
 def normalize_document(document: Any, normalizers: Mapping[str, Any], *, window: Window) -> Any:
-    """Normalize one document; every key is an RFC 6901 pointer from its root."""
+    """Normalize one document; every key is an RFC 6901 pointer from its root.
+
+    The ``unordered`` collection rules sort their lists first, outermost pointer first; the field
+    rules then apply to the sorted document.
+    """
     out = copy.deepcopy(json_form(document))
+    collections = {pointer: unordered_key(spec) for pointer, spec in normalizers.items()}
+    for pointer, key in sorted(collections.items(), key=lambda item: item[0].count("/")):
+        if key is not None:
+            _sort_collection(out, pointer, key)
     _apply_rules(
         out,
-        normalizers,
+        {pointer: spec for pointer, spec in normalizers.items() if collections[pointer] is None},
         window=window,
         ordinals=_Ordinals(),
         sequence=False,

@@ -13,6 +13,7 @@
     "arguments": {}
   },
   "normalizers": {
+    "/response/result/channels": {"name": "unordered", "key": "name"},
     "/response/result/channels/1/id": "uuid_ordinal"
   },
   "mask": []
