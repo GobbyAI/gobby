@@ -5,6 +5,7 @@ The recorder is pure: these tests pass synthetic frames and never start a daemon
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -21,19 +22,23 @@ from tests.e2e.task_census_bootstrap import (
     unsafe_reason,
 )
 from tests.e2e.task_census_recorder import (
+    LOOP_DEFAULT,
     RECORDED_PYTHON,
+    TIMING_OPTIONAL_SUBMITTERS,
     _mapped_inventory_tasks,
     _placed_stop,
     build_census,
     census_skip_reason,
     creation_record,
     creator_from_frames,
+    dumps_fixture,
     executor_record,
     normalize_name,
     normalize_record,
     record_key,
     record_target_problem,
     submit_record,
+    timing_comparison_view,
 )
 
 REPO = Path(__file__).resolve().parents[2]
@@ -420,6 +425,87 @@ def test_guard_refuses_bootstrap_that_is_not_a_mapping(
     reason = unsafe_reason(_guard_env(home), operator_home=operator)
     assert reason is not None and "bootstrap.yaml" in reason
     assert "not a readable YAML mapping" in reason
+
+
+def _loop_census(submitters: list[str], creator: str = LOOP_DEFAULT) -> dict[str, Any]:
+    """A minimal census with one executor row and no outside entries."""
+    return {
+        "executors": [{"creator": creator, "prefix": "asyncio", "submitters": sorted(submitters)}],
+        "outside_runner_lifecycle": [],
+    }
+
+
+def _same_under_timing_rule(live: dict[str, Any], frozen: dict[str, Any]) -> bool:
+    return dumps_fixture(timing_comparison_view(live)) == dumps_fixture(
+        timing_comparison_view(frozen)
+    )
+
+
+_MONITOR_CHECK = (
+    "gobby.agents.interactive_attention_monitor:InteractiveAttentionMonitor._check_attention_panes"
+)
+_OTHER_SUBMITTER = "gobby.hooks.inbox:drain_hook_inbox_barrier"
+
+
+def test_timing_optional_submitter_may_be_absent_or_present() -> None:
+    """A monitor pass or a startup sweep may or may not have run before the read (R68)."""
+    frozen = _loop_census([_OTHER_SUBMITTER, _MONITOR_CHECK])
+    assert _same_under_timing_rule(_loop_census([_OTHER_SUBMITTER]), frozen)
+    assert _same_under_timing_rule(_loop_census([_OTHER_SUBMITTER, _MONITOR_CHECK]), frozen)
+
+
+def test_timing_rule_keeps_every_other_submitter_exact() -> None:
+    """Only the named submitters are optional: an extra or missing other name still fails."""
+    frozen = _loop_census([_OTHER_SUBMITTER, _MONITOR_CHECK])
+    extra = _loop_census([_OTHER_SUBMITTER, _MONITOR_CHECK, "gobby.synthetic:unlisted"])
+    assert not _same_under_timing_rule(extra, frozen)
+    assert not _same_under_timing_rule(
+        _loop_census([_MONITOR_CHECK]), _loop_census([_OTHER_SUBMITTER])
+    )
+    assert not _same_under_timing_rule(
+        _loop_census([_OTHER_SUBMITTER, _MONITOR_CHECK]),
+        _loop_census([_OTHER_SUBMITTER, "gobby.synthetic:unlisted"]),
+    )
+
+
+def test_timing_rule_applies_only_to_the_loop_default_executor() -> None:
+    """The same submitter name on a pool the census keys by a creator is not optional."""
+    frozen = _loop_census([], creator="gobby.synthetic.pool:make")
+    live = _loop_census([_MONITOR_CHECK], creator="gobby.synthetic.pool:make")
+    assert not _same_under_timing_rule(live, frozen)
+
+
+def _defined_qualnames(tree: ast.Module) -> set[str]:
+    found: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            found.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            for child in node.body:
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    found.add(f"{node.name}.{child.name}")
+    return found
+
+
+def test_timing_optional_names_are_not_in_the_fixture() -> None:
+    """The optional set only admits extras: a name the frozen fixture lists is always exact."""
+    listed = {
+        str(name)
+        for row in _census()["executors"]
+        if row["creator"] == LOOP_DEFAULT
+        for name in row["submitters"]
+    }
+    assert TIMING_OPTIONAL_SUBMITTERS.isdisjoint(listed), sorted(
+        TIMING_OPTIONAL_SUBMITTERS & listed
+    )
+
+
+@pytest.mark.parametrize("submitter", sorted(TIMING_OPTIONAL_SUBMITTERS))
+def test_timing_optional_names_are_real_definitions(submitter: str) -> None:
+    """A renamed helper must fail here, so the optional set cannot silently stop matching."""
+    module, qualname = submitter.split(":", 1)
+    source = REPO / "src" / f"{module.replace('.', '/')}.py"
+    assert qualname in _defined_qualnames(ast.parse(source.read_text(encoding="utf-8"))), submitter
 
 
 def test_record_target_refuses_frozen_fixture_directory(tmp_path: Path) -> None:

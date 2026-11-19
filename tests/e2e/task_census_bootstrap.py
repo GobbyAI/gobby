@@ -24,6 +24,8 @@ from typing import Any, TextIO
 from unittest.mock import patch
 from urllib.parse import urlsplit
 
+import yaml
+
 if sys.platform != "win32":
     import pwd
 
@@ -35,10 +37,13 @@ TEST_HUB_DATABASE = "gobby_test"
 ISOLATED_DATABASE_PREFIX = "gobby_test_"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
 BOOTSTRAP_FILE = "bootstrap.yaml"
-DATABASE_URL_KEY = b"database_url:"
 REPO = Path(__file__).resolve().parents[2]
 CENSUS_LOG = Path("logs") / "task-census.jsonl"
 # Switches read by the test process that records the census; they are not part of a boot.
+
+
+class BootstrapFileError(ValueError):
+    """The bootstrap.yaml cannot be read the way the daemon reads it (R64)."""
 
 
 def database_url_is_test_hub(url: str | None) -> bool:
@@ -68,26 +73,24 @@ def database_url_is_test_hub(url: str | None) -> bool:
 
 
 def bootstrap_database_url(home: Path) -> str | None:
-    """The value of the top-level ``database_url:`` line in ``home``'s bootstrap.yaml.
+    """The top-level ``database_url`` the daemon reads from ``home``'s bootstrap.yaml (R64).
 
-    Only that line is decoded. Every other line is skipped as raw bytes, so no other field of
-    the file is read or parsed, and an undecodable line elsewhere cannot stop the check.
+    The file is read the way the daemon reads it (``bootstrap_io.read_present_bootstrap_mapping``):
+    UTF-8, then ``yaml.safe_load``, where a repeated key keeps its last value. A file that does
+    not decode, does not parse, or does not parse to a mapping raises ``BootstrapFileError``.
+    A missing file, or a mapping without a non-empty string ``database_url``, gives None.
     """
     path = home / BOOTSTRAP_FILE
     if not path.is_file():
         return None
-    with path.open("rb") as handle:
-        for raw in handle:
-            if not raw.startswith(DATABASE_URL_KEY):
-                continue
-            try:
-                value = raw[len(DATABASE_URL_KEY) :].decode("utf-8").strip()
-            except UnicodeDecodeError:
-                return None
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-                value = value[1:-1]
-            return value or None
-    return None
+    try:
+        loaded = yaml.safe_load(path.read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        raise BootstrapFileError("bootstrap.yaml is not readable YAML") from exc
+    if not isinstance(loaded, dict):
+        raise BootstrapFileError("bootstrap.yaml does not parse to a mapping")
+    value = loaded.get("database_url")
+    return value if isinstance(value, str) and value else None
 
 
 def unsafe_reason(env: Mapping[str, str], *, operator_home: Path) -> str | None:
@@ -109,7 +112,10 @@ def unsafe_reason(env: Mapping[str, str], *, operator_home: Path) -> str | None:
     live = operator / ".gobby"
     if home == operator or home == live or home.is_relative_to(live):
         return "task census refused: GOBBY_HOME is the operator home"
-    url = bootstrap_database_url(home)
+    try:
+        url = bootstrap_database_url(home)
+    except BootstrapFileError:
+        return "task census refused: GOBBY_HOME/bootstrap.yaml is not a readable YAML mapping"
     if url is None:
         return "task census refused: GOBBY_HOME/bootstrap.yaml names no database_url"
     if not database_url_is_test_hub(url):

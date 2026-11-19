@@ -167,16 +167,20 @@ def test_isolated_boot_creates_only_inventoried_tasks(census_boot: Path) -> None
 
 
 def test_census_matches_fixture(census_boot: Path) -> None:
-    """The live census equals the frozen fixture after normalization (R6, R23).
+    """The live census equals the frozen fixture after normalization (R6, R23, R68).
 
-    Request-driven entries compare as a set of keys; everything else compares byte for byte.
+    Request-driven entries compare as a set of keys. The loop's default-executor submitters named
+    in TIMING_OPTIONAL_SUBMITTERS may be absent or present, because a background pass races the
+    read; every other row and submitter compares byte for byte.
     """
-    from tests.e2e.task_census_recorder import build_census, comparison_view, dumps_fixture
+    from tests.e2e.task_census_recorder import build_census, dumps_fixture, timing_comparison_view
 
     inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
     live = build_census(_records(census_boot), inventory=inventory)
     frozen = json.loads(CENSUS.read_text(encoding="utf-8"))
-    assert dumps_fixture(comparison_view(live)) == dumps_fixture(comparison_view(frozen))
+    assert dumps_fixture(timing_comparison_view(live)) == dumps_fixture(
+        timing_comparison_view(frozen)
+    )
 
 
 def test_census_recording(census_boot: Path, tmp_path: Path) -> None:

@@ -138,9 +138,12 @@ bootstrap refuses to run unless `GOBBY_TEST_PROTECT=1`, `DATABASE_URL` names the
 `bootstrap.yaml` `database_url` names the test hub too. The hub check compares the parsed DSN
 parts, not the string: the user, the password, a loopback host (`127.0.0.1` or `localhost`), port
 `60892`, and a database that is `gobby_test` or an isolated `gobby_test_*` database. The query
-string is ignored. The bootstrap reads only the top-level `database_url:` line and never another
-line of that file, and a refusal never echoes a URL. The bootstrap never sets
-`GOBBY_ALLOW_WORKTREE_DAEMON`.
+string is ignored. The guard reads the home's `bootstrap.yaml` only after the operator-home check,
+and it reads it the way the daemon does (`read_present_bootstrap_mapping` in
+`src/gobby/config/bootstrap_io.py`): UTF-8, then `yaml.safe_load`, so a repeated `database_url` key
+keeps its last value, which is the value the daemon uses. A file that does not decode, does not
+parse, or does not parse to a mapping is refused. A refusal never echoes a URL. The bootstrap never
+sets `GOBBY_ALLOW_WORKTREE_DAEMON`.
 
 Host: the fixture was recorded on macOS (darwin) under CPython 3.14 (`RECORDED_PLATFORM` and
 `RECORDED_PYTHON` in `tests/e2e/task_census_recorder.py`). The census e2e module skips elsewhere, on
@@ -174,6 +177,39 @@ so the thread rows would differ by host. The Postgres capacity of the hub also s
 executor. The census needs at least 64
 usable connections on the isolated hub; a smaller hub changes the recorded `max_workers` and fails
 the fixture match loudly.
+
+Timing-optional submitters: the loop's default executor (`loop-default`) lists the frame that
+submitted each `asyncio.to_thread` call, once that call has run. Two background paths can add such
+a frame after the fixture's boot: the attention monitor's poll pass (`InteractiveAttentionMonitor`,
+first tick 5 seconds after its lifespan start), and the terminal-host upgrade check
+(`HostUpgradeCoordinator._installed_sha256`), which `HostUpgradeCoordinator.observe` reaches on each
+host adoption and health ping. The census is read 2 seconds after recovery-ready, so the monitor
+pass lands before the read on some boots, most often when host load slows the boot. A boot creates
+no task or thread for these calls; only the submitter list changes.
+
+Evidence: before the rule, the fixture match passed in 9 of 9 quiet runs (8 isolated, and 1 combined
+with the worker and contract tests) and failed in 2 of 2 runs taken while eight busy-loop processes
+shared the host. In both failing boots the diff was the same and sat on the live side only: four
+monitor helper submitters (`_check_attention_panes`, `_clear_attention_if_current`,
+`_list_active_agent_sessions`, `_list_interactive_sessions`) and the host-upgrade submitter. There
+was no other row, and the sandbox submitter matched on both sides. The monitor pass found one
+interactive session row with no live terminal. Each pytest process has its own database, which is
+reset to the canonical seed before each boot, and a literal search of `src/gobby` found session
+inserts only in runtime storage code, so the row was created during the boot. Its creator is not
+identified. Other agents' concurrent runs were not measured; only the synthetic load was. A
+verifier's report of a sandbox difference on one run, with no recorded direction, is not reproduced;
+the sandbox submitter stays exact.
+
+The rule: `TIMING_OPTIONAL_SUBMITTERS` in `tests/e2e/task_census_recorder.py` names five
+submitters that may be absent from a boot or present in it: the four monitor helpers above and the
+host-upgrade check. `timing_comparison_view` removes them from the `loop-default` executor row on
+both sides before the byte comparison. It touches no other row, no other submitter and no other
+executor. Three further helpers of the same pass (`_enter_interactive_lifecycle_wait`,
+`_resolve_interactive_lifecycle_wait`, `_settle_local_command`) run only after a live terminal row
+yields pane output, which the census boot never creates, so they are not named; if one appears, the
+match fails. A contract test pins that no named submitter is in the fixture's list, so the rule
+only admits extras. Another checks that each named submitter is still defined in its source, so a
+renamed helper fails the contract. The fixture is not edited.
 
 Skip: the skip rule (GF-14) drops a creation whose stack has no `gobby.` frame, so it is not
 recorded (harness-owned threads are listed under `excluded`). A pool worker start is not recorded;

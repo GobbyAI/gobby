@@ -39,6 +39,27 @@ REQUEST_DRIVEN_KEYS = frozenset(
         "thread|gobby.hooks.health_monitor:HealthMonitor.start|threading:Timer.run",
     }
 )
+# Loop-default submitters that a boot can add to the frozen fixture's list (R68). Each one is a
+# helper frame that calls asyncio.to_thread, so the loop's default executor records it only once
+# that call has run. The attention monitor's first poll pass runs 5 seconds after its lifespan
+# start, and the read follows recovery-ready by 2 seconds, so the pass lands before the read only on
+# some boots, most often when host load slows the boot. The host-upgrade check runs on each
+# terminal-host adoption and health ping. The four monitor names are the helpers the pass reaches in a
+# boot that has an interactive session row with no live terminal (the observed case). Three
+# further helpers of the same pass need a live terminal row and pane output, which the census boot
+# never creates, so they are not named. The set may only hold names that the frozen fixture does
+# not list (a test pins that), so a name the fixture lists is always compared exactly.
+# docs/contracts/runner-lifecycle.md records the reasons.
+_ATTENTION = "gobby.agents.interactive_attention_monitor:InteractiveAttentionMonitor"
+TIMING_OPTIONAL_SUBMITTERS = frozenset(
+    {
+        f"{_ATTENTION}._check_attention_panes",
+        f"{_ATTENTION}._clear_attention_if_current",
+        f"{_ATTENTION}._list_active_agent_sessions",
+        f"{_ATTENTION}._list_interactive_sessions",
+        "gobby.terminals.host_upgrade:HostUpgradeCoordinator._installed_sha256",
+    }
+)
 # Environment keys the census bootstrap reads or sets (R25). Nothing else enters the baseline.
 CENSUS_ENV_ALLOWLIST = frozenset({"GOBBY_HOME", "GOBBY_TEST_PROTECT"})
 APP_LIFECYCLE_MODULE = "gobby.servers._app_lifecycle"
@@ -544,6 +565,24 @@ def comparison_view(census: Mapping[str, Any]) -> dict[str, Any]:
     view["request_driven_keys"] = sorted(
         str(entry["key"]) for entry in outside if entry.get("request_driven")
     )
+    return view
+
+
+def timing_comparison_view(census: Mapping[str, Any]) -> dict[str, Any]:
+    """The comparison view with the timing-optional submitters removed from the loop's executor.
+
+    Both sides pass through this view, so a name in TIMING_OPTIONAL_SUBMITTERS may be present in
+    one and absent from the other. The row is found by its creator, so a pool keyed by a gobby
+    creator keeps every name it submits (R68).
+    """
+    view = comparison_view(census)
+    executors: list[dict[str, Any]] = []
+    for row in view["executors"]:
+        submitters = row["submitters"]
+        if row["creator"] == LOOP_DEFAULT:
+            submitters = [name for name in submitters if name not in TIMING_OPTIONAL_SUBMITTERS]
+        executors.append({**row, "submitters": submitters})
+    view["executors"] = executors
     return view
 
 
