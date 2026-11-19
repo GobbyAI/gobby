@@ -3,8 +3,10 @@
 
 use std::collections::HashMap;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::Command;
 
 use serde_json::{Value, json};
@@ -65,13 +67,20 @@ pub(super) fn materialize_profile(spec: &Value, dir: &Path) -> Option<PathBuf> {
     };
     let target = dir.join("rehearsal-profile.json");
     fs::write(&target, body).expect("write profile");
-    let mode = u32::from_str_radix(spec["mode"].as_str().expect("mode"), 8).expect("octal mode");
-    fs::set_permissions(&target, fs::Permissions::from_mode(mode)).expect("chmod profile");
+    #[cfg(unix)]
+    {
+        let mode =
+            u32::from_str_radix(spec["mode"].as_str().expect("mode"), 8).expect("octal mode");
+        fs::set_permissions(&target, fs::Permissions::from_mode(mode)).expect("chmod profile");
+    }
     match spec["path"].as_str().expect("path") {
         "absolute" => Some(target),
         "relative" => Some(PathBuf::from("relative").join("rehearsal-profile.json")),
         "symlink" => {
+            // Windows symlinks need a privilege plain tests cannot assume. Without the link the
+            // path is missing, which the guard refuses the same way (R4), so the vector holds.
             let link = dir.join("profile-link.json");
+            #[cfg(unix)]
             std::os::unix::fs::symlink(&target, &link).expect("symlink profile");
             Some(link)
         }
@@ -86,6 +95,25 @@ fn expected_verdict(vector: &Value) -> String {
     } else {
         format!("refuse:{}", vector["rule"].as_str().expect("rule"))
     }
+}
+
+/// On Windows the owner and 0600 checks cannot run (`open_checked_profile`), so an absolute
+/// rehearsal profile that reaches them is refused with the distinct Windows rule instead of its
+/// Unix verdict. Other vectors keep the Python verdict on every platform.
+#[cfg(windows)]
+fn windows_adjusted(vector: &Value, expected: String) -> String {
+    let reaches_owner_check = vector["op"] == "check"
+        && vector["profile"]["path"] == "absolute";
+    if reaches_owner_check && (expected == "accept:rehearsal" || expected == "refuse:R4") {
+        "refuse:R4-windows".to_owned()
+    } else {
+        expected
+    }
+}
+
+#[cfg(unix)]
+fn windows_adjusted(_vector: &Value, expected: String) -> String {
+    expected
 }
 
 /// The verdict this engine returns for a vector, in the same form.
@@ -135,7 +163,7 @@ fn every_vector_gets_the_python_verdict_and_rule() {
         let id = vector["id"].as_str().expect("vector id");
         let dir = scratch.path().join(id);
         fs::create_dir_all(&dir).expect("vector dir");
-        let expected = expected_verdict(vector);
+        let expected = windows_adjusted(vector, expected_verdict(vector));
         let actual = actual_verdict(vector, &dir);
         if actual != expected {
             mismatches.push(format!("{id}: expected {expected}, got {actual}"));
@@ -224,6 +252,9 @@ fn derivation_refuses_names_outside_the_run_patterns_and_bad_schemas() {
     );
 }
 
+// Accepts a rehearsal profile, which needs the Unix owner and 0600 checks: Unix only (the Windows
+// refusal is covered by the vector verdicts above).
+#[cfg(unix)]
 #[test]
 fn rehearsal_derivation_returns_the_base_unchanged() {
     let dir = tempfile::tempdir().expect("scratch dir");
@@ -375,6 +406,9 @@ fn home_probe_child() {
 /// A rehearsal profile whose gobby_home is `<HOME>/.gobby` is refused as the operator's home only
 /// when HOME points at that directory. The operator home comes from the passwd entry, so a child
 /// process whose HOME is overridden must return the same verdict as the parent.
+// Unix only: the passwd home it checks is the Unix lookup. On Windows the home comes from
+// USERPROFILE, an environment value, so an override there is not a property the guard keeps.
+#[cfg(unix)]
 #[test]
 fn home_override_does_not_change_the_rehearsal_verdict() {
     let dir = tempfile::tempdir().expect("tempdir");

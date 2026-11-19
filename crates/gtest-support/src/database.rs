@@ -212,7 +212,10 @@ fn require_harness_name(name: &str) -> Result<(), DatabaseError> {
 }
 
 /// `kill(pid, 0)`: ESRCH means the process is gone; any other outcome means it may be alive.
-fn process_alive(pid: u32) -> bool {
+/// Whether the process exists. A pid that cannot be checked counts as alive, so a database is
+/// swept only when its owner is proven dead (never on an unknown answer).
+#[cfg(unix)]
+pub(crate) fn process_alive(pid: u32) -> bool {
     let Ok(raw) = i32::try_from(pid) else {
         return true;
     };
@@ -220,6 +223,26 @@ fn process_alive(pid: u32) -> bool {
         nix::sys::signal::kill(nix::unistd::Pid::from_raw(raw), None),
         Err(nix::errno::Errno::ESRCH)
     )
+}
+
+/// Windows: tasklist filtered to this pid prints the pid as a field when the process exists. A
+/// tasklist that cannot run, or exits with an error, counts as alive: an unknown answer never
+/// proves a death.
+#[cfg(windows)]
+pub(crate) fn process_alive(pid: u32) -> bool {
+    let Ok(output) = std::process::Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output()
+    else {
+        return true;
+    };
+    if !output.status.success() {
+        return true;
+    }
+    let wanted = pid.to_string();
+    String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .any(|field| field == wanted)
 }
 
 fn install_search_extension(run_url: &str) -> Result<(), DatabaseError> {

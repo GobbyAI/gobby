@@ -1,22 +1,20 @@
-//! Full-daemon harness (design-v2 section 7.3): this checkout's gdaemon and Python worker on a
-//! per-run database of the isolated test hub, with a temporary home and free loopback ports.
-//!
-//! The guard runs first (section 7.1). The worktree-daemon override reaches only the gdaemon
-//! child's environment, and only after the guard accepted. Teardown stops gdaemon, then the
-//! worker, then drops the run database (H45); `Drop` runs the same steps when a test panics.
+//! Full-daemon harness (design-v2 section 7.3): gdaemon and its Python worker on temporary ports,
+//! against an isolated per-run database. Process control lives in `process`; the detached gterm
+//! host lives in `terminal_host`.
 
 use std::fmt;
+#[cfg(unix)]
+use std::fs::Permissions;
 use std::fs::{self, File};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
-use nix::errno::Errno;
-use nix::sys::signal::{Signal, kill, killpg};
-use nix::unistd::Pid;
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -25,7 +23,14 @@ use crate::http_sender::get_status;
 use crate::hub_guard::{GuardMode, HubGuardError, check_test_hub};
 use crate::ports::{DaemonPorts, daemon_ports};
 
-/// The line a database-backed test prints when `DATABASE_URL` is unset (ruling H18, section 7.13).
+mod process;
+mod terminal_host;
+
+use process::{find_worker, stop_daemon, stop_worker};
+pub use process::pid_alive;
+use terminal_host::{ensure_gterm, install_gterm, read_host_pid, stop_terminal_host};
+
+/// The line a database-backed test prints when `DATABASE_URL` is unset (ruling H18).
 pub const SKIP_LINE: &str =
     "skipped: DATABASE_URL is unset (P0-HARNESS needs the isolated test hub)";
 
@@ -39,6 +44,16 @@ const DAEMON_GRACE: Duration = Duration::from_secs(30);
 const WORKER_GRACE: Duration = Duration::from_secs(10);
 const POLL: Duration = Duration::from_millis(100);
 
+/// Why `start` refuses on Windows. The guard runs first, so a refused URL still gets its rule.
+pub const WINDOWS_UNBUILT: &str = "the full-daemon harness has no process control on Windows yet: plain std cannot place a daemon in a process group or walk its children (the Windows mechanism is a found line for the post-port smoke test, H47)";
+
+/// The PATH the child tools run under. Windows has no fixed system PATH the harness trusts, so it
+/// is empty there, and `start` refuses before any child runs.
+#[cfg(unix)]
+const SYSTEM_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+#[cfg(windows)]
+const SYSTEM_PATH: &str = "";
+
 /// The test hub URL from `lookup`, or the skip line printed and `None` returned (H18).
 pub fn test_hub_url_or_skip(lookup: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     match lookup("DATABASE_URL") {
@@ -48,58 +63,6 @@ pub fn test_hub_url_or_skip(lookup: &dyn Fn(&str) -> Option<String>) -> Option<S
             None
         }
     }
-}
-
-/// Whether a process with this pid exists and is not a zombie. EPERM counts as alive.
-pub fn pid_alive(pid: u32) -> bool {
-    // Pid 0 names the caller's own process group to kill(2), so it is never a process of ours.
-    let Ok(raw) = i32::try_from(pid) else {
-        return false;
-    };
-    if raw <= 0 {
-        return false;
-    }
-    match kill(Pid::from_raw(raw), None) {
-        Ok(()) => !is_zombie(pid),
-        Err(Errno::EPERM) => true,
-        Err(_) => false,
-    }
-}
-
-fn is_zombie(pid: u32) -> bool {
-    Command::new("ps")
-        .args(["-o", "stat=", "-p", &pid.to_string()])
-        .output()
-        .map(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .starts_with('Z')
-        })
-        .unwrap_or(false)
-}
-
-/// The `(pid, pgid)` pairs of the processes whose parent is `parent`.
-fn children_of(parent: u32) -> Vec<(u32, u32)> {
-    let Ok(output) = Command::new("ps")
-        .args(["-A", "-o", "pid=,ppid=,pgid="])
-        .output()
-    else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let fields: Vec<u32> = line
-                .split_whitespace()
-                .map(str::parse)
-                .collect::<Result<_, _>>()
-                .ok()?;
-            match fields[..] {
-                [pid, ppid, pgid] if ppid == parent => Some((pid, pgid)),
-                _ => None,
-            }
-        })
-        .collect()
 }
 
 /// A failure to start, operate or stop the full daemon.
@@ -121,6 +84,8 @@ pub enum FullDaemonError {
     Ready(String),
     /// A teardown step failed.
     Teardown(String),
+    /// The platform has no mechanism for this harness yet (H46: refuse, never skip).
+    Unsupported(String),
 }
 
 impl fmt::Display for FullDaemonError {
@@ -134,6 +99,7 @@ impl fmt::Display for FullDaemonError {
             Self::Seed(detail) => write!(f, "seed: {detail}"),
             Self::Ready(detail) => write!(f, "ready: {detail}"),
             Self::Teardown(detail) => write!(f, "teardown: {detail}"),
+            Self::Unsupported(detail) => write!(f, "unsupported: {detail}"),
         }
     }
 }
@@ -187,7 +153,7 @@ pub struct SeedContext<'a> {
     pub home: &'a Path,
     /// The project checkout the daemon runs in, empty when the step starts.
     pub project_dir: &'a Path,
-    /// The checkout's `.venv/bin/python`.
+    /// The checkout's interpreter (`.venv/bin/python`, or `.venv/Scripts/python.exe` on Windows).
     pub python: &'a Path,
     /// The repository root, whose `src` is the Python source root.
     pub repo_root: &'a Path,
@@ -234,7 +200,8 @@ impl FullDaemonBuilder<'_> {
     }
 
     /// Run the guard, create the run database, apply the schema, seed, launch and wait for
-    /// readiness. The guard runs before any process is spawned.
+    /// readiness. The guard runs before any process is spawned. On Windows the guard still runs,
+    /// and the launch is then refused with [`FullDaemonError::Unsupported`].
     pub fn start(self) -> Result<FullDaemon, FullDaemonError> {
         let Self {
             gdaemon,
@@ -245,6 +212,9 @@ impl FullDaemonBuilder<'_> {
         } = self;
         let base = lookup("DATABASE_URL");
         let guard = check_test_hub(base.as_deref(), &*lookup, profile.as_deref())?;
+        if cfg!(windows) {
+            return Err(FullDaemonError::Unsupported(WINDOWS_UNBUILT.into()));
+        }
         let python = checkout_python(repo_root);
         require_file(gdaemon, "the gdaemon binary")?;
         require_file(&python, "the checkout's interpreter")?;
@@ -338,8 +308,10 @@ impl FullDaemonBuilder<'_> {
             .current_dir(&project)
             .stdin(Stdio::null())
             .stdout(open_log(&home.join("logs/daemon.log"))?)
-            .stderr(open_log(&home.join("logs/daemon_error.log"))?)
-            .process_group(0);
+            .stderr(open_log(&home.join("logs/daemon_error.log"))?);
+        // gdaemon leads its own process group, so teardown can signal the whole group (Unix).
+        #[cfg(unix)]
+        command.process_group(0);
         let child = command
             .spawn()
             .map_err(|error| FullDaemonError::Io(format!("spawn gdaemon: {error}")))?;
@@ -497,9 +469,17 @@ impl Drop for FullDaemon {
     }
 }
 
-/// The checkout's interpreter path, `<repo_root>/.venv/bin/python`.
+/// The checkout's interpreter path: `<repo_root>/.venv/bin/python` (Unix) or
+/// `<repo_root>/.venv/Scripts/python.exe` (Windows).
+#[cfg(unix)]
 pub fn checkout_python(repo_root: &Path) -> PathBuf {
     repo_root.join(".venv").join("bin").join("python")
+}
+
+/// The checkout's interpreter path on Windows (`.venv\Scripts\python.exe`).
+#[cfg(windows)]
+pub fn checkout_python(repo_root: &Path) -> PathBuf {
+    repo_root.join(".venv").join("Scripts").join("python.exe")
 }
 
 fn require_file(path: &Path, what: &str) -> Result<(), FullDaemonError> {
@@ -529,7 +509,8 @@ fn daemon_environment(repo_root: &Path, python: &Path, home: &Path) -> Vec<(Stri
         (
             "PATH".to_owned(),
             format!(
-                "/usr/bin:/bin:/usr/sbin:/sbin:{}",
+                "{SYSTEM_PATH}{}{}",
+                if SYSTEM_PATH.is_empty() { "" } else { ":" },
                 python.parent().unwrap_or(python).display()
             ),
         ),
@@ -556,8 +537,6 @@ fn daemon_environment(repo_root: &Path, python: &Path, home: &Path) -> Vec<(Stri
     env
 }
 
-/// The config file and bootstrap of the isolated home (design 7.3.4). JSON is YAML, so the
-/// daemon's YAML loader reads both.
 fn write_home(home: &Path, ports: DaemonPorts, database_url: &str) -> Result<(), FullDaemonError> {
     fs::write(home.join("machine_id"), MACHINE_ID).map_err(home_io)?;
     let logs = home.join("logs");
@@ -594,7 +573,10 @@ fn write_home(home: &Path, ports: DaemonPorts, database_url: &str) -> Result<(),
     });
     let path = home.join("bootstrap.yaml");
     fs::write(&path, bootstrap.to_string()).map_err(home_io)?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).map_err(home_io)?;
+    // The bootstrap key is secret: owner-only on Unix. Plain std sets no ACL on Windows, so the
+    // file keeps the temporary directory's inherited permissions there.
+    #[cfg(unix)]
+    fs::set_permissions(&path, Permissions::from_mode(0o600)).map_err(home_io)?;
     Ok(())
 }
 
@@ -616,7 +598,7 @@ fn schema_apply(gdaemon: &Path, project: &Path, database_url: &str) -> Result<()
         .args(["schema", "apply"])
         .env_clear()
         .env("GOBBY_DATABASE_URL", database_url)
-        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .env("PATH", SYSTEM_PATH)
         .current_dir(project)
         .output()
         .map_err(io_error("run schema apply"))?;
@@ -631,8 +613,6 @@ fn schema_apply(gdaemon: &Path, project: &Path, database_url: &str) -> Result<()
     }
 }
 
-/// The start time psutil reports for this test process, passed through unchanged: the readiness
-/// bootstrap compares it for equality (tests/e2e/readiness_bootstrap.py:24-40).
 fn process_create_time(python: &Path, repo_root: &Path) -> Result<String, FullDaemonError> {
     let script = "import os,sys,psutil;print(psutil.Process(int(sys.argv[1])).create_time())";
     let output = Command::new(python)
@@ -652,7 +632,6 @@ fn process_create_time(python: &Path, repo_root: &Path) -> Result<String, FullDa
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
-/// Poll the front door until `/api/auth/status` answers 200. Fails early when gdaemon exits.
 fn wait_ready(daemon: &mut FullDaemon, home: &Path) -> Result<(), FullDaemonError> {
     let url = format!("{}/api/auth/status", daemon.front_door);
     let deadline = Instant::now() + READY_CEILING;
@@ -684,169 +663,4 @@ fn log_tail(path: &Path) -> String {
     let text = fs::read_to_string(path).unwrap_or_default();
     let lines: Vec<&str> = text.lines().collect();
     lines[lines.len().saturating_sub(40)..].join("\n")
-}
-
-/// SIGTERM gdaemon's group, wait for its exit, then SIGKILL the group after the grace period.
-fn stop_daemon(child: &mut Child, grace: Duration) -> Result<(), FullDaemonError> {
-    let raw = i32::try_from(child.id())
-        .map_err(|error| FullDaemonError::Teardown(format!("gdaemon pid: {error}")))?;
-    let group = Pid::from_raw(raw);
-    let _ = killpg(group, Signal::SIGTERM);
-    let deadline = Instant::now() + grace;
-    loop {
-        if child
-            .try_wait()
-            .map_err(|error| FullDaemonError::Teardown(format!("poll gdaemon: {error}")))?
-            .is_some()
-        {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            let _ = killpg(group, Signal::SIGKILL);
-            child
-                .wait()
-                .map_err(|error| FullDaemonError::Teardown(format!("reap gdaemon: {error}")))?;
-            return Ok(());
-        }
-        sleep(POLL);
-    }
-}
-
-/// SIGTERM the worker's group, then SIGKILL survivors after the grace period.
-fn stop_worker(pid: u32, grace: Duration) {
-    let Ok(raw) = i32::try_from(pid) else {
-        return;
-    };
-    let group = Pid::from_raw(raw);
-    let _ = killpg(group, Signal::SIGTERM);
-    let deadline = Instant::now() + grace;
-    while pid_alive(pid) && Instant::now() < deadline {
-        sleep(POLL);
-    }
-    if pid_alive(pid) {
-        let _ = killpg(group, Signal::SIGKILL);
-    }
-}
-
-/// The gterm host binary beside gdaemon. When it is absent, build it from this checkout into the
-/// same target directory, as the e2e fixtures build their binaries (tests/fixtures/gdaemon_binary.py).
-fn ensure_gterm(gdaemon: &Path, repo_root: &Path) -> Result<PathBuf, FullDaemonError> {
-    let built = gdaemon.with_file_name("gterm");
-    if built.is_file() {
-        return Ok(built);
-    }
-    let target = gdaemon.parent().and_then(Path::parent).ok_or_else(|| {
-        FullDaemonError::Missing(format!("no target directory above {}", gdaemon.display()))
-    })?;
-    // gdaemon's profile directory names the build profile, so gterm is built in the same one.
-    let release = gdaemon
-        .parent()
-        .and_then(Path::file_name)
-        .is_some_and(|name| name == "release");
-    let mut args = vec![
-        "build",
-        "-p",
-        "gobby-terminal",
-        "--features",
-        "vt-engine",
-        "--bin",
-        "gterm",
-    ];
-    if release {
-        args.push("--release");
-    }
-    let output = Command::new("cargo")
-        .args(&args)
-        .env("CARGO_TARGET_DIR", target)
-        .current_dir(repo_root)
-        .output()
-        .map_err(io_error("run cargo for gterm"))?;
-    if !output.status.success() {
-        return Err(FullDaemonError::Missing(format!(
-            "cargo could not build gterm:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        )));
-    }
-    if built.is_file() {
-        Ok(built)
-    } else {
-        Err(FullDaemonError::Missing(format!(
-            "gterm is absent at {}",
-            built.display()
-        )))
-    }
-}
-
-/// Copy gterm to `<home>/bin/gterm`, the daemon's default host binary. A copy, not a link: gterm
-/// refuses a symlinked executable.
-fn install_gterm(gterm: &Path, home: &Path) -> Result<(), FullDaemonError> {
-    let bin = home.join("bin");
-    fs::create_dir_all(&bin).map_err(io_error("create the home bin directory"))?;
-    let target = bin.join("gterm");
-    fs::copy(gterm, &target).map_err(io_error("copy gterm into the home"))?;
-    fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
-        .map_err(io_error("chmod gterm"))?;
-    Ok(())
-}
-
-/// The process-table column that names the executable (macOS prints full paths in `comm`).
-#[cfg(target_os = "macos")]
-const NAME_COLUMN: &str = "ucomm";
-#[cfg(not(target_os = "macos"))]
-const NAME_COLUMN: &str = "comm";
-
-/// Whether `pid` runs a gterm host. The daemon execs the host from a content-addressed pin named
-/// `gterm-<sha256>` (crates/gterminal/src/host/image.rs), and the name column truncates that name,
-/// so the identity check is the `gterm` prefix of the name column.
-fn is_gterm_host(pid: u32) -> bool {
-    Command::new("ps")
-        .args(["-o", &format!("{NAME_COLUMN}="), "-p", &pid.to_string()])
-        .output()
-        .map(|output| {
-            let name = String::from_utf8_lossy(&output.stdout);
-            let name = name.trim();
-            name == "gterm" || name.starts_with("gterm-")
-        })
-        .unwrap_or(false)
-}
-
-/// The gterm host pid the host wrote into its socket directory, when it wrote one.
-fn read_host_pid(socket_dir: &Path) -> Option<u32> {
-    if socket_dir.as_os_str().is_empty() {
-        return None;
-    }
-    fs::read_to_string(socket_dir.join("gterm.pid"))
-        .ok()?
-        .trim()
-        .parse::<u32>()
-        .ok()
-}
-
-/// The Python worker: the child of gdaemon that leads its own process group.
-fn find_worker(daemon_pid: u32) -> Option<u32> {
-    children_of(daemon_pid)
-        .into_iter()
-        .find(|(pid, pgid)| pid == pgid)
-        .map(|(pid, _)| pid)
-}
-
-/// Stop the gterm host at `pid` when it is still a live gterm, and report whether it was signalled.
-/// The pid came from the host's own pidfile in this run's socket directory, and it is checked
-/// before any signal, so a recycled pid is never signalled.
-fn stop_terminal_host(pid: u32) -> bool {
-    if !pid_alive(pid) || !is_gterm_host(pid) {
-        return false;
-    }
-    let Ok(raw) = i32::try_from(pid) else {
-        return false;
-    };
-    let _ = kill(Pid::from_raw(raw), Signal::SIGTERM);
-    let deadline = Instant::now() + WORKER_GRACE;
-    while pid_alive(pid) && Instant::now() < deadline {
-        sleep(POLL);
-    }
-    if pid_alive(pid) {
-        let _ = kill(Pid::from_raw(raw), Signal::SIGKILL);
-    }
-    true
 }

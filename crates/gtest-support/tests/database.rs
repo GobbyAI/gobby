@@ -106,7 +106,9 @@ fn wait_until(mut condition: impl FnMut() -> bool, timeout: Duration) {
 
 /// The pid of a child that has exited and been reaped, so it is dead.
 fn dead_pid() -> u32 {
-    let mut child = Command::new("/usr/bin/true")
+    // This test binary, asked for its help text, exits at once on every platform.
+    let mut child = Command::new(std::env::current_exe().expect("this test binary"))
+        .arg("--help")
         .spawn()
         .expect("spawn a child that exits");
     let pid = child.id();

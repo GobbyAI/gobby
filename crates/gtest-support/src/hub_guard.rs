@@ -8,6 +8,7 @@
 use std::fmt;
 use std::fs::{self, File};
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -287,11 +288,21 @@ pub fn run_database_pid(name: &str, prefix: &str) -> Option<u32> {
 ///
 /// Reads the passwd entry for the effective uid, as the Python guard does (`pwd.getpwuid`), so
 /// the environment's `HOME` cannot move the verdict.
+#[cfg(unix)]
 pub fn operator_home() -> Option<PathBuf> {
     nix::unistd::User::from_uid(nix::unistd::getuid())
         .ok()
         .flatten()
         .map(|user| user.dir.join(".gobby"))
+}
+
+/// Windows has no passwd entry in plain std, so the home comes from `USERPROFILE`. That value
+/// is an environment variable, so unlike the Unix lookup it can be overridden by the caller.
+#[cfg(windows)]
+pub fn operator_home() -> Option<PathBuf> {
+    std::env::var_os("USERPROFILE")
+        .filter(|home| !home.is_empty())
+        .map(|home| PathBuf::from(home).join(".gobby"))
 }
 
 /// `DATABASE_URL` from the process environment, accepted for a test that needs the test hub.
@@ -493,17 +504,7 @@ fn read_profile(path: &Path) -> Result<Map<String, Value>, HubGuardError> {
     if metadata.file_type().is_symlink() {
         return Err(unreadable());
     }
-    let mut options = fs::OpenOptions::new();
-    options.read(true).custom_flags(nix::libc::O_NOFOLLOW);
-    let mut file: File = options.open(path).map_err(|_| unreadable())?;
-    let opened = file.metadata().map_err(|_| unreadable())?;
-    let owner = current_uid();
-    if !opened.is_file() || opened.permissions().mode() & 0o7777 != 0o600 || opened.uid() != owner {
-        return Err(refuse(
-            "R4",
-            "the rehearsal profile must be a regular 0600 file owned by this user",
-        ));
-    }
+    let mut file = open_checked_profile(path)?;
     let mut raw = Vec::new();
     file.by_ref()
         .take(MAX_PROFILE_BYTES + 1)
@@ -519,7 +520,49 @@ fn read_profile(path: &Path) -> Result<Map<String, Value>, HubGuardError> {
     }
 }
 
+/// Opens a rehearsal profile without following a final symlink, then requires a regular file with
+/// mode 0600 owned by this user (the Python guard's checks).
+#[cfg(unix)]
+fn open_checked_profile(path: &Path) -> Result<File, HubGuardError> {
+    let unreadable = || {
+        refuse(
+            "R4",
+            "the rehearsal profile is missing, a symlink or unreadable",
+        )
+    };
+    let mut options = fs::OpenOptions::new();
+    options.read(true).custom_flags(nix::libc::O_NOFOLLOW);
+    let file = options.open(path).map_err(|_| unreadable())?;
+    let opened = file.metadata().map_err(|_| unreadable())?;
+    if !opened.is_file()
+        || opened.permissions().mode() & 0o7777 != 0o600
+        || opened.uid() != current_uid()
+    {
+        return Err(refuse(
+            "R4",
+            "the rehearsal profile must be a regular 0600 file owned by this user",
+        ));
+    }
+    Ok(file)
+}
+
+/// The rule a Windows refusal carries. It is distinct from R4 so a log line says the check is
+/// missing rather than that the profile is wrong.
+#[cfg(windows)]
+const WINDOWS_PROFILE_RULE: &str = "R4-windows";
+
+/// Plain std has no mode bits or uid owner on Windows, so the owner and 0600 checks cannot run.
+/// Rehearsal is refused there (fail closed) until a Windows ACL check exists.
+#[cfg(windows)]
+fn open_checked_profile(_path: &Path) -> Result<File, HubGuardError> {
+    Err(refuse(
+        WINDOWS_PROFILE_RULE,
+        "the rehearsal profile's owner and 0600 mode cannot be checked on Windows yet, so rehearsal is refused there",
+    ))
+}
+
 /// The real uid of this process (`getuid`, as the Python guard's `os.getuid()`).
+#[cfg(unix)]
 fn current_uid() -> u32 {
     nix::unistd::getuid().as_raw()
 }

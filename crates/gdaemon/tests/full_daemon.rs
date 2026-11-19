@@ -3,6 +3,7 @@
 //! the skip line and return when `DATABASE_URL` is unset (H18).
 
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -91,6 +92,13 @@ print(json.dumps({"operator_key": key}))
 "#;
 
 /// The pre-start seed step: runs [`SEED_SCRIPT`] on the checkout's interpreter.
+/// The seed interpreter's fixed PATH on Unix. Windows has no such system PATH, and the harness
+/// refuses to launch there before the seed runs.
+#[cfg(unix)]
+const SEED_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
+#[cfg(windows)]
+const SEED_PATH: &str = "";
+
 fn python_seed(context: &SeedContext<'_>) -> Result<String, String> {
     let output = Command::new(context.python)
         .arg("-c")
@@ -101,7 +109,7 @@ fn python_seed(context: &SeedContext<'_>) -> Result<String, String> {
         .arg(context.terminal_host_dir)
         .current_dir(context.repo_root)
         .env_clear()
-        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .env("PATH", SEED_PATH)
         .env("HOME", context.home)
         .env("GOBBY_HOME", context.home)
         .env("GOBBY_TEST_PROTECT", "1")
@@ -187,7 +195,10 @@ fn write_profile(
         body["postgres_system_identifier"] = Value::String(identifier.to_owned());
     }
     fs::write(&path, body.to_string()).expect("write the profile");
+    #[cfg(unix)]
     fs::set_permissions(&path, fs::Permissions::from_mode(mode)).expect("chmod the profile");
+    #[cfg(windows)]
+    let _ = mode; // Windows has no mode bits to set; the guard refuses such a profile there.
     path
 }
 
@@ -230,6 +241,9 @@ fn refused_database_url_fails_before_any_override_is_set() {
     );
 }
 
+// Unix only: the accepted profile needs the 0600 owner check. The Windows verdicts for these
+// profiles are the distinct refusal that guard.rs asserts.
+#[cfg(unix)]
 #[test]
 fn rehearsal_profile_vectors_accept_and_refuse() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -383,7 +397,9 @@ fn database_gone_after_teardown() {
 fn start_sweeps_dead_pid_database() {
     let Some(url) = test_hub() else { return };
     let admin = maintenance_url(&url);
-    let mut child = Command::new("true")
+    // This test binary, asked for its help text, exits at once on every platform.
+    let mut child = Command::new(std::env::current_exe().expect("this test binary"))
+        .arg("--help")
         .spawn()
         .expect("spawn a short-lived child");
     let dead = child.id();
