@@ -32,6 +32,7 @@ use hyper_util::rt::TokioIo;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::task::JoinHandle;
 
 use super::backend::{Backends, NO_NATIVE_BACKEND, native_family, start_listener};
 use super::compare::{first_difference, normalized_document};
@@ -217,6 +218,12 @@ pub fn record_line(case: &Case, verdict: &Verdict) -> Value {
 /// `recorded`, a v2 or v3 `response` object. This is test scaffolding, not the behaviour under
 /// test, so it is real.
 pub async fn recorded_target(recorded: &Value) -> SocketAddr {
+    recorded_target_task(recorded).await.0
+}
+
+/// As [`recorded_target`], and also returns the task that accepts connections, so a caller
+/// that starts many targets can stop each one.
+pub async fn recorded_target_task(recorded: &Value) -> (SocketAddr, JoinHandle<()>) {
     let status = u16::try_from(recorded["status"].as_u64().expect("recorded status"))
         .expect("status fits u16");
     let content_type = recorded["headers"]["content-type"]
@@ -229,7 +236,7 @@ pub async fn recorded_target(recorded: &Value) -> SocketAddr {
     };
     let listener = bind_loopback(0).await.expect("bind recorded target");
     let addr = local_addr(&listener).expect("recorded target addr");
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         while let Ok((stream, _)) = listener.accept().await {
             let content_type = content_type.clone();
             let body = body.clone();
@@ -256,7 +263,7 @@ pub async fn recorded_target(recorded: &Value) -> SocketAddr {
             });
         }
     });
-    addr
+    (addr, task)
 }
 
 fn shape(detail: impl Into<String>) -> DifferentialError {

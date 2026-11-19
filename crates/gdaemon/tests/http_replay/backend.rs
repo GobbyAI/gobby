@@ -32,6 +32,7 @@ use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::task::JoinHandle;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 /// The answer of the test-only family's one native route.
@@ -118,6 +119,19 @@ pub async fn start_listener(
     target: SocketAddr,
     home: &Path,
 ) -> SocketAddr {
+    start_listener_task(families, backends, target, home)
+        .await
+        .0
+}
+
+/// As [`start_listener`], and also returns the task that serves the listener, so a caller
+/// that starts many listeners can stop each one.
+pub async fn start_listener_task(
+    families: &[&'static dyn RouteFamily<FrontDoorState>],
+    backends: &Backends,
+    target: SocketAddr,
+    home: &Path,
+) -> (SocketAddr, JoinHandle<()>) {
     let auth =
         Arc::new(AuthState::new("driver-secret".into(), None, Default::default()).expect("auth"));
     let mut state = FrontDoorState::new(target, BackendState::Down, auth);
@@ -128,11 +142,11 @@ pub async fn start_listener(
         .expect("bind listener");
     let addr = listener.local_addr().expect("listener addr");
     let door = FrontDoor::new(state, table);
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         let doors = vec![(listener, door)];
         let _ = serve_doors(doors, None, HeartbeatHost::new(), std::future::pending()).await;
     });
-    addr
+    (addr, task)
 }
 
 /// A stub Python backend: answers every request with `stub-answer` and records its method and
