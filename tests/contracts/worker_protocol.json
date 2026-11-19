@@ -1,0 +1,169 @@
+{
+  "schema": "worker-protocol-corpus",
+  "credential": "corpus-credential",
+  "versions": [
+    {
+      "protocol_version": 1,
+      "cases": [
+        {
+          "name": "handshake accepted",
+          "state": "unbound",
+          "bound_generation": null,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"handshake\",\"body\":{\"credential\":\"corpus-credential\"}}",
+          "response_bytes": "{\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1,\"result\":{\"commands\":[\"handshake\",\"initialize\",\"invoke\"],\"generation\":7,\"protocol_version\":1,\"schema_identity\":\"$schema_identity\"}}"
+        },
+        {
+          "name": "handshake repeated",
+          "state": "bound",
+          "bound_generation": 7,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:2\",\"command\":\"handshake\",\"body\":{\"credential\":\"corpus-credential\"}}",
+          "response_bytes": "{\"generation\":7,\"operation_id\":\"7:2\",\"protocol_version\":1,\"result\":{\"commands\":[\"handshake\",\"initialize\",\"invoke\"],\"generation\":7,\"protocol_version\":1,\"schema_identity\":\"$schema_identity\"}}"
+        },
+        {
+          "name": "handshake with another generation",
+          "state": "bound",
+          "bound_generation": 7,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":8,\"operation_id\":\"8:1\",\"command\":\"handshake\",\"body\":{\"credential\":\"corpus-credential\"}}",
+          "response_bytes": "{\"error\":{\"code\":\"stale_generation\",\"message\":\"generation does not match the bound generation\"},\"generation\":8,\"operation_id\":\"8:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "handshake wrong credential",
+          "state": "unbound",
+          "bound_generation": null,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"handshake\",\"body\":{\"credential\":\"wrong\"}}",
+          "response_bytes": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"credential refused\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "handshake with no credential configured",
+          "state": "unbound",
+          "bound_generation": null,
+          "credential_configured": false,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"handshake\",\"body\":{\"credential\":\"corpus-credential\"}}",
+          "response_bytes": "{\"error\":{\"code\":\"unauthorized\",\"message\":\"credential refused\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "handshake missing credential",
+          "state": "unbound",
+          "bound_generation": null,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"handshake\",\"body\":{}}",
+          "response_bytes": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"invalid request\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "protocol mismatch",
+          "state": "unbound",
+          "bound_generation": null,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":2,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"handshake\",\"body\":{\"credential\":\"corpus-credential\"}}",
+          "response_bytes": "{\"error\":{\"code\":\"protocol_mismatch\",\"message\":\"protocol version not accepted\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "malformed JSON",
+          "state": "unbound",
+          "bound_generation": null,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,",
+          "response_bytes": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"invalid request\"},\"generation\":null,\"operation_id\":null,\"protocol_version\":1}"
+        },
+        {
+          "name": "unknown field",
+          "state": "unbound",
+          "bound_generation": null,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"handshake\",\"body\":{\"credential\":\"corpus-credential\"},\"extra\":true}",
+          "response_bytes": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"invalid request\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "command before handshake",
+          "state": "unbound",
+          "bound_generation": null,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"invoke\",\"body\":{\"op\":\"anything\",\"params\":{}}}",
+          "response_bytes": "{\"error\":{\"code\":\"not_handshaken\",\"message\":\"no handshake for this worker\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "unknown command",
+          "state": "bound",
+          "bound_generation": 7,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"frobnicate\",\"body\":{}}",
+          "response_bytes": "{\"error\":{\"code\":\"unknown_command\",\"message\":\"unknown command\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "wrong generation after handshake",
+          "state": "bound",
+          "bound_generation": 7,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":8,\"operation_id\":\"8:1\",\"command\":\"initialize\",\"body\":{\"phase\":\"storage_and_config\"}}",
+          "response_bytes": "{\"error\":{\"code\":\"stale_generation\",\"message\":\"generation does not match the bound generation\"},\"generation\":8,\"operation_id\":\"8:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "initialize before handshake",
+          "state": "unbound",
+          "bound_generation": null,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"initialize\",\"body\":{\"phase\":\"storage_and_config\"}}",
+          "response_bytes": "{\"error\":{\"code\":\"not_handshaken\",\"message\":\"no handshake for this worker\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "invalid phase value",
+          "state": "bound",
+          "bound_generation": 7,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"initialize\",\"body\":{\"phase\":\"bogus\"}}",
+          "response_bytes": "{\"error\":{\"code\":\"invalid_request\",\"message\":\"invalid request\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "out-of-order first phase",
+          "state": "bound",
+          "bound_generation": 7,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"initialize\",\"body\":{\"phase\":\"config_runtime\"}}",
+          "response_bytes": "{\"error\":{\"code\":\"phase_out_of_order\",\"message\":\"phase is not the next phase\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "invoke before ready",
+          "state": "bound",
+          "bound_generation": 7,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"invoke\",\"body\":{\"op\":\"anything\",\"params\":{}}}",
+          "response_bytes": "{\"error\":{\"code\":\"not_ready\",\"message\":\"worker is not ready\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        },
+        {
+          "name": "invoke with unknown op",
+          "state": "ready",
+          "bound_generation": 7,
+          "credential_configured": true,
+          "request_bytes": "{\"protocol_version\":1,\"generation\":7,\"operation_id\":\"7:1\",\"command\":\"invoke\",\"body\":{\"op\":\"no_such_op\",\"params\":{}}}",
+          "response_bytes": "{\"error\":{\"code\":\"unknown_command\",\"message\":\"unknown command\"},\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1}"
+        }
+      ],
+      "responses": [
+        {
+          "name": "ready with next phase",
+          "response_bytes": "{\"generation\":7,\"operation_id\":\"7:1\",\"protocol_version\":1,\"result\":{\"error_type\":null,\"message\":null,\"next_phase\":\"content_refusal\",\"phase\":\"storage_and_config\",\"status\":\"ready\"}}"
+        },
+        {
+          "name": "ready on last phase",
+          "response_bytes": "{\"generation\":7,\"operation_id\":\"7:5\",\"protocol_version\":1,\"result\":{\"error_type\":null,\"message\":null,\"next_phase\":null,\"phase\":\"runtime_services\",\"status\":\"ready\"}}"
+        },
+        {
+          "name": "refused",
+          "response_bytes": "{\"generation\":7,\"operation_id\":\"7:2\",\"protocol_version\":1,\"result\":{\"error_type\":null,\"message\":\"bundled content is refused\",\"next_phase\":null,\"phase\":\"content_refusal\",\"status\":\"refused\"}}"
+        },
+        {
+          "name": "failed",
+          "response_bytes": "{\"generation\":7,\"operation_id\":\"7:3\",\"protocol_version\":1,\"result\":{\"error_type\":\"RuntimeError\",\"message\":\"boom\",\"next_phase\":null,\"phase\":\"startup_content\",\"status\":\"failed\"}}"
+        },
+        {
+          "name": "worker_unusable",
+          "response_bytes": "{\"error\":{\"code\":\"worker_unusable\",\"message\":\"worker is unusable\"},\"generation\":7,\"operation_id\":\"7:4\",\"protocol_version\":1}"
+        }
+      ]
+    }
+  ]
+}
