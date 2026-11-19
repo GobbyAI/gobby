@@ -1,5 +1,7 @@
 use super::*;
 use crate::lease::NamedLock;
+use crate::lifecycle::pid_file::{Role, claim_pid_file};
+use crate::lifecycle::worker_handshake::{ProtocolViolation, WorkerCallError};
 use std::{sync::Mutex as StdMutex, time::Duration};
 use tokio::time::timeout;
 
@@ -36,7 +38,7 @@ assert os.read(int(os.environ['GOBBY_SUPERVISOR_FD']),4096).endswith(b'\n')
         &raw.to_string(),
     ])?;
     let config = BackendConfig::from_command_json(home.path(), Some(&command))?;
-    let mut backend = BackendChild::spawn(&config).await?;
+    let mut backend = BackendChild::spawn(&config, None).await?;
     let status = timeout(Duration::from_secs(10), backend.child.wait()).await??;
     backend.finish_stderr().await;
     assert!(
@@ -53,7 +55,7 @@ async fn sealed_backend_exec_still_reports_spawn_errors() -> anyhow::Result<()> 
     let home = tempfile::tempdir()?;
     let command = serde_json::to_string(&[home.path().join("absent-executable")])?;
     let config = BackendConfig::from_command_json(home.path(), Some(&command))?;
-    let result = BackendChild::spawn(&config).await;
+    let result = BackendChild::spawn(&config, None).await;
     let error = match result {
         Ok(_) => anyhow::bail!("missing executable unexpectedly spawned"),
         Err(error) => error,
@@ -154,7 +156,7 @@ async fn group_signal_after_leader_exit_is_not_a_permission_error() -> anyhow::R
     let config =
         BackendConfig::from_command_json(home.path(), Some(r#"["/bin/sh","-c","exit 0"]"#))?;
     for trial in 0..200 {
-        let mut backend = BackendChild::spawn(&config).await?;
+        let mut backend = BackendChild::spawn(&config, None).await?;
         let mut reaped = false;
         for _ in 0..10_000 {
             // drain and kill_group signal the group until the leader is reaped.
@@ -316,4 +318,59 @@ async fn bounded_spawn_never_hands_the_child_a_descriptor_reused_after_the_calle
         completed, "done\n",
         "the child must find the liveness pipe at its number, not an unrelated descriptor"
     );
+}
+
+/// A supervisor in Rust mode over a backend command that exits at once.
+fn rust_mode_supervisor(home: &tempfile::TempDir) -> BackendSupervisor {
+    let pid_file = home.path().join("gobby.pid");
+    let claim = claim_pid_file(&pid_file, Role::Daemon)
+        .expect("pid file is writable")
+        .expect("fresh pid file is claimable");
+    let config =
+        BackendConfig::from_command_json(home.path(), Some(r#"["/bin/sh","-c","exit 0"]"#))
+            .expect("backend config");
+    BackendSupervisor::with_runner(None, claim, config, RunnerMode::Rust)
+}
+
+/// A protocol violation in the handshake refuses the supervisor, and the refusal names the
+/// handshake as its reason.
+#[test]
+fn handshake_sticky_failure_refuses_the_supervisor() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    let supervisor = rust_mode_supervisor(&home);
+    let exit = supervisor
+        .handle_handshake_failure(&WorkerCallError::Protocol(ProtocolViolation::Malformed));
+    assert_eq!(exit, Some(SupervisorExit::Refused));
+    let state = supervisor.subscribe();
+    assert_eq!(
+        state.borrow().clone(),
+        BackendStatus::Refused {
+            reason: "worker handshake failed: protocol".to_owned(),
+        }
+    );
+    Ok(())
+}
+
+/// The mode a supervisor is built with is the mode it reports.
+#[test]
+fn with_runner_stores_the_mode() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    let supervisor = rust_mode_supervisor(&home);
+    assert_eq!(supervisor.runner_mode(), RunnerMode::Rust);
+    Ok(())
+}
+
+/// A child spawned with a generation source serves the source's first generation, and a child
+/// spawned without one serves none.
+#[tokio::test]
+async fn spawn_assigns_generation_from_source() -> anyhow::Result<()> {
+    let home = tempfile::tempdir()?;
+    let config =
+        BackendConfig::from_command_json(home.path(), Some(r#"["/bin/sh","-c","exit 0"]"#))?;
+    let source = GenerationSource::default();
+    let serving = BackendChild::spawn(&config, Some(&source)).await?;
+    assert_eq!(serving.worker_generation(), Some(1));
+    let plain = BackendChild::spawn(&config, None).await?;
+    assert_eq!(plain.worker_generation(), None);
+    Ok(())
 }

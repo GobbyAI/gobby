@@ -1,0 +1,96 @@
+{
+  "schema": "worker-handshake-golden",
+  "credential": "corpus-credential",
+  "versions": [1],
+  "cases": [
+    {
+      "name": "handshake_accepted_v1",
+      "command": "handshake",
+      "generation": 7,
+      "reply": {
+        "protocol_version": 1,
+        "generation": 7,
+        "operation_id": "7:1",
+        "result": {
+          "protocol_version": 1,
+          "generation": 7,
+          "commands": ["handshake", "initialize", "invoke"],
+          "schema_identity": "$schema_identity"
+        }
+      },
+      "expect": "accepted"
+    },
+    {
+      "name": "handshake_identity_mismatch",
+      "command": "handshake",
+      "generation": 7,
+      "reply": {
+        "protocol_version": 1,
+        "generation": 7,
+        "operation_id": "7:1",
+        "result": {
+          "protocol_version": 1,
+          "generation": 7,
+          "commands": ["handshake", "initialize", "invoke"],
+          "schema_identity": {
+            "assets_root_hash": "bc0e3f4573e862926ad80660bd5507f7a524f1f397d601a7245ec9db0cced7a8",
+            "baseline_checksum": "e5b08e67d3f5df97cfac96b9b12aac1f4f936a9465220f27b95d6e067e207e3a",
+            "baseline_version": 420,
+            "latest_checksum": "0000000000000000000000000000000000000000000000000000000000000000",
+            "latest_version": 503,
+            "runner_protocol": 1
+          }
+        }
+      },
+      "expect": "identity_mismatch"
+    },
+    {
+      "name": "invoke_integer_above_u64",
+      "command": "invoke",
+      "generation": 7,
+      "reply": {
+        "protocol_version": 1,
+        "generation": 7,
+        "operation_id": "7:1",
+        "result": {"n": 18446744073709551616}
+      },
+      "expect": "unknown_outcome"
+    },
+    {
+      "name": "invoke_integer_below_i64",
+      "command": "invoke",
+      "generation": 7,
+      "reply": {
+        "protocol_version": 1,
+        "generation": 7,
+        "operation_id": "7:1",
+        "result": {"n": -9223372036854775809}
+      },
+      "expect": "unknown_outcome"
+    },
+    {
+      "name": "invoke_integer_u64_max_accepted",
+      "command": "invoke",
+      "generation": 7,
+      "reply": {
+        "protocol_version": 1,
+        "generation": 7,
+        "operation_id": "7:1",
+        "result": {"n": 18446744073709551615}
+      },
+      "expect": "accepted"
+    },
+    {
+      "name": "invoke_integer_i64_min_accepted",
+      "command": "invoke",
+      "generation": 7,
+      "reply": {
+        "protocol_version": 1,
+        "generation": 7,
+        "operation_id": "7:1",
+        "result": {"n": -9223372036854775808}
+      },
+      "expect": "accepted"
+    }
+  ]
+}

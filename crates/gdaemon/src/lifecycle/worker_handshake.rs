@@ -204,6 +204,7 @@ pub enum HandshakeField {
     ProtocolVersion,
     Generation,
     Commands,
+    SchemaIdentity,
 }
 
 /// A reply that failed envelope or handshake validation.
@@ -232,6 +233,19 @@ pub enum WorkerCallError {
     Refused(ErrorBody),
     /// An invoke answered `op_failed`: the op ran and may have had a partial effect.
     OpFailed(ErrorBody),
+}
+
+/// What a failed handshake does to the supervisor: refuse it for good, or end the child so the
+/// next spawn starts a new generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandshakeOutcome {
+    Sticky,
+    Crash,
+}
+
+/// Classifies a failed handshake. Until the classification lands, every failure is a crash.
+pub fn handshake_outcome(_error: &WorkerCallError) -> HandshakeOutcome {
+    HandshakeOutcome::Crash
 }
 
 /// The handshake result. `schema_identity` is returned as JSON and compared by R1.

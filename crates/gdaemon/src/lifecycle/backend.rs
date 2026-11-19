@@ -3,6 +3,7 @@
 use super::{
     pid_file::PidFileClaim,
     shutdown_intent::{Intent, IntentMarker},
+    worker_handshake::{GenerationSource, RUNNER_DEFAULT, RunnerMode},
 };
 use crate::lease::{ActiveDaemonLease, NamedGuard, NamedLock};
 use anyhow::{Context, Result, bail, ensure};
@@ -26,6 +27,9 @@ use tokio::{
     task::JoinHandle,
     time::{Instant, interval, interval_at, sleep_until, timeout},
 };
+
+#[cfg(unix)]
+mod handshake;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BackendStatus {
@@ -129,6 +133,16 @@ impl BackendSupervisor {
         pid_claim: PidFileClaim,
         config: BackendConfig,
     ) -> Self {
+        Self::with_runner(lease, pid_claim, config, RUNNER_DEFAULT)
+    }
+
+    /// Builds a supervisor whose worker handshake runs for `mode`.
+    pub fn with_runner(
+        lease: Option<Arc<NamedLock<ActiveDaemonLease>>>,
+        pid_claim: PidFileClaim,
+        config: BackendConfig,
+        _mode: RunnerMode,
+    ) -> Self {
         let (state, _) = watch::channel(BackendStatus::Standby);
         let (wait, _) = watch::channel(None);
         Self {
@@ -138,6 +152,11 @@ impl BackendSupervisor {
             state,
             wait,
         }
+    }
+
+    /// The runner mode the worker handshake runs for.
+    pub fn runner_mode(&self) -> RunnerMode {
+        RunnerMode::Python
     }
 
     pub fn subscribe(&self) -> watch::Receiver<BackendStatus> {
@@ -252,7 +271,7 @@ impl BackendSupervisor {
             if shutdown_requested(shutdown) {
                 return Ok(SupervisorExit::Stopped);
             }
-            let mut backend = BackendChild::spawn(&self.config).await?;
+            let mut backend = BackendChild::spawn(&self.config, None).await?;
             let started_at = Instant::now();
             let pid = backend.child.id().context("spawned backend has no PID")?;
             self.state.send_replace(BackendStatus::Starting { pid });
@@ -545,7 +564,10 @@ struct BackendChild {
 }
 
 impl BackendChild {
-    async fn spawn(config: &BackendConfig) -> Result<Self> {
+    async fn spawn(
+        config: &BackendConfig,
+        _generations: Option<&GenerationSource>,
+    ) -> Result<Self> {
         let (reader, writer) = std::io::pipe()?;
         let read_fd = reader.as_raw_fd();
         // The secret rides its own pipe, filled and closed before spawn so the
@@ -641,6 +663,11 @@ impl BackendChild {
             stderr,
             last_line,
         })
+    }
+
+    /// The generation of the worker session this child serves, or None when it serves none.
+    fn worker_generation(&self) -> Option<u64> {
+        None
     }
 
     async fn finish_stderr(&mut self) {

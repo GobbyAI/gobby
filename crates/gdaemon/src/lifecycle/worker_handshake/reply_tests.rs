@@ -6,7 +6,8 @@
 use serde_json::{Value, json};
 
 use super::{
-    CREDENTIAL, ScriptedChannel, case_response, refusal, response, session_at, unknown_outcome,
+    CREDENTIAL, ScriptedChannel, case_response, installed_identity, refusal, response, session_at,
+    unknown_outcome,
 };
 use crate::lifecycle::worker_handshake::{
     ErrorBody, HandshakeField, HandshakeResult, MAX_DOMAIN_OP_REQUEST_BYTES,
@@ -726,6 +727,33 @@ async fn handshake_commands_must_be_exact_and_ordered() {
             "{commands}: {err:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn handshake_schema_identity_must_match_installed() {
+    let mut identity = installed_identity();
+    identity["latest_checksum"] = json!("0".repeat(64));
+    let reply = handshake_reply_with(|result| result["schema_identity"] = identity.clone());
+    let result = handshake_answer(reply).await;
+    assert!(
+        matches!(
+            result,
+            Err(WorkerCallError::Protocol(
+                ProtocolViolation::ResultMismatch(HandshakeField::SchemaIdentity)
+            ))
+        ),
+        "{result:?}"
+    );
+}
+
+#[tokio::test]
+async fn handshake_schema_identity_matching_installed_is_accepted() {
+    let identity = installed_identity();
+    let reply = handshake_reply_with(|result| result["schema_identity"] = identity.clone());
+    let result = handshake_answer(reply)
+        .await
+        .expect("the installed identity is accepted");
+    assert_eq!(result.schema_identity, identity);
 }
 
 #[tokio::test]
