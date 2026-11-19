@@ -11,8 +11,9 @@ use std::time::Duration;
 use gobby_core::bootstrap::{RouteBackend, TlsBootstrap, TlsMode};
 use gobby_daemon::front_door::tls::{self, LoadedTls};
 use gobby_daemon::serve::{PublicListener, serve};
+use gobby_test_support::listeners::{bind_addr, bind_loopback, local_addr};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpStream;
 use tokio::sync::oneshot;
 use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
@@ -23,10 +24,8 @@ pub const TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Start a front door on an ephemeral port that proxies to `backend`.
 pub async fn start_front_door(backend: SocketAddr) -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind front door");
-    let addr = listener.local_addr().expect("front door addr");
+    let listener = bind_loopback(0).await.expect("bind front door");
+    let addr = local_addr(&listener).expect("front door addr");
     tokio::spawn(async move {
         let routes = BTreeMap::new();
         serve(
@@ -75,8 +74,8 @@ pub async fn start_front_door_on(
     config: Option<Arc<ServerConfig>>,
     routes: BTreeMap<String, RouteBackend>,
 ) -> SocketAddr {
-    let listener = TcpListener::bind(bind).await.expect("bind front door");
-    let addr = listener.local_addr().expect("front door addr");
+    let listener = bind_addr(bind).await.expect("bind front door");
+    let addr = local_addr(&listener).expect("front door addr");
     tokio::spawn(async move {
         serve(
             vec![PublicListener {
@@ -174,10 +173,8 @@ pub async fn ws_backend(
     expect_len: usize,
     reply: Vec<u8>,
 ) -> (SocketAddr, oneshot::Receiver<WsCapture>) {
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind ws backend");
-    let addr = listener.local_addr().expect("ws backend addr");
+    let listener = bind_loopback(0).await.expect("bind ws backend");
+    let addr = local_addr(&listener).expect("ws backend addr");
     let (done, captured) = oneshot::channel();
     tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.expect("accept");
