@@ -1,0 +1,856 @@
+{
+  "cases": [
+    {
+      "id": "claude-session-start-resumed",
+      "kind": "event",
+      "provenance": "synthetic",
+      "event_type": "session_start",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "session-start",
+      "payload": {
+        "hook_event_name": "SessionStart",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "source": "resume"
+      },
+      "collaborator_script": [],
+      "scenario": "session_start_resumed",
+      "expect": {
+        "event_type": "session_start",
+        "response": {
+          "system_message": "\nGobby Session ID: synthetic-app#1 (<uuid>)",
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "parent_session_id": null,
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>",
+            "external_id": "<uuid>",
+            "task_id": null,
+            "terminal_cwd": "<path>",
+            "_first_hook_for_session": false
+          }
+        },
+        "native_output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "\nGobby Session ID: synthetic-app#1 (<uuid>)"
+          }
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "find_by_external_id",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "find_by_external_id",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "rebind_resumed_terminal_session",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "cache_session_mapping",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_task_manager",
+            "method": "get_session_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_coordinator",
+            "method": "register_session",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "message_processor_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "task_manager",
+            "method": "list_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_config_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      }
+    },
+    {
+      "id": "claude-session-start-cleared",
+      "kind": "event",
+      "provenance": "synthetic",
+      "event_type": "session_start",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "session-start",
+      "payload": {
+        "hook_event_name": "SessionStart",
+        "session_id": "4a3b2c1d-0e9f-4a8b-9c7d-6e5f4a3b2c1d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "source": "clear"
+      },
+      "collaborator_script": [],
+      "scenario": "session_start_cleared",
+      "expect": {
+        "event_type": "session_start",
+        "response": {
+          "system_message": "\nGobby Session ID: synthetic-app#2 (<uuid>)",
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#2",
+            "parent_session_id": null,
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>",
+            "external_id": "<uuid>",
+            "task_id": null,
+            "terminal_cwd": "<path>",
+            "_first_hook_for_session": true
+          }
+        },
+        "native_output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "\nGobby Session ID: synthetic-app#2 (<uuid>)\n\nCLI-Specific Session ID (external_id): <uuid>\nmachine_id: <uuid>\nproject_id: <uuid>"
+          }
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "resolve_project_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "register_session",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "bind_native_clear_successor",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_task_manager",
+            "method": "get_session_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_coordinator",
+            "method": "register_session",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "message_processor_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "task_manager",
+            "method": "list_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_config_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      }
+    },
+    {
+      "id": "codex-session-start-compacted",
+      "kind": "event",
+      "provenance": "synthetic",
+      "event_type": "session_start",
+      "setup": [
+        {
+          "source": "codex",
+          "hook_type": "SessionStart",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+            "turn_id": "019a8c2e-turn-0002",
+            "transcript_path": "<project>/.provider/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "model": "gpt-5-codex",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "codex",
+          "hook_type": "UserPromptSubmit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+            "turn_id": "019a8c2e-turn-0002",
+            "transcript_path": "<project>/.provider/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "model": "gpt-5-codex",
+            "prompt": "Run the unit tests for the parser."
+          }
+        }
+      ],
+      "source": "codex",
+      "hook_type": "SessionStart",
+      "payload": {
+        "hook_event_name": "SessionStart",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "019a8c2e-turn-0002",
+        "transcript_path": "<project>/.provider/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "model": "gpt-5-codex",
+        "source": "compact"
+      },
+      "collaborator_script": [],
+      "scenario": "session_start_compacted",
+      "expect": {
+        "event_type": "session_start",
+        "response": {
+          "system_message": "\nGobby Session ID: synthetic-app#1 (<uuid>)",
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "parent_session_id": null,
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>",
+            "external_id": "<uuid>",
+            "task_id": null,
+            "terminal_cwd": "<path>",
+            "_first_hook_for_session": false
+          }
+        },
+        "native_output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "\nGobby Session ID: synthetic-app#1 (<uuid>)"
+          }
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "find_by_external_id",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "find_by_external_id",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "_notify_session_change",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "cache_session_mapping",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_task_manager",
+            "method": "get_session_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_coordinator",
+            "method": "register_session",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "message_processor_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "task_manager",
+            "method": "list_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_coordinator",
+            "method": "_event_loop",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_config_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "update",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      }
+    }
+  ]
+}

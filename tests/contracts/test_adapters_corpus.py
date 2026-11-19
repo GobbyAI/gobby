@@ -279,6 +279,15 @@ def test_python_adapters_replay_corpus() -> None:
     assert not mismatched, f"adapter cases that do not replay: {mismatched}"
 
 
+def test_rerecord_committed_corpus() -> None:
+    """Re-record the committed expect blocks from the live adapters when GOBBY_CORPUS_RECORD=1."""
+    adapters_corpus.record_corpus(CORPUS_DIR)
+    cases = _committed_cases()
+    assert len(cases) >= MIN_CASES, (
+        f"adapter corpus holds {len(cases)} cases after re-record; at least {MIN_CASES} required"
+    )
+
+
 def test_adapter_cases_change_outcome_when_their_adapter_path_is_broken(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1,0 +1,120 @@
+{
+  "cases": [
+    {
+      "id": "git-commit-allowed",
+      "kind": "git_verdict",
+      "source": "git",
+      "provenance": "synthetic",
+      "hook_type": "pre-commit",
+      "payload": {
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "cwd": "/srv/app",
+        "staged_paths": [
+          "src/parser.py",
+          "tests/test_parser.py"
+        ],
+        "integration_branch": "main",
+        "tool_input": {
+          "command": "git commit -m 'Add the parser test'"
+        }
+      },
+      "verdict": "allow",
+      "expect": {
+        "event": {
+          "event_type": "before_tool",
+          "session_id": "<uuid>",
+          "source": "git",
+          "timestamp": "<volatile>",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "git commit -m 'Add the parser test'"
+            },
+            "staged_paths": [
+              "src/parser.py",
+              "tests/test_parser.py"
+            ],
+            "integration_branch": "main",
+            "cwd": "/srv/app"
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {},
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        },
+        "output": {
+          "decision": "allow"
+        }
+      }
+    },
+    {
+      "id": "git-commit-blocked",
+      "kind": "git_verdict",
+      "source": "git",
+      "provenance": "synthetic",
+      "hook_type": "pre-commit",
+      "payload": {
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "cwd": "/srv/app",
+        "staged_paths": [
+          "src/parser.py",
+          "tests/test_parser.py"
+        ],
+        "integration_branch": "main",
+        "tool_input": {
+          "command": "git commit -m 'Add the parser test'"
+        }
+      },
+      "verdict": "block",
+      "reason": "Commits to main need a linked task.",
+      "expect": {
+        "event": {
+          "event_type": "before_tool",
+          "session_id": "<uuid>",
+          "source": "git",
+          "timestamp": "<volatile>",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "git commit -m 'Add the parser test'"
+            },
+            "staged_paths": [
+              "src/parser.py",
+              "tests/test_parser.py"
+            ],
+            "integration_branch": "main",
+            "cwd": "/srv/app"
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {},
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        },
+        "output": {
+          "decision": "block",
+          "reason": "Commits to main need a linked task."
+        }
+      }
+    }
+  ]
+}

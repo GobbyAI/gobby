@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "layer": "adapters",
+  "case_kinds": [
+    "inbound",
+    "outbound",
+    "node_origin",
+    "git_verdict",
+    "route_refusal"
+  ],
+  "sources": [
+    "claude",
+    "codex",
+    "droid",
+    "grok",
+    "agy",
+    "git"
+  ],
+  "platform_record": {
+    "macos": "recorded and replayed on macOS arm64 (the chunk gate)",
+    "linux": "not run for this commit; the replay uses no macOS-only path",
+    "windows-x64": "not run for this commit",
+    "windows-arm64": "not run for this commit"
+  }
+}

@@ -1,0 +1,2706 @@
+{
+  "cases": [
+    {
+      "id": "claude-in-session-start",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "session-start",
+      "payload": {
+        "hook_event_name": "SessionStart",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "source": "startup",
+        "model": "claude-opus"
+      },
+      "expect": {
+        "event": {
+          "event_type": "session_start",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "SessionStart",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "source": "startup",
+            "model": "claude-opus",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "session-start"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-setup",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "setup",
+      "payload": {
+        "hook_event_name": "Setup",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "trigger": "init"
+      },
+      "expect": {
+        "event": {
+          "event_type": "setup",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "Setup",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "trigger": "init",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "setup"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-instructions-loaded",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "instructions-loaded",
+      "payload": {
+        "hook_event_name": "InstructionsLoaded",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "file_path": "/srv/app/CLAUDE.md",
+        "memory_type": "Project",
+        "load_reason": "session_start"
+      },
+      "expect": {
+        "event": {
+          "event_type": "instructions_loaded",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "InstructionsLoaded",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "file_path": "/srv/app/CLAUDE.md",
+            "memory_type": "Project",
+            "load_reason": "session_start",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "instructions-loaded"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-user-prompt-submit",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "user-prompt-submit",
+      "payload": {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "prompt": "List the failing tests."
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_agent",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "prompt": "List the failing tests.",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "user-prompt-submit"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-user-prompt-expansion",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "user-prompt-expansion",
+      "payload": {
+        "hook_event_name": "UserPromptExpansion",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "prompt": "/review",
+        "expanded_prompt": "Review the staged diff."
+      },
+      "expect": {
+        "event": {
+          "event_type": "user_prompt_expansion",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "UserPromptExpansion",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "prompt": "/review",
+            "expanded_prompt": "Review the staged diff.",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "user-prompt-expansion"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-pre-tool-use",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "pre-tool-use",
+      "payload": {
+        "hook_event_name": "PreToolUse",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "git status --short",
+          "description": "Show working tree status"
+        },
+        "tool_use_id": "toolu_01"
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_tool",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "git status --short",
+              "description": "Show working tree status"
+            },
+            "tool_use_id": "toolu_01",
+            "_raw_tool_input": {
+              "command": "git status --short",
+              "description": "Show working tree status"
+            },
+            "command": "git status --short",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": true,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "pre-tool-use"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "toolu_01",
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": "toolu_01",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-permission-request",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "permission-request",
+      "payload": {
+        "hook_event_name": "PermissionRequest",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "rm -rf build/",
+          "description": "Remove the build output"
+        },
+        "tool_use_id": "toolu_03"
+      },
+      "expect": {
+        "event": {
+          "event_type": "permission_request",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PermissionRequest",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "rm -rf build/",
+              "description": "Remove the build output",
+              "file_path": "build/"
+            },
+            "tool_use_id": "toolu_03",
+            "_raw_tool_input": {
+              "command": "rm -rf build/",
+              "description": "Remove the build output"
+            },
+            "command": "rm -rf build/",
+            "canonical_tool_kind": "write",
+            "canonical_tool_confidence": "high",
+            "canonical_file_paths": [
+              "build/"
+            ],
+            "canonical_file_path": "build/",
+            "canonical_repo_mutation": true,
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "permission-request"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": "approval",
+          "wait_token": "toolu_03",
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": "toolu_03",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-post-tool-use",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "post-tool-use",
+      "payload": {
+        "hook_event_name": "PostToolUse",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "git status --short",
+          "description": "Show working tree status"
+        },
+        "tool_use_id": "toolu_01",
+        "tool_response": {
+          "stdout": " M README.md\n",
+          "stderr": "",
+          "interrupted": false,
+          "isImage": false
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_tool",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PostToolUse",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "git status --short",
+              "description": "Show working tree status"
+            },
+            "tool_use_id": "toolu_01",
+            "tool_response": {
+              "stdout": " M README.md\n",
+              "stderr": "",
+              "interrupted": false,
+              "isImage": false
+            },
+            "_raw_tool_input": {
+              "command": "git status --short",
+              "description": "Show working tree status"
+            },
+            "tool_output": {
+              "stdout": " M README.md\n",
+              "stderr": "",
+              "interrupted": false,
+              "isImage": false
+            },
+            "command": "git status --short",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": true,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "succeeded",
+              "provenance": "claude.hook:PostToolUse"
+            },
+            "_tool_outcome_trust": "provider_contract"
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "post-tool-use",
+            "is_failure": false
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "toolu_01",
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": "toolu_01",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-post-tool-use-failure",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "post-tool-use-failure",
+      "payload": {
+        "hook_event_name": "PostToolUseFailure",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "pytest -q tests/test_parser.py"
+        },
+        "tool_use_id": "toolu_04",
+        "error": "Exit code 1\n1 failed, 12 passed",
+        "is_interrupt": false
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_tool",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PostToolUseFailure",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "pytest -q tests/test_parser.py"
+            },
+            "tool_use_id": "toolu_04",
+            "error": "Exit code 1\n1 failed, 12 passed",
+            "is_interrupt": false,
+            "_raw_tool_input": {
+              "command": "pytest -q tests/test_parser.py"
+            },
+            "command": "pytest -q tests/test_parser.py",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "failed",
+              "provenance": "claude.hook:PostToolUseFailure"
+            },
+            "_tool_outcome_trust": "provider_contract"
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "post-tool-use-failure",
+            "is_failure": true
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "toolu_04",
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": "toolu_04",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-post-tool-batch",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "post-tool-batch",
+      "payload": {
+        "hook_event_name": "PostToolBatch",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "tool_calls": [
+          {
+            "tool_name": "Read",
+            "tool_use_id": "toolu_02"
+          }
+        ]
+      },
+      "expect": {
+        "event": {
+          "event_type": "post_tool_batch",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PostToolBatch",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "tool_calls": [
+              {
+                "tool_name": "Read",
+                "tool_use_id": "toolu_02"
+              }
+            ],
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "post-tool-batch"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-permission-denied",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "permission-denied",
+      "payload": {
+        "hook_event_name": "PermissionDenied",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "rm -rf build/",
+          "description": "Remove the build output"
+        },
+        "tool_use_id": "toolu_03"
+      },
+      "expect": {
+        "event": {
+          "event_type": "permission_denied",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PermissionDenied",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "rm -rf build/",
+              "description": "Remove the build output",
+              "file_path": "build/"
+            },
+            "tool_use_id": "toolu_03",
+            "_raw_tool_input": {
+              "command": "rm -rf build/",
+              "description": "Remove the build output"
+            },
+            "command": "rm -rf build/",
+            "canonical_tool_kind": "write",
+            "canonical_tool_confidence": "high",
+            "canonical_file_paths": [
+              "build/"
+            ],
+            "canonical_file_path": "build/",
+            "canonical_repo_mutation": true,
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "permission-denied"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": "approval",
+          "wait_token": "toolu_03",
+          "wait_resolution": "abandoned",
+          "provider_turn_key": null,
+          "request_id": "toolu_03",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-notification",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "notification",
+      "payload": {
+        "hook_event_name": "Notification",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "message": "Claude is waiting for your input",
+        "notification_type": "idle_prompt"
+      },
+      "expect": {
+        "event": {
+          "event_type": "notification",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "Notification",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "message": "Claude is waiting for your input",
+            "notification_type": "idle_prompt",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "notification"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-message-display",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "message-display",
+      "payload": {
+        "hook_event_name": "MessageDisplay",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "message": "Compacting conversation"
+      },
+      "expect": {
+        "event": {
+          "event_type": "message_display",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "MessageDisplay",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "message": "Compacting conversation",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "message-display"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-subagent-start",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "subagent-start",
+      "payload": {
+        "hook_event_name": "SubagentStart",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "agent_id": "agent_01",
+        "agent_type": "Explore"
+      },
+      "expect": {
+        "event": {
+          "event_type": "subagent_start",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "SubagentStart",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "agent_id": "agent_01",
+            "agent_type": "Explore",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "subagent-start"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-subagent-stop",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "subagent-stop",
+      "payload": {
+        "hook_event_name": "SubagentStop",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "agent_id": "agent_01",
+        "agent_type": "Explore",
+        "stop_hook_active": false,
+        "agent_transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d/subagents/agent_01.jsonl"
+      },
+      "expect": {
+        "event": {
+          "event_type": "subagent_stop",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "SubagentStop",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "agent_id": "agent_01",
+            "agent_type": "Explore",
+            "stop_hook_active": false,
+            "agent_transcript_path": "/srv/claude/projects/app/<uuid>/subagents/agent_01.jsonl",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "subagent-stop"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-task-created",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "task-created",
+      "payload": {
+        "hook_event_name": "TaskCreated",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "task_id": "1",
+        "subject": "Add the parser test",
+        "description": "Cover empty input."
+      },
+      "expect": {
+        "event": {
+          "event_type": "task_created",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "TaskCreated",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "task_id": "1",
+            "subject": "Add the parser test",
+            "description": "Cover empty input.",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "task-created"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-task-completed",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "task-completed",
+      "payload": {
+        "hook_event_name": "TaskCompleted",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "task_id": "1",
+        "subject": "Add the parser test"
+      },
+      "expect": {
+        "event": {
+          "event_type": "task_completed",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "TaskCompleted",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "task_id": "1",
+            "subject": "Add the parser test",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "task-completed"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-stop",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "stop",
+      "payload": {
+        "hook_event_name": "Stop",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "stop_hook_active": false,
+        "last_assistant_message": "Done."
+      },
+      "expect": {
+        "event": {
+          "event_type": "stop",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "Stop",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "stop_hook_active": false,
+            "last_assistant_message": "Done.",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "stop"
+          },
+          "turn_disposition": "completed",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-stop-failure",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "stop-failure",
+      "payload": {
+        "hook_event_name": "StopFailure",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "error": "overloaded_error"
+      },
+      "expect": {
+        "event": {
+          "event_type": "stop_failure",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "StopFailure",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "error": "overloaded_error",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "stop-failure"
+          },
+          "turn_disposition": "ended_non_user",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-teammate-idle",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "teammate-idle",
+      "payload": {
+        "hook_event_name": "TeammateIdle",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "teammate_name": "reviewer",
+        "team_name": "core"
+      },
+      "expect": {
+        "event": {
+          "event_type": "teammate_idle",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "TeammateIdle",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "teammate_name": "reviewer",
+            "team_name": "core",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "teammate-idle"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-config-change",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "config-change",
+      "payload": {
+        "hook_event_name": "ConfigChange",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "source": "user_settings",
+        "file_path": "/srv/app/.claude/settings.json"
+      },
+      "expect": {
+        "event": {
+          "event_type": "config_change",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "ConfigChange",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "source": "user_settings",
+            "file_path": "/srv/app/.claude/settings.json",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "config-change"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-cwd-changed",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "cwd-changed",
+      "payload": {
+        "hook_event_name": "CwdChanged",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "old_cwd": "/srv/app",
+        "new_cwd": "/srv/app/src"
+      },
+      "expect": {
+        "event": {
+          "event_type": "cwd_changed",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "CwdChanged",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "old_cwd": "/srv/app",
+            "new_cwd": "/srv/app/src",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "cwd-changed"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-directory-added",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "directory-added",
+      "payload": {
+        "hook_event_name": "DirectoryAdded",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "directory": "/srv/app/docs"
+      },
+      "expect": {
+        "event": {
+          "event_type": "directory_added",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "DirectoryAdded",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "directory": "/srv/app/docs",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "directory-added"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-file-changed",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "file-changed",
+      "payload": {
+        "hook_event_name": "FileChanged",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "file_path": "/srv/app/README.md",
+        "event": "change"
+      },
+      "expect": {
+        "event": {
+          "event_type": "file_changed",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "FileChanged",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "file_path": "/srv/app/README.md",
+            "event": "change",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "file-changed"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-worktree-create",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "worktree-create",
+      "payload": {
+        "hook_event_name": "WorktreeCreate",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "name": "feature-parser"
+      },
+      "expect": {
+        "event": {
+          "event_type": "worktree_create",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "WorktreeCreate",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "name": "feature-parser",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "worktree-create"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-worktree-remove",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "worktree-remove",
+      "payload": {
+        "hook_event_name": "WorktreeRemove",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "worktree_path": "/srv/app-feature-parser"
+      },
+      "expect": {
+        "event": {
+          "event_type": "worktree_remove",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "WorktreeRemove",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "worktree_path": "/srv/app-feature-parser",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "worktree-remove"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-pre-compact",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "pre-compact",
+      "payload": {
+        "hook_event_name": "PreCompact",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "trigger": "manual",
+        "custom_instructions": ""
+      },
+      "expect": {
+        "event": {
+          "event_type": "pre_compact",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PreCompact",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "trigger": "manual",
+            "custom_instructions": "",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "pre-compact"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-post-compact",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "post-compact",
+      "payload": {
+        "hook_event_name": "PostCompact",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "trigger": "manual",
+        "compact_summary": "Summary."
+      },
+      "expect": {
+        "event": {
+          "event_type": "post_compact",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PostCompact",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "trigger": "manual",
+            "compact_summary": "Summary.",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "post-compact"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-pre-model-switch",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "pre-model-switch",
+      "payload": {
+        "hook_event_name": "PreModelSwitch",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "model": "claude-sonnet"
+      },
+      "expect": {
+        "event": {
+          "event_type": "pre_model_switch",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PreModelSwitch",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "model": "claude-sonnet",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "pre-model-switch"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-post-model-switch",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "post-model-switch",
+      "payload": {
+        "hook_event_name": "PostModelSwitch",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "model": "claude-sonnet"
+      },
+      "expect": {
+        "event": {
+          "event_type": "post_model_switch",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PostModelSwitch",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "model": "claude-sonnet",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "post-model-switch"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-session-end",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "session-end",
+      "payload": {
+        "hook_event_name": "SessionEnd",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "reason": "prompt_input_exit"
+      },
+      "expect": {
+        "event": {
+          "event_type": "session_end",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "SessionEnd",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "reason": "prompt_input_exit",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "session-end"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-elicitation",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "elicitation",
+      "payload": {
+        "hook_event_name": "Elicitation",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "mcp_server_name": "tracker",
+        "message": "Pick a task",
+        "requested_schema": {
+          "type": "object",
+          "properties": {
+            "task": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "elicitation",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "Elicitation",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "mcp_server_name": "tracker",
+            "message": "Pick a task",
+            "requested_schema": {
+              "type": "object",
+              "properties": {
+                "task": {
+                  "type": "string"
+                }
+              }
+            },
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "elicitation"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": "input",
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-in-elicitation-result",
+      "kind": "inbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "elicitation-result",
+      "payload": {
+        "hook_event_name": "ElicitationResult",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "mcp_server_name": "tracker",
+        "action": "accept",
+        "content": {
+          "task": "1"
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "elicitation_result",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "ElicitationResult",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "mcp_server_name": "tracker",
+            "action": "accept",
+            "content": {
+              "task": "1"
+            },
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "elicitation-result"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": "input",
+          "wait_token": null,
+          "wait_resolution": "ambiguous",
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "claude-out-session-start",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "session-start",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "Two ready tasks are waiting.\n\nTask #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-setup",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "setup",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "Setup",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-instructions-loaded",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "instructions-loaded",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-user-prompt-submit",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "user-prompt-submit",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-user-prompt-expansion",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "user-prompt-expansion",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptExpansion",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-pre-tool-use",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "pre-tool-use",
+      "response": {
+        "auto_approve": true,
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "modified_input": {
+          "command": "git status --short --branch"
+        },
+        "permission_decision": "allow",
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": "Task #12 is claimed for this file.",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": "Recursive removal is not allowed here.",
+            "updatedInput": {
+              "command": "git status --short --branch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-pre-tool-use-deny",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "pre-tool-use",
+      "response": {
+        "decision": "deny",
+        "reason": "Recursive removal is not allowed here.",
+        "permission_decision": "deny",
+        "system_message": "Gobby blocked a recursive removal."
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Gobby blocked a recursive removal.",
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "Recursive removal is not allowed here."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-permission-request",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "permission-request",
+      "response": {
+        "auto_approve": true,
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "modified_input": {
+          "command": "git status --short --branch"
+        },
+        "permission_decision": "allow",
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "updated_permissions": [
+          {
+            "type": "addRules",
+            "rules": [
+              {
+                "toolName": "Bash",
+                "ruleContent": "git status:*"
+              }
+            ],
+            "behavior": "allow",
+            "destination": "session"
+          }
+        ],
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {
+              "behavior": "allow",
+              "updatedInput": {
+                "command": "git status --short --branch"
+              },
+              "updatedPermissions": [
+                {
+                  "type": "addRules",
+                  "rules": [
+                    {
+                      "toolName": "Bash",
+                      "ruleContent": "git status:*"
+                    }
+                  ],
+                  "behavior": "allow",
+                  "destination": "session"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-permission-request-deny",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "permission-request",
+      "response": {
+        "decision": "deny",
+        "reason": "Recursive removal is not allowed here.",
+        "permission_decision": "deny",
+        "system_message": "Gobby blocked a recursive removal."
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Gobby blocked a recursive removal.",
+          "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {
+              "behavior": "deny",
+              "message": "Recursive removal is not allowed here."
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-post-tool-use",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "post-tool-use",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-post-tool-use-failure",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "post-tool-use-failure",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "PostToolUseFailure",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-post-tool-batch",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "post-tool-batch",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "PostToolBatch",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-permission-denied",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "permission-denied",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "retry": true,
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "PermissionDenied",
+            "retry": true
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-notification",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "notification",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "Notification",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-message-display",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "message-display",
+      "response": {
+        "display_content": "Compacting conversation; a handoff was saved.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "hookSpecificOutput": {
+            "hookEventName": "MessageDisplay",
+            "displayContent": "Compacting conversation; a handoff was saved."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-subagent-start",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "subagent-start",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "SubagentStart",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-subagent-stop",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "subagent-stop",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-task-created",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "task-created",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-task-completed",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "task-completed",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-stop",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "stop",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-stop-failure",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "stop-failure",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-teammate-idle",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "teammate-idle",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-config-change",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "config-change",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-cwd-changed",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "cwd-changed",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "watch_paths": [
+          "/srv/app/.gobby/project.json"
+        ],
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "CwdChanged",
+            "watchPaths": [
+              "/srv/app/.gobby/project.json"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-directory-added",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "directory-added",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-file-changed",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "file-changed",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "watch_paths": [
+          "/srv/app/.gobby/project.json"
+        ],
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "FileChanged",
+            "watchPaths": [
+              "/srv/app/.gobby/project.json"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-worktree-create",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "worktree-create",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "worktree_path": "/srv/app-worktrees/feature-parser",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "WorktreeCreate",
+            "worktreePath": "/srv/app-worktrees/feature-parser"
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-worktree-remove",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "worktree-remove",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-pre-compact",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "pre-compact",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-post-compact",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "post-compact",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-pre-model-switch",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "pre-model-switch",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-post-model-switch",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "post-model-switch",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "PostModelSwitch",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-session-end",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "session-end",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "claude-out-elicitation",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "elicitation",
+      "response": {
+        "elicitation_action": "accept",
+        "elicitation_content": {
+          "task": "1"
+        },
+        "elicitation_error": "The tracker server closed the request.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "Elicitation",
+            "action": "accept",
+            "content": {
+              "task": "1"
+            },
+            "errorMessage": "The tracker server closed the request."
+          }
+        }
+      }
+    },
+    {
+      "id": "claude-out-elicitation-result",
+      "kind": "outbound",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "elicitation-result",
+      "response": {
+        "elicitation_action": "accept",
+        "elicitation_content": {
+          "task": "1"
+        },
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "ElicitationResult",
+            "action": "accept",
+            "content": {
+              "task": "1"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

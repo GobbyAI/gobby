@@ -30,6 +30,7 @@ from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.hooks.factory import HookManagerComponents
 from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.session_lookup import SessionLookupService
 from tests.contracts import pipeline_corpus
 
 CONTRACTS_DIR = Path(__file__).resolve().parent
@@ -52,7 +53,6 @@ COLLABORATOR_KINDS = (
     "progress_tracker",
     "session_end_auto_link_worker",
     "skill_manager",
-    "call_tool",
     "workflow_config_resolver",
     "get_machine_id",
     "resolve_project_id",
@@ -63,6 +63,10 @@ COLLABORATOR_KINDS = (
     "webhook_dispatcher",
     "broadcaster",
 )
+# Injected into EventHandlers but read by no handler, so no failure of it can reach a response.
+# The guard below fails once a handler reads it, and the kind then needs a failing case.
+UNREAD_COLLABORATORS = {"call_tool": "_call_tool"}
+HOOKS_SOURCE = CONTRACTS_DIR.parents[1] / "src" / "gobby" / "hooks"
 REQUIRED_SCENARIOS = (
     "session_start_new",
     "session_start_resumed",
@@ -75,12 +79,15 @@ REQUIRED_SCENARIOS = (
     "rule_block_short_circuit",
 )
 RULE_SHORT_CIRCUIT = "rule_block_short_circuit"
-# Scenarios whose response comes from a path other than the event's handler. Breaking that
-# path must change the outcome; for the rule short circuit, breaking the handler must not.
-SHORT_CIRCUIT_PATHS: dict[str, tuple[type, str]] = {
+# The path each scenario names besides the event's handler. Breaking it must change the outcome.
+SCENARIO_PATHS: dict[str, tuple[type, str]] = {
     RULE_SHORT_CIRCUIT: (HookManager, "_evaluate_workflow_rules"),
     "blocking_webhook": (HookManager, "_evaluate_blocking_webhooks"),
+    "deferred_activation": (EventHandlers, "_activate_materialized_session"),
+    "node_session_missing_row": (SessionLookupService, "resolve"),
 }
+# Scenarios decided before the event's handler runs: breaking the handler must not change them.
+HANDLER_BYPASSED = frozenset({RULE_SHORT_CIRCUIT, "blocking_webhook", "node_session_missing_row"})
 SYNTHETIC_RULE_PREFIX = "synthetic-"
 # A collaborator failure is injected only through these case keys, never in the script, so
 # removing them yields the healthy twin of the case.
@@ -222,6 +229,33 @@ def test_pipeline_corpus_has_required_cases() -> None:
     assert not gaps, f"pipeline corpus gaps: {gaps}"
 
 
+def test_unread_collaborators_stay_unread() -> None:
+    manifest, _cases = pipeline_corpus.load_corpus(CORPUS_DIR)
+    assert set(manifest.get("unread_collaborators", {})) == set(UNREAD_COLLABORATORS)
+    assert not set(UNREAD_COLLABORATORS) & set(COLLABORATOR_KINDS)
+    sources = sorted(HOOKS_SOURCE.rglob("*.py"))
+    assert sources, f"no hook sources under {HOOKS_SOURCE}"
+    reads: list[str] = []
+    for path in sources:
+        for number, line in enumerate(path.read_text().splitlines(), start=1):
+            for kind, attribute in UNREAD_COLLABORATORS.items():
+                stripped = line.strip()
+                stored = stripped == f"self.{attribute} = {kind}"
+                declared = stripped.startswith(f"{attribute}:")
+                if re.search(rf"\b{attribute}\b", line) and not (stored or declared):
+                    reads.append(f"{path.relative_to(HOOKS_SOURCE)}:{number}")
+    assert not reads, f"handlers now read an unread collaborator; give it a failing case: {reads}"
+
+
+def test_rerecord_committed_corpus() -> None:
+    """Re-record the committed expect blocks from the live pipeline when GOBBY_CORPUS_RECORD=1."""
+    pipeline_corpus.record_corpus(CORPUS_DIR)
+    cases = _committed_cases()
+    assert len(cases) >= MIN_CASES, (
+        f"pipeline corpus holds {len(cases)} cases after re-record; at least {MIN_CASES} required"
+    )
+
+
 def test_python_pipeline_replays_corpus() -> None:
     cases = _committed_cases()
     assert len(cases) >= MIN_CASES, (
@@ -284,17 +318,17 @@ def test_pipeline_cases_change_outcome_when_their_path_is_broken(
             patch.setattr(EventHandlers, handler, _broken)
             handler_changed = _outcome(case) != case["expect"]
         scenario = str(case.get("scenario"))
-        if scenario not in SHORT_CIRCUIT_PATHS:
-            if not handler_changed:
-                unreached.append(f"{case['id']}: unchanged with {handler} broken")
+        if scenario in HANDLER_BYPASSED and handler_changed:
+            unreached.append(f"{case['id']}: {scenario} did not decide before {handler}")
+        if scenario not in HANDLER_BYPASSED and not handler_changed:
+            unreached.append(f"{case['id']}: unchanged with {handler} broken")
+        if scenario not in SCENARIO_PATHS:
             continue
-        owner, attribute = SHORT_CIRCUIT_PATHS[scenario]
+        owner, attribute = SCENARIO_PATHS[scenario]
         with monkeypatch.context() as patch:
             patch.setattr(owner, attribute, _broken)
             if _outcome(case) == case["expect"]:
                 unreached.append(f"{case['id']}: unchanged with {attribute} broken")
-        if scenario == RULE_SHORT_CIRCUIT and handler_changed:
-            unreached.append(f"{case['id']}: the rule block did not short-circuit {handler}")
     assert not unreached, f"pipeline cases that never reach their named path: {unreached}"
 
 

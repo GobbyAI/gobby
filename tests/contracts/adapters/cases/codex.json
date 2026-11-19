@@ -1,0 +1,1174 @@
+{
+  "cases": [
+    {
+      "id": "codex-in-SessionStart",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "SessionStart",
+      "payload": {
+        "hook_event_name": "SessionStart",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "source": "startup"
+      },
+      "expect": {
+        "event": {
+          "event_type": "session_start",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "SessionStart",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "source": "startup",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "SessionStart"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-SubagentStart",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "SubagentStart",
+      "payload": {
+        "hook_event_name": "SubagentStart",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "agent_id": "agent_7",
+        "agent_type": "worker"
+      },
+      "expect": {
+        "event": {
+          "event_type": "subagent_start",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "SubagentStart",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "agent_id": "agent_7",
+            "agent_type": "worker",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "SubagentStart"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-UserPromptSubmit",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "UserPromptSubmit",
+      "payload": {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "prompt": "Run the unit tests for the parser."
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_agent",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "prompt": "Run the unit tests for the parser.",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "UserPromptSubmit"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-PreToolUse",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PreToolUse",
+      "payload": {
+        "hook_event_name": "PreToolUse",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "tool_name": "Bash",
+        "tool_use_id": "call_1",
+        "tool_input": {
+          "command": "cargo test -p parser",
+          "workdir": "/srv/app"
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_tool",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "tool_name": "Bash",
+            "tool_use_id": "call_1",
+            "tool_input": {
+              "command": "cargo test -p parser",
+              "workdir": "/srv/app"
+            },
+            "_raw_tool_input": {
+              "command": "cargo test -p parser",
+              "workdir": "/srv/app"
+            },
+            "command": "cargo test -p parser",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PreToolUse",
+            "raw_tool_input": {
+              "command": "cargo test -p parser",
+              "workdir": "/srv/app"
+            }
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "call_1",
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": "call_1",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-PermissionRequest",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PermissionRequest",
+      "payload": {
+        "hook_event_name": "PermissionRequest",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "tool_name": "Bash",
+        "tool_use_id": "call_2",
+        "tool_input": {
+          "command": "rm -rf target",
+          "workdir": "/srv/app"
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "permission_request",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PermissionRequest",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "tool_name": "Bash",
+            "tool_use_id": "call_2",
+            "tool_input": {
+              "command": "rm -rf target",
+              "workdir": "/srv/app",
+              "file_path": "target"
+            },
+            "_raw_tool_input": {
+              "command": "rm -rf target",
+              "workdir": "/srv/app"
+            },
+            "command": "rm -rf target",
+            "canonical_tool_kind": "write",
+            "canonical_tool_confidence": "high",
+            "canonical_file_paths": [
+              "target"
+            ],
+            "canonical_file_path": "target",
+            "canonical_repo_mutation": true,
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PermissionRequest",
+            "raw_tool_input": {
+              "command": "rm -rf target",
+              "workdir": "/srv/app",
+              "file_path": "target"
+            }
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": "approval",
+          "wait_token": "call_2",
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": "call_2",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-PostToolUse",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PostToolUse",
+      "payload": {
+        "hook_event_name": "PostToolUse",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "tool_name": "Bash",
+        "tool_use_id": "call_1",
+        "tool_input": {
+          "command": "cargo test -p parser",
+          "workdir": "/srv/app"
+        },
+        "tool_response": "test result: ok. 12 passed; 0 failed"
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_tool",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PostToolUse",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "tool_name": "Bash",
+            "tool_use_id": "call_1",
+            "tool_input": {
+              "command": "cargo test -p parser",
+              "workdir": "/srv/app"
+            },
+            "tool_response": "test result: ok. 12 passed; 0 failed",
+            "_raw_tool_input": {
+              "command": "cargo test -p parser",
+              "workdir": "/srv/app"
+            },
+            "tool_output": "test result: ok. 12 passed; 0 failed",
+            "command": "cargo test -p parser",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PostToolUse",
+            "raw_tool_input": {
+              "command": "cargo test -p parser",
+              "workdir": "/srv/app"
+            }
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "call_1",
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": "call_1",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-PreCompact",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PreCompact",
+      "payload": {
+        "hook_event_name": "PreCompact",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "trigger": "auto"
+      },
+      "expect": {
+        "event": {
+          "event_type": "pre_compact",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PreCompact",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "trigger": "auto",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PreCompact"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-PostCompact",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PostCompact",
+      "payload": {
+        "hook_event_name": "PostCompact",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "trigger": "auto"
+      },
+      "expect": {
+        "event": {
+          "event_type": "post_compact",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PostCompact",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "trigger": "auto",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PostCompact"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-SubagentStop",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "SubagentStop",
+      "payload": {
+        "hook_event_name": "SubagentStop",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "agent_id": "agent_7",
+        "agent_type": "worker"
+      },
+      "expect": {
+        "event": {
+          "event_type": "subagent_stop",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "SubagentStop",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "agent_id": "agent_7",
+            "agent_type": "worker",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "SubagentStop"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-Stop",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "Stop",
+      "payload": {
+        "hook_event_name": "Stop",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "stop_hook_active": false,
+        "last_assistant_message": "The tests pass."
+      },
+      "expect": {
+        "event": {
+          "event_type": "stop",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "Stop",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "stop_hook_active": false,
+            "last_assistant_message": "The tests pass.",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "Stop"
+          },
+          "turn_disposition": "completed",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-Interrupt",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "Interrupt",
+      "payload": {
+        "hook_event_name": "Interrupt",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "reason": "user_interrupt"
+      },
+      "expect": {
+        "event": {
+          "event_type": "interrupt",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "Interrupt",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "reason": "user_interrupt",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "Interrupt"
+          },
+          "turn_disposition": "user_interrupted",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-SessionEnd",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "SessionEnd",
+      "payload": {
+        "hook_event_name": "SessionEnd",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "reason": "exit"
+      },
+      "expect": {
+        "event": {
+          "event_type": "session_end",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "SessionEnd",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "reason": "exit",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "SessionEnd"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-PreModelRequest",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PreModelRequest",
+      "payload": {
+        "hook_event_name": "PreModelRequest",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "request_id": "req_3"
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_model",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PreModelRequest",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "request_id": "req_3",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PreModelRequest"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "req_3",
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": "req_3",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-in-PostModelRequest",
+      "kind": "inbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PostModelRequest",
+      "payload": {
+        "hook_event_name": "PostModelRequest",
+        "session_id": "019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "request_id": "req_3",
+        "status": "completed"
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_model",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PostModelRequest",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "request_id": "req_3",
+            "status": "completed",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PostModelRequest"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "req_3",
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": "req_3",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-out-SessionStart",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "SessionStart",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "Two ready tasks are waiting.\n\nTask #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "codex-out-SubagentStart",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "SubagentStart",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "SubagentStart",
+            "additionalContext": "Two ready tasks are waiting.\n\nTask #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "codex-out-UserPromptSubmit",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "UserPromptSubmit",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "Two ready tasks are waiting.\n\nTask #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "codex-out-PreToolUse",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PreToolUse",
+      "response": {
+        "auto_approve": true,
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "modified_input": {
+          "command": "git status --short --branch"
+        },
+        "permission_decision": "allow",
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "command": "git status --short --branch"
+            }
+          },
+          "systemMessage": "Two ready tasks are waiting.\n\nTask #12 is claimed for this file."
+        }
+      }
+    },
+    {
+      "id": "codex-out-PreToolUse-deny",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PreToolUse",
+      "response": {
+        "decision": "deny",
+        "reason": "Recursive removal is not allowed here.",
+        "permission_decision": "deny",
+        "system_message": "Gobby blocked a recursive removal."
+      },
+      "expect": {
+        "output": {
+          "decision": "block",
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "Recursive removal is not allowed here."
+          },
+          "reason": "Recursive removal is not allowed here.",
+          "systemMessage": "Gobby blocked a recursive removal."
+        }
+      }
+    },
+    {
+      "id": "codex-out-PermissionRequest",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PermissionRequest",
+      "response": {
+        "auto_approve": true,
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "permission_decision": "allow",
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {
+              "behavior": "allow"
+            }
+          },
+          "systemMessage": "Two ready tasks are waiting.\n\nTask #12 is claimed for this file."
+        }
+      }
+    },
+    {
+      "id": "codex-out-PermissionRequest-deny",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PermissionRequest",
+      "response": {
+        "decision": "deny",
+        "reason": "Recursive removal is not allowed here.",
+        "permission_decision": "deny",
+        "system_message": "Gobby blocked a recursive removal."
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {
+              "behavior": "deny",
+              "message": "Recursive removal is not allowed here."
+            }
+          },
+          "systemMessage": "Gobby blocked a recursive removal."
+        }
+      }
+    },
+    {
+      "id": "codex-out-PostToolUse",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PostToolUse",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": "Two ready tasks are waiting.\n\nTask #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "codex-out-PreCompact",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PreCompact",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.\n\nTask #12 is claimed for this file."
+        }
+      }
+    },
+    {
+      "id": "codex-out-PostCompact",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PostCompact",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.\n\nTask #12 is claimed for this file."
+        }
+      }
+    },
+    {
+      "id": "codex-out-SubagentStop",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "SubagentStop",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "codex-out-Stop",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "Stop",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.\n\nTask #12 is claimed for this file."
+        }
+      }
+    },
+    {
+      "id": "codex-out-Interrupt",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "Interrupt",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "codex-out-SessionEnd",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "SessionEnd",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "codex-out-PreModelRequest",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PreModelRequest",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {}
+      }
+    },
+    {
+      "id": "codex-out-PostModelRequest",
+      "kind": "outbound",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PostModelRequest",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {}
+      }
+    }
+  ]
+}

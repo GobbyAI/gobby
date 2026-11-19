@@ -1,0 +1,1374 @@
+{
+  "cases": [
+    {
+      "id": "grok-in-session_start",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "session_start",
+      "payload": {
+        "hookEventName": "session_start",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "source": "new"
+      },
+      "expect": {
+        "event": {
+          "event_type": "session_start",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "session_start",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "source": "new",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "session_start"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-session_end",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "session_end",
+      "payload": {
+        "hookEventName": "session_end",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "reason": "exit"
+      },
+      "expect": {
+        "event": {
+          "event_type": "session_end",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "session_end",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "reason": "exit",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "session_end"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-user_prompt_submit",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "user_prompt_submit",
+      "payload": {
+        "hookEventName": "user_prompt_submit",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "prompt": "Explain the build."
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_agent",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "user_prompt_submit",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "prompt": "Explain the build.",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "user_prompt_submit"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-pre_tool_use",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "pre_tool_use",
+      "payload": {
+        "hookEventName": "pre_tool_use",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "toolName": "bash",
+        "toolUseId": "call_1",
+        "toolInput": {
+          "command": "make build"
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_tool",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "pre_tool_use",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "toolName": "bash",
+            "toolUseId": "call_1",
+            "toolInput": {
+              "command": "make build"
+            },
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "tool_name": "Bash",
+            "tool_use_id": "call_1",
+            "tool_input": {
+              "command": "make build"
+            },
+            "_raw_tool_input": {
+              "command": "make build"
+            },
+            "command": "make build",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "original_tool_name": "bash",
+            "normalized_tool_name": "Bash",
+            "_native_hook_type": "pre_tool_use"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "call_1",
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": "call_1",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-post_tool_use",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "post_tool_use",
+      "payload": {
+        "hookEventName": "post_tool_use",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "toolName": "bash",
+        "toolUseId": "call_1",
+        "toolInput": {
+          "command": "make build"
+        },
+        "toolResult": {
+          "type": "Text",
+          "output": "build ok"
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_tool",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "post_tool_use",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "toolName": "bash",
+            "toolUseId": "call_1",
+            "toolInput": {
+              "command": "make build"
+            },
+            "toolResult": {
+              "type": "Text",
+              "output": "build ok"
+            },
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "tool_name": "Bash",
+            "tool_use_id": "call_1",
+            "tool_input": {
+              "command": "make build"
+            },
+            "tool_output": {
+              "type": "Text",
+              "output": "build ok"
+            },
+            "_raw_tool_input": {
+              "command": "make build"
+            },
+            "command": "make build",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "original_tool_name": "bash",
+            "normalized_tool_name": "Bash",
+            "_native_hook_type": "post_tool_use"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "call_1",
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": "call_1",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-post_tool_use_failure",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "post_tool_use_failure",
+      "payload": {
+        "hookEventName": "post_tool_use_failure",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "toolName": "bash",
+        "toolUseId": "call_2",
+        "toolInput": {
+          "command": "make lint"
+        },
+        "error": "exit status 2"
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_tool",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "post_tool_use_failure",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "toolName": "bash",
+            "toolUseId": "call_2",
+            "toolInput": {
+              "command": "make lint"
+            },
+            "error": "exit status 2",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "tool_name": "Bash",
+            "tool_use_id": "call_2",
+            "tool_input": {
+              "command": "make lint"
+            },
+            "_raw_tool_input": {
+              "command": "make lint"
+            },
+            "command": "make lint",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "failed",
+              "provenance": "grok.hook:post_tool_use_failure"
+            },
+            "_tool_outcome_trust": "provider_contract"
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "original_tool_name": "bash",
+            "normalized_tool_name": "Bash",
+            "_native_hook_type": "post_tool_use_failure",
+            "is_failure": true
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "call_2",
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": "call_2",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-pre_compact",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "pre_compact",
+      "payload": {
+        "hookEventName": "pre_compact",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "trigger": "auto"
+      },
+      "expect": {
+        "event": {
+          "event_type": "pre_compact",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "pre_compact",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "trigger": "auto",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "pre_compact"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-post_compact",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "post_compact",
+      "payload": {
+        "hookEventName": "post_compact",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "trigger": "auto"
+      },
+      "expect": {
+        "event": {
+          "event_type": "post_compact",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "post_compact",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "trigger": "auto",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "post_compact"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-stop",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "stop",
+      "payload": {
+        "hookEventName": "stop",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "stopReason": "end_turn"
+      },
+      "expect": {
+        "event": {
+          "event_type": "stop",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "stop",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "stopReason": "end_turn",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "stop_reason": "end_turn",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "stop"
+          },
+          "turn_disposition": "completed",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-notification",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "notification",
+      "payload": {
+        "hookEventName": "notification",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "message": "Grok is waiting for input"
+      },
+      "expect": {
+        "event": {
+          "event_type": "notification",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "notification",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "message": "Grok is waiting for input",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "notification"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-permission_denied",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "permission_denied",
+      "payload": {
+        "hookEventName": "permission_denied",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "toolName": "bash",
+        "toolUseId": "call_3",
+        "toolInput": {
+          "command": "rm -rf /srv"
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "permission_denied",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "permission_denied",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "toolName": "bash",
+            "toolUseId": "call_3",
+            "toolInput": {
+              "command": "rm -rf /srv"
+            },
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "tool_name": "Bash",
+            "tool_use_id": "call_3",
+            "tool_input": {
+              "command": "rm -rf /srv",
+              "file_path": "/srv"
+            },
+            "_raw_tool_input": {
+              "command": "rm -rf /srv"
+            },
+            "command": "rm -rf /srv",
+            "canonical_tool_kind": "write",
+            "canonical_tool_confidence": "high",
+            "canonical_file_paths": [
+              "/srv"
+            ],
+            "canonical_file_path": "/srv",
+            "canonical_repo_mutation": true,
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "original_tool_name": "bash",
+            "normalized_tool_name": "Bash",
+            "_native_hook_type": "permission_denied"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "call_3",
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": "call_3",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-stop_failure",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "stop_failure",
+      "payload": {
+        "hookEventName": "stop_failure",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "error": "rate_limited"
+      },
+      "expect": {
+        "event": {
+          "event_type": "stop_failure",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "stop_failure",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "error": "rate_limited",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "stop_failure"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-subagent_start",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "subagent_start",
+      "payload": {
+        "hookEventName": "subagent_start",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "agentId": "sub_1",
+        "agentType": "explorer"
+      },
+      "expect": {
+        "event": {
+          "event_type": "subagent_start",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "subagent_start",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "agentId": "sub_1",
+            "agentType": "explorer",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "subagent_start"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-subagent_stop",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "subagent_stop",
+      "payload": {
+        "hookEventName": "subagent_stop",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "agentId": "sub_1",
+        "agentType": "explorer"
+      },
+      "expect": {
+        "event": {
+          "event_type": "subagent_stop",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "subagent_stop",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "agentId": "sub_1",
+            "agentType": "explorer",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "subagent_stop"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-pending_interaction",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "pending_interaction",
+      "payload": {
+        "hookEventName": "pending_interaction",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "kind": "question",
+        "message": "Which branch?"
+      },
+      "expect": {
+        "event": {
+          "event_type": "notification",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "pending_interaction",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "kind": "question",
+            "message": "Which branch?",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "pending_interaction"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-interaction_resolved",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "interaction_resolved",
+      "payload": {
+        "hookEventName": "interaction_resolved",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "kind": "question"
+      },
+      "expect": {
+        "event": {
+          "event_type": "notification",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "interaction_resolved",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "kind": "question",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "interaction_resolved"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-in-stop_cancelled",
+      "kind": "inbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "stop_cancelled",
+      "payload": {
+        "hookEventName": "stop_cancelled",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "cancelledBy": "user"
+      },
+      "expect": {
+        "event": {
+          "event_type": "stop",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "stop_cancelled",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "cancelledBy": "user",
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "cancelled_by": "user",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "stop_cancelled"
+          },
+          "turn_disposition": "ended_non_user",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-out-session_start",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "session_start",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-session_end",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "session_end",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-user_prompt_submit",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "user_prompt_submit",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-pre_tool_use",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "pre_tool_use",
+      "response": {
+        "auto_approve": true,
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "modified_input": {
+          "command": "git status --short --branch"
+        },
+        "permission_decision": "allow",
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "reason": "Recursive removal is not allowed here.",
+          "hookSpecificOutput": {
+            "hookEventName": "pre_tool_use",
+            "additionalContext": "Task #12 is claimed for this file.",
+            "permissionDecision": "allow",
+            "updatedInput": {
+              "command": "git status --short --branch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "grok-out-pre_tool_use-deny",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "pre_tool_use",
+      "response": {
+        "decision": "deny",
+        "reason": "Recursive removal is not allowed here.",
+        "permission_decision": "deny",
+        "system_message": "Gobby blocked a recursive removal."
+      },
+      "expect": {
+        "output": {
+          "decision": "deny",
+          "continue": true,
+          "reason": "Recursive removal is not allowed here.",
+          "hookSpecificOutput": {
+            "hookEventName": "pre_tool_use",
+            "permissionDecision": "deny"
+          }
+        }
+      }
+    },
+    {
+      "id": "grok-out-post_tool_use",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "post_tool_use",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-post_tool_use_failure",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "post_tool_use_failure",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-pre_compact",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "pre_compact",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-post_compact",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "post_compact",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-stop",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "stop",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "Stop",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "grok-out-notification",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "notification",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-permission_denied",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "permission_denied",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-stop_failure",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "stop_failure",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-subagent_start",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "subagent_start",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-subagent_stop",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "subagent_stop",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "SubagentStop",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "grok-out-pending_interaction",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "pending_interaction",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-interaction_resolved",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "interaction_resolved",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    },
+    {
+      "id": "grok-out-stop_cancelled",
+      "kind": "outbound",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "stop_cancelled",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true
+        }
+      }
+    }
+  ]
+}

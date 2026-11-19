@@ -1,0 +1,3047 @@
+{
+  "cases": [
+    {
+      "id": "failing-session-manager",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "before_tool",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "pre-tool-use",
+      "payload": {
+        "hook_event_name": "PreToolUse",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "git status --short",
+          "description": "Show working tree status"
+        },
+        "tool_use_id": "toolu_01"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "before_tool",
+        "response": {
+          "metadata": {
+            "_normalized_tool_name": "Bash",
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": false,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "progress_tracker",
+            "method": "record_tool_start",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "session_manager",
+      "failure": {
+        "method": "get",
+        "error": "synthetic session_manager outage"
+      }
+    },
+    {
+      "id": "failing-workflow-handler",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "session_end",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "session-end",
+      "payload": {
+        "hook_event_name": "SessionEnd",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "reason": "prompt_input_exit"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "session_end",
+        "response": {
+          "reason": "Handler error: workflow_handler.rule_engine: synthetic workflow_handler outage"
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_handler",
+            "method": "rule_engine",
+            "outcome": "failed"
+          }
+        ]
+      },
+      "failing_collaborator": "workflow_handler",
+      "failure": {
+        "method": "rule_engine",
+        "error": "synthetic workflow_handler outage"
+      }
+    },
+    {
+      "id": "failing-session-task-manager",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "before_agent",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "user-prompt-submit",
+      "payload": {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "prompt": "Summarise the open tasks in this project."
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "before_agent",
+        "response": {
+          "system_message": "\nGobby Session ID: synthetic-app#1 (<uuid>)",
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": true,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true,
+          "systemMessage": "\nGobby Session ID: synthetic-app#1 (<uuid>)",
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "Gobby Session ID: synthetic-app#1 (<uuid>)\nCLI-Specific Session ID (external_id): <uuid>\nmachine_id: <uuid>\nproject_id: <uuid>"
+          }
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "resolve_project_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "bind_native_clear_successor",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_task_manager",
+            "method": "get_session_tasks",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_coordinator",
+            "method": "register_session",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "message_processor_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "task_manager",
+            "method": "list_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_config_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "skill_manager",
+            "method": "match_triggers",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_config_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "session_task_manager",
+      "failure": {
+        "method": "get_session_tasks",
+        "error": "synthetic session_task_manager outage"
+      }
+    },
+    {
+      "id": "failing-task-manager",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "session_end",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "session-end",
+      "payload": {
+        "hook_event_name": "SessionEnd",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "reason": "prompt_input_exit"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "session_end",
+        "response": {
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": false,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_handler",
+            "method": "rule_engine",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_handler",
+            "method": "rule_engine",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "task_manager",
+            "method": "list_tasks",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "update_status_if_non_terminal",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "task_manager",
+      "failure": {
+        "method": "list_tasks",
+        "error": "synthetic task_manager outage"
+      }
+    },
+    {
+      "id": "failing-agent-run-manager",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "after_tool",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "post-tool-use",
+      "payload": {
+        "hook_event_name": "PostToolUse",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "git status --short",
+          "description": "Show working tree status"
+        },
+        "tool_use_id": "toolu_01",
+        "tool_response": {
+          "stdout": " M README.md\n",
+          "stderr": "",
+          "interrupted": false,
+          "isImage": false
+        }
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "after_tool",
+        "response": {
+          "reason": "Handler error: agent_run_manager.(attribute read): synthetic agent_run_manager outage"
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "progress_tracker",
+            "method": "record_tool_call",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "agent_run_manager",
+            "method": "(attribute read)",
+            "outcome": "failed"
+          }
+        ]
+      },
+      "failing_collaborator": "agent_run_manager",
+      "failure": {
+        "method": "(attribute read)",
+        "error": "synthetic agent_run_manager outage"
+      }
+    },
+    {
+      "id": "failing-worktree-manager",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "worktree_remove",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "worktree-remove",
+      "payload": {
+        "hook_event_name": "WorktreeRemove",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "worktree_path": "<project>-feature-parser"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "worktree_remove",
+        "response": {
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": false,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "worktree_manager",
+            "method": "has_path_on_other_machine",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "worktree_manager",
+            "method": "get_by_path",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "worktree_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "worktree_manager",
+      "failure": {
+        "method": "get_by_path",
+        "error": "synthetic worktree_manager outage"
+      }
+    },
+    {
+      "id": "failing-memory-manager",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "pre_compact",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "pre-compact",
+      "payload": {
+        "hook_event_name": "PreCompact",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "trigger": "manual",
+        "custom_instructions": ""
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "pre_compact",
+        "response": {
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": false,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "update_session_status",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "memory_manager",
+            "method": "(attribute read)",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "memory_manager",
+      "failure": {
+        "method": "(attribute read)",
+        "error": "synthetic memory_manager outage"
+      }
+    },
+    {
+      "id": "failing-message-processor-resolver",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "before_agent",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "user-prompt-submit",
+      "payload": {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "prompt": "Summarise the open tasks in this project."
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "before_agent",
+        "response": {
+          "reason": "Handler error: message_processor_resolver.__call__: synthetic message_processor_resolver outage"
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "resolve_project_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "bind_native_clear_successor",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_task_manager",
+            "method": "get_session_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_coordinator",
+            "method": "register_session",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "message_processor_resolver",
+            "method": "__call__",
+            "outcome": "failed"
+          }
+        ]
+      },
+      "failing_collaborator": "message_processor_resolver",
+      "failure": {
+        "method": "__call__",
+        "error": "synthetic message_processor_resolver outage"
+      }
+    },
+    {
+      "id": "failing-session-coordinator",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "before_agent",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "user-prompt-submit",
+      "payload": {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "prompt": "Summarise the open tasks in this project."
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "before_agent",
+        "response": {
+          "system_message": "\nGobby Session ID: synthetic-app#1 (<uuid>)",
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": true,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true,
+          "systemMessage": "\nGobby Session ID: synthetic-app#1 (<uuid>)",
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "Gobby Session ID: synthetic-app#1 (<uuid>)\nCLI-Specific Session ID (external_id): <uuid>\nmachine_id: <uuid>\nproject_id: <uuid>"
+          }
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "resolve_project_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "bind_native_clear_successor",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_task_manager",
+            "method": "get_session_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_coordinator",
+            "method": "register_session",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "message_processor_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "task_manager",
+            "method": "list_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_config_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "skill_manager",
+            "method": "match_triggers",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_config_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "session_coordinator",
+      "failure": {
+        "method": "register_session",
+        "error": "synthetic session_coordinator outage"
+      }
+    },
+    {
+      "id": "failing-progress-tracker",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "before_tool",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "pre-tool-use",
+      "payload": {
+        "hook_event_name": "PreToolUse",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "git status --short",
+          "description": "Show working tree status"
+        },
+        "tool_use_id": "toolu_01"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "before_tool",
+        "response": {
+          "metadata": {
+            "_normalized_tool_name": "Bash",
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": false,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "progress_tracker",
+            "method": "record_tool_start",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "progress_tracker",
+      "failure": {
+        "method": "record_tool_start",
+        "error": "synthetic progress_tracker outage"
+      }
+    },
+    {
+      "id": "failing-session-end-auto-link-worker",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "session_end",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "session-end",
+      "payload": {
+        "hook_event_name": "SessionEnd",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "reason": "prompt_input_exit"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "session_end",
+        "response": {
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": false,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_end_auto_link_worker",
+            "method": "submit",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_handler",
+            "method": "rule_engine",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_handler",
+            "method": "rule_engine",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "task_manager",
+            "method": "list_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "update_status_if_non_terminal",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "session_end_auto_link_worker",
+      "failure": {
+        "method": "submit",
+        "error": "synthetic session_end_auto_link_worker outage"
+      }
+    },
+    {
+      "id": "failing-skill-manager",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "before_agent",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "user-prompt-submit",
+      "payload": {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "prompt": "List the failing tests."
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "before_agent",
+        "response": {
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": false,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "skill_manager",
+            "method": "match_triggers",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_config_resolver",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "skill_manager",
+      "failure": {
+        "method": "match_triggers",
+        "error": "synthetic skill_manager outage"
+      }
+    },
+    {
+      "id": "failing-workflow-config-resolver",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "before_agent",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "user-prompt-submit",
+      "payload": {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "prompt": "List the failing tests."
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "before_agent",
+        "response": {
+          "reason": "Handler error: workflow_config_resolver.__call__: synthetic workflow_config_resolver outage"
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "skill_manager",
+            "method": "match_triggers",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_config_resolver",
+            "method": "__call__",
+            "outcome": "failed"
+          }
+        ]
+      },
+      "failing_collaborator": "workflow_config_resolver",
+      "failure": {
+        "method": "__call__",
+        "error": "synthetic workflow_config_resolver outage"
+      }
+    },
+    {
+      "id": "failing-get-machine-id",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "session_end",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "session-end",
+      "payload": {
+        "hook_event_name": "SessionEnd",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "reason": "prompt_input_exit"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "session_end",
+        "response": {},
+        "native_output": null,
+        "collaborator_calls": [
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "failed"
+          }
+        ],
+        "raised": "CollaboratorFailure"
+      },
+      "failing_collaborator": "get_machine_id",
+      "failure": {
+        "method": "__call__",
+        "error": "synthetic get_machine_id outage"
+      }
+    },
+    {
+      "id": "failing-resolve-project-id",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "session_start",
+      "setup": [],
+      "source": "claude",
+      "hook_type": "session-start",
+      "payload": {
+        "hook_event_name": "SessionStart",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "source": "startup"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "session_start",
+        "response": {},
+        "native_output": null,
+        "collaborator_calls": [
+          {
+            "collaborator": "resolve_project_id",
+            "method": "__call__",
+            "outcome": "failed"
+          }
+        ],
+        "raised": "CollaboratorFailure"
+      },
+      "failing_collaborator": "resolve_project_id",
+      "failure": {
+        "method": "__call__",
+        "error": "synthetic resolve_project_id outage"
+      }
+    },
+    {
+      "id": "failing-code-index-trigger",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "after_tool",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "post-tool-use",
+      "payload": {
+        "hook_event_name": "PostToolUse",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "tool_name": "Edit",
+        "tool_input": {
+          "file_path": "<project>/README.md",
+          "old_string": "# App",
+          "new_string": "# Synthetic app"
+        },
+        "tool_use_id": "toolu_12",
+        "tool_response": {
+          "filePath": "<project>/README.md",
+          "structuredPatch": [],
+          "userModified": false
+        }
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "after_tool",
+        "response": {
+          "metadata": {
+            "_normalized_tool_name": "Edit",
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": false,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "progress_tracker",
+            "method": "record_tool_call",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "code_index_trigger",
+            "method": "notify_file_changed",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "task_manager",
+            "method": "list_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "code_index_trigger",
+      "failure": {
+        "method": "notify_file_changed",
+        "error": "synthetic code_index_trigger outage"
+      }
+    },
+    {
+      "id": "failing-attention-metadata-store",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "pre_compact",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "pre-compact",
+      "payload": {
+        "hook_event_name": "PreCompact",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "trigger": "manual",
+        "custom_instructions": ""
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "pre_compact",
+        "response": {
+          "reason": "Handler error: attention_metadata_store.set: synthetic attention_metadata_store outage"
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "attention_metadata_store",
+            "method": "set",
+            "outcome": "failed"
+          }
+        ]
+      },
+      "failing_collaborator": "attention_metadata_store",
+      "failure": {
+        "method": "set",
+        "error": "synthetic attention_metadata_store outage"
+      }
+    },
+    {
+      "id": "failing-terminal-manager",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "session_end",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "session-end",
+      "payload": {
+        "hook_event_name": "SessionEnd",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "reason": "prompt_input_exit"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "session_end",
+        "response": {
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": false,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_handler",
+            "method": "rule_engine",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "workflow_handler",
+            "method": "rule_engine",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "task_manager",
+            "method": "list_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "update_status_if_non_terminal",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "terminal_manager",
+            "method": "get_live_for_session",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "terminal_manager",
+      "failure": {
+        "method": "get_live_for_session",
+        "error": "synthetic terminal_manager outage"
+      }
+    },
+    {
+      "id": "failing-terminal-runtime-registry",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "post_compact",
+      "setup": [
+        {
+          "source": "grok",
+          "hook_type": "session_start",
+          "payload": {
+            "hookEventName": "session_start",
+            "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+            "cwd": "<project>",
+            "workspaceRoot": "<project>",
+            "timestamp": "2026-11-19T12:00:00+00:00",
+            "machine_id": "<machine>",
+            "source": "new"
+          }
+        },
+        {
+          "source": "grok",
+          "hook_type": "user_prompt_submit",
+          "payload": {
+            "hookEventName": "user_prompt_submit",
+            "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+            "cwd": "<project>",
+            "workspaceRoot": "<project>",
+            "timestamp": "2026-11-19T12:00:00+00:00",
+            "machine_id": "<machine>",
+            "prompt": "Explain the build."
+          }
+        }
+      ],
+      "source": "grok",
+      "hook_type": "post_compact",
+      "payload": {
+        "hookEventName": "post_compact",
+        "sessionId": "9e8d7c6b-5a49-4382-a716-f5e4d3c2b1a0",
+        "cwd": "<project>",
+        "workspaceRoot": "<project>",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "machine_id": "<machine>",
+        "source": "manual"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "post_compact",
+        "response": {
+          "metadata": {
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": false,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "update_context_usage",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "task_manager",
+            "method": "list_tasks",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_coordinator",
+            "method": "_event_loop",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "terminal_runtime_registry",
+            "method": "(attribute read)",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "terminal_runtime_registry",
+      "failure": {
+        "method": "(attribute read)",
+        "error": "synthetic terminal_runtime_registry outage"
+      }
+    },
+    {
+      "id": "failing-webhook-dispatcher",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "before_tool",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "pre-tool-use",
+      "payload": {
+        "hook_event_name": "PreToolUse",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "git status --short",
+          "description": "Show working tree status"
+        },
+        "tool_use_id": "toolu_01"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "before_tool",
+        "response": {
+          "metadata": {
+            "_normalized_tool_name": "Bash",
+            "session_id": "<uuid>",
+            "session_ref": "synthetic-app#1",
+            "_first_hook_for_session": false,
+            "external_id": "<uuid>",
+            "machine_id": "<uuid>",
+            "project_id": "<uuid>"
+          }
+        },
+        "native_output": {
+          "continue": true
+        },
+        "collaborator_calls": [
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "failed"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "progress_tracker",
+            "method": "record_tool_start",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          }
+        ]
+      },
+      "failing_collaborator": "webhook_dispatcher",
+      "failure": {
+        "method": "get_blocking_decision",
+        "error": "synthetic webhook_dispatcher outage"
+      }
+    },
+    {
+      "id": "failing-broadcaster",
+      "kind": "collaborator_failure",
+      "provenance": "synthetic",
+      "event_type": "before_tool",
+      "setup": [
+        {
+          "source": "claude",
+          "hook_type": "session-start",
+          "payload": {
+            "hook_event_name": "SessionStart",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "source": "startup"
+          }
+        },
+        {
+          "source": "claude",
+          "hook_type": "user-prompt-submit",
+          "payload": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+            "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+            "cwd": "<project>",
+            "machine_id": "<machine>",
+            "permission_mode": "default",
+            "prompt": "Summarise the open tasks in this project."
+          }
+        }
+      ],
+      "source": "claude",
+      "hook_type": "pre-tool-use",
+      "payload": {
+        "hook_event_name": "PreToolUse",
+        "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+        "transcript_path": "<project>/.provider/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "<project>",
+        "machine_id": "<machine>",
+        "permission_mode": "default",
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "git status --short",
+          "description": "Show working tree status"
+        },
+        "tool_use_id": "toolu_01"
+      },
+      "collaborator_script": [],
+      "expect": {
+        "event_type": "before_tool",
+        "response": {},
+        "native_output": null,
+        "collaborator_calls": [
+          {
+            "collaborator": "get_machine_id",
+            "method": "__call__",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "config",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "webhook_dispatcher",
+            "method": "get_blocking_decision",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "get",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "progress_tracker",
+            "method": "record_tool_start",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "session_manager",
+            "method": "db",
+            "outcome": "ok"
+          },
+          {
+            "collaborator": "broadcaster",
+            "method": "broadcast_event",
+            "outcome": "failed"
+          }
+        ],
+        "raised": "CollaboratorFailure"
+      },
+      "failing_collaborator": "broadcaster",
+      "failure": {
+        "method": "broadcast_event",
+        "error": "synthetic broadcaster outage"
+      }
+    }
+  ]
+}

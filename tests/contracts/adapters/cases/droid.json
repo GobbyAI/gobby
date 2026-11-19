@@ -1,0 +1,726 @@
+{
+  "cases": [
+    {
+      "id": "droid-in-PreToolUse",
+      "kind": "inbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "PreToolUse",
+      "payload": {
+        "hook_event_name": "PreToolUse",
+        "session_id": "5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d",
+        "transcript_path": "/srv/factory/sessions/app/5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "auto-low",
+        "tool_name": "Execute",
+        "tool_input": {
+          "command": "npm test -- login"
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_tool",
+          "session_id": "<uuid>",
+          "source": "droid",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PreToolUse",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/factory/sessions/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "auto-low",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "npm test -- login"
+            },
+            "_raw_tool_input": {
+              "command": "npm test -- login"
+            },
+            "command": "npm test -- login",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PreToolUse"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "droid-in-PostToolUse",
+      "kind": "inbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "PostToolUse",
+      "payload": {
+        "hook_event_name": "PostToolUse",
+        "session_id": "5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d",
+        "transcript_path": "/srv/factory/sessions/app/5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "auto-low",
+        "tool_name": "Execute",
+        "tool_input": {
+          "command": "npm test -- login"
+        },
+        "tool_response": {
+          "exitCode": 0,
+          "output": "Tests: 4 passed"
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_tool",
+          "session_id": "<uuid>",
+          "source": "droid",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PostToolUse",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/factory/sessions/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "auto-low",
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "npm test -- login"
+            },
+            "tool_response": {
+              "exitCode": 0,
+              "output": "Tests: 4 passed"
+            },
+            "_raw_tool_input": {
+              "command": "npm test -- login"
+            },
+            "tool_output": {
+              "exitCode": 0,
+              "output": "Tests: 4 passed"
+            },
+            "command": "npm test -- login",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "succeeded",
+              "exit_code": 0,
+              "provenance": "droid.hook:PostToolUse"
+            },
+            "_tool_outcome_trust": "provider_contract"
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PostToolUse",
+            "is_failure": false
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "droid-in-UserPromptSubmit",
+      "kind": "inbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "UserPromptSubmit",
+      "payload": {
+        "hook_event_name": "UserPromptSubmit",
+        "session_id": "5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d",
+        "transcript_path": "/srv/factory/sessions/app/5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "auto-low",
+        "prompt": "Fix the flaky login test."
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_agent",
+          "session_id": "<uuid>",
+          "source": "droid",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "UserPromptSubmit",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/factory/sessions/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "auto-low",
+            "prompt": "Fix the flaky login test.",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "UserPromptSubmit"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "droid-in-Notification",
+      "kind": "inbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "Notification",
+      "payload": {
+        "hook_event_name": "Notification",
+        "session_id": "5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d",
+        "transcript_path": "/srv/factory/sessions/app/5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "auto-low",
+        "message": "Droid is waiting for your input"
+      },
+      "expect": {
+        "event": {
+          "event_type": "notification",
+          "session_id": "<uuid>",
+          "source": "droid",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "Notification",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/factory/sessions/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "auto-low",
+            "message": "Droid is waiting for your input",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "Notification"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "droid-in-Stop",
+      "kind": "inbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "Stop",
+      "payload": {
+        "hook_event_name": "Stop",
+        "session_id": "5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d",
+        "transcript_path": "/srv/factory/sessions/app/5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "auto-low",
+        "stop_hook_active": false
+      },
+      "expect": {
+        "event": {
+          "event_type": "stop",
+          "session_id": "<uuid>",
+          "source": "droid",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "Stop",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/factory/sessions/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "auto-low",
+            "stop_hook_active": false,
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "Stop"
+          },
+          "turn_disposition": "completed",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "droid-in-SubagentStop",
+      "kind": "inbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "SubagentStop",
+      "payload": {
+        "hook_event_name": "SubagentStop",
+        "session_id": "5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d",
+        "transcript_path": "/srv/factory/sessions/app/5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "auto-low",
+        "stop_hook_active": false
+      },
+      "expect": {
+        "event": {
+          "event_type": "subagent_stop",
+          "session_id": "<uuid>",
+          "source": "droid",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "SubagentStop",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/factory/sessions/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "auto-low",
+            "stop_hook_active": false,
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "SubagentStop"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "droid-in-PreCompact",
+      "kind": "inbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "PreCompact",
+      "payload": {
+        "hook_event_name": "PreCompact",
+        "session_id": "5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d",
+        "transcript_path": "/srv/factory/sessions/app/5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "auto-low",
+        "trigger": "auto",
+        "custom_instructions": ""
+      },
+      "expect": {
+        "event": {
+          "event_type": "pre_compact",
+          "session_id": "<uuid>",
+          "source": "droid",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PreCompact",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/factory/sessions/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "auto-low",
+            "trigger": "manual",
+            "custom_instructions": "",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PreCompact"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "droid-in-SessionStart",
+      "kind": "inbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "SessionStart",
+      "payload": {
+        "hook_event_name": "SessionStart",
+        "session_id": "5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d",
+        "transcript_path": "/srv/factory/sessions/app/5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "auto-low",
+        "source": "startup"
+      },
+      "expect": {
+        "event": {
+          "event_type": "session_start",
+          "session_id": "<uuid>",
+          "source": "droid",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "SessionStart",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/factory/sessions/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "auto-low",
+            "source": "startup",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "SessionStart"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "droid-in-SessionEnd",
+      "kind": "inbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "SessionEnd",
+      "payload": {
+        "hook_event_name": "SessionEnd",
+        "session_id": "5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d",
+        "transcript_path": "/srv/factory/sessions/app/5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "auto-low",
+        "reason": "exit"
+      },
+      "expect": {
+        "event": {
+          "event_type": "session_end",
+          "session_id": "<uuid>",
+          "source": "droid",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "SessionEnd",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/factory/sessions/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "auto-low",
+            "reason": "exit",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "SessionEnd"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "droid-out-PreToolUse",
+      "kind": "outbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "PreToolUse",
+      "response": {
+        "auto_approve": true,
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "modified_input": {
+          "command": "git status --short --branch"
+        },
+        "permission_decision": "allow",
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": "Recursive removal is not allowed here.",
+            "updatedInput": {
+              "command": "git status --short --branch"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "droid-out-PreToolUse-deny",
+      "kind": "outbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "PreToolUse",
+      "response": {
+        "decision": "deny",
+        "reason": "Recursive removal is not allowed here.",
+        "permission_decision": "deny",
+        "system_message": "Gobby blocked a recursive removal."
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Gobby blocked a recursive removal.",
+          "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": "Recursive removal is not allowed here."
+          }
+        }
+      }
+    },
+    {
+      "id": "droid-out-PostToolUse",
+      "kind": "outbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "PostToolUse",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "PostToolUse",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "droid-out-UserPromptSubmit",
+      "kind": "outbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "UserPromptSubmit",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting.",
+          "hookSpecificOutput": {
+            "hookEventName": "UserPromptSubmit",
+            "additionalContext": "Task #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "droid-out-Notification",
+      "kind": "outbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "Notification",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "droid-out-Stop",
+      "kind": "outbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "Stop",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "droid-out-SubagentStop",
+      "kind": "outbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "SubagentStop",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "droid-out-PreCompact",
+      "kind": "outbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "PreCompact",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    },
+    {
+      "id": "droid-out-SessionStart",
+      "kind": "outbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "SessionStart",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": "Two ready tasks are waiting.\n\nTask #12 is claimed for this file."
+          }
+        }
+      }
+    },
+    {
+      "id": "droid-out-SessionEnd",
+      "kind": "outbound",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "SessionEnd",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "continue": true,
+          "systemMessage": "Two ready tasks are waiting."
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "cases": [
+    {
+      "id": "route-unknown-source",
+      "kind": "route_refusal",
+      "refusal": "unknown_source",
+      "provenance": "synthetic",
+      "request": {
+        "schema_version": 1,
+        "hook_type": "SessionStart",
+        "input_data": {
+          "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+          "cwd": "/srv/app"
+        },
+        "source": "no-such-cli"
+      },
+      "expect": {
+        "status": 400,
+        "detail": "Unsupported source: no-such-cli. Supported: claude, grok, codex, droid, agy, git",
+        "supported_sources_named": [
+          "claude",
+          "grok",
+          "codex",
+          "droid",
+          "agy",
+          "git"
+        ],
+        "adapter_called": false
+      }
+    },
+    {
+      "id": "route-malformed-payload",
+      "kind": "route_refusal",
+      "refusal": "malformed_payload",
+      "provenance": "synthetic",
+      "request": {
+        "schema_version": 1,
+        "input_data": {
+          "session_id": "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d",
+          "cwd": "/srv/app"
+        },
+        "source": "claude"
+      },
+      "expect": {
+        "status": 400,
+        "detail": "hook_type required",
+        "supported_sources_named": [],
+        "adapter_called": false
+      }
+    }
+  ]
+}

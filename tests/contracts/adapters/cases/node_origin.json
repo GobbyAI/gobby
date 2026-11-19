@@ -1,0 +1,424 @@
+{
+  "cases": [
+    {
+      "id": "claude-node-spill-pointer",
+      "kind": "node_origin",
+      "source": "claude",
+      "provenance": "synthetic",
+      "hook_type": "post-tool-use",
+      "branch": "spill_reader_skip",
+      "file_present": false,
+      "payload": {
+        "hook_event_name": "PostToolUse",
+        "session_id": "0c6f2c8e-5a1b-4c1d-9e1f-2a3b4c5d6e7f",
+        "transcript_path": "/srv/claude/projects/app/3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "default",
+        "tool_name": "mcp__tracker__list_tasks",
+        "tool_use_id": "toolu_09",
+        "tool_input": {
+          "status": "open"
+        },
+        "tool_response": "Error: result (120,000 characters) exceeds maximum allowed tokens. Output has been saved to /srv/claude/projects/app/0c6f2c8e-5a1b-4c1d-9e1f-2a3b4c5d6e7f/tool-results/mcp-tracker-list_tasks-1.txt."
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_tool",
+          "session_id": "<uuid>",
+          "source": "claude",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PostToolUse",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/claude/projects/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "default",
+            "tool_name": "mcp__tracker__list_tasks",
+            "tool_use_id": "toolu_09",
+            "tool_input": {
+              "status": "open"
+            },
+            "tool_response": "Error: result (120,000 characters) exceeds maximum allowed tokens. Output has been saved to /srv/claude/projects/app/<uuid>/tool-results/mcp-tracker-list_tasks-1.txt.",
+            "_raw_tool_input": {
+              "status": "open"
+            },
+            "mcp_server": "tracker",
+            "mcp_tool": "list_tasks",
+            "tool_output": "Error: result (120,000 characters) exceeds maximum allowed tokens. Output has been saved to /srv/claude/projects/app/<uuid>/tool-results/mcp-tracker-list_tasks-1.txt.",
+            "canonical_tool_kind": "mcp",
+            "canonical_tool_confidence": "high",
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "succeeded",
+              "provenance": "claude.hook:PostToolUse"
+            },
+            "_tool_outcome_trust": "provider_contract"
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "post-tool-use",
+            "is_failure": false
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "toolu_09",
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": "toolu_09",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "grok-node-spill-pointer",
+      "kind": "node_origin",
+      "source": "grok",
+      "provenance": "synthetic",
+      "hook_type": "post_tool_use",
+      "branch": "spill_reader_skip",
+      "file_present": false,
+      "payload": {
+        "hookEventName": "post_tool_use",
+        "sessionId": "0c6f2c8e-5a1b-4c1d-9e1f-2a3b4c5d6e7f",
+        "cwd": "/srv/app",
+        "workspaceRoot": "/srv/app",
+        "timestamp": "2026-11-19T12:00:00+00:00",
+        "toolName": "mcp__tracker__list_tasks",
+        "toolUseId": "call_7",
+        "toolInput": {
+          "status": "open"
+        },
+        "toolResult": {
+          "type": "MCP",
+          "output": {
+            "OkayOutput": "{\"partial\": true\n\n[MCP output truncated: 19500 of 80000 bytes shown. Full output written to: /srv/grok/sessions/0c6f2c8e-5a1b-4c1d-9e1f-2a3b4c5d6e7f/mcp/call_7.json. The full output is valid JSON]"
+          }
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_tool",
+          "session_id": "<uuid>",
+          "source": "grok",
+          "timestamp": "<volatile>",
+          "data": {
+            "hookEventName": "post_tool_use",
+            "sessionId": "<uuid>",
+            "cwd": "/srv/app",
+            "workspaceRoot": "/srv/app",
+            "timestamp": "<volatile>",
+            "toolName": "mcp__tracker__list_tasks",
+            "toolUseId": "call_7",
+            "toolInput": {
+              "status": "open"
+            },
+            "toolResult": {
+              "type": "MCP",
+              "output": {
+                "OkayOutput": "{\"partial\": true\n\n[MCP output truncated: 19500 of 80000 bytes shown. Full output written to: /srv/grok/sessions/<uuid>/mcp/call_7.json. The full output is valid JSON]"
+              }
+            },
+            "session_id": "<uuid>",
+            "workspace_root": "/srv/app",
+            "tool_name": "mcp__tracker__list_tasks",
+            "tool_use_id": "call_7",
+            "tool_input": {
+              "status": "open"
+            },
+            "tool_output": "{\"partial\": true\n\n[MCP output truncated: 19500 of 80000 bytes shown. Full output written to: /srv/grok/sessions/<uuid>/mcp/call_7.json. The full output is valid JSON]",
+            "_raw_tool_input": {
+              "status": "open"
+            },
+            "mcp_server": "tracker",
+            "mcp_tool": "list_tasks",
+            "canonical_tool_kind": "mcp",
+            "canonical_tool_confidence": "high",
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "original_tool_name": "mcp__tracker__list_tasks",
+            "normalized_tool_name": "mcp__tracker__list_tasks",
+            "_native_hook_type": "post_tool_use"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "call_7",
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": "call_7",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "codex-node-spill-transcript",
+      "kind": "node_origin",
+      "source": "codex",
+      "provenance": "synthetic",
+      "hook_type": "PostToolUse",
+      "branch": "spill_reader_skip",
+      "file_present": false,
+      "payload": {
+        "hook_event_name": "PostToolUse",
+        "session_id": "0c6f2c8e-5a1b-4c1d-9e1f-2a3b4c5d6e7f",
+        "turn_id": "turn-2",
+        "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-019a8c2e-4b5d-7e6f-8a9b-0c1d2e3f4a5b.jsonl",
+        "cwd": "/srv/app",
+        "model": "gpt-5-codex",
+        "tool_name": "Bash",
+        "tool_use_id": "call_9",
+        "tool_input": {
+          "command": "git status --short",
+          "workdir": "/srv/app"
+        },
+        "tool_response": ""
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_tool",
+          "session_id": "<uuid>",
+          "source": "codex",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "PostToolUse",
+            "session_id": "<uuid>",
+            "turn_id": "turn-2",
+            "transcript_path": "/srv/codex/sessions/2026/11/19/rollout-<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "model": "gpt-5-codex",
+            "tool_name": "Bash",
+            "tool_use_id": "call_9",
+            "tool_input": {
+              "command": "git status --short",
+              "workdir": "/srv/app"
+            },
+            "tool_response": "",
+            "_raw_tool_input": {
+              "command": "git status --short",
+              "workdir": "/srv/app"
+            },
+            "tool_output": "",
+            "command": "git status --short",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": true,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PostToolUse",
+            "raw_tool_input": {
+              "command": "git status --short",
+              "workdir": "/srv/app"
+            }
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "call_9",
+          "wait_resolution": null,
+          "provider_turn_key": "turn-2",
+          "request_id": "call_9",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "droid-node-permission-wait",
+      "kind": "node_origin",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "Notification",
+      "branch": "notification_wait_skip",
+      "file_present": false,
+      "payload": {
+        "hook_event_name": "Notification",
+        "session_id": "0c6f2c8e-5a1b-4c1d-9e1f-2a3b4c5d6e7f",
+        "transcript_path": "/srv/factory/sessions/app/5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "auto-low",
+        "notification_type": "permission_prompt",
+        "tool_use_id": "toolu_5",
+        "message": "Droid needs your permission to use Execute"
+      },
+      "expect": {
+        "event": {
+          "event_type": "notification",
+          "session_id": "<uuid>",
+          "source": "droid",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "Notification",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/factory/sessions/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "auto-low",
+            "notification_type": "permission_prompt",
+            "tool_use_id": "toolu_5",
+            "message": "Droid needs your permission to use Execute",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "Notification"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": "toolu_5",
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": "toolu_5",
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "droid-node-idle-cancel",
+      "kind": "node_origin",
+      "source": "droid",
+      "provenance": "synthetic",
+      "hook_type": "Notification",
+      "branch": "idle_prompt_cancel_skip",
+      "file_present": false,
+      "payload": {
+        "hook_event_name": "Notification",
+        "session_id": "0c6f2c8e-5a1b-4c1d-9e1f-2a3b4c5d6e7f",
+        "transcript_path": "/srv/factory/sessions/app/5b4a3c2d-1e0f-4a9b-8c7d-6e5f4a3b2c1d.jsonl",
+        "cwd": "/srv/app",
+        "permission_mode": "auto-low",
+        "notification_type": "idle_prompt",
+        "reason": "cancelled",
+        "message": "Stopped by user",
+        "message_id": "msg_3"
+      },
+      "expect": {
+        "event": {
+          "event_type": "notification",
+          "session_id": "<uuid>",
+          "source": "droid",
+          "timestamp": "<volatile>",
+          "data": {
+            "hook_event_name": "Notification",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/factory/sessions/app/<uuid>.jsonl",
+            "cwd": "/srv/app",
+            "permission_mode": "auto-low",
+            "notification_type": "idle_prompt",
+            "reason": "cancelled",
+            "message": "Stopped by user",
+            "message_id": "msg_3",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "Notification"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "agy-node-prompt-backfill",
+      "kind": "node_origin",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "PreInvocation",
+      "branch": "prompt_backfill_skip",
+      "file_present": false,
+      "payload": {
+        "conversationId": "0c6f2c8e-5a1b-4c1d-9e1f-2a3b4c5d6e7f",
+        "artifactDirectoryPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "transcriptPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f/transcript_full.jsonl",
+        "workspacePaths": [
+          "/srv/app"
+        ],
+        "modelName": "gemini-3-flash-agent",
+        "initialNumSteps": 1,
+        "invocationNum": 0
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_agent",
+          "session_id": "<uuid>",
+          "source": "agy",
+          "timestamp": "<volatile>",
+          "data": {
+            "conversationId": "<uuid>",
+            "artifactDirectoryPath": "/srv/agy/brain/<uuid>",
+            "transcriptPath": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspacePaths": [
+              "/srv/app"
+            ],
+            "modelName": "gemini-3-flash-agent",
+            "initialNumSteps": 1,
+            "invocationNum": 0,
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspace_paths": [
+              "/srv/app"
+            ],
+            "artifact_directory_path": "/srv/agy/brain/<uuid>",
+            "model": "gemini-3-flash-agent",
+            "invocation_num": 0,
+            "initial_num_steps": 1,
+            "cwd": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PreInvocation"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    }
+  ]
+}

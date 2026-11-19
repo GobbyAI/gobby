@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "layer": "pipeline",
+  "case_kinds": [
+    "event",
+    "collaborator_failure"
+  ],
+  "collaborators": [
+    "session_manager",
+    "workflow_handler",
+    "session_task_manager",
+    "task_manager",
+    "agent_run_manager",
+    "worktree_manager",
+    "memory_manager",
+    "message_processor_resolver",
+    "session_coordinator",
+    "progress_tracker",
+    "session_end_auto_link_worker",
+    "skill_manager",
+    "workflow_config_resolver",
+    "get_machine_id",
+    "resolve_project_id",
+    "code_index_trigger",
+    "attention_metadata_store",
+    "terminal_manager",
+    "terminal_runtime_registry",
+    "webhook_dispatcher",
+    "broadcaster"
+  ],
+  "unread_collaborators": {
+    "call_tool": "injected into EventHandlers by the factory, but no handler reads it"
+  },
+  "required": {
+    "scenario": [
+      "session_start_new",
+      "session_start_resumed",
+      "session_start_cleared",
+      "session_start_compacted",
+      "session_start_system_message",
+      "node_session_missing_row",
+      "deferred_activation",
+      "blocking_webhook",
+      "rule_block_short_circuit"
+    ]
+  },
+  "sources": [
+    "claude",
+    "codex",
+    "droid",
+    "grok",
+    "agy",
+    "git"
+  ],
+  "platform_record": {
+    "macos": "recorded and replayed on macOS arm64 (the chunk gate)",
+    "linux": "not run for this commit; the replay uses no macOS-only path",
+    "windows-x64": "not run for this commit",
+    "windows-arm64": "not run for this commit"
+  }
+}

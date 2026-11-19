@@ -1,0 +1,645 @@
+{
+  "cases": [
+    {
+      "id": "agy-in-SessionStart",
+      "kind": "inbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "SessionStart",
+      "payload": {
+        "conversationId": "6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "artifactDirectoryPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "transcriptPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f/transcript_full.jsonl",
+        "workspacePaths": [
+          "/srv/app"
+        ],
+        "modelName": "gemini-3-flash-agent",
+        "initialNumSteps": 1,
+        "source": "startup"
+      },
+      "expect": {
+        "event": {
+          "event_type": "session_start",
+          "session_id": "<uuid>",
+          "source": "agy",
+          "timestamp": "<volatile>",
+          "data": {
+            "conversationId": "<uuid>",
+            "artifactDirectoryPath": "/srv/agy/brain/<uuid>",
+            "transcriptPath": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspacePaths": [
+              "/srv/app"
+            ],
+            "modelName": "gemini-3-flash-agent",
+            "initialNumSteps": 1,
+            "source": "startup",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspace_paths": [
+              "/srv/app"
+            ],
+            "artifact_directory_path": "/srv/agy/brain/<uuid>",
+            "model": "gemini-3-flash-agent",
+            "initial_num_steps": 1,
+            "cwd": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "SessionStart"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "agy-in-PreInvocation",
+      "kind": "inbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "PreInvocation",
+      "payload": {
+        "conversationId": "6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "artifactDirectoryPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "transcriptPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f/transcript_full.jsonl",
+        "workspacePaths": [
+          "/srv/app"
+        ],
+        "modelName": "gemini-3-flash-agent",
+        "initialNumSteps": 1,
+        "invocationNum": 0,
+        "prompt": "Add a docstring to the parser."
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_agent",
+          "session_id": "<uuid>",
+          "source": "agy",
+          "timestamp": "<volatile>",
+          "data": {
+            "conversationId": "<uuid>",
+            "artifactDirectoryPath": "/srv/agy/brain/<uuid>",
+            "transcriptPath": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspacePaths": [
+              "/srv/app"
+            ],
+            "modelName": "gemini-3-flash-agent",
+            "initialNumSteps": 1,
+            "invocationNum": 0,
+            "prompt": "Add a docstring to the parser.",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspace_paths": [
+              "/srv/app"
+            ],
+            "artifact_directory_path": "/srv/agy/brain/<uuid>",
+            "model": "gemini-3-flash-agent",
+            "invocation_num": 0,
+            "initial_num_steps": 1,
+            "cwd": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PreInvocation"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "agy-in-PreToolUse",
+      "kind": "inbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "PreToolUse",
+      "payload": {
+        "conversationId": "6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "artifactDirectoryPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "transcriptPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f/transcript_full.jsonl",
+        "workspacePaths": [
+          "/srv/app"
+        ],
+        "modelName": "gemini-3-flash-agent",
+        "initialNumSteps": 1,
+        "stepIdx": 2,
+        "toolCall": {
+          "name": "run_command",
+          "args": {
+            "CommandLine": "go test ./..."
+          }
+        }
+      },
+      "expect": {
+        "event": {
+          "event_type": "before_tool",
+          "session_id": "<uuid>",
+          "source": "agy",
+          "timestamp": "<volatile>",
+          "data": {
+            "conversationId": "<uuid>",
+            "artifactDirectoryPath": "/srv/agy/brain/<uuid>",
+            "transcriptPath": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspacePaths": [
+              "/srv/app"
+            ],
+            "modelName": "gemini-3-flash-agent",
+            "initialNumSteps": 1,
+            "stepIdx": 2,
+            "toolCall": {
+              "name": "run_command",
+              "args": {
+                "CommandLine": "go test ./...",
+                "command": "go test ./..."
+              }
+            },
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspace_paths": [
+              "/srv/app"
+            ],
+            "artifact_directory_path": "/srv/agy/brain/<uuid>",
+            "model": "gemini-3-flash-agent",
+            "step_idx": 2,
+            "initial_num_steps": 1,
+            "tool_name": "Bash",
+            "tool_input": {
+              "CommandLine": "go test ./...",
+              "command": "go test ./..."
+            },
+            "_raw_tool_input": {
+              "CommandLine": "go test ./..."
+            },
+            "cwd": "/srv/app",
+            "command": "go test ./...",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "unknown"
+            }
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "original_tool_name": "run_command",
+            "normalized_tool_name": "Bash",
+            "_native_hook_type": "PreToolUse"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "agy-in-PostToolUse",
+      "kind": "inbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "PostToolUse",
+      "payload": {
+        "conversationId": "6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "artifactDirectoryPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "transcriptPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f/transcript_full.jsonl",
+        "workspacePaths": [
+          "/srv/app"
+        ],
+        "modelName": "gemini-3-flash-agent",
+        "initialNumSteps": 1,
+        "stepIdx": 2,
+        "toolCall": {
+          "name": "run_command",
+          "args": {
+            "CommandLine": "go test ./..."
+          }
+        },
+        "toolResult": "ok  \tparser\t0.2s\nThe command exited with code 0."
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_tool",
+          "session_id": "<uuid>",
+          "source": "agy",
+          "timestamp": "<volatile>",
+          "data": {
+            "conversationId": "<uuid>",
+            "artifactDirectoryPath": "/srv/agy/brain/<uuid>",
+            "transcriptPath": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspacePaths": [
+              "/srv/app"
+            ],
+            "modelName": "gemini-3-flash-agent",
+            "initialNumSteps": 1,
+            "stepIdx": 2,
+            "toolCall": {
+              "name": "run_command",
+              "args": {
+                "CommandLine": "go test ./...",
+                "command": "go test ./..."
+              }
+            },
+            "toolResult": "ok  \tparser\t0.2s\nThe command exited with code 0.",
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspace_paths": [
+              "/srv/app"
+            ],
+            "artifact_directory_path": "/srv/agy/brain/<uuid>",
+            "model": "gemini-3-flash-agent",
+            "step_idx": 2,
+            "initial_num_steps": 1,
+            "tool_name": "Bash",
+            "tool_input": {
+              "CommandLine": "go test ./...",
+              "command": "go test ./..."
+            },
+            "_raw_tool_input": {
+              "CommandLine": "go test ./..."
+            },
+            "cwd": "/srv/app",
+            "command": "go test ./...",
+            "canonical_tool_kind": "execute",
+            "canonical_tool_confidence": "high",
+            "canonical_read_only": false,
+            "canonical_code_navigation_segments": [],
+            "tool_outcome": {
+              "status": "succeeded",
+              "provenance": "agy.hook:PostToolUse"
+            },
+            "_tool_outcome_trust": "provider_contract",
+            "_tool_outcome_locked": true
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "original_tool_name": "run_command",
+            "normalized_tool_name": "Bash",
+            "_native_hook_type": "PostToolUse"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "agy-in-PostInvocation",
+      "kind": "inbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "PostInvocation",
+      "payload": {
+        "conversationId": "6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "artifactDirectoryPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "transcriptPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f/transcript_full.jsonl",
+        "workspacePaths": [
+          "/srv/app"
+        ],
+        "modelName": "gemini-3-flash-agent",
+        "initialNumSteps": 1,
+        "invocationNum": 0,
+        "executionNum": 1
+      },
+      "expect": {
+        "event": {
+          "event_type": "after_agent",
+          "session_id": "<uuid>",
+          "source": "agy",
+          "timestamp": "<volatile>",
+          "data": {
+            "conversationId": "<uuid>",
+            "artifactDirectoryPath": "/srv/agy/brain/<uuid>",
+            "transcriptPath": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspacePaths": [
+              "/srv/app"
+            ],
+            "modelName": "gemini-3-flash-agent",
+            "initialNumSteps": 1,
+            "invocationNum": 0,
+            "executionNum": 1,
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspace_paths": [
+              "/srv/app"
+            ],
+            "artifact_directory_path": "/srv/agy/brain/<uuid>",
+            "model": "gemini-3-flash-agent",
+            "invocation_num": 0,
+            "initial_num_steps": 1,
+            "execution_num": 1,
+            "cwd": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "PostInvocation"
+          },
+          "turn_disposition": "unknown",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "agy-in-Stop",
+      "kind": "inbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "Stop",
+      "payload": {
+        "conversationId": "6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "artifactDirectoryPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f",
+        "transcriptPath": "/srv/agy/brain/6c1d2e3f-4a5b-4c6d-8e7f-9a0b1c2d3e4f/transcript_full.jsonl",
+        "workspacePaths": [
+          "/srv/app"
+        ],
+        "modelName": "gemini-3-flash-agent",
+        "initialNumSteps": 1,
+        "terminationReason": "completed",
+        "fullyIdle": true
+      },
+      "expect": {
+        "event": {
+          "event_type": "stop",
+          "session_id": "<uuid>",
+          "source": "agy",
+          "timestamp": "<volatile>",
+          "data": {
+            "conversationId": "<uuid>",
+            "artifactDirectoryPath": "/srv/agy/brain/<uuid>",
+            "transcriptPath": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspacePaths": [
+              "/srv/app"
+            ],
+            "modelName": "gemini-3-flash-agent",
+            "initialNumSteps": 1,
+            "terminationReason": "completed",
+            "fullyIdle": true,
+            "session_id": "<uuid>",
+            "transcript_path": "/srv/agy/brain/<uuid>/transcript_full.jsonl",
+            "workspace_paths": [
+              "/srv/app"
+            ],
+            "artifact_directory_path": "/srv/agy/brain/<uuid>",
+            "model": "gemini-3-flash-agent",
+            "initial_num_steps": 1,
+            "termination_reason": "completed",
+            "fully_idle": true,
+            "cwd": "/srv/app",
+            "canonical_code_navigation_segments": []
+          },
+          "machine_id": null,
+          "cwd": "/srv/app",
+          "user_id": null,
+          "project_id": null,
+          "task_id": null,
+          "workflow_id": null,
+          "metadata": {
+            "_native_hook_type": "Stop"
+          },
+          "turn_disposition": "completed",
+          "wait_kind": null,
+          "wait_token": null,
+          "wait_resolution": null,
+          "provider_turn_key": null,
+          "request_id": null,
+          "protocol_cursor": null
+        }
+      }
+    },
+    {
+      "id": "agy-out-SessionStart",
+      "kind": "outbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "SessionStart",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "injectSteps": [
+            {
+              "ephemeralMessage": "Task #12 is claimed for this file."
+            },
+            {
+              "userMessage": "Two ready tasks are waiting."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "agy-out-PreInvocation",
+      "kind": "outbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "PreInvocation",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "injectSteps": [
+            {
+              "ephemeralMessage": "Task #12 is claimed for this file."
+            },
+            {
+              "userMessage": "Two ready tasks are waiting."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "agy-out-PreToolUse",
+      "kind": "outbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "PreToolUse",
+      "response": {
+        "auto_approve": true,
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "modified_input": {
+          "command": "git status --short --branch"
+        },
+        "permission_decision": "allow",
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "decision": "allow",
+          "reason": "Recursive removal is not allowed here.",
+          "overwrite": {
+            "command": "git status --short --branch"
+          }
+        }
+      }
+    },
+    {
+      "id": "agy-out-PreToolUse-deny",
+      "kind": "outbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "PreToolUse",
+      "response": {
+        "decision": "deny",
+        "reason": "Recursive removal is not allowed here.",
+        "permission_decision": "deny",
+        "system_message": "Gobby blocked a recursive removal."
+      },
+      "expect": {
+        "output": {
+          "decision": "deny",
+          "reason": "Recursive removal is not allowed here."
+        }
+      }
+    },
+    {
+      "id": "agy-out-PostToolUse",
+      "kind": "outbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "PostToolUse",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {}
+      }
+    },
+    {
+      "id": "agy-out-PostInvocation",
+      "kind": "outbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "PostInvocation",
+      "response": {
+        "context": "Task #12 is claimed for this file.",
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {
+          "injectSteps": [
+            {
+              "ephemeralMessage": "Task #12 is claimed for this file."
+            },
+            {
+              "userMessage": "Two ready tasks are waiting."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "agy-out-Stop",
+      "kind": "outbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "Stop",
+      "response": {
+        "metadata": {
+          "session_ref": "synthetic-app#1"
+        },
+        "reason": "Recursive removal is not allowed here.",
+        "system_message": "Two ready tasks are waiting.",
+        "decision": "allow"
+      },
+      "expect": {
+        "output": {}
+      }
+    },
+    {
+      "id": "agy-out-PreToolUse-modify-args",
+      "kind": "outbound",
+      "source": "agy",
+      "provenance": "synthetic",
+      "hook_type": "PreToolUse",
+      "response": {
+        "decision": "allow",
+        "modify_args": {
+          "command": "go test ./parser/..."
+        }
+      },
+      "note": "AGY declares no modify_args channel; the output shows the field is dropped.",
+      "expect": {
+        "output": {}
+      }
+    }
+  ]
+}
