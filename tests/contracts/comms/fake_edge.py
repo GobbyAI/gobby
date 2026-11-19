@@ -8,11 +8,12 @@ server with implicit TLS and an SMTP server with STARTTLS serve the email adapte
 Every request through the proxy is logged, in arrival order, as host, method, path and its
 sanitized ``semantic`` fields (``http_semantics``): the destination, the message text, the
 attachment filename and the SHA-256 of the uploaded bytes. Headers and raw bodies are never
-logged, so no request credential reaches the log. A request whose body the edge cannot read or
-whose payload it cannot decode is still logged, with empty semantic fields and a
-``decode_error`` marker naming the stage and the error type, never the error message. The
-CONNECT itself is not logged. A Telegram bot token in a path is replaced before the log keeps the path. Any host or path no script names
-answers HTTP 200 with a generic JSON body.
+logged, so no request credential reaches the log. A request whose target the edge cannot parse,
+whose body it cannot read or whose payload it cannot decode is still logged, with empty
+semantic fields and a ``decode_error`` marker naming the stage and the error type, never the
+error message. The CONNECT itself is not logged. A Telegram bot token in a path is replaced
+before the log keeps the path. Any host or path no script names answers HTTP 200 with a
+generic JSON body.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import re
 import shlex
 import socket
 import ssl
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -157,7 +159,7 @@ def http_semantics(method: str, path: str, headers: dict[str, str], body: bytes)
     return semantic
 
 
-def _decode_error(stage: str, error: ValueError) -> str:
+def _decode_error(stage: str, error: BaseException) -> str:
     """A safe marker for a request the edge could not decode: the stage and the error type.
 
     The error message is never kept, because it can quote the raw body.
@@ -515,33 +517,50 @@ class FakeEdge:
     def _serve_tunnel(self, tls: ssl.SSLSocket, host: str) -> None:
         reader = tls.makefile("rb")
         try:
-            while True:
-                head = _read_head(reader)
-                if head is None:
-                    return
-                request_line, headers = head
-                method, _, rest = request_line.partition(" ")
-                target = rest.rpartition(" ")[0] or rest
-                path = urlsplit(target).path or "/"
-                try:
-                    body = _read_body(reader, headers)
-                except ValueError as error:
-                    # The framing is lost, so the arrival is logged and the tunnel closes.
-                    self._log(host, method, path, empty_semantic(), _decode_error("body", error))
-                    return
-                try:
-                    semantic = http_semantics(method, path, headers, body)
-                except ValueError as error:
-                    self._log(host, method, path, empty_semantic(), _decode_error("payload", error))
-                else:
-                    self._log(host, method, path, semantic)
-                _write_reply(tls, self._reply_for(host, method, path))
-                if headers.get("connection", "").lower() == "close":
-                    return
+            while self._serve_request(tls, reader, host):
+                pass
         except (OSError, ssl.SSLError, ValueError):
             return
         finally:
             reader.close()
+
+    def _serve_request(self, tls: ssl.SSLSocket, reader: BinaryIO, host: str) -> bool:
+        """Answer one tunnelled request; False when the tunnel closes after it.
+
+        Every request whose head arrives is logged exactly once, in the ``finally`` that every
+        exit passes through. A failure at any stage (target parse, body read, payload decode)
+        leaves empty semantic fields and a marker naming that stage and the error type.
+        """
+        head = _read_head(reader)
+        if head is None:
+            return False
+        request_line, headers = head
+        method, _, rest = request_line.partition(" ")
+        target = rest.rpartition(" ")[0] or rest
+        # The target with no query, logged when the target itself cannot be parsed.
+        path = target.partition("?")[0] or "/"
+        semantic = empty_semantic()
+        stage = "target"
+        failure: Exception | None = None
+        try:
+            path = urlsplit(target).path or "/"
+            stage = "body"
+            body = _read_body(reader, headers)
+            stage = "payload"
+            semantic = http_semantics(method, path, headers, body)
+        except Exception as error:  # every failure is logged by stage; see the finally
+            failure = error
+        finally:
+            raised = failure or sys.exception()
+            if raised is None:
+                self._log(host, method, path, semantic)
+            else:
+                self._log(host, method, path, empty_semantic(), _decode_error(stage, raised))
+        if failure is not None and stage != "payload":
+            # The framing is lost, so the tunnel closes after the logged arrival.
+            return False
+        _write_reply(tls, self._reply_for(host, method, path))
+        return headers.get("connection", "").lower() != "close"
 
     def _mail_credentials(self) -> tuple[str, str] | None:
         for script in self._scripts:

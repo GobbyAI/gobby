@@ -210,8 +210,9 @@ class ProviderEdgeCapture:
     uploaded bytes. An arrival logged with no ``semantic`` (an edge that keeps signatures only)
     is captured as its signature, which then differs from a recording that carries semantics.
     An arrival the edge could not decode keeps its ``DECODE_ERROR_KEY`` marker, so it differs
-    from a well-formed request that sends no semantic field. Entering the capture clears the edge log, so the window holds only the arrivals its request
-    makes. Headers and raw bodies are never kept.
+    from a well-formed request that sends no semantic field. Entering the capture clears the
+    edge log, so the window holds only the arrivals its request makes. Headers and raw bodies
+    are never kept.
     """
 
     def __init__(self, edge: ProviderEdgeLog, hosts: Sequence[str]) -> None:

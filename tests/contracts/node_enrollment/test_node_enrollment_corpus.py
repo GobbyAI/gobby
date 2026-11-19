@@ -26,8 +26,8 @@ HTTP, not a command frame, so ``command_frames`` stays empty and no enrollment c
 route reuses the hub-node command contract.
 
 An optional ``description`` says in prose what a case covers beyond its single
-``command``. The entry-point cases 2.2.1 and 2.2.2 use it: their anchors state the shared
-exec behaviour of both ``gclient node install`` and ``gclient node enroll``, and
+``command``. The two ``gclient`` wrapper entry-point cases use it: their anchors state the
+shared exec behaviour of both ``gclient node install`` and ``gclient node enroll``, and
 ``gclient node install`` is the representative command for both verbs. ``README.md``
 beside this file says the same.
 """
@@ -115,8 +115,8 @@ COVERED_IDS: tuple[str, ...] = tuple(
     for number in range(1, last + 1)
 )
 # The node entry points: the gdaemon release report and the two gclient wrappers that exec the
-# sibling gdaemon. Each anchor's entry kind and the verb it runs. 2.2.1 and 2.2.2 state the
-# shared exec behaviour of both gclient node install and gclient node enroll; install is the
+# sibling gdaemon. Each anchor's entry kind and the verb it runs. The two wrapper anchors state
+# the shared exec behaviour of both gclient node install and gclient node enroll; install is the
 # representative command, and each case's description names both verbs.
 ENTRY_POINT_SECTIONS = frozenset({"2.1", "2.2"})
 ENTRY_POINT_ANCHORS: dict[str, tuple[str, str]] = {

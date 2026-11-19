@@ -3,8 +3,8 @@ the adapter wire fixtures.
 
 A committed case holds ``$secret:`` references only. The scan flags Slack bot tokens, Telegram bot
 tokens and the generated fake-secret marker wherever they appear in a committed case, an edge
-script or an adapter wire fixture. A finding names the file and the shape, never the matched value. The scan never reads the
-secret store.
+script or an adapter wire fixture. A finding names the file and the shape, never the matched
+value. The scan never reads the secret store.
 """
 
 from __future__ import annotations
