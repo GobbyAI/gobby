@@ -55,8 +55,8 @@
               "id": true
             },
             "column": "revision",
-            "before": 2,
-            "after": 3
+            "before": 3,
+            "after": 4
           }
         ]
       }
@@ -84,8 +84,8 @@
               "key": "voice.whisper_vocabulary"
             },
             "column": "revision",
-            "before": 2,
-            "after": 3
+            "before": 3,
+            "after": 4
           },
           {
             "key": {

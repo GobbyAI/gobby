@@ -14,5 +14,28 @@
     "body": null
   },
   "normalizers": {},
-  "mask": []
+  "mask": [
+    "/response/body/stt_available",
+    "/response/body/stt_reason",
+    "/response/body/whisper_model",
+    "/response/body/stt_warmup_status",
+    "/response/body/stt_warmup_error",
+    "/response/body/tts_warmup_status",
+    "/response/body/tts_warmup_error",
+    "/response/body/voice_ready",
+    "/response/body/voice_loading",
+    "/response/body/tts_provider",
+    "/response/body/tts_available",
+    "/response/body/tts_reason",
+    "/response/body/tts_backend_kind",
+    "/response/body/tts_capabilities",
+    "/response/body/tts_reference_audio",
+    "/response/body/tts_reference_audio_exists",
+    "/response/body/tts_reference_audio_conditioned",
+    "/response/body/tts_runtime_primed",
+    "/response/body/tts_device",
+    "/response/body/tts_chatterbox_max_generation_tokens",
+    "/response/body/transcription_enabled",
+    "/response/body/translation_enabled"
+  ]
 }

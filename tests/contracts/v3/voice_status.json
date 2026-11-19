@@ -14,15 +14,61 @@
     "body": null
   },
   "response": {
-    "status": 401,
+    "status": 200,
     "headers": {
       "content-type": "application/json"
     },
     "body": {
-      "error": "grant lacks the required capability",
-      "code": "wrong_capability"
+      "enabled": true,
+      "stt_enabled": true,
+      "stt_available": "@mask@",
+      "stt_reason": "@mask@",
+      "whisper_model": "@mask@",
+      "stt_warmup_status": "@mask@",
+      "stt_warmup_error": "@mask@",
+      "tts_enabled": true,
+      "tts_warmup_status": "@mask@",
+      "tts_warmup_error": "@mask@",
+      "voice_ready": "@mask@",
+      "voice_loading": "@mask@",
+      "tts_provider": "@mask@",
+      "tts_available": "@mask@",
+      "tts_reason": "@mask@",
+      "tts_backend_kind": "@mask@",
+      "tts_capabilities": "@mask@",
+      "tts_reference_audio": "@mask@",
+      "tts_reference_audio_exists": "@mask@",
+      "tts_reference_audio_conditioned": "@mask@",
+      "tts_runtime_primed": "@mask@",
+      "tts_device": "@mask@",
+      "tts_chatterbox_max_generation_tokens": "@mask@",
+      "transcription_enabled": "@mask@",
+      "translation_enabled": "@mask@"
     }
   },
   "normalizers": {},
-  "mask": []
+  "mask": [
+    "/response/body/stt_available",
+    "/response/body/stt_reason",
+    "/response/body/whisper_model",
+    "/response/body/stt_warmup_status",
+    "/response/body/stt_warmup_error",
+    "/response/body/tts_warmup_status",
+    "/response/body/tts_warmup_error",
+    "/response/body/voice_ready",
+    "/response/body/voice_loading",
+    "/response/body/tts_provider",
+    "/response/body/tts_available",
+    "/response/body/tts_reason",
+    "/response/body/tts_backend_kind",
+    "/response/body/tts_capabilities",
+    "/response/body/tts_reference_audio",
+    "/response/body/tts_reference_audio_exists",
+    "/response/body/tts_reference_audio_conditioned",
+    "/response/body/tts_runtime_primed",
+    "/response/body/tts_device",
+    "/response/body/tts_chatterbox_max_generation_tokens",
+    "/response/body/transcription_enabled",
+    "/response/body/translation_enabled"
+  ]
 }

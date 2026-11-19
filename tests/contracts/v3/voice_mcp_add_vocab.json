@@ -46,8 +46,8 @@
               "id": true
             },
             "column": "revision",
-            "before": 1,
-            "after": 2
+            "before": 2,
+            "after": 3
           }
         ]
       }
@@ -73,7 +73,7 @@
             "value": "[\"Gobby\", \"MCP\", \"worktree\", \"Kubernetes\", \"PostgreSQL\", \"FastAPI\", \"Pydantic\", \"TypeScript\", \"GraphQL\", \"WebSocket\", \"Redis\", \"MongoDB\", \"OAuth\", \"JWT\", \"REST\", \"gRPC\", \"YAML\", \"JSON\", \"Docker\", \"Terraform\", \"GitHub\", \"GitLab\", \"Claude\", \"Anthropic\", \"Gemini\", \"Codex\", \"npm\", \"pip\", \"pytest\", \"ESLint\", \"webpack\", \"Vite\", \"corpus-term-one\", \"corpus-term-two\"]",
             "source": "user",
             "is_secret": false,
-            "revision": 2
+            "revision": 3
           }
         ],
         "removed": [],

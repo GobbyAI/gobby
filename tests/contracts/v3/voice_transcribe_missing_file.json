@@ -14,13 +14,22 @@
     "body": {}
   },
   "response": {
-    "status": 401,
+    "status": 422,
     "headers": {
       "content-type": "application/json"
     },
     "body": {
-      "error": "grant lacks the required capability",
-      "code": "wrong_capability"
+      "detail": [
+        {
+          "type": "missing",
+          "loc": [
+            "body",
+            "file"
+          ],
+          "msg": "Field required",
+          "input": null
+        }
+      ]
     }
   },
   "normalizers": {},

@@ -7,6 +7,7 @@ edge side effects and webhook answers. A test that starts a daemon runs only aft
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import time
@@ -18,8 +19,10 @@ from typing import Any
 import httpx
 import pytest
 
+from scripts.parity_waivers import DIFF, PASSED
 from tests.contracts import corpus_v3, recorder_v3
 from tests.contracts.comms.fake_edge import FakeEdge
+from tests.contracts.http_corpus import classify_replay
 from tests.contracts.recorder_daemon_v3 import (
     CORPUS_SLACK_CHANNEL_ID,
     RecorderDaemon,
@@ -46,8 +49,30 @@ PROVIDER_REACHING_HOSTS: dict[str, tuple[str, ...]] = {
     "comms_attachment": ("slack.com", "upload.corpus.test"),
     "comms_mcp_send_message": ("slack.com",),
 }
-VOICE_CASES = ("voice_status", "voice_status_want_tts", "voice_transcribe_missing_file")
-VOICE_REFUSAL_BODY = {"error": "grant lacks the required capability", "code": "wrong_capability"}
+VOICE_STATUS_CASES = ("voice_status", "voice_status_want_tts")
+VOICE_TRANSCRIBE_CASE = "voice_transcribe_missing_file"
+# Voice status masks address the HTTP response body.
+VOICE_BODY_PREFIX = "/response/body/"
+ENGINE_FIELDS = ("whisper_model", "tts_provider")
+ENGINE_SUFFIXES = frozenset({"engine", "model", "package", "provider"})
+AVAILABILITY_FIELDS = (
+    "stt_available",
+    "stt_reason",
+    "voice_ready",
+    "voice_loading",
+    "stt_warmup_status",
+    "stt_warmup_error",
+    "tts_warmup_status",
+    "tts_warmup_error",
+    "tts_available",
+    "tts_reason",
+    "tts_backend_kind",
+    "tts_capabilities",
+    "transcription_enabled",
+    "translation_enabled",
+)
+VISIBLE_VOICE_FIELDS = frozenset({"enabled", "stt_enabled", "tts_enabled"})
+VOICE_ENABLED_CONFIG = {"voice.enabled": True, "voice.stt_enabled": True}
 WEBHOOK_VERIFY_CASE = "comms_webhook_verify"
 WEBHOOK_RECEIVE_CASE = "comms_webhook_receive"
 README_HEADINGS = (
@@ -259,20 +284,69 @@ def test_no_comms_or_voice_case_uses_the_dropped_gobby_chat_id() -> None:
     assert carrying == [], f"cases carry the dropped gobby_chat id: {carrying}"
 
 
-@pytest.mark.unit
-def test_voice_cases_record_the_grant_refusal_with_no_masks() -> None:
-    """Voice is disabled, so a valid grant lacks the audio capability and the route refuses it.
+def _replay_with_body(case: dict[str, Any], field: str, value: Any) -> str:
+    """Classify a replay whose response body differs from the recording in one field."""
+    actual = copy.deepcopy(case["response"])
+    actual["body"][field] = value
+    observed: dict[str, list[Any]] = {"db_delta": [], "side_effects": []}
+    return classify_replay(case, actual, {}, observed=observed).outcome
 
-    The engine and availability fields only appear in a 200 answer, so the recorded refusal
-    carries none of them and no mask resolves. Each voice case presents a runtime grant and
-    records the refusal body in the HTTP response, under the response body prefix.
-    """
-    for name in VOICE_CASES:
+
+@pytest.mark.unit
+def test_voice_startup_enables_voice_and_speech_to_text() -> None:
+    startup = corpus_v3.load_manifest(V3_DIR).get("startup", {})
+    voice = startup.get("voice")
+    assert isinstance(voice, dict), "the manifest has no voice startup block"
+    config = voice.get("config", {})
+    for key, value in VOICE_ENABLED_CONFIG.items():
+        assert config.get(key) is value, f"the voice startup block does not set {key} to {value}"
+
+
+@pytest.mark.unit
+def test_voice_status_cases_mask_engine_and_availability_fields() -> None:
+    for name in VOICE_STATUS_CASES:
         case = _v3_case_named(name)
         assert case["credential"] == "grant", f"{name} does not present a runtime grant"
-        assert case["response"]["status"] == 401, f"{name} did not refuse the grant"
-        assert case["response"]["body"] == VOICE_REFUSAL_BODY, f"{name} answered a different body"
-        assert case["mask"] == [], f"{name} masks a key that its refusal does not carry"
+        assert case["response"]["status"] == 200, f"{name} answered {case['response']['status']}"
+        body = case["response"]["body"]
+        assert isinstance(body, dict), f"{name} does not answer a JSON object"
+        assert body.get("enabled") is True, f"{name} was not recorded with voice enabled"
+        masked = set(case["mask"])
+        for field in (*ENGINE_FIELDS, *AVAILABILITY_FIELDS):
+            assert f"{VOICE_BODY_PREFIX}{field}" in masked, f"{name} does not mask {field}"
+        for key in body:
+            pointer = f"{VOICE_BODY_PREFIX}{key}"
+            if key.rsplit("_", 1)[-1] in ENGINE_SUFFIXES:
+                assert pointer in masked, f"{name} does not mask engine field {key}"
+            assert pointer in masked or key in VISIBLE_VOICE_FIELDS, (
+                f"{name} answers {key!r}, which is neither masked nor a visible flag"
+            )
+
+
+@pytest.mark.unit
+def test_voice_status_masks_hide_engine_values_and_keep_the_enabled_flags() -> None:
+    for name in VOICE_STATUS_CASES:
+        case = _v3_case_named(name)
+        for field in ENGINE_FIELDS:
+            outcome = _replay_with_body(case, field, "corpus-other-engine")
+            assert outcome == PASSED, f"{name}: a changed {field} value is a difference"
+        for field in VISIBLE_VOICE_FIELDS:
+            flipped = not case["response"]["body"][field]
+            outcome = _replay_with_body(case, field, flipped)
+            assert outcome == DIFF, f"{name}: a changed {field} flag still matches"
+
+
+@pytest.mark.unit
+def test_voice_transcribe_answers_the_missing_file_envelope() -> None:
+    case = _v3_case_named(VOICE_TRANSCRIBE_CASE)
+    assert case["credential"] == "grant", "the transcribe case does not present a runtime grant"
+    response = case["response"]
+    assert response["status"] == 422, f"the transcribe case answered {response['status']}"
+    detail = response["body"].get("detail")
+    assert isinstance(detail, list) and detail, f"the transcribe case answered {response['body']}"
+    missing = [item for item in detail if item.get("loc") == ["body", "file"]]
+    assert missing, f"the transcribe case does not name the missing file: {detail}"
+    assert missing[0].get("type") == "missing", f"the file error is not missing: {missing[0]}"
 
 
 @pytest.mark.unit

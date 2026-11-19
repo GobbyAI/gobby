@@ -68,6 +68,9 @@
         }
       ],
       "secrets": ["corpus_slack_bot_token", "corpus_slack_signing_secret"]
+    },
+    "voice": {
+      "config": {"voice.enabled": true, "voice.stt_enabled": true}
     }
   }
 }
