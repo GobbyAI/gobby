@@ -14,6 +14,7 @@ import contextlib
 import logging
 import os
 import socket
+import stat
 import struct
 from dataclasses import dataclass, field
 
@@ -64,7 +65,9 @@ def take_worker_boot() -> WorkerBoot | None:
         raise StartRefusal("worker channel needs unix descriptors")
     channel_fd = _inherited_descriptor(WORKER_CHANNEL_FD_ENV, channel_text)
     credential_fd = _inherited_descriptor(WORKER_CREDENTIAL_FD_ENV, credential_text)
-    return WorkerBoot(channel_fd=channel_fd, credential=_read_credential(credential_fd))
+    credential = _read_credential(credential_fd)
+    _require_open_socket(channel_fd)
+    return WorkerBoot(channel_fd=channel_fd, credential=credential)
 
 
 def _inherited_descriptor(name: str, text: str | None) -> int:
@@ -76,6 +79,16 @@ def _inherited_descriptor(name: str, text: str | None) -> int:
     if fd < _LOWEST_INHERITED_FD:
         raise StartRefusal(f"{name} must name an inherited descriptor above stderr")
     return fd
+
+
+def _require_open_socket(fd: int) -> None:
+    """Refuse a channel descriptor that is closed or is not a socket, before anything uses it."""
+    try:
+        mode = os.fstat(fd).st_mode
+    except OSError as exc:
+        raise StartRefusal(f"{WORKER_CHANNEL_FD_ENV} names a descriptor that is not open") from exc
+    if not stat.S_ISSOCK(mode):
+        raise StartRefusal(f"{WORKER_CHANNEL_FD_ENV} names a descriptor that is not a socket")
 
 
 def _read_credential(fd: int) -> str:

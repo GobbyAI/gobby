@@ -102,7 +102,7 @@ impl fmt::Debug for WorkerAttachment {
 /// What one spawn hands over: the parent's attachment, and the descriptors the child inherits.
 /// The parent holds the child descriptors only until the spawn returns.
 #[derive(Debug)]
-pub struct WorkerSpawn {
+pub(crate) struct WorkerSpawn {
     pub attachment: WorkerAttachment,
     #[cfg(unix)]
     pub child_fds: Vec<OwnedFd>,
@@ -116,7 +116,7 @@ pub struct WorkerSpawn {
 /// spawn drew, so the attachment serves that generation. The parent end is registered with the
 /// Tokio reactor, so this must run inside the runtime.
 #[cfg(unix)]
-pub fn attach(session: WorkerSession) -> io::Result<WorkerSpawn> {
+pub(crate) fn attach(session: WorkerSession) -> io::Result<WorkerSpawn> {
     let (parent, child) = UnixStream::pair()?;
     parent.set_nonblocking(true)?;
     let stream = tokio::net::UnixStream::from_std(parent)?;
@@ -142,7 +142,7 @@ pub fn attach(session: WorkerSession) -> io::Result<WorkerSpawn> {
 
 /// Off unix no worker channel exists, so no spawn can attach one.
 #[cfg(not(unix))]
-pub fn attach(_session: WorkerSession) -> io::Result<WorkerSpawn> {
+pub(crate) fn attach(_session: WorkerSession) -> io::Result<WorkerSpawn> {
     Err(io::Error::from(io::ErrorKind::Unsupported))
 }
 

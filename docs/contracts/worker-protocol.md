@@ -43,6 +43,8 @@ This contract is private to the daemon and its worker. It is not a public API.
   - A marker other than `1` refuses the start. So does a marker on Windows.
   - A channel or credential variable that is missing, is not an integer, or does not name an
     inherited descriptor above stderr refuses the start, and the message names the variable.
+  - A channel descriptor that is closed, or is open but is not a socket, refuses the start before
+    the channel is used, and the message names the channel variable.
   - Otherwise the credential is read to end of stream and its descriptor is closed. The channel
     descriptor stays open for the worker.
   A refusal exits with status 78, and the supervisor treats that exit as sticky.
