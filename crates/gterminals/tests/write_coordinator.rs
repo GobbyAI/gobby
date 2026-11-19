@@ -15,8 +15,6 @@ use serde_json::json;
 use tokio::sync::oneshot;
 use uuid::Uuid;
 
-const TEST_HUB: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test";
-
 struct Hub {
     url: String,
     schema: String,
@@ -26,10 +24,6 @@ struct Hub {
 impl Hub {
     async fn new() -> anyhow::Result<Self> {
         let url = crate::common::test_database_url()?;
-        anyhow::ensure!(
-            url == TEST_HUB,
-            "write coordinator tests require the explicitly selected isolated test hub"
-        );
         let schema = format!("gobby_terminal_write_{}", Uuid::new_v4().simple());
         let admin_url = url.clone();
         let owned_schema = schema.clone();

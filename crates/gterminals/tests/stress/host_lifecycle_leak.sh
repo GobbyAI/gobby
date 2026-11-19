@@ -7,14 +7,16 @@
 # first LEAK-FAIL (exit 1). Any other failing run exits 2. A clean sweep exits 0.
 #
 # Usage: host_lifecycle_leak.sh [iterations] [test-threads]
-# Run from the repository root. Uses the isolated test hub unless
-# GOBBY_TERMINALS_TEST_DATABASE_URL is already set.
+# Run from the repository root. DATABASE_URL must name the isolated test hub
+# (gobby_test on 127.0.0.1:60892); the script refuses to run without it.
 set -u
 
 iterations=${1:-20}
 threads=${2:-9}
-: "${GOBBY_TERMINALS_TEST_DATABASE_URL:=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test}"
-export GOBBY_TERMINALS_TEST_DATABASE_URL
+if [ -z "${DATABASE_URL:-}" ]; then
+    echo "DATABASE_URL must name the isolated test hub" >&2
+    exit 2
+fi
 
 run=1
 while [ "$run" -le "$iterations" ]; do

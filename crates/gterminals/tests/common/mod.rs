@@ -12,13 +12,11 @@ use gobby_terminals::repository::{self, Backend, Ownership, State, Terminal};
 use serde_json::json;
 use uuid::Uuid;
 
-const DATABASE_URL_ENV: &str = "GOBBY_TERMINALS_TEST_DATABASE_URL";
-
-/// The one environment read of the terminal tests. Still reads the retired name (red commit).
+/// The one environment read of the terminal tests: `DATABASE_URL` through the shared guard entry.
 pub fn database_url_from(
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<String, gobby_test_support::hub_guard::DbUrlError> {
-    env(DATABASE_URL_ENV).ok_or(gobby_test_support::hub_guard::DbUrlError::Unset)
+    gobby_test_support::hub_guard::database_url_with_env(env)
 }
 
 /// The isolated test hub from the process environment, or an error when it is unset or refused.
@@ -52,10 +50,6 @@ pub struct Hub {
 impl Hub {
     pub async fn new() -> anyhow::Result<Self> {
         let url = test_database_url()?;
-        anyhow::ensure!(
-            url == "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test",
-            "reconciliation tests require the explicitly selected isolated test hub"
-        );
         let schema = format!("gobby_terminal_reconcile_{}", Uuid::new_v4().simple());
         let admin_url = url.clone();
         let owned_schema = schema.clone();

@@ -1,17 +1,16 @@
 use super::*;
 use gobby_core::postgres_pool::PoolSettings;
-use gobby_test_support::hub_guard::DbUrlError;
+use gobby_test_support::hub_guard::{DbUrlError, database_url_with_env};
 use tokio_postgres::{Client, NoTls};
 
 const CUTOFF: &str = "2026-04-11T12:00:00Z";
 const SESSION: &str = "11111111-1111-4111-8111-111111111111";
-const DATABASE_URL_ENV: &str = "GOBBY_SCHEMA_TEST_DATABASE_URL";
 const TEST_HUB: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test";
 const LIVE_HUB: &str = "postgresql://gobby:gobby@localhost:60891/gobby";
 
-/// The one environment read of this file. Still reads the retired name (red commit).
+/// The one environment read of this file: `DATABASE_URL` through the shared guard entry.
 fn database_url_from(env: &dyn Fn(&str) -> Option<String>) -> Result<String, DbUrlError> {
-    env(DATABASE_URL_ENV).ok_or(DbUrlError::Unset)
+    database_url_with_env(env)
 }
 
 /// The test hub from the process environment, or `None` after printing a skip line.

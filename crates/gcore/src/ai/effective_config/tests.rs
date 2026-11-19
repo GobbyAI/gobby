@@ -479,15 +479,14 @@ fn fresh_effective_cache_serves_within_ttl_without_a_revision_source() {
     assert_eq!(config.revision(), 7);
 }
 
-const DATABASE_URL_ENV: &str = "GCODE_POSTGRES_TEST_DATABASE_URL";
 const TEST_HUB: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test";
 const LIVE_HUB: &str = "postgresql://gobby:gobby@localhost:60891/gobby";
 
-/// The one environment read of this file. Still reads the retired name (red commit).
+/// The one environment read of this file: `DATABASE_URL` through the shared guard entry.
 fn database_url_from(
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<String, gobby_test_support::hub_guard::DbUrlError> {
-    env(DATABASE_URL_ENV).ok_or(gobby_test_support::hub_guard::DbUrlError::Unset)
+    gobby_test_support::hub_guard::database_url_with_env(env)
 }
 
 #[test]
@@ -524,12 +523,6 @@ fn fresh_effective_cache_drops_when_postgres_revision_differs() {
         return;
     };
     let config = url.parse::<postgres::Config>().expect("test DSN");
-    assert!(
-        config.get_dbname().is_some_and(|name| {
-            name == "gobby_gcode_test" || name.starts_with("gobby_gcode_test_")
-        }),
-        "cache fixture requires the isolated gcode test database namespace"
-    );
     struct RevisionSchema {
         conn: postgres::Client,
         name: String,

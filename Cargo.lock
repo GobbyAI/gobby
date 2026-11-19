@@ -2442,6 +2442,7 @@ dependencies = [
  "clap",
  "gix",
  "glob",
+ "gobby-code",
  "gobby-core",
  "gobby-test-support",
  "insta",

@@ -1,4 +1,7 @@
-const GCODE_POSTGRES_TEST_DATABASE_URL_ENV: &str = "GCODE_POSTGRES_TEST_DATABASE_URL";
+#![cfg(any(test, feature = "test-support"))]
+
+use gobby_test_support::hub_guard::{DbUrlError, database_url_with_env};
+
 #[cfg(test)]
 const GOBBY_HOME_ENV: &str = "GOBBY_HOME";
 const GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV: &str = "GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE";
@@ -12,25 +15,23 @@ pub fn postgres_test_database_url(purpose: &str) -> String {
     database_url
 }
 
-/// Resolve the test database URL and refuse any database but
-/// the `gobby_gcode_test` namespace unless `GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE` overrides
-/// the guard. Only the gcode-specific variable is read: the pytest stack's
-/// `DATABASE_URL` and `GOBBY_POSTGRES_TEST_*` point at gobby_test, and the
-/// operator's bootstrap.yaml points at the live hub.
+/// Resolve the test database URL: `DATABASE_URL` through the shared guard, then gcode's
+/// `gobby_gcode_test` namespace on that hub, refusing any other database unless
+/// `GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE` overrides the guard. `GOBBY_POSTGRES_TEST_*`
+/// and the operator's bootstrap.yaml are never read.
 fn resolve_postgres_test_database_url(purpose: &str) -> String {
     let Some(database_url) = postgres_test_database_url_from_sources() else {
         panic!(
-            "{purpose} requires a PostgreSQL test database URL; set \
-             {GCODE_POSTGRES_TEST_DATABASE_URL_ENV} to the \
-             `{GCODE_POSTGRES_TEST_DATABASE}` database"
+            "{purpose} requires a PostgreSQL test database URL; set DATABASE_URL to \
+             the isolated test hub (gobby_test), whose `{GCODE_POSTGRES_TEST_DATABASE}` \
+             namespace gcode uses"
         )
     };
     if let Err(reason) = destructive_postgres_test_allowed(&database_url) {
         panic!(
             "{purpose} refused the resolved PostgreSQL database URL: {reason}. \
-             gcode DB tests only run against `{GCODE_POSTGRES_TEST_DATABASE}`; set \
-             {GCODE_POSTGRES_TEST_DATABASE_URL_ENV} to it or set \
-             {GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV}=1 to bypass this guard"
+             gcode DB tests only run against `{GCODE_POSTGRES_TEST_DATABASE}`; \
+             {GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV}=1 bypasses this guard"
         );
     }
     let config = database_url
@@ -87,19 +88,17 @@ fn database_url_for_name(database_url: &str, name: &str) -> String {
     }
 }
 
-/// The one environment read of the resolver. Still reads the retired name (red commit):
-/// the shared entry maps `DATABASE_URL` onto the `gobby_gcode_test` namespace (H25).
-fn database_url_from(
-    env: &dyn Fn(&str) -> Option<String>,
-) -> Result<String, gobby_test_support::hub_guard::DbUrlError> {
-    env(GCODE_POSTGRES_TEST_DATABASE_URL_ENV)
-        .ok_or(gobby_test_support::hub_guard::DbUrlError::Unset)
+/// The one environment read of the resolver: `DATABASE_URL` through the shared guard entry,
+/// with the database name replaced by gcode's own `gobby_gcode_test` namespace on that hub (H25).
+fn database_url_from(env: &dyn Fn(&str) -> Option<String>) -> Result<String, DbUrlError> {
+    database_url_with_env(env)
+        .map(|base| database_url_for_name(&base, GCODE_POSTGRES_TEST_DATABASE))
 }
 
 fn postgres_test_database_url_from_sources() -> Option<String> {
     match database_url_from(&non_empty_env) {
         Ok(url) => Some(url),
-        Err(gobby_test_support::hub_guard::DbUrlError::Unset) => None,
+        Err(DbUrlError::Unset) => None,
         Err(error) => panic!("{error}"),
     }
 }
@@ -324,7 +323,7 @@ mod tests {
     use super::*;
 
     const POSTGRES_TEST_ENV_KEYS: &[&str] = &[
-        GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
+        "GCODE_POSTGRES_TEST_DATABASE_URL",
         "GOBBY_POSTGRES_TEST_DATABASE_URL",
         "DATABASE_URL",
         "GOBBY_POSTGRES_TEST_DB",
@@ -378,25 +377,23 @@ mod tests {
         ));
     }
 
+    const TEST_HUB: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test";
+    const GCODE_NAMESPACE_HUB: &str =
+        "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_gcode_test";
+
     #[test]
     #[serial_test::serial(serial_db)]
-    fn test_env_reads_the_gcode_specific_database_url() {
-        with_postgres_test_env(
-            &[(
-                GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
-                Some("postgresql://localhost/gobby_gcode_test"),
-            )],
-            || {
-                assert_eq!(
-                    postgres_test_database_url_from_sources().as_deref(),
-                    Some("postgresql://localhost/gobby_gcode_test")
-                );
-            },
-        );
+    fn test_env_reads_the_shared_database_url_into_the_gcode_namespace() {
+        with_postgres_test_env(&[("DATABASE_URL", Some(TEST_HUB))], || {
+            assert_eq!(
+                postgres_test_database_url_from_sources().as_deref(),
+                Some(GCODE_NAMESPACE_HUB)
+            );
+        });
     }
 
-    // DATABASE_URL and the GOBBY_POSTGRES_TEST_* family are the pytest stack's
-    // and point at gobby_test; the gcode fixture must never pick them up.
+    // The GOBBY_POSTGRES_TEST_* family is the pytest stack's and points at gobby_test;
+    // the gcode fixture must never pick it up.
     #[test]
     #[serial_test::serial(serial_db)]
     fn test_env_ignores_pytest_database_sources() {
@@ -406,10 +403,24 @@ mod tests {
                     "GOBBY_POSTGRES_TEST_DATABASE_URL",
                     Some("postgresql://localhost/gobby_test"),
                 ),
-                ("DATABASE_URL", Some("postgresql://localhost/gobby_test")),
                 ("GOBBY_POSTGRES_TEST_DB", Some("gobby_test")),
                 ("GOBBY_POSTGRES_TEST_USER", Some("gobby_test")),
             ],
+            || {
+                assert_eq!(postgres_test_database_url_from_sources().as_deref(), None);
+            },
+        );
+    }
+
+    // The gcode-only variable is retired: DATABASE_URL is the one source (H7).
+    #[test]
+    #[serial_test::serial(serial_db)]
+    fn test_env_ignores_the_retired_gcode_variable() {
+        with_postgres_test_env(
+            &[(
+                "GCODE_POSTGRES_TEST_DATABASE_URL",
+                Some(GCODE_NAMESPACE_HUB),
+            )],
             || {
                 assert_eq!(postgres_test_database_url_from_sources().as_deref(), None);
             },
@@ -434,47 +445,20 @@ mod tests {
 
     #[test]
     #[serial_test::serial(serial_db)]
-    fn resolve_refuses_non_test_database_without_override() {
+    fn resolve_refuses_a_live_hub_database_url() {
         with_postgres_test_env(
             &[(
-                GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
-                Some("postgresql://localhost/gobby_test"),
+                "DATABASE_URL",
+                Some("postgresql://gobby:gobby@localhost:60891/gobby"),
             )],
             || {
                 let panic =
                     std::panic::catch_unwind(|| resolve_postgres_test_database_url("guard tests"))
-                        .expect_err("pytest's database URL is refused");
+                        .expect_err("the live hub is refused");
                 let message = panic
                     .downcast_ref::<String>()
                     .expect("panic payload is a formatted String");
-                assert!(
-                    message.contains("`gobby_test` is not the dedicated `gobby_gcode_test`"),
-                    "{message}"
-                );
-                assert!(
-                    message.contains(GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV),
-                    "{message}"
-                );
-            },
-        );
-    }
-
-    #[test]
-    #[serial_test::serial(serial_db)]
-    fn resolve_allows_non_test_database_with_override() {
-        with_postgres_test_env(
-            &[
-                (
-                    GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
-                    Some("postgresql://localhost/gobby"),
-                ),
-                (GCODE_POSTGRES_TEST_ALLOW_DESTRUCTIVE_ENV, Some("1")),
-            ],
-            || {
-                assert_eq!(
-                    resolve_postgres_test_database_url("guard tests"),
-                    "postgresql://localhost/gobby"
-                );
+                assert!(message.contains("R3"), "{message}");
             },
         );
     }
@@ -482,24 +466,15 @@ mod tests {
     #[test]
     #[serial_test::serial(serial_db)]
     fn resolve_selects_compiled_schema_database() {
-        with_postgres_test_env(
-            &[(
-                GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
-                Some("postgresql://localhost/gobby_gcode_test"),
-            )],
-            || {
-                assert_eq!(resolve_postgres_test_database_url("guard tests"), {
-                    let identity = gobby_core::schema::schema_identity();
-                    format!(
-                        "postgresql://localhost/{}",
-                        schema_test_database_name(
-                            identity.latest_asset.version,
-                            &identity.root_hash
-                        )
-                    )
-                });
-            },
-        );
+        with_postgres_test_env(&[("DATABASE_URL", Some(TEST_HUB))], || {
+            assert_eq!(resolve_postgres_test_database_url("guard tests"), {
+                let identity = gobby_core::schema::schema_identity();
+                format!(
+                    "postgresql://gobby_test:gobby_test@127.0.0.1:60892/{}",
+                    schema_test_database_name(identity.latest_asset.version, &identity.root_hash)
+                )
+            });
+        });
     }
 
     #[test]
@@ -545,25 +520,24 @@ mod tests {
 
     #[test]
     #[serial_test::serial(serial_db)]
-    fn schema_database_selection_preserves_options_and_ignores_newer_target() {
+    fn schema_database_selection_preserves_query_options() {
         let identity = gobby_core::schema::schema_identity();
         let version = identity.latest_asset.version;
         let name = schema_test_database_name(version, &identity.root_hash);
         for source in [
-            format!("postgresql://fixture:secret@127.0.0.1:60892/gobby_gcode_test_v{}?application_name=fixture+app&sslmode=disable&options=-c%20statement_timeout%3D1000", version + 1),
-            "host=127.0.0.1 port=60892 user=fixture password=secret dbname=gobby_gcode_test application_name=fixture+app sslmode=disable options='-c statement_timeout=1000'".to_string(),
+            "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?application_name=fixture+app&sslmode=disable".to_string(),
+            "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test?sslmode=disable&application_name=fixture+app".to_string(),
         ] {
-            with_postgres_test_env(&[(GCODE_POSTGRES_TEST_DATABASE_URL_ENV, Some(&source))], || {
+            with_postgres_test_env(&[("DATABASE_URL", Some(&source))], || {
                 let first = resolve_postgres_test_database_url("schema cohorts");
                 let second = resolve_postgres_test_database_url("schema cohorts");
                 assert_eq!(first, second, "same compiled schema shares a target");
                 let config = first.parse::<postgres::Config>().expect("selected DSN");
                 assert_eq!(config.get_dbname(), Some(name.as_str()));
-                assert_eq!(config.get_user(), Some("fixture"));
-                assert_eq!(config.get_password(), Some(b"secret".as_slice()));
+                assert_eq!(config.get_user(), Some("gobby_test"));
+                assert_eq!(config.get_password(), Some(b"gobby_test".as_slice()));
                 assert_eq!(config.get_ports(), &[60892]);
                 assert_eq!(config.get_application_name(), Some("fixture+app"));
-                assert_eq!(config.get_options(), Some("-c statement_timeout=1000"));
                 assert_eq!(config.get_ssl_mode(), postgres::config::SslMode::Disable);
             });
         }
@@ -606,7 +580,7 @@ mod tests {
     {
         let identity = gobby_core::schema::schema_identity();
         let version = identity.latest_asset.version;
-        let source = postgres_test_database_url_from_sources().expect("DB test DSN");
+        let source = gobby_test_support::hub_guard::database_url_for_tests().expect("DB test DSN");
         // Only this unique disposable probe database carries the simulated
         // future receipt. Never alter or drop another runner's shared cohort.
         let future_name = format!(
@@ -651,27 +625,23 @@ mod tests {
                 error.to_string().contains("newer than this runner"),
                 "{error}"
             );
-            temp_env::with_var(
-                GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
-                Some(future_url.as_str()),
-                || {
-                    let selected = postgres_test_database_url("schema cohort regression");
-                    assert_eq!(
-                        selected
-                            .parse::<postgres::Config>()
-                            .expect("cohort DSN")
-                            .get_dbname(),
-                        Some(schema_test_database_name(version, &identity.root_hash).as_str())
-                    );
-                    assert_eq!(postgres_test_database_url("same process"), selected);
-                    let mut current = gobby_core::postgres::connect_readwrite(&selected)
-                        .expect("compiled cohort connection");
-                    gobby_core::schema::SchemaRunner::new(&mut current, "public")
-                        .expect("compiled runner")
-                        .apply()
-                        .expect("compiled schema remains applicable");
-                },
-            );
+            temp_env::with_var("DATABASE_URL", Some(source.as_str()), || {
+                let selected = postgres_test_database_url("schema cohort regression");
+                assert_eq!(
+                    selected
+                        .parse::<postgres::Config>()
+                        .expect("cohort DSN")
+                        .get_dbname(),
+                    Some(schema_test_database_name(version, &identity.root_hash).as_str())
+                );
+                assert_eq!(postgres_test_database_url("same process"), selected);
+                let mut current = gobby_core::postgres::connect_readwrite(&selected)
+                    .expect("compiled cohort connection");
+                gobby_core::schema::SchemaRunner::new(&mut current, "public")
+                    .expect("compiled runner")
+                    .apply()
+                    .expect("compiled schema remains applicable");
+            });
             Ok(())
         })()
     }

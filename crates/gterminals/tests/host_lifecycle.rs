@@ -386,11 +386,6 @@ struct OwnedHubSchema {
 impl OwnedHubSchema {
     async fn new() -> anyhow::Result<Self> {
         let admin_url = crate::common::test_database_url()?;
-        anyhow::ensure!(
-            admin_url.starts_with("postgresql://gobby_test:gobby_test@127.0.0.1:60892/")
-                && admin_url.ends_with("/gobby_test"),
-            "terminal lifecycle tests require the explicitly selected isolated test hub"
-        );
         let fixture = Self {
             admin_url,
             schema: format!("gobby_terminals_{}", uuid::Uuid::new_v4().simple()),

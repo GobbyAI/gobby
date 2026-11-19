@@ -10,15 +10,14 @@ use tokio_postgres::config::Host;
 use tokio_postgres::error::SqlState;
 use tokio_postgres::types::ToSql;
 
-const DATABASE_URL_ENV: &str = "GOBBY_SCHEMA_TEST_DATABASE_URL";
 const TEST_HUB: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test";
 const LIVE_HUB: &str = "postgresql://gobby:gobby@localhost:60891/gobby";
 
-/// The one environment read of this file. Still reads the retired name (red commit).
+/// The one environment read of this file: `DATABASE_URL` through the shared guard entry.
 fn database_url_from(
     env: &dyn Fn(&str) -> Option<String>,
 ) -> Result<String, gobby_test_support::hub_guard::DbUrlError> {
-    env(DATABASE_URL_ENV).ok_or(gobby_test_support::hub_guard::DbUrlError::Unset)
+    gobby_test_support::hub_guard::database_url_with_env(env)
 }
 
 #[test]

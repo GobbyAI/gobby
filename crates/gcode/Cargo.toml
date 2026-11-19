@@ -24,7 +24,7 @@ path = "src/lib.rs"
 [features]
 default = ["ai"]
 ai = ["gobby-core/ai"]
-test-support = []
+test-support = ["dep:gobby-test-support"]
 
 [[bin]]
 name = "gcode"
@@ -42,6 +42,8 @@ required-features = ["test-support"]
 [dependencies]
 # Internal
 gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres", "falkor", "qdrant", "search", "indexing", "graph-analytics"] }
+# Test-only: the `test-support` feature compiles the test_env module outside `cargo test` (H37).
+gobby-test-support = { path = "../gtest-support", optional = true }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -119,3 +121,6 @@ serial_test = "3"
 syn = { version = "2", features = ["full"] }
 temp-env = "0.3.6"
 gobby-test-support = { path = "../gtest-support" }
+# Integration targets (tests/evidence.rs) call test_env from the library built without cfg(test);
+# this self dev-dependency enables the test-support feature for them (H37 follow-up).
+gobby-code = { path = ".", features = ["test-support"] }

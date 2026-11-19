@@ -492,8 +492,6 @@ if {
         RUST_TEST_DATABASE_URL="${RUST_TEST_DATABASE_URL/@localhost:/@127.0.0.1:}" &&
         DATABASE_URL="$RUST_TEST_DATABASE_URL" \
             GOBBY_TEST_PROTECT=1 \
-            GOBBY_TEST_POSTGRES_URL="$RUST_TEST_DATABASE_URL" \
-            GOBBY_TERMINALS_TEST_DATABASE_URL="$RUST_TEST_DATABASE_URL" \
             cargo nextest run --profile ci --workspace --no-default-features -E 'not binary(catalog_manifest_freshness)' &&
         cargo test --doc --workspace --no-default-features
 } 2>&1 | tee "$CARGO_REPORT"; then
