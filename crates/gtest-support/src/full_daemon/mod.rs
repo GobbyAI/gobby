@@ -26,8 +26,8 @@ use crate::ports::{DaemonPorts, daemon_ports};
 mod process;
 mod terminal_host;
 
-use process::{find_worker, stop_daemon, stop_worker};
 pub use process::pid_alive;
+use process::{find_worker, stop_daemon, stop_worker};
 use terminal_host::{ensure_gterm, install_gterm, read_host_pid, stop_terminal_host};
 
 /// The line a database-backed test prints when `DATABASE_URL` is unset (ruling H18).
@@ -173,9 +173,18 @@ pub struct FullDaemonBuilder<'a> {
     lookup: Lookup,
     profile: Option<PathBuf>,
     seed: Option<Seed>,
+    loopback: bool,
 }
 
 impl FullDaemonBuilder<'_> {
+    /// Run gdaemon under the loopback-only mode (section 7.4): outbound connections other than
+    /// loopback fail. The wrapper is built by `crate::loopback` and refuses where it has no
+    /// mechanism.
+    pub fn loopback_only(mut self) -> Self {
+        self.loopback = true;
+        self
+    }
+
     /// Read `DATABASE_URL` and the PG* redirect variables through `lookup` instead of the process.
     pub fn environment(mut self, lookup: impl Fn(&str) -> Option<String> + 'static) -> Self {
         self.lookup = Box::new(lookup);
@@ -209,11 +218,18 @@ impl FullDaemonBuilder<'_> {
             lookup,
             profile,
             seed,
+            loopback,
         } = self;
         let base = lookup("DATABASE_URL");
         let guard = check_test_hub(base.as_deref(), &*lookup, profile.as_deref())?;
         if cfg!(windows) {
             return Err(FullDaemonError::Unsupported(WINDOWS_UNBUILT.into()));
+        }
+        if loopback {
+            // C17 stub: the wrapper is built in C18 (section 7.4), and nothing launches before it.
+            return Err(FullDaemonError::Unsupported(
+                crate::loopback::ERR_UNBUILT.into(),
+            ));
         }
         let python = checkout_python(repo_root);
         require_file(gdaemon, "the gdaemon binary")?;
@@ -353,6 +369,7 @@ impl FullDaemon {
             lookup: Box::new(|name: &str| std::env::var(name).ok()),
             profile: None,
             seed: None,
+            loopback: false,
         }
     }
 

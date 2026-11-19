@@ -99,7 +99,8 @@ const SEED_PATH: &str = "/usr/bin:/bin:/usr/sbin:/sbin";
 #[cfg(windows)]
 const SEED_PATH: &str = "";
 
-fn python_seed(context: &SeedContext<'_>) -> Result<String, String> {
+/// The installed-user seed step. Shared with the loopback tests in this suite binary.
+pub(crate) fn python_seed(context: &SeedContext<'_>) -> Result<String, String> {
     let output = Command::new(context.python)
         .arg("-c")
         .arg(SEED_SCRIPT)
