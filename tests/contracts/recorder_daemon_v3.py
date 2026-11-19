@@ -14,7 +14,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +23,7 @@ from typing import Any
 from gobby.storage.api_keys import ensure_local_api_key
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.utils.dev import WORKTREE_DAEMON_OVERRIDE_ENV
+from tests.contracts.recorder_v3_support import ProviderEdgeLog
 from tests.e2e import conftest as e2e
 from tests.fixtures.gdaemon_binary import build_checkout_gdaemon
 from tests.fixtures.hub_guard import guard_worktree_override
@@ -211,11 +212,18 @@ def _worktree_override(base_url: str) -> Iterator[None]:
 
 
 @contextmanager
-def recorder_daemon(*, base_url: str, database_url: str) -> Iterator[RecorderDaemon]:
+def recorder_daemon(
+    *,
+    base_url: str,
+    database_url: str,
+    startup: Mapping[str, Any] | None = None,
+    edge: ProviderEdgeLog | None = None,
+) -> Iterator[RecorderDaemon]:
     """Start one isolated daemon on ``database_url`` and stop it on exit.
 
     ``base_url`` is the guarded DATABASE_URL the run derives from; ``database_url`` is the run's
-    own database. The caller owns the database and drops it after this context exits.
+    own database. The caller owns the database and drops it after this context exits. ``startup``
+    (a family's startup block) and ``edge`` (a provider edge) are accepted here but not yet applied.
     """
     with _daemon(database_url, base_url) as daemon:
         yield daemon

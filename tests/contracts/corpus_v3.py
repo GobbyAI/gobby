@@ -30,10 +30,16 @@ V3_DIR = Path(__file__).resolve().parent / "v3"
 # JSON vectors kept beside the schema 3 cases. Tests read them; the loader never replays them.
 V3_NON_CASE_FILES = frozenset({"grant_encoding.json"})
 KINDS = frozenset({"http", "mcp", "ws", "cli"})
-CHANNELS = frozenset({"pg_notify", "ws_publish", "files_home_write"})
+CHANNELS = frozenset({"pg_notify", "ws_publish", "files_home_write", "provider_edge"})
 FIELD_NORMALIZERS = frozenset({"uuid_ordinal", "monotonic", "timestamp", "bytes", "none"})
 ORDER_MODES = frozenset({"set", "as_recorded"})
-MCP_TRANSPORTS = frozenset({"http", "stdio"})
+MCP_TRANSPORTS = frozenset({"http", "stdio", "rest"})
+# The startup block (schema 3 manifest): the keys of one family's entry and of one channel row.
+STARTUP_KEYS = frozenset({"config", "channels", "secrets"})
+STARTUP_CHANNEL_KEYS = frozenset({"id", "channel_type", "name", "enabled", "config"})
+SECRET_REFERENCE = "$secret:"
+_SECRET_NAME = re.compile(r"[a-z][a-z0-9_]*")
+_UUID_TEXT = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 # Keys appear in this order; absent keys are omitted.
 V3_KEY_ORDER = (
     "schema_version",
@@ -99,6 +105,11 @@ def load_manifest(corpus_dir: Path) -> dict[str, Any]:
             or family.get("origin") not in ORIGIN_VALUES
         ):
             raise CorpusError(f"family {name!r} needs a parity and an origin")
+    label = f"{corpus_dir.name}/{MANIFEST_NAME}"
+    if "startup" in manifest:
+        if version != 3:
+            raise CorpusError(f"{label}: startup is valid only in schema 3")
+        _check_startup(manifest["startup"], families, label)
     return manifest
 
 
@@ -210,7 +221,7 @@ def _validate_schema_3(case: Mapping[str, Any], file_name: str) -> None:
     key_match = _check_ledger_key(case, kind, file_name)
     if kind != "http":
         _check_invocation(case, kind, key_match, file_name)
-    if "response" in case:
+    if "response" in case and not _is_rest_call(case):
         _check_response(case["response"], kind, file_name)
     _check_mask_shape(case, file_name)
     for name in ("seed", "db_delta", "side_effects", "normalizers", "waiver"):
@@ -227,6 +238,16 @@ def _is_native_extension(case: Mapping[str, Any]) -> bool:
     """A waiver id ends in ``.native-extension`` exactly as ``Waiver.native_extension`` reads it."""
     waiver = case.get("waiver")
     return isinstance(waiver, str) and waiver.endswith(".native-extension")
+
+
+def _is_rest_call(case: Mapping[str, Any]) -> bool:
+    """A kind mcp case on the REST transport answers the tool's JSON body, which is any value."""
+    invocation = case.get("invocation")
+    return (
+        case.get("kind") == "mcp"
+        and isinstance(invocation, dict)
+        and invocation.get("transport") == "rest"
+    )
 
 
 def _check_response_presence(case: Mapping[str, Any], file_name: str) -> None:
@@ -475,3 +496,71 @@ def _check_side_effect(effect: Any, file_name: str) -> None:
         raise CorpusError(f"{file_name}: side effect needs a known channel and a match object")
     _check_normalizers(effect.get("normalizers", {}), file_name)
     _check_pointer_keys(effect.get("normalizers", {}), file_name)
+    if effect["channel"] == "provider_edge":
+        hosts = effect["match"].get("hosts")
+        named = isinstance(hosts, list) and all(isinstance(host, str) and host for host in hosts)
+        if not named or not hosts:
+            raise CorpusError(f"{file_name}: a provider_edge side effect needs a hosts list")
+
+
+def _check_startup(startup: Any, families: Mapping[str, Any], label: str) -> None:
+    """Validate the schema 3 startup block: keyed by declared families, with known keys only."""
+    if not isinstance(startup, dict):
+        raise CorpusError(f"{label}: startup must be an object keyed by family")
+    for family, entry in startup.items():
+        if family not in families:
+            raise CorpusError(
+                f"{label}: startup names family {family!r}, which the manifest does not declare"
+            )
+        _check_startup_entry(entry, family, label)
+
+
+def _check_startup_entry(entry: Any, family: str, label: str) -> None:
+    if not isinstance(entry, dict):
+        raise CorpusError(f"{label}: startup {family!r} must be an object")
+    unknown = sorted(set(entry) - STARTUP_KEYS)
+    if unknown:
+        raise CorpusError(f"{label}: startup {family!r} has unknown key {unknown[0]!r}")
+    config = entry.get("config", {})
+    if not isinstance(config, dict) or not all(
+        isinstance(key, str) and isinstance(value, str | int | float | bool)
+        for key, value in config.items()
+    ):
+        raise CorpusError(f"{label}: startup {family!r} config maps keys to scalar values only")
+    secrets = entry.get("secrets", [])
+    if not isinstance(secrets, list):
+        raise CorpusError(f"{label}: startup {family!r} secrets must be a list of names")
+    for name in secrets:
+        if not isinstance(name, str) or not _SECRET_NAME.fullmatch(name):
+            raise CorpusError(
+                f"{label}: startup secret name {name!r} is not a lowercase identifier"
+            )
+    channels = entry.get("channels", [])
+    if not isinstance(channels, list):
+        raise CorpusError(f"{label}: startup {family!r} channels must be a list")
+    for row in channels:
+        _check_startup_channel(row, set(secrets), label)
+
+
+def _check_startup_channel(row: Any, declared: set[str], label: str) -> None:
+    """One startup channel row: its exact keys, a UUID id and only declared secret references."""
+    if not isinstance(row, dict) or set(row) != STARTUP_CHANNEL_KEYS:
+        raise CorpusError(
+            f"{label}: a startup channel needs exactly the keys {sorted(STARTUP_CHANNEL_KEYS)}"
+        )
+    if not isinstance(row["id"], str) or not _UUID_TEXT.fullmatch(row["id"]):
+        raise CorpusError(f"{label}: startup channel id {row['id']!r} is not a UUID")
+    for key in ("channel_type", "name"):
+        if not isinstance(row[key], str) or not row[key]:
+            raise CorpusError(f"{label}: startup channel {key} must be a non-empty string")
+    if not isinstance(row["enabled"], bool):
+        raise CorpusError(f"{label}: startup channel enabled must be true or false")
+    if not isinstance(row["config"], dict):
+        raise CorpusError(f"{label}: startup channel config must be an object")
+    for key, value in row["config"].items():
+        if isinstance(value, str) and value.startswith(SECRET_REFERENCE):
+            name = value.removeprefix(SECRET_REFERENCE)
+            if name not in declared:
+                raise CorpusError(
+                    f"{label}: startup channel config {key!r} refers to undeclared secret {name!r}"
+                )

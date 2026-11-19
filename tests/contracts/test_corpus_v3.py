@@ -653,27 +653,32 @@ def test_v2_directory_keeps_its_unlisted_json_files(tmp_path: Path) -> None:
 
 @pytest.fixture(scope="module")
 def v3_self_replay() -> Iterator[dict[str, Any]]:
-    """Replay every schema 3 case, in manifest order, against one isolated Python daemon.
+    """Replay every schema 3 case, in manifest order, each in its own run database and daemon.
 
-    Each case's seed resets the state it reads, so one daemon serves the whole manifest. A case
-    that cannot run is stored as its exception and re-raised only by that case's own test.
+    A case's daemon starts from empty state, so no case reads another case's writes. A case that
+    cannot run, including one whose daemon cannot start, is stored as its exception and re-raised
+    only by that case's own test.
     """
     waivers = http_corpus.load_replay_waivers()
+    outcomes: dict[str, Any] = {}
     with tempfile.TemporaryDirectory(prefix="v3-self-replay-") as scratch:
-        with (
-            recorder_v3.open_run_database() as run,
-            recorder_daemon(base_url=run.base_url, database_url=run.url) as daemon,
-        ):
-            operator = daemon.operator_headers()
-            outcomes: dict[str, Any] = {}
-            for case in V3_CASES:
-                try:
+        for case in V3_CASES:
+            try:
+                with (
+                    recorder_v3.open_run_database() as run,
+                    recorder_daemon(base_url=run.base_url, database_url=run.url) as daemon,
+                ):
                     outcomes[case["name"]] = recorder_v3.replay_case(
-                        run, daemon, case, waivers, operator=operator, scratch=Path(scratch)
+                        run,
+                        daemon,
+                        case,
+                        waivers,
+                        operator=daemon.operator_headers(),
+                        scratch=Path(scratch),
                     )
-                except Exception as error:
-                    outcomes[case["name"]] = error
-            yield outcomes
+            except Exception as error:
+                outcomes[case["name"]] = error
+        yield outcomes
 
 
 @pytest.mark.e2e

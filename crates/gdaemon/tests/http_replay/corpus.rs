@@ -59,9 +59,14 @@ const V3_REQUIRED_KEYS: [&str; 8] = [
 ];
 
 const CREDENTIALS: [&str; 3] = ["none", "operator", "grant"];
-const CHANNELS: [&str; 3] = ["pg_notify", "ws_publish", "files_home_write"];
+const CHANNELS: [&str; 4] = [
+    "pg_notify",
+    "ws_publish",
+    "files_home_write",
+    "provider_edge",
+];
 const FIELD_NORMALIZERS: [&str; 5] = ["uuid_ordinal", "monotonic", "timestamp", "bytes", "none"];
-const MCP_TRANSPORTS: [&str; 2] = ["http", "stdio"];
+const MCP_TRANSPORTS: [&str; 3] = ["http", "stdio", "rest"];
 const PARITY_VALUES: [&str; 2] = ["proxy", "native"];
 const ORIGIN_VALUES: [&str; 2] = ["python", "gdaemon"];
 
@@ -229,7 +234,9 @@ pub fn parse_case(value: &Value) -> Result<Case, CorpusError> {
     {
         check_ledger_key(&name, kind, key, request.as_ref(), invocation.as_ref())?;
     }
-    if let Some(response) = &response {
+    if let Some(response) = &response
+        && !is_rest_call(kind, invocation.as_ref())
+    {
         check_response(&name, kind, response)?;
     }
     if schema_version == 3 {
@@ -861,6 +868,15 @@ fn check_response(case: &str, kind: Kind, response: &Value) -> Result<(), Corpus
             format!("response has the wrong shape for kind {}", kind_label(kind)),
         ))
     }
+}
+
+/// A kind mcp case on the REST transport: its answer is the tool's JSON body, which is any value.
+fn is_rest_call(kind: Kind, invocation: Option<&Value>) -> bool {
+    kind == Kind::Mcp
+        && invocation
+            .and_then(|object| object.get("transport"))
+            .and_then(Value::as_str)
+            == Some("rest")
 }
 
 fn is_integer(value: &Value) -> bool {
