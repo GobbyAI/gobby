@@ -5,6 +5,7 @@
 //! compare record claims.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -63,6 +64,28 @@ impl WaiverManifest {
     pub fn get(&self, id: &str) -> Option<&WaiverEntry> {
         self.entries.get(id)
     }
+
+    /// The entry a replayed case cites, or the typed reason the citation does not stand.
+    ///
+    /// Mirrors Python's `cite_waiver` in `scripts/parity_waivers.py`: a citation is valid only
+    /// when the waiver exists and its surface covers the case's kind.
+    pub fn cite(
+        &self,
+        waiver_id: &str,
+        case: CaseSurface<'_>,
+    ) -> Result<&WaiverEntry, WaiverError> {
+        let entry = self
+            .get(waiver_id)
+            .ok_or_else(|| WaiverError::UnknownWaiver(waiver_id.to_owned()))?;
+        if surface_matches_case(&entry.surface, case) {
+            Ok(entry)
+        } else {
+            Err(WaiverError::SurfaceMismatch {
+                case: case.describe(),
+                surface: entry.surface.clone(),
+            })
+        }
+    }
 }
 
 /// Whether a waiver id names a native-only surface (`<family>.<surface>.native-extension`).
@@ -95,3 +118,54 @@ pub fn surface_matches(surface: &str, method: &str, path: &str) -> bool {
                 || segment == value
         })
 }
+
+/// The surface a replayed case presents to the matcher: an HTTP request, or the exact ledger key
+/// of an MCP, WS or CLI case (design-v2 section 7.7.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaseSurface<'a> {
+    Http { method: &'a str, path: &'a str },
+    Keyed { key: &'a str },
+}
+
+impl CaseSurface<'_> {
+    fn describe(self) -> String {
+        match self {
+            Self::Http { method, path } => format!("{method} {path}"),
+            Self::Keyed { key } => key.to_owned(),
+        }
+    }
+}
+
+/// Whether a manifest surface covers one replayed case of its kind.
+///
+/// An HTTP case uses the template rule of [`surface_matches`]. A keyed case (MCP, WS or CLI)
+/// matches only the exact ledger key it carries, so an HTTP surface never covers a keyed case and
+/// a keyed surface never covers an HTTP case.
+pub fn surface_matches_case(surface: &str, case: CaseSurface<'_>) -> bool {
+    match case {
+        CaseSurface::Http { method, path } => surface_matches(surface, method, path),
+        CaseSurface::Keyed { key } => surface == key,
+    }
+}
+
+/// Why a waiver citation does not stand. Display keeps the phrases the replay assertions match.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WaiverError {
+    /// The case cites a waiver id that the committed manifest does not hold.
+    UnknownWaiver(String),
+    /// The cited waiver's surface does not cover the case's kind and surface.
+    SurfaceMismatch { case: String, surface: String },
+}
+
+impl fmt::Display for WaiverError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownWaiver(id) => write!(f, "unknown waiver {id}"),
+            Self::SurfaceMismatch { case, surface } => {
+                write!(f, "{case} does not match waiver surface {surface}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for WaiverError {}
