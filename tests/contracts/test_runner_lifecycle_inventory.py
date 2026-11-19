@@ -70,6 +70,7 @@ TASK_KEYS = {
 }
 PHASE_KEYS = {"id", "stage", "owner", "hub_only", "next_owner", "seams"}
 CONSTRUCT_PHASE_KEYS = {*PHASE_KEYS, "seam_notes"}
+SEAM_NOTE_KEYS = {"module", "qualname", "unobserved_reason", "unverified_reason"}
 SERVICE_KEYS = {"id", "start_owner", "stop_owner", "stage", "hub_only", "next_owner"}
 IDENTITY_KEYS = {"name", "source", "producer", "consumers", "current_owner"}
 ERROR_KEYS = {"raised_by", "exception", "exit_code", "effect"}
@@ -1131,12 +1132,18 @@ def _construct_creators() -> set[tuple[str, str]]:
     return creators
 
 
+def _is_submodule(package: str, name: str) -> bool:
+    return (SRC.parent / package.replace(".", "/") / f"{name}.py").is_file()
+
+
 def _defined_in(module: str, name: str, depth: int = 0) -> tuple[str, str, str] | None:
     """(module, qualname, kind) of the top-level def or class ``name`` of a gobby module.
 
     Kind is ``function`` or ``class``. An absolute ``from gobby... import`` re-export is followed.
     """
     assert depth < 8, f"re-export chain too deep at {module}.{name}"
+    if not _module_file(module).is_file():
+        return None  # a namespace package names submodules, which are not defs
     for node in _cached_tree(_module_file(module)).body:
         if isinstance(node, ast.ClassDef) and node.name == name:
             return module, name, "class"
@@ -1149,6 +1156,8 @@ def _defined_in(module: str, name: str, depth: int = 0) -> tuple[str, str, str] 
         ):
             for alias in node.names:
                 if (alias.asname or alias.name) == name:
+                    if _is_submodule(node.module or "", alias.name):
+                        return None  # a package names its submodule, which is not a def
                     return _defined_in(node.module or "", alias.name, depth + 1)
     return None
 
@@ -1231,7 +1240,7 @@ def test_construct_seam_notes_cover_each_seam() -> None:
         assert set(phase["seam_notes"]) == set(phase["seams"]), phase["id"]
         for seam, entry in phase["seam_notes"].items():
             assert {"module", "qualname"} <= set(entry), (phase["id"], seam)
-            assert set(entry) <= {"module", "qualname", "unobserved_reason"}, (phase["id"], seam)
+            assert set(entry) <= SEAM_NOTE_KEYS, (phase["id"], seam)
             assert entry["module"].startswith("gobby."), (phase["id"], seam)
             assert entry["qualname"], (phase["id"], seam)
 
@@ -1296,5 +1305,287 @@ def test_construct_seams_equal_source_and_census_union() -> None:
 
 def test_runner_lifecycle_doc_names_seam_notes() -> None:
     text = DOC_PATH.read_text(encoding="utf-8")
-    for term in ("`seam_notes`", "`unobserved_reason`"):
+    for term in ("`seam_notes`", "`unobserved_reason`", "`unverified_reason`", "phase_scope"):
         assert term in text, term
+
+
+# R45 phase attribution by marker -----------------------------------------------------------------
+
+FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
+RUNNER_MODULE = "gobby.runner"
+CREATE = "GobbyRunner.create"
+
+
+@functools.cache
+def _module_defs(module: str) -> dict[str, ast.AST]:
+    """Every def and class of a gobby module, keyed by qualname (cached; AST only)."""
+    return _definitions(_cached_tree(_module_file(module)))
+
+
+@functools.cache
+def _module_imports(module: str) -> dict[str, tuple[str, str]]:
+    """Absolute gobby ``from`` imports outside any def: local name -> (module, name)."""
+    found: dict[str, tuple[str, str]] = {}
+
+    def visit(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, FunctionNode):
+                continue
+            if isinstance(child, ast.ImportFrom) and _is_gobby_import(child):
+                for alias in child.names:
+                    found[alias.asname or alias.name] = (child.module or "", alias.name)
+            visit(child)
+
+    visit(_cached_tree(_module_file(module)))
+    return found
+
+
+def _is_gobby_import(node: ast.ImportFrom) -> bool:
+    return node.level == 0 and (node.module or "").startswith("gobby.")
+
+
+class _Scope:
+    """What the bare names and attributes of one gobby function resolve to, read from source.
+
+    Resolution uses module and function imports, parameter and class-body annotations, a local
+    bound once to a class constructor, and ``self`` inside a method. Nothing else is inferred.
+    """
+
+    def __init__(self, module: str, qualname: str, function: FunctionNode | None) -> None:
+        self.module = module
+        self.imports = _module_imports(module)
+        self.local_imports: dict[str, tuple[str, str]] = {}
+        self.assigned: dict[str, list[ast.expr]] = {}
+        self.params: dict[str, ast.expr] = {}
+        head = qualname.split(".")[0]
+        is_method = "." in qualname and isinstance(_module_defs(module).get(head), ast.ClassDef)
+        self.self_class: tuple[str, str] | None = (module, head) if is_method else None
+        if function is None:
+            return
+        for arg in [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]:
+            if arg.annotation is not None:
+                self.params[arg.arg] = arg.annotation
+        for node in ast.walk(function):
+            if isinstance(node, ast.ImportFrom) and _is_gobby_import(node):
+                for alias in node.names:
+                    self.local_imports[alias.asname or alias.name] = (node.module or "", alias.name)
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+            ):
+                self.assigned.setdefault(node.targets[0].id, []).append(node.value)
+
+    def name_target(self, name: str) -> tuple[str, str, str] | None:
+        """(module, qualname, kind) of the def or class a bare name denotes; kind is
+        ``function`` or ``class``."""
+        origin = self.local_imports.get(name) or self.imports.get(name)
+        if origin is not None:
+            return _defined_in(*origin)
+        node = _module_defs(self.module).get(name)
+        if isinstance(node, ast.ClassDef):
+            return self.module, name, "class"
+        if isinstance(node, FunctionNode):
+            return self.module, name, "function"
+        return None
+
+    def class_of(self, annotation: ast.expr) -> tuple[str, str] | None:
+        if not isinstance(annotation, ast.Name):
+            return None
+        found = self.name_target(annotation.id)
+        if found is None or found[2] != "class":
+            return None
+        return found[0], found[1]
+
+    def class_called(self, func: ast.expr) -> tuple[str, str] | None:
+        return self.class_of(func) if isinstance(func, ast.Name) else None
+
+    def instance_of(self, expr: ast.expr, depth: int = 0) -> tuple[str, str] | None:
+        """(module, class qualname) of the object an expression is, when the source fixes it."""
+        if depth > 8:
+            return None
+        if isinstance(expr, ast.Name):
+            if expr.id == "self":
+                return self.self_class
+            if expr.id in self.params:
+                return self.class_of(self.params[expr.id])
+            types = {self.instance_of(value, depth + 1) for value in self.assigned.get(expr.id, [])}
+            return types.pop() if len(types) == 1 else None
+        if isinstance(expr, ast.Attribute):
+            owner = self.instance_of(expr.value, depth + 1)
+            return None if owner is None else _annotated_attr_class(owner, expr.attr)
+        if isinstance(expr, ast.Call):
+            return self.class_called(expr.func)
+        return None
+
+    def targets(self, roots: list[ast.stmt]) -> set[tuple[str, str]]:
+        """The gobby functions that the statements name: bare names, method attributes, and the
+        ``__init__`` of a class that is constructed."""
+        nodes = [node for root in roots for node in ast.walk(root)]
+        constructed = {id(node.func) for node in nodes if isinstance(node, ast.Call)}
+        found: set[tuple[str, str]] = set()
+        for node in nodes:
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                target = self.name_target(node.id)
+                if target is None:
+                    continue
+                if target[2] == "function":
+                    found.add((target[0], target[1]))
+                elif id(node) in constructed:
+                    init = _method((target[0], target[1]), "__init__")
+                    if init is not None:
+                        found.add(init)
+            elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+                owner = self.instance_of(node.value)
+                method = None if owner is None else _method(owner, node.attr)
+                if method is not None:
+                    found.add(method)
+        return found
+
+
+def _annotated_attr_class(owner: tuple[str, str], attr: str) -> tuple[str, str] | None:
+    """The class of a class-body annotation ``attr: Cls`` in a gobby class."""
+    node = _module_defs(owner[0]).get(owner[1])
+    if not isinstance(node, ast.ClassDef):
+        return None
+    for stmt in node.body:
+        if (
+            isinstance(stmt, ast.AnnAssign)
+            and isinstance(stmt.target, ast.Name)
+            and stmt.target.id == attr
+        ):
+            return _Scope(owner[0], owner[1], None).class_of(stmt.annotation)
+    return None
+
+
+def _method(owner: tuple[str, str], attr: str, depth: int = 0) -> tuple[str, str] | None:
+    """The gobby method ``attr`` of a class, or of its first base that defines it."""
+    module, cls = owner
+    defs = _module_defs(module)
+    node = defs.get(f"{cls}.{attr}")
+    if isinstance(node, FunctionNode):
+        return module, f"{cls}.{attr}"
+    klass = defs.get(cls)
+    if depth > 8 or not isinstance(klass, ast.ClassDef):
+        return None
+    scope = _Scope(module, cls, None)
+    for base in klass.bases:
+        base_class = scope.class_of(base)
+        found = None if base_class is None else _method(base_class, attr, depth + 1)
+        if found is not None:
+            return found
+    return None
+
+
+@functools.cache
+def _references(module: str, qualname: str) -> frozenset[tuple[str, str]]:
+    """The gobby functions one function names anywhere in its body, nested defs included."""
+    node = _module_defs(module)[qualname]
+    assert isinstance(node, FunctionNode), (module, qualname)
+    return frozenset(_Scope(module, qualname, node).targets([node]))
+
+
+def _reach(starts: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """The gobby functions reachable from the starts through named references."""
+    seen = set(starts)
+    pending = list(starts)
+    while pending:
+        module, qualname = pending.pop()
+        for target in _references(module, qualname):
+            if target not in seen:
+                seen.add(target)
+                pending.append(target)
+    return seen
+
+
+@functools.cache
+def _phase_names() -> dict[str, str]:
+    """InitPhase member name -> phase id (its enum value), read by AST from worker/phase_ids.py."""
+    klass = _module_defs("gobby.worker.phase_ids")["InitPhase"]
+    assert isinstance(klass, ast.ClassDef)
+    names: dict[str, str] = {}
+    for stmt in klass.body:
+        if isinstance(stmt, ast.Assign) and isinstance(stmt.targets[0], ast.Name):
+            value = stmt.value
+            assert isinstance(value, ast.Constant) and isinstance(value.value, str)
+            names[stmt.targets[0].id] = value.value
+    return names
+
+
+def _marker_blocks() -> list[tuple[str, list[ast.stmt]]]:
+    """(phase id, body) of each phase_scope block of GobbyRunner.create, in source order.
+
+    The body excludes the marker itself, so ``phase_scope`` is not counted as a seam. Every other
+    statement of the create try body must be a marker block, or a phase import.
+    """
+    create = _function_def(RUNNER_MODULE, CREATE)
+    (try_block,) = [node for node in create.body if isinstance(node, ast.Try)]
+    names = _phase_names()
+    blocks: list[tuple[str, list[ast.stmt]]] = []
+    for stmt in try_block.body:
+        if isinstance(stmt, ast.ImportFrom):
+            continue
+        assert isinstance(stmt, ast.AsyncWith), (stmt.lineno, type(stmt).__name__)
+        marker = stmt.items[0].context_expr
+        assert isinstance(marker, ast.Call) and _call_leaf(marker.func) == "phase_scope"
+        phase = marker.args[0]
+        assert isinstance(phase, ast.Attribute)
+        assert isinstance(phase.value, ast.Name) and phase.value.id == "InitPhase"
+        blocks.append((names[phase.attr], stmt.body))
+    return blocks
+
+
+def _function_def(module: str, qualname: str) -> FunctionNode:
+    node = _module_defs(module)[qualname]
+    assert isinstance(node, FunctionNode), (module, qualname)
+    return node
+
+
+def _direct_targets() -> dict[str, set[tuple[str, str]]]:
+    """Phase id -> the gobby functions the phase's marker block names (R45)."""
+    scope = _Scope(RUNNER_MODULE, CREATE, _function_def(RUNNER_MODULE, CREATE))
+    return {phase: scope.targets(body) for phase, body in _marker_blocks()}
+
+
+def _identities(phase: Mapping[str, Any]) -> set[tuple[str, str]]:
+    return set(_targets(phase))
+
+
+def test_construct_markers_match_inventory_phases() -> None:
+    """The phase_scope blocks of GobbyRunner.create are the construct phases, in inventory order."""
+    assert [phase for phase, _ in _marker_blocks()] == [p["id"] for p in _construct_phases()]
+
+
+def test_construct_direct_seams_are_listed_under_their_marker() -> None:
+    """(R45) A function that a phase_scope block names is listed under exactly that phase, and a
+    seam listed under a phase is named by that phase's block whenever some block names it. A
+    seam moved to another phase, or listed under a phase whose block does not name it, fails."""
+    direct = _direct_targets()
+    direct_all = set().union(*direct.values())
+    for phase in _construct_phases():
+        assert _identities(phase) & direct_all == direct[phase["id"]], phase["id"]
+
+
+def test_construct_transitive_seams_follow_source_reach() -> None:
+    """(R45) A construct seam that no marker block names is listed under the first construct
+    phase whose block reaches it through named references in source. A seam that no block
+    reaches carries an unverified_reason and is listed once; any other seam carries none."""
+    direct = _direct_targets()
+    direct_all = set().union(*direct.values())
+    reach = {phase: _reach(targets) for phase, targets in direct.items()}
+    phases = _construct_phases()
+    for phase in phases:
+        for seam, entry in phase["seam_notes"].items():
+            identity = (entry["module"], entry["qualname"])
+            reason = entry.get("unverified_reason")
+            listing = [p["id"] for p in phases if identity in _identities(p)]
+            if identity in direct_all:
+                assert reason is None, (phase["id"], seam)
+                continue
+            first = next((name for name, found in reach.items() if identity in found), None)
+            if first is None:
+                assert isinstance(reason, str) and reason.strip(), (phase["id"], seam)
+                assert listing == [phase["id"]], (seam, listing)
+            else:
+                assert reason is None, (phase["id"], seam)
+                assert listing == [first], (seam, first, listing)
