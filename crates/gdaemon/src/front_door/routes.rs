@@ -8,6 +8,7 @@
 //! claims, requests a family's `claims` declines, and every upgrade stay on the hyper
 //! proxy.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::panic::AssertUnwindSafe;
@@ -160,8 +161,8 @@ impl RouteTable {
     }
 
     /// The family whose claim row answers this request, if any. Only Native entries are
-    /// consulted. The most specific matching row wins, and an equal rank keeps the
-    /// earlier entry.
+    /// consulted. The most specific matching row wins; at equal specificity the family
+    /// with the lower `start_rank` wins, and an equal rank keeps the earlier entry.
     pub fn claim_owner(&self, method: &Method, path: &str, upgrade: bool) -> Option<&'static str> {
         self.best_claim(|_, claim| claim.matches(method, path, upgrade))
             .map(|(family, _)| family.name())
@@ -170,7 +171,7 @@ impl RouteTable {
     /// The family and row that answer this request in one claim phase, if any. A row
     /// qualifies when its gate and credential are the phase's, it matches the request,
     /// and its family's `claim_enabled` holds for `state`. Only Native entries are
-    /// consulted, and the most specific qualifying row wins.
+    /// consulted, and the most specific qualifying row wins, with ties in start order.
     pub fn claimant(
         &self,
         state: &FrontDoorState,
@@ -188,13 +189,14 @@ impl RouteTable {
         })
     }
 
-    /// The most specific row that `accepts`, among Native entries. An equal rank keeps
-    /// the earlier entry.
+    /// The most specific row that `accepts`, among Native entries. At equal specificity
+    /// the lower `start_rank` wins, and an equal rank keeps the earlier entry, so ties go
+    /// to start order.
     fn best_claim(
         &self,
         accepts: impl Fn(&'static dyn RouteFamily<FrontDoorState>, &RouteClaim) -> bool,
     ) -> Option<ClaimRow> {
-        let mut best: Option<(u8, ClaimRow)> = None;
+        let mut best: Option<((u8, Reverse<u8>), ClaimRow)> = None;
         for entry in self
             .entries
             .iter()
@@ -205,9 +207,9 @@ impl RouteTable {
                 if !accepts(family, claim) {
                     continue;
                 }
-                let rank = specificity(claim.path);
-                if best.is_none_or(|(best_rank, _)| rank > best_rank) {
-                    best = Some((rank, (family, claim)));
+                let key = (specificity(claim.path), Reverse(family.start_rank()));
+                if best.is_none_or(|(best_key, _)| key > best_key) {
+                    best = Some((key, (family, claim)));
                 }
             }
         }

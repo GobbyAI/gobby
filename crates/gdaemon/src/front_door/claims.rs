@@ -12,10 +12,13 @@
 use std::net::{IpAddr, SocketAddr};
 
 use axum::body::Body;
-use axum::http::{Request, Response, StatusCode};
+#[cfg(unix)]
+use axum::http::StatusCode;
+use axum::http::{Request, Response};
 use gobby_core::route_family::{Credential, Gate, PeerRule};
 
 use super::FrontDoorState;
+#[cfg(unix)]
 use super::health::{self, BackendState};
 use super::routes::RouteTable;
 use super::ws;
