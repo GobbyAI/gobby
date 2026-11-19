@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use serde_json::{Value, json};
 
@@ -347,4 +348,68 @@ fn database_url_for_tests_accepts_any_loopback_test_hub_port() {
         DbUrlError::Refused(error) => assert_eq!(error.rule, "R2"),
         DbUrlError::Unset => panic!("redirected reported as unset"),
     }
+}
+
+const HOME_PROBE_PROFILE_ENV: &str = "GOBBY_GUARD_HOME_PROBE_PROFILE";
+const HOME_PROBE_OUT_ENV: &str = "GOBBY_GUARD_HOME_PROBE_OUT";
+/// A loopback test hub URL on a port that is not shared, so the rehearsal profile can name it.
+const REHEARSAL_URL: &str = "postgresql://gobby_test:gobby_test@127.0.0.1:61503/gobby_test";
+
+/// Child half of `home_override_does_not_change_the_rehearsal_verdict`. It runs only when the
+/// parent sets both probe variables, and it writes the guard's verdict for the profile to a file.
+#[test]
+fn home_probe_child() {
+    let (Some(profile), Some(out)) = (
+        std::env::var_os(HOME_PROBE_PROFILE_ENV),
+        std::env::var_os(HOME_PROBE_OUT_ENV),
+    ) else {
+        return;
+    };
+    let verdict = match check_test_hub(Some(REHEARSAL_URL), &|_| None, Some(Path::new(&profile))) {
+        Ok(guard) => format!("accept:{}", mode_name(guard.mode)),
+        Err(error) => format!("refuse:{}", error.rule),
+    };
+    fs::write(out, verdict).expect("write the probe verdict");
+}
+
+/// A rehearsal profile whose gobby_home is `<HOME>/.gobby` is refused as the operator's home only
+/// when HOME points at that directory. The operator home comes from the passwd entry, so a child
+/// process whose HOME is overridden must return the same verdict as the parent.
+#[test]
+fn home_override_does_not_change_the_rehearsal_verdict() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let fake_home = dir.path().join("fake-home");
+    fs::create_dir_all(fake_home.join(".gobby")).expect("fake home gobby directory");
+    let profile = dir.path().join("rehearsal-profile.json");
+    let body = json!({
+        "gobby_home": fake_home.join(".gobby").display().to_string(),
+        "postgres_host": "127.0.0.1",
+        "postgres_system_identifier": "7000000000000000001",
+        "services": {"postgres": {"port": 61503}},
+    });
+    fs::write(&profile, body.to_string()).expect("write profile");
+    fs::set_permissions(&profile, fs::Permissions::from_mode(0o600)).expect("chmod profile");
+
+    let parent = check_test_hub(Some(REHEARSAL_URL), &|_| None, Some(&profile))
+        .map(|guard| format!("accept:{}", mode_name(guard.mode)))
+        .unwrap_or_else(|error| format!("refuse:{}", error.rule));
+    assert_eq!(
+        parent, "accept:rehearsal",
+        "the parent process accepts the profile"
+    );
+
+    let out = dir.path().join("child-verdict.txt");
+    let status = Command::new(std::env::current_exe().expect("this test binary"))
+        .args(["--exact", "guard::home_probe_child"])
+        .env("HOME", &fake_home)
+        .env(HOME_PROBE_PROFILE_ENV, &profile)
+        .env(HOME_PROBE_OUT_ENV, &out)
+        .status()
+        .expect("run the probe child");
+    assert!(status.success(), "the probe child failed: {status}");
+    let child = fs::read_to_string(&out).expect("the probe child wrote its verdict");
+    assert_eq!(
+        child, parent,
+        "overriding HOME must not change the operator-home verdict"
+    );
 }
