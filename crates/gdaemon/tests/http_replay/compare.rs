@@ -404,6 +404,40 @@ mod tests {
     }
 
     #[test]
+    fn an_http_answer_is_sorted_before_a_positional_mask_applies() {
+        // Golden (Python recorder_v3._normalize_response): the unordered collection is sorted by
+        // its key before the mask on index 0, so the listed and reversed answers both mask alpha.
+        let case = case_of(
+            Kind::Http,
+            json!(["/response/body/0/id"]),
+            json!({"/response/body": {"name": "unordered", "key": "name"}}),
+            Vec::new(),
+        );
+        let alpha = json!({"name": "alpha", "id": U1});
+        let beta = json!({"name": "beta", "id": U2});
+        let expected = json!({
+            "response": {
+                "status": 200,
+                "headers": {},
+                "body": [{"name": "alpha", "id": "@mask@"}, {"name": "beta", "id": U2}]
+            },
+            "db_delta": [],
+            "side_effects": []
+        });
+        for (label, rows) in [
+            ("as listed", json!([alpha.clone(), beta.clone()])),
+            ("reversed", json!([beta, alpha])),
+        ] {
+            let response = json!({"status": 200, "headers": {}, "body": rows});
+            assert_eq!(
+                normalized_document(&case, &response, &[], &[], &wide()),
+                Ok(expected.clone()),
+                "the rows {label} normalize differently"
+            );
+        }
+    }
+
+    #[test]
     fn an_http_mask_on_a_container_refuses_a_none_rule_under_it() {
         // Golden (Python, http): the masked body is "@mask@", so /response/body/id matches nothing.
         let case = case_of(

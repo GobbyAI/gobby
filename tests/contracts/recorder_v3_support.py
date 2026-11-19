@@ -24,6 +24,7 @@ from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.secrets import SecretStore
 from tests.contracts import http_corpus
+from tests.contracts.comms.fake_edge import DECODE_ERROR_KEY
 
 # The quiet period and the cap that bound every capture window. The recorder's other channels
 # drain with the same values.
@@ -208,7 +209,8 @@ class ProviderEdgeCapture:
     sanitized ``semantic`` fields: destination, text, attachment filename and the SHA-256 of the
     uploaded bytes. An arrival logged with no ``semantic`` (an edge that keeps signatures only)
     is captured as its signature, which then differs from a recording that carries semantics.
-    Entering the capture clears the edge log, so the window holds only the arrivals its request
+    An arrival the edge could not decode keeps its ``DECODE_ERROR_KEY`` marker, so it differs
+    from a well-formed request that sends no semantic field. Entering the capture clears the edge log, so the window holds only the arrivals its request
     makes. Headers and raw bodies are never kept.
     """
 
@@ -230,6 +232,11 @@ class ProviderEdgeCapture:
                 "method": arrival["method"],
                 "path": arrival["path"],
                 **({"semantic": dict(arrival["semantic"])} if "semantic" in arrival else {}),
+                **(
+                    {DECODE_ERROR_KEY: arrival[DECODE_ERROR_KEY]}
+                    if DECODE_ERROR_KEY in arrival
+                    else {}
+                ),
             }
             for arrival in self._edge.hits()
             if arrival["host"] in self._hosts

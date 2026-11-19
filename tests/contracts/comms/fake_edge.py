@@ -8,8 +8,10 @@ server with implicit TLS and an SMTP server with STARTTLS serve the email adapte
 Every request through the proxy is logged, in arrival order, as host, method, path and its
 sanitized ``semantic`` fields (``http_semantics``): the destination, the message text, the
 attachment filename and the SHA-256 of the uploaded bytes. Headers and raw bodies are never
-logged, so no request credential reaches the log. The CONNECT itself is not logged. A Telegram bot
-token in a path is replaced before the log keeps the path. Any host or path no script names
+logged, so no request credential reaches the log. A request whose body the edge cannot read or
+whose payload it cannot decode is still logged, with empty semantic fields and a
+``decode_error`` marker naming the stage and the error type, never the error message. The
+CONNECT itself is not logged. A Telegram bot token in a path is replaced before the log keeps the path. Any host or path no script names
 answers HTTP 200 with a generic JSON body.
 """
 
@@ -153,6 +155,14 @@ def http_semantics(method: str, path: str, headers: dict[str, str], body: bytes)
             payload = body
     semantic["payload_sha256"] = payload_digest(payload)
     return semantic
+
+
+def _decode_error(stage: str, error: ValueError) -> str:
+    """A safe marker for a request the edge could not decode: the stage and the error type.
+
+    The error message is never kept, because it can quote the raw body.
+    """
+    return f"{stage}: {type(error).__name__}"
 
 
 def _encode_body(body: Any) -> bytes:
@@ -421,7 +431,10 @@ class FakeEdge:
         return self._root / CA_FILE
 
     def hits(self) -> list[dict[str, Any]]:
-        """Every arrival since the last clear, in arrival order: host, method, path, semantic."""
+        """Every arrival since the last clear, in arrival order: host, method, path, semantic.
+
+        An arrival the edge could not decode also carries its ``DECODE_ERROR_KEY`` marker.
+        """
         with self._hits_lock:
             return [{**hit, "semantic": dict(hit["semantic"])} for hit in self._hits]
 
@@ -457,12 +470,25 @@ class FakeEdge:
             return script.default
         return UNSCRIPTED_REPLY
 
-    def _log(self, host: str, method: str, path: str, semantic: dict[str, str]) -> None:
+    def _log(
+        self,
+        host: str,
+        method: str,
+        path: str,
+        semantic: dict[str, str],
+        decode_error: str | None = None,
+    ) -> None:
         logged = TELEGRAM_BOT_PATH.sub(TELEGRAM_BOT_MARKER, path)
+        hit: dict[str, Any] = {
+            "host": host,
+            "method": method,
+            "path": logged,
+            "semantic": dict(semantic),
+        }
+        if decode_error is not None:
+            hit[DECODE_ERROR_KEY] = decode_error
         with self._hits_lock:
-            self._hits.append(
-                {"host": host, "method": method, "path": logged, "semantic": dict(semantic)}
-            )
+            self._hits.append(hit)
 
     def _serve_proxy_client(self, conn: socket.socket) -> None:
         assert self._authority is not None
@@ -496,9 +522,19 @@ class FakeEdge:
                 request_line, headers = head
                 method, _, rest = request_line.partition(" ")
                 target = rest.rpartition(" ")[0] or rest
-                body = _read_body(reader, headers)
                 path = urlsplit(target).path or "/"
-                self._log(host, method, path, http_semantics(method, path, headers, body))
+                try:
+                    body = _read_body(reader, headers)
+                except ValueError as error:
+                    # The framing is lost, so the arrival is logged and the tunnel closes.
+                    self._log(host, method, path, empty_semantic(), _decode_error("body", error))
+                    return
+                try:
+                    semantic = http_semantics(method, path, headers, body)
+                except ValueError as error:
+                    self._log(host, method, path, empty_semantic(), _decode_error("payload", error))
+                else:
+                    self._log(host, method, path, semantic)
                 _write_reply(tls, self._reply_for(host, method, path))
                 if headers.get("connection", "").lower() == "close":
                     return

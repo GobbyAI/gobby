@@ -30,6 +30,9 @@ Normalizers (names are exact):
   "<field>"}`` on the pointer of a list. A list read from an unordered query is sorted by the JSON
   text of each item's ``key`` field before the document's field rules and the case's masks apply,
   so positional pointers address the sorted list and row order is not compared.
+
+Both sorts compare JSON text with non-ASCII characters left unescaped, as the Rust comparison
+writes it, so a key such as ``"éclair"`` sorts after ``"zeta"`` on both sides.
 """
 
 from __future__ import annotations
@@ -294,7 +297,7 @@ def _sort_collection(document: Any, pointer: str, key: str) -> None:
     for index, item in enumerate(items):
         if not (isinstance(item, Mapping) and key in item):
             raise NormalizationError(f"unordered key {key!r} is missing at {pointer}/{index}")
-    items.sort(key=lambda item: json.dumps(item[key]))
+    items.sort(key=lambda item: json.dumps(item[key], ensure_ascii=False))
 
 
 def normalize_document(document: Any, normalizers: Mapping[str, Any], *, window: Window) -> Any:
@@ -387,7 +390,9 @@ def normalize_rows(
         if missing:
             raise NormalizationError(f"row lacks key column {missing[0]!r}")
     if order == "set":
-        json_rows.sort(key=lambda row: [json.dumps(row[column]) for column in key])
+        json_rows.sort(
+            key=lambda row: [json.dumps(row[column], ensure_ascii=False) for column in key]
+        )
     return normalize_images(json_rows, order=order, normalizers=normalizers, window=window)
 
 

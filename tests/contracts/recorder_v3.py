@@ -50,6 +50,7 @@ from tests.contracts.normalizers_v3 import (
     normalize_captures,
     normalize_document,
     normalize_images,
+    unordered_key,
 )
 from tests.contracts.recorder_daemon_v3 import recorder_daemon
 from tests.contracts.recorder_v3_support import (
@@ -718,7 +719,9 @@ def _normalize_response(case: Mapping[str, Any], raw: Any, window: Window) -> An
     Redaction covers every kind: an HTTP body, a WS frame list and a CLI object alike. A WS
     frame is text, so its JSON is parsed, normalized and masked as a document and re-encoded
     canonically (sorted keys, compact separators); pointers inside a frame therefore address its
-    fields. Masks are read under /response, as the comparison reads them.
+    fields. Masks are read under /response, as the comparison reads them. An HTTP answer is
+    masked once its unordered collections are sorted and before its field rules run, so a
+    positional mask addresses the sorted list.
     """
     rules = case.get("normalizers", {})
     mask = case.get("mask", [])
@@ -730,6 +733,18 @@ def _normalize_response(case: Mapping[str, Any], raw: Any, window: Window) -> An
         masked = http_corpus.apply_masks({"response": response}, mask)["response"]
         return [_canonical_frame(frame) for frame in masked]
     response = http_corpus.redact_secrets(json_form(raw))
+    if corpus_v3.case_kind(case) == "http":
+        # As the Rust comparison does: unordered collections sort first, the masks then apply to
+        # the sorted answer, and the field rules observe the masked answer.
+        collections = {
+            pointer: spec for pointer, spec in rules.items() if unordered_key(spec) is not None
+        }
+        if collections:
+            response = normalize_document({"response": response}, collections, window=window)[
+                "response"
+            ]
+        response = http_corpus.apply_masks({"response": response}, mask)["response"]
+        rules = {pointer: spec for pointer, spec in rules.items() if pointer not in collections}
     if rules:
         response = normalize_document({"response": response}, rules, window=window)["response"]
     return http_corpus.apply_masks({"response": response}, mask)["response"]
@@ -842,7 +857,9 @@ def _send(
             headers=headers,
             json=request["body"],
         )
-        return http_corpus.normalize_response(case, response)
+        # Redacted with allowlisted headers but not masked: _normalize_response masks the answer
+        # after it sorts the unordered collections.
+        return http_corpus.normalize_response({**case, "mask": []}, response)
     if kind == "mcp":
         invocation = case["invocation"]
         if invocation["transport"] == "rest":
