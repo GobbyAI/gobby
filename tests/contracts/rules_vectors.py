@@ -18,7 +18,13 @@ of positional ``args`` and keyword ``kwargs``, all JSON-native. Optional fields:
   ``target`` is metered during the call; the expect block then carries ``result`` plus
   ``scan_within_budget`` (characters scanned at most N times the input length) and
   ``scan_observed`` (at least the input length was scanned).
-- ``negative_from``: the test function whose assertion the vector replays.
+- ``negative_from``: the negative test the vector serves. A vector replays either the
+  test's own entry call or the normalizer step that builds the state the test asserts on.
+- ``metadata``: ``{"reason": ...}``, a one-line note on why the vector's entry has a parameter
+  outside the builtin set, or none. Replay ignores it.
+
+An argument that JSON cannot carry as text is written ``{"bytes": "<text>"}``; replay passes
+its UTF-8 encoding as a ``bytes`` value.
 
 A function that raises is recorded as ``{"raised": <type name>}``. Names, prepare steps and
 constructed arguments resolve before the call, so a missing entry point is an error, not a
@@ -48,6 +54,7 @@ from tests.contracts import rules_recorder
 
 RECORD_ENV = "GOBBY_CORPUS_RECORD"
 REPO_TOKEN = "{repo}"
+BYTES_KEY = "bytes"
 GITLINK_SHA = "1" * 40
 
 
@@ -127,10 +134,17 @@ class _ScanMeter:
         }
 
 
+def _decode_argument(value: Any) -> Any:
+    """Return ``value`` unchanged, or the UTF-8 bytes of a ``{"bytes": text}`` argument."""
+    if isinstance(value, dict) and list(value) == [BYTES_KEY]:
+        return str(value[BYTES_KEY]).encode("utf-8")
+    return value
+
+
 def _call(vector: dict[str, Any], repo: Path | None) -> Any:
     arguments = _substitute(vector.get("input", {}), repo)
-    args = list(arguments.get("args", []))
-    kwargs = dict(arguments.get("kwargs", {}))
+    args = [_decode_argument(item) for item in arguments.get("args", [])]
+    kwargs = {key: _decode_argument(item) for key, item in arguments.get("kwargs", {}).items()}
     # Resolve everything the call needs before the try: a missing entry point or prepare step,
     # or a fixture that does not build, must fail the replay rather than be recorded as output.
     for spec in vector.get("construct", []):

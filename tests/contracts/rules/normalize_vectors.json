@@ -100,6 +100,9 @@
           ]
         ],
         "heredocs": []
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Literal['bash', 'zsh']), so the vector replays a recorded call"
       }
     },
     {
@@ -129,7 +132,10 @@
       "expect": [
         "A",
         4
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (ShellDialect), so the vector replays a recorded call"
+      }
     },
     {
       "id": "entry-apply_path_scope_metadata",
@@ -149,7 +155,10 @@
         ]
       },
       "expect": {},
-      "result_from_arg": 1
+      "result_from_arg": 1,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any], Sequence[str], dict[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "entry-normalize_tool_fields",
@@ -203,6 +212,9 @@
           "status": "succeeded",
           "provenance": "event.is_error"
         }
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, typing.Any]), so the vector replays a recorded call"
       }
     },
     {
@@ -220,7 +232,10 @@
           null
         ]
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (pathlib.Path | None), so the vector replays a recorded call"
+      }
     },
     {
       "id": "entry-executable_command_subjects",
@@ -233,7 +248,10 @@
       "expect": [
         "git commit -m x",
         "gem push y"
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (LanguageBodies), so the vector replays a recorded call"
+      }
     },
     {
       "id": "entry-command_patterns_match",
@@ -259,7 +277,10 @@
           }
         ]
       },
-      "expect": true
+      "expect": true,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "entry-rule_matches_agent",
@@ -316,7 +337,10 @@
             "updated_at": "2026-01-01T00:00:00+00:00"
           }
         }
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, Any] | None, gobby.storage.definitions.rules.RuleDefinitionRow, gobby.workflows.agent_models.AgentDefinitionBody), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._ansi_c.opens_ansi_c_quote",
@@ -376,7 +400,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (object), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_apply_rewrite.build_apply_rewrite",
@@ -412,7 +439,10 @@
           "class": "pathlib.Path",
           "data": {}
         }
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Path), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_apply_rewrite.simple_apply_words",
@@ -490,7 +520,10 @@
         ],
         "kwargs": {}
       },
-      "expect": {}
+      "expect": {},
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_base_commands.classify_base_command",
@@ -522,6 +555,9 @@
         "shell_raw_words": [],
         "literal_path_root": null,
         "navigation_paths": []
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (pathlib.Path | None), so the vector replays a recorded call"
       }
     },
     {
@@ -547,6 +583,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.hooks._normalization_segments._ShellSegmentMetadata), so the vector replays a recorded call"
       }
     },
     {
@@ -587,7 +626,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Mapping[str, str] | None), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_bindings._literal_assignment_values",
@@ -599,7 +641,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Mapping[str, str] | None), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_bindings._loop_binding_variable_is_stable",
@@ -682,7 +727,10 @@
         ],
         "kwargs": {}
       },
-      "expect": {}
+      "expect": {},
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (pathlib.Path | None), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_compound.case_arm_tokens",
@@ -702,7 +750,10 @@
         [],
         null,
         false
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_compound.case_pattern_process_bodies",
@@ -719,7 +770,10 @@
       "expect": [
         [],
         false
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_compound.command_substitution_bodies",
@@ -768,7 +822,10 @@
       "expect": [
         [],
         []
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_compound.scan_function_program",
@@ -783,6 +840,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.hooks._normalization_shell.ShellScan), so the vector replays a recorded call"
       }
     },
     {
@@ -797,6 +857,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.hooks._normalization_shell.ShellScan), so the vector replays a recorded call"
       }
     },
     {
@@ -853,6 +916,9 @@
         "shell_raw_words": [],
         "literal_path_root": null,
         "navigation_paths": []
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (pathlib.Path | None), so the vector replays a recorded call"
       }
     },
     {
@@ -890,6 +956,9 @@
         "shell_raw_words": [],
         "literal_path_root": null,
         "navigation_paths": []
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (pathlib.Path | None), so the vector replays a recorded call"
       }
     },
     {
@@ -930,6 +999,9 @@
       },
       "expect": {
         "raised": "IndexError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (pathlib.Path | None), so the vector replays a recorded call"
       }
     },
     {
@@ -987,6 +1059,9 @@
         "shell_raw_words": [],
         "literal_path_root": null,
         "navigation_paths": []
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (pathlib.Path | None), so the vector replays a recorded call"
       }
     },
     {
@@ -999,7 +1074,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_segments._ShellSegmentMetadata]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_interpreter_segments._python_write_segment",
@@ -1031,6 +1109,9 @@
         "shell_raw_words": [],
         "literal_path_root": null,
         "navigation_paths": []
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.hooks._python_pipeline_classifier._PythonMutationEvidence | None), so the vector replays a recorded call"
       }
     },
     {
@@ -1042,7 +1123,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_mcp._parse_json_object",
@@ -1053,7 +1137,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_mcp._unwrap_mcp_tool_output",
@@ -1064,7 +1151,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_mcp.normalize_mcp_fields",
@@ -1075,7 +1165,10 @@
         ],
         "kwargs": {}
       },
-      "expect": {}
+      "expect": {},
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_metadata._build_canonical_tool_metadata",
@@ -1089,6 +1182,9 @@
       "expect": {
         "canonical_tool_kind": null,
         "canonical_tool_confidence": "high"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Mapping[str, Any] | None), so the vector replays a recorded call"
       }
     },
     {
@@ -1100,7 +1196,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_segments._ShellSegmentMetadata]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_metadata._merge_shell_segment_metadata",
@@ -1115,6 +1214,9 @@
         "canonical_tool_kind": "execute",
         "canonical_tool_confidence": "high",
         "canonical_read_only": true
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_segments._ShellSegmentMetadata]), so the vector replays a recorded call"
       }
     },
     {
@@ -1141,6 +1243,9 @@
         "canonical_tool_confidence": "low",
         "canonical_repo_mutation": true,
         "canonical_repo_mutation_scope_unknown": true
+      },
+      "metadata": {
+        "reason": "takes no parameters, so the vector replays its fixed result"
       }
     },
     {
@@ -1152,7 +1257,10 @@
         ],
         "kwargs": {}
       },
-      "expect": {}
+      "expect": {},
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Mapping[str, Any] | None), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_notifications._notification_severity_from_payload",
@@ -1163,7 +1271,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Mapping[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_notifications.normalize_notification_input",
@@ -1180,6 +1291,9 @@
       "expect": {
         "notification_type": "general",
         "message": "Notification event received"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, typing.Any]), so the vector replays a recorded call"
       }
     },
     {
@@ -1191,7 +1305,10 @@
         ],
         "kwargs": {}
       },
-      "expect": "Notification event received"
+      "expect": "Notification event received",
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Mapping[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_notifications.notification_type_from_payload",
@@ -1202,7 +1319,10 @@
         ],
         "kwargs": {}
       },
-      "expect": "general"
+      "expect": "general",
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Mapping[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_operands._curl_output_paths",
@@ -1246,7 +1366,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (pathlib.Path | None), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_operands._find_has_mutation_predicate",
@@ -1315,7 +1438,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (frozenset[str]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_operands._search_command_paths",
@@ -1339,7 +1465,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (set[str] | None), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_operands._sort_output_paths",
@@ -1426,6 +1555,9 @@
         "shell_raw_words": [],
         "literal_path_root": null,
         "navigation_paths": []
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (pathlib.Path | None), so the vector replays a recorded call"
       }
     },
     {
@@ -1438,7 +1570,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_paths._compact_tool_name",
@@ -1449,7 +1584,10 @@
         ],
         "kwargs": {}
       },
-      "expect": ""
+      "expect": "",
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_paths._extract_apply_patch_text",
@@ -1460,7 +1598,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_paths._extract_change_path",
@@ -1471,7 +1612,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_paths._extract_tool_input_paths",
@@ -1482,7 +1626,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_paths._is_structured_file_mutation",
@@ -1494,7 +1641,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any, collections.abc.Mapping[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_paths._normalize_apply_patch_input",
@@ -1505,7 +1655,10 @@
         ],
         "kwargs": {}
       },
-      "expect": {}
+      "expect": {},
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_paths._normalize_file_change_input",
@@ -1516,7 +1669,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_paths._parse_apply_patch_paths",
@@ -1539,7 +1695,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_paths._structured_write_paths",
@@ -1552,7 +1711,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any, collections.abc.Mapping[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_paths.extract_structured_mutation_paths",
@@ -1563,7 +1725,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Mapping[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_pipeline._interpreter_reads_program_from_stdin",
@@ -1586,7 +1751,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_pipeline._is_read_only_pipeline_stage",
@@ -1598,7 +1766,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken], pathlib.Path | None), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_pipeline._stdin_program_interpreter",
@@ -1631,7 +1802,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_redirects.has_mutating_output_redirection",
@@ -1642,7 +1816,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_redirects.redirect_source_read_metadata",
@@ -1654,7 +1831,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Mapping[str, Any] | None, list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_redirects.source_output_destinations",
@@ -1670,6 +1850,9 @@
         "2": "stderr",
         "stdout": "stdout",
         "stderr": "stderr"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
       }
     },
     {
@@ -1682,7 +1865,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_sed.classify_sed_segment",
@@ -1716,6 +1902,9 @@
         "shell_raw_words": [],
         "literal_path_root": null,
         "navigation_paths": []
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (pathlib.Path | None), so the vector replays a recorded call"
       }
     },
     {
@@ -1731,7 +1920,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[_ShellSegmentMetadata], list[_ShellSegment]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_segments._mark_pipeline_read_escape",
@@ -1746,7 +1938,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[_ShellSegmentMetadata], list[_ShellSegment], set[str]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_segments._pipeline_filter_output_line_bound",
@@ -1770,7 +1965,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_shell._apply_cd",
@@ -1804,7 +2002,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_shell._input_redirection_paths",
@@ -1815,7 +2016,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_shell._is_env_assignment",
@@ -1931,7 +2135,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_shell._strip_shell_wrappers",
@@ -1980,7 +2187,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_shell.has_shell_input_redirection",
@@ -1991,7 +2201,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_shell.is_dynamic_program_word",
@@ -2015,6 +2228,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.hooks._normalization_shell.ShellToken), so the vector replays a recorded call"
       }
     },
     {
@@ -2028,6 +2244,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.hooks._normalization_shell.ShellToken), so the vector replays a recorded call"
       }
     },
     {
@@ -2041,6 +2260,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.hooks._normalization_shell.ShellToken), so the vector replays a recorded call"
       }
     },
     {
@@ -2052,7 +2274,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_shell.is_unquoted_shell_control_token",
@@ -2065,6 +2290,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.hooks._normalization_shell.ShellToken), so the vector replays a recorded call"
       }
     },
     {
@@ -2076,7 +2304,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_shell.strip_input_redirections",
@@ -2087,7 +2318,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_shell.strip_output_redirections",
@@ -2098,7 +2332,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_shell_stdin.shell_stdin_arguments",
@@ -2114,6 +2351,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.hooks._normalization_segments._ShellSegment, gobby.hooks._normalization_segments._ShellSegment | None, gobby.hooks._normalization_shell.ShellScan), so the vector replays a recorded call"
       }
     },
     {
@@ -2126,7 +2366,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_tool_input.is_non_object_tool_input",
@@ -2137,7 +2380,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (object), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_tool_input.mark_tool_input_unavailable",
@@ -2155,7 +2401,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Literal['invalid_json', 'non_object_json', 'non_object'], dict[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_tool_input.tool_input_error",
@@ -2166,7 +2415,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Mapping[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_tool_input.tool_input_source",
@@ -2177,7 +2429,10 @@
         ],
         "kwargs": {}
       },
-      "expect": "tool_input"
+      "expect": "tool_input",
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Mapping[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_tools._detect_tool_error",
@@ -2192,7 +2447,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_tools._set_canonical_tool_metadata",
@@ -2205,7 +2463,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._normalization_tools.normalize_tool_display_fields",
@@ -2220,6 +2481,9 @@
       },
       "expect": {
         "canonical_code_navigation_segments": []
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, typing.Any]), so the vector replays a recorded call"
       }
     },
     {
@@ -2232,7 +2496,10 @@
         ],
         "kwargs": {}
       },
-      "expect": {}
+      "expect": {},
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._path_scope._is_temp_agent_scratchpad_path",
@@ -2250,7 +2517,10 @@
           "class": "pathlib.Path",
           "data": {}
         }
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Path), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._path_scope._is_temp_path",
@@ -2268,7 +2538,10 @@
           "class": "pathlib.Path",
           "data": {}
         }
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Path), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._path_scope._shares_git_repository",
@@ -2292,7 +2565,10 @@
           "class": "pathlib.Path",
           "data": {}
         }
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Path), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._path_scope.checkout_root",
@@ -2310,7 +2586,10 @@
           "class": "pathlib.Path",
           "data": {}
         }
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Path), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._path_scope.code_navigation_may_touch_project",
@@ -2324,7 +2603,10 @@
           "project_root": null
         }
       },
-      "expect": true
+      "expect": true,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Path | None, Sequence[str]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._path_scope.current_project_root",
@@ -2335,7 +2617,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._path_scope.current_tool_cwd",
@@ -2346,7 +2631,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._path_scope.resolve_tool_path",
@@ -2358,7 +2646,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any, Path | None), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._provider_shell_syntax._prepare",
@@ -2384,7 +2675,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (set[str] | None), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._shell_execution_words.option_word_count",
@@ -2396,7 +2690,10 @@
         ],
         "kwargs": {}
       },
-      "expect": 1
+      "expect": 1,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Collection[str]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks._shell_syntax._compound_comparison_operators",
@@ -2461,7 +2758,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (asyncio.AbstractEventLoop), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks.checkout_reads.event_machine_id",
@@ -2470,7 +2770,10 @@
         "args": [],
         "kwargs": {}
       },
-      "expect": "<uuid>"
+      "expect": "<uuid>",
+      "metadata": {
+        "reason": "takes no parameters, so the vector replays its fixed result"
+      }
     },
     {
       "id": "required-gobby.hooks.checkout_reads.node_origin",
@@ -2479,7 +2782,10 @@
         "args": [],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "takes no parameters, so the vector replays its fixed result"
+      }
     },
     {
       "id": "required-gobby.hooks.checkout_reads.path_facts",
@@ -2508,6 +2814,9 @@
             "count": 60
           }
         }
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Sequence[str]), so the vector replays a recorded call"
       }
     },
     {
@@ -2545,6 +2854,9 @@
             "count": 60
           }
         }
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Sequence[str], float), so the vector replays a recorded call"
       }
     },
     {
@@ -2582,6 +2894,9 @@
         "canonical_code_navigation_action": "enumerate",
         "canonical_code_navigation_broad": true,
         "canonical_code_navigation_gcode_supported": true
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Sequence[str]), so the vector replays a recorded call"
       }
     },
     {
@@ -2604,7 +2919,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks.code_navigation.search_navigation_metadata",
@@ -2616,6 +2934,9 @@
       "expect": {
         "canonical_code_navigation_action": "search",
         "canonical_code_navigation_broad": true
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Sequence[str]), so the vector replays a recorded call"
       }
     },
     {
@@ -2666,7 +2987,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks.code_navigation_recovery.annotate_navigation_outcome",
@@ -2677,7 +3001,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks.code_navigation_recovery.gcode_targets",
@@ -2701,7 +3028,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, str] | None, ShellDialect, list[ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks.provider_launch_guard._pipeline_definition_pipes",
@@ -2712,7 +3042,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.hooks.provider_launch_guard._python_name",
@@ -2764,6 +3097,9 @@
         "status": "failed",
         "exit_code": null,
         "provenance": "raw_result.missing"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (object), so the vector replays a recorded call"
       }
     },
     {
@@ -2780,6 +3116,9 @@
         "status": "unknown",
         "exit_code": null,
         "provenance": null
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (object), so the vector replays a recorded call"
       }
     },
     {
@@ -2799,6 +3138,9 @@
         "status": "unknown",
         "exit_code": null,
         "provenance": null
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, Any]), so the vector replays a recorded call"
       }
     },
     {
@@ -2814,6 +3156,9 @@
         "status": "unknown",
         "exit_code": null,
         "provenance": null
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any] | None), so the vector replays a recorded call"
       }
     },
     {
@@ -2825,7 +3170,10 @@
         ],
         "kwargs": {}
       },
-      "expect": null
+      "expect": null,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.mcp_proxy._call_tool_wrapper.canonical_call_tool_input",
@@ -2836,7 +3184,10 @@
         ],
         "kwargs": {}
       },
-      "expect": {}
+      "expect": {},
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.mcp_proxy._call_tool_wrapper.canonicalize_call_tool_wrapper",
@@ -2855,6 +3206,9 @@
         "session_id": null,
         "project_id": null,
         "intent": null
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (str | dict[str, Any] | None), so the vector replays a recorded call"
       }
     },
     {
@@ -2878,7 +3232,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (object), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.workflows.engine.command_matching._command_tokens",
@@ -2889,7 +3246,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.workflows.engine.command_matching._decoded_stages",
@@ -2918,7 +3278,10 @@
       },
       "expect": [
         []
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.workflows.engine.command_matching._resolve_substitutions",
@@ -2934,7 +3297,10 @@
       },
       "expect": [
         ""
-      ]
+      ],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (LanguageBodies), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.workflows.engine.command_matching._shell_input_scripts",
@@ -2956,7 +3322,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.workflows.engine.command_matching._stage_words",
@@ -2967,7 +3336,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[ShellToken]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.workflows.engine.command_matching._wrapper_scripts",
@@ -2999,6 +3371,9 @@
         "raw_outproc": false,
         "source": "language",
         "language_stage": []
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (list[gobby.hooks._normalization_shell.ShellToken]), so the vector replays a recorded call"
       }
     },
     {
@@ -3013,7 +3388,10 @@
         ],
         "kwargs": {}
       },
-      "expect": ""
+      "expect": "",
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (collections.abc.Sequence[gobby.hooks._normalization_shell.HeredocBody]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.workflows.engine.command_matching_uv._after_options",
@@ -3025,7 +3403,10 @@
         ],
         "kwargs": {}
       },
-      "expect": []
+      "expect": [],
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (frozenset[str]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.workflows.engine.command_matching_uv._language_stage",
@@ -3082,6 +3463,9 @@
       },
       "expect": {
         "GOBBY_PS_SHIM": "ps"
+      },
+      "metadata": {
+        "reason": "takes no parameters, so the vector replays its fixed result"
       }
     },
     {
@@ -3105,7 +3489,10 @@
         ],
         "kwargs": {}
       },
-      "expect": false
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Any), so the vector replays a recorded call"
+      }
     },
     {
       "id": "required-gobby.workflows.selectors.is_mandatory_rule",
@@ -3118,6 +3505,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.storage.definitions.rules.RuleDefinitionRow), so the vector replays a recorded call"
       }
     },
     {
@@ -3132,6 +3522,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.workflows.agent_models.AgentDefinitionBody, list[gobby.storage.skills._models.Skill]), so the vector replays a recorded call"
       }
     },
     {
@@ -3146,6 +3539,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.workflows.agent_models.AgentDefinitionBody, list[gobby.storage.definitions.rules.RuleDefinitionRow]), so the vector replays a recorded call"
       }
     },
     {
@@ -3160,6 +3556,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.workflows.agent_models.AgentDefinitionBody, list[gobby.storage.skills._models.Skill]), so the vector replays a recorded call"
       }
     },
     {
@@ -3174,6 +3573,9 @@
       },
       "expect": {
         "raised": "AttributeError"
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (gobby.workflows.agent_models.AgentDefinitionBody, list[typing.Any]), so the vector replays a recorded call"
       }
     },
     {
@@ -8489,7 +8891,10 @@
         }
       },
       "negative_from": "tests/hooks/test_code_navigation_recovery.py::test_whole_file_reads_stay_blocked_past_the_scan_limit",
-      "expect": true
+      "expect": true,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any], dict[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "negative-test_unverifiable_bounds_and_variable_paths_stay_blocked[0]",
@@ -8536,7 +8941,10 @@
       "parameters": {
         "command": "sed -n \"$(grep -n VALUE src/long.py | cut -d: -f1)p\" src/long.py"
       },
-      "expect": true
+      "expect": true,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any], dict[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "negative-test_unverifiable_bounds_and_variable_paths_stay_blocked[1]",
@@ -8583,7 +8991,10 @@
       "parameters": {
         "command": "sed -n \"${start},${end}p\" src/long.py"
       },
-      "expect": true
+      "expect": true,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any], dict[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "negative-test_unverifiable_bounds_and_variable_paths_stay_blocked[2]",
@@ -8630,7 +9041,10 @@
       "parameters": {
         "command": "cat \"$SCRATCH/probe.py\""
       },
-      "expect": true
+      "expect": true,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any], dict[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "negative-test_unproven_variable_reads_block_in_write_commands[0]",
@@ -8677,7 +9091,10 @@
       "parameters": {
         "command": "for f in src/long.py; do f=src/long.py; cat \"$f\"; done; touch /tmp/x"
       },
-      "expect": true
+      "expect": true,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any], dict[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "negative-test_unproven_variable_reads_block_in_write_commands[1]",
@@ -8724,7 +9141,10 @@
       "parameters": {
         "command": "cat $F; touch /tmp/x"
       },
-      "expect": true
+      "expect": true,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any], dict[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "negative-test_unproven_variable_reads_block_in_write_commands[2]",
@@ -8771,7 +9191,10 @@
       "parameters": {
         "command": "bash -c 'cat \"$F\"; touch /tmp/x'"
       },
-      "expect": true
+      "expect": true,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any], dict[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "negative-test_unproven_variable_reads_block_in_write_commands[3]",
@@ -8818,10 +9241,13 @@
       "parameters": {
         "command": "( cat \"$F\" ); touch /tmp/x"
       },
-      "expect": true
+      "expect": true,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any], dict[str, Any]), so the vector replays a recorded call"
+      }
     },
     {
-      "id": "negative-test_refused_outline_opens_only_requested_read[0]",
+      "id": "gate-refused-outline-broad-read",
       "entry": "gobby.hooks.code_navigation_recovery.navigation_requires_index",
       "setup": {
         "git_repo": true,
@@ -8879,15 +9305,128 @@
           "broad_only": true
         }
       },
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any], dict[str, Any]), so the vector replays a recorded call"
+      }
+    },
+    {
+      "id": "negative-test_refused_outline_opens_only_requested_read[0]",
+      "entry": "gobby.hooks.normalization.normalize_tool_fields",
+      "setup": {
+        "git_repo": true,
+        "files": {
+          ".gitignore": "web/dist/\ncustom-output/\n",
+          "custom-output/.keep": "",
+          "src/constants.py": "VALUE = 1\n",
+          "src/short.py": {
+            "repeat": "value = 1\n",
+            "count": 5
+          },
+          "src/long.py": {
+            "repeat": "value = 1\n",
+            "count": 60
+          }
+        }
+      },
+      "input": {
+        "args": [
+          {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "gcode outline src/long.py"
+            },
+            "cwd": "{repo}",
+            "project_path": "{repo}",
+            "tool_output": "{\"error\":\"invalid_path_scope\",\"message\":\"path outside index\"}",
+            "is_error": false
+          }
+        ]
+      },
+      "result_from_arg": 0,
       "negative_from": "tests/hooks/test_code_navigation_recovery.py::test_refused_outline_opens_only_requested_read",
       "parameters": {
         "code": "invalid_path_scope"
       },
-      "expect": false
+      "expect": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "gcode outline src/long.py",
+          "file_path": "src/long.py"
+        },
+        "cwd": "<path>",
+        "project_path": "<path>",
+        "tool_output": {
+          "error": "invalid_path_scope",
+          "message": "path outside index"
+        },
+        "is_error": false,
+        "_raw_tool_input": {
+          "command": "gcode outline src/long.py"
+        },
+        "command": "gcode outline src/long.py",
+        "canonical_tool_kind": "read",
+        "canonical_tool_confidence": "high",
+        "canonical_file_paths": [
+          "src/long.py"
+        ],
+        "canonical_file_path": "src/long.py",
+        "canonical_code_index_navigation": true,
+        "canonical_code_index_command": "gcode outline",
+        "canonical_code_navigation_action": "read",
+        "_canonical_source_read_output_channels": [
+          "stdout"
+        ],
+        "canonical_read_only": true,
+        "canonical_code_navigation_segments": [
+          {
+            "canonical_code_index_navigation": true,
+            "canonical_code_index_command": "gcode outline",
+            "canonical_code_navigation_action": "read",
+            "_canonical_source_read_output_channels": [
+              "stdout"
+            ],
+            "canonical_file_paths": [
+              "<path>"
+            ],
+            "canonical_code_navigation_repo_scope": true,
+            "canonical_code_navigation_checkout_scope": true,
+            "canonical_code_navigation_ignore_candidates": [
+              "<path>"
+            ]
+          }
+        ],
+        "canonical_code_navigation_broad": false,
+        "canonical_code_navigation_repo_scope": true,
+        "tool_outcome": {
+          "status": "succeeded",
+          "provenance": "event.is_error"
+        },
+        "canonical_code_index_attempts": [
+          {
+            "action": "read",
+            "paths": [
+              "<path>"
+            ]
+          }
+        ],
+        "canonical_code_index_verified": [],
+        "canonical_code_index_recovery": [
+          {
+            "action": "read",
+            "paths": [
+              "<path>"
+            ]
+          }
+        ]
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "negative-test_refused_outline_opens_only_requested_read[1]",
-      "entry": "gobby.hooks.code_navigation_recovery.navigation_requires_index",
+      "entry": "gobby.hooks.normalization.normalize_tool_fields",
       "setup": {
         "git_repo": true,
         "files": {
@@ -8904,51 +9443,100 @@
           }
         }
       },
-      "prepare": [
-        "gobby.hooks.normalization.normalize_tool_fields"
-      ],
       "input": {
         "args": [
           {
             "tool_name": "Bash",
             "tool_input": {
-              "command": "cat src/long.py"
+              "command": "gcode outline src/long.py"
             },
             "cwd": "{repo}",
             "project_path": "{repo}",
-            "tool_output": "",
+            "tool_output": "{\"error\":\"not_indexed\",\"message\":\"path outside index\"}",
             "is_error": false
-          },
-          {
-            "code_index_attempts": [
-              {
-                "action": "read",
-                "paths": [
-                  "{repo}/src/long.py"
-                ]
-              }
-            ],
-            "code_index_verified": [],
-            "code_index_recoveries": [
-              {
-                "action": "read",
-                "paths": [
-                  "{repo}/src/long.py"
-                ]
-              }
-            ]
-          },
-          "read"
-        ],
-        "kwargs": {
-          "broad_only": true
-        }
+          }
+        ]
       },
+      "result_from_arg": 0,
       "negative_from": "tests/hooks/test_code_navigation_recovery.py::test_refused_outline_opens_only_requested_read",
       "parameters": {
         "code": "not_indexed"
       },
-      "expect": false
+      "expect": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "gcode outline src/long.py",
+          "file_path": "src/long.py"
+        },
+        "cwd": "<path>",
+        "project_path": "<path>",
+        "tool_output": {
+          "error": "not_indexed",
+          "message": "path outside index"
+        },
+        "is_error": false,
+        "_raw_tool_input": {
+          "command": "gcode outline src/long.py"
+        },
+        "command": "gcode outline src/long.py",
+        "canonical_tool_kind": "read",
+        "canonical_tool_confidence": "high",
+        "canonical_file_paths": [
+          "src/long.py"
+        ],
+        "canonical_file_path": "src/long.py",
+        "canonical_code_index_navigation": true,
+        "canonical_code_index_command": "gcode outline",
+        "canonical_code_navigation_action": "read",
+        "_canonical_source_read_output_channels": [
+          "stdout"
+        ],
+        "canonical_read_only": true,
+        "canonical_code_navigation_segments": [
+          {
+            "canonical_code_index_navigation": true,
+            "canonical_code_index_command": "gcode outline",
+            "canonical_code_navigation_action": "read",
+            "_canonical_source_read_output_channels": [
+              "stdout"
+            ],
+            "canonical_file_paths": [
+              "<path>"
+            ],
+            "canonical_code_navigation_repo_scope": true,
+            "canonical_code_navigation_checkout_scope": true,
+            "canonical_code_navigation_ignore_candidates": [
+              "<path>"
+            ]
+          }
+        ],
+        "canonical_code_navigation_broad": false,
+        "canonical_code_navigation_repo_scope": true,
+        "tool_outcome": {
+          "status": "succeeded",
+          "provenance": "event.is_error"
+        },
+        "canonical_code_index_attempts": [
+          {
+            "action": "read",
+            "paths": [
+              "<path>"
+            ]
+          }
+        ],
+        "canonical_code_index_verified": [],
+        "canonical_code_index_recovery": [
+          {
+            "action": "read",
+            "paths": [
+              "<path>"
+            ]
+          }
+        ]
+      },
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (dict[str, typing.Any]), so the vector replays a recorded call"
+      }
     },
     {
       "id": "negative-test_a_path_git_refuses_does_not_hide_later_answers",
@@ -8996,7 +9584,2497 @@
         "kwargs": {}
       },
       "negative_from": "tests/hooks/test_code_navigation_recovery.py::test_a_path_git_refuses_does_not_hide_later_answers",
+      "expect": false,
+      "metadata": {
+        "reason": "has a parameter outside the builtin set (Mapping[str, Any], dict[str, Any]), so the vector replays a recorded call"
+      }
+    },
+    {
+      "id": "realistic-hooks._ansi_c._digits",
+      "entry": "gobby.hooks._ansi_c._digits",
+      "input": {
+        "args": [
+          "\\x41b",
+          2,
+          "0123456789abcdefABCDEF",
+          2
+        ],
+        "kwargs": {}
+      },
+      "expect": 4
+    },
+    {
+      "id": "realistic-hooks._ansi_c._zsh_modified",
+      "entry": "gobby.hooks._ansi_c._zsh_modified",
+      "input": {
+        "args": [
+          "\\C-a tail",
+          0
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "\u0001",
+        4
+      ]
+    },
+    {
+      "id": "realistic-hooks._ansi_c.opens_ansi_c_quote",
+      "entry": "gobby.hooks._ansi_c.opens_ansi_c_quote",
+      "input": {
+        "args": [
+          "case x in $'x)' | y) gem push x;; esac",
+          10
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._case_syntax._balanced_parens_end",
+      "entry": "gobby.hooks._case_syntax._balanced_parens_end",
+      "input": {
+        "args": [
+          "shopt -s extglob\ncase x in @(x|y)) gem push x;; esac",
+          28
+        ],
+        "kwargs": {
+          "depth": 0
+        }
+      },
+      "expect": 33
+    },
+    {
+      "id": "realistic-hooks._case_syntax._word_end",
+      "entry": "gobby.hooks._case_syntax._word_end",
+      "input": {
+        "args": [
+          "(case x in x) gem push x;; esac)",
+          1
+        ],
+        "kwargs": {
+          "depth": 0,
+          "backtick": false
+        }
+      },
+      "expect": 5
+    },
+    {
+      "id": "realistic-hooks._case_syntax._word_expansion_end",
+      "entry": "gobby.hooks._case_syntax._word_expansion_end",
+      "input": {
+        "args": [
+          "case x in $(echo x) | y) gem push x;; esac",
+          10
+        ],
+        "kwargs": {
+          "depth": 0
+        }
+      },
+      "expect": 19
+    },
+    {
+      "id": "realistic-hooks._case_syntax.case_pattern_end",
+      "entry": "gobby.hooks._case_syntax.case_pattern_end",
+      "input": {
+        "args": [
+          "(case x in x) gem push x;; esac)",
+          11,
+          32
+        ],
+        "kwargs": {}
+      },
+      "expect": 12
+    },
+    {
+      "id": "realistic-hooks._case_syntax.pid_parameter_end",
+      "entry": "gobby.hooks._case_syntax.pid_parameter_end",
+      "input": {
+        "args": [
+          "echo $$ done",
+          5
+        ],
+        "kwargs": {}
+      },
+      "expect": 7
+    },
+    {
+      "id": "realistic-hooks._normalization_apply_rewrite.build_apply_rewrite",
+      "entry": "gobby.hooks._normalization_apply_rewrite.build_apply_rewrite",
+      "input": {
+        "args": [
+          [
+            "git",
+            "apply",
+            "--index",
+            "-"
+          ],
+          "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-old\n+new\n"
+        ],
+        "kwargs": {}
+      },
+      "expect": "git apply --index - <<'<token>'\n--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-old\n+new\n<token>\n"
+    },
+    {
+      "id": "realistic-hooks._normalization_apply_rewrite.simple_apply_words",
+      "entry": "gobby.hooks._normalization_apply_rewrite.simple_apply_words",
+      "input": {
+        "args": [
+          "git apply --index fix.patch"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "git",
+        "apply",
+        "--index",
+        "fix.patch"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_archives._option_directories",
+      "entry": "gobby.hooks._normalization_archives._option_directories",
+      "input": {
+        "args": [
+          [
+            "unzip",
+            "-d",
+            "out",
+            "bundle.zip"
+          ],
+          "/srv/app",
+          "-d",
+          "--directory"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "/srv/app/out"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_archives._other_archive_destinations",
+      "entry": "gobby.hooks._normalization_archives._other_archive_destinations",
+      "input": {
+        "args": [
+          "unzip",
+          [
+            "unzip",
+            "-o",
+            "bundle.zip",
+            "-d",
+            "out"
+          ],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "out"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_archives._unzip_destination",
+      "entry": "gobby.hooks._normalization_archives._unzip_destination",
+      "input": {
+        "args": [
+          [
+            "unzip",
+            "-o",
+            "bundle.zip",
+            "-d",
+            "out"
+          ],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "out"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_archives.classify_archive_command",
+      "entry": "gobby.hooks._normalization_archives.classify_archive_command",
+      "input": {
+        "args": [
+          "tar",
+          [
+            "tar",
+            "-xzf",
+            "release.tar.gz",
+            "-C",
+            "build"
+          ],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "kind": "write",
+        "paths": [
+          "build"
+        ],
+        "write_paths": [
+          "build"
+        ],
+        "extra": {
+          "canonical_tree_write_paths": [
+            "build"
+          ],
+          "canonical_tree_write_cwds": {}
+        },
+        "repo_mutation": true,
+        "confidence": "high",
+        "neutral_setup": false,
+        "pure_gcode_navigation": false,
+        "read_only_pipeline_filter": false,
+        "read_only": null,
+        "stdin_program_interpreter": null,
+        "unverified_write_scope": false,
+        "cwd": null,
+        "loop_binding_variable": null,
+        "assignment_bindings": [],
+        "shell_words": [],
+        "shell_raw_words": [],
+        "literal_path_root": null,
+        "navigation_paths": []
+      }
+    },
+    {
+      "id": "realistic-hooks._normalization_archives.classify_ditto_command",
+      "entry": "gobby.hooks._normalization_archives.classify_ditto_command",
+      "input": {
+        "args": [
+          [
+            "ditto",
+            "-x",
+            "-k",
+            "archive.zip",
+            "extracted"
+          ],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "kind": "write",
+        "paths": [
+          "extracted"
+        ],
+        "write_paths": [
+          "extracted"
+        ],
+        "extra": {
+          "canonical_tree_write_paths": [
+            "extracted"
+          ],
+          "canonical_tree_write_cwds": {},
+          "canonical_tree_write_scope_unknown": false,
+          "_canonical_repo_mutation_scope_unknown": false
+        },
+        "repo_mutation": true,
+        "confidence": "high",
+        "neutral_setup": false,
+        "pure_gcode_navigation": false,
+        "read_only_pipeline_filter": false,
+        "read_only": null,
+        "stdin_program_interpreter": null,
+        "unverified_write_scope": false,
+        "cwd": null,
+        "loop_binding_variable": null,
+        "assignment_bindings": [],
+        "shell_words": [],
+        "shell_raw_words": [],
+        "literal_path_root": null,
+        "navigation_paths": []
+      }
+    },
+    {
+      "id": "realistic-hooks._normalization_base_commands._classify_for_loop_header",
+      "entry": "gobby.hooks._normalization_base_commands._classify_for_loop_header",
+      "input": {
+        "args": [
+          [
+            "for",
+            "f",
+            "in",
+            "src/long.py"
+          ],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "kind": "execute",
+        "paths": [
+          "src/long.py"
+        ],
+        "write_paths": [],
+        "extra": null,
+        "repo_mutation": false,
+        "confidence": "high",
+        "neutral_setup": false,
+        "pure_gcode_navigation": false,
+        "read_only_pipeline_filter": false,
+        "read_only": true,
+        "stdin_program_interpreter": null,
+        "unverified_write_scope": false,
+        "cwd": null,
+        "loop_binding_variable": "f",
+        "assignment_bindings": [],
+        "shell_words": [],
+        "shell_raw_words": [],
+        "literal_path_root": null,
+        "navigation_paths": []
+      }
+    },
+    {
+      "id": "realistic-hooks._normalization_base_commands._count_only_reader",
+      "entry": "gobby.hooks._normalization_base_commands._count_only_reader",
+      "input": {
+        "args": [
+          [
+            "wc",
+            "-l",
+            "src/app.py"
+          ]
+        ],
+        "kwargs": {}
+      },
       "expect": false
+    },
+    {
+      "id": "realistic-hooks._normalization_base_commands._formatter_mutates",
+      "entry": "gobby.hooks._normalization_base_commands._formatter_mutates",
+      "input": {
+        "args": [
+          [
+            "ruff",
+            "format",
+            "src/app.py"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_base_commands._names_uv_project_variable",
+      "entry": "gobby.hooks._normalization_base_commands._names_uv_project_variable",
+      "input": {
+        "args": [
+          "UV_PROJECT=../service uv run pytest"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_base_commands._uv_lockfile_targets",
+      "entry": "gobby.hooks._normalization_base_commands._uv_lockfile_targets",
+      "input": {
+        "args": [
+          [
+            "uv",
+            "sync",
+            "--locked"
+          ],
+          "/srv/app"
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "realistic-hooks._normalization_base_commands._uv_project_is_proven",
+      "entry": "gobby.hooks._normalization_base_commands._uv_project_is_proven",
+      "input": {
+        "args": [
+          "{repo}"
+        ],
+        "kwargs": {}
+      },
+      "setup": {
+        "git_repo": true,
+        "files": {
+          "pyproject.toml": "[project]\nname = \"synthetic-app\"\nversion = \"0.0.0\"\n"
+        }
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_base_commands.execution_context_is_read_only",
+      "entry": "gobby.hooks._normalization_base_commands.execution_context_is_read_only",
+      "input": {
+        "args": [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_base_commands.unwrap_execution_command",
+      "entry": "gobby.hooks._normalization_base_commands.unwrap_execution_command",
+      "input": {
+        "args": [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "parts": [
+          "git",
+          "push",
+          "origin",
+          "main"
+        ],
+        "cwd": null,
+        "read_only": true,
+        "directory_proven": true
+      }
+    },
+    {
+      "id": "realistic-hooks._normalization_base_commands.xargs_reader",
+      "entry": "gobby.hooks._normalization_base_commands.xargs_reader",
+      "input": {
+        "args": [
+          [
+            "xargs",
+            "-n1",
+            "cat"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [
+          "cat"
+        ],
+        false
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_bindings._loop_binding_variable_is_stable",
+      "entry": "gobby.hooks._normalization_bindings._loop_binding_variable_is_stable",
+      "input": {
+        "args": [
+          "f"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_bindings._loop_header_words_are_literal",
+      "entry": "gobby.hooks._normalization_bindings._loop_header_words_are_literal",
+      "input": {
+        "args": [
+          [
+            "for",
+            "f",
+            "in",
+            "src/long.py"
+          ],
+          [
+            "for",
+            "f",
+            "in",
+            "src/long.py"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_bindings._plain_loop_binding_reference",
+      "entry": "gobby.hooks._normalization_bindings._plain_loop_binding_reference",
+      "input": {
+        "args": [
+          "$SCRATCH/probe.py",
+          [
+            "cat",
+            "$SCRATCH/probe.py"
+          ],
+          [
+            "cat",
+            "\"$SCRATCH/probe.py\""
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "SCRATCH",
+        "/probe.py"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_bindings._raw_shell_word_is_literal",
+      "entry": "gobby.hooks._normalization_bindings._raw_shell_word_is_literal",
+      "input": {
+        "args": [
+          "cat"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_bindings._shell_loop_binding_disqualifications",
+      "entry": "gobby.hooks._normalization_bindings._shell_loop_binding_disqualifications",
+      "input": {
+        "args": [
+          [
+            "FOO=bar",
+            "npm",
+            "test"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "FOO"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_bindings._shell_option_setup",
+      "entry": "gobby.hooks._normalization_bindings._shell_option_setup",
+      "input": {
+        "args": [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ],
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "realistic-hooks._normalization_bindings._shell_segment_preserves_loop_binding",
+      "entry": "gobby.hooks._normalization_bindings._shell_segment_preserves_loop_binding",
+      "input": {
+        "args": [
+          [
+            "cat",
+            "$F"
+          ],
+          "F"
+        ],
+        "kwargs": {
+          "command_is_known": true
+        }
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_compound.command_substitution_bodies",
+      "entry": "gobby.hooks._normalization_compound.command_substitution_bodies",
+      "input": {
+        "args": [
+          "git push origin main",
+          [
+            [
+              0,
+              3
+            ],
+            [
+              4,
+              8
+            ],
+            [
+              9,
+              15
+            ],
+            [
+              16,
+              20
+            ]
+          ]
+        ],
+        "kwargs": {
+          "depth": 0
+        }
+      },
+      "expect": [
+        "git push origin main",
+        []
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_compound.heredoc_substitution_bodies",
+      "entry": "gobby.hooks._normalization_compound.heredoc_substitution_bodies",
+      "input": {
+        "args": [
+          "cat <<EOF\nhello $(whoami)\nEOF\n"
+        ],
+        "kwargs": {
+          "depth": 0
+        }
+      },
+      "expect": [
+        [
+          "whoami"
+        ],
+        false
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_env._prefix",
+      "entry": "gobby.hooks._normalization_env._prefix",
+      "input": {
+        "args": [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [
+          "git",
+          "push",
+          "origin",
+          "main"
+        ],
+        []
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_env._utility_command",
+      "entry": "gobby.hooks._normalization_env._utility_command",
+      "input": {
+        "args": [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "git",
+        "push",
+        "origin",
+        "main"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_env.env_command",
+      "entry": "gobby.hooks._normalization_env.env_command",
+      "input": {
+        "args": [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [
+          "git",
+          "push",
+          "origin",
+          "main"
+        ],
+        []
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_env.env_directory_operands",
+      "entry": "gobby.hooks._normalization_env.env_directory_operands",
+      "input": {
+        "args": [
+          [
+            "env",
+            "-C",
+            "build",
+            "make",
+            "test"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "build"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_env.strip_shell_wrappers",
+      "entry": "gobby.hooks._normalization_env.strip_shell_wrappers",
+      "input": {
+        "args": [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "git",
+        "push",
+        "origin",
+        "main"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_git._checkout_probe",
+      "entry": "gobby.hooks._normalization_git._checkout_probe",
+      "input": {
+        "args": [
+          "/srv/app"
+        ],
+        "kwargs": {}
+      },
+      "expect": "/srv/app"
+    },
+    {
+      "id": "realistic-hooks._normalization_git._node_checkout_is_path",
+      "entry": "gobby.hooks._normalization_git._node_checkout_is_path",
+      "input": {
+        "args": [
+          [
+            "src/app.py"
+          ],
+          "/srv/app",
+          "main"
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "realistic-hooks._normalization_git._positional_checkout_is_path",
+      "entry": "gobby.hooks._normalization_git._positional_checkout_is_path",
+      "input": {
+        "args": [
+          [
+            "src/app.py"
+          ],
+          "/srv/app",
+          "main"
+        ],
+        "kwargs": {}
+      },
+      "expect": null
+    },
+    {
+      "id": "realistic-hooks._normalization_git.git_command_is_read_only",
+      "entry": "gobby.hooks._normalization_git.git_command_is_read_only",
+      "input": {
+        "args": [
+          [
+            "git",
+            "grep",
+            "-n",
+            "TODO",
+            "--",
+            "src"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_git.git_environment_parts",
+      "entry": "gobby.hooks._normalization_git.git_environment_parts",
+      "input": {
+        "args": [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ],
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "git",
+        "push",
+        "origin",
+        "main"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_git.git_selector_name",
+      "entry": "gobby.hooks._normalization_git.git_selector_name",
+      "input": {
+        "args": [
+          ":(glob)src/**/*.py"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_git.git_selector_setup",
+      "entry": "gobby.hooks._normalization_git.git_selector_setup",
+      "input": {
+        "args": [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ],
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "realistic-hooks._normalization_git_apply._git_apply_options",
+      "entry": "gobby.hooks._normalization_git_apply._git_apply_options",
+      "input": {
+        "args": [
+          [
+            "--index",
+            "--check",
+            "fix.patch"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [
+          "--check",
+          "--index"
+        ],
+        [
+          "fix.patch"
+        ]
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_git_apply._is_literal",
+      "entry": "gobby.hooks._normalization_git_apply._is_literal",
+      "input": {
+        "args": [
+          "src/app.py"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_git_apply._may_become_option",
+      "entry": "gobby.hooks._normalization_git_apply._may_become_option",
+      "input": {
+        "args": [
+          "$OPTION"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_git_apply._patch_targets_from_text",
+      "entry": "gobby.hooks._normalization_git_apply._patch_targets_from_text",
+      "input": {
+        "args": [
+          "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-old\n+new\n"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "src/app.py"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_git_apply._safe_path",
+      "entry": "gobby.hooks._normalization_git_apply._safe_path",
+      "input": {
+        "args": [
+          "src/app.py"
+        ],
+        "kwargs": {}
+      },
+      "expect": "src/app.py"
+    },
+    {
+      "id": "realistic-hooks._normalization_git_apply._same_sides",
+      "entry": "gobby.hooks._normalization_git_apply._same_sides",
+      "input": {
+        "args": [
+          "a/src/app.py b/src/app.py"
+        ],
+        "kwargs": {}
+      },
+      "expect": "src/app.py"
+    },
+    {
+      "id": "realistic-hooks._normalization_git_apply._strip_prefix",
+      "entry": "gobby.hooks._normalization_git_apply._strip_prefix",
+      "input": {
+        "args": [
+          "a/src/app.py"
+        ],
+        "kwargs": {}
+      },
+      "expect": "src/app.py"
+    },
+    {
+      "id": "realistic-hooks._normalization_metadata._path_is_unresolved",
+      "entry": "gobby.hooks._normalization_metadata._path_is_unresolved",
+      "input": {
+        "args": [
+          "$SCRATCH/probe.py",
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._curl_output_paths",
+      "entry": "gobby.hooks._normalization_operands._curl_output_paths",
+      "input": {
+        "args": [
+          [
+            "curl",
+            "-fsSL",
+            "https://example.com/install.sh",
+            "-o",
+            "install.sh"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        true,
+        [
+          "install.sh"
+        ]
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._file_command_operands",
+      "entry": "gobby.hooks._normalization_operands._file_command_operands",
+      "input": {
+        "args": [
+          "rm",
+          [
+            "rm",
+            "-f",
+            "old.log"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [
+          "old.log"
+        ],
+        null,
+        false
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._find_has_mutation_predicate",
+      "entry": "gobby.hooks._normalization_operands._find_has_mutation_predicate",
+      "input": {
+        "args": [
+          [
+            "find",
+            "src",
+            "-name",
+            "*.rs",
+            "-exec",
+            "wc",
+            "-l",
+            "{}",
+            "+"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._git_add_positional_args_after",
+      "entry": "gobby.hooks._normalization_operands._git_add_positional_args_after",
+      "input": {
+        "args": [
+          [
+            "git",
+            "add",
+            "src/app.py",
+            "tests/test_app.py"
+          ],
+          2
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "src/app.py",
+        "tests/test_app.py"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._git_grep_is_revision_scoped",
+      "entry": "gobby.hooks._normalization_operands._git_grep_is_revision_scoped",
+      "input": {
+        "args": [
+          [
+            "git",
+            "grep",
+            "-n",
+            "def main",
+            "HEAD",
+            "--",
+            "src"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._git_restore_positional_args_after",
+      "entry": "gobby.hooks._normalization_operands._git_restore_positional_args_after",
+      "input": {
+        "args": [
+          [
+            "git",
+            "restore",
+            "--staged",
+            "src/app.py",
+            "tests/test_app.py"
+          ],
+          2
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "src/app.py",
+        "tests/test_app.py"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._grep_is_recursive",
+      "entry": "gobby.hooks._normalization_operands._grep_is_recursive",
+      "input": {
+        "args": [
+          [
+            "grep",
+            "-rn",
+            "def main",
+            "src/"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._search_command_paths",
+      "entry": "gobby.hooks._normalization_operands._search_command_paths",
+      "input": {
+        "args": [
+          "grep",
+          [
+            "grep",
+            "-n",
+            "VALUE",
+            "src/long.py"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "src/long.py"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._search_has_pattern_option",
+      "entry": "gobby.hooks._normalization_operands._search_has_pattern_option",
+      "input": {
+        "args": [
+          [
+            "grep",
+            "-e",
+            "TODO",
+            "src"
+          ],
+          1,
+          "grep"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._search_value_options",
+      "entry": "gobby.hooks._normalization_operands._search_value_options",
+      "input": {
+        "args": [
+          "git"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "--after-context",
+        "--before-context",
+        "--context",
+        "--devices",
+        "--directories",
+        "--file",
+        "--glob",
+        "--max-count",
+        "--max-depth",
+        "--regexp",
+        "--threads",
+        "-A",
+        "-B",
+        "-C",
+        "-D",
+        "-d",
+        "-e",
+        "-f",
+        "-g",
+        "-m"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._sort_output_paths",
+      "entry": "gobby.hooks._normalization_operands._sort_output_paths",
+      "input": {
+        "args": [
+          [
+            "sort",
+            "-o",
+            "sorted.txt",
+            "input.txt"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        true,
+        [
+          "sorted.txt"
+        ]
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._tar_extract_paths",
+      "entry": "gobby.hooks._normalization_operands._tar_extract_paths",
+      "input": {
+        "args": [
+          [
+            "tar",
+            "-xzf",
+            "release.tar.gz",
+            "-C",
+            "build"
+          ],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        true,
+        [
+          "build"
+        ],
+        false
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_operands._truncate_positional_paths",
+      "entry": "gobby.hooks._normalization_operands._truncate_positional_paths",
+      "input": {
+        "args": [
+          [
+            "head",
+            "-n",
+            "20",
+            "src/long.py",
+            "src/short.py"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "20",
+        "src/long.py",
+        "src/short.py"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_operands.rg_preprocessor",
+      "entry": "gobby.hooks._normalization_operands.rg_preprocessor",
+      "input": {
+        "args": [
+          [
+            "rg",
+            "--pre=zcat",
+            "TODO",
+            "logs.gz"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": "zcat"
+    },
+    {
+      "id": "realistic-hooks._normalization_patch._patch_options",
+      "entry": "gobby.hooks._normalization_patch._patch_options",
+      "input": {
+        "args": [
+          [
+            "-p1",
+            "-i",
+            "fix.patch"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": {
+        "flags": [],
+        "values": [
+          [
+            "p",
+            "1"
+          ],
+          [
+            "i",
+            "fix.patch"
+          ]
+        ],
+        "operands": []
+      }
+    },
+    {
+      "id": "realistic-hooks._normalization_patch._single_unified_diff",
+      "entry": "gobby.hooks._normalization_patch._single_unified_diff",
+      "input": {
+        "args": [
+          {
+            "bytes": "--- a/src/app.py\n+++ b/src/app.py\n@@ -1 +1 @@\n-old\n+new\n"
+          }
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_paths._parse_apply_patch_paths",
+      "entry": "gobby.hooks._normalization_paths._parse_apply_patch_paths",
+      "input": {
+        "args": [
+          "*** Begin Patch\n*** Update File: src/app.py\n@@\n-old\n+new\n*** End Patch\n"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "src/app.py"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_pipeline._interpreter_reads_program_from_stdin",
+      "entry": "gobby.hooks._normalization_pipeline._interpreter_reads_program_from_stdin",
+      "input": {
+        "args": [
+          [
+            "python3",
+            "-"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_pipeline._stdin_program_interpreter",
+      "entry": "gobby.hooks._normalization_pipeline._stdin_program_interpreter",
+      "input": {
+        "args": [
+          [
+            "python3",
+            "-"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": "python3"
+    },
+    {
+      "id": "realistic-hooks._normalization_redirects._extract_redirection_paths",
+      "entry": "gobby.hooks._normalization_redirects._extract_redirection_paths",
+      "input": {
+        "args": [
+          [
+            "python",
+            "build.py",
+            ">",
+            "out.log",
+            "2>",
+            "errors.log"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "out.log",
+        "errors.log"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_redirects.is_benign_redirect_target",
+      "entry": "gobby.hooks._normalization_redirects.is_benign_redirect_target",
+      "input": {
+        "args": [
+          "/dev/null"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_segments._pipeline_filter_output_line_bound",
+      "entry": "gobby.hooks._normalization_segments._pipeline_filter_output_line_bound",
+      "input": {
+        "args": [
+          [
+            "head",
+            "-n",
+            "20"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": 20
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._apply_cd",
+      "entry": "gobby.hooks._normalization_shell._apply_cd",
+      "input": {
+        "args": [
+          null,
+          "src/minified.py"
+        ],
+        "kwargs": {}
+      },
+      "expect": "src/minified.py"
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._cached_substitution_end",
+      "entry": "gobby.hooks._normalization_shell._cached_substitution_end",
+      "input": {
+        "args": [
+          "     { :; }; echo $(f6() { :; }; echo $(f5() { :; }; echo $(f4() { :; }; echo $(f3() { :; }; echo $(f2() { :; }; echo $(f1() { :; }; echo $(f0() { :; }; echo $(p0() { echo 0; };      { echo 1; };      { echo 2; };      { echo 3; };      { echo 4; };      { echo 5; };      { echo 6; };      { echo 7; };      { echo 8; };      { echo 9; };       { echo 10; };       { echo 11; };       { echo 12; };       { echo 13; };       { echo 14; };       { echo 15; };       { echo 16; };       { echo 17; };       { echo 18; };       { echo 19; };       { echo 20; };       { echo 21; };       { echo 22; };       { echo 23; };       { echo 24; };       { echo 25; };       { echo 26; };       { echo 27; };       { echo 28; };       { echo 29; };       { echo 30; };       { echo 31; };       { echo 32; };       { echo 33; };       { echo 34; };       { echo 35; };       { echo 36; };       { echo 37; };       { echo 38; };       { echo 39; };       { echo 40; };       { echo 41; };       { echo 42; };       { echo 43; };       { echo 44; };       { echo 45; };       { echo 46; };       { echo 47; };       { echo 48; };       { echo 49; };       { echo 50; };       { echo 51; };       { echo 52; };       { echo 53; };       { echo 54; };       { echo 55; };       { echo 56; };       { echo 57; };       { echo 58; };       { echo 59; };       { echo 60; };       { echo 61; };       { echo 62; };       { echo 63; };       { echo 64; };       { echo 65; };       { echo 66; };       { echo 67; };       { echo 68; };       { echo 69; };       { echo 70; };       { echo 71; };       { echo 72; };       { echo 73; };       { echo 74; };       { echo 75; };       { echo 76; };       { echo 77; };       { echo 78; };       { echo 79; };       { echo 80; };       { echo 81; };       { echo 82; };       { echo 83; };       { echo 84; };       { echo 85; };       { echo 86; };       { echo 87; };       { echo 88; };       { echo 89; };       { echo 90; };       { echo 91; };       { echo 92; };       { echo 93; };       { echo 94; };       { echo 95; };       { echo 96; };       { echo 97; };       { echo 98; };       { echo 99; };        { echo 100; };        { echo 101; };        { echo 102; };        { echo 103; };        { echo 104; };        { echo 105; };        { echo 106; };        { echo 107; };        { echo 108; };        { echo 109; };        { echo 110; };        { echo 111; };        { echo 112; };        { echo 113; };        { echo 114; };        { echo 115; };        { echo 116; };        { echo 117; };        { echo 118; };        { echo 119; };        { echo 120; };        { echo 121; };        { echo 122; };        { echo 123; };        { echo 124; };        { echo 125; };        { echo 126; };        { echo 127; };        { echo 128; };        { echo 129; };        { echo 130; };        { echo 131; };        { echo 132; };        { echo 133; };        { echo 134; };        { echo 135; };        { echo 136; };        { echo 137; };        { echo 138; };        { echo 139; };        { echo 140; };        { echo 141; };        { echo 142; };        { echo 143; };        { echo 144; };        { echo 145; };        { echo 146; };        { echo 147; };        { echo 148; };        { echo 149; };        { echo 150; };        { echo 151; };        { echo 152; };        { echo 153; };        { echo 154; };        { echo 155; };        { echo 156; };        { echo 157; };        { echo 158; };        { echo 159; };        { echo 160; };        { echo 161; };        { echo 162; };        { echo 163; };        { echo 164; };        { echo 165; };        { echo 166; };        { echo 167; };        { echo 168; };        { echo 169; };        { echo 170; };        { echo 171; };        { echo 172; };        { echo 173; };        { echo 174; };        { echo 175; };        { echo 176; };        { echo 177; };        { echo 178; };        { echo 179; };        { echo 180; };        { echo 181; };        { echo 182; };        { echo 183; };        { echo 184; };        { echo 185; };        { echo 186; };        { echo 187; };        { echo 188; };        { echo 189; };        { echo 190; };        { echo 191; };        { echo 192; };        { echo 193; };        { echo 194; };        { echo 195; };        { echo 196; };        { echo 197; };        { echo 198; };        { echo 199; };        { echo 200; };        { echo 201; };        { echo 202; };        { echo 203; };        { echo 204; };        { echo 205; };        { echo 206; };        { echo 207; };        { echo 208; };        { echo 209; };        { echo 210; };        { echo 211; };        { echo 212; };        { echo 213; };        { echo 214; };        { echo 215; };        { echo 216; };        { echo 217; };        { echo 218; };        { echo 219; };        { echo 220; };        { echo 221; };        { echo 222; };        { echo 223; };        { echo 224; };        { echo 225; };        { echo 226; };        { echo 227; };        { echo 228; };        { echo 229; };        { echo 230; };        { echo 231; };        { echo 232; };        { echo 233; };        { echo 234; };        { echo 235; };        { echo 236; };        { echo 237; };        { echo 238; };        { echo 239; };        { echo 240; };        { echo 241; };        { echo 242; };        { echo 243; };        { echo 244; };        { echo 245; };        { echo 246; };        { echo 247; };        { echo 248; };        { echo 249; };        { echo 250; };        { echo 251; };        { echo 252; };        { echo 253; };        { echo 254; };        { echo 255; };        { echo 256; };        { echo 257; };        { echo 258; };        { echo 259; };        { echo 260; };        { echo 261; };        { echo 262; };        { echo 263; };        { echo 264; };        { echo 265; };        { echo 266; };        { echo 267; };        { echo 268; };        { echo 269; };        { echo 270; };        { echo 271; };        { echo 272; };        { echo 273; };        { echo 274; };        { echo 275; };        { echo 276; };        { echo 277; };        { echo 278; };        { echo 279; };        { echo 280; };        { echo 281; };        { echo 282; };        { echo 283; };        { echo 284; };        { echo 285; };        { echo 286; };        { echo 287; };        { echo 288; };        { echo 289; };        { echo 290; };        { echo 291; };        { echo 292; };        { echo 293; };        { echo 294; };        { echo 295; };        { echo 296; };        { echo 297; };        { echo 298; };        { echo 299; }; gem push x))))))))",
+          160,
+          false,
+          8
+        ],
+        "kwargs": {}
+      },
+      "expect": 6550
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._compound_word_end",
+      "entry": "gobby.hooks._normalization_shell._compound_word_end",
+      "input": {
+        "args": [
+          "(case x in x) gem push x;; esac)",
+          0
+        ],
+        "kwargs": {
+          "word_start": true
+        }
+      },
+      "expect": 32
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._contains_unexpanded_shell_reference",
+      "entry": "gobby.hooks._normalization_shell._contains_unexpanded_shell_reference",
+      "input": {
+        "args": [
+          "$(git rev-parse --show-toplevel)/src/app.py"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._double_bracket_end",
+      "entry": "gobby.hooks._normalization_shell._double_bracket_end",
+      "input": {
+        "args": [
+          "[[ -f src/app.py ]] && cat src/app.py",
+          0
+        ],
+        "kwargs": {}
+      },
+      "expect": 19
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._find_substitution_end",
+      "entry": "gobby.hooks._normalization_shell._find_substitution_end",
+      "input": {
+        "args": [
+          "(case x in x) gem push x;; esac)",
+          1,
+          false,
+          0
+        ],
+        "kwargs": {}
+      },
+      "expect": 31
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._is_env_assignment",
+      "entry": "gobby.hooks._normalization_shell._is_env_assignment",
+      "input": {
+        "args": [
+          "f=src/long.py"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._join_cwd",
+      "entry": "gobby.hooks._normalization_shell._join_cwd",
+      "input": {
+        "args": [
+          "/srv/app",
+          "README.md"
+        ],
+        "kwargs": {}
+      },
+      "expect": "/srv/app/README.md"
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._literal_cd_target",
+      "entry": "gobby.hooks._normalization_shell._literal_cd_target",
+      "input": {
+        "args": [
+          [
+            "cd",
+            "src"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": "src"
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._looks_file_like",
+      "entry": "gobby.hooks._normalization_shell._looks_file_like",
+      "input": {
+        "args": [
+          "src/minified.py"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._looks_path_target",
+      "entry": "gobby.hooks._normalization_shell._looks_path_target",
+      "input": {
+        "args": [
+          "src/long.py"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._quoted_substitution_close",
+      "entry": "gobby.hooks._normalization_shell._quoted_substitution_close",
+      "input": {
+        "args": [
+          "case x in \"$(echo x)\" | y) gem push x;; esac",
+          11
+        ],
+        "kwargs": {}
+      },
+      "expect": 19
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._quoted_tilde_word",
+      "entry": "gobby.hooks._normalization_shell._quoted_tilde_word",
+      "input": {
+        "args": [
+          "~/notes.md",
+          "'~/notes.md'"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._rebase_navigation_shell_paths",
+      "entry": "gobby.hooks._normalization_shell._rebase_navigation_shell_paths",
+      "input": {
+        "args": [
+          [
+            "src/minified.py"
+          ],
+          null
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "src/minified.py"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._rebase_shell_path",
+      "entry": "gobby.hooks._normalization_shell._rebase_shell_path",
+      "input": {
+        "args": [
+          "$UNRESOLVED",
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": "$UNRESOLVED"
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._rebase_shell_paths",
+      "entry": "gobby.hooks._normalization_shell._rebase_shell_paths",
+      "input": {
+        "args": [
+          [
+            "$UNRESOLVED"
+          ],
+          ""
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "$UNRESOLVED"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._shell_positional_args",
+      "entry": "gobby.hooks._normalization_shell._shell_positional_args",
+      "input": {
+        "args": [
+          [
+            "cat",
+            "src/minified.py"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "src/minified.py"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._strip_shell_wrappers",
+      "entry": "gobby.hooks._normalization_shell._strip_shell_wrappers",
+      "input": {
+        "args": [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "git",
+        "push",
+        "origin",
+        "main"
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._substitution_end",
+      "entry": "gobby.hooks._normalization_shell._substitution_end",
+      "input": {
+        "args": [
+          "(case x in x) gem push x;; esac)",
+          1,
+          false,
+          0
+        ],
+        "kwargs": {}
+      },
+      "expect": 31
+    },
+    {
+      "id": "realistic-hooks._normalization_shell._substitution_output_redirects",
+      "entry": "gobby.hooks._normalization_shell._substitution_output_redirects",
+      "input": {
+        "args": [
+          "echo $(cat src/app.py > out.txt)",
+          5,
+          28
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [
+          {
+            "value": ">",
+            "quoted": false
+          },
+          [
+            22,
+            23
+          ]
+        ],
+        [
+          {
+            "value": "out.",
+            "quoted": false
+          },
+          [
+            24,
+            28
+          ]
+        ]
+      ]
+    },
+    {
+      "id": "realistic-hooks._normalization_shell.backtick_body",
+      "entry": "gobby.hooks._normalization_shell.backtick_body",
+      "input": {
+        "args": [
+          "case y in y) gem push x;; esac"
+        ],
+        "kwargs": {}
+      },
+      "expect": "case y in y) gem push x;; esac"
+    },
+    {
+      "id": "realistic-hooks._normalization_shell.is_dynamic_program_word",
+      "entry": "gobby.hooks._normalization_shell.is_dynamic_program_word",
+      "input": {
+        "args": [
+          "$EDITOR"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._normalization_shell_stdin._literal_printf",
+      "entry": "gobby.hooks._normalization_shell_stdin._literal_printf",
+      "input": {
+        "args": [
+          [
+            "%s\\n",
+            "hello"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": "hello\n"
+    },
+    {
+      "id": "realistic-hooks._normalization_shell_stdin._safe_stdin_options",
+      "entry": "gobby.hooks._normalization_shell_stdin._safe_stdin_options",
+      "input": {
+        "args": [
+          [
+            "-s"
+          ],
+          "bash"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks._provider_shell_syntax._group_spans",
+      "entry": "gobby.hooks._provider_shell_syntax._group_spans",
+      "input": {
+        "args": [
+          "(cd src && claude -p hi)"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        {},
+        {},
+        {},
+        {}
+      ]
+    },
+    {
+      "id": "realistic-hooks._provider_shell_syntax._prepare",
+      "entry": "gobby.hooks._provider_shell_syntax._prepare",
+      "input": {
+        "args": [
+          "claude -p hi",
+          0
+        ],
+        "kwargs": {
+          "data": false
+        }
+      },
+      "expect": [
+        "claude -p hi",
+        []
+      ]
+    },
+    {
+      "id": "realistic-hooks._shell_execution_words._split_env_argv",
+      "entry": "gobby.hooks._shell_execution_words._split_env_argv",
+      "input": {
+        "args": [
+          "-i PATH=/usr/bin make test"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "-i",
+        "PATH=/usr/bin",
+        "make",
+        "test"
+      ]
+    },
+    {
+      "id": "realistic-hooks._shell_syntax._compound_comparison_operators",
+      "entry": "gobby.hooks._shell_syntax._compound_comparison_operators",
+      "input": {
+        "args": [
+          "echo $((count<3 && limit>1))",
+          5,
+          28
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        13,
+        16,
+        17,
+        24
+      ]
+    },
+    {
+      "id": "realistic-hooks._shell_syntax._scan_unquoted_shell_operator",
+      "entry": "gobby.hooks._shell_syntax._scan_unquoted_shell_operator",
+      "input": {
+        "args": [
+          "git commit -m 'x y' && gem push x",
+          20
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "&&",
+        2
+      ]
+    },
+    {
+      "id": "realistic-hooks._shell_syntax.joined_prefix_end",
+      "entry": "gobby.hooks._shell_syntax.joined_prefix_end",
+      "input": {
+        "args": [
+          "git commit -m 'x y' && gem push x",
+          20,
+          "&&"
+        ],
+        "kwargs": {}
+      },
+      "expect": 22
+    },
+    {
+      "id": "realistic-hooks._shell_syntax.skip_line_continuations",
+      "entry": "gobby.hooks._shell_syntax.skip_line_continuations",
+      "input": {
+        "args": [
+          "git commit -m 'x y' && gem push x",
+          21
+        ],
+        "kwargs": {}
+      },
+      "expect": 21
+    },
+    {
+      "id": "realistic-hooks.code_navigation._is_source_file_path",
+      "entry": "gobby.hooks.code_navigation._is_source_file_path",
+      "input": {
+        "args": [
+          "src/minified.py"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks.code_navigation._last_count_option",
+      "entry": "gobby.hooks.code_navigation._last_count_option",
+      "input": {
+        "args": [
+          [
+            "head",
+            "-n",
+            "20"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "n",
+        "20"
+      ]
+    },
+    {
+      "id": "realistic-hooks.code_navigation._literal_sed_window_line_count",
+      "entry": "gobby.hooks.code_navigation._literal_sed_window_line_count",
+      "input": {
+        "args": [
+          "1,40p",
+          true
+        ],
+        "kwargs": {}
+      },
+      "expect": 40
+    },
+    {
+      "id": "realistic-hooks.code_navigation._may_hold_source",
+      "entry": "gobby.hooks.code_navigation._may_hold_source",
+      "input": {
+        "args": [
+          "."
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks.code_navigation._sed_has_quiet_option",
+      "entry": "gobby.hooks.code_navigation._sed_has_quiet_option",
+      "input": {
+        "args": [
+          [
+            "sed",
+            "-n",
+            "1,40p",
+            "src/app.py"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks.code_navigation.count_option_byte_count",
+      "entry": "gobby.hooks.code_navigation.count_option_byte_count",
+      "input": {
+        "args": [
+          [
+            "head",
+            "-c",
+            "200",
+            "data/input.bin"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": 200
+    },
+    {
+      "id": "realistic-hooks.code_navigation.count_option_line_count",
+      "entry": "gobby.hooks.code_navigation.count_option_line_count",
+      "input": {
+        "args": [
+          [
+            "head",
+            "-n",
+            "20"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": 20
+    },
+    {
+      "id": "realistic-hooks.code_navigation.gcode_navigation_metadata",
+      "entry": "gobby.hooks.code_navigation.gcode_navigation_metadata",
+      "input": {
+        "args": [
+          [
+            "gcode",
+            "outline",
+            "src/long.py"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "read",
+        {
+          "canonical_code_index_navigation": true,
+          "canonical_code_index_command": "gcode outline",
+          "canonical_code_navigation_action": "read"
+        }
+      ]
+    },
+    {
+      "id": "realistic-hooks.code_navigation.sed_line_count",
+      "entry": "gobby.hooks.code_navigation.sed_line_count",
+      "input": {
+        "args": [
+          [
+            "sed",
+            "-n",
+            "1,40p",
+            "src/app.py"
+          ],
+          [
+            "1,40p",
+            "src/app.py"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": 40
+    },
+    {
+      "id": "realistic-hooks.code_navigation.shell_command_name",
+      "entry": "gobby.hooks.code_navigation.shell_command_name",
+      "input": {
+        "args": [
+          "git"
+        ],
+        "kwargs": {}
+      },
+      "expect": "git"
+    },
+    {
+      "id": "realistic-hooks.code_navigation.source_read_navigation_metadata",
+      "entry": "gobby.hooks.code_navigation.source_read_navigation_metadata",
+      "input": {
+        "args": [
+          [
+            "src/minified.py"
+          ]
+        ],
+        "kwargs": {
+          "line_count": null,
+          "byte_count": null,
+          "read_scope": "full_file",
+          "defer_unresolved": true
+        }
+      },
+      "expect": {
+        "canonical_code_navigation_action": "read",
+        "canonical_code_navigation_broad": true,
+        "canonical_narrow_source_context": false,
+        "canonical_source_read_scope": "full_file"
+      }
+    },
+    {
+      "id": "realistic-hooks.code_navigation_recovery._gcode_error_codes",
+      "entry": "gobby.hooks.code_navigation_recovery._gcode_error_codes",
+      "input": {
+        "args": [
+          "{\"error\":\"not_indexed\",\"message\":\"path outside index\"}"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "not_indexed"
+      ]
+    },
+    {
+      "id": "realistic-hooks.code_navigation_recovery.gcode_targets",
+      "entry": "gobby.hooks.code_navigation_recovery.gcode_targets",
+      "input": {
+        "args": [
+          [
+            "gcode",
+            "outline",
+            "src/long.py"
+          ],
+          "gcode outline"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "src/long.py"
+      ]
+    },
+    {
+      "id": "realistic-hooks.provider_launch_guard._administration",
+      "entry": "gobby.hooks.provider_launch_guard._administration",
+      "input": {
+        "args": [
+          [
+            "-p",
+            "hi"
+          ],
+          "claude"
+        ],
+        "kwargs": {}
+      },
+      "expect": false
+    },
+    {
+      "id": "realistic-hooks.provider_launch_guard._cat_stdin",
+      "entry": "gobby.hooks.provider_launch_guard._cat_stdin",
+      "input": {
+        "args": [
+          [
+            "cat"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks.provider_launch_guard._help_request",
+      "entry": "gobby.hooks.provider_launch_guard._help_request",
+      "input": {
+        "args": [
+          [
+            "--help"
+          ],
+          "claude"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks.provider_launch_guard._python_name",
+      "entry": "gobby.hooks.provider_launch_guard._python_name",
+      "input": {
+        "args": [
+          "python3"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-hooks.provider_launch_guard._python_program",
+      "entry": "gobby.hooks.provider_launch_guard._python_program",
+      "input": {
+        "args": [
+          [
+            "python3",
+            "-c",
+            "print(1)"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "print(1)",
+        false,
+        []
+      ]
+    },
+    {
+      "id": "realistic-hooks.provider_launch_guard._shell_script",
+      "entry": "gobby.hooks.provider_launch_guard._shell_script",
+      "input": {
+        "args": [
+          [
+            "sh",
+            "-c",
+            "cat src/long.py"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": "cat src/long.py"
+    },
+    {
+      "id": "realistic-hooks.provider_launch_guard._shell_stdin",
+      "entry": "gobby.hooks.provider_launch_guard._shell_stdin",
+      "input": {
+        "args": [
+          [
+            "bash"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-mcp_proxy._call_tool_wrapper._has_top_level_wrapper_value",
+      "entry": "gobby.mcp_proxy._call_tool_wrapper._has_top_level_wrapper_value",
+      "input": {
+        "args": [
+          "{\"task_id\": \"#25939\"}"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-mcp_proxy._call_tool_wrapper._string_refusal_code",
+      "entry": "gobby.mcp_proxy._call_tool_wrapper._string_refusal_code",
+      "input": {
+        "args": [
+          "[\"refresh\", true]"
+        ],
+        "kwargs": {}
+      },
+      "expect": "non_object_json"
+    },
+    {
+      "id": "realistic-utils.python_source.parse_agent_source",
+      "entry": "gobby.utils.python_source.parse_agent_source",
+      "input": {
+        "args": [
+          "print(1)"
+        ],
+        "kwargs": {}
+      },
+      "expect": "Module(body=[Expr(value=Call(func=Name(id='print', ctx=Load()), args=[Constant(value=1)]))])"
+    },
+    {
+      "id": "realistic-workflows.engine.command_environment._assignment_name",
+      "entry": "gobby.workflows.engine.command_environment._assignment_name",
+      "input": {
+        "args": [
+          "GOBBY_VAR=1"
+        ],
+        "kwargs": {}
+      },
+      "expect": "GOBBY_VAR"
+    },
+    {
+      "id": "realistic-workflows.engine.command_environment._literal_arithmetic",
+      "entry": "gobby.workflows.engine.command_environment._literal_arithmetic",
+      "input": {
+        "args": [
+          "2+3"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching._decoded_stages",
+      "entry": "gobby.workflows.engine.command_matching._decoded_stages",
+      "input": {
+        "args": [
+          "git push origin main",
+          {
+            "GOBBY_PS_SHIM": "ps"
+          }
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ]
+        ],
+        {
+          "GOBBY_PS_SHIM": "ps"
+        }
+      ]
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching._mask_quoted_command_boundaries",
+      "entry": "gobby.workflows.engine.command_matching._mask_quoted_command_boundaries",
+      "input": {
+        "args": [
+          "git push origin main"
+        ],
+        "kwargs": {}
+      },
+      "expect": "git push origin main"
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching._selector_subjects",
+      "entry": "gobby.workflows.engine.command_matching._selector_subjects",
+      "input": {
+        "args": [
+          "git push origin main",
+          false,
+          true
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [
+          "git push origin main",
+          "git push origin main"
+        ],
+        "git push origin main"
+      ]
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching._shell_input_scripts",
+      "entry": "gobby.workflows.engine.command_matching._shell_input_scripts",
+      "input": {
+        "args": [
+          "echo 'cd src && ls' | bash"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "cd src && ls",
+        "cd src && ls"
+      ]
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching._substitution_spans",
+      "entry": "gobby.workflows.engine.command_matching._substitution_spans",
+      "input": {
+        "args": [
+          "echo $(date) and `whoami`"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "date",
+        "whoami"
+      ]
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching._wrapper_scripts",
+      "entry": "gobby.workflows.engine.command_matching._wrapper_scripts",
+      "input": {
+        "args": [
+          [
+            [
+              "bash",
+              "-c",
+              "gem push x"
+            ]
+          ]
+        ],
+        "kwargs": {
+          "resolve_uv_run": true
+        }
+      },
+      "expect": [
+        "gem push x"
+      ]
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching.mask_quoted_spans",
+      "entry": "gobby.workflows.engine.command_matching.mask_quoted_spans",
+      "input": {
+        "args": [
+          "case x in x) gem push x"
+        ],
+        "kwargs": {}
+      },
+      "expect": "case x in x) gem push x"
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching_uv._language_stage",
+      "entry": "gobby.workflows.engine.command_matching_uv._language_stage",
+      "input": {
+        "args": [
+          [
+            "python",
+            "-"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching_uv._node_stdin_program",
+      "entry": "gobby.workflows.engine.command_matching_uv._node_stdin_program",
+      "input": {
+        "args": [
+          [
+            "node",
+            "-"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching_uv._selects_module",
+      "entry": "gobby.workflows.engine.command_matching_uv._selects_module",
+      "input": {
+        "args": [
+          "-m"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching_uv._tool_argv",
+      "entry": "gobby.workflows.engine.command_matching_uv._tool_argv",
+      "input": {
+        "args": [
+          [
+            "uvx",
+            "ruff",
+            "check",
+            "src"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "uvx",
+        "ruff",
+        "check",
+        "src"
+      ]
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching_uv._uv_run_argvs",
+      "entry": "gobby.workflows.engine.command_matching_uv._uv_run_argvs",
+      "input": {
+        "args": [
+          "uv",
+          [
+            "run",
+            "--directory",
+            "../service",
+            "ruff",
+            "check"
+          ]
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        [
+          "ruff",
+          "check"
+        ]
+      ]
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching_variables._expand",
+      "entry": "gobby.workflows.engine.command_matching_variables._expand",
+      "input": {
+        "args": [
+          "git",
+          {
+            "GOBBY_PS_SHIM": "ps"
+          }
+        ],
+        "kwargs": {}
+      },
+      "expect": "git"
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching_variables.assignment_prefix",
+      "entry": "gobby.workflows.engine.command_matching_variables.assignment_prefix",
+      "input": {
+        "args": [
+          {
+            "FOO": "bar",
+            "BAZ": "qux value"
+          }
+        ],
+        "kwargs": {}
+      },
+      "expect": "FOO=bar; BAZ='qux value'; "
+    },
+    {
+      "id": "realistic-workflows.engine.command_matching_variables.expand_stage",
+      "entry": "gobby.workflows.engine.command_matching_variables.expand_stage",
+      "input": {
+        "args": [
+          [
+            "git",
+            "push",
+            "origin",
+            "main"
+          ],
+          {
+            "GOBBY_PS_SHIM": "ps"
+          }
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "git",
+        "push",
+        "origin",
+        "main"
+      ]
+    },
+    {
+      "id": "realistic-workflows.selectors.agent_scope_matches",
+      "entry": "gobby.workflows.selectors.agent_scope_matches",
+      "input": {
+        "args": [
+          null,
+          "synthetic-agent"
+        ],
+        "kwargs": {}
+      },
+      "expect": true
+    },
+    {
+      "id": "realistic-workflows.selectors.parse_selector",
+      "entry": "gobby.workflows.selectors.parse_selector",
+      "input": {
+        "args": [
+          "tag:python"
+        ],
+        "kwargs": {}
+      },
+      "expect": [
+        "tag",
+        "python"
+      ]
     }
   ]
 }

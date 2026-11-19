@@ -320,7 +320,7 @@ def _assert_scenarios_present(cases: list[dict[str, Any]], required: Iterable[st
 
 def _effect_types(case: dict[str, Any]) -> set[str]:
     types = {effect["type"] for rule in case["rules"] for effect in rule["effects"]}
-    types.update(entry["type"] for entry in case["expect"]["effect_log"] if "type" in entry)
+    types.update(entry["effect"] for entry in case["expect"]["effect_log"] if "effect" in entry)
     return types
 
 
@@ -505,8 +505,30 @@ def _display_path(path: Path) -> str:
         return path.name
 
 
+def _names_field_in_call(node: ast.Call, field: str) -> bool:
+    """True when a call passes ``field`` as a keyword, as a ``**`` dict key or as a setattr name.
+
+    Only literal names are seen: a field name built at run time is not detected.
+    """
+    if any(keyword.arg == field for keyword in node.keywords):
+        return True
+    for keyword in node.keywords:
+        if (
+            keyword.arg is None
+            and isinstance(keyword.value, ast.Dict)
+            and any(
+                isinstance(key, ast.Constant) and key.value == field for key in keyword.value.keys
+            )
+        ):
+            return True
+    callee = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+    return callee in ("setattr", "__setattr__") and any(
+        isinstance(arg, ast.Constant) and arg.value == field for arg in node.args
+    )
+
+
 def _writers_of(field: str, paths: Iterable[Path] | None = None) -> list[str]:
-    """Return ``file:line`` for each call keyword or attribute assignment that names ``field``.
+    """Return ``file:line`` for each call that names ``field`` or attribute assignment to it.
 
     ``paths`` defaults to every module under ``src/gobby``.
     """
@@ -517,7 +539,7 @@ def _writers_of(field: str, paths: Iterable[Path] | None = None) -> list[str]:
         location = _display_path(path)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
-                if any(keyword.arg == field for keyword in node.keywords):
+                if _names_field_in_call(node, field):
                     found.append(f"{location}:{node.lineno}")
             elif isinstance(node, ast.Assign | ast.AugAssign | ast.AnnAssign):
                 targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -560,11 +582,34 @@ def test_corpus_has_required_scenarios() -> None:
     _assert_scenarios_present(cases, REQUIRED_SCENARIO_IDS)
 
 
+def _needs_posix_shell(case: dict[str, Any]) -> bool:
+    """True for a seam caller that runs an absolute POSIX shell binary as its command."""
+    command = case.get("input", {}).get("command")
+    return (
+        case.get("kind") == rules_recorder.CALLER_KIND
+        and isinstance(command, list)
+        and bool(command)
+        and str(command[0]).startswith("/bin/")
+    )
+
+
 def test_python_engine_replays_corpus() -> None:
     cases = _load_committed_cases()
     _assert_enough(cases)
+    if sys.platform == "win32":
+        cases = [case for case in cases if not _needs_posix_shell(case)]
     mismatched = [case["id"] for case in cases if rules_corpus.replay_case(case) != case["expect"]]
     assert not mismatched, f"engine output differs from the expect block for: {mismatched}"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="the seam caller runs /bin/sh, which Windows lacks"
+)
+def test_posix_shell_seam_callers_replay() -> None:
+    cases = [case for case in _load_committed_cases() if _needs_posix_shell(case)]
+    assert cases, "no seam-caller case runs a POSIX shell"
+    mismatched = [case["id"] for case in cases if rules_corpus.replay_case(case) != case["expect"]]
+    assert not mismatched, f"shell seam callers differ from the expect block for: {mismatched}"
 
 
 def test_corpus_covers_hardcoded_behavior_and_response_fields() -> None:
@@ -857,7 +902,11 @@ def _owner_findings(manifest: dict[str, Any]) -> list[str]:
     if not owners:
         return [f"the manifest names no {RESPONSE_FIELD_OWNER_KEY}"]
     findings: list[str] = []
+    if owners != RESPONSE_FIELD_OWNERS:
+        findings.append(f"manifest owners {owners} differ from the owner constant")
     required = set(manifest["required"]["response_field"])
+    if required != set(ENGINE_RESPONSE_FIELDS):
+        findings.append(f"required fields differ from the rule-pass set: {sorted(required)}")
     overlap = sorted(required & set(owners))
     if overlap:
         findings.append(f"fields both required and owned: {overlap}")
