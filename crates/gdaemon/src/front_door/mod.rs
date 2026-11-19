@@ -213,11 +213,14 @@ const FORWARDING_HEADERS: [&str; 6] = [
 /// Replace every forwarding header with the transport's own view: the peer's
 /// IP in `X-Forwarded-For` and the scheme in `X-Forwarded-Proto`. A client
 /// `Connection` field naming a forwarding header is dropped from it, or the
-/// downstream hop-by-hop strip would delete the observed values.
+/// downstream hop-by-hop strip would delete the observed values. Client-supplied
+/// identity headers are dropped too, so only authentication writes them; the
+/// front-door proof stays for the checks that run before authentication.
 fn observe_peer(headers: &mut HeaderMap, peer: SocketAddr, https: bool) {
     for name in FORWARDING_HEADERS {
         headers.remove(name);
     }
+    gobby_core::family::strip_identity_entry_headers(headers);
     let nominations: Vec<String> = headers
         .get_all(CONNECTION)
         .iter()

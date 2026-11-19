@@ -28,12 +28,8 @@ const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 /// Node mode has no local hub authority, even if database credentials exist.
 pub use gobby_core::bootstrap::RunMode as LeaseMode;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LeaseState {
-    Standby,
-    Active,
-    Lost,
-}
+/// The lease state families read through their context is the one this authority publishes.
+pub use gobby_core::family::LeaseState;
 
 /// The epoch and signing secret rotate together at successful acquisition.
 /// Intentionally has no Debug implementation: the signing secret is sensitive.

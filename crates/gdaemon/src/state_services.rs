@@ -123,8 +123,8 @@ pub(crate) fn report_terminal_host_failure(
     ctx: &gobby_core::family::FamilyContext,
     error: &str,
 ) -> String {
-    let _ = (ctx, error);
-    String::new()
+    ctx.degraded().mark("gterm_host");
+    format!("gdaemon terminal host: {error}")
 }
 
 #[cfg(test)]

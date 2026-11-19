@@ -19,7 +19,8 @@ use axum::http::{Method, Request, Response, StatusCode};
 use bytes::Bytes;
 use gobby_core::bootstrap::RouteBackend;
 use gobby_core::family::{
-    ConfigEpoch, ContextParts, DegradedServices, Extensions, FamilyContext, config_channel,
+    ConfigEpoch, ContextParts, DegradedServices, Extensions, FamilyContext, IDENTITY_ENTRY_HEADERS,
+    config_channel,
 };
 use gobby_core::route_family::{
     BoxFut, Credential, Gate, Kind, PathMatch, PeerRule, RouteClaim, RouteFamily,
@@ -718,6 +719,27 @@ fn front_door_handle_has_no_hand_wired_surface() {
             "the backend door still calls {call} directly"
         );
     }
+}
+
+#[test]
+fn identity_header_names_agree() {
+    let source = include_str!("../src/front_door/auth.rs");
+    let (_, list) = source
+        .split_once("const IDENTITY_HEADERS: [&str; 4] = [")
+        .expect("authentication names the headers it writes");
+    let (list, _) = list.split_once("];").expect("the header list ends");
+    let written: Vec<&str> = list
+        .split(',')
+        .map(|item| item.trim().trim_matches('"'))
+        .filter(|item| !item.is_empty())
+        .collect();
+
+    let mut expected: Vec<&str> = IDENTITY_ENTRY_HEADERS.to_vec();
+    expected.push("x-gobby-front-door");
+    assert_eq!(
+        written, expected,
+        "authentication writes the identity headers the entry strip removes, then the proof"
+    );
 }
 
 #[tokio::test]

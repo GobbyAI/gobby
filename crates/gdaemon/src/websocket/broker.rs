@@ -432,7 +432,8 @@ impl BroadcastBroker {
     }
 }
 
-/// The family frame publisher over a broker: each publication becomes one batch.
+/// The family frame publisher over a broker: each publication becomes one batch. A
+/// batch larger than a whole connection queue is refused.
 #[derive(Clone)]
 pub struct BroadcastBrokerPublisher {
     broker: BroadcastBroker,
@@ -446,7 +447,8 @@ impl BroadcastBrokerPublisher {
 
 impl FramePublisher for BroadcastBrokerPublisher {
     fn publish_frames(&self, filter: &Value, frames: Vec<String>) -> Result<(), PublishRefused> {
-        let _ = (&self.broker, filter, frames);
+        let batch = Batch::new(frames).map_err(|BatchTooLarge| PublishRefused)?;
+        self.broker.publish(filter, &batch);
         Ok(())
     }
 }

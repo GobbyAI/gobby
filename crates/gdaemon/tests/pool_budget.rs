@@ -1,13 +1,14 @@
 //! The native pool budget's inputs, read from the isolated test hub through a pool that
 //! runs as the daemon's runtime role in a schema of its own.
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 use gobby_core::database_concurrency::PostgresCapacity;
 use gobby_core::database_concurrency::pool_budget::StoredKeys;
 use gobby_core::postgres_pool::{Pool, PoolSettings};
-use gobby_daemon::native_pools::read_budget_inputs;
+use gobby_daemon::native_pools::{build_serve, build_set, read_budget_inputs};
 use tokio_postgres::NoTls;
 use uuid::Uuid;
 
@@ -107,4 +108,66 @@ async fn reads_capacity_and_keys_from_the_hub() -> Result<()> {
         }
         Err(panic) => std::panic::resume_unwind(panic),
     }
+}
+
+/// Three tasks that each hold one checkout for `hold` on `pool`; returns how long each
+/// waited for its checkout.
+async fn three_holders(pool: Arc<Pool>, hold: Duration) -> Result<Vec<Duration>> {
+    let holders: Vec<_> = (0..3)
+        .map(|_| {
+            let pool = Arc::clone(&pool);
+            tokio::spawn(async move {
+                let asked = Instant::now();
+                let client = pool.get().await?;
+                let waited = asked.elapsed();
+                client.simple_query("SELECT 1").await?;
+                tokio::time::sleep(hold).await;
+                drop(client);
+                Ok::<Duration, anyhow::Error>(waited)
+            })
+        })
+        .collect();
+    let mut waits = Vec::with_capacity(holders.len());
+    for holder in holders {
+        waits.push(holder.await??);
+    }
+    Ok(waits)
+}
+
+#[tokio::test]
+async fn concurrent_checkouts_fit_the_share() -> Result<()> {
+    let url = std::env::var("DATABASE_URL").context("DATABASE_URL names the test hub")?;
+    let config: tokio_postgres::Config = url.parse()?;
+    ensure!(
+        config.get_dbname() == Some("gobby_test")
+            && config.get_ports() == [60892]
+            && std::env::var("GOBBY_TEST_PROTECT").as_deref() == Ok("1"),
+        "the pool share test requires the protected isolated test hub"
+    );
+    let set = build_set(&url, true)?;
+    let writes = set
+        .terminal_writes
+        .context("an owner builds the terminal writes pool")?;
+    let authority = set
+        .terminal_authority
+        .context("an owner builds the terminal authority pool")?;
+    let pools = [
+        ("serve", build_serve(&url)?, Duration::from_secs(5)),
+        ("active", set.active, Duration::from_secs(2)),
+        ("terminal writes", writes, Duration::from_secs(2)),
+        ("terminal authority", authority, Duration::from_secs(2)),
+    ];
+    let hold = Duration::from_millis(200);
+
+    for (name, pool, deadline) in pools {
+        let waits = three_holders(Arc::new(pool), hold).await?;
+
+        assert_eq!(waits.len(), 3, "{name}: every holder checked out");
+        let slowest = waits.iter().max().copied().unwrap_or_default();
+        assert!(
+            slowest < deadline,
+            "{name}: a checkout waited {slowest:?}, beyond its {deadline:?} deadline"
+        );
+    }
+    Ok(())
 }

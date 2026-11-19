@@ -7,7 +7,7 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
-use gobby_core::family::lifecycle::{JobRun, JobSink};
+use gobby_core::family::lifecycle::{JobRun, JobSink, JobStatus};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval_at, timeout};
@@ -49,6 +49,9 @@ impl Drop for Run {
 #[derive(Default)]
 pub struct HeartbeatHost {
     jobs: Vec<Job>,
+    /// Every registered job's name and interval, in registration order. It outlives
+    /// `start`, which takes the jobs themselves.
+    registered: Vec<(String, Duration)>,
     started: bool,
     running: Option<RunningHost>,
 }
@@ -68,20 +71,32 @@ impl HeartbeatHost {
         F: Fn() -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<()>> + Send + 'static,
     {
+        self.push(
+            name.into(),
+            interval,
+            Arc::new(move || Box::pin(callback())),
+        )
+    }
+
+    fn push(&mut self, name: String, interval: Duration, callback: Callback) -> Result<()> {
         if self.started {
             bail!("heartbeat registration is frozen after start");
         }
-        let name = name.into();
         if name.is_empty() || interval.is_zero() {
             bail!("heartbeat jobs require a name and a nonzero interval");
         }
-        if self.jobs.iter().any(|job| job.name == name) {
+        if self
+            .registered
+            .iter()
+            .any(|(existing, _)| *existing == name)
+        {
             bail!("duplicate heartbeat job: {name}");
         }
+        self.registered.push((name.clone(), interval));
         self.jobs.push(Job {
             name,
             interval,
-            callback: Arc::new(move || Box::pin(callback())),
+            callback,
         });
         Ok(())
     }
@@ -127,8 +142,24 @@ impl HeartbeatHost {
 /// Family jobs reach the host through the job sink, with the registration rules of
 /// [`HeartbeatHost::register`]. Starting and stopping stay on the host.
 impl JobSink for HeartbeatHost {
-    fn register_job(&mut self, _name: &str, _interval: Duration, _run: JobRun) -> Result<()> {
-        Ok(())
+    fn register_job(&mut self, name: &str, interval: Duration, run: JobRun) -> Result<()> {
+        self.push(name.to_owned(), interval, run)
+    }
+
+    fn statuses(&self) -> Vec<(String, JobStatus)> {
+        self.registered
+            .iter()
+            .map(|(name, interval)| {
+                (
+                    name.clone(),
+                    JobStatus {
+                        enabled: true,
+                        interval: *interval,
+                        last_result: None,
+                    },
+                )
+            })
+            .collect()
     }
 }
 

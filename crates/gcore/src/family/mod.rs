@@ -222,9 +222,10 @@ impl FamilyContext {
     }
 
     /// The identity that authentication wrote into the request. A request that did not
-    /// pass authentication with an API key has none.
-    pub fn caller(&self, _parts: &Parts) -> Option<CallerIdentity> {
-        None
+    /// pass authentication with an API key has none: the front door removes forged
+    /// identity headers when the request enters, so only authentication writes them.
+    pub fn caller(&self, parts: &Parts) -> Option<CallerIdentity> {
+        CallerIdentity::from_headers(&parts.headers)
     }
 
     /// The one configuration publisher.
