@@ -29,6 +29,14 @@ fn vectors(document: &Value) -> &Vec<Value> {
     document["vectors"].as_array().expect("vectors array")
 }
 
+/// The shared file's size when this floor was set: 11 accept and 42 refuse vectors (53 in all).
+const MIN_VECTOR_COUNT: usize = 53;
+
+/// Stub for the red stage: the real floor check replaces it.
+fn assert_vector_floor(vectors: &[Value]) {
+    let _ = vectors;
+}
+
 fn env_map(spec: &Value) -> HashMap<String, String> {
     spec.as_object()
         .expect("env object")
@@ -154,8 +162,15 @@ fn actual_verdict(vector: &Value, dir: &Path) -> String {
 }
 
 #[test]
+#[should_panic(expected = "vector set")]
+fn an_emptied_vector_file_fails_the_floor() {
+    assert_vector_floor(&[]);
+}
+
+#[test]
 fn every_vector_gets_the_python_verdict_and_rule() {
     let document = document();
+    assert_vector_floor(vectors(&document));
     let scratch = tempfile::tempdir().expect("scratch dir");
     let mut mismatches = Vec::new();
     for vector in vectors(&document) {

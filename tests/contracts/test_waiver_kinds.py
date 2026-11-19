@@ -120,6 +120,12 @@ def test_unknown_kind_is_a_value_error() -> None:
         parity_waivers.surface_matches(CLI_LIST, kind="grpc", key=CLI_LIST)
 
 
+@pytest.mark.parametrize("key", [MCP_HTTP, WS_EVENT, CLI_LIST])
+def test_keyed_call_without_kind_raises(key: str) -> None:
+    with pytest.raises(WaiverError, match="needs kind="):
+        parity_waivers.surface_matches(key, key=key)
+
+
 @pytest.mark.parametrize(("kind", "surface", "key", "method", "path"), CITED)
 def test_cited_case_resolves_to_its_own_waiver(
     tmp_path: Path, kind: str, surface: str, key: str, method: str, path: str

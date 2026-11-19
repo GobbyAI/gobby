@@ -751,3 +751,330 @@ mod manifest_tests {
         parse_case(&value).expect("a schema 2 case loads with an unresolved mask");
     }
 }
+
+/// The refusals of the Python loader (`tests/contracts/corpus_v3.py`), one rule per test (fix3 V27).
+#[cfg(test)]
+mod loader_rule_tests {
+    use super::{Kind, load_manifest, parse_case};
+    use serde_json::{Value, json};
+    use std::path::{Path, PathBuf};
+
+    /// A valid schema 3 HTTP case, in the key order the loader requires.
+    fn http_case() -> Value {
+        json!({
+            "schema_version": 3,
+            "name": "rule_probe",
+            "kind": "http",
+            "family": "health",
+            "backend": "up",
+            "credential": "none",
+            "ledger_key": "HTTP GET /api/health",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "response": {"status": 200, "headers": {}, "body": null},
+            "mask": []
+        })
+    }
+
+    /// A valid schema 3 case of `kind` with the given ledger key, invocation and response.
+    fn kind_case(kind: &str, key: &str, invocation: Value, response: Value) -> Value {
+        json!({
+            "schema_version": 3,
+            "name": "rule_probe",
+            "kind": kind,
+            "family": "health",
+            "backend": "up",
+            "credential": "operator",
+            "ledger_key": key,
+            "invocation": invocation,
+            "response": response,
+            "mask": []
+        })
+    }
+
+    fn refused(value: &Value) -> super::CorpusError {
+        parse_case(value).expect_err("the loader refuses this case")
+    }
+
+    fn families() -> Value {
+        json!({"health": {"parity": "proxy", "origin": "python"}})
+    }
+
+    fn write_manifest(dir: &Path, schema: u64, cases: &[&str], families: &Value) -> PathBuf {
+        let path = dir.join("manifest.json");
+        let manifest = json!({"schema_version": schema, "cases": cases, "families": families});
+        std::fs::write(&path, manifest.to_string()).expect("write manifest");
+        path
+    }
+
+    fn write_case(dir: &Path, file: &str, value: &Value) {
+        std::fs::write(dir.join(file), value.to_string()).expect("write case");
+    }
+
+    #[test]
+    fn a_waived_case_without_a_response_is_refused() {
+        // Python _check_response_presence: only a native-extension may omit its response.
+        let mut value = http_case();
+        value
+            .as_object_mut()
+            .expect("case object")
+            .shift_remove("response");
+        value["waiver"] = json!("probe.http.waived");
+        let error = refused(&value);
+        assert!(error.to_string().contains("missing response"), "{error}");
+    }
+
+    #[test]
+    fn a_native_extension_case_refuses_a_response() {
+        // Python _check_response_presence: a native-extension cannot carry a response.
+        let mut value = http_case();
+        value["waiver"] = json!("probe.http.native-extension");
+        value["native_response"] = json!({"status": 200, "headers": {}, "body": null});
+        let error = refused(&value);
+        assert!(error.to_string().contains("native-extension"), "{error}");
+    }
+
+    #[test]
+    fn a_keyed_mcp_transport_must_be_the_invocation_transport() {
+        // Python V7: "MCP stdio gobby:<tool>" names the stdio transport of its invocation.
+        let response = json!({"jsonrpc": "2.0", "id": 1, "result": {}});
+        let mismatched = kind_case(
+            "mcp",
+            "MCP stdio gobby:list_tools",
+            json!({"transport": "http", "server": "gobby", "tool": "list_tools", "arguments": {}}),
+            response.clone(),
+        );
+        let error = refused(&mismatched);
+        assert!(error.to_string().contains("transport"), "{error}");
+        let matching = kind_case(
+            "mcp",
+            "MCP HTTP gobby:list_tools",
+            json!({"transport": "http", "server": "gobby", "tool": "list_tools", "arguments": {}}),
+            response,
+        );
+        parse_case(&matching).expect("a matching transport loads");
+    }
+
+    #[test]
+    fn a_cli_key_verb_must_be_the_first_argument() {
+        let value = kind_case(
+            "cli",
+            "CLI gobby schema",
+            json!({"argv": ["other", "--help"], "stdin": null}),
+            json!({"exit": 0, "stdout": "", "stderr": ""}),
+        );
+        let error = refused(&value);
+        assert!(error.to_string().contains("argv[0]"), "{error}");
+    }
+
+    #[test]
+    fn a_ws_frame_type_must_equal_the_key_type() {
+        let value = kind_case(
+            "ws",
+            "WS message terminal_list",
+            json!({"frames": ["{\"type\": \"other\"}"]}),
+            json!(["{\"type\": \"terminal_list\"}"]),
+        );
+        let error = refused(&value);
+        assert!(error.to_string().contains("frame type"), "{error}");
+    }
+
+    #[test]
+    fn an_http_key_method_must_equal_the_request_method() {
+        let mut value = http_case();
+        value["ledger_key"] = json!("HTTP POST /api/health");
+        let error = refused(&value);
+        assert!(error.to_string().contains("method"), "{error}");
+    }
+
+    #[test]
+    fn keys_must_follow_the_declared_order() {
+        let value = json!({
+            "schema_version": 3, "name": "rule_probe", "kind": "http", "family": "health",
+            "backend": "up", "credential": "none", "ledger_key": "HTTP GET /api/health",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "mask": [], "response": {"status": 200, "headers": {}, "body": null}
+        });
+        let error = refused(&value);
+        assert!(error.to_string().contains("key order"), "{error}");
+    }
+
+    #[test]
+    fn an_unknown_key_is_refused() {
+        let mut value = http_case();
+        value["extra"] = json!(1);
+        let error = refused(&value);
+        assert!(error.to_string().contains("unknown key"), "{error}");
+    }
+
+    #[test]
+    fn a_ws_response_must_be_a_list_of_text_frames() {
+        let value = kind_case(
+            "ws",
+            "WS message terminal_list",
+            json!({"frames": ["{\"type\": \"terminal_list\"}"]}),
+            json!({"status": 200}),
+        );
+        let error = refused(&value);
+        assert!(error.to_string().contains("wrong shape"), "{error}");
+    }
+
+    #[test]
+    fn an_mcp_response_must_be_a_jsonrpc_message() {
+        let value = kind_case(
+            "mcp",
+            "MCP HTTP gobby:list_tools",
+            json!({"transport": "http", "server": "gobby", "tool": "list_tools", "arguments": {}}),
+            json!({"status": 200, "headers": {}, "body": null}),
+        );
+        let error = refused(&value);
+        assert!(error.to_string().contains("wrong shape"), "{error}");
+    }
+
+    #[test]
+    fn a_normalizer_must_name_a_field_normalizer() {
+        let value = json!({
+            "schema_version": 3, "name": "rule_probe", "kind": "http", "family": "health",
+            "backend": "up", "credential": "none", "ledger_key": "HTTP GET /api/health",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "response": {"status": 200, "headers": {}, "body": null},
+            "normalizers": {"/response/body": "bogus"},
+            "mask": []
+        });
+        let error = refused(&value);
+        assert!(error.to_string().contains("bogus"), "{error}");
+    }
+
+    #[test]
+    fn a_side_effect_must_name_a_known_channel() {
+        let value = json!({
+            "schema_version": 3, "name": "rule_probe", "kind": "http", "family": "health",
+            "backend": "up", "credential": "none", "ledger_key": "HTTP GET /api/health",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "response": {"status": 200, "headers": {}, "body": null},
+            "side_effects": [{"channel": "bogus", "match": {}}],
+            "mask": []
+        });
+        let error = refused(&value);
+        assert!(error.to_string().contains("channel"), "{error}");
+    }
+
+    #[test]
+    fn a_seed_step_is_an_http_or_sql_object() {
+        let value = json!({
+            "schema_version": 3, "name": "rule_probe", "kind": "http", "family": "health",
+            "backend": "up", "credential": "none", "ledger_key": "HTTP GET /api/health",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "seed": [{"bogus": {}}],
+            "response": {"status": 200, "headers": {}, "body": null},
+            "mask": []
+        });
+        let error = refused(&value);
+        assert!(error.to_string().contains("seed"), "{error}");
+    }
+
+    #[test]
+    fn a_db_delta_key_must_be_non_empty() {
+        let value = json!({
+            "schema_version": 3, "name": "rule_probe", "kind": "http", "family": "health",
+            "backend": "up", "credential": "none", "ledger_key": "HTTP GET /api/health",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "response": {"status": 200, "headers": {}, "body": null},
+            "db_delta": [{"table": "t", "key": [], "columns": "all", "order": "set",
+                          "recorded": {"added": [], "removed": [], "changed": []}}],
+            "mask": []
+        });
+        let error = refused(&value);
+        assert!(error.to_string().contains("key is required"), "{error}");
+    }
+
+    #[test]
+    fn a_schema_2_case_carries_no_kind() {
+        let mut value = http_case();
+        value["schema_version"] = json!(2);
+        value.as_object_mut().expect("case object").shift_remove("ledger_key");
+        let error = refused(&value);
+        assert!(error.to_string().contains("no kind"), "{error}");
+    }
+
+    #[test]
+    fn a_mcp_case_carries_no_request() {
+        let mut value = kind_case(
+            "mcp",
+            "MCP HTTP gobby:list_tools",
+            json!({"transport": "http", "server": "gobby", "tool": "list_tools", "arguments": {}}),
+            json!({"jsonrpc": "2.0", "id": 1, "result": {}}),
+        );
+        value["request"] = json!({"method": "POST", "path": "/api/mcp/gobby/tools/list_tools"});
+        let error = refused(&value);
+        assert!(error.to_string().contains("request is only for kind http"), "{error}");
+    }
+
+    #[test]
+    fn a_case_name_must_equal_its_file_stem() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut value = http_case();
+        value["name"] = json!("other_name");
+        write_case(dir.path(), "a.json", &value);
+        let path = write_manifest(dir.path(), 3, &["a.json"], &families());
+        let error = load_manifest(&path).expect_err("the name differs from the file stem");
+        assert!(error.to_string().contains("file stem"), "{error}");
+    }
+
+    #[test]
+    fn a_case_family_must_be_in_the_manifest() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut value = http_case();
+        value["name"] = json!("a");
+        write_case(dir.path(), "a.json", &value);
+        let path = write_manifest(dir.path(), 3, &["a.json"], &json!({}));
+        let error = load_manifest(&path).expect_err("the family is not in the manifest");
+        assert!(error.to_string().contains("not in the manifest"), "{error}");
+    }
+
+    #[test]
+    fn a_manifest_family_needs_a_known_parity_and_origin() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut value = http_case();
+        value["name"] = json!("a");
+        write_case(dir.path(), "a.json", &value);
+        let families = json!({"health": {"parity": "bogus", "origin": "python"}});
+        let path = write_manifest(dir.path(), 3, &["a.json"], &families);
+        assert!(load_manifest(&path).is_err(), "an unknown parity is refused");
+    }
+
+    #[test]
+    fn a_v3_manifest_must_list_every_case_file() {
+        // Python V6: a case file in the v3 directory that the manifest does not list is refused.
+        let dir = tempfile::tempdir().expect("dir");
+        let mut listed = http_case();
+        listed["name"] = json!("a");
+        write_case(dir.path(), "a.json", &listed);
+        let mut unlisted = http_case();
+        unlisted["name"] = json!("b");
+        write_case(dir.path(), "b.json", &unlisted);
+        let path = write_manifest(dir.path(), 3, &["a.json"], &families());
+        let error = load_manifest(&path).expect_err("b.json is not listed");
+        assert!(error.to_string().contains("b.json"), "{error}");
+    }
+
+    #[test]
+    fn a_v3_manifest_ignores_a_json_file_that_is_not_a_case() {
+        // grant_encoding.json is a vector of the v3 directory, not a case: it carries no ledger_key.
+        let dir = tempfile::tempdir().expect("dir");
+        let mut listed = http_case();
+        listed["name"] = json!("a");
+        write_case(dir.path(), "a.json", &listed);
+        write_case(dir.path(), "vector.json", &json!({"schema_version": 3, "description": "x"}));
+        let path = write_manifest(dir.path(), 3, &["a.json"], &families());
+        let cases = load_manifest(&path).expect("the vector is not a case");
+        assert_eq!(cases.len(), 1);
+        assert_eq!(cases[0].kind, Kind::Http);
+    }
+
+    #[test]
+    fn the_shipped_v3_manifest_lists_every_case_file() {
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/contracts/v3/manifest.json");
+        let cases = load_manifest(&path).expect("the shipped v3 manifest loads");
+        assert_eq!(cases.len(), 5);
+    }
+}

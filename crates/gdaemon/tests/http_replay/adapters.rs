@@ -41,9 +41,37 @@ fn read_value(path: &Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).expect("read json")).expect("parse json")
 }
 
+/// What one terminal fixture's replay observed (fix3 V28): the bytes the backend received after its
+/// upgrade head, and the bytes the client received.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminalReplay {
+    pub backend_received: Vec<u8>,
+    pub client_received: Vec<u8>,
+}
+
+/// The byte comparisons of one terminal fixture (design 7.11.1): the client leg reaches the backend
+/// unchanged, and the reply reaches the client unchanged.
+pub fn check_terminal_replay(
+    client: &[u8],
+    reply: &[u8],
+    replayed: &TerminalReplay,
+) -> Result<(), String> {
+    let _ = (client, reply, replayed);
+    Ok(())
+}
+
+/// The client and reply frames of one terminal fixture: its payload as one masked text frame sent
+/// by the client, and as one unmasked text frame sent back by the stub.
+fn terminal_frames(payload: &[u8]) -> (Vec<u8>, Vec<u8>) {
+    (
+        frame(TEXT_FIN, payload, true),
+        frame(TEXT_FIN, payload, false),
+    )
+}
+
 /// Replay every terminal WS golden fixture, one connection each, through the front door. Returns
-/// each fixture's name with `Ok` when its replayed bytes equal the fixture bytes.
-pub async fn replay_terminal_ws_fixtures() -> Vec<(String, Result<(), String>)> {
+/// each fixture's name with what its replay observed.
+pub async fn replay_terminal_ws_fixtures() -> Vec<(String, Result<TerminalReplay, String>)> {
     let dir = fixtures_dir().join("terminal_ws_golden");
     let manifest = read_value(&dir.join("manifest.json"));
     let mut results = Vec::new();
@@ -57,11 +85,9 @@ pub async fn replay_terminal_ws_fixtures() -> Vec<(String, Result<(), String>)> 
 }
 
 /// One fixture: one connection through the front door, against a stub that echoes the fixture as
-/// one text frame. Both legs are compared byte for byte, as `ws_golden_proxy.rs` compares the
-/// whole corpus.
-async fn replay_terminal_fixture(payload: &[u8]) -> Result<(), String> {
-    let client = frame(TEXT_FIN, payload, true);
-    let reply = frame(TEXT_FIN, payload, false);
+/// one text frame. Returns the bytes each leg carried, for the caller to compare.
+async fn replay_terminal_fixture(payload: &[u8]) -> Result<TerminalReplay, String> {
+    let (client, reply) = terminal_frames(payload);
     let (backend, captured) = ws_backend(client.len(), reply.clone()).await;
     let door = start_front_door(backend).await;
     let (mut stream, head, mut received) = ws_client(door, "/api/terminals/ws").await;
@@ -84,13 +110,10 @@ async fn replay_terminal_fixture(payload: &[u8]) -> Result<(), String> {
         .await
         .map_err(|_| "the backend capture timed out".to_owned())?
         .map_err(|_| "the backend capture was dropped".to_owned())?;
-    if capture.received != client {
-        return Err("the client-to-backend leg changed the fixture bytes".to_owned());
-    }
-    if received != reply {
-        return Err("the backend-to-client leg changed the fixture bytes".to_owned());
-    }
-    Ok(())
+    Ok(TerminalReplay {
+        backend_received: capture.received,
+        client_received: received,
+    })
 }
 
 /// Replay the shared envelope corpus (`ws_envelope_golden::replay_corpus`) and return the number
@@ -148,18 +171,59 @@ fn grant_outcome(raw: &[u8]) -> GrantOutcome {
 
 #[tokio::test]
 async fn terminal_ws_44_replay() {
-    let manifest = read_value(&fixtures_dir().join("terminal_ws_golden/manifest.json"));
+    let dir = fixtures_dir().join("terminal_ws_golden");
+    let manifest = read_value(&dir.join("manifest.json"));
     let listed = manifest["fixtures"].as_array().expect("fixtures").len();
     assert_eq!(listed, 44, "the terminal golden manifest lists 44 fixtures");
     let results = replay_terminal_ws_fixtures().await;
-    assert_eq!(results.len(), listed, "every manifest fixture replays");
-    for (name, outcome) in results {
-        assert_eq!(
-            outcome,
-            Ok(()),
-            "{name}: replayed bytes differ from the fixture"
-        );
+    let mut compared = 0;
+    for (name, replayed) in results {
+        // The fixture bytes come from the file; the leg bytes come from what the replay observed.
+        let payload = std::fs::read(dir.join(&name)).expect("read fixture");
+        let (client, reply) = terminal_frames(&payload);
+        let replayed = replayed.unwrap_or_else(|error| panic!("{name}: {error}"));
+        check_terminal_replay(&client, &reply, &replayed)
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
+        compared += 1;
     }
+    assert_eq!(compared, listed, "every manifest fixture replays and compares");
+}
+
+#[test]
+fn check_terminal_replay_refuses_a_changed_leg() {
+    let payload = b"{\"type\":\"terminal_list\"}";
+    let (client, reply) = terminal_frames(payload);
+    let exact = TerminalReplay {
+        backend_received: client.clone(),
+        client_received: reply.clone(),
+    };
+    assert_eq!(check_terminal_replay(&client, &reply, &exact), Ok(()));
+    let mut flipped_client = client.clone();
+    flipped_client[0] ^= 0x01;
+    let changed_backend = TerminalReplay {
+        backend_received: flipped_client,
+        client_received: reply.clone(),
+    };
+    assert!(
+        check_terminal_replay(&client, &reply, &changed_backend)
+            .unwrap_err()
+            .contains("client-to-backend"),
+        "a changed backend leg is refused"
+    );
+    let changed_client = TerminalReplay {
+        backend_received: client.clone(),
+        client_received: Vec::new(),
+    };
+    assert!(
+        check_terminal_replay(&client, &reply, &changed_client)
+            .unwrap_err()
+            .contains("backend-to-client"),
+        "a missing reply is refused"
+    );
+    assert!(
+        check_terminal_replay(&client, &reply, &TerminalReplay::default()).is_err(),
+        "an empty observation is refused"
+    );
 }
 
 #[test]

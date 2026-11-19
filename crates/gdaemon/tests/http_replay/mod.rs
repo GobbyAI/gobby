@@ -20,12 +20,14 @@ mod normalize;
 mod side_effects;
 mod soak;
 mod summary;
+#[cfg(test)]
+mod driver_tests;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use backend::{Backends, start_listener};
+use backend::{Backends, WsHop, start_listener, start_ws_hop};
 use compare::{comparison_document, first_difference, normalized_document};
 use corpus::{Case, CorpusError, Kind, parse_case, recorded_db_delta, recorded_side_effects};
 use db_delta::{DeltaError, Row, table_delta};
@@ -79,12 +81,36 @@ impl std::fmt::Display for DriverError {
     }
 }
 
+/// The transports one observation runs through. [`Transports::recorded`] is the self-replay: the
+/// repo's `gobby` entry point and the recording's own WS reply frames, with no hop.
+#[derive(Debug, Clone)]
+pub struct Transports {
+    /// The `gobby` entry point a CLI case runs.
+    pub gobby: PathBuf,
+    /// The text frames the WS stub sends in place of the recording's reply, when set.
+    pub ws_reply: Option<Vec<String>>,
+    /// A relay between the front door and the WS stub, when set.
+    pub ws_hop: Option<WsHop>,
+}
+
+impl Transports {
+    /// The self-replay transports: the repo's `gobby` entry point, the recorded WS reply, no hop.
+    pub fn recorded() -> Self {
+        Self {
+            gobby: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.venv/bin/gobby"),
+            ws_reply: None,
+            ws_hop: None,
+        }
+    }
+}
+
 /// Observe one case through its own transport in proxy mode: the response, the observed
 /// `db_delta` (each entry a `db_delta::table_delta` output) and the captured side effects.
 pub async fn observe(
     case: &Case,
     home: &Path,
     window: &Window,
+    transports: &Transports,
 ) -> Result<Observation, DriverError> {
     match case.kind {
         Kind::Http => {
@@ -105,8 +131,8 @@ pub async fn observe(
             });
             observe_request(case, &request, recording, home, window).await
         }
-        Kind::Ws => observe_ws(case, window).await,
-        Kind::Cli => observe_cli(case, home),
+        Kind::Ws => observe_ws(case, window, transports).await,
+        Kind::Cli => observe_cli(case, home, &transports.gobby),
     }
 }
 
@@ -282,7 +308,12 @@ fn mcp_request(case: &Case) -> Result<Value, DriverError> {
 
 /// A WS observation: the invocation frames go through the front door's terminal route to a stub
 /// that answers the recorded reply frames.
-async fn observe_ws(case: &Case, window: &Window) -> Result<Observation, DriverError> {
+async fn observe_ws(
+    case: &Case,
+    window: &Window,
+    transports: &Transports,
+) -> Result<Observation, DriverError> {
+    let _ = transports;
     let invocation = case
         .invocation
         .as_ref()
@@ -381,13 +412,14 @@ fn decode_text_frames(mut bytes: &[u8]) -> Result<Vec<String>, DriverError> {
 
 /// A CLI observation: the sealed environment of `composer_proof.py` (no database URL, a temporary
 /// home), the repo's `gobby` entry point, and the recorded exit, stdout and stderr.
-fn observe_cli(case: &Case, home: &Path) -> Result<Observation, DriverError> {
+fn observe_cli(case: &Case, home: &Path, binary: &Path) -> Result<Observation, DriverError> {
     let invocation = case
         .invocation
         .as_ref()
         .ok_or_else(|| shape(format!("{} has no invocation", case.name)))?;
     let argv = text_list(&invocation["argv"], &case.name)?;
     let stdin = invocation["stdin"].as_str().map(str::to_owned);
+    let _ = binary;
     let binary = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../.venv/bin/gobby");
     let mut command = Command::new(binary);
     command
@@ -576,7 +608,7 @@ async fn v2_down_cases_in_process() {
     assert_eq!(down.len(), 3, "the v2 corpus has three backend-down cases");
     let home = tempfile::tempdir().expect("home");
     for case in down {
-        let observed = observe(case, home.path(), &open_window())
+        let observed = observe(case, home.path(), &open_window(), &Transports::recorded())
             .await
             .expect("observe");
         let replay = classify(case, &no_waivers(), &observed, &open_window()).expect("classify");
@@ -591,7 +623,7 @@ async fn v2_16_proxy_driver_replay() {
     assert_eq!(cases.len(), 16, "the v2 corpus has sixteen cases");
     let home = tempfile::tempdir().expect("home");
     for case in &cases {
-        let observed = observe(case, home.path(), &open_window())
+        let observed = observe(case, home.path(), &open_window(), &Transports::recorded())
             .await
             .expect("observe");
         let replay = classify(case, &no_waivers(), &observed, &open_window()).expect("classify");
@@ -623,7 +655,7 @@ async fn v3_cases_proxy_self_replay() {
     let home = tempfile::tempdir().expect("home");
     let mut replayed = 0;
     for case in &cases {
-        let observed = observe(case, home.path(), &open_window())
+        let observed = observe(case, home.path(), &open_window(), &Transports::recorded())
             .await
             .expect("observe");
         let replay = classify(case, &no_waivers(), &observed, &open_window()).expect("classify");
@@ -742,7 +774,9 @@ async fn one_changed_db_delta_column_is_a_diff_on_self_replay_and_differential()
     let (value, case) = v3_case("config_values_patch.json");
     let home = tempfile::tempdir().expect("home");
     let window = open_window();
-    let observed = observe(&case, home.path(), &window).await.expect("observe");
+    let observed = observe(&case, home.path(), &window, &Transports::recorded())
+        .await
+        .expect("observe");
     assert_eq!(
         classify(&case, &no_waivers(), &observed, &window).expect("classify"),
         Replay::Match,
@@ -778,7 +812,9 @@ async fn one_changed_side_effect_is_a_diff_on_self_replay_and_differential() {
     let (value, case) = v3_case("config_values_patch.json");
     let home = tempfile::tempdir().expect("home");
     let window = open_window();
-    let observed = observe(&case, home.path(), &window).await.expect("observe");
+    let observed = observe(&case, home.path(), &window, &Transports::recorded())
+        .await
+        .expect("observe");
 
     // Self-replay: the recording names another channel for its one capture.
     let mut changed = value.clone();

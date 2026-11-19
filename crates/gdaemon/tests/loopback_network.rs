@@ -82,11 +82,24 @@ fn assert_measured(name: &str, text: &str) {
     );
 }
 
+/// The post-connect class the mode-off control expects: the transport or protocol error the daemon
+/// reports after the TCP connect succeeds (design-v2 7.4.6). The step-6 run fills it from the
+/// daemon's answer, as it fills the connect-failure texts in `loopback`.
+const POST_CONNECT_TEXT: &str =
+    "UNMEASURED: the step-6 run fills this from the daemon's post-connect transport or protocol error";
+
+/// The daemon's answers to the off-host registration and to one tool call on the server.
+struct Attempt {
+    add_status: u16,
+    call: Value,
+    combined: String,
+}
+
 /// Registers the off-host destination as an external HTTP MCP server through the daemon's
 /// existing route, then calls one tool on it. The connect fails inside the daemon, and the
 /// combined response text carries the failure class. The route is used because the daemon takes
 /// its external servers from the API, not from a config key (see the deviation in the report).
-fn daemon_connect_failure(daemon: &FullDaemon, target: SocketAddrV4) -> String {
+fn daemon_connect_failure(daemon: &FullDaemon, target: SocketAddrV4) -> Attempt {
     let base = daemon.front_door();
     let key = daemon.operator_key();
     let server = json!({
@@ -108,7 +121,11 @@ fn daemon_connect_failure(daemon: &FullDaemon, target: SocketAddrV4) -> String {
         "the tool call answers",
     );
     let combined: Value = json!({"add": {"status": added_status, "body": added}, "call": {"status": call_status, "body": call}});
-    combined.to_string()
+    Attempt {
+        add_status: added_status,
+        call,
+        combined: combined.to_string(),
+    }
 }
 
 // Non-ignored: the design's profile, argv, planner and target rules, and the probe.
@@ -335,22 +352,39 @@ fn control_connects_mode_off() {
     assert_measured("EPERM", EXTERNAL_CONNECT_EPERM_TEXT);
     assert_measured("refused", EXTERNAL_CONNECT_REFUSED_TEXT);
     assert_measured("timeout", EXTERNAL_CONNECT_TIMEOUT_TEXT);
+    assert_measured("post-connect", POST_CONNECT_TEXT);
     let daemon = must(
         FullDaemon::builder(Path::new(GDAEMON), Path::new(REPO_ROOT))
             .seed(python_seed)
             .start(),
         "the control daemon starts with the mode off",
     );
-    let body = daemon_connect_failure(&daemon, target);
+    let attempt = daemon_connect_failure(&daemon, target);
     daemon.teardown().expect("the control daemon tears down");
+    // The daemon's own connection must get past TCP: the registration succeeds, and the call fails
+    // with the post-connect class, not with a route error or a connect failure (H9, design 7.4.6).
+    assert!(
+        (200..300).contains(&attempt.add_status),
+        "the off-host server must register with the mode off: {}",
+        attempt.combined
+    );
+    let call = attempt.call.to_string();
+    assert!(
+        !call.contains("SERVER_NOT_FOUND"),
+        "the call hit a route error, not the daemon's connect: {call}"
+    );
+    assert!(
+        call.contains(POST_CONNECT_TEXT),
+        "the mode-off connect did not fail after TCP as the post-connect class: {call}"
+    );
     for (name, text) in [
         ("EPERM", EXTERNAL_CONNECT_EPERM_TEXT),
         ("refused", EXTERNAL_CONNECT_REFUSED_TEXT),
         ("timeout", EXTERNAL_CONNECT_TIMEOUT_TEXT),
     ] {
         assert!(
-            !body.contains(text),
-            "the mode-off connect failed as {name}, which is not a control result: {body}"
+            !call.contains(text),
+            "the mode-off connect failed as {name}, which is not a control result: {call}"
         );
     }
 }
@@ -367,10 +401,11 @@ fn daemon_outbound_fails_mode_on() {
             .start(),
         "the daemon starts under the loopback mode",
     );
-    let body = daemon_connect_failure(&daemon, target);
+    let attempt = daemon_connect_failure(&daemon, target);
     daemon.teardown().expect("the daemon tears down");
     assert!(
-        body.contains(EXTERNAL_CONNECT_EPERM_TEXT),
-        "the daemon's external connect was not blocked with EPERM: {body}"
+        attempt.combined.contains(EXTERNAL_CONNECT_EPERM_TEXT),
+        "the daemon's external connect was not blocked with EPERM: {}",
+        attempt.combined
     );
 }

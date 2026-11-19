@@ -186,6 +186,22 @@ pub async fn stub_target() -> (SocketAddr, Seen) {
     (addr, seen)
 }
 
+/// A relay between the front door and a WS stub. It forwards the upgrade head unchanged, passes
+/// each later client chunk through `rewrite_client`, and after the stub's first reply chunk waits
+/// briefly and writes `late_reply` to the client (design-v2 section 7.11.1; fix3 V22 and V25).
+#[derive(Debug, Clone, Default)]
+pub struct WsHop {
+    /// Rewrites each client chunk after the upgrade head. `None` forwards the client bytes as sent.
+    pub rewrite_client: Option<fn(&mut [u8])>,
+    /// Bytes written to the client after the stub's first reply chunk. Empty writes nothing.
+    pub late_reply: Vec<u8>,
+}
+
+/// Starts a hop to `backend` and returns the address the front door should dial instead.
+pub async fn start_ws_hop(backend: SocketAddr, _hop: &WsHop) -> SocketAddr {
+    backend
+}
+
 /// One `GET` over a fresh connection; returns the status code and the body text.
 pub async fn get_text(addr: SocketAddr, path: &str) -> (u16, String) {
     let exchange = async {

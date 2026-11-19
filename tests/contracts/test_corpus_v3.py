@@ -18,6 +18,15 @@ from tests.contracts.http_corpus import CorpusError, classify_replay
 from tests.contracts.recorder_daemon_v3 import recorder_daemon
 
 V2_CASE_COUNT = 16
+# The schema 3 case files in manifest order. Adding or dropping a case changes this pin in the same
+# change, as V2_CASE_COUNT does for schema 2, so a case cannot leave the corpus silently.
+V3_CASE_FILES = (
+    "config_values_patch.json",
+    "mcp_http_gobby_list_tools.json",
+    "mcp_stdio_gobby_list_tools.json",
+    "ws_terminal_list.json",
+    "cli_schema_help.json",
+)
 FAMILIES: dict[str, dict[str, str]] = {"probe": {"parity": "proxy", "origin": "python"}}
 # The frozen v3 key order (design section 7.5.2), pinned here independently of the loader.
 V3_CASE_ORDER = (
@@ -394,6 +403,43 @@ def test_invocation_must_agree_with_the_ledger_key(
         corpus_v3.load_cases(root)
 
 
+def _with_transport(case: dict[str, Any], transport: str) -> dict[str, Any]:
+    return {**case, "invocation": {**case["invocation"], "transport": transport}}
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("ledger_key", "transport"),
+    [("MCP HTTP gobby:list_tasks", "stdio"), ("MCP stdio gobby:list_tasks", "http")],
+    ids=["http-key-stdio-invocation", "stdio-key-http-invocation"],
+)
+def test_keyed_mcp_transport_must_match_the_invocation(
+    tmp_path: Path, ledger_key: str, transport: str
+) -> None:
+    case = _with_transport(_mcp(ledger_key=ledger_key), transport)
+    root = _write_corpus(tmp_path, version=3, cases=[case])
+    with pytest.raises(CorpusError, match="names transport"):
+        corpus_v3.load_cases(root)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("ledger_key", "server", "transport"),
+    [
+        ("MCP HTTP gobby:list_tasks", "gobby", "http"),
+        ("MCP stdio gobby:list_tasks", "gobby", "stdio"),
+        ("MCP tasks:list_tasks", "tasks", "http"),
+        ("MCP tasks:list_tasks", "tasks", "stdio"),
+    ],
+)
+def test_mcp_transport_is_checked_only_when_the_key_names_one(
+    tmp_path: Path, ledger_key: str, server: str, transport: str
+) -> None:
+    case = _with_transport(_mcp(ledger_key=ledger_key, server=server), transport)
+    root = _write_corpus(tmp_path, version=3, cases=[case])
+    assert corpus_v3.load_cases(root) == [case]
+
+
 @pytest.mark.unit
 def test_mcp_invocation_is_required(tmp_path: Path) -> None:
     case = _mcp()
@@ -569,8 +615,37 @@ def test_after_and_pointer_keys_are_checked(
 def test_v3_manifest_lists_its_cases_once() -> None:
     manifest = corpus_v3.load_manifest(corpus_v3.V3_DIR)
     names = [case["name"] for case in V3_CASES]
-    assert len(V3_CASES) == len(manifest["cases"])
+    assert manifest["cases"] == list(V3_CASE_FILES)
+    assert names == [file_name.removesuffix(".json") for file_name in V3_CASE_FILES]
     assert len(set(names)) == len(names)
+
+
+@pytest.mark.unit
+def test_v3_directory_holds_the_pinned_cases_and_one_vector() -> None:
+    files = {path.name for path in corpus_v3.V3_DIR.glob("*.json")}
+    assert files == {*V3_CASE_FILES, "manifest.json", "grant_encoding.json"}
+
+
+@pytest.mark.unit
+def test_loader_refuses_a_v3_case_file_the_manifest_does_not_list(tmp_path: Path) -> None:
+    root = _write_corpus(tmp_path, version=3, cases=[_v3_http(name="probe_listed")])
+    (root / "probe_unlisted.json").write_text(json.dumps(_v3_http(name="probe_unlisted")))
+    with pytest.raises(CorpusError, match=r"probe_unlisted\.json: .*not listed in manifest\.json"):
+        corpus_v3.load_cases(root)
+
+
+@pytest.mark.unit
+def test_loader_accepts_a_declared_non_case_vector_beside_the_cases(tmp_path: Path) -> None:
+    root = _write_corpus(tmp_path, version=3, cases=[_v3_http()])
+    (root / "grant_encoding.json").write_text(json.dumps({"vector": []}))
+    assert len(corpus_v3.load_cases(root)) == 1
+
+
+@pytest.mark.unit
+def test_v2_directory_keeps_its_unlisted_json_files(tmp_path: Path) -> None:
+    root = _write_corpus(tmp_path, version=2, cases=[_v2_case()])
+    (root / "mask_vector.json").write_text(json.dumps({}))
+    assert len(corpus_v3.load_cases(root)) == 1
 
 
 @pytest.fixture(scope="module")

@@ -304,6 +304,8 @@ impl FullDaemonBuilder<'_> {
             .prefix("g")
             .tempdir()
             .map_err(io_error("create the terminal host socket directory"))?;
+        let root_canonical =
+            fs::canonicalize(root.path()).map_err(io_error("resolve the temporary root"))?;
         let mut daemon = FullDaemon {
             root: Some(root),
             host_dir: Some(host_dir),
@@ -319,6 +321,7 @@ impl FullDaemonBuilder<'_> {
             readiness_path,
             watch: None,
             relays: None,
+            root_canonical,
         };
         let host_dir = daemon.host_dir_path();
 
@@ -458,6 +461,8 @@ pub struct FullDaemon {
     watch: Option<GroupWatch>,
     /// The socat relays of a loopback-only run, stopped when the daemon is torn down.
     relays: Option<LoopbackGuard>,
+    /// The temporary root with its symlinks resolved, the path a process's cwd names.
+    root_canonical: PathBuf,
 }
 
 impl FullDaemon {
@@ -485,9 +490,15 @@ impl FullDaemon {
         &self.operator_key
     }
 
-    /// The temporary home the daemon reads from.
+    /// The temporary root directory; the daemon's home is its `home` subdirectory.
     pub fn home(&self) -> &Path {
         self.root.as_ref().map_or(Path::new(""), |root| root.path())
+    }
+
+    /// The run's temporary root, with symlinks resolved. Every process of the run has its cwd
+    /// under it (the daemon starts in its project directory), so a process found there is ours.
+    pub fn run_root(&self) -> &Path {
+        &self.root_canonical
     }
 
     fn host_dir_path(&self) -> PathBuf {
@@ -606,6 +617,13 @@ impl Drop for FullDaemon {
         // Best effort: a panicking test still stops both process groups before the database goes.
         let _ = self.shutdown();
     }
+}
+
+/// The live processes of a run: those whose cwd is under `root` or whose process group is one of
+/// `groups`. Stub for the red stage; the real scan replaces it.
+pub fn processes_in_run(root: &Path, groups: &[u32]) -> Vec<u32> {
+    let _ = (root, groups);
+    Vec::new()
 }
 
 /// The checkout's interpreter path: `<repo_root>/.venv/bin/python` (Unix) or

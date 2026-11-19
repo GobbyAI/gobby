@@ -54,6 +54,9 @@ pub enum Verdict {
     Diff { pointer: String },
     /// The family has no native backend, so no leg ran.
     NoNativeBackend,
+    /// The native leg's request reached the proxy target: the native family did not answer the
+    /// path itself, so the legs show no native parity and the run is never a match (fix3 V24).
+    NativeFallthrough,
 }
 
 impl Verdict {
@@ -63,9 +66,13 @@ impl Verdict {
             Verdict::Match => "match",
             Verdict::Diff { .. } => "diff",
             Verdict::NoNativeBackend => NO_NATIVE_BACKEND,
+            Verdict::NativeFallthrough => NATIVE_FALLTHROUGH,
         }
     }
 }
+
+/// The outcome name a native leg that reached the proxy target writes.
+pub const NATIVE_FALLTHROUGH: &str = "native-fallthrough";
 
 /// What one leg produced: the observed response and the observed `db_delta` and side-effect
 /// values, in the recorded shape.
@@ -631,8 +638,10 @@ mod tests {
         )
         .await
         .expect("runs");
-        assert_eq!(verdict, Verdict::Match);
-        assert_eq!(verdict_lines(home.path())[0]["outcome"], "match");
+        // Open item (fix3 V24): the health family's native leg is `proxy::forward` to the proxy
+        // target, so this is a fall-through, not native parity. Recorded with FW-S4.
+        assert_eq!(verdict, Verdict::NativeFallthrough);
+        assert_eq!(verdict_lines(home.path())[0]["outcome"], "native-fallthrough");
     }
 
     #[tokio::test]
@@ -666,11 +675,13 @@ mod tests {
         )
         .await
         .expect("runs");
-        assert_eq!(verdict, Verdict::Match);
+        // Open item (fix3 V24): the native health leg falls through to the proxy target, so the
+        // backend-down case is a fall-through too. Recorded with FW-S4.
+        assert_eq!(verdict, Verdict::NativeFallthrough);
     }
 
     #[tokio::test]
-    async fn a_path_without_a_native_handler_matches_when_both_legs_reach_the_stub() {
+    async fn a_path_without_a_native_handler_is_a_fall_through_never_a_match() {
         let (target, seen) = stub_target().await;
         let home = tempfile::tempdir().expect("home");
         let case = http_case("probe_shared", "probe", "up", "/api/probe/shared");
@@ -685,11 +696,15 @@ mod tests {
         )
         .await
         .expect("runs");
-        assert_eq!(verdict, Verdict::Match);
+        assert_eq!(verdict, Verdict::NativeFallthrough);
         assert_eq!(
             seen.lock().expect("seen").len(),
-            2,
-            "both legs reach the stub"
+            1,
+            "only the proxied leg reaches the proxy target; the native leg reaches the tripwire"
+        );
+        assert_eq!(
+            verdict_lines(home.path())[0]["outcome"],
+            "native-fallthrough"
         );
     }
 

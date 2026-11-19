@@ -14,7 +14,8 @@ use gobby_core::grant::{encode_grant_header, parse_grant_json};
 use gobby_test_support::corpus_v2::{load_all_cases, load_manifest};
 use gobby_test_support::database::{create_database, database_exists};
 use gobby_test_support::full_daemon::{
-    FullDaemon, FullDaemonError, SeedContext, TeardownStep, pid_alive, test_hub_url_or_skip,
+    FullDaemon, FullDaemonError, SeedContext, TeardownStep, pid_alive, processes_in_run,
+    test_hub_url_or_skip,
 };
 use gobby_test_support::http_sender::{
     Credentials, agent, classify_response, get_status, post_json, send_case,
@@ -246,6 +247,41 @@ fn refused_database_url_fails_before_any_override_is_set() {
 /// Set in the re-executed test binary, which plays the owner that dies without teardown (H60).
 const OWNER_CHILD: &str = "GOBBY_HARNESS_OWNER_CHILD";
 
+/// A process the test starts in a run's root. Killed and reaped on drop, so a failing assertion
+/// never leaves it behind.
+struct Stray(std::process::Child);
+
+impl Drop for Stray {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Teardown treats any process left in the run's root as a failure of the run and stops it. A
+/// terminal host or worker that survives its orderly stop is the case this guards: the host is
+/// found by cwd even when its pid file was never written.
+#[test]
+fn teardown_fails_and_stops_a_process_left_in_the_run_root() {
+    let Some(_url) = test_hub() else { return };
+    let daemon = start_daemon().expect("the full daemon starts");
+    let root = daemon.run_root().to_path_buf();
+    let stray = Stray(
+        Command::new("sleep")
+            .arg("600")
+            .current_dir(&root)
+            .spawn()
+            .expect("spawn a stray in the run root"),
+    );
+    let pid = stray.0.id();
+    let result = daemon.teardown();
+    assert!(
+        matches!(&result, Err(FullDaemonError::Teardown(text)) if text.contains(&pid.to_string())),
+        "teardown must fail naming the stray {pid}, got {result:?}"
+    );
+    assert!(!pid_alive(pid), "teardown must stop the stray {pid}");
+}
+
 /// H50: a start whose readiness never passes tears down the worker it had started, and reports
 /// the pids it held. The worker must be running when readiness fails, so the test proves the
 /// teardown reached a live worker and not an empty launch.
@@ -287,12 +323,16 @@ fn owner_death_tears_down_the_daemon_groups() {
     };
     if std::env::var_os(OWNER_CHILD).is_some() {
         let daemon = start_daemon().expect("the owner's daemon starts");
+        let host = daemon
+            .terminal_host_pid()
+            .expect("the owner's daemon started the terminal host");
         println!(
             "PIDS {} {} {}",
             daemon.daemon_pid(),
-            daemon.worker_pid().unwrap_or(0),
-            daemon.terminal_host_pid().unwrap_or(0)
+            daemon.worker_pid().expect("the owner's worker"),
+            host
         );
+        println!("ROOT {}", daemon.run_root().display());
         // Exit without teardown or Drop: the owner's death is what the watchdog must survive.
         std::process::exit(0);
     }
@@ -314,27 +354,32 @@ fn owner_death_tears_down_the_daemon_groups() {
         .try_into()
         .unwrap_or_else(|pids: Vec<u32>| panic!("three pids expected, got {pids:?}"));
     assert!(
-        daemon != 0 && worker != 0,
-        "the owner's daemon and worker are both reported"
+        daemon != 0 && worker != 0 && host != 0,
+        "the owner's daemon, worker and terminal host are all reported: {daemon} {worker} {host}"
     );
+    let root = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("ROOT "))
+        .map(PathBuf::from)
+        .expect("the owner reports its run root");
     let deadline = Instant::now() + Duration::from_secs(15);
-    while [daemon, worker, host]
-        .iter()
-        .any(|&pid| pid != 0 && pid_alive(pid))
-        && Instant::now() < deadline
-    {
+    while [daemon, worker, host].iter().any(|&pid| pid_alive(pid)) && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
     }
+    let survivors = processes_in_run(&root, &[daemon, worker, host]);
+    // The run root is left by the owner's death, so the test removes it once the check has run.
+    let _ = fs::remove_dir_all(&root);
     for (name, pid) in [
         ("gdaemon", daemon),
         ("worker", worker),
         ("gterm host", host),
     ] {
-        assert!(
-            pid == 0 || !pid_alive(pid),
-            "the {name} (pid {pid}) outlived its owner"
-        );
+        assert!(!pid_alive(pid), "the {name} (pid {pid}) outlived its owner");
     }
+    assert!(
+        survivors.is_empty(),
+        "processes of the run outlived its owner: {survivors:?}"
+    );
 }
 
 // Unix only: the accepted profile needs the 0600 owner check. The Windows verdicts for these
@@ -428,7 +473,12 @@ fn teardown_stops_daemon_and_worker_before_the_database_drops() {
         "the terminal host runs before teardown"
     );
     let name = daemon.database_name().expect("a run database").to_owned();
+    let root = daemon.run_root().to_path_buf();
     let report = daemon.teardown().expect("teardown");
+    assert!(
+        processes_in_run(&root, &[daemon_pid, worker_pid, host_pid]).is_empty(),
+        "no process of the run may survive teardown"
+    );
     assert_eq!(
         report.steps,
         [
@@ -452,19 +502,34 @@ fn teardown_stops_daemon_and_worker_before_the_database_drops() {
 #[test]
 fn teardown_runs_from_drop_when_a_test_panics() {
     let Some(url) = test_hub() else { return };
-    let mut seen: Option<(u32, Option<u32>, String)> = None;
+    let mut seen: Option<(u32, Option<u32>, String, Option<u32>, PathBuf)> = None;
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         let daemon = start_daemon().expect("the full daemon starts");
         let name = daemon.database_name().expect("a run database").to_owned();
-        seen = Some((daemon.daemon_pid(), daemon.worker_pid(), name));
+        seen = Some((
+            daemon.daemon_pid(),
+            daemon.worker_pid(),
+            name,
+            daemon.terminal_host_pid(),
+            daemon.run_root().to_path_buf(),
+        ));
         panic!("simulated failure after start");
     }));
     assert!(result.is_err(), "the closure panicked");
-    let (daemon_pid, worker_pid, name) = seen.expect("start recorded its processes");
+    let (daemon_pid, worker_pid, name, host_pid, root) =
+        seen.expect("start recorded its processes");
     assert!(!pid_alive(daemon_pid), "gdaemon outlived the panic");
     assert!(
         !worker_pid.is_some_and(pid_alive),
         "the worker outlived the panic"
+    );
+    let groups: Vec<u32> = [Some(daemon_pid), worker_pid, host_pid]
+        .into_iter()
+        .flatten()
+        .collect();
+    assert!(
+        processes_in_run(&root, &groups).is_empty(),
+        "a process of the run outlived the panic"
     );
     assert!(
         !database_exists(&maintenance_url(&url), &name).expect("probe"),

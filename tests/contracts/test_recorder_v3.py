@@ -6,15 +6,20 @@ test hub (DATABASE_URL), never a daemon. The guard refusals connect to nothing.
 
 from __future__ import annotations
 
+import copy
+import http.server
 import json
 import os
+import queue
 import re
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Iterator, Mapping
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
@@ -24,7 +29,8 @@ from websockets.sync.server import ServerConnection, serve
 
 from gobby.runtime_grants.handshake import decode_grant_header, encode_grant_header
 from gobby.runtime_grants.schema import GrantBundle
-from tests.contracts import corpus_v3, normalizers_v3, recorder_v3
+from gobby.utils.daemon_url import resolve_daemon_url
+from tests.contracts import corpus_v3, http_corpus, normalizers_v3, recorder_v3
 from tests.contracts.http_corpus import CorpusError
 from tests.fixtures.hub_guard import HARNESS_DATABASE_PATTERN, HubGuardError, maintenance_url
 
@@ -288,18 +294,43 @@ def test_pg_notify_capture_keeps_listened_channels_in_arrival_order(
 
 
 @pytest.mark.unit
-def test_ws_publish_capture_keeps_only_the_declared_types() -> None:
+def test_ws_publish_capture_subscribes_and_keeps_only_the_declared_types() -> None:
+    """A fake that delivers as the daemon does: an event type reaches only its subscribers.
+
+    ``session_event`` is an event type in the daemon's broadcast filter, so it is delivered only
+    after a subscribe that names it. ``other`` is not an event type and passes to any subscriber.
+    """
+    subscribes: list[list[str]] = []
+
     def publish(connection: ServerConnection) -> None:
-        connection.send(json.dumps({"type": "probe", "n": 1}))
-        connection.send(json.dumps({"type": "other"}))
-        connection.send(json.dumps({"type": "probe", "n": 2}))
+        subscribed: set[str] = set()
+        for raw in connection:
+            message = json.loads(raw)
+            if message.get("type") != "subscribe":
+                continue
+            subscribed = set(message["events"])
+            subscribes.append(list(message["events"]))
+            connection.send(
+                json.dumps({"type": "subscribe_success", "events": sorted(subscribed)})
+            )
+            for frame in (
+                {"type": "session_event", "n": 1},
+                {"type": "other"},
+                {"type": "session_event", "n": 2},
+            ):
+                if frame["type"] == "session_event" and "session_event" not in subscribed:
+                    continue
+                connection.send(json.dumps(frame))
 
     with serve(publish, "127.0.0.1", 0) as server:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         port = server.socket.getsockname()[1]
-        with recorder_v3.ws_publish_capture(f"ws://127.0.0.1:{port}/", ["probe"]) as capture:
+        with recorder_v3.ws_publish_capture(
+            f"ws://127.0.0.1:{port}/", ["session_event"]
+        ) as capture:
             captured = capture.drain()
-    assert captured == [{"type": "probe", "n": 1}, {"type": "probe", "n": 2}]
+    assert subscribes == [["session_event"]]
+    assert captured == [{"type": "session_event", "n": 1}, {"type": "session_event", "n": 2}]
 
 
 @pytest.mark.unit
@@ -327,3 +358,271 @@ def test_files_home_capture_reports_created_modified_and_removed_paths(tmp_path:
         "modified": ["changed.txt"],
         "removed": ["gone.txt"],
     }
+
+
+PER_RUN_URL = "http://127.0.0.1:61234"
+PROBE_INVOCATION = {"server": "gobby", "tool": "list_tools", "arguments": {}}
+
+
+class _Spawned(Exception):
+    """Raised by a fake process launcher after it records the environment; nothing starts."""
+
+
+@pytest.mark.unit
+def test_stdio_sender_env_points_at_the_per_run_daemon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wrapper's environment names the per-run home, the fence and the per-run daemon URL.
+
+    Without GOBBY_DAEMON_URL the wrapper dials the operator's live daemon (127.0.0.1:60887).
+    The fake Popen raises after recording the environment, so no process starts.
+    """
+    captured: dict[str, Any] = {}
+
+    def fake_popen(argv: Any, **kwargs: Any) -> None:
+        captured["env"] = kwargs["env"]
+        raise _Spawned
+
+    monkeypatch.setattr(
+        recorder_v3, "subprocess", SimpleNamespace(PIPE=subprocess.PIPE, Popen=fake_popen)
+    )
+    home = tmp_path / "home"
+    home.mkdir()
+    with pytest.raises(_Spawned):
+        recorder_v3.send_mcp_stdio(
+            PROBE_INVOCATION,
+            home=home,
+            cwd=tmp_path,
+            scratch=tmp_path,
+            daemon_url=PER_RUN_URL,
+        )
+    env = captured["env"]
+    assert env.get("GOBBY_TEST_PROTECT") == "1"
+    assert env.get("GOBBY_HOME") == str(home)
+    assert env.get("GOBBY_DAEMON_URL") == PER_RUN_URL
+    assert resolve_daemon_url(env=env) == PER_RUN_URL
+
+
+@pytest.mark.unit
+def test_cli_sender_env_points_at_the_per_run_daemon(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_run(argv: Any, **kwargs: Any) -> None:
+        captured["env"] = kwargs["env"]
+        raise _Spawned
+
+    monkeypatch.setattr(recorder_v3, "subprocess", SimpleNamespace(run=fake_run))
+    with pytest.raises(_Spawned):
+        recorder_v3.send_cli(
+            ["schema", "--help"], stdin=None, scratch=tmp_path, daemon_url=PER_RUN_URL
+        )
+    env = captured["env"]
+    assert env.get("GOBBY_TEST_PROTECT") == "1"
+    assert env.get("GOBBY_HOME") == str(tmp_path / "home")
+    assert env.get("GOBBY_DAEMON_URL") == PER_RUN_URL
+    assert resolve_daemon_url(env=env) == PER_RUN_URL
+
+
+class _HealthDaemon:
+    """An ephemeral HTTP listener that answers every GET 200 and records its paths."""
+
+    def __init__(self) -> None:
+        self.paths: list[str] = []
+        self._lock = threading.Lock()
+        paths, lock = self.paths, self._lock
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                with lock:
+                    paths.append(self.path)
+                body = b'{"status": "ok"}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, format: str, *args: Any) -> None:
+                return
+
+        self._server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._server.server_address[1]}"
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+
+    def seen(self) -> list[str]:
+        with self._lock:
+            return list(self.paths)
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+
+
+@pytest.mark.integration
+def test_stdio_wrapper_health_probe_reaches_only_the_injected_daemon(tmp_path: Path) -> None:
+    """The real wrapper, run with the sender's environment, probes the injected daemon only.
+
+    A stand-in process whose argv names the per-run home and ``gobby.runner`` satisfies the
+    fence, so the wrapper finds a running daemon and never reaches the start branch. The
+    ephemeral listener is the only daemon it can reach.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    health = _HealthDaemon()
+    try:
+        env = recorder_v3._stdio_env(home, health.url)
+        stand_in = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(300)", "gobby.runner", str(home)]
+        )
+        wrapper: subprocess.Popen[str] | None = None
+        try:
+            with (tmp_path / "wrapper-stderr.log").open("w") as stderr:
+                wrapper = subprocess.Popen(
+                    [sys.executable, "-m", "gobby.mcp_proxy.stdio"],
+                    cwd=tmp_path,
+                    env=env,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=stderr,
+                    text=True,
+                )
+            assert wrapper.stdin is not None
+            lines: queue.Queue[str | None] = queue.Queue()
+            threading.Thread(
+                target=recorder_v3._pump_lines, args=(wrapper.stdout, lines), daemon=True
+            ).start()
+            for message in (
+                recorder_v3._initialize_message(),
+                recorder_v3._initialized_message(),
+                recorder_v3._call_message(PROBE_INVOCATION),
+            ):
+                wrapper.stdin.write(json.dumps(message) + "\n")
+                wrapper.stdin.flush()
+            replies: dict[int, dict[str, Any]] = {}
+            while recorder_v3.MCP_CALL_ID not in replies:
+                replies.update(recorder_v3._stdio_reply(lines))
+            deadline = time.monotonic() + 60
+            while "/api/health" not in health.seen() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            assert "/api/health" in health.seen()
+        finally:
+            if wrapper is not None:
+                wrapper.kill()
+                wrapper.wait()
+            stand_in.kill()
+            stand_in.wait()
+    finally:
+        health.close()
+
+
+@pytest.mark.unit
+def test_rehearsal_profile_is_refused_before_any_sweep(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """H6: rehearsal mode creates and sweeps nothing; the Python recorder only refuses it."""
+
+    def no_sweep(url: str) -> list[str]:
+        raise AssertionError("the recorder swept dead runs in rehearsal mode (H6)")
+
+    monkeypatch.setattr(recorder_v3, "sweep_dead_runs", no_sweep)
+    profile = tmp_path / "rehearsal.json"
+    profile.write_text(
+        json.dumps(
+            {
+                "gobby_home": str(tmp_path / "rehearsal-home"),
+                "postgres_host": "127.0.0.1",
+                "postgres_system_identifier": "7000000000000000001",
+                "services": {"postgres": {"port": 61500}},
+            }
+        )
+    )
+    profile.chmod(0o600)
+    url = "postgresql://gobby_test:gobby_test@127.0.0.1:61500/gobby_test"
+    env = {"DATABASE_URL": url, "GOBBY_HUB_REHEARSAL_PROFILE": str(profile)}
+    with (
+        pytest.raises(recorder_v3.RecorderError, match="rehearsal"),
+        recorder_v3.open_run_database(base_url=url, env=env),
+    ):
+        pass
+
+
+def _record_case() -> dict[str, Any]:
+    return _v3_case(
+        db_delta=[
+            {
+                "table": "probe_rows",
+                "key": ["id"],
+                "columns": "all",
+                "normalizers": {},
+                "order": "set",
+            }
+        ],
+        side_effects=[{"channel": "ws_publish", "match": {"types": ["probe"]}, "normalizers": {}}],
+    )
+
+
+@pytest.mark.unit
+def test_secret_keyed_values_are_written_redacted_and_still_match_the_raw_replay() -> None:
+    case = _record_case()
+    observation = recorder_v3.Observation(
+        response={"status": 200, "headers": {}, "body": None},
+        db_delta=[
+            {
+                "added": [{"id": "gamma", "deployment_token": "raw-token"}],
+                "removed": [],
+                "changed": [],
+            }
+        ],
+        side_effects=[[{"type": "probe", "signature": "raw-signature"}]],
+    )
+    recorder_v3._recorded_entries(case, observation)
+    written = json.dumps(case)
+    assert "raw-token" not in written
+    assert "raw-signature" not in written
+    assert case["db_delta"][0]["recorded"]["added"] == [
+        {"id": "gamma", "deployment_token": "@secret@"}
+    ]
+    assert case["side_effects"][0]["recorded"] == [{"type": "probe", "signature": "@secret@"}]
+    actual, observed = recorder_v3._classify_inputs(observation)
+    result = http_corpus.classify_replay(case, actual, {}, observed=observed)
+    assert result.outcome == http_corpus.PASSED
+
+
+@pytest.mark.unit
+def test_a_changed_secret_keyed_column_is_refused_at_record_time() -> None:
+    case = _record_case()
+    observation = recorder_v3.Observation(
+        response={"status": 200, "headers": {}, "body": None},
+        db_delta=[
+            {
+                "added": [],
+                "removed": [],
+                "changed": [
+                    {
+                        "key": {"id": "alpha"},
+                        "column": "deployment_token",
+                        "before": "old-token",
+                        "after": "new-token",
+                    }
+                ],
+            }
+        ],
+        side_effects=[[]],
+    )
+    with pytest.raises(recorder_v3.RecorderError, match="deployment_token"):
+        recorder_v3._recorded_entries(case, observation)
+
+
+@pytest.mark.unit
+def test_redaction_leaves_a_committed_recording_unchanged() -> None:
+    committed = json.loads((corpus_v3.V3_DIR / "config_values_patch.json").read_text())
+    case = copy.deepcopy(committed)
+    observation = recorder_v3.Observation(
+        response=case["response"],
+        db_delta=[entry["recorded"] for entry in case["db_delta"]],
+        side_effects=[entry["recorded"] for entry in case["side_effects"]],
+    )
+    recorder_v3._recorded_entries(case, observation)
+    assert case == committed
