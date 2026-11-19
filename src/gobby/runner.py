@@ -1,14 +1,14 @@
 """Gobby Daemon Runner.
 
 GobbyRunner is the main entry point for the daemon. Initialization and
-lifecycle logic are extracted into runner_init.py and runner_lifecycle.py
-to keep this module focused on the public API.
+lifecycle logic are extracted into the runner_init package and the
+runner_lifecycle modules to keep this module focused on the public API.
 
 Related modules:
-- runner_init.py — component wiring, dependency injection, service setup
-- runner_lifecycle.py — event loop, startup sequence, shutdown sequence
+- runner_init/ — component wiring, dependency injection, service setup
+- runner_lifecycle.py — daemon lifecycle compatibility and orchestration
 - runner_broadcasting.py — WebSocket event broadcasting
-- runner_maintenance.py — background maintenance loops, signal handling
+- runner_maintenance/ — background maintenance tasks, signal handling
 """
 
 from __future__ import annotations
@@ -281,32 +281,39 @@ class GobbyRunner:
                 init_startup_content,
                 open_storage_and_config,
             )
+            from gobby.worker.gate import phase_scope
+            from gobby.worker.phase_ids import InitPhase
 
-            await _run_blocking_startup_phase(
-                open_storage_and_config,
-                self,
-                config_path,
-                verbose,
-                broadcast_loop=asyncio.get_running_loop(),
-            )
-            # The refusal asks Git, so it runs off the loop, ahead of every bundled
-            # publish (#22829).
-            if refusal := await asyncio.to_thread(bundled_content_refusal, self):
-                raise StartRefusal(refusal)
-            await _run_blocking_startup_phase(init_startup_content, self)
-            startup_snapshot = await self.config_runtime.start()
-            from gobby.runner_init.storage import bootstrap_overlaid_config
+            async with phase_scope(InitPhase.STORAGE_AND_CONFIG, self):
+                await _run_blocking_startup_phase(
+                    open_storage_and_config,
+                    self,
+                    config_path,
+                    verbose,
+                    broadcast_loop=asyncio.get_running_loop(),
+                )
+            async with phase_scope(InitPhase.CONTENT_REFUSAL, self):
+                # The refusal asks Git, so it runs off the loop, ahead of every bundled
+                # publish (#22829).
+                if refusal := await asyncio.to_thread(bundled_content_refusal, self):
+                    raise StartRefusal(refusal)
+            async with phase_scope(InitPhase.STARTUP_CONTENT, self):
+                await _run_blocking_startup_phase(init_startup_content, self)
+            async with phase_scope(InitPhase.CONFIG_RUNTIME, self):
+                startup_snapshot = await self.config_runtime.start()
+                from gobby.runner_init.storage import bootstrap_overlaid_config
 
-            self.startup_config = bootstrap_overlaid_config(
-                startup_snapshot.active, self.bootstrap_config
-            )
-            from gobby.agents.build_root import configure_build_root
+                self.startup_config = bootstrap_overlaid_config(
+                    startup_snapshot.active, self.bootstrap_config
+                )
+                from gobby.agents.build_root import configure_build_root
 
-            try:
-                configure_build_root(self.startup_config.agent_build.build_root)
-            except ValueError as exc:
-                raise StartRefusal(str(exc)) from exc
-            await self._initialize_runtime_services()
+                try:
+                    configure_build_root(self.startup_config.agent_build.build_root)
+                except ValueError as exc:
+                    raise StartRefusal(str(exc)) from exc
+            async with phase_scope(InitPhase.RUNTIME_SERVICES, self):
+                await self._initialize_runtime_services()
         except BaseException:
             runtime = getattr(self, "config_runtime", None)
             if runtime is not None:

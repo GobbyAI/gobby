@@ -18,3 +18,11 @@ class InitPhase(StrEnum):
 
 
 PHASE_ORDER: tuple[InitPhase, ...] = tuple(InitPhase)
+
+
+class PhaseStatus(StrEnum):
+    """What one initialize call reports about its phase (R0 design 5.4, ruling R30)."""
+
+    READY = "ready"
+    REFUSED = "refused"
+    FAILED = "failed"

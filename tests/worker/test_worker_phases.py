@@ -23,14 +23,14 @@ from typing import Any
 
 import pytest
 import yaml
-from gobby.worker.gate import phase_scope
-from gobby.worker.phases import UNUSABLE, PhaseDriver
 
 from gobby.app_context import clear_app_context
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner import GobbyRunner
+from gobby.worker.gate import phase_scope
 from gobby.worker.phase_ids import InitPhase
+from gobby.worker.phases import UNUSABLE, PhaseDriver
 
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY = ROOT / "tests/contracts/runner_lifecycle.json"
