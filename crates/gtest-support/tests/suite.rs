@@ -1,1 +1,3 @@
-// Scaffold stub (S1): single test target of the shared test crate; WP-D adds its modules.
+//! Single test target of the shared test crate. Each module is one group of tests.
+
+mod guard;
