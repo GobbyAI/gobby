@@ -76,7 +76,8 @@ pub struct Observation {
     pub side_effects: Vec<Value>,
 }
 
-/// The `db_delta` and side-effect values a leg's observer supplies.
+/// The values a leg's observer supplies: each `db_delta` entry as `db_delta::table_delta` returns
+/// it (already normalized), and each side-effect entry's raw captures.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Extras {
     pub db_delta: Vec<Value>,

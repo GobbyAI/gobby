@@ -204,6 +204,31 @@ mod tests {
         );
     }
 
+    /// Golden: `snapshot_files` of `recorder_v3.py` with the glob `**/*` on this tree gives
+    /// `a.json`, `link_file.json` and `sub/b.json`. The link to a file is a file, and the link to
+    /// the directory `linkdir` is not entered (pathlib's `glob` does not recurse into it).
+    #[cfg(unix)]
+    #[test]
+    fn the_symlink_tree_matches_the_python_snapshot_golden() {
+        let home = tempfile::tempdir().expect("home");
+        let files = home.path().join("files");
+        std::fs::create_dir_all(files.join("sub")).expect("sub");
+        std::fs::write(files.join("a.json"), b"a").expect("a");
+        std::fs::write(files.join("sub").join("b.json"), b"b").expect("b");
+        std::os::unix::fs::symlink(files.join("a.json"), files.join("link_file.json"))
+            .expect("file link");
+        std::os::unix::fs::symlink(files.join("sub"), files.join("linkdir")).expect("dir link");
+        let snapshot = files_home_snapshot(home.path()).expect("snapshot");
+        assert_eq!(
+            snapshot.keys().cloned().collect::<Vec<_>>(),
+            vec![
+                "a.json".to_owned(),
+                "link_file.json".to_owned(),
+                "sub/b.json".to_owned()
+            ]
+        );
+    }
+
     #[test]
     fn snapshot_hashes_regular_files_under_files_by_relative_path() {
         let home = tempfile::tempdir().expect("home");

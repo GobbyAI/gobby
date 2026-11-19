@@ -7,22 +7,21 @@
 //! followed by the actual one, a missing key reports its own pointer, lists compare length and
 //! then elements in order, and scalars compare by type and value.
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::corpus::Case;
 use super::normalize::{
-    NormalizeError, Window, escape_token, normalize_document, parse_name, redact,
+    NormalizeError, Window, escape_token, normalize_document, parse_spec, redact,
 };
 
-/// The normalizer names an entry declares, from its `normalizers` object.
-fn normalizers_of(entry: &Value) -> Vec<(&String, &str)> {
-    entry
-        .get("normalizers")
-        .and_then(Value::as_object)
-        .into_iter()
-        .flat_map(Map::iter)
-        .filter_map(|(path, name)| name.as_str().map(|name| (path, name)))
-        .collect()
+/// The normalizer declarations of an entry, from its `normalizers` object, in declaration order.
+/// A `normalizers` value that is not an object is refused, not skipped.
+fn normalizers_of(entry: &Value) -> Result<Vec<(&String, &Value)>, NormalizeError> {
+    match entry.get("normalizers") {
+        None => Ok(Vec::new()),
+        Some(Value::Object(map)) => Ok(map.iter().collect()),
+        Some(other) => Err(NormalizeError::BadSpec(other.to_string())),
+    }
 }
 
 /// Build the comparison document of one response, its `db_delta` values and its side effects.
@@ -83,10 +82,14 @@ fn first_difference_at(expected: &Value, actual: &Value, pointer: &str) -> Optio
     }
 }
 
-/// The comparison document of one case observation, with the case's masks and normalizers
-/// applied. The normalizers of `db_delta` and `side_effects` entries are resolved against the
-/// document, so a column normalizer reaches every row and changed value of its column, and a
-/// side-effect normalizer reaches each capture in capture order.
+/// The comparison document of one case observation, normalized as the observer normalizes it.
+///
+/// `db_delta` values must already be the output of `db_delta::table_delta`, which normalizes each
+/// entry as its own unit, so they are not normalized again here. `side_effects` values are the raw
+/// captures of each entry, and the response is the raw response. Each entry's normalizers resolve
+/// against the document: a case normalizer by its pointer, a side-effect normalizer on each capture
+/// of its entry. Masks are applied before the rules here; Python applies them after normalization
+/// (open item F2 in the report).
 pub fn normalized_document(
     case: &Case,
     response: &Value,
@@ -96,34 +99,14 @@ pub fn normalized_document(
 ) -> Result<Value, NormalizeError> {
     let document = comparison_document(response, db_delta, side_effects);
     let mut rules = Vec::new();
-    for (pointer, name) in &case.normalizers {
-        let name = name.as_str().unwrap_or_default();
-        rules.push((pointer.clone(), parse_name(name)?));
-    }
-    for (index, entry) in case.db_delta.iter().enumerate() {
-        let base = format!("/db_delta/{index}/recorded");
-        for (column, name) in normalizers_of(entry) {
-            let normalizer = parse_name(name)?;
-            let column = escape_token(column);
-            rules.push((format!("{base}/added/*/{column}"), normalizer));
-            rules.push((format!("{base}/removed/*/{column}"), normalizer));
-            // A changed value is addressed by its entry, so the entries of this column expand.
-            let changed = document
-                .pointer(&format!("{base}/changed"))
-                .and_then(Value::as_array);
-            for (position, change) in changed.into_iter().flatten().enumerate() {
-                if change["column"].as_str() == Some(column.as_str()) {
-                    rules.push((format!("{base}/changed/{position}/before"), normalizer));
-                    rules.push((format!("{base}/changed/{position}/after"), normalizer));
-                }
-            }
-        }
+    for (pointer, spec) in &case.normalizers {
+        rules.push((pointer.clone(), parse_spec(spec, false)?.normalizer));
     }
     for (index, entry) in case.side_effects.iter().enumerate() {
-        for (pointer, name) in normalizers_of(entry) {
+        for (pointer, spec) in normalizers_of(entry)? {
             rules.push((
                 format!("/side_effects/{index}/recorded/*{pointer}"),
-                parse_name(name)?,
+                parse_spec(spec, false)?.normalizer,
             ));
         }
     }
@@ -208,16 +191,6 @@ mod tests {
         );
     }
 
-    /// The column names of one db_delta entry field (`key` or `columns`).
-    fn names_of(entry: &Value, field: &str) -> Vec<String> {
-        entry[field]
-            .as_array()
-            .expect("entry names")
-            .iter()
-            .map(|name| name.as_str().expect("column name").to_owned())
-            .collect()
-    }
-
     /// The real v3 recording, end to end. The observed values are built from raw before and after
     /// rows that produce the recorded deltas, and the observed pg_notify payload is the sequence
     /// text "2". Only the observed values are normalized; the recording is compared as stored.
@@ -246,18 +219,18 @@ mod tests {
             "source": "user", "is_secret": false, "revision": 2
         }))];
         let observed_db_delta = vec![
-            crate::http_replay::db_delta::delta(
-                &names_of(&case.db_delta[0], "key"),
-                &names_of(&case.db_delta[0], "columns"),
+            crate::http_replay::db_delta::table_delta(
                 &state_before,
                 &state_after,
+                &case.db_delta[0],
+                &window,
             )
             .expect("config_state delta"),
-            crate::http_replay::db_delta::delta(
-                &names_of(&case.db_delta[1], "key"),
-                &names_of(&case.db_delta[1], "columns"),
+            crate::http_replay::db_delta::table_delta(
                 &store_before,
                 &store_after,
+                &case.db_delta[1],
+                &window,
             )
             .expect("config_store delta"),
         ];
