@@ -8,7 +8,7 @@ from typing import Any
 import psycopg
 
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
-from gobby.sessions.terminal_binding import cli_shares_shell_tty
+from gobby.sessions.terminal_binding import cli_tty_refusal
 from gobby.terminal_context import parse_terminal_context_value
 
 STALE_TERMINAL_SESSION_SCAN_LIMIT = 200
@@ -69,17 +69,20 @@ def bind_discovered_terminal(
         terminal = terminal_manager.get(native_terminal_id)
     except ValueError:
         terminal = None
-    if (
-        isinstance(cli_pid, bool)
-        or not isinstance(cli_pid, int)
-        or cli_pid <= 0
-        or terminal is None
-        or not cli_shares_shell_tty(cli_pid, terminal)
-    ):
+    refusal: str | None
+    if isinstance(cli_pid, bool) or not isinstance(cli_pid, int) or cli_pid <= 0:
+        refusal = f"missing or non-integer parent_pid {cli_pid!r}"
+    elif terminal is None:
+        refusal = "no terminal row"
+    else:
+        refusal = cli_tty_refusal(cli_pid, terminal)
+    if refusal is not None:
         logger.info(
-            "native terminal %s refused for session %s: CLI and shell tty could not be verified",
+            "native terminal %s refused for session %s: CLI and shell tty could not be "
+            "verified: %s",
             native_terminal_id,
             session_id,
+            refusal,
         )
         session_manager.clear_gobby_terminal_id(session_id)
         if terminal is not None and terminal.session_id == session_id:
@@ -88,6 +91,11 @@ def bind_discovered_terminal(
         return None
     if terminal_manager.bind_session(native_terminal_id, session_id, project_id) is None:
         return project_id, terminal_context
+    if session_manager is not None:
+        # The context merge admits a pane's terminal id only once its row is bound here.
+        session_manager.backfill_terminal_context(
+            session_id, {"gobby_terminal_id": native_terminal_id}
+        )
     return None
 
 

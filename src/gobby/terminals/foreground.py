@@ -20,6 +20,7 @@ import os
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Protocol
 
 import psutil
 
@@ -206,6 +207,32 @@ def shell_pid(row: object) -> int | None:
     if isinstance(pgid, bool) or not isinstance(pgid, int) or pgid <= 0:
         return None
     return pgid
+
+
+class _HasTerminal(Protocol):
+    def terminal(self) -> str | None: ...
+
+
+def _clear_terminal_map_cache() -> None:
+    """Drop psutil's device-to-tty map, which it otherwise keeps for the process lifetime."""
+    posix = getattr(psutil, "_psposix", None)
+    cache_clear = getattr(getattr(posix, "get_terminal_map", None), "cache_clear", None)
+    if callable(cache_clear):
+        cache_clear()
+
+
+def process_tty(process: _HasTerminal) -> str | None:
+    """A process's tty, rereading the device map once when it has no entry for it.
+
+    psutil builds its map of /dev device numbers once per process, so a long-lived
+    daemon misses every pty node created after that and reports no tty for the
+    processes on them. Errors from inspecting the process propagate to the caller.
+    """
+    tty = process.terminal()
+    if tty:
+        return tty
+    _clear_terminal_map_cache()
+    return process.terminal() or None
 
 
 def process_shell(row: object) -> str | None:

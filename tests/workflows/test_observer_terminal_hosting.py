@@ -62,8 +62,8 @@ def test_hosting_follows_live_native_terminal_row(
     else:
         context: dict[str, Any] = {"gobby_terminal_id": tid, "parent_pid": 202}
         with patch(
-            "gobby.hooks.event_handlers._session_start.terminal_runtime.cli_shares_shell_tty",
-            return_value=False,
+            "gobby.hooks.event_handlers._session_start.terminal_runtime.cli_tty_refusal",
+            return_value="tty mismatch",
         ):
             bind_discovered_terminal(
                 terminals,

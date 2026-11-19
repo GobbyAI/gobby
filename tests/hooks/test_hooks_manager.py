@@ -2004,7 +2004,7 @@ class TestHookManagerSessionLookup:
     def test_handle_backfills_terminal_context_for_known_session(
         self, hook_manager_with_mocks: HookManager, temp_dir: Path
     ) -> None:
-        """Later Codex hooks should repair a session that missed SessionStart terminal metadata."""
+        """Later Codex hooks repair missed metadata but never merge an unbound pane id."""
         manager = hook_manager_with_mocks
         project_id = json.loads((temp_dir / ".gobby" / "project.json").read_text())["id"]
         registered = cast(Any, manager._session_manager).register(
@@ -2039,7 +2039,8 @@ class TestHookManagerSessionLookup:
         updated = manager._session_manager.get(session_id)
         assert updated is not None
         assert updated.terminal_context is not None
-        assert updated.terminal_context["gobby_terminal_id"] == "%5"
+        # No native row named "%5" is bound to this session, so its pane id stays out.
+        assert "gobby_terminal_id" not in updated.terminal_context
         assert updated.terminal_context["cwd"] == str(temp_dir)
 
     def test_handle_resolves_active_task(

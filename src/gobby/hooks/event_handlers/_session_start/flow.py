@@ -574,6 +574,17 @@ def handle_pre_created_session(
     effective_terminal_context = (
         stored_terminal_context if isinstance(stored_terminal_context, dict) else terminal_context
     )
+    pane_terminal_id = (terminal_context or {}).get("gobby_terminal_id")
+    if (
+        effective_terminal_context is not None
+        and pane_terminal_id is not None
+        and effective_terminal_context.get("gobby_terminal_id") != pane_terminal_id
+    ):
+        # The merge holds back a pane id whose row is not bound yet; this hook binds it.
+        effective_terminal_context = {
+            **effective_terminal_context,
+            "gobby_terminal_id": pane_terminal_id,
+        }
     pending_native_terminal_bind = discover_and_bind_external_terminal(
         handler,
         session_id=session_obj.id,

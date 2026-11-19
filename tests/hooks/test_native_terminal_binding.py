@@ -84,8 +84,8 @@ def test_native_binding_clears_route_when_cli_pid_is_invalid(cli_pid: object) ->
     sessions = MagicMock()
     context = {"gobby_terminal_id": terminal_id, "parent_pid": cli_pid}
     with patch(
-        "gobby.hooks.event_handlers._session_start.terminal_runtime.cli_shares_shell_tty",
-        return_value=True,
+        "gobby.hooks.event_handlers._session_start.terminal_runtime.cli_tty_refusal",
+        return_value=None,
     ) as shell_proof:
         result = bind_discovered_terminal(
             manager,

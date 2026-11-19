@@ -105,6 +105,60 @@ def test_refused_route_stays_refused_after_the_next_hook_backfill(
     assert unchanged is not None and unchanged.session_id is None
 
 
+def test_pane_id_merges_once_the_same_hook_binds_its_row(
+    session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
+    terminals = TerminalManager(session_manager.db)
+    terminal_id = str(uuid4())
+    terminal = terminals.create_pending(
+        terminal_id=terminal_id,
+        project_id=sample_project["id"],
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal_id,
+    )
+    assert terminal.attempt_started_at is not None
+    assert (
+        terminals.record_process(
+            terminal_id,
+            {"pgid": 101, "host_terminal_id": terminal_id},
+            attempt_generation=terminal.attempt_generation,
+            attempt_started_at=terminal.attempt_started_at,
+        )
+        is not None
+    )
+    session = _register_terminal(
+        session_manager,
+        sample_project["id"],
+        "same-hook-bind",
+        terminal_context={"parent_pid": 202, "tty": "/dev/ttys002"},
+    )
+    hook_context = {"gobby_terminal_id": terminal_id, "parent_pid": 202, "tty": "/dev/ttys002"}
+    # Before the bind, the merge holds the pane id back.
+    held = session_manager.backfill_terminal_context(session.id, dict(hook_context))
+    assert held is not None and "gobby_terminal_id" not in (held.terminal_context or {})
+    processes = {
+        101: SimpleNamespace(terminal=lambda: "/dev/ttys002"),
+        202: SimpleNamespace(terminal=lambda: "/dev/ttys002"),
+    }
+    with patch("gobby.sessions.terminal_binding.psutil.Process", side_effect=processes.__getitem__):
+        pending = bind_discovered_terminal(
+            terminals,
+            logging.getLogger(__name__),
+            session_id=session.id,
+            project_id=session.project_id,
+            terminal_context=dict(hook_context),
+            session_manager=session_manager,
+        )
+    assert pending is None
+    bound = terminals.get_live_for_session(session.id)
+    assert bound is not None and bound.id == terminal_id
+    session_manager.backfill_terminal_context(session.id, dict(hook_context))
+    stored = session_manager.get(session.id)
+    assert stored is not None
+    assert stored.terminal_context == hook_context
+
+
 @pytest.fixture(autouse=True)
 def _local_machine_identity() -> Iterator[None]:
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
