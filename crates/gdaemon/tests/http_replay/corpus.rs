@@ -1791,6 +1791,30 @@ mod loader_rule_tests {
     }
 
     #[test]
+    fn a_schema_3_response_collection_may_be_declared_unordered_by_a_key() {
+        // A channel list answers rows from an unordered read, so the case sorts them by a stable
+        // key before its positional rules apply.
+        let value = json!({
+            "schema_version": 3,
+            "name": "rule_probe",
+            "kind": "http",
+            "family": "health",
+            "backend": "up",
+            "credential": "none",
+            "ledger_key": "HTTP GET /api/health",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "response": {"status": 200, "headers": {}, "body": [{"name": "alpha"}, {"name": "beta"}]},
+            "normalizers": {"/response/body": {"name": "unordered", "key": "name"}},
+            "mask": []
+        });
+        let refusal = parse_case(&value).err().map(|error| error.to_string());
+        assert!(
+            refusal.is_none(),
+            "the loader refused an unordered collection declaration: {refusal:?}"
+        );
+    }
+
+    #[test]
     fn a_schema_3_mcp_case_may_use_the_rest_transport() {
         // The REST tool route answers a body that is not a JSON-RPC envelope, so a rest case may
         // carry any JSON response.

@@ -29,8 +29,10 @@ route reuses the hub-node command contract.
 from __future__ import annotations
 
 import ast
+import copy
 import json
 import re
+from collections.abc import Collection
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +108,17 @@ COVERED_IDS: tuple[str, ...] = tuple(
     for section, last in COVERED_THROUGH.items()
     for number in range(1, last + 1)
 )
+# The node entry points: the gdaemon release report and the two gclient wrappers that exec the
+# sibling gdaemon. Each anchor's entry kind and the verb it runs.
+ENTRY_POINT_SECTIONS = frozenset({"2.1", "2.2"})
+ENTRY_POINT_ANCHORS: dict[str, tuple[str, str]] = {
+    "2.1.1": ("node_install", "gdaemon node release-info"),
+    "2.2.1": ("node_install", "gclient node install"),
+    "2.2.2": ("node_install", "gclient node install"),
+}
+# The entry-point sections' version bumps, which move to the cutover that promotes a binary.
+ENTRY_POINT_EXCLUDED_IDS = frozenset({"2.1.2", "2.2.3"})
+NODE_VERB_PREFIXES = ("gobby node ", "gdaemon ", "gclient node ")
 _BOOTSTRAP = ("POST", "/api/auth/keys/bootstrap")
 _LOGIN = ("POST", "/api/auth/login")
 _REVOKE = ("DELETE", "/api/auth/keys/{key_id}")
@@ -140,15 +153,15 @@ def _plan_lines() -> list[str]:
     return NODE_PLAN.read_text(encoding="utf-8").splitlines()
 
 
-def _plan_anchors() -> dict[str, int]:
-    """The 1-based line of each acceptance anchor in the covered sections."""
+def _plan_anchors(sections: Collection[str] = tuple(SECTIONS)) -> dict[str, int]:
+    """The 1-based line of each acceptance anchor in the given sections."""
     anchors: dict[str, int] = {}
     for number, line in enumerate(_plan_lines(), start=1):
         match = ANCHOR.match(line)
         if match is None:
             continue
         anchor = match.group(1)
-        if anchor.rsplit(".", 1)[0] not in SECTIONS:
+        if anchor.rsplit(".", 1)[0] not in sections:
             continue
         assert anchor not in anchors, f"{NODE_PLAN} names anchor {anchor} twice"
         anchors[anchor] = number
@@ -206,12 +219,18 @@ def test_enrollment_corpus_uses_node_verbs() -> None:
     for case in cases:
         command = case.get("command")
         assert isinstance(command, str), f"case {case.get('id')} has no command"
-        assert command.startswith(("gobby node ", "gdaemon ")), (
+        assert command.startswith(NODE_VERB_PREFIXES), (
             f"case {case.get('id')} runs {command}, not a node verb"
         )
         assert "gobby auth login" not in command, f"case {case.get('id')} runs the Python login"
     for case in cases:
-        section = str(case.get("id")).rsplit(".", 1)[0]
+        anchor = str(case.get("id"))
+        if anchor in ENTRY_POINT_ANCHORS:
+            kind, command = ENTRY_POINT_ANCHORS[anchor]
+            assert case.get("kind") == kind, f"case {anchor} has kind {case.get('kind')}"
+            assert case.get("command") == command, f"case {anchor} runs {case.get('command')}"
+            continue
+        section = anchor.rsplit(".", 1)[0]
         assert section in SECTIONS, f"case {case.get('id')} is outside the covered sections"
         kind, command = SECTIONS[section]
         assert case.get("kind") == kind, f"case {case['id']} has kind {case.get('kind')}"
@@ -226,12 +245,13 @@ def test_enrollment_cases_cover_plan_acceptance() -> None:
         f"the plan's anchors {sorted(set(anchors) ^ (set(COVERED_IDS) | EXCLUDED_IDS))} "
         "are not partitioned into covered and excluded"
     )
-    ids = [str(case.get("id")) for case in cases]
+    in_sections = [case for case in cases if str(case.get("id")) not in ENTRY_POINT_ANCHORS]
+    ids = [str(case.get("id")) for case in in_sections]
     assert sorted(ids) == sorted(COVERED_IDS), (
         f"the corpus covers {len(ids)} anchors, not the {len(COVERED_IDS)} it declares"
     )
     assert not EXCLUDED_IDS & set(ids)
-    for case in cases:
+    for case in in_sections:
         anchor = case["id"]
         assert case.get("plan_line") == anchors[anchor], (
             f"case {anchor} cites line {case.get('plan_line')}, not {anchors[anchor]}"
@@ -241,8 +261,58 @@ def test_enrollment_cases_cover_plan_acceptance() -> None:
         )
 
 
-def test_enrollment_routes_match_declared_routes() -> None:
+def test_node_corpus_covers_the_entry_point_anchors() -> None:
     cases = _cases()
+    anchors = _plan_anchors(ENTRY_POINT_SECTIONS)
+    lines = _plan_lines()
+    assert set(anchors) == set(ENTRY_POINT_ANCHORS) | ENTRY_POINT_EXCLUDED_IDS, (
+        f"the plan's entry-point anchors {sorted(anchors)} are not partitioned into covered "
+        "and excluded"
+    )
+    ids = sorted(str(case.get("id")) for case in cases)
+    assert ids == sorted([*COVERED_IDS, *ENTRY_POINT_ANCHORS]), (
+        f"the corpus covers the anchors {ids}, missing "
+        f"{sorted(set(ENTRY_POINT_ANCHORS) - set(ids))} of the entry points"
+    )
+    by_id = {str(case.get("id")): case for case in cases}
+    for anchor, (kind, command) in ENTRY_POINT_ANCHORS.items():
+        case = by_id[anchor]
+        assert case.get("kind") == kind, f"case {anchor} has kind {case.get('kind')}"
+        assert case.get("command") == command, f"case {anchor} runs {case.get('command')}"
+        assert case.get("plan_line") == anchors[anchor], (
+            f"case {anchor} cites line {case.get('plan_line')}, not {anchors[anchor]}"
+        )
+        assert case.get("anchor_text") == lines[anchors[anchor] - 1], (
+            f"case {anchor} does not copy its plan line verbatim"
+        )
+        assert not case.get("http"), f"case {anchor} names hub routes"
+
+
+def test_enrollment_routes_match_declared_routes() -> None:
+    cited = _checked_enrollment_routes(_cases())
+    assert cited == {_BOOTSTRAP, _LOGIN, _REVOKE}, f"the corpus cites the routes {sorted(cited)}"
+
+
+def test_route_check_accepts_the_plan_spelling_of_a_route_parameter() -> None:
+    cases = copy.deepcopy(_cases())
+    respelled = 0
+    for case in cases:
+        for item in case.get("http", []):
+            if (item.get("method"), item.get("path")) == _REVOKE:
+                item["path"] = "/api/auth/keys/{id}"
+                respelled += 1
+    assert respelled == 1, f"the corpus names the revoke route {respelled} times, expected 1"
+    cited = {_route_key(*route) for route in _checked_enrollment_routes(cases)}
+    expected = {_route_key(*route) for route in (_BOOTSTRAP, _LOGIN, _REVOKE)}
+    assert cited == expected, f"the respelled corpus cites the routes {sorted(cited)}"
+
+
+def _checked_enrollment_routes(cases: list[dict[str, Any]]) -> set[tuple[str, str]]:
+    """Check every route each case names and return the routes the corpus cites.
+
+    A named route is declared by a route module, named by its plan line and expected for its
+    anchor.
+    """
     with_http = [case for case in cases if case.get("http")]
     assert len(with_http) >= 3, f"only {len(with_http)} cases carry http"
     declared = {_route_key(method, path) for method, path in _declared_routes()}
@@ -263,7 +333,7 @@ def test_enrollment_routes_match_declared_routes() -> None:
                 f"plan line {source} does not name {key[0]} {key[1]}"
             )
             cited.add((item["method"], item["path"]))
-    assert cited == {_BOOTSTRAP, _LOGIN, _REVOKE}, f"the corpus cites the routes {sorted(cited)}"
+    return cited
 
 
 def test_enrollment_corpus_declares_no_command_frames() -> None:

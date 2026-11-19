@@ -8,11 +8,14 @@ edge side effects and webhook answers. A test that starts a daemon runs only aft
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import time
-from collections.abc import Iterator
+import uuid
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,11 +26,13 @@ from scripts.parity_waivers import DIFF, PASSED
 from tests.contracts import corpus_v3, recorder_v3
 from tests.contracts.comms.fake_edge import FakeEdge
 from tests.contracts.http_corpus import classify_replay
+from tests.contracts.normalizers_v3 import Window, normalize_captures
 from tests.contracts.recorder_daemon_v3 import (
     CORPUS_SLACK_CHANNEL_ID,
     RecorderDaemon,
     recorder_daemon,
 )
+from tests.contracts.recorder_v3_support import ProviderEdgeCapture
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 V3_DIR = corpus_v3.V3_DIR
@@ -49,6 +54,75 @@ PROVIDER_REACHING_HOSTS: dict[str, tuple[str, ...]] = {
     "comms_attachment": ("slack.com", "upload.corpus.test"),
     "comms_mcp_send_message": ("slack.com",),
 }
+SLACK_DESTINATION = "C0CORPUS0001"
+ATTACHMENT_SHA256 = hashlib.sha256(b"corpus attachment line one\n").hexdigest()
+EMPTY_SEMANTIC = {"destination": "", "text": "", "filename": "", "payload_sha256": ""}
+
+
+def _hit(host: str, method: str, path: str, **semantic: str) -> dict[str, Any]:
+    """One provider edge capture item: the request signature and its sanitized semantics."""
+    return {
+        "host": host,
+        "method": method,
+        "path": path,
+        "semantic": {**EMPTY_SEMANTIC, **semantic},
+    }
+
+
+_AUTH_TEST = _hit("slack.com", "POST", "/api/auth.test")
+# The exact ordered provider requests each provider-reaching case makes, with what each one sends.
+PROVIDER_SEQUENCES: dict[str, tuple[dict[str, Any], ...]] = {
+    "comms_channel_create": (_AUTH_TEST,),
+    "comms_channel_update": (_AUTH_TEST,),
+    "comms_send": (
+        _hit(
+            "slack.com",
+            "POST",
+            "/api/chat.postMessage",
+            destination=SLACK_DESTINATION,
+            text="corpus message one",
+        ),
+    ),
+    "comms_attachment": (
+        _hit("slack.com", "POST", "/api/files.getUploadURLExternal", filename="corpus-errors.txt"),
+        _hit("upload.corpus.test", "PUT", "/upload/corpus-1", payload_sha256=ATTACHMENT_SHA256),
+        _hit(
+            "slack.com",
+            "POST",
+            "/api/files.completeUploadExternal",
+            destination=SLACK_DESTINATION,
+            text="corpus caption",
+            filename="corpus-errors.txt",
+        ),
+    ),
+    "comms_mcp_send_message": (
+        _hit(
+            "slack.com",
+            "POST",
+            "/api/chat.postMessage",
+            destination=SLACK_DESTINATION,
+            text="corpus message two",
+        ),
+    ),
+}
+# A send the daemon refuses before any provider request: it captures the provider host it would
+# have reached and records an empty capture.
+REFUSED_SEND_CASE = "comms_send_missing_channel"
+EMPTY_CAPTURE_CASES: dict[str, tuple[str, ...]] = {REFUSED_SEND_CASE: ("slack.com",)}
+# The sends that persist one outbound message row, with the content that row carries.
+PERSISTED_SENDS: dict[str, str] = {
+    "comms_send": "corpus message one",
+    "comms_attachment": "corpus caption",
+    "comms_mcp_send_message": "corpus message two",
+}
+MESSAGES_TABLE = "comms_messages"
+EMPTY_DELTA: dict[str, list[Any]] = {"added": [], "removed": [], "changed": []}
+# The channel list answers and where each one holds its channel rows. Row order is not a contract.
+CHANNEL_LIST_ROWS: dict[str, tuple[str, ...]] = {
+    "comms_channels_list": ("body",),
+    "comms_mcp_list_channels": ("result", "channels"),
+}
+REPLAY_WINDOW = Window(start=datetime.now(UTC), end=datetime.now(UTC))
 VOICE_STATUS_CASES = ("voice_status", "voice_status_want_tts")
 VOICE_TRANSCRIBE_CASE = "voice_transcribe_missing_file"
 # Voice status masks address the HTTP response body.
@@ -360,6 +434,10 @@ def test_every_provider_reaching_case_declares_a_provider_edge_side_effect() -> 
     assert missing == [], f"these are not communications or voice cases: {missing}"
     for case in cases:
         name = case["name"]
+        if name in EMPTY_CAPTURE_CASES:
+            # A refused send declares the host it would reach and records no request; its own
+            # test checks both.
+            continue
         effects = _provider_edge_effects(case)
         declared = sorted(host for effect in effects for host in _effect_hosts(effect))
         expected = sorted(PROVIDER_REACHING_HOSTS.get(name, ()))
@@ -426,3 +504,248 @@ def test_webhook_cases_answer_as_the_routes_document() -> None:
     assert receive["body"] == {
         "detail": f"Webhook signature verification failed for channel '{CORPUS_SLACK_CHANNEL_NAME}'"
     }, f"the webhook POST answered {receive['body']!r}"
+
+
+# Replayed provider-edge observations go through the recorder's own capture and the replay
+# classifier, so each proof below exercises the comparison a replay uses.
+
+
+class _ArrivalLog:
+    """A provider edge arrival log holding a fixed list of arrivals."""
+
+    def __init__(self, arrivals: list[dict[str, Any]]) -> None:
+        self._arrivals = copy.deepcopy(arrivals)
+
+    def hits(self) -> list[dict[str, Any]]:
+        return copy.deepcopy(self._arrivals)
+
+    def clear(self) -> None:
+        self._arrivals.clear()
+
+
+def _recorded_edge_hits(case: dict[str, Any]) -> list[Any]:
+    """Every recorded provider_edge capture item of a case, in declaration and arrival order."""
+    return [item for effect in _provider_edge_effects(case) for item in effect.get("recorded", [])]
+
+
+def _edge_observation(case: dict[str, Any], arrivals: list[dict[str, Any]]) -> list[Any]:
+    """The side-effect values a replay observes when the provider edge logged ``arrivals``."""
+    observed: list[Any] = []
+    for effect in case.get("side_effects", []):
+        assert effect.get("channel") == "provider_edge", (
+            f"{case['name']} declares a {effect.get('channel')} side effect"
+        )
+        items = ProviderEdgeCapture(_ArrivalLog(arrivals), _effect_hosts(effect)).hits()
+        observed.append(
+            normalize_captures(items, effect.get("normalizers", {}), window=REPLAY_WINDOW)
+        )
+    return observed
+
+
+def _recorded_db(case: dict[str, Any]) -> list[Any]:
+    return [copy.deepcopy(entry.get("recorded")) for entry in case.get("db_delta", [])]
+
+
+def _classify_edge(
+    case: dict[str, Any], arrivals: list[dict[str, Any]], db_delta: list[Any] | None = None
+) -> str:
+    """Classify a replay that answered the recorded reply while the edge logged ``arrivals``."""
+    observed = {
+        "db_delta": _recorded_db(case) if db_delta is None else db_delta,
+        "side_effects": _edge_observation(case, arrivals),
+    }
+    return classify_replay(case, copy.deepcopy(case["response"]), {}, observed=observed).outcome
+
+
+def _pinned_sequence(name: str) -> list[dict[str, Any]]:
+    return copy.deepcopy(list(PROVIDER_SEQUENCES[name]))
+
+
+def _messages_entries(case: dict[str, Any]) -> list[dict[str, Any]]:
+    return [entry for entry in case.get("db_delta", []) if entry.get("table") == MESSAGES_TABLE]
+
+
+@pytest.mark.unit
+def test_provider_reaching_cases_record_the_exact_provider_sequence() -> None:
+    assert set(PROVIDER_SEQUENCES) == set(PROVIDER_REACHING_HOSTS), (
+        "every provider-reaching case pins its provider sequence"
+    )
+    for name in sorted(PROVIDER_SEQUENCES):
+        recorded = _recorded_edge_hits(_v3_case_named(name))
+        expected = _pinned_sequence(name)
+        assert recorded == expected, (
+            f"{name} records the provider sequence {recorded}, expected {expected}"
+        )
+
+
+def _wrong_endpoint(index: int, path: str) -> Callable[[list[dict[str, Any]]], None]:
+    def mutate(hits: list[dict[str, Any]]) -> None:
+        hits[index]["path"] = path
+
+    return mutate
+
+
+def _drop_step(index: int) -> Callable[[list[dict[str, Any]]], None]:
+    def mutate(hits: list[dict[str, Any]]) -> None:
+        del hits[index]
+
+    return mutate
+
+
+def _repeat_step(index: int) -> Callable[[list[dict[str, Any]]], None]:
+    def mutate(hits: list[dict[str, Any]]) -> None:
+        hits.insert(index, copy.deepcopy(hits[index]))
+
+    return mutate
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("name", "mutation"),
+    [
+        pytest.param("comms_send", _wrong_endpoint(0, "/api/auth.test"), id="send-wrong-endpoint"),
+        pytest.param("comms_send", _repeat_step(0), id="send-repeated-step"),
+        pytest.param(
+            "comms_attachment",
+            _wrong_endpoint(2, "/api/files.completeUpload"),
+            id="attachment-wrong-endpoint",
+        ),
+        pytest.param("comms_attachment", _drop_step(2), id="attachment-missing-step"),
+        pytest.param(
+            "comms_channel_create", _wrong_endpoint(0, "/api/chat.postMessage"), id="create"
+        ),
+    ],
+)
+def test_a_changed_provider_sequence_is_a_difference(
+    name: str, mutation: Callable[[list[dict[str, Any]]], None]
+) -> None:
+    case = _v3_case_named(name)
+    expected = _pinned_sequence(name)
+    assert _recorded_edge_hits(case) == expected, f"{name} does not record its pinned sequence"
+    assert _classify_edge(case, expected) == PASSED, f"{name}: the pinned sequence is a difference"
+    mutated = _pinned_sequence(name)
+    mutation(mutated)
+    assert _classify_edge(case, mutated) == DIFF, f"{name}: the sequence {mutated} still matches"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("name", "index", "field", "value"),
+    [
+        pytest.param("comms_send", 0, "destination", "C0OTHER0001", id="send-destination"),
+        pytest.param("comms_send", 0, "text", "another text", id="send-text"),
+        pytest.param(
+            "comms_mcp_send_message", 0, "destination", "C0OTHER0001", id="mcp-send-destination"
+        ),
+        pytest.param("comms_mcp_send_message", 0, "text", "another text", id="mcp-send-text"),
+        pytest.param("comms_attachment", 0, "filename", "other.txt", id="attachment-filename"),
+        pytest.param("comms_attachment", 1, "payload_sha256", "f" * 64, id="attachment-bytes"),
+        pytest.param(
+            "comms_attachment", 2, "destination", "C0OTHER0001", id="attachment-destination"
+        ),
+        pytest.param("comms_attachment", 2, "text", "another caption", id="attachment-caption"),
+    ],
+)
+def test_a_changed_outbound_payload_with_the_same_reply_is_a_difference(
+    name: str, index: int, field: str, value: str
+) -> None:
+    case = _v3_case_named(name)
+    faithful = _pinned_sequence(name)
+    assert _classify_edge(case, faithful) == PASSED, f"{name}: the pinned sequence is a difference"
+    mutated = _pinned_sequence(name)
+    mutated[index]["semantic"][field] = value
+    assert _classify_edge(case, mutated) == DIFF, (
+        f"{name}: a request {index} sending {field}={value!r} with the same reply still matches"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("name", "content"), sorted(PERSISTED_SENDS.items()))
+def test_persisted_sends_record_one_outbound_message_row(name: str, content: str) -> None:
+    case = _v3_case_named(name)
+    entries = _messages_entries(case)
+    assert len(entries) == 1, f"{name} declares {len(entries)} {MESSAGES_TABLE} deltas, expected 1"
+    recorded = entries[0].get("recorded", {})
+    assert recorded.get("removed") == [] and recorded.get("changed") == [], (
+        f"{name} records a removed or changed message row: {recorded}"
+    )
+    added = recorded.get("added", [])
+    assert len(added) == 1, f"{name} records {len(added)} added message rows, expected 1"
+    assert added[0].get("direction") == "outbound", f"{name} records the row {added[0]}"
+    assert added[0].get("content") == content, f"{name} records the row {added[0]}"
+    unwritten = _recorded_db(case)
+    unwritten[case["db_delta"].index(entries[0])] = copy.deepcopy(EMPTY_DELTA)
+    sequence = _pinned_sequence(name)
+    assert _classify_edge(case, sequence) == PASSED, f"{name}: the recording is a difference"
+    assert _classify_edge(case, sequence, db_delta=unwritten) == DIFF, (
+        f"{name}: a replay that writes no message row still matches"
+    )
+
+
+@pytest.mark.unit
+def test_a_refused_send_records_no_provider_request_and_no_message_row() -> None:
+    case = _v3_case_named(REFUSED_SEND_CASE)
+    effects = _provider_edge_effects(case)
+    hosts = [list(host) for host in EMPTY_CAPTURE_CASES.values()]
+    assert [_effect_hosts(effect) for effect in effects] == hosts, (
+        f"{REFUSED_SEND_CASE} declares the provider_edge side effects {effects}"
+    )
+    assert [effect.get("recorded") for effect in effects] == [[]], (
+        f"{REFUSED_SEND_CASE} records provider requests: {effects}"
+    )
+    entries = _messages_entries(case)
+    assert [entry.get("recorded") for entry in entries] == [EMPTY_DELTA], (
+        f"{REFUSED_SEND_CASE} records the {MESSAGES_TABLE} deltas {entries}"
+    )
+    assert _classify_edge(case, []) == PASSED, "the refused send's recording is a difference"
+    sent = _pinned_sequence("comms_send")
+    assert _classify_edge(case, sent) == DIFF, "a refused send that reached Slack still matches"
+    written = copy.deepcopy(EMPTY_DELTA)
+    written["added"].append({"direction": "outbound", "content": "corpus message missing"})
+    assert _classify_edge(case, [], db_delta=[written]) == DIFF, (
+        "a refused send that wrote a message row still matches"
+    )
+
+
+def _channel_rows(document: Any, case_name: str) -> list[dict[str, Any]]:
+    node = document
+    for token in CHANNEL_LIST_ROWS[case_name]:
+        node = node[token]
+    assert isinstance(node, list), f"{case_name} answers no channel list"
+    return node
+
+
+def _raw_channel_answer(case: dict[str, Any], *, reverse: bool, rename: bool) -> Any:
+    """A raw answer to the channel list request, with the ordinal channel id made concrete."""
+    raw = copy.deepcopy(case["response"])
+    rows = _channel_rows(raw, case["name"])
+    for row in rows:
+        if row.get("id") == "@uuid:1@":
+            row["id"] = str(uuid.uuid4())
+    if rename:
+        rows[0]["name"] = "corpus-renamed"
+    if reverse:
+        rows.reverse()
+    return raw
+
+
+def _classify_answer(case: dict[str, Any], raw: Any) -> str:
+    actual = recorder_v3._normalize_response(case, raw, REPLAY_WINDOW)
+    observed: dict[str, list[Any]] = {"db_delta": [], "side_effects": []}
+    return classify_replay(case, actual, {}, observed=observed).outcome
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name", sorted(CHANNEL_LIST_ROWS))
+def test_channel_lists_match_in_any_row_order_and_differ_on_a_changed_channel(name: str) -> None:
+    case = _v3_case_named(name)
+    rows = _channel_rows(case["response"], name)
+    assert len(rows) >= 2, f"{name} answers {len(rows)} channels, too few to reorder"
+    as_recorded = _raw_channel_answer(case, reverse=False, rename=False)
+    assert _classify_answer(case, as_recorded) == PASSED, f"{name}: the recorded order differs"
+    reversed_rows = _raw_channel_answer(case, reverse=True, rename=False)
+    assert _classify_answer(case, reversed_rows) == PASSED, (
+        f"{name}: the same channels in reversed order are a difference"
+    )
+    renamed = _raw_channel_answer(case, reverse=True, rename=True)
+    assert _classify_answer(case, renamed) == DIFF, f"{name}: a renamed channel still matches"

@@ -959,3 +959,69 @@ def test_provider_edge_capture_keeps_listed_hosts_in_arrival_order() -> None:
         {"host": "slack.com", "method": "POST", "path": "/api/chat.postMessage"},
         {"host": "slack.com", "method": "GET", "path": "/api/auth.test"},
     ]
+
+
+@pytest.mark.unit
+def test_provider_edge_capture_keeps_the_sanitized_semantics_of_each_arrival() -> None:
+    edge = _EdgeLog()
+    capture = ProviderEdgeCapture(edge, hosts=["slack.com"])
+    sent = {
+        "destination": "C0CORPUS0001",
+        "text": "corpus message one",
+        "filename": "",
+        "payload_sha256": "",
+    }
+    edge.add(
+        {
+            "host": "slack.com",
+            "method": "POST",
+            "path": "/api/chat.postMessage",
+            "headers": {"authorization": "Bearer test-token"},
+            "body": {"channel": "C0CORPUS0001", "text": "corpus message one"},
+            "semantic": sent,
+        }
+    )
+    edge.add(
+        {
+            "host": "other.test",
+            "method": "POST",
+            "path": "/ignored",
+            "semantic": {**sent, "text": "ignored"},
+        }
+    )
+    assert capture.hits() == [
+        {"host": "slack.com", "method": "POST", "path": "/api/chat.postMessage", "semantic": sent}
+    ], "the capture drops what each provider request sent"
+
+
+_UNORDERED_RULES: dict[str, Any] = {
+    "/body": {"name": "unordered", "key": "name"},
+    "/body/1/id": "uuid_ordinal",
+}
+_ALPHA_ID = "11111111-1111-4111-8111-111111111111"
+_BETA_ID = "22222222-2222-4222-8222-222222222222"
+
+
+def _normalized_or_refusal(document: Any, rules: Mapping[str, Any]) -> Any:
+    try:
+        return normalizers_v3.normalize_document(document, rules, window=WINDOW)
+    except normalizers_v3.NormalizationError as error:
+        return f"refused: {error}"
+
+
+@pytest.mark.unit
+def test_an_unordered_rule_sorts_a_collection_by_key_before_positional_rules() -> None:
+    rows = [{"name": "alpha", "id": _ALPHA_ID}, {"name": "beta", "id": _BETA_ID}]
+    expected = {"body": [{"name": "alpha", "id": _ALPHA_ID}, {"name": "beta", "id": "@uuid:1@"}]}
+    for label, order in (("as listed", rows), ("reversed", list(reversed(rows)))):
+        normalized = _normalized_or_refusal({"body": copy.deepcopy(order)}, _UNORDERED_RULES)
+        assert normalized == expected, f"the rows {label} normalize to {normalized}"
+    renamed = [{"name": "alpha", "id": _ALPHA_ID}, {"name": "gamma", "id": _BETA_ID}]
+    assert _normalized_or_refusal({"body": renamed}, _UNORDERED_RULES) != expected, (
+        "a changed row still normalizes to the recorded rows"
+    )
+    keyless = {"/body": {"name": "unordered"}}
+    refusal = _normalized_or_refusal({"body": copy.deepcopy(rows)}, keyless)
+    assert isinstance(refusal, str) and refusal.startswith("refused: "), (
+        f"an unordered rule with no key normalized to {refusal}"
+    )

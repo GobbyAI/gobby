@@ -62,6 +62,19 @@ class _PassingDriver:
         self.calls.append(stage)
 
 
+class _FailsAtDriver:
+    """A driver whose stages pass until the named stage, which fails."""
+
+    def __init__(self, failing: str) -> None:
+        self.failing = failing
+        self.calls: list[str] = []
+
+    def run_stage(self, stage: str) -> None:
+        self.calls.append(stage)
+        if stage == self.failing:
+            raise ConnectionError(f"offline: {stage}")
+
+
 def _refuse_connect(*args: object, **kwargs: object) -> NoReturn:
     raise AssertionError(f"the gated script opened a socket: {args}")
 
@@ -100,6 +113,24 @@ def test_discord_round_trip_reports_every_stage() -> None:
         "attachment": "skipped",
     }
     assert offline.calls == ["connect"]
+
+
+@pytest.mark.parametrize("failing", STAGES[1:])
+def test_discord_round_trip_reports_the_stages_passed_before_a_later_failure(
+    failing: str,
+) -> None:
+    script = _script()
+    driver = _FailsAtDriver(failing)
+    outcomes = script.run_round_trip(driver)
+    position = STAGES.index(failing)
+    expected = {
+        stage: "passed" if index < position else "failed" if index == position else "skipped"
+        for index, stage in enumerate(STAGES)
+    }
+    assert outcomes == expected, f"a failure at {failing} reported {outcomes}"
+    assert driver.calls == list(STAGES[: position + 1]), (
+        f"a failure at {failing} ran the stages {driver.calls}"
+    )
 
 
 def test_discord_script_is_gated(monkeypatch: pytest.MonkeyPatch) -> None:

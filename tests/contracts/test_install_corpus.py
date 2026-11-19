@@ -137,6 +137,10 @@ HOST_PATH_CASES: dict[str, tuple[str, list[str]]] = {
     "shell_default_in_hook_template": ('"$(mktemp -d \\"${TMPDIR:-/tmp}/gobby.XXXXXX\\")"', []),
     "other_directory_ending_in_temp": ('{"path": "/var/tmp/cache"}', []),
     "longer_sibling_name": ('{"path": "/tmpfiles/x"}', []),
+    "temp_before_single_quote": ('{"command": "cd \'/tmp\'"}', ["/tmp"]),
+    "temp_before_colon": ('{"env": "PATH=/tmp:/usr/bin"}', ["/tmp"]),
+    "temp_before_comma": ('{"paths": "/tmp,/var/lib"}', ["/tmp"]),
+    "temp_before_closing_paren": ('{"command": "(cd /tmp)"}', ["/tmp"]),
 }
 
 
@@ -177,6 +181,7 @@ def test_golden_components_match_declared_scope() -> None:
                 )
 
 
+@POSIX_ONLY
 def test_golden_entries_name_mode_and_one_content_or_bundled_source() -> None:
     golden = _load_golden()
     phases = _phases(golden, str(GOLDEN_PATH))
@@ -346,6 +351,7 @@ def test_install_readme_documents_scope() -> None:
 @pytest.mark.skipif(
     os.environ.get(RECORD_ENV) != "1", reason=f"set {RECORD_ENV}=1 to record the install golden"
 )
+@POSIX_ONLY
 def test_record_install_contracts(tmp_path: Path) -> None:
     first = record_install_tree(tmp_path / "first")
     second = record_install_tree(tmp_path / "second")

@@ -27,6 +27,7 @@ class ScanReport:
 
     case_files: int
     edge_files: int
+    wire_files: int = 0
     findings: list[str] = field(default_factory=list)
 
 

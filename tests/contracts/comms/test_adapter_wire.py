@@ -853,47 +853,92 @@ def test_adapter_wire_fixtures_carry_provenance() -> None:
         )
 
 
+def _label_problems(stem: str, fixture: dict[str, Any]) -> list[str]:
+    """Every way a fixture's verified flag, capture label, exchanges or outcome is mislabelled."""
+    problems: list[str] = []
+    if fixture.get("verified") is not False:
+        problems.append(f"{stem}.json does not declare verified false")
+    capture = fixture.get("capture")
+    if capture not in CAPTURE_KINDS:
+        problems.append(f"{stem}.json declares the capture kind {capture!r}")
+    exchanges = fixture.get("exchanges")
+    if not isinstance(exchanges, list):
+        return [*problems, f"{stem}.json has no exchanges list"]
+    if stem in REFUSAL_FIXTURES and capture != "refusal":
+        problems.append(f"{stem}.json is not labelled a refusal")
+    if capture == "refusal":
+        if exchanges != []:
+            problems.append(f"the refusal {stem}.json records provider requests")
+        outcome = fixture.get("outcome")
+        if not (isinstance(outcome, dict) and outcome.get("error")):
+            problems.append(f"the refusal {stem}.json records no error outcome")
+    elif fixture.get("operation") != "inbound" and not exchanges:
+        problems.append(f"{stem}.json records a {fixture.get('operation')} with no request")
+    for exchange in exchanges:
+        semantic = exchange.get("semantic")
+        if not isinstance(semantic, dict):
+            problems.append(f"{stem}.json has an exchange with no semantics")
+        elif set(semantic) != set(SEMANTIC_FIELDS):
+            problems.append(f"{stem}.json carries the semantic fields {sorted(semantic)}")
+    return problems
+
+
 def test_adapter_wire_labels_refusals_and_unverified_captures() -> None:
     fixtures = _load_fixtures()
     for stem, fixture in fixtures.items():
-        assert fixture.get("verified") is False, f"{stem}.json does not declare verified false"
-        capture = fixture.get("capture")
-        assert capture in CAPTURE_KINDS, f"{stem}.json declares the capture kind {capture!r}"
-        exchanges = fixture.get("exchanges")
-        assert isinstance(exchanges, list), f"{stem}.json has no exchanges list"
-        if stem in REFUSAL_FIXTURES:
-            assert capture == "refusal", f"{stem}.json is not labelled a refusal"
-        if capture == "refusal":
-            assert exchanges == [], f"the refusal {stem}.json records provider requests"
-            outcome = fixture.get("outcome")
-            assert isinstance(outcome, dict) and outcome.get("error"), (
-                f"the refusal {stem}.json records no error outcome"
-            )
-        elif fixture.get("operation") != "inbound":
-            assert exchanges, f"{stem}.json records a {fixture.get('operation')} with no request"
-        for exchange in exchanges:
-            semantic = exchange.get("semantic")
-            assert isinstance(semantic, dict), f"{stem}.json has an exchange with no semantics"
-            assert set(semantic) == set(SEMANTIC_FIELDS), (
-                f"{stem}.json carries the semantic fields {sorted(semantic)}"
-            )
+        problems = _label_problems(stem, fixture)
+        assert problems == [], f"{stem}.json is mislabelled: {problems}"
+
+
+def test_a_refusal_label_on_a_fixture_that_does_not_refuse_is_mislabelled() -> None:
+    fixture = copy.deepcopy(_load_fixtures()["slack_send"])
+    assert _label_problems("slack_send", fixture) == [], "slack_send.json is mislabelled"
+    fixture["capture"] = "refusal"
+    fixture["exchanges"] = []
+    fixture["outcome"] = {"error": "corpus relabelled refusal"}
+    problems = _label_problems("slack_send", fixture)
+    assert problems, "a send relabelled as a refusal with no requests is accepted"
+
+
+def _contract_problems(stem: str, fixture: dict[str, Any]) -> list[str]:
+    """Every way a fixture's drive or scripted provider responses fall short of replaying it."""
+    problems: list[str] = []
+    drive = fixture.get("drive")
+    if not (isinstance(drive, dict) and drive):
+        problems.append(f"{stem}.json has no drive object")
+    contract = fixture.get("provider_contract")
+    if not isinstance(contract, dict):
+        return [*problems, f"{stem}.json has no provider_contract object"]
+    responses = contract.get("responses")
+    if not isinstance(responses, list):
+        return [*problems, f"{stem}.json has no provider_contract.responses list"]
+    if fixture.get("capture") == "refusal" and responses != []:
+        problems.append(f"the refusal {stem}.json scripts provider responses")
+    for index, response in enumerate(responses):
+        if not isinstance(response, dict):
+            problems.append(f"{stem}.json response {index} is not an object")
+            continue
+        absent = [key for key in ("host", "method", "path", "body") if key not in response]
+        if absent:
+            problems.append(f"{stem}.json response {index} lacks {absent}")
+    return problems
 
 
 def test_adapter_wire_fixtures_carry_drive_and_provider_contract() -> None:
     fixtures = _load_fixtures()
     for stem, fixture in fixtures.items():
-        drive = fixture.get("drive")
-        assert isinstance(drive, dict) and drive, f"{stem}.json has no drive object"
-        contract = fixture.get("provider_contract")
-        assert isinstance(contract, dict), f"{stem}.json has no provider_contract object"
-        responses = contract.get("responses")
-        assert isinstance(responses, list), f"{stem}.json has no provider_contract.responses list"
-        if fixture.get("capture") == "refusal":
-            assert responses == [], f"the refusal {stem}.json scripts provider responses"
-        for index, response in enumerate(responses):
-            assert isinstance(response, dict), f"{stem}.json response {index} is not an object"
-            absent = [key for key in ("host", "method", "path", "body") if key not in response]
-            assert not absent, f"{stem}.json response {index} lacks {absent}"
+        problems = _contract_problems(stem, fixture)
+        assert problems == [], f"{stem}.json cannot be replayed: {problems}"
+
+
+@pytest.mark.parametrize("stem", ["slack_send", "slack_attachment", "telegram_send"])
+def test_an_exchange_with_no_scripted_provider_response_cannot_be_replayed(stem: str) -> None:
+    fixture = copy.deepcopy(_load_fixtures()[stem])
+    assert fixture.get("capture") == "exchange", f"{stem}.json is not an exchange"
+    assert _contract_problems(stem, fixture) == [], f"{stem}.json cannot be replayed"
+    fixture["provider_contract"]["responses"] = []
+    problems = _contract_problems(stem, fixture)
+    assert problems, f"{stem}.json with no scripted provider response is accepted"
 
 
 @pytest.mark.integration
@@ -934,7 +979,7 @@ def test_adapter_wire_replay_detects_a_changed_provider_response(tmp_path: Path)
     body["ts"] = "9999999999.999999"
     replay = replay_wire_fixture(fixture, tmp_path / "slack_send")
     differences = wire_differences(fixture, replay)
-    assert "/outcome/message_id" in _pointers(differences), (
+    assert _pointers(differences) == {"/outcome/message_id"}, (
         f"a changed provider message ts gave the differences {differences}"
     )
 

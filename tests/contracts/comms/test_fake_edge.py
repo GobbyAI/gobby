@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import imaplib
 import json
 import smtplib
@@ -37,6 +38,8 @@ TEAMS_JWKS_HOST = "login.botframework.com"
 TEAMS_JWKS_URL = f"https://{TEAMS_JWKS_HOST}/v1/.well-known/keys"
 MAIL_USER = "corpus-mailbox"
 MAIL_PASSWORD = "corpus-mail-password"
+EDGE_BEARER = "corpus-edge-bearer"
+ATTACHMENT_BYTES = b"corpus attachment line one\n"
 
 
 def _probe(target: str, out_file: Path) -> str:
@@ -132,6 +135,59 @@ def test_provider_hosts_route_to_the_edge_and_are_logged(
             assert arrivals == [UNLISTED_HOST], f"{UNLISTED_HOST} logged arrivals {arrivals}"
     finally:
         edge.stop()
+
+
+@pytest.mark.integration
+def test_provider_requests_are_logged_with_what_they_send_and_no_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    edge = FakeEdge(tmp_path)
+    edge.start()
+    try:
+        assert edge.address[1] != 0, "the fake edge bound no port"
+        _route_environment_through(monkeypatch, edge)
+        with httpx.Client(timeout=10.0) as client:
+            sent = client.post(
+                "https://slack.com/api/chat.postMessage",
+                json={"channel": "C0CORPUS0001", "text": "corpus message one"},
+                headers={"Authorization": f"Bearer {EDGE_BEARER}"},
+            )
+            uploaded = client.put(
+                f"https://{UNLISTED_HOST}/upload/corpus-1",
+                content=ATTACHMENT_BYTES,
+                headers={"Content-Type": "text/plain"},
+            )
+        assert (sent.status_code, uploaded.status_code) == (200, 200), (
+            f"the edge answered {sent.status_code} and {uploaded.status_code}"
+        )
+        hits = edge.hits()
+    finally:
+        edge.stop()
+    assert hits == [
+        {
+            "host": "slack.com",
+            "method": "POST",
+            "path": "/api/chat.postMessage",
+            "semantic": {
+                "destination": "C0CORPUS0001",
+                "text": "corpus message one",
+                "filename": "",
+                "payload_sha256": "",
+            },
+        },
+        {
+            "host": UNLISTED_HOST,
+            "method": "PUT",
+            "path": "/upload/corpus-1",
+            "semantic": {
+                "destination": "",
+                "text": "",
+                "filename": "",
+                "payload_sha256": hashlib.sha256(ATTACHMENT_BYTES).hexdigest(),
+            },
+        },
+    ], f"the edge logged {hits}"
+    assert EDGE_BEARER not in json.dumps(hits), "the edge log keeps a request credential"
 
 
 @pytest.mark.integration

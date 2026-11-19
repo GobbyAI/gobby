@@ -396,6 +396,84 @@ def test_ledger_key_prefix_must_match_the_kind(tmp_path: Path, case: dict[str, A
         corpus_v3.load_cases(root)
 
 
+def _routed_http(template: str, path: str) -> dict[str, Any]:
+    """An http case citing ``GET <template>`` whose request goes to ``path``."""
+    request: dict[str, Any] = {
+        "method": "GET",
+        "path": path,
+        "query": {},
+        "headers": {},
+        "body": None,
+    }
+    return _v3_http(ledger_key=f"HTTP GET {template}", request=request)
+
+
+def _load_or_refusal(root: Path, cases: list[dict[str, Any]]) -> Any:
+    try:
+        return corpus_v3.load_cases(_write_corpus(root, version=3, cases=cases))
+    except CorpusError as error:
+        return f"refused: {error}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("template", "routed", "relabelled"),
+    [
+        (
+            "/api/comms/channels/{channel_id}/status",
+            "/api/comms/channels/c1/status",
+            "/api/comms/channels",
+        ),
+        ("/api/probe/{probe_id}/run", "/api/probe/p1/run", "/api/probe/p1/stop"),
+        ("/api/probe/{probe_id}/run", "/api/probe/p1/run", "/api/probe/p1/extra/run"),
+        ("/api/probe/{probe_id}/run", "/api/probe/p1/run", "/api/probe//run"),
+        ("/api/probe/{probe_id}/run", "/api/probe/p1/run", "/api/other/p1/run"),
+        ("/api/probe", "/api/probe", "/api/probe/p1"),
+    ],
+    ids=[
+        "list-relabelled-as-status",
+        "literal-segment-differs",
+        "parameter-spans-two-segments",
+        "parameter-is-empty",
+        "prefix-differs",
+        "extra-segment",
+    ],
+)
+def test_http_request_path_must_match_its_ledger_route_segment_by_segment(
+    tmp_path: Path, template: str, routed: str, relabelled: str
+) -> None:
+    on_route = _routed_http(template, routed)
+    assert _load_or_refusal(tmp_path / "routed", [on_route]) == [on_route], (
+        f"a request to {routed} does not load under {template}"
+    )
+    off_route = _routed_http(template, relabelled)
+    refusal = _load_or_refusal(tmp_path / "relabelled", [off_route])
+    assert isinstance(refusal, str) and "ledger_key" in refusal, (
+        f"a request to {relabelled} loads under {template} with the same method"
+    )
+
+
+@pytest.mark.unit
+def test_a_response_collection_may_be_declared_unordered_by_a_key(tmp_path: Path) -> None:
+    body = [{"name": "alpha"}, {"name": "beta"}]
+    response = {"status": 200, "headers": {}, "body": body}
+    declared = _v3_http(
+        response=response, normalizers={"/response/body": {"name": "unordered", "key": "name"}}
+    )
+    assert _load_or_refusal(tmp_path / "declared", [declared]) == [declared], (
+        "a collection declared unordered by a key does not load"
+    )
+    keyless = _v3_http(response=response, normalizers={"/response/body": {"name": "unordered"}})
+    keyed_field = _v3_http(
+        response=response, normalizers={"/response/body": {"name": "none", "key": "name"}}
+    )
+    for label, case in (("with no key", keyless), ("with a key on a field rule", keyed_field)):
+        refusal = _load_or_refusal(tmp_path / label.replace(" ", "_"), [case])
+        assert isinstance(refusal, str) and "normalizer" in refusal, (
+            f"an unordered declaration {label} loads"
+        )
+
+
 @pytest.mark.unit
 def test_request_is_only_for_http_and_invocation_only_for_other_kinds(tmp_path: Path) -> None:
     with_request = _ordered(
