@@ -362,6 +362,27 @@ async fn get_makes_two_stub_requests_and_records_match() {
     assert_eq!(records[0].outcome, Outcome::Match);
 }
 
+#[tokio::test]
+async fn a_comms_and_voice_paths_reach_the_proxy_beside_the_native_families() {
+    // Neither path belongs to a native family, so both fall through to the proxy's stub backend.
+    let (target, seen) = stub_target().await;
+    let home = tempfile::tempdir().expect("home");
+    let addr = start_listener(FAMILIES, &Backends::default(), target, home.path()).await;
+
+    let (status, text) = get_text(addr, "/api/comms/channels").await;
+    assert_eq!((status, text.as_str()), (200, STUB_ANSWER));
+    let (status, text) = get_text(addr, "/api/voice/status").await;
+    assert_eq!((status, text.as_str()), (200, STUB_ANSWER));
+
+    let get = |path: &str| ("GET".to_owned(), path.to_owned());
+    let requests = seen.lock().expect("seen").clone();
+    assert_eq!(
+        requests,
+        vec![get("/api/comms/channels"), get("/api/voice/status")],
+        "both paths reach the stub"
+    );
+}
+
 #[test]
 fn differential_without_a_native_family_is_no_native_backend() {
     assert!(

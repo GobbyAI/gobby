@@ -65,13 +65,16 @@ def _write_corpus(
     version: int,
     cases: list[dict[str, Any]],
     families: Mapping[str, Mapping[str, str]] = FAMILIES,
+    startup: Mapping[str, Any] | None = None,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
-    manifest = {
+    manifest: dict[str, Any] = {
         "schema_version": version,
         "cases": [f"{case['name']}.json" for case in cases],
         "families": families,
     }
+    if startup is not None:
+        manifest["startup"] = startup
     (root / "manifest.json").write_text(json.dumps(manifest))
     for case in cases:
         (root / f"{case['name']}.json").write_text(json.dumps(case))
@@ -821,3 +824,117 @@ def test_changed_recording_diffs_on_cited_classify(
     observed = mutate(_replayed(case))
     result = classify_replay(case, case["native_response"], waivers, observed=observed)
     assert result.outcome == DIFF
+
+
+COMMUNICATIONS_FAMILY: dict[str, dict[str, str]] = {
+    "communications": {"parity": "proxy", "origin": "python"}
+}
+CORPUS_SLACK_CHANNEL_ID = "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001"
+# The startup entry for the communications family, as the committed manifest will declare it.
+COMMUNICATIONS_STARTUP: dict[str, Any] = {
+    "config": {"communications.enabled": True},
+    "channels": [
+        {
+            "id": CORPUS_SLACK_CHANNEL_ID,
+            "channel_type": "slack",
+            "name": "corpus-slack",
+            "enabled": True,
+            "config": {
+                "bot_token": "$secret:corpus_slack_bot_token",
+                "signing_secret": "$secret:corpus_slack_signing_secret",
+                "default_destination": "C0CORPUS0001",
+            },
+        }
+    ],
+    "secrets": ["corpus_slack_bot_token", "corpus_slack_signing_secret"],
+}
+
+
+def _startup_corpus(root: Path, startup: Mapping[str, Any]) -> Path:
+    """A schema 3 corpus with no cases, declaring the communications family and a startup block."""
+    return _write_corpus(
+        root,
+        version=3,
+        cases=[],
+        families={**FAMILIES, **COMMUNICATIONS_FAMILY},
+        startup=startup,
+    )
+
+
+def _refusal(root: Path) -> str | None:
+    """The loader's refusal text for the corpus at root, or None when every case loads."""
+    try:
+        corpus_v3.load_cases(root)
+    except CorpusError as error:
+        return str(error)
+    return None
+
+
+@pytest.mark.unit
+def test_mcp_rest_transport_loads_with_any_json_response(tmp_path: Path) -> None:
+    rest = _v3_kind(
+        "mcp",
+        name="probe_mcp_rest",
+        ledger_key="MCP gobby-communications:list_channels",
+        invocation={
+            "transport": "rest",
+            "server": "gobby-communications",
+            "tool": "list_channels",
+            "arguments": {},
+        },
+        response=[{"name": "corpus-slack"}],
+    )
+    refusal = _refusal(_write_corpus(tmp_path, version=3, cases=[rest]))
+    assert refusal is None, f"the loader refused a rest case: {refusal}"
+
+
+@pytest.mark.unit
+def test_provider_edge_channel_requires_a_hosts_list(tmp_path: Path) -> None:
+    listed = _v3_http(
+        side_effects=[{"channel": "provider_edge", "match": {"hosts": ["slack.com"]}}]
+    )
+    refusal = _refusal(_write_corpus(tmp_path / "hosts", version=3, cases=[listed]))
+    assert refusal is None, f"the loader refused a provider_edge side effect: {refusal}"
+    bare = _v3_http(side_effects=[{"channel": "provider_edge", "match": {}}])
+    with pytest.raises(CorpusError, match="hosts"):
+        corpus_v3.load_cases(_write_corpus(tmp_path / "bare", version=3, cases=[bare]))
+
+
+@pytest.mark.unit
+def test_startup_block_rejects_undeclared_families_and_unknown_keys(tmp_path: Path) -> None:
+    valid = {"communications": COMMUNICATIONS_STARTUP}
+    assert corpus_v3.load_cases(_startup_corpus(tmp_path / "valid", valid)) == []
+    with pytest.raises(CorpusError, match="voice"):
+        corpus_v3.load_cases(_startup_corpus(tmp_path / "undeclared", {**valid, "voice": {}}))
+    unknown = {"communications": {**COMMUNICATIONS_STARTUP, "bogus_key": 1}}
+    with pytest.raises(CorpusError, match="bogus_key"):
+        corpus_v3.load_cases(_startup_corpus(tmp_path / "unknown", unknown))
+
+
+@pytest.mark.unit
+def test_startup_secret_names_are_lowercase_identifiers(tmp_path: Path) -> None:
+    valid = {"communications": COMMUNICATIONS_STARTUP}
+    assert corpus_v3.load_cases(_startup_corpus(tmp_path / "valid", valid)) == []
+    bad = {"communications": {**COMMUNICATIONS_STARTUP, "secrets": ["Bad Name"]}}
+    with pytest.raises(CorpusError, match="Bad Name"):
+        corpus_v3.load_cases(_startup_corpus(tmp_path / "bad", bad))
+
+
+@pytest.mark.unit
+def test_startup_channel_ids_must_be_uuids(tmp_path: Path) -> None:
+    valid = {"communications": COMMUNICATIONS_STARTUP}
+    assert corpus_v3.load_cases(_startup_corpus(tmp_path / "valid", valid)) == []
+    channel = {**COMMUNICATIONS_STARTUP["channels"][0], "id": "not-a-uuid"}
+    bad = {"communications": {**COMMUNICATIONS_STARTUP, "channels": [channel]}}
+    with pytest.raises(CorpusError, match="not-a-uuid"):
+        corpus_v3.load_cases(_startup_corpus(tmp_path / "bad", bad))
+
+
+@pytest.mark.unit
+def test_mcp_jsonrpc_transports_still_require_an_envelope(tmp_path: Path) -> None:
+    envelope = _mcp()
+    loaded = corpus_v3.load_cases(_write_corpus(tmp_path / "envelope", version=3, cases=[envelope]))
+    assert loaded == [envelope]
+    bare = {**_mcp(), "response": []}
+    with pytest.raises(CorpusError, match="wrong shape"):
+        corpus_v3.load_cases(_write_corpus(tmp_path / "bare", version=3, cases=[bare]))

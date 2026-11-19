@@ -1743,4 +1743,49 @@ mod loader_rule_tests {
         let cases = load_manifest(&path).expect("the shipped v3 manifest loads");
         assert_eq!(cases.len(), 5);
     }
+
+    #[test]
+    fn a_schema_3_case_may_name_the_provider_edge_channel() {
+        // A side effect names the provider_edge channel and the hosts it captures.
+        let value = json!({
+            "schema_version": 3,
+            "name": "rule_probe",
+            "kind": "http",
+            "family": "health",
+            "backend": "up",
+            "credential": "none",
+            "ledger_key": "HTTP GET /api/health",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "response": {"status": 200, "headers": {}, "body": null},
+            "side_effects": [{"channel": "provider_edge", "match": {"hosts": ["slack.com"]}}],
+            "mask": []
+        });
+        let refusal = parse_case(&value).err().map(|error| error.to_string());
+        assert!(
+            refusal.is_none(),
+            "the loader refused a provider_edge side effect: {refusal:?}"
+        );
+    }
+
+    #[test]
+    fn a_schema_3_mcp_case_may_use_the_rest_transport() {
+        // The REST tool route answers a body that is not a JSON-RPC envelope, so a rest case may
+        // carry any JSON response.
+        let value = kind_case(
+            "mcp",
+            "MCP gobby-communications:list_channels",
+            json!({
+                "transport": "rest",
+                "server": "gobby-communications",
+                "tool": "list_channels",
+                "arguments": {}
+            }),
+            json!({"success": true, "channels": []}),
+        );
+        let refusal = parse_case(&value).err().map(|error| error.to_string());
+        assert!(
+            refusal.is_none(),
+            "the loader refused a rest case: {refusal:?}"
+        );
+    }
 }
