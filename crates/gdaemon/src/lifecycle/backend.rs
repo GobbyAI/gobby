@@ -9,7 +9,7 @@ use super::{
     },
     worker_handshake::{GenerationSource, RUNNER_DEFAULT, RunnerMode, WorkerSession},
 };
-use crate::lease::{ActiveDaemonLease, NamedGuard, NamedLock};
+use crate::lease::{ActiveDaemonLease, LeaseLoss, NamedGuard, NamedLock};
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use gobby_terminals::write_api::{TokenLease, TokenSlot};
@@ -115,6 +115,8 @@ impl BackendConfig {
 
 pub struct BackendSupervisor {
     lease: Option<Arc<NamedLock<ActiveDaemonLease>>>,
+    /// Publishes the lease as lost without its lock; taken at each lifetime's standby check.
+    loss: Option<LeaseLoss>,
     pid_claim: Option<PidFileClaim>,
     config: BackendConfig,
     state: watch::Sender<BackendStatus>,
@@ -151,6 +153,7 @@ impl BackendSupervisor {
         let (wait, _) = watch::channel(None);
         Self {
             lease,
+            loss: None,
             pid_claim: Some(pid_claim),
             config,
             state,
@@ -242,10 +245,14 @@ impl BackendSupervisor {
         if self.pid_claim.is_none() {
             return Ok(SupervisorExit::Stopped);
         }
-        if let Some(lease) = &self.lease
-            && self.lock_lease(lease).await?.fence().is_none()
-        {
-            return Ok(SupervisorExit::Standby);
+        if let Some(lease) = &self.lease {
+            let guard = self.lock_lease(lease).await?;
+            if guard.fence().is_none() {
+                return Ok(SupervisorExit::Standby);
+            }
+            let loss = guard.loss();
+            drop(guard);
+            self.loss = Some(loss);
         }
         let result = self.supervise(&mut shutdown).await;
         // The lease keeps its heartbeat until release, so a loss during the hook is published.

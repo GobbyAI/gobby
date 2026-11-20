@@ -1,4 +1,6 @@
 //! Lease liveness through the pre-release phase of a lease lifetime.
+//!
+//! This lives apart from `backend.rs` to keep that file under the 1,000-line ceiling.
 
 use super::{BackendSupervisor, SupervisorExit};
 use std::{future::Future, pin::pin};
@@ -11,8 +13,9 @@ impl BackendSupervisor {
     /// it is still running); a lease already lost is not monitored again.
     ///
     /// Each heartbeat is awaited to its end and never dropped part way, since a cancelled
-    /// heartbeat discards the session and publishes Lost. After the first failed heartbeat,
-    /// `work` runs to its end unmonitored.
+    /// heartbeat discards the session and publishes Lost. The monitor fails closed: any
+    /// heartbeat error, including a lease lock wait that fails at its bound, publishes Lost
+    /// before `work` runs to its end unmonitored.
     pub(super) async fn heartbeat_through<T>(
         &self,
         exit: Option<SupervisorExit>,
@@ -30,6 +33,9 @@ impl BackendSupervisor {
                 output = &mut work => return output,
                 _ = heartbeats.tick() => {
                     if let Err(error) = self.heartbeat().await {
+                        if let Some(loss) = &self.loss {
+                            loss.publish();
+                        }
                         tracing::warn!(
                             target: "gobby.lifecycle",
                             "backend lease lost before release: {error:#}"

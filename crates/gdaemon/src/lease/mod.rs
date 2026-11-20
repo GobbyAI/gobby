@@ -43,12 +43,24 @@ struct Authority {
     fence: Fence,
 }
 
-struct LossOnDrop(Option<watch::Sender<LeaseState>>);
+/// Publishes the lease as lost without taking its lock, so a monitor that cannot reach the lease
+/// still fails closed. Authority published as lost is never reused: the next `try_acquire`
+/// discards it and acquires afresh.
+#[derive(Clone)]
+pub struct LeaseLoss(watch::Sender<LeaseState>);
+
+impl LeaseLoss {
+    pub fn publish(&self) {
+        self.0.send_replace(LeaseState::Lost);
+    }
+}
+
+struct LossOnDrop(Option<LeaseLoss>);
 
 impl Drop for LossOnDrop {
     fn drop(&mut self) {
-        if let Some(state) = &self.0 {
-            state.send_replace(LeaseState::Lost);
+        if let Some(loss) = &self.0 {
+            loss.publish();
         }
     }
 }
@@ -102,6 +114,11 @@ impl ActiveDaemonLease {
         self.state.subscribe()
     }
 
+    /// The handle that publishes this lease as lost; it needs no lease lock to publish.
+    pub fn loss(&self) -> LeaseLoss {
+        LeaseLoss(self.state.clone())
+    }
+
     pub fn application_name(&self) -> &str {
         &self.application_name
     }
@@ -138,8 +155,13 @@ impl ActiveDaemonLease {
     /// before authority installation drops the detached connection and lock.
     pub async fn try_acquire(&mut self) -> Result<bool> {
         if self.authority.is_some() {
-            self.heartbeat().await?;
-            return Ok(true);
+            if *self.state.borrow() != LeaseState::Lost {
+                self.heartbeat().await?;
+                return Ok(true);
+            }
+            // A loss published through `LeaseLoss` leaves the session; its authority is spent,
+            // so it is released before a fresh acquisition rotates the fence.
+            self.release().await?;
         }
         // One bound covers checkout, connect and the lock attempt, so a waiting pool
         // cannot push an attempt past the operation bound.
@@ -192,7 +214,7 @@ impl ActiveDaemonLease {
         let Some(owner) = self.authority.take() else {
             bail!("active-daemon lease is not held");
         };
-        let mut loss = LossOnDrop(Some(self.state.clone()));
+        let mut loss = LossOnDrop(Some(self.loss()));
         timeout(OPERATION_TIMEOUT, owner.client.simple_query("SELECT 1")).await??;
         self.authority = Some(owner);
         loss.0 = None;

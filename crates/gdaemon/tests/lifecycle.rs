@@ -1902,6 +1902,36 @@ async fn a_pre_release_heartbeat_error_that_publishes_no_loss_is_seen_as_lost_an
     .await
 }
 
+/// A loss the pre-release monitor publishes without the lease lock leaves the session open. The
+/// next lifetime's acquisition must not reuse that authority under a Lost watch, or the fenced
+/// job host would run no job for the whole lifetime: it acquires afresh and publishes Active.
+#[tokio::test]
+async fn authority_published_lost_without_the_lock_is_acquired_afresh() -> Result<()> {
+    database_case(async |db| {
+        let mut owner = db.lease("published-loss")?;
+        assert!(owner.try_acquire().await?);
+        let old = owner.fence().context("first authority")?.epoch;
+        owner.loss().publish();
+        assert_eq!(*owner.subscribe().borrow(), LeaseState::Lost);
+        assert!(
+            owner.try_acquire().await?,
+            "the lease was not acquired again after its published loss"
+        );
+        assert_eq!(
+            *owner.subscribe().borrow(),
+            LeaseState::Active,
+            "the lease watch stayed Lost after the lease was acquired again"
+        );
+        assert_eq!(
+            owner.fence().context("new authority")?.epoch,
+            old + 1,
+            "a lease published as lost reused its spent authority"
+        );
+        owner.release().await
+    })
+    .await
+}
+
 /// Takes the lease a terminated session held, once PostgreSQL has freed its lock. The
 /// bound is a hang guard: the terminated backend frees the lock as it exits.
 async fn take_freed_lease(db: &TestDb, machine: &str) -> Result<ActiveDaemonLease> {
