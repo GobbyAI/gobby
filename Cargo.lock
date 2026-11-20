@@ -2624,6 +2624,7 @@ dependencies = [
  "clap",
  "fancy-regex",
  "gobby-core",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

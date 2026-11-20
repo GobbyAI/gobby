@@ -14,6 +14,9 @@ mod ledger;
 #[path = "record.rs"]
 mod record;
 
+#[path = "regex_audit.rs"]
+mod regex_audit;
+
 #[path = "shapes.rs"]
 mod shapes;
 
