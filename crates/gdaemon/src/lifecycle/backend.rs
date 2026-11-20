@@ -251,7 +251,10 @@ impl BackendSupervisor {
         if let Some(lease) = &self.lease {
             let mut guard = self.lock_lease(lease, self.config.lease_lock_limit).await?;
             if let Err(error) = guard.heartbeat().await {
-                tracing::warn!(target: "gobby.lifecycle", "backend lease not held at lifetime start: {error:#}");
+                tracing::warn!(
+                    target: "gobby.lifecycle",
+                    "backend lease not held at lifetime start: {error:#}"
+                );
                 return Ok(SupervisorExit::Standby);
             }
             let loss = guard.loss();
@@ -267,7 +270,7 @@ impl BackendSupervisor {
             // The lease keeps its heartbeat through the end, so a loss during the end is published.
             let exit = result.as_ref().ok().copied();
             pulse.through(exit, scoped.end(exit)).await;
-            // No heartbeat is left in flight past this point, on any exit (rule 19).
+            // No heartbeat is left in flight past this point, on any exit.
             if let Err(error) = pulse.settle().await {
                 tracing::warn!(target: "gobby.lifecycle", "backend lease lost before release: {error:#}");
             }

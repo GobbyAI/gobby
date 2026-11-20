@@ -581,6 +581,7 @@ async fn wait_until_closed(lease: &ActiveDaemonLease) -> Result<()> {
 }
 
 /// [`wait_until_closed`] for a lease behind its lock, taking the lock for each look.
+#[cfg(unix)]
 async fn wait_until_closed_under_lock(
     lease: &gobby_daemon::lease::NamedLock<ActiveDaemonLease>,
 ) -> Result<()> {
