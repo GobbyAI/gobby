@@ -196,8 +196,8 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   the lease. Only a Native family may register one; Compare is refused with
   `JobRefused::Compare`. Staging applies the job sink's own rule
   (`JobSink::validate_job`; the daemon's sink refuses a zero interval, an empty
-  name, a name already held and any registration after it started), so the family sees the refusal when it stages. Staged jobs reach the
-  sink only when the activation pass succeeds, so a fatal failure leaves nothing
+  name, a name already held and any registration after it started), so the
+  family sees the refusal when it stages. Staged jobs reach the sink only when the activation pass succeeds, so a fatal failure leaves nothing
   registered and a retry registers the same names cleanly. An ordinary failure
   discards only that family's staged jobs. If the sink still refuses a job at
   commit, that is an ordinary failure of its family, and the jobs that pass
