@@ -78,20 +78,23 @@ impl HeartbeatHost {
         )
     }
 
-    fn push(&mut self, name: String, interval: Duration, callback: Callback) -> Result<()> {
+    /// The one registration rule: no registration after start, a name and a nonzero
+    /// interval, and no name registered twice.
+    fn check(&self, name: &str, interval: Duration) -> Result<()> {
         if self.started {
             bail!("heartbeat registration is frozen after start");
         }
         if name.is_empty() || interval.is_zero() {
             bail!("heartbeat jobs require a name and a nonzero interval");
         }
-        if self
-            .registered
-            .iter()
-            .any(|(existing, _)| *existing == name)
-        {
+        if self.registered.iter().any(|(existing, _)| existing == name) {
             bail!("duplicate heartbeat job: {name}");
         }
+        Ok(())
+    }
+
+    fn push(&mut self, name: String, interval: Duration, callback: Callback) -> Result<()> {
+        self.check(&name, interval)?;
         self.registered.push((name.clone(), interval));
         self.jobs.push(Job {
             name,
@@ -146,11 +149,18 @@ impl JobSink for HeartbeatHost {
         self.push(name.to_owned(), interval, run)
     }
 
-    fn validate_job(&self, _name: &str, _interval: Duration) -> Result<()> {
-        Ok(())
+    fn validate_job(&self, name: &str, interval: Duration) -> Result<()> {
+        self.check(name, interval)
     }
 
-    fn remove_job(&mut self, _name: &str) {}
+    /// Removal is frozen after start with registration, so a started host ignores it.
+    fn remove_job(&mut self, name: &str) {
+        if self.started {
+            return;
+        }
+        self.registered.retain(|(existing, _)| existing != name);
+        self.jobs.retain(|job| job.name != name);
+    }
 
     fn statuses(&self) -> Vec<(String, JobStatus)> {
         self.registered

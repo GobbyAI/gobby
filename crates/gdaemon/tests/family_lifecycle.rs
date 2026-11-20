@@ -53,6 +53,10 @@ enum Step {
     Ordinary(&'static str),
     Fatal(&'static str, bool),
     Hang,
+    /// Succeeds after the duration.
+    PassAfter(Duration),
+    /// Fails fatally after the duration, naming the failure `slow`.
+    FatalAfter(Duration),
 }
 
 /// A family whose every hook records itself in a shared log and does what its step says.
@@ -187,6 +191,17 @@ async fn perform(step: Step) -> Result<(), HookError> {
             relaunch_could_clear,
         }),
         Step::Hang => std::future::pending().await,
+        Step::PassAfter(delay) => {
+            tokio::time::sleep(delay).await;
+            Ok(())
+        }
+        Step::FatalAfter(delay) => {
+            tokio::time::sleep(delay).await;
+            Err(HookError::Fatal {
+                message: "slow".into(),
+                relaunch_could_clear: false,
+            })
+        }
     }
 }
 
@@ -246,6 +261,17 @@ impl RouteFamily<FrontDoorState> for Hooked {
                     message: message.into(),
                 }),
                 Step::Hang => std::future::pending().await,
+                Step::PassAfter(delay) => {
+                    tokio::time::sleep(delay).await;
+                    Ok(())
+                }
+                Step::FatalAfter(delay) => {
+                    tokio::time::sleep(delay).await;
+                    Err(StopFailure {
+                        family,
+                        message: "slow".into(),
+                    })
+                }
             }
         })
     }
@@ -363,8 +389,11 @@ fn job_names(sink: &dyn JobSink) -> Vec<String> {
     sink.statuses().into_iter().map(|(name, _)| name).collect()
 }
 
+/// The unwind budget of a test that does not measure it.
+const UNWIND_BUDGET: Duration = Duration::from_secs(5);
+
 fn soon() -> Instant {
-    Instant::now() + Duration::from_secs(5)
+    Instant::now() + UNWIND_BUDGET
 }
 
 fn noop_job() -> JobRun {
@@ -430,7 +459,7 @@ async fn default_hooks_change_nothing() {
     let mut sink = RecordingSink::default();
 
     assert_eq!(
-        start_families(&entries, &ctx, soon()).await,
+        start_families(&entries, &ctx, UNWIND_BUDGET).await,
         Ok(StartReport::default())
     );
     assert_eq!(
@@ -453,7 +482,7 @@ async fn ordinary_start_error_marks_family_and_serving_continues() {
     let after = Hooked::leak("after", RouteBackend::Native, &log);
     let ctx = FamilyContext::unconfigured();
 
-    let report = start_families(&[entry(flaky), entry(after)], &ctx, soon()).await;
+    let report = start_families(&[entry(flaky), entry(after)], &ctx, UNWIND_BUDGET).await;
 
     assert_eq!(
         report,
@@ -486,7 +515,7 @@ async fn fatal_start_error_stops_later_hooks_and_returns_the_form() {
     let c = Hooked::leak("c", RouteBackend::Native, &log);
     let ctx = FamilyContext::unconfigured();
 
-    let result = start_families(&[entry(a), entry(b), entry(c)], &ctx, soon()).await;
+    let result = start_families(&[entry(a), entry(b), entry(c)], &ctx, UNWIND_BUDGET).await;
 
     assert_eq!(
         result,
@@ -516,7 +545,7 @@ async fn fatal_start_unwind_shares_one_deadline() {
     let began = Instant::now();
     let budget = Duration::from_millis(100);
 
-    let result = start_families(&[entry(a), entry(b), entry(c)], &ctx, began + budget).await;
+    let result = start_families(&[entry(a), entry(b), entry(c)], &ctx, budget).await;
 
     assert_eq!(
         result,
@@ -544,6 +573,26 @@ async fn fatal_start_unwind_shares_one_deadline() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn fatal_start_unwind_budget_begins_when_the_unwind_begins() {
+    let log = new_log();
+    let stops = Hooked::leak("stops", RouteBackend::Native, &log);
+    stops.set_deactivate(Step::PassAfter(Duration::from_secs(1)));
+    let starts = Hooked::leak("starts", RouteBackend::Native, &log);
+    starts.set_start(Step::FatalAfter(Duration::from_secs(3600)));
+    let ctx = FamilyContext::unconfigured();
+    let began = Instant::now();
+
+    let result = start_families(&[entry(stops), entry(starts)], &ctx, UNWIND_BUDGET).await;
+
+    assert_eq!(result.err().map(|failure| failure.family), Some("starts"));
+    assert_eq!(
+        began.elapsed(),
+        Duration::from_secs(3601),
+        "the hour-long start left the started family's one-second deactivate its budget"
+    );
+}
+
 #[tokio::test]
 async fn fatal_relaunch_flag_round_trips_for_start_and_activate() {
     let log = new_log();
@@ -552,7 +601,7 @@ async fn fatal_relaunch_flag_round_trips_for_start_and_activate() {
         let starts = Hooked::leak("starts", RouteBackend::Native, &log);
         starts.set_start(Step::Fatal("start refused", relaunch_could_clear));
         assert_eq!(
-            start_families(&[entry(starts)], &ctx, soon()).await,
+            start_families(&[entry(starts)], &ctx, UNWIND_BUDGET).await,
             Err(StartFailure {
                 family: "starts",
                 message: "start refused".into(),
@@ -1046,7 +1095,7 @@ async fn fatal_start_unwinds_the_failing_family_first_and_retries_cleanly() {
     let entries = [entry(a), native(b)];
     let ctx = FamilyContext::unconfigured();
 
-    let failed = start_families(&entries, &ctx, soon()).await;
+    let failed = start_families(&entries, &ctx, UNWIND_BUDGET).await;
 
     assert_eq!(
         failed,
@@ -1068,7 +1117,7 @@ async fn fatal_start_unwinds_the_failing_family_first_and_retries_cleanly() {
 
     *b.start.lock().expect("start step") = Step::Pass;
     assert_eq!(
-        start_families(&entries, &ctx, soon()).await,
+        start_families(&entries, &ctx, UNWIND_BUDGET).await,
         Ok(StartReport::default()),
         "a retry starts cleanly"
     );
@@ -1251,6 +1300,41 @@ async fn commit_failure_removes_the_family_jobs_that_pass_registered() {
         .collect();
     assert_eq!(failed, vec!["a"]);
     assert!(ctx.degraded().contains("a"));
+}
+
+#[tokio::test]
+async fn commit_failure_registers_none_of_the_family_later_jobs() {
+    const TWO: &[(&str, Duration)] = &[
+        ("first", Duration::from_secs(5)),
+        ("second", Duration::from_secs(10)),
+    ];
+    let log = new_log();
+    let a = Hooked::with_jobs("a", RouteBackend::Native, &log, TWO);
+    let b = Hooked::with_jobs("b", RouteBackend::Native, &log, TICK);
+    let ctx = FamilyContext::unconfigured();
+    let mut sink = RecordingSink {
+        refused_at_commit: Some("a.first"),
+        ..RecordingSink::default()
+    };
+
+    let report = activate_families(&[entry(a), entry(b)], &ctx, &mut sink, soon()).await;
+
+    assert_eq!(
+        job_names(&sink),
+        vec!["b.tick"],
+        "a job staged after the family's refused one is not registered"
+    );
+    let failures = report
+        .expect("a refused commit is an ordinary failure")
+        .ordinary;
+    assert_eq!(
+        failures
+            .iter()
+            .map(|failure| failure.family)
+            .collect::<Vec<_>>(),
+        vec!["a"],
+        "the family is reported once: {failures:?}"
+    );
 }
 
 #[tokio::test]

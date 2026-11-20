@@ -105,6 +105,7 @@ pub trait JobSink: Send {
     fn register_job(&mut self, name: &str, interval: Duration, run: JobRun) -> anyhow::Result<()>;
     /// Checks a registration against the rule [`JobSink::register_job`] applies, without
     /// registering it, so staging refuses every job the commit would refuse.
+    /// `register_job` applies this same check before it registers.
     fn validate_job(&self, name: &str, interval: Duration) -> anyhow::Result<()>;
     /// Removes the registered job `name`; an unknown name is ignored. A pass whose commit
     /// failed for a family removes the jobs it had registered for that family.
@@ -137,7 +138,8 @@ pub struct Activation<'a> {
     ctx: &'a FamilyContext,
     mode: FamilyMode,
     family: &'static str,
-    staging: &'a mut Staging,
+    sink: &'a mut (dyn JobSink + Send),
+    staged: &'a mut Vec<StagedJob>,
 }
 
 impl Activation<'_> {
@@ -151,9 +153,10 @@ impl Activation<'_> {
         self.mode
     }
 
-    /// Stages a job for this lease. A Compare family is refused. A zero interval and a
-    /// name that the sink already holds or that this pass already staged are refused as
-    /// the sink would refuse them.
+    /// Stages a job for this lease. A Compare family is refused. A name this pass already
+    /// staged is refused, and so is every registration the sink's own rule
+    /// ([`JobSink::validate_job`]) refuses, so the family sees the refusal here rather
+    /// than when the pass commits.
     pub fn register_job(
         &mut self,
         name: &str,
@@ -163,19 +166,15 @@ impl Activation<'_> {
         if self.mode != FamilyMode::Native {
             return Err(JobRefused::Compare);
         }
-        if interval.is_zero() {
-            return Err(JobRefused::Sink(format!(
-                "job {name} needs an interval greater than zero"
-            )));
-        }
-        let taken = self.staging.held.iter().any(|held| held == name)
-            || self.staging.jobs.iter().any(|job| job.name == name);
-        if taken {
+        if self.staged.iter().any(|job| job.name == name) {
             return Err(JobRefused::Sink(format!(
                 "job {name} is already registered"
             )));
         }
-        self.staging.jobs.push(StagedJob {
+        self.sink
+            .validate_job(name, interval)
+            .map_err(|error| JobRefused::Sink(format!("{error:#}")))?;
+        self.staged.push(StagedJob {
             family: self.family,
             name: name.to_owned(),
             interval,
@@ -191,12 +190,6 @@ struct StagedJob {
     name: String,
     interval: Duration,
     run: JobRun,
-}
-
-/// The jobs an activation pass has staged, and the names the sink held when it began.
-struct Staging {
-    held: Vec<String>,
-    jobs: Vec<StagedJob>,
 }
 
 /// One family and the backend its route resolved to.
@@ -248,7 +241,8 @@ fn record_ordinary(
 
 /// How one pass of a hook over the families ended.
 struct Pass<S: 'static> {
-    /// The entries whose hook returned without a fatal error, in start order.
+    /// The entries whose hook was called, in start order. After a fatal error the failing
+    /// entry is the last one, since its hook may have acquired part of what it holds.
     ran: Vec<ActivationEntry<S>>,
     report: StartReport,
     fatal: Option<StartFailure>,
@@ -271,7 +265,9 @@ where
     };
     for entry in start_order(entries) {
         let family = entry.family;
-        match hook(family).await {
+        let outcome = hook(family).await;
+        pass.ran.push(entry);
+        match outcome {
             Ok(()) => {}
             Err(HookError::Ordinary { message }) => {
                 record_ordinary(ctx, &mut pass.report, family.name(), message);
@@ -288,7 +284,6 @@ where
                 return pass;
             }
         }
-        pass.ran.push(entry);
     }
     pass
 }
@@ -301,65 +296,71 @@ fn pass_result<S: 'static>(pass: Pass<S>) -> Result<StartReport, StartFailure> {
 }
 
 /// Runs each entry's `start` once per process, before admission. An ordinary error marks
-/// the family degraded and continues. A fatal error stops the pass, deactivates the
-/// families already started in reverse with `StopMode::Stop`, and returns the failure.
-/// That unwind shares one deadline, `unwind_deadline`, across every hook it calls. A
-/// family whose `start` failed in the ordinary way counts as started. The unwind's own
+/// the family degraded and continues. A fatal error stops the pass, deactivates in reverse
+/// with `StopMode::Stop` the failing family first (its `start` may have acquired part of
+/// what it holds) and then the families already started, and returns the failure.
+///
+/// That unwind shares one deadline across every hook it calls, `unwind_budget` from the
+/// moment the unwind begins, so time spent in a slow `start` cannot exhaust the cleanup.
+/// A family whose `start` failed in the ordinary way counts as started. The unwind's own
 /// failures are not reported: the fatal failure is what the caller acts on.
 pub async fn start_families<S: 'static>(
     entries: &[ActivationEntry<S>],
     ctx: &FamilyContext,
-    unwind_deadline: Instant,
+    unwind_budget: Duration,
 ) -> Result<StartReport, StartFailure> {
     let pass = run_pass(entries, ctx, |family| family.start(ctx)).await;
     if pass.fatal.is_some() {
-        deactivate_families(&pass.ran, StopMode::Stop, unwind_deadline).await;
+        let deadline = Instant::now() + unwind_budget;
+        deactivate_families(&pass.ran, StopMode::Stop, deadline).await;
     }
     pass_result(pass)
 }
 
 /// Runs each entry's `activate` once per lease. Jobs staged during the pass reach `jobs`
-/// only when the pass succeeds. A fatal error discards every staged job, deactivates the
-/// families activated so far in reverse under the one `unwind_deadline`, and returns the
-/// failure, so a retry registers the same names cleanly. The failing family itself is not
-/// deactivated, and a family whose `activate` failed in the ordinary way counts as
+/// only when the pass succeeds. A fatal error discards every staged job, deactivates in
+/// reverse under the one `unwind_deadline` the failing family first and then the
+/// families activated so far, and returns the failure, so a retry registers the same
+/// names cleanly. A family whose `activate` failed in the ordinary way counts as
 /// activated.
 ///
-/// An ordinary error discards only that family's staged jobs and marks its name. A job
-/// the sink refuses when the pass commits is an ordinary failure of the family that
-/// staged it.
+/// Staging applies the sink's own rule, so a family sees a refusal when it stages the
+/// job. An ordinary error discards only that family's staged jobs and marks its name. If
+/// the sink still refuses a job when the pass commits, that is one ordinary failure of the
+/// family that staged it: the jobs this pass registered for that family are removed and
+/// its remaining staged jobs are not registered.
 pub async fn activate_families<S: 'static>(
     entries: &[ActivationEntry<S>],
     ctx: &FamilyContext,
     jobs: &mut (dyn JobSink + Send),
     unwind_deadline: Instant,
 ) -> Result<StartReport, StartFailure> {
-    let mut staging = Staging {
-        held: jobs.statuses().into_iter().map(|(name, _)| name).collect(),
-        jobs: Vec::new(),
-    };
+    let mut staged = Vec::new();
     let mut activated = Vec::new();
     let mut report = StartReport::default();
     for entry in start_order(entries) {
         let family = entry.family;
-        let first_staged = staging.jobs.len();
+        let first_staged = staged.len();
         let mut activation = Activation {
             ctx,
             mode: mode_of(entry.backend),
             family: family.name(),
-            staging: &mut staging,
+            sink: &mut *jobs,
+            staged: &mut staged,
         };
-        match family.activate(&mut activation).await {
+        let outcome = family.activate(&mut activation).await;
+        activated.push(entry);
+        match outcome {
             Ok(()) => {}
             Err(HookError::Ordinary { message }) => {
-                staging.jobs.truncate(first_staged);
+                staged.truncate(first_staged);
                 record_ordinary(ctx, &mut report, family.name(), message);
             }
             Err(HookError::Fatal {
                 message,
                 relaunch_could_clear,
             }) => {
-                drop(staging);
+                drop(staged);
                 deactivate_families(&activated, StopMode::Stop, unwind_deadline).await;
                 return Err(StartFailure {
                     family: family.name(),
@@ -368,19 +369,44 @@ pub async fn activate_families<S: 'static>(
                 });
             }
         }
-        activated.push(entry);
     }
-    for job in staging.jobs {
-        if let Err(error) = jobs.register_job(&job.name, job.interval, job.run) {
-            record_ordinary(
-                ctx,
-                &mut report,
-                job.family,
-                format!("job {}: {error:#}", job.name),
-            );
+    commit_staged(staged, ctx, jobs, &mut report);
+    Ok(report)
+}
+
+/// Hands the staged jobs to the sink in staging order. The first refusal for a family
+/// removes the jobs already registered for it and skips the rest of its staged jobs.
+fn commit_staged(
+    staged: Vec<StagedJob>,
+    ctx: &FamilyContext,
+    jobs: &mut (dyn JobSink + Send),
+    report: &mut StartReport,
+) {
+    let mut registered: Vec<(&'static str, String)> = Vec::new();
+    let mut refused: Vec<&'static str> = Vec::new();
+    for job in staged {
+        if refused.contains(&job.family) {
+            continue;
+        }
+        match jobs.register_job(&job.name, job.interval, job.run) {
+            Ok(()) => registered.push((job.family, job.name)),
+            Err(error) => {
+                refused.push(job.family);
+                for (_, name) in registered
+                    .iter()
+                    .filter(|(family, _)| *family == job.family)
+                {
+                    jobs.remove_job(name);
+                }
+                record_ordinary(
+                    ctx,
+                    report,
+                    job.family,
+                    format!("job {}: {error:#}", job.name),
+                );
+            }
         }
     }
-    Ok(report)
 }
 
 /// Runs each entry's `deactivate` in reverse start order and returns every failure. The

@@ -181,7 +181,10 @@ pub trait RouteFamily<S>: Send + Sync {
     ) -> BoxFut<'a, Result<(), HookError>> {
         Box::pin(async { Ok(()) })
     }
-    /// Runs once per lease release or drain, in reverse start order.
+    /// Runs once per lease release or drain, in reverse start order. It also unwinds a
+    /// fatal `start` or `activate`, the failing family's own included, so it must be safe
+    /// on a family that is only partly started or activated: it releases what was
+    /// acquired and skips what was not.
     fn deactivate<'a>(&'a self, _mode: StopMode) -> BoxFut<'a, Result<(), StopFailure>> {
         Box::pin(async { Ok(()) })
     }

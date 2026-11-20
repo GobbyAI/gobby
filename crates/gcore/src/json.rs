@@ -229,7 +229,9 @@ pub fn python_float_repr(value: f64) -> String {
 
 impl Json {
     /// Parses `text` as `json.loads` does: a repeated key keeps its first position and
-    /// its last value, and integers keep their digits.
+    /// its last value, and integers keep their digits. It is stricter in two ways:
+    /// the `NaN`, `Infinity` and `-Infinity` literals and a lone surrogate escape,
+    /// which `json.loads` accepts, are refused.
     pub fn parse(text: &str) -> Result<Json, serde_json::Error> {
         let raw: &serde_json::value::RawValue = serde_json::from_str(text)?;
         from_raw(raw.get())
