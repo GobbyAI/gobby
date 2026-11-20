@@ -1,18 +1,24 @@
-//! Tests for the Rust side of the worker handshake (R0 contract, protocol v1).
+//! Tests for the Rust side of the worker handshake (frozen contract, protocol v1).
 //!
 //! The corpus at `tests/contracts/worker_protocol.json` is frozen. These tests
 //! read its exact bytes and never edit it.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt::Debug;
+use std::time::Duration;
 
+use gobby_core::schema::SchemaIdentityContract;
+use serde::Deserialize;
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
+use tokio::time::timeout;
 
 use super::{
-    ACCEPTED_WORKER_PROTOCOL_VERSIONS, ChannelError, ErrorBody, GenerationSource,
-    MAX_DOMAIN_OP_REQUEST_BYTES, MAX_WORKER_REQUEST_BYTES, PhaseReply, ProtocolViolation,
-    SessionError, UnknownOutcome, WORKER_PROTOCOL_VERSION, WorkerCallError, WorkerChannel,
-    WorkerSession, perform_handshake, perform_initialize, perform_invoke,
+    ACCEPTED_WORKER_PROTOCOL_VERSIONS, ChannelError, ErrorBody, GenerationSource, HandshakeField,
+    HandshakeOutcome, MAX_DOMAIN_OP_REQUEST_BYTES, MAX_WORKER_REQUEST_BYTES, PhaseReply,
+    ProtocolViolation, SessionError, UnknownOutcome, WORKER_PROTOCOL_VERSION, WorkerCallError,
+    WorkerChannel, WorkerSession, handshake_outcome, perform_handshake, perform_initialize,
+    perform_invoke,
 };
 #[cfg(unix)]
 use super::{RUNNER_DEFAULT, RunnerMode, WorkerHandshake};
@@ -25,6 +31,14 @@ const CREDENTIAL: &str = "corpus-credential";
 const CORPUS_PATH: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../tests/contracts/worker_protocol.json"
+);
+const GOLDEN_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../tests/contracts/worker_handshake.json"
+);
+const IDENTITY_PATH: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../src/gobby/storage/schema_expected_identity.json"
 );
 
 /// A scripted peer. Each exchange pops the next reply, and every request is recorded.
@@ -44,7 +58,11 @@ impl ScriptedChannel {
 }
 
 impl WorkerChannel for ScriptedChannel {
-    async fn exchange(&mut self, request: &[u8]) -> Result<Vec<u8>, ChannelError> {
+    async fn exchange(
+        &mut self,
+        request: &[u8],
+        _reply_limit: usize,
+    ) -> Result<Vec<u8>, ChannelError> {
         self.requests.push(request.to_vec());
         self.replies
             .pop_front()
@@ -57,7 +75,9 @@ fn corpus() -> Value {
     serde_json::from_str(&text).expect("worker protocol corpus is JSON")
 }
 
-/// The exact bytes of one corpus entry. `list` is `cases` or `responses`.
+/// The exact bytes of one corpus entry. `list` is `cases` or `responses`. The corpus names the
+/// installed schema identity by the placeholder `"$schema_identity"`, which is replaced here
+/// with the installed identity, so the frozen bytes stay unchanged.
 fn corpus_text(list: &str, name: &str, field: &str) -> Vec<u8> {
     let corpus = corpus();
     let entries = corpus["versions"][0][list]
@@ -70,8 +90,8 @@ fn corpus_text(list: &str, name: &str, field: &str) -> Vec<u8> {
     entry[field]
         .as_str()
         .expect("corpus bytes are a string")
-        .as_bytes()
-        .to_vec()
+        .replace("\"$schema_identity\"", &installed_identity_text())
+        .into_bytes()
 }
 
 fn case_request(name: &str) -> Vec<u8> {
@@ -113,6 +133,12 @@ fn too_large<T: Debug>(result: Result<T, WorkerCallError>) -> (usize, usize) {
 
 fn blob(len: usize) -> Value {
     json!({ "blob": "x".repeat(len) })
+}
+
+/// The installed schema identity as a handshake result carries it.
+fn installed_identity() -> Value {
+    serde_json::to_value(SchemaIdentityContract::embedded())
+        .expect("the installed schema contract serializes")
 }
 
 #[test]
@@ -187,7 +213,7 @@ async fn handshake_accepted_round_trip() {
     assert_eq!(result.protocol_version, 1);
     assert_eq!(result.generation, 7);
     assert_eq!(result.commands, ["handshake", "initialize", "invoke"]);
-    assert_eq!(result.schema_identity, json!("$schema_identity"));
+    assert_eq!(result.schema_identity, installed_identity());
 }
 
 #[tokio::test]
@@ -374,6 +400,34 @@ async fn handshake_lost_reply_is_unknown_and_not_resent() {
     assert_eq!(channel.requests.len(), 1, "a lost reply is never resent");
 }
 
+/// A peer that never answers.
+struct SilentChannel;
+
+impl WorkerChannel for SilentChannel {
+    async fn exchange(
+        &mut self,
+        _request: &[u8],
+        _reply_limit: usize,
+    ) -> Result<Vec<u8>, ChannelError> {
+        std::future::pending().await
+    }
+}
+
+/// A handshake whose peer never answers ends at its deadline as an unknown outcome. The clock is
+/// paused, so the 120 second bound is virtual time, and a wait with no deadline never returns.
+#[tokio::test(start_paused = true)]
+async fn handshake_without_answer_is_channel_error_at_deadline() {
+    let outcome = timeout(
+        Duration::from_secs(120),
+        perform_handshake(&mut SilentChannel, &mut session_at(7), CREDENTIAL),
+    )
+    .await;
+    assert!(
+        matches!(outcome, Ok(Err(WorkerCallError::Unknown(_)))),
+        "a silent peer ends the handshake as an unknown outcome at its deadline: {outcome:?}"
+    );
+}
+
 #[cfg(unix)]
 fn supervisor_in(home: &tempfile::TempDir) -> BackendSupervisor {
     let pid_file = home.path().join("gobby.pid");
@@ -528,6 +582,122 @@ async fn invalid_reply_is_unknown_for_initialize_and_invoke() {
     assert_eq!(channel.requests.len(), 2);
 }
 
-/// Reply-validation tests (R56), in a sibling file so this module stays small.
+/// The golden handshake vectors. Each reply is kept as raw JSON text, so an integer literal reaches
+/// the reply check exactly as written.
+#[derive(Deserialize)]
+struct GoldenFile {
+    credential: String,
+    cases: Vec<GoldenCase>,
+}
+
+#[derive(Deserialize)]
+struct GoldenCase {
+    name: String,
+    command: String,
+    generation: u64,
+    reply: Box<RawValue>,
+    expect: String,
+}
+
+/// The installed identity as JSON text with its keys sorted, for splicing into a raw reply.
+fn installed_identity_text() -> String {
+    let sorted: BTreeMap<String, Value> = serde_json::from_value(installed_identity())
+        .expect("the installed schema contract is an object");
+    serde_json::to_string(&sorted).expect("the sorted identity serializes")
+}
+
+/// Replays one golden case through the Rust client and names what it observed.
+async fn observe_golden(case: &GoldenCase, credential: &str) -> String {
+    let text = case
+        .reply
+        .get()
+        .replace("\"$schema_identity\"", &installed_identity_text());
+    let mut channel = ScriptedChannel::replying([Ok(text.into_bytes())]);
+    let mut session = session_at(case.generation);
+    let outcome = match case.command.as_str() {
+        "handshake" => perform_handshake(&mut channel, &mut session, credential)
+            .await
+            .map(|_| ()),
+        "invoke" => perform_invoke(&mut channel, &mut session, "anything", json!({}))
+            .await
+            .map(|_| ()),
+        other => return format!("unsupported command {other}"),
+    };
+    match outcome {
+        Ok(()) => "accepted".to_owned(),
+        Err(WorkerCallError::Protocol(ProtocolViolation::ResultMismatch(
+            HandshakeField::SchemaIdentity,
+        ))) => "identity_mismatch".to_owned(),
+        Err(WorkerCallError::Unknown(_)) => "unknown_outcome".to_owned(),
+        Err(other) => format!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn golden_vectors_replay_rust() {
+    let text = std::fs::read_to_string(GOLDEN_PATH).expect("golden handshake vectors are readable");
+    let golden: GoldenFile = serde_json::from_str(&text).expect("golden handshake vectors parse");
+    let mut mismatches = Vec::new();
+    for case in &golden.cases {
+        let observed = observe_golden(case, &golden.credential).await;
+        if observed != case.expect {
+            mismatches.push(format!(
+                "{}: expected {}, observed {observed}",
+                case.name, case.expect
+            ));
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "golden vector mismatches:\n{}",
+        mismatches.join("\n")
+    );
+}
+
+#[test]
+fn handshake_failures_split_into_sticky_and_crash() {
+    let body = ErrorBody {
+        code: "unauthorized".to_owned(),
+        message: "credential refused".to_owned(),
+    };
+    let sticky = [
+        WorkerCallError::Protocol(ProtocolViolation::Malformed),
+        WorkerCallError::Protocol(ProtocolViolation::ProtocolMismatch { got: 2 }),
+        WorkerCallError::Protocol(ProtocolViolation::GenerationMismatch {
+            expected: 7,
+            got: 8,
+        }),
+        WorkerCallError::Protocol(ProtocolViolation::OperationMismatch),
+        WorkerCallError::Protocol(ProtocolViolation::ResultMismatch(
+            HandshakeField::SchemaIdentity,
+        )),
+        WorkerCallError::Refused(body.clone()),
+        WorkerCallError::OpFailed(body),
+        WorkerCallError::CredentialMissing,
+        WorkerCallError::RequestTooLarge { bytes: 2, limit: 1 },
+    ];
+    for error in &sticky {
+        assert_eq!(
+            handshake_outcome(error),
+            HandshakeOutcome::Sticky,
+            "{error:?}"
+        );
+    }
+    let lost = WorkerCallError::Unknown(UnknownOutcome {
+        command: "handshake",
+        generation: 7,
+        operation_id: "7:1".to_owned(),
+    });
+    assert_eq!(handshake_outcome(&lost), HandshakeOutcome::Crash);
+}
+
+#[test]
+fn packaged_identity_equals_embedded_contract() {
+    let text = std::fs::read_to_string(IDENTITY_PATH).expect("packaged identity is readable");
+    let packaged: Value = serde_json::from_str(&text).expect("packaged identity is JSON");
+    assert_eq!(packaged, installed_identity());
+}
+
+/// Reply-validation tests, in a sibling file so this module stays small.
 #[path = "reply_tests.rs"]
 mod reply_tests;

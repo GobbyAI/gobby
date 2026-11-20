@@ -1,0 +1,26 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_compose_status_report",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:compose_status_report",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "compose_status_report",
+    "arguments": {
+      "channel": "corpus-slack",
+      "integration_branch": "main",
+      "operator_timezone": "UTC"
+    }
+  },
+  "response": {
+    "success": false,
+    "code": "forbidden",
+    "error": "Status reports are composed by daemon-run steps only"
+  },
+  "normalizers": {},
+  "mask": []
+}

@@ -17,7 +17,7 @@ from gobby.workflows.workspace_read_targets import _shell_path_words
 
 pytestmark = pytest.mark.unit
 
-PROJECT = "11111111-1111-4111-8111-111111111111"
+PROJECT = "fixture-project"
 
 
 @pytest.fixture

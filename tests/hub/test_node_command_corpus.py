@@ -253,3 +253,14 @@ def test_report_digests_and_sandbox_records_validate() -> None:
     )
     for path, value in cases:
         _refuses("report", _replaced(report, path, value))
+
+
+def test_contract_doc_states_contract_version() -> None:
+    assert _DOC.is_file(), f"the node command contract does not exist at {_DOC}"
+    text = _DOC.read_text(encoding="utf-8")
+    stated = re.findall(r"`CONTRACT_VERSION` as (\d+)", text)
+    assert stated, f"{_DOC} does not state CONTRACT_VERSION"
+    assert stated == [str(CONTRACT_VERSION)] * len(stated), (
+        f"{_DOC} states CONTRACT_VERSION as {stated}, not {CONTRACT_VERSION}"
+    )
+    assert "as 4" not in text, f"{_DOC} still states a version as 4"

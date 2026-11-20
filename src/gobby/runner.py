@@ -84,6 +84,7 @@ if TYPE_CHECKING:
     from gobby.terminals import TerminalRuntimeRegistry
     from gobby.terminals.host_manager import TerminalHostManager
     from gobby.terminals.services import TerminalServices
+    from gobby.worker.channel import WorkerBoot
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.executor import WorktreeDeleteExecutor
@@ -393,6 +394,7 @@ async def run_gobby(
     config_path: Path | None = None,
     verbose: bool = False,
     ownership_resolution: PidOwnershipResolution | None = None,
+    worker: WorkerBoot | None = None,
 ) -> None:
     from contextlib import suppress
 
@@ -417,7 +419,8 @@ async def run_gobby(
             raise StartRefusal(refusal)
         if platform_error := unsupported_platform_error():
             raise StartRefusal(platform_error)
-        bind_daemon_bootstrap(resolve_bootstrap_path(str(config_path) if config_path else None))
+        if worker is None:
+            bind_daemon_bootstrap(resolve_bootstrap_path(str(config_path) if config_path else None))
     except Exception:
         if ownership_resolution is not None:
             if not isinstance(ownership_resolution, SupervisedPidOwnership):
@@ -426,6 +429,12 @@ async def run_gobby(
                 cleanup_pid_file()
             ownership_resolution.release()
         raise
+    if worker is not None:
+        # A marked start serves the worker and owns no lifecycle: no PID claim, no runner.
+        from gobby.worker.channel import serve_worker
+
+        await serve_worker(worker)
+        return
     if ownership_resolution is None:
         if supervisor_fd() is not None:
             ownership_resolution = SupervisedPidOwnership()
@@ -628,11 +637,18 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     _raise_fd_limit()
 
     from gobby.runner_backend import take_front_door_secret, take_supervisor_fd
+    from gobby.runner_init import StartRefusal
     from gobby.utils.spawn import seal_inherited_descriptors
+    from gobby.worker.channel import take_worker_boot
 
     # Consume process-only launch markers before sealing descriptors and spawning children.
     take_supervisor_fd()
     take_front_door_secret()
+    try:
+        worker = take_worker_boot()
+    except StartRefusal as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(78)
     seal_inherited_descriptors()
 
     # Refuse a linked-worktree source tree before any subsystem touches the
@@ -644,11 +660,9 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
         print(refusal, file=sys.stderr)
         sys.exit(78)
 
-    from gobby.runner_init import StartRefusal
-
     try:
         asyncio.run(
-            run_gobby(config_path=config_path, verbose=verbose),
+            run_gobby(config_path=config_path, verbose=verbose, worker=worker),
             loop_factory=_StandaloneEventLoop,
         )
     except KeyboardInterrupt:

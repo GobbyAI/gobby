@@ -1,0 +1,40 @@
+{
+  "schema_version": 3,
+  "name": "voice_mcp_add_vocab",
+  "kind": "mcp",
+  "family": "voice",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-voice:add_vocab",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-voice",
+    "tool": "add_vocab",
+    "arguments": {"terms": "corpus-term-one, corpus-term-two"}
+  },
+  "db_delta": [
+    {
+      "table": "config_state",
+      "key": ["id"],
+      "columns": ["id", "revision"],
+      "normalizers": {},
+      "order": "set"
+    },
+    {
+      "table": "config_store",
+      "key": ["key"],
+      "columns": ["key", "value", "source", "is_secret", "revision"],
+      "normalizers": {},
+      "order": "set"
+    }
+  ],
+  "side_effects": [
+    {
+      "channel": "pg_notify",
+      "match": {"channels": ["gobby_config_changed"]},
+      "normalizers": {"/payload": "monotonic"}
+    }
+  ],
+  "normalizers": {},
+  "mask": []
+}

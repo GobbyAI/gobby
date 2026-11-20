@@ -8,7 +8,10 @@
 //! (`-?[0-9]+`, as `pg_notify` payloads arrive) and is allowed only in a sequence unit (captures, or
 //! a table ordered `as_recorded`); each sequence must strictly increase. `timestamp` masks RFC 3339
 //! values inside the run window and fails any value outside it. `bytes` and `none` leave the value
-//! unchanged. The masks of a comparison run after the rules (`http_corpus._comparison`).
+//! unchanged. A document may also declare the collection rule `{"name": "unordered", "key":
+//! <field>}` on the pointer of a list, which sorts that list by the JSON text of each item's key
+//! field before the field rules and masks apply. The masks of a comparison run after the rules
+//! (`http_corpus._comparison`).
 
 use std::fmt;
 
@@ -184,6 +187,77 @@ pub fn normalize_document(
     )?;
     corpus_v2::apply_masks(&mut out, mask);
     Ok(out)
+}
+
+/// The name of the collection rule `{"name": "unordered", "key": <field>}` (Python
+/// `normalizers_v3.unordered_key`).
+pub const UNORDERED: &str = "unordered";
+
+/// The key field of an `unordered` collection rule, or `None` when `spec` is not one. A spec named
+/// `unordered` must be exactly `{"name": "unordered", "key": <non-empty field>}`.
+pub fn parse_unordered(spec: &Value) -> Option<Result<String, NormalizeError>> {
+    let map = spec.as_object()?;
+    if map.get("name").and_then(Value::as_str) != Some(UNORDERED) {
+        return None;
+    }
+    let key = map
+        .get("key")
+        .and_then(Value::as_str)
+        .filter(|key| !key.is_empty() && map.len() == 2);
+    Some(
+        key.map(str::to_owned)
+            .ok_or_else(|| NormalizeError::BadSpec(spec.to_string())),
+    )
+}
+
+/// A document's declarations split into its collection rules (pointer and key field) and its
+/// field rules, each keyed by RFC 6901 pointer.
+pub type DocumentRules = (Vec<(String, String)>, Vec<(String, Normalizer)>);
+
+/// Split a document's declarations (a case's `normalizers`) into collection and field rules.
+pub fn document_rules<'a>(
+    declared: impl IntoIterator<Item = (&'a String, &'a Value)>,
+) -> Result<DocumentRules, NormalizeError> {
+    let mut collections = Vec::new();
+    let mut fields = Vec::new();
+    for (pointer, spec) in declared {
+        match parse_unordered(spec) {
+            Some(key) => collections.push((pointer.clone(), key?)),
+            None => fields.push((pointer.clone(), parse_spec(spec, false)?.normalizer)),
+        }
+    }
+    Ok((collections, fields))
+}
+
+/// Sort each list a collection rule names by the JSON text of its items' key field (Python
+/// `normalize_document`), outermost pointer first, so the field rules and the masks address the
+/// sorted list and row order is never compared.
+pub fn sort_collections(
+    document: &mut Value,
+    collections: &[(String, String)],
+) -> Result<(), NormalizeError> {
+    let mut ordered: Vec<&(String, String)> = collections.iter().collect();
+    ordered.sort_by_key(|(pointer, _)| pointer.matches('/').count());
+    for (pointer, key) in ordered {
+        let items = document
+            .pointer_mut(pointer)
+            .ok_or_else(|| NormalizeError::NoMatch {
+                pointer: pointer.clone(),
+            })?
+            .as_array_mut()
+            .ok_or_else(|| NormalizeError::NotAList {
+                pointer: pointer.clone(),
+            })?;
+        for (index, item) in items.iter().enumerate() {
+            if item.get(key.as_str()).is_none() || !item.is_object() {
+                return Err(NormalizeError::NoMatch {
+                    pointer: format!("{pointer}/{index}/{}", escape_token(key)),
+                });
+            }
+        }
+        items.sort_by_key(|item| item[key.as_str()].to_string());
+    }
+    Ok(())
 }
 
 /// Normalize one sequence unit: each item is a document whose rules are pointers relative to the
@@ -516,12 +590,11 @@ pub fn run_vector(vector: &Value, window: &Window) -> Result<Value, NormalizeErr
             )?))
         }
         "document" => {
-            let rules: Vec<(String, Normalizer)> = pointer_specs(&declared)?
-                .into_iter()
-                .map(|(pointer, spec)| (pointer, spec.normalizer))
-                .collect();
+            let (collections, rules) = document_rules(&declared)?;
+            let mut document = vector["document"].clone();
+            sort_collections(&mut document, &collections)?;
             let mask = vector.get("mask").cloned().unwrap_or_else(|| json!([]));
-            normalize_document(&vector["document"], &mask, &rules, window)
+            normalize_document(&document, &mask, &rules, window)
         }
         other => Err(NormalizeError::UnknownName(other.to_owned())),
     }
@@ -578,7 +651,7 @@ mod vector_tests {
             end: at("end"),
         };
         let vectors = file["vectors"].as_array().expect("vectors");
-        assert_eq!(vectors.len(), 20, "the vector file has 20 vectors");
+        assert_eq!(vectors.len(), 21, "the vector file has 21 vectors");
         for vector in vectors {
             let id = vector["id"].as_str().unwrap_or("vector");
             let result = run_vector(vector, &window);

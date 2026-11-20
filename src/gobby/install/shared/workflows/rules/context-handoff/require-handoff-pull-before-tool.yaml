@@ -1,9 +1,13 @@
-version: "1.1.0"
+version: "1.2.0"
 tags: [context-handoff, handoff, enforcement, gobby, default]
 
 # A Claude subagent shares its parent's session and carries agent_id in its hook
 # payload. The pending handoff belongs to the parent, so a subagent neither
 # waits on the pull nor touches the session's handoff.
+# The MCP proxy evaluates before_tool again with an event it builds itself, which
+# carries no agent_id. It marks that event a duplicate when the CLI hook already
+# evaluated the same call, so the gate skips duplicates: the hook-level pass has
+# already admitted the call, and it blocks the parent's own calls there.
 rules:
   require-handoff-pull-before-tool:
     description: "Consume the pending handoff before loading new context or doing work"
@@ -13,6 +17,7 @@ rules:
     when: >-
       variables.get('handoff_pull_pending')
       and not event.data.get('agent_id')
+      and not event.metadata.get('_mcp_proxy_duplicate_before_tool')
       and not (
         event.data.get('mcp_server') == 'gobby-sessions'
         and event.data.get('mcp_tool') in ('get_handoff', 'set_handoff', 'feedback')

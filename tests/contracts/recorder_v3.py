@@ -42,6 +42,7 @@ from websockets.sync.client import ClientConnection, connect
 
 from scripts.parity_waivers import Waiver
 from tests.contracts import corpus_v3, http_corpus
+from tests.contracts.comms.fake_edge import FakeEdge
 from tests.contracts.http_corpus import CorpusError
 from tests.contracts.normalizers_v3 import (
     Window,
@@ -49,8 +50,21 @@ from tests.contracts.normalizers_v3 import (
     normalize_captures,
     normalize_document,
     normalize_images,
+    unordered_key,
 )
 from tests.contracts.recorder_daemon_v3 import recorder_daemon
+from tests.contracts.recorder_v3_support import (
+    CAPTURE_CAP_SECONDS,
+    CAPTURE_QUIET_SECONDS,
+    ProviderEdgeCapture,
+    ProviderEdgeLog,
+    recorded_db_delta,
+    recorder_credential_headers,
+    refuse_pending_captures,
+    send_mcp_rest,
+)
+from tests.contracts.recorder_v3_support import RecorderError as RecorderError
+from tests.contracts.recorder_v3_support import send_seed_http as send_seed_http
 from tests.e2e import conftest as e2e
 from tests.fixtures.hub_guard import (
     HARNESS_DATABASE_PATTERN,
@@ -68,13 +82,7 @@ V3_DIR = corpus_v3.V3_DIR
 TEMPLATE_DIR = V3_DIR / "templates"
 SEED_DIR = V3_DIR / "seeds"
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CAPTURE_QUIET_SECONDS = 0.5
-CAPTURE_CAP_SECONDS = 5.0
 GLOB_ALL = "*"
-
-
-class RecorderError(RuntimeError):
-    """A recording or replay could not run to a comparable result."""
 
 
 @dataclass(frozen=True)
@@ -459,19 +467,6 @@ def files_captures(delta: Mapping[str, list[str]]) -> list[dict[str, str]]:
 # Senders: one per kind. Each returns the raw answer for normalization.
 
 
-def _credential_headers(credential: str, operator: Mapping[str, str]) -> dict[str, str]:
-    if credential == "grant":
-        raise RecorderError("the grant credential is not sent by the v3 recorder")
-    return http_corpus.credential_headers(credential, operator=operator, grant={})
-
-
-def send_seed_http(
-    client: httpx.Client, step: Mapping[str, Any], *, operator: Mapping[str, str]
-) -> None:
-    headers = _credential_headers(step["credential"], operator)
-    client.request(step["method"], step["path"], headers=headers, json=step.get("body"))
-
-
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MCP_SESSION_HEADER = "mcp-session-id"
 MCP_PROTOCOL_HEADER = "mcp-protocol-version"
@@ -720,23 +715,40 @@ class Observation:
 
 
 def _normalize_response(case: Mapping[str, Any], raw: Any, window: Window) -> Any:
-    """Redact the whole response, then apply the case's pointer normalizers under /response.
+    """Redact the whole response, apply the case's pointer normalizers, then its masks.
 
     Redaction covers every kind: an HTTP body, a WS frame list and a CLI object alike. A WS
-    frame is text, so its JSON is parsed, normalized as a document and re-encoded canonically
-    (sorted keys, compact separators); pointers inside a frame therefore address its fields.
+    frame is text, so its JSON is parsed, normalized and masked as a document and re-encoded
+    canonically (sorted keys, compact separators); pointers inside a frame therefore address its
+    fields. Masks are read under /response, as the comparison reads them. An HTTP answer is
+    masked once its unordered collections are sorted and before its field rules run, so a
+    positional mask addresses the sorted list.
     """
     rules = case.get("normalizers", {})
+    mask = case.get("mask", [])
     if corpus_v3.case_kind(case) == "ws":
         frames = [_parse_frame(frame) for frame in raw]
         response: Any = http_corpus.redact_secrets(frames)
         if rules:
             response = normalize_document({"response": response}, rules, window=window)["response"]
-        return [_canonical_frame(frame) for frame in response]
+        masked = http_corpus.apply_masks({"response": response}, mask)["response"]
+        return [_canonical_frame(frame) for frame in masked]
     response = http_corpus.redact_secrets(json_form(raw))
+    if corpus_v3.case_kind(case) == "http":
+        # As the Rust comparison does: unordered collections sort first, the masks then apply to
+        # the sorted answer, and the field rules observe the masked answer.
+        collections = {
+            pointer: spec for pointer, spec in rules.items() if unordered_key(spec) is not None
+        }
+        if collections:
+            response = normalize_document({"response": response}, collections, window=window)[
+                "response"
+            ]
+        response = http_corpus.apply_masks({"response": response}, mask)["response"]
+        rules = {pointer: spec for pointer, spec in rules.items() if pointer not in collections}
     if rules:
         response = normalize_document({"response": response}, rules, window=window)["response"]
-    return response
+    return http_corpus.apply_masks({"response": response}, mask)["response"]
 
 
 def _parse_frame(frame: Any) -> Any:
@@ -757,6 +769,7 @@ def _run_case(
     *,
     operator: Mapping[str, str],
     scratch: Path,
+    edge: ProviderEdgeLog | None = None,
 ) -> tuple[Observation, Window]:
     """Run one case end to end and return its raw-but-normalized observation and its window."""
     kind = corpus_v3.case_kind(case)
@@ -775,6 +788,12 @@ def _run_case(
             for index, effect in enumerate(effects)
             if effect["channel"] == "files_home_write"
         }
+        if any(effect["channel"] == "provider_edge" for effect in effects):
+            if edge is None:
+                raise RecorderError("a provider_edge side effect needs an edge")
+            # The case boundary: the edge's generation opens once per case, before any capture
+            # view of it exists and before the case's request is sent, and every view shares it.
+            edge.clear()
         with ExitStack() as stack:
             captures: dict[int, Any] = {}
             for index, effect in enumerate(effects):
@@ -790,6 +809,11 @@ def _run_case(
                             effect["match"]["types"],
                             headers=operator,
                         )
+                    )
+                elif channel == "provider_edge":
+                    assert edge is not None, "the case boundary above requires the edge"
+                    captures[index] = stack.enter_context(
+                        ProviderEdgeCapture(edge, effect["match"]["hosts"])
                     )
             started = datetime.now(UTC)
             response = _send(kind, case, client, daemon, operator=operator, scratch=scratch)
@@ -829,7 +853,7 @@ def _send(
 ) -> Any:
     """Send one case of the given kind and return its raw response, redacted by kind."""
     if kind == "http":
-        headers = _credential_headers(case["credential"], operator)
+        headers = recorder_credential_headers(client, case["credential"], operator)
         request = case["request"]
         headers.update(request["headers"])
         response = client.request(
@@ -839,9 +863,13 @@ def _send(
             headers=headers,
             json=request["body"],
         )
-        return http_corpus.normalize_response(case, response)
+        # Redacted with allowlisted headers but not masked: _normalize_response masks the answer
+        # after it sorts the unordered collections.
+        return http_corpus.normalize_response({**case, "mask": []}, response)
     if kind == "mcp":
         invocation = case["invocation"]
+        if invocation["transport"] == "rest":
+            return send_mcp_rest(client, invocation, operator=operator)
         if invocation["transport"] == "stdio":
             return send_mcp_stdio(
                 invocation,
@@ -880,57 +908,34 @@ def replay_case(
     *,
     operator: Mapping[str, str],
     scratch: Path,
+    edge: ProviderEdgeLog | None = None,
 ) -> http_corpus.ReplayResult:
     """Replay one stored schema 3 case and classify it against its recording or native answer."""
-    observation, _window = _run_case(run, daemon, case, operator=operator, scratch=scratch)
+    observation, _window = _run_case(
+        run, daemon, case, operator=operator, scratch=scratch, edge=edge
+    )
     actual, observed = _classify_inputs(observation)
     return http_corpus.classify_replay(case, actual, waivers, observed=observed)
 
 
-def _carries_secret(value: Any) -> bool:
-    """True when a secret-keyed field sits anywhere in the value; redaction would change it."""
-    return bool(http_corpus.redact_secrets(value) != value)
-
-
-def _recorded_db_delta(value: Mapping[str, Any], case_name: str) -> dict[str, Any]:
-    """Redact one db_delta value for writing: secret-keyed fields never reach a recording.
-
-    Added and removed rows are redacted in full, the same rule the comparison applies to both
-    sides, so the stored value and the comparison agree. A changed value in a secret-keyed column,
-    or one that carries a secret-keyed field, is refused: writing it would commit the secret, and
-    masking it would hide its change from the comparison. A decision is needed for those.
-    """
-    changed: list[dict[str, Any]] = []
-    for item in value["changed"]:
-        column = item["column"]
-        if (
-            column in http_corpus.SECRET_KEYS
-            or _carries_secret(item["before"])
-            or _carries_secret(item["after"])
-        ):
-            raise RecorderError(
-                f"{case_name}: a changed value in secret-keyed column {column!r} cannot be "
-                "recorded; the case needs a decision (V5)"
-            )
-        changed.append({**item, "key": http_corpus.redact_secrets(item["key"])})
-    return {
-        "added": http_corpus.redact_secrets(value["added"]),
-        "removed": http_corpus.redact_secrets(value["removed"]),
-        "changed": changed,
-    }
-
-
 def _recorded_entries(case: dict[str, Any], observation: Observation) -> None:
-    """Attach redacted recorded values to the case's db_delta and side_effects entries, in place.
+    """Attach redacted, masked recorded values to the case's db_delta and side_effects, in place.
 
     Redaction runs after normalization, as the comparison does, and captures are redacted in full
-    (every body and capture).
+    (every body and capture). The case's masks then apply at the pointers the comparison uses,
+    which address each value under ``recorded``.
     """
     case_name = str(case.get("name", ""))
-    for entry, value in zip(case.get("db_delta", []), observation.db_delta, strict=True):
-        entry["recorded"] = _recorded_db_delta(value, case_name)
-    for entry, value in zip(case.get("side_effects", []), observation.side_effects, strict=True):
-        entry["recorded"] = http_corpus.redact_secrets(value)
+    recorded: dict[str, Any] = {
+        "db_delta": [{"recorded": recorded_db_delta(v, case_name)} for v in observation.db_delta],
+        "side_effects": [
+            {"recorded": http_corpus.redact_secrets(v)} for v in observation.side_effects
+        ],
+    }
+    masked = http_corpus.apply_masks(recorded, case.get("mask", []))
+    for name in ("db_delta", "side_effects"):
+        for entry, value in zip(case.get(name, []), masked[name], strict=True):
+            entry["recorded"] = value["recorded"]
 
 
 def record_template(
@@ -940,10 +945,17 @@ def record_template(
     *,
     operator: Mapping[str, str],
     scratch: Path,
+    edge: ProviderEdgeLog | None = None,
 ) -> dict[str, Any]:
-    """Run one raw template and return the recorded case, keys in the frozen order."""
+    """Run one raw template and return the recorded case, keys in the frozen order.
+
+    A capture that holds a provider request still in flight is refused, never recorded.
+    """
     case = copy.deepcopy(dict(template))
-    observation, _window = _run_case(run, daemon, case, operator=operator, scratch=scratch)
+    observation, _window = _run_case(
+        run, daemon, case, operator=operator, scratch=scratch, edge=edge
+    )
+    refuse_pending_captures(str(case.get("name", "")), observation.side_effects)
     if "waiver" in case and str(case["waiver"]).endswith(".native-extension"):
         case.pop("response", None)
     else:
@@ -964,29 +976,66 @@ def read_template(path: Path) -> dict[str, Any]:
     return document
 
 
+def startup_for(family: str, manifest: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    """The manifest's startup block for one family, or None when the family has none."""
+    startup: Mapping[str, Any] = manifest.get("startup", {})
+    entry: Mapping[str, Any] | None = startup.get(family)
+    return entry
+
+
+def record_in_own_run(
+    template: Mapping[str, Any],
+    *,
+    scratch: Path,
+    startup: Mapping[str, Any] | None = None,
+    edge: FakeEdge | None = None,
+) -> dict[str, Any]:
+    """Record one template in a run database and a daemon of its own.
+
+    No case reads another case's writes, so every case starts from an empty run. The daemon
+    starts from the case family's startup block, if it has one, and routes through the edge.
+    """
+    with (
+        open_run_database() as run,
+        recorder_daemon(
+            base_url=run.base_url, database_url=run.url, startup=startup, edge=edge
+        ) as daemon,
+    ):
+        return record_template(
+            run,
+            daemon,
+            template,
+            operator=daemon.operator_headers(),
+            scratch=scratch,
+            edge=edge,
+        )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    """Record every template in the templates directory into the corpus directory."""
+    """Record every template in the templates directory into the corpus directory.
+
+    One provider edge serves the whole run, built before the first daemon and stopped after the
+    last. Its test authority lives in the run's scratch directory.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--templates", type=Path, default=TEMPLATE_DIR)
     parser.add_argument("--out", type=Path, default=V3_DIR)
     args = parser.parse_args(argv)
     templates = sorted(args.templates.glob("*.json"))
     scratch = Path(tempfile.mkdtemp(prefix="recorder-v3-"))
-    with (
-        open_run_database() as run,
-        recorder_daemon(base_url=run.base_url, database_url=run.url) as daemon,
-    ):
-        operator = daemon.operator_headers()
+    manifest = corpus_v3.load_manifest(V3_DIR)
+    edge = FakeEdge(scratch / "edge")
+    (scratch / "edge").mkdir(parents=True, exist_ok=True)
+    edge.start()
+    try:
         for template in templates:
-            case = record_template(
-                run,
-                daemon,
-                read_template(template),
-                operator=operator,
-                scratch=scratch,
-            )
+            document = read_template(template)
+            startup = startup_for(str(document.get("family", "")), manifest)
+            case = record_in_own_run(document, scratch=scratch, startup=startup, edge=edge)
             (args.out / f"{case['name']}.json").write_bytes(case_bytes(case))
             print(f"recorded {case['name']}", file=sys.stderr)
+    finally:
+        edge.stop()
     return 0
 
 

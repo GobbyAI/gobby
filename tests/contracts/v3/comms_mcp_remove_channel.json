@@ -1,0 +1,23 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_remove_channel",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:remove_channel",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "remove_channel",
+    "arguments": {
+      "name": "corpus-slack"
+    }
+  },
+  "response": {
+    "success": false,
+    "error": "Operator messaging requires a registered caller"
+  },
+  "normalizers": {},
+  "mask": []
+}

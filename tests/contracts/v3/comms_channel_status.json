@@ -1,0 +1,38 @@
+{
+  "schema_version": 3,
+  "name": "comms_channel_status",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP GET /api/comms/channels/{channel_id}/status",
+  "request": {
+    "method": "GET",
+    "path": "/api/comms/channels/5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001/status",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "name": "corpus-slack",
+      "channel_type": "slack",
+      "status": "active",
+      "active": true,
+      "enabled": true,
+      "supports_webhooks": true,
+      "supports_polling": false,
+      "is_polling": false,
+      "init_error": null,
+      "retry_pending": false,
+      "retry_attempts": 0,
+      "next_retry_at": null
+    }
+  },
+  "normalizers": {},
+  "mask": []
+}

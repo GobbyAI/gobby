@@ -1,0 +1,7 @@
+{
+  "hosts": [],
+  "mail": {
+    "user": "corpus-mailbox",
+    "password": "corpus-mail-password"
+  }
+}

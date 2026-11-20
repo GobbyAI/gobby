@@ -1,0 +1,24 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_set_channel_project",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:set_channel_project",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "set_channel_project",
+    "arguments": {
+      "channel": "corpus-slack",
+      "project": "corpus-project"
+    }
+  },
+  "response": {
+    "success": false,
+    "error": "Operator messaging requires a registered caller"
+  },
+  "normalizers": {},
+  "mask": []
+}

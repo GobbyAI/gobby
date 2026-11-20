@@ -1,0 +1,27 @@
+{
+  "schema_version": 3,
+  "name": "comms_channel_delete",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP DELETE /api/comms/channels/{channel_id}",
+  "request": {
+    "method": "DELETE",
+    "path": "/api/comms/channels/5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "db_delta": [
+    {
+      "table": "comms_channels",
+      "key": ["id"],
+      "columns": ["id", "channel_type", "name", "enabled", "config_json"],
+      "normalizers": {"id": "uuid_ordinal"},
+      "order": "set"
+    }
+  ],
+  "normalizers": {},
+  "mask": []
+}

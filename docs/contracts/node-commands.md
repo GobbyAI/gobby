@@ -14,7 +14,7 @@ gives as "or null" accepts an explicit `null` and fails when it is missing.
 Values are not coerced: a string never parses as a number, and a number never
 parses as a boolean.
 
-Both sides define `CONTRACT_VERSION` as 4: a Rust `pub const` and a Python
+Both sides define `CONTRACT_VERSION` as 5: a Rust `pub const` and a Python
 module constant. Every frame and every node body carries it as `v`; answers
 carry no `v`. A new command or field bumps `v`. Every handler and route
 refuses a `v` other than `CONTRACT_VERSION` with `unsupported_version`: a node

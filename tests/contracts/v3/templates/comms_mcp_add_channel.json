@@ -1,0 +1,24 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_add_channel",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:add_channel",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "add_channel",
+    "arguments": {
+      "channel_type": "slack",
+      "name": "corpus-mcp-added",
+      "config": {
+        "bot_token": "$secret:corpus_slack_bot_token",
+        "signing_secret": "$secret:corpus_slack_signing_secret"
+      }
+    }
+  },
+  "normalizers": {},
+  "mask": []
+}

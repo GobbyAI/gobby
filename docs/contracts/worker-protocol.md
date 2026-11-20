@@ -3,18 +3,71 @@
 Status: protocol version 1, R0 (gobby#25948). The frozen corpus is
 `tests/contracts/worker_protocol.json`. The Python models are in
 `src/gobby/worker/protocol.py`, and the guard order is in `src/gobby/worker/facade.py`.
-The Rust client is `crates/gdaemon/src/lifecycle/worker_handshake.rs` (dormant until R1).
+The Rust client is `crates/gdaemon/src/lifecycle/worker_handshake.rs` (dormant under the Python
+default; the Rust handshake runs when RUNNER_DEFAULT is Rust).
 
 This contract is private to the daemon and its worker. It is not a public API.
 
 ## Transport and encoding
 
-- Every request and every response is UTF-8 JSON bytes. Framing and transport belong to R1.
+- Every request and every response is UTF-8 JSON bytes, carried in the length-prefixed frames
+  described in Transport and framing.
 - A request is stored and replayed exactly as a client sends it. Requests are not canonical.
 - A response is canonical: `json.dumps(value, separators=(",", ":"), sort_keys=True,
   ensure_ascii=False, allow_nan=False)` encoded as UTF-8.
 - Request bytes are read with plain `json.loads`. Duplicate keys and `NaN` are not refused.
   Bytes that are not UTF-8 JSON, or whose top level is not an object, are `invalid_request`.
+
+## Transport and framing
+
+- The channel is one connected Unix socket pair, created by gdaemon for each spawn in Rust mode.
+  gdaemon keeps the parent end, which is close-on-exec. The child inherits only the child end. There
+  is no listener, socket path or port, so the connection is bound to that one child and is private
+  to this machine. The supervisor that spawns workers is built for Unix only, and a marked start
+  refuses on Windows.
+- Three variables mark a start that serves the channel. Only gdaemon sets them, and only in Rust
+  mode, in the same step that creates the descriptors, so a child never sees the marker without
+  them:
+  - `GOBBY_WORKER_MARKER` is `1`.
+  - `GOBBY_WORKER_CHANNEL_FD` names the child end of the connection.
+  - `GOBBY_WORKER_CREDENTIAL_FD` names the read end of the credential pipe.
+  The Python default spawn sets none of them. Its argv, environment and inherited descriptors are
+  unchanged.
+- The credential is drawn per spawn: 32 random bytes, encoded as URL-safe base64 without padding
+  (43 characters). gdaemon writes it into a pipe and closes the write end before the spawn. The
+  read end is inherited and named by `GOBBY_WORKER_CREDENTIAL_FD`. The credential is never in argv
+  or in any environment value.
+- Python's `take_worker_boot` consumes all three variables before the inherited descriptors are
+  sealed:
+  - With no marker, the start is an ordinary start and takes no boot.
+  - A marker other than `1` refuses the start. So does a marker on Windows.
+  - A channel or credential variable that is missing, is not an integer, or does not name an
+    inherited descriptor above stderr refuses the start, and the message names the variable.
+  - A channel descriptor that is closed, or is open but is not a socket, refuses the start before
+    the channel is used, and the message names the channel variable.
+  - Otherwise the credential is read to end of stream and its descriptor is closed. The channel
+    descriptor stays open for the worker.
+  A refusal exits with status 78, and the supervisor treats that exit as sticky.
+- A marked start serves the worker facade over the channel and does not construct the full runner.
+  The worker-only boot registers no lifecycle phase and no domain op.
+- Every frame is a 4-byte unsigned big-endian length followed by that many payload bytes. The
+  payload is one request or response envelope. Each request frame gets exactly one reply frame, in
+  order.
+- A reader checks the length prefix against its limit before it reads or allocates the body.
+  - The Python worker refuses a request frame whose prefix is over 16 MiB (16,777,216 bytes) and
+    closes the channel. It also refuses to send a reply over 16 MiB and closes the channel. The
+    request bounds in Bounds apply to each request once it is read.
+  - The Rust client refuses a reply frame whose prefix is over the limit for its command, and
+    reports a channel error.
+- The Rust client's reply limits are 65,536 bytes for `handshake` and `initialize`, and 16 MiB
+  (16,777,216 bytes) for `invoke`. The Python worker sends no reply over its 16 MiB frame limit.
+- A stream that ends before a whole prefix or body arrives is end of stream. The Python worker
+  closes the channel. The Rust client reports a channel error.
+- The Rust client waits at most 60 seconds for a `handshake` reply and at most 300 seconds for an
+  `initialize` or `invoke` reply. A reply that misses its deadline is a channel error.
+- Each call makes one exchange. A channel error, an end of stream, a framing error, a reply over
+  its limit or a missed deadline is an unknown outcome for that call (see Unknown outcome). The
+  client never resends.
 
 ## Request envelope
 
@@ -69,7 +122,8 @@ Example, a handshake accepted:
 - Generations are sequential integers that start at 1. They are not secret. The
   credential admits a handshake: the handshake checks auth before it compares generations,
   and a refused handshake binds nothing.
-- One worker process serves one generation.
+- One worker process serves one generation. In Rust mode each spawn draws its generation once,
+  and the child serves that generation.
 
 ## Credential and handshake
 
@@ -82,13 +136,17 @@ Example, a handshake accepted:
 - The body credential is compared with `hmac.compare_digest`. A mismatch is `unauthorized`
   with the message `credential refused`.
 - The credential is never echoed, logged or stored after the comparison. Error text is constant.
+  The worker receives the credential only through its own inherited pipe (see Transport and
+  framing), never through argv or the environment.
 - The handshake result carries `protocol_version`, `generation`, `commands` (sorted:
   `handshake`, `initialize`, `invoke`) and `schema_identity`, which is the release-pinned
-  identity `expected_schema_identity()`. Rust returns `schema_identity` as an opaque value
-  and does not compare it (R1 compares).
+  identity `expected_schema_identity()`. The Rust client compares it with the installed
+  identity after the commands check. A mismatch is a protocol violation on the `schema_identity`
+  field, and it binds no generation.
 - Only the handshake carries the credential. `initialize` and `invoke` carry none. After a
-  handshake binds, later commands are admitted by transport peer admission, which R1 owns,
-  not by this contract.
+  handshake binds, later commands are admitted by the connection itself: the channel is a
+  socket pair held by one child, with no listener, path or port (see Transport and framing). No
+  per-command credential is sent.
 - A handshake whose schema identity cannot be loaded is `op_failed` with the message
   `schema identity unavailable`. It binds no generation, so the next command is
   `not_handshaken`.
@@ -109,7 +167,7 @@ The facade applies these steps in order. The first failing step decides the resp
 | 8 | Generation differs from the bound generation | `stale_generation` |
 | 9 | Command is not `initialize` or `invoke` | `unknown_command` |
 | 10 | `initialize`: body is exactly `{"phase": <known phase>}`; then unusable; then phase order | `invalid_request`, `worker_unusable`, `phase_out_of_order` |
-| 11 | `invoke`: body is exactly `{"op", "params"}`; then unusable; then not ready; then op lookup; then params | `invalid_request`, `worker_unusable`, `not_ready`, `unknown_command`, `invalid_request` |
+| 11 | `invoke`: body is exactly `{"op", "params"}`; then unusable; then not ready; then op lookup; then params; then the op runs, and an op that raises an `Exception` is `op_failed` | `invalid_request`, `worker_unusable`, `not_ready`, `unknown_command`, `op_failed` |
 
 `command` is a plain string at the envelope level, so an unknown command is `unknown_command`,
 never `invalid_request`.
@@ -172,7 +230,12 @@ it is `invalid_request`, and its echo leaves out the generation.
 An `Int` parameter outside it is `invalid_request`.
 `Anything` and `JsonObject` values pass through as decoded JSON.
 An integer nested in one reaches the op as it was decoded.
-The Rust client reads envelope integers as `u64` or `i64`.
+The Rust client reads envelope integers as `u64` or `i64`. It applies the same range to every
+integer in a reply, before it parses the reply. A reply that holds an out-of-range integer is
+malformed: a protocol violation for `handshake`, and an unknown outcome for `initialize` and
+`invoke`.
+
+Reply limits and reply deadlines are in Transport and framing.
 
 Python and Rust keep separate constants. The Rust constant `MAX_DOMAIN_OP_REQUEST_BYTES`
 is not shared with the hook ingress bound, which is private to its module.
@@ -191,6 +254,23 @@ is not shared with the hook ingress bound, which is private to its module.
 | `worker_unusable` | `worker is unusable` | a refused, failed or cancelled phase has made the facade unusable |
 | `not_ready` | `worker is not ready` | an `invoke` before the handshake and every phase are ready |
 | `op_failed` | dynamic, at most 2,048 characters, or `schema identity unavailable` | an op raised an `Exception`, returned an unencodable value (including an integer outside the wire range), a registration fault occurred, or the handshake could not load its schema identity |
+
+### Error codes per command
+
+A command's error reply carries one of the codes in its row. Each row is the union of that
+command's guard steps above, and the Rust client's code sets (`HANDSHAKE_ERROR_CODES`,
+`INITIALIZE_ERROR_CODES` and `INVOKE_ERROR_CODES`) equal the rows.
+
+| Command | Error codes |
+|---|---|
+| `handshake` | `invalid_request`, `protocol_mismatch`, `unauthorized`, `stale_generation`, `op_failed` |
+| `initialize` | `invalid_request`, `protocol_mismatch`, `not_handshaken`, `stale_generation`, `worker_unusable`, `phase_out_of_order` |
+| `invoke` | `invalid_request`, `protocol_mismatch`, `not_handshaken`, `stale_generation`, `worker_unusable`, `not_ready`, `unknown_command`, `op_failed` |
+
+Out-of-set rule. A reply whose error code is outside its command's row is a protocol violation
+for `handshake`. For `initialize` and `invoke` it is an unknown outcome, because the effect may
+already have happened. `initialize` never answers `op_failed`: a failed phase is a `failed`
+result, not an error.
 
 Registration faults map to `op_failed`, never to `invalid_request`. They are the
 `OpRegistrationError`, `TypeError`, `ImportError` and `NameError` raised by a broken
@@ -248,7 +328,12 @@ slashes on POSIX; a set or
 - For `initialize` and `invoke`, a reply that fails validation is also an unknown outcome,
   because the effect may already have happened. A handshake reply that fails validation is a
   protocol violation.
-- Reconciliation belongs to the caller. The R1 supervisor reconciles lifecycle phases. The
+- A reply whose error code is outside its command's row in the per-command table is a protocol
+  violation for `handshake`, and an unknown outcome for `initialize` and `invoke`.
+- An unknown outcome on `handshake` or `initialize` ends the worker child. The next spawn takes a
+  new generation, and the ended generation is refused as stale. R1 registers no lifecycle phase,
+  so R2 inherits this rule for the phases it registers.
+- Reconciliation belongs to the caller. Reconciling lifecycle phases belongs to R2. The
   caller chunk reconciles domain ops. An `op_failed` reply means the op ran and may have had a
   partial effect.
 
@@ -273,18 +358,15 @@ It has one version block (`protocol_version` 1) with 17 request cases and 5 resp
 
 ## R1 hand-off
 
-R1 owns the live boot, and this contract does not wire it. R1 owns:
+R1 wires the live boot. Each item lives in the section named after it:
 
-- the transport and framing for the three commands;
-- wiring the `GenerationSource` into the supervisor's spawn path;
-- comparing the returned `schema_identity` with the installed identity;
-- the real credential source, which the facade receives as its `credential`;
-- keeping the worker channel bound to one connection and private to the machine, or adding a
-  per-command credential under a new protocol version, before a command is served. The handshake
-  credential does not cover later commands, and this trust model is never reused for a network
-  link;
-- reconciling unknown outcomes for lifecycle phases;
-- the runner-mode switch that selects the Rust handshake. `RUNNER_DEFAULT` is `Python` at R0
-  landing, so the Rust handshake stays dormant until the compiled default is Rust.
+- the transport and framing for the three commands: Transport and framing;
+- the generation of each spawn: Generation;
+- comparing the returned `schema_identity` with the installed identity: Credential and handshake;
+- the credential, which is per spawn and rides its own inherited pipe: Transport and framing;
+- the connection, bound to one child and private to the machine, which stands in for a per-command
+  credential: Credential and handshake;
+- unknown outcomes for lifecycle phases: Unknown outcome, where R2 inherits the rule;
+- the runner-mode switch that selects the Rust handshake: the status line at the top of this file.
 
-No R0 code calls the Rust handshake, and R0 registers no domain op.
+R1 registers no domain op and no lifecycle phase.

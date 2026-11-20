@@ -1,0 +1,34 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_send_message",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:send_message",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "send_message",
+    "arguments": {"channel": "corpus-slack", "content": "corpus message two"}
+  },
+  "db_delta": [
+    {
+      "table": "comms_messages",
+      "key": ["id"],
+      "columns": ["id", "channel_id", "direction", "content", "content_type", "platform_message_id", "status"],
+      "normalizers": {"id": "uuid_ordinal"},
+      "order": "set"
+    }
+  ],
+  "side_effects": [
+    {
+      "channel": "provider_edge",
+      "match": {"hosts": ["slack.com"]}
+    }
+  ],
+  "normalizers": {
+    "/response/result/message_id": "uuid_ordinal"
+  },
+  "mask": []
+}

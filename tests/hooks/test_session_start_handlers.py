@@ -1736,8 +1736,10 @@ class TestSessionStartNewSession:
         mock_sv_mgr_cls.return_value = mock_sv_mgr
 
         handlers = EventHandlers(**mock_dependencies)
+        # Fresh-session materialization drops a launch task only at SESSION_START; a
+        # BEFORE_AGENT first-prompt materialization keeps it.
         event = make_event(
-            HookEventType.BEFORE_AGENT,
+            HookEventType.SESSION_START,
             session_id="ext-123",
             data={"skip_default_agent_activation": True},
         )

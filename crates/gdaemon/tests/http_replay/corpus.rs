@@ -15,6 +15,8 @@ use std::path::Path;
 use gobby_daemon::front_door::waivers::is_native_extension;
 use serde_json::{Map, Value, json};
 
+use super::normalize::parse_unordered;
+
 /// The schema versions the loader accepts: v2 files as they are, and v3 files.
 pub const ACCEPTED_SCHEMAS: [u64; 2] = [2, 3];
 
@@ -59,9 +61,14 @@ const V3_REQUIRED_KEYS: [&str; 8] = [
 ];
 
 const CREDENTIALS: [&str; 3] = ["none", "operator", "grant"];
-const CHANNELS: [&str; 3] = ["pg_notify", "ws_publish", "files_home_write"];
+const CHANNELS: [&str; 4] = [
+    "pg_notify",
+    "ws_publish",
+    "files_home_write",
+    "provider_edge",
+];
 const FIELD_NORMALIZERS: [&str; 5] = ["uuid_ordinal", "monotonic", "timestamp", "bytes", "none"];
-const MCP_TRANSPORTS: [&str; 2] = ["http", "stdio"];
+const MCP_TRANSPORTS: [&str; 3] = ["http", "stdio", "rest"];
 const PARITY_VALUES: [&str; 2] = ["proxy", "native"];
 const ORIGIN_VALUES: [&str; 2] = ["python", "gdaemon"];
 
@@ -229,7 +236,9 @@ pub fn parse_case(value: &Value) -> Result<Case, CorpusError> {
     {
         check_ledger_key(&name, kind, key, request.as_ref(), invocation.as_ref())?;
     }
-    if let Some(response) = &response {
+    if let Some(response) = &response
+        && !is_rest_call(kind, invocation.as_ref())
+    {
         check_response(&name, kind, response)?;
     }
     if schema_version == 3 {
@@ -297,7 +306,7 @@ fn check_v3_optional(value: &Value, case: &str) -> Result<(), CorpusError> {
         }
     }
     if let Some(normalizers) = value.get("normalizers") {
-        check_normalizers(normalizers, case, false)?;
+        check_normalizers(normalizers, case, false, true)?;
         check_pointer_keys(normalizers, case)?;
     }
     for entry in entries(value, case, "db_delta")? {
@@ -345,7 +354,7 @@ fn check_db_delta(case: &str, entry: &Value) -> Result<(), CorpusError> {
         ));
     }
     if let Some(normalizers) = object.get("normalizers") {
-        check_normalizers(normalizers, case, true)?;
+        check_normalizers(normalizers, case, true, false)?;
     }
     let order = match object.get("order") {
         None => return Err(shape(case, format!("db_delta {table} order is required"))),
@@ -392,7 +401,7 @@ fn check_side_effect(case: &str, effect: &Value) -> Result<(), CorpusError> {
         ));
     }
     if let Some(normalizers) = object.and_then(|map| map.get("normalizers")) {
-        check_normalizers(normalizers, case, false)?;
+        check_normalizers(normalizers, case, false, false)?;
         check_pointer_keys(normalizers, case)?;
     }
     Ok(())
@@ -400,15 +409,27 @@ fn check_side_effect(case: &str, effect: &Value) -> Result<(), CorpusError> {
 
 /// A normalizer map (Python `_check_normalizers`): each value names a field normalizer, or is
 /// `{"name", "after"}` where `after` is legal only on a `db_delta` normalizer and only for timestamps.
+/// A case's own map (`allow_unordered`) may also declare a response collection
+/// `{"name": "unordered", "key": <field>}`, which the comparison sorts by that field.
 fn check_normalizers(
     normalizers: &Value,
     case: &str,
     allow_after: bool,
+    allow_unordered: bool,
 ) -> Result<(), CorpusError> {
     let map = normalizers
         .as_object()
         .ok_or_else(|| shape(case, "normalizers must be an object"))?;
     for spec in map.values() {
+        if allow_unordered && let Some(key) = parse_unordered(spec) {
+            key.map_err(|_| {
+                shape(
+                    case,
+                    format!("normalizer {spec} needs exactly a name and a key field"),
+                )
+            })?;
+            continue;
+        }
         let (_, after) = normalizer_spec(spec, case)?;
         if after.is_some() && !allow_after {
             return Err(shape(
@@ -861,6 +882,15 @@ fn check_response(case: &str, kind: Kind, response: &Value) -> Result<(), Corpus
             format!("response has the wrong shape for kind {}", kind_label(kind)),
         ))
     }
+}
+
+/// A kind mcp case on the REST transport: its answer is the tool's JSON body, which is any value.
+fn is_rest_call(kind: Kind, invocation: Option<&Value>) -> bool {
+    kind == Kind::Mcp
+        && invocation
+            .and_then(|object| object.get("transport"))
+            .and_then(Value::as_str)
+            == Some("rest")
 }
 
 fn is_integer(value: &Value) -> bool {
@@ -1741,6 +1771,82 @@ mod loader_rule_tests {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/contracts/v3/manifest.json");
         let cases = load_manifest(&path).expect("the shipped v3 manifest loads");
-        assert_eq!(cases.len(), 5);
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read the v3 manifest"))
+                .expect("the v3 manifest is JSON");
+        let listed = manifest["cases"]
+            .as_array()
+            .expect("the v3 manifest lists cases")
+            .len();
+        assert_eq!(cases.len(), listed);
+    }
+
+    #[test]
+    fn a_schema_3_case_may_name_the_provider_edge_channel() {
+        // A side effect names the provider_edge channel and the hosts it captures.
+        let value = json!({
+            "schema_version": 3,
+            "name": "rule_probe",
+            "kind": "http",
+            "family": "health",
+            "backend": "up",
+            "credential": "none",
+            "ledger_key": "HTTP GET /api/health",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "response": {"status": 200, "headers": {}, "body": null},
+            "side_effects": [{"channel": "provider_edge", "match": {"hosts": ["slack.com"]}}],
+            "mask": []
+        });
+        let refusal = parse_case(&value).err().map(|error| error.to_string());
+        assert!(
+            refusal.is_none(),
+            "the loader refused a provider_edge side effect: {refusal:?}"
+        );
+    }
+
+    #[test]
+    fn a_schema_3_response_collection_may_be_declared_unordered_by_a_key() {
+        // A channel list answers rows from an unordered read, so the case sorts them by a stable
+        // key before its positional rules apply.
+        let value = json!({
+            "schema_version": 3,
+            "name": "rule_probe",
+            "kind": "http",
+            "family": "health",
+            "backend": "up",
+            "credential": "none",
+            "ledger_key": "HTTP GET /api/health",
+            "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
+            "response": {"status": 200, "headers": {}, "body": [{"name": "alpha"}, {"name": "beta"}]},
+            "normalizers": {"/response/body": {"name": "unordered", "key": "name"}},
+            "mask": []
+        });
+        let refusal = parse_case(&value).err().map(|error| error.to_string());
+        assert!(
+            refusal.is_none(),
+            "the loader refused an unordered collection declaration: {refusal:?}"
+        );
+    }
+
+    #[test]
+    fn a_schema_3_mcp_case_may_use_the_rest_transport() {
+        // The REST tool route answers a body that is not a JSON-RPC envelope, so a rest case may
+        // carry any JSON response.
+        let value = kind_case(
+            "mcp",
+            "MCP gobby-communications:list_channels",
+            json!({
+                "transport": "rest",
+                "server": "gobby-communications",
+                "tool": "list_channels",
+                "arguments": {}
+            }),
+            json!({"success": true, "channels": []}),
+        );
+        let refusal = parse_case(&value).err().map(|error| error.to_string());
+        assert!(
+            refusal.is_none(),
+            "the loader refused a rest case: {refusal:?}"
+        );
     }
 }

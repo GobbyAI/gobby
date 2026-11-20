@@ -1,0 +1,143 @@
+{
+  "provider": "slack",
+  "operation": "attachment",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/slack.py",
+  "source_test": "tests/communications/adapters/test_slack.py::test_send_attachment_three_step_upload",
+  "contract_ref": "https://api.slack.com/methods/files.getUploadURLExternal",
+  "drive": {
+    "channel": {
+      "name": "corpus-slack",
+      "config": {
+        "bot_token": "$secret:SLACK_BOT_TOKEN",
+        "signing_secret": "$secret:SLACK_SIGNING_SECRET",
+        "default_destination": "C0CORPUS0001"
+      }
+    },
+    "secrets": {
+      "SLACK_BOT_TOKEN": "corpus-wire-slack-bot-token",
+      "SLACK_SIGNING_SECRET": "corpus-wire-slack-signing-secret"
+    },
+    "call": "send_attachment",
+    "message": {
+      "content": "corpus slack attachment",
+      "metadata": {
+        "platform_destination": "C0CORPUS0001"
+      }
+    },
+    "attachment": {
+      "filename": "corpus-report.txt",
+      "content_type": "text/plain",
+      "content_base64": "Y29ycHVzIGF0dGFjaG1lbnQgYnl0ZXMK"
+    }
+  },
+  "provider_contract": {
+    "responses": [
+      {
+        "host": "slack.com",
+        "method": "POST",
+        "path": "/api/auth.test",
+        "body": {
+          "ok": true,
+          "url": "https://corpus-workspace.slack.com/",
+          "team": "corpus-team",
+          "user": "corpus-bot",
+          "team_id": "T0CORPUS0001",
+          "user_id": "U0CORPUS0001",
+          "bot_id": "B0CORPUS0001"
+        }
+      },
+      {
+        "host": "slack.com",
+        "method": "POST",
+        "path": "/api/files.getUploadURLExternal",
+        "body": {
+          "ok": true,
+          "upload_url": "https://files.slack.com/upload/v1/corpus-wire-1",
+          "file_id": "F0CORPUS0001"
+        }
+      },
+      {
+        "host": "files.slack.com",
+        "method": "PUT",
+        "path": "/upload/v1/corpus-wire-1",
+        "content_type": "text/plain",
+        "body": "OK - 24"
+      },
+      {
+        "host": "slack.com",
+        "method": "POST",
+        "path": "/api/files.completeUploadExternal",
+        "body": {
+          "ok": true,
+          "files": [
+            {
+              "id": "F0CORPUS0001",
+              "title": "corpus-report.txt",
+              "shares": {
+                "public": {
+                  "C0CORPUS0001": [
+                    {
+                      "ts": "1700000000.000200"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "exchanges": [
+    {
+      "host": "slack.com",
+      "method": "POST",
+      "path": "/api/auth.test",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "slack.com",
+      "method": "POST",
+      "path": "/api/files.getUploadURLExternal",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "corpus-report.txt",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "files.slack.com",
+      "method": "PUT",
+      "path": "/upload/v1/corpus-wire-1",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": "660491dbdbd8662a2067ccf0fd219e4b805c98a846c0b4cfadba6b8e26e17fd9"
+      }
+    },
+    {
+      "host": "slack.com",
+      "method": "POST",
+      "path": "/api/files.completeUploadExternal",
+      "semantic": {
+        "destination": "C0CORPUS0001",
+        "text": "corpus slack attachment",
+        "filename": "corpus-report.txt",
+        "payload_sha256": ""
+      }
+    }
+  ],
+  "outcome": {
+    "message_id": "1700000000.000200"
+  }
+}

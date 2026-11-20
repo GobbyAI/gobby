@@ -1,0 +1,23 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_list_conversation_attachments",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:list_conversation_attachments",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "list_conversation_attachments",
+    "arguments": {}
+  },
+  "response": {
+    "success": true,
+    "result": {
+      "attachments": []
+    }
+  },
+  "normalizers": {},
+  "mask": []
+}

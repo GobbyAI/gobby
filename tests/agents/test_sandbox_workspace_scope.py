@@ -8,8 +8,9 @@ from uuid import uuid4
 
 import pytest
 
-from gobby.agents.agent_workspaces import grant_seat_workspace_paths
+from gobby.agents.agent_workspaces import grant_seat_workspace_paths, workspace_anchor
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
+from gobby.agents.workspace_projects import workspace_project_name
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat._session_launch import (
     SessionLaunchContext,
@@ -97,6 +98,15 @@ async def test_workspace_scope_cannot_be_interpreted_as_a_glob(
         await compute_sandbox_paths(config, str(checkout))
 
 
+def _anchor(db: HubDatabase, project_id: str) -> Path:
+    """The project's anchor under the registered project name, its ownership receipt recorded.
+
+    Resolving first lets a test create folders under the anchor; a folder without a receipt
+    is refused.
+    """
+    return workspace_anchor(workspace_project_name(db, project_id))
+
+
 def _definition(
     db: HubDatabase, *, persistent: bool, read_all: bool = False, promote: bool = False
 ) -> None:
@@ -128,7 +138,8 @@ async def test_binary_promotion_grant_is_definition_owned(
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
     _definition(temp_db, persistent=False, promote=promote)
     caller = _session(temp_db, sample_project["id"], 40)
-    own = gobby_home / "agents_workspaces" / sample_project["id"] / "custom-seat" / "session-40"
+    own = _anchor(temp_db, sample_project["id"]) / "custom-seat" / "session-40"
+    assert own.parents[2] == gobby_home / "agents_workspaces"
     config = grant_seat_workspace_paths(
         SandboxConfig(enabled=True, backend="srt"), temp_db, caller, "custom-seat"
     )
@@ -164,7 +175,8 @@ async def test_seat_scope_uses_definition_and_keeps_history_read_only(
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby"))
     root = tmp_path / "gobby" / "agents_workspaces"
     project: str = sample_project["id"]
-    anchor = root / project
+    anchor = _anchor(temp_db, project)
+    assert anchor.parent == root
     own = anchor / "custom-seat" / ("current" if persistent else "session-40")
     prior = own.parent / "history" / "session-10" if persistent else own.parent / "session-10"
     live = anchor / "other-seat" / "session-20"
@@ -205,11 +217,13 @@ async def test_managed_persona_scope_is_available_before_backend_start(
     checkout.mkdir()
     _definition(temp_db, persistent=False, read_all=True)
     caller = _session(temp_db, sample_project["id"], 10)
+    own = _anchor(temp_db, sample_project["id"]) / "custom-seat" / "session-10"
+    assert own.parents[2] == root
     observed: list[str] = []
 
     async def start(model: str | None = None) -> None:
         assert model is None
-        assert (root / sample_project["id"] / "custom-seat" / "session-10").is_dir()
+        assert own.is_dir()
         assert session.sandbox_config is not None
         paths = await compute_sandbox_paths(session.sandbox_config, str(checkout))
         observed.extend(paths.read_paths)
@@ -262,7 +276,8 @@ async def test_symlinked_own_binding_cannot_authorize_foreign_folder(
     when: str,
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby"))
-    anchor = tmp_path / "gobby" / "agents_workspaces" / sample_project["id"]
+    anchor = _anchor(temp_db, sample_project["id"])
+    assert anchor.parent == tmp_path / "gobby" / "agents_workspaces"
     own = anchor / "custom-seat" / "session-10"
     foreign = anchor / "other-seat" / "session-20"
     own.parent.mkdir(parents=True)
@@ -274,7 +289,13 @@ async def test_symlinked_own_binding_cannot_authorize_foreign_folder(
         config = grant_seat_workspace_paths(config, temp_db, caller, "custom-seat")
         own.rmdir()
     own.symlink_to(foreign, target_is_directory=True)
-    with pytest.raises(ValueError, match="scope follows an alias"):
+    # Binding refuses the alias before granting; a later render refuses the granted scope.
+    refusal = (
+        "Agent workspace paths must not be symbolic links"
+        if when == "before-grant"
+        else "scope follows an alias"
+    )
+    with pytest.raises(ValueError, match=refusal):
         if when == "before-grant":
             grant_seat_workspace_paths(config, temp_db, caller, "custom-seat")
         else:

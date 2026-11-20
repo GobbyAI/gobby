@@ -1,0 +1,54 @@
+{
+  "provider": "slack",
+  "operation": "inbound",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/slack.py",
+  "source_test": "tests/communications/adapters/test_slack.py::test_parse_webhook_event_callback",
+  "contract_ref": "https://api.slack.com/apis/events-api",
+  "drive": {
+    "channel": {
+      "name": "corpus-slack",
+      "config": {
+        "bot_token": "$secret:SLACK_BOT_TOKEN",
+        "signing_secret": "$secret:SLACK_SIGNING_SECRET",
+        "default_destination": "C0CORPUS0001"
+      }
+    },
+    "secrets": {
+      "SLACK_BOT_TOKEN": "corpus-wire-slack-bot-token",
+      "SLACK_SIGNING_SECRET": "corpus-wire-slack-signing-secret"
+    },
+    "initialize": false,
+    "call": "webhook",
+    "webhook": {
+      "body": "{\"api_app_id\": \"A0CORPUS0001\", \"event\": {\"channel\": \"C0CORPUS0001\", \"channel_type\": \"channel\", \"text\": \"corpus slack inbound\", \"ts\": \"1700000000.000300\", \"type\": \"message\", \"user\": \"U0CORPUS0002\"}, \"event_id\": \"Ev0CORPUS0001\", \"event_time\": 1700000000, \"team_id\": \"T0CORPUS0001\", \"type\": \"event_callback\"}",
+      "headers": {
+        "content-type": "application/json",
+        "x-slack-request-timestamp": "1700000000",
+        "x-slack-signature": "v0=9ce541b42a4b91b58b6f45b4f095bd562ec2be22693a8224ce51e0969ae09622"
+      },
+      "secret": "$secret:SLACK_SIGNING_SECRET",
+      "frozen_time": 1700000030
+    }
+  },
+  "provider_contract": {
+    "responses": []
+  },
+  "exchanges": [],
+  "outcome": {
+    "verified": true,
+    "messages": [
+      {
+        "content": "corpus slack inbound",
+        "content_type": "text",
+        "identity_id": "U0CORPUS0002",
+        "platform_message_id": "1700000000.000300",
+        "platform_thread_id": null,
+        "platform_channel_id": "C0CORPUS0001",
+        "external_username": "U0CORPUS0002"
+      }
+    ]
+  }
+}

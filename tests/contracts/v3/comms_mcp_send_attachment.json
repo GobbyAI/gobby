@@ -1,0 +1,24 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_send_attachment",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:send_attachment",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "send_attachment",
+    "arguments": {
+      "channel": "corpus-slack",
+      "file_path": "/corpus-missing/corpus-attachment.txt"
+    }
+  },
+  "response": {
+    "success": false,
+    "error": "Invalid attachment path: [Errno 2] No such file or directory: '/corpus-missing'"
+  },
+  "normalizers": {},
+  "mask": []
+}

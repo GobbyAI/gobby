@@ -14,6 +14,7 @@ import pytest
 
 from scripts.parity_waivers import DIFF, PASSED, WAIVED, Waiver
 from tests.contracts import corpus_v3, http_corpus, recorder_v3
+from tests.contracts.comms.fake_edge import FakeEdge
 from tests.contracts.http_corpus import CorpusError, classify_replay
 from tests.contracts.recorder_daemon_v3 import recorder_daemon
 
@@ -26,6 +27,42 @@ V3_CASE_FILES = (
     "mcp_stdio_gobby_list_tools.json",
     "ws_terminal_list.json",
     "cli_schema_help.json",
+    "comms_channels_list.json",
+    "comms_channel_create.json",
+    "comms_channel_update.json",
+    "comms_channel_status.json",
+    "comms_send.json",
+    "comms_send_missing_channel.json",
+    "comms_messages.json",
+    "comms_attachment.json",
+    "comms_webhook_verify.json",
+    "comms_webhook_receive.json",
+    "comms_channel_delete.json",
+    "comms_mcp_add_channel.json",
+    "comms_mcp_attach_conversation.json",
+    "comms_mcp_compose_status_report.json",
+    "comms_mcp_detach_conversation.json",
+    "comms_mcp_get_messages.json",
+    "comms_mcp_link_identity.json",
+    "comms_mcp_list_channels.json",
+    "comms_mcp_list_conversation_attachments.json",
+    "comms_mcp_list_identities.json",
+    "comms_mcp_remove_channel.json",
+    "comms_mcp_resolve_operator_conversation.json",
+    "comms_mcp_send_attachment.json",
+    "comms_mcp_send_message.json",
+    "comms_mcp_send_operator_attachment.json",
+    "comms_mcp_send_operator_message.json",
+    "comms_mcp_send_proactive_message.json",
+    "comms_mcp_set_channel_project.json",
+    "comms_mcp_unlink_identity.json",
+    "voice_status.json",
+    "voice_status_want_tts.json",
+    "voice_transcribe_missing_file.json",
+    "voice_mcp_add_vocab.json",
+    "voice_mcp_list_vocab.json",
+    "voice_mcp_remove_vocab.json",
+    "voice_mcp_clear_vocab.json",
 )
 FAMILIES: dict[str, dict[str, str]] = {"probe": {"parity": "proxy", "origin": "python"}}
 # The frozen v3 key order, pinned here independently of the loader.
@@ -65,13 +102,16 @@ def _write_corpus(
     version: int,
     cases: list[dict[str, Any]],
     families: Mapping[str, Mapping[str, str]] = FAMILIES,
+    startup: Mapping[str, Any] | None = None,
 ) -> Path:
     root.mkdir(parents=True, exist_ok=True)
-    manifest = {
+    manifest: dict[str, Any] = {
         "schema_version": version,
         "cases": [f"{case['name']}.json" for case in cases],
         "families": families,
     }
+    if startup is not None:
+        manifest["startup"] = startup
     (root / "manifest.json").write_text(json.dumps(manifest))
     for case in cases:
         (root / f"{case['name']}.json").write_text(json.dumps(case))
@@ -230,7 +270,7 @@ def _ledger_mismatches(root: Path) -> list[str]:
 @pytest.mark.unit
 def test_ledger_and_waiver_manifest_match_the_digests_taken_at_head() -> None:
     assert _ledger_mismatches(recorder_v3.REPO_ROOT) == [], (
-        "the ledger and waiver manifest must not change in a chunk landing (design section 13.2)"
+        "the ledger and waiver manifest must not change in a chunk's landed commit (design section 13.2)"
     )
 
 
@@ -354,6 +394,84 @@ def test_ledger_key_prefix_must_match_the_kind(tmp_path: Path, case: dict[str, A
     root = _write_corpus(tmp_path, version=3, cases=[case])
     with pytest.raises(CorpusError, match="ledger_key"):
         corpus_v3.load_cases(root)
+
+
+def _routed_http(template: str, path: str) -> dict[str, Any]:
+    """An http case citing ``GET <template>`` whose request goes to ``path``."""
+    request: dict[str, Any] = {
+        "method": "GET",
+        "path": path,
+        "query": {},
+        "headers": {},
+        "body": None,
+    }
+    return _v3_http(ledger_key=f"HTTP GET {template}", request=request)
+
+
+def _load_or_refusal(root: Path, cases: list[dict[str, Any]]) -> Any:
+    try:
+        return corpus_v3.load_cases(_write_corpus(root, version=3, cases=cases))
+    except CorpusError as error:
+        return f"refused: {error}"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("template", "routed", "relabelled"),
+    [
+        (
+            "/api/comms/channels/{channel_id}/status",
+            "/api/comms/channels/c1/status",
+            "/api/comms/channels",
+        ),
+        ("/api/probe/{probe_id}/run", "/api/probe/p1/run", "/api/probe/p1/stop"),
+        ("/api/probe/{probe_id}/run", "/api/probe/p1/run", "/api/probe/p1/extra/run"),
+        ("/api/probe/{probe_id}/run", "/api/probe/p1/run", "/api/probe//run"),
+        ("/api/probe/{probe_id}/run", "/api/probe/p1/run", "/api/other/p1/run"),
+        ("/api/probe", "/api/probe", "/api/probe/p1"),
+    ],
+    ids=[
+        "list-relabelled-as-status",
+        "literal-segment-differs",
+        "parameter-spans-two-segments",
+        "parameter-is-empty",
+        "prefix-differs",
+        "extra-segment",
+    ],
+)
+def test_http_request_path_must_match_its_ledger_route_segment_by_segment(
+    tmp_path: Path, template: str, routed: str, relabelled: str
+) -> None:
+    on_route = _routed_http(template, routed)
+    assert _load_or_refusal(tmp_path / "routed", [on_route]) == [on_route], (
+        f"a request to {routed} does not load under {template}"
+    )
+    off_route = _routed_http(template, relabelled)
+    refusal = _load_or_refusal(tmp_path / "relabelled", [off_route])
+    assert isinstance(refusal, str) and "ledger_key" in refusal, (
+        f"a request to {relabelled} loads under {template} with the same method"
+    )
+
+
+@pytest.mark.unit
+def test_a_response_collection_may_be_declared_unordered_by_a_key(tmp_path: Path) -> None:
+    body = [{"name": "alpha"}, {"name": "beta"}]
+    response = {"status": 200, "headers": {}, "body": body}
+    declared = _v3_http(
+        response=response, normalizers={"/response/body": {"name": "unordered", "key": "name"}}
+    )
+    assert _load_or_refusal(tmp_path / "declared", [declared]) == [declared], (
+        "a collection declared unordered by a key does not load"
+    )
+    keyless = _v3_http(response=response, normalizers={"/response/body": {"name": "unordered"}})
+    keyed_field = _v3_http(
+        response=response, normalizers={"/response/body": {"name": "none", "key": "name"}}
+    )
+    for label, case in (("with no key", keyless), ("with a key on a field rule", keyed_field)):
+        refusal = _load_or_refusal(tmp_path / label.replace(" ", "_"), [case])
+        assert isinstance(refusal, str) and "normalizer" in refusal, (
+            f"an unordered declaration {label} loads"
+        )
 
 
 @pytest.mark.unit
@@ -649,36 +767,48 @@ def test_v2_directory_keeps_its_unlisted_json_files(tmp_path: Path) -> None:
 
 
 @pytest.fixture(scope="module")
-def v3_self_replay() -> Iterator[dict[str, Any]]:
-    """Replay every schema 3 case, in manifest order, against one isolated Python daemon.
+def v3_replay_edge() -> Iterator[tuple[FakeEdge, Path]]:
+    """One provider edge for every self-replayed case of the module, with its scratch directory.
 
-    Each case's seed resets the state it reads, so one daemon serves the whole manifest. A case
-    that cannot run is stored as its exception and re-raised only by that case's own test.
+    The edge is built before the first case's daemon and stopped after the last, as a recording
+    run builds it. Each daemon clears the edge log once its startup channel is live.
     """
-    waivers = http_corpus.load_replay_waivers()
     with tempfile.TemporaryDirectory(prefix="v3-self-replay-") as scratch:
-        with (
-            recorder_v3.open_run_database() as run,
-            recorder_daemon(base_url=run.base_url, database_url=run.url) as daemon,
-        ):
-            operator = daemon.operator_headers()
-            outcomes: dict[str, Any] = {}
-            for case in V3_CASES:
-                try:
-                    outcomes[case["name"]] = recorder_v3.replay_case(
-                        run, daemon, case, waivers, operator=operator, scratch=Path(scratch)
-                    )
-                except Exception as error:
-                    outcomes[case["name"]] = error
-            yield outcomes
+        edge_root = Path(scratch) / "edge"
+        edge_root.mkdir()
+        edge = FakeEdge(edge_root)
+        edge.start()
+        try:
+            yield edge, Path(scratch)
+        finally:
+            edge.stop()
 
 
 @pytest.mark.e2e
 @pytest.mark.parametrize("case", V3_CASES, ids=lambda case: case["name"])
-def test_v3_proxy_self_replay(case: dict[str, Any], v3_self_replay: dict[str, Any]) -> None:
-    outcome = v3_self_replay[case["name"]]
-    if isinstance(outcome, BaseException):
-        raise outcome
+def test_v3_proxy_self_replay(case: dict[str, Any], v3_replay_edge: tuple[FakeEdge, Path]) -> None:
+    """Replay one schema 3 case in its own run database and daemon.
+
+    The daemon starts from empty state and from the case family's startup block, so no case reads
+    another case's writes, and each case's daemon start counts against its own test only.
+    """
+    edge, scratch = v3_replay_edge
+    startup = recorder_v3.startup_for(case["family"], corpus_v3.load_manifest(corpus_v3.V3_DIR))
+    with (
+        recorder_v3.open_run_database() as run,
+        recorder_daemon(
+            base_url=run.base_url, database_url=run.url, startup=startup, edge=edge
+        ) as daemon,
+    ):
+        outcome = recorder_v3.replay_case(
+            run,
+            daemon,
+            case,
+            http_corpus.load_replay_waivers(),
+            operator=daemon.operator_headers(),
+            scratch=scratch,
+            edge=edge,
+        )
     assert outcome.outcome in (PASSED, WAIVED), case["name"]
 
 
@@ -821,3 +951,117 @@ def test_changed_recording_diffs_on_cited_classify(
     observed = mutate(_replayed(case))
     result = classify_replay(case, case["native_response"], waivers, observed=observed)
     assert result.outcome == DIFF
+
+
+COMMUNICATIONS_FAMILY: dict[str, dict[str, str]] = {
+    "communications": {"parity": "proxy", "origin": "python"}
+}
+CORPUS_SLACK_CHANNEL_ID = "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001"
+# The startup entry for the communications family, as the committed manifest will declare it.
+COMMUNICATIONS_STARTUP: dict[str, Any] = {
+    "config": {"communications.enabled": True},
+    "channels": [
+        {
+            "id": CORPUS_SLACK_CHANNEL_ID,
+            "channel_type": "slack",
+            "name": "corpus-slack",
+            "enabled": True,
+            "config": {
+                "bot_token": "$secret:corpus_slack_bot_token",
+                "signing_secret": "$secret:corpus_slack_signing_secret",
+                "default_destination": "C0CORPUS0001",
+            },
+        }
+    ],
+    "secrets": ["corpus_slack_bot_token", "corpus_slack_signing_secret"],
+}
+
+
+def _startup_corpus(root: Path, startup: Mapping[str, Any]) -> Path:
+    """A schema 3 corpus with no cases, declaring the communications family and a startup block."""
+    return _write_corpus(
+        root,
+        version=3,
+        cases=[],
+        families={**FAMILIES, **COMMUNICATIONS_FAMILY},
+        startup=startup,
+    )
+
+
+def _refusal(root: Path) -> str | None:
+    """The loader's refusal text for the corpus at root, or None when every case loads."""
+    try:
+        corpus_v3.load_cases(root)
+    except CorpusError as error:
+        return str(error)
+    return None
+
+
+@pytest.mark.unit
+def test_mcp_rest_transport_loads_with_any_json_response(tmp_path: Path) -> None:
+    rest = _v3_kind(
+        "mcp",
+        name="probe_mcp_rest",
+        ledger_key="MCP gobby-communications:list_channels",
+        invocation={
+            "transport": "rest",
+            "server": "gobby-communications",
+            "tool": "list_channels",
+            "arguments": {},
+        },
+        response=[{"name": "corpus-slack"}],
+    )
+    refusal = _refusal(_write_corpus(tmp_path, version=3, cases=[rest]))
+    assert refusal is None, f"the loader refused a rest case: {refusal}"
+
+
+@pytest.mark.unit
+def test_provider_edge_channel_requires_a_hosts_list(tmp_path: Path) -> None:
+    listed = _v3_http(
+        side_effects=[{"channel": "provider_edge", "match": {"hosts": ["slack.com"]}}]
+    )
+    refusal = _refusal(_write_corpus(tmp_path / "hosts", version=3, cases=[listed]))
+    assert refusal is None, f"the loader refused a provider_edge side effect: {refusal}"
+    bare = _v3_http(side_effects=[{"channel": "provider_edge", "match": {}}])
+    with pytest.raises(CorpusError, match="hosts"):
+        corpus_v3.load_cases(_write_corpus(tmp_path / "bare", version=3, cases=[bare]))
+
+
+@pytest.mark.unit
+def test_startup_block_rejects_undeclared_families_and_unknown_keys(tmp_path: Path) -> None:
+    valid = {"communications": COMMUNICATIONS_STARTUP}
+    assert corpus_v3.load_cases(_startup_corpus(tmp_path / "valid", valid)) == []
+    with pytest.raises(CorpusError, match="voice"):
+        corpus_v3.load_cases(_startup_corpus(tmp_path / "undeclared", {**valid, "voice": {}}))
+    unknown = {"communications": {**COMMUNICATIONS_STARTUP, "bogus_key": 1}}
+    with pytest.raises(CorpusError, match="bogus_key"):
+        corpus_v3.load_cases(_startup_corpus(tmp_path / "unknown", unknown))
+
+
+@pytest.mark.unit
+def test_startup_secret_names_are_lowercase_identifiers(tmp_path: Path) -> None:
+    valid = {"communications": COMMUNICATIONS_STARTUP}
+    assert corpus_v3.load_cases(_startup_corpus(tmp_path / "valid", valid)) == []
+    bad = {"communications": {**COMMUNICATIONS_STARTUP, "secrets": ["Bad Name"]}}
+    with pytest.raises(CorpusError, match="Bad Name"):
+        corpus_v3.load_cases(_startup_corpus(tmp_path / "bad", bad))
+
+
+@pytest.mark.unit
+def test_startup_channel_ids_must_be_uuids(tmp_path: Path) -> None:
+    valid = {"communications": COMMUNICATIONS_STARTUP}
+    assert corpus_v3.load_cases(_startup_corpus(tmp_path / "valid", valid)) == []
+    channel = {**COMMUNICATIONS_STARTUP["channels"][0], "id": "not-a-uuid"}
+    bad = {"communications": {**COMMUNICATIONS_STARTUP, "channels": [channel]}}
+    with pytest.raises(CorpusError, match="not-a-uuid"):
+        corpus_v3.load_cases(_startup_corpus(tmp_path / "bad", bad))
+
+
+@pytest.mark.unit
+def test_mcp_jsonrpc_transports_still_require_an_envelope(tmp_path: Path) -> None:
+    envelope = _mcp()
+    loaded = corpus_v3.load_cases(_write_corpus(tmp_path / "envelope", version=3, cases=[envelope]))
+    assert loaded == [envelope]
+    bare = {**_mcp(), "response": []}
+    with pytest.raises(CorpusError, match="wrong shape"):
+        corpus_v3.load_cases(_write_corpus(tmp_path / "bare", version=3, cases=[bare]))

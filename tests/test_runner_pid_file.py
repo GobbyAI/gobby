@@ -524,7 +524,9 @@ def test_main_preserves_native_pid_claim(tmp_path: Path) -> None:
     original = pid_file.read_bytes()
     observed: list[tuple[Path | None, bool]] = []
 
-    async def record_start(config_path: Path | None = None, verbose: bool = False) -> None:
+    async def record_start(
+        config_path: Path | None = None, verbose: bool = False, worker: object | None = None
+    ) -> None:
         observed.append((config_path, verbose))
 
     try:

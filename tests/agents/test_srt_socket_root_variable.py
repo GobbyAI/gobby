@@ -9,11 +9,13 @@ successor. That successor runs in the same process under the same grant.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.agents import resume_executor, spawn_executor_providers
+from gobby.agents.agent_workspaces import session_workspace_dir
 from gobby.agents.srt_runtime import (
     SandboxLaunch,
     inherit_run_socket_root,
@@ -29,9 +31,10 @@ from tests.agents.test_resume_executor import (
     _runner,
     _spawn_result,
 )
-from tests.agents.test_spawn_executor_providers import _sandbox_request
+from tests.agents.test_spawn_executor_providers import _seat_request
 from tests.fixtures.landing_case import make_landing_case
 from tests.fixtures.team_case import TeamWorld, make_team_world
+from tests.fixtures.workspace_seat import WorkspaceSeat
 
 pytestmark = pytest.mark.unit
 
@@ -134,12 +137,12 @@ def test_unsandboxed_clear_successor_does_not_inherit_a_socket_root(world: TeamW
 
 @pytest.mark.asyncio
 async def test_spawn_records_the_launch_socket_root_on_the_child_session(
+    workspace_seat: WorkspaceSeat,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    request, spawn_context, run_manager = _sandbox_request()
-    request.session_manager = MagicMock()
-    # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
-    request.session_manager._storage.db.fetchone.return_value = None
+    # The child is a real session row, so its workspace is named from the registered project.
+    request, spawn_context = _seat_request(workspace_seat)
+    run_manager = cast(MagicMock, request.run_manager)
     request.machine_id = "machine"
     request.project_path = "/workspace"
     request.resume_metadata_json = {}
@@ -147,9 +150,8 @@ async def test_spawn_records_the_launch_socket_root_on_the_child_session(
     monkeypatch.setattr(
         "gobby.storage.project_checkouts.require_root", MagicMock(return_value="/workspace")
     )
-    monkeypatch.setattr(
-        spawn_executor_providers, "prepare_sandbox_launch", AsyncMock(return_value=launch)
-    )
+    prepare = AsyncMock(return_value=launch)
+    monkeypatch.setattr(spawn_executor_providers, "prepare_sandbox_launch", prepare)
     record = MagicMock()
     monkeypatch.setattr(spawn_executor_providers, "record_run_socket_root", record)
 
@@ -162,6 +164,8 @@ async def test_spawn_records_the_launch_socket_root_on_the_child_session(
 
     assert result is launch
     assert run_manager.fail.call_count == 0
+    seat_folder = session_workspace_dir(workspace_seat.project_name, None, workspace_seat.seq_num)
+    assert str(seat_folder) in prepare.call_args.kwargs["config"].extra_write_paths
     record.assert_called_once()
     assert record.call_args.args[1] == spawn_context.session_id
     assert record.call_args.args[2] is launch

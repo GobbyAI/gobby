@@ -1,0 +1,132 @@
+{
+  "provider": "telegram",
+  "operation": "send",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/telegram.py",
+  "source_test": "tests/communications/adapters/test_telegram.py::test_send_message_basic",
+  "contract_ref": "https://core.telegram.org/bots/api#sendmessage",
+  "drive": {
+    "channel": {
+      "name": "corpus-telegram",
+      "config": {
+        "bot_token": "$secret:TELEGRAM_BOT_TOKEN"
+      }
+    },
+    "secrets": {
+      "TELEGRAM_BOT_TOKEN": "1000001:corpus-wire-telegram-token"
+    },
+    "call": "send_message",
+    "message": {
+      "content": "corpus telegram send",
+      "metadata": {
+        "platform_destination": "1000002"
+      }
+    }
+  },
+  "provider_contract": {
+    "responses": [
+      {
+        "host": "api.telegram.org",
+        "method": "POST",
+        "path": "/bot@TELEGRAM_TOKEN@/getMe",
+        "body": {
+          "ok": true,
+          "result": {
+            "id": 1000001,
+            "is_bot": true,
+            "first_name": "corpus",
+            "username": "corpus_bot"
+          }
+        }
+      },
+      {
+        "host": "api.telegram.org",
+        "method": "POST",
+        "path": "/bot@TELEGRAM_TOKEN@/setMyCommands",
+        "body": {
+          "ok": true,
+          "result": true
+        }
+      },
+      {
+        "host": "api.telegram.org",
+        "method": "POST",
+        "path": "/bot@TELEGRAM_TOKEN@/deleteWebhook",
+        "body": {
+          "ok": true,
+          "result": true,
+          "description": "Webhook is already deleted"
+        }
+      },
+      {
+        "host": "api.telegram.org",
+        "method": "POST",
+        "path": "/bot@TELEGRAM_TOKEN@/sendMessage",
+        "body": {
+          "ok": true,
+          "result": {
+            "message_id": 101,
+            "date": 1700000000,
+            "chat": {
+              "id": -1001000000001,
+              "type": "supergroup",
+              "title": "corpus"
+            },
+            "text": "corpus telegram send"
+          }
+        }
+      }
+    ]
+  },
+  "exchanges": [
+    {
+      "host": "api.telegram.org",
+      "method": "POST",
+      "path": "/bot@TELEGRAM_TOKEN@/getMe",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "api.telegram.org",
+      "method": "POST",
+      "path": "/bot@TELEGRAM_TOKEN@/setMyCommands",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "api.telegram.org",
+      "method": "POST",
+      "path": "/bot@TELEGRAM_TOKEN@/deleteWebhook",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "api.telegram.org",
+      "method": "POST",
+      "path": "/bot@TELEGRAM_TOKEN@/sendMessage",
+      "semantic": {
+        "destination": "1000002",
+        "text": "corpus telegram send",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    }
+  ],
+  "outcome": {
+    "message_id": "101"
+  }
+}

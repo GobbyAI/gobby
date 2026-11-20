@@ -11,7 +11,6 @@ import pytest
 
 from gobby.agents.agent_workspaces import grant_seat_workspace_paths, spawn_workspace_write_paths
 from gobby.agents.sandbox import SandboxConfig
-from gobby.agents.workspace_bindings import bind_session_workspace
 from gobby.app_context import ServiceContainer
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start.agents import resolve_agent_name
@@ -309,27 +308,38 @@ async def test_spawned_clear_dispatches_cancellation_without_completing_task(
     mock_dependencies["task_manager"].close_task.assert_not_called()
 
 
-def test_default_launch_grants_no_agent_workspace(
+def _default_folder(db: HubDatabase, home: Path, project_name: str, session_id: str) -> Path:
+    """The contract path of a default session's workspace under ``home``."""
+    row = db.fetchone("SELECT seq_num FROM sessions WHERE id = %s", (session_id,))
+    assert row is not None
+    return home / "agents_workspaces" / project_name / "default" / f"session-{row['seq_num']}"
+
+
+def test_default_launch_grants_only_its_session_workspace(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    home = tmp_path / "home"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
     pane = _pane(temp_db, tmp_path, monkeypatch, "default-launch")
     SessionVariableManager(temp_db).merge_variables(pane.predecessor_id, {"_agent_type": "default"})
-    assert spawn_workspace_write_paths(temp_db, pane.predecessor_id, "default") == []
+    expected = _default_folder(temp_db, home, "default-launch", pane.predecessor_id)
+    assert spawn_workspace_write_paths(temp_db, pane.predecessor_id, "default") == [str(expected)]
     config = grant_seat_workspace_paths(SandboxConfig(), temp_db, pane.predecessor_id, "default")
-    assert not config.extra_write_paths
-    assert not (tmp_path / "home" / "agents_workspaces").exists()
+    assert config.extra_write_paths == [str(expected)]
+    assert expected.is_dir()
 
 
 @pytest.mark.asyncio
 async def test_operator_clear_handoff_resets_definition(
     temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    home = tmp_path / "home"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
     pane = _pane(temp_db, tmp_path, monkeypatch, "operator-clear")
     _define(temp_db, ["claim"])
     assert (await apply_agent_definition_impl("seat", temp_db, pane.predecessor_id))["success"]
     variables = SessionVariableManager(temp_db)
+    seat_folder = variables.get_variables(pane.predecessor_id)["_agent_workspace_dir"]
     variables.merge_variables(
         pane.predecessor_id,
         {"_persona_name": "fixture-overlay", "_agent_workspace_injected": True},
@@ -340,19 +350,8 @@ async def test_operator_clear_handoff_resets_definition(
     assert after["_agent_type"] == "default"
     assert not after.get("seat_only")
     assert not after.get("_persona_name")
-    assert not after.get("_agent_workspace_dir")
+    default_folder = _default_folder(temp_db, home, "operator-clear", successor)
+    assert after["_agent_workspace_dir"] == str(default_folder)
+    assert after["_agent_workspace_dir"] != seat_folder
     assert not after.get("_agent_workspace_injected")
     assert after["is_spawned_agent"] is False
-
-
-def test_default_session_has_no_agent_workspace(
-    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    home = tmp_path / "home"
-    monkeypatch.setenv("GOBBY_HOME", str(home))
-    pane = _pane(temp_db, tmp_path, monkeypatch, "default-scratch")
-    manager = SessionVariableManager(temp_db)
-    manager.merge_variables(pane.predecessor_id, {"_agent_type": "default"})
-    assert bind_session_workspace(temp_db, pane.predecessor_id) is None
-    assert not manager.get_variables(pane.predecessor_id).get("_agent_workspace_dir")
-    assert not (home / "agents_workspaces").exists()

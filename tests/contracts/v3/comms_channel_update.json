@@ -1,0 +1,104 @@
+{
+  "schema_version": 3,
+  "name": "comms_channel_update",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP PUT /api/comms/channels/{channel_id}",
+  "request": {
+    "method": "PUT",
+    "path": "/api/comms/channels/5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+    "query": {},
+    "headers": {},
+    "body": {
+      "name": "corpus-slack-renamed"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "id": "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+      "channel_type": "slack",
+      "name": "corpus-slack-renamed",
+      "enabled": true,
+      "config_json": {
+        "bot_token": "$secret:corpus_slack_bot_token",
+        "default_destination": "C0CORPUS0001",
+        "signing_secret": "$secret:corpus_slack_signing_secret"
+      },
+      "created_at": "@mask@",
+      "updated_at": "@ts@",
+      "active": true,
+      "init_error": null,
+      "retry_pending": false,
+      "retry_attempts": 0,
+      "next_retry_at": null
+    }
+  },
+  "db_delta": [
+    {
+      "table": "comms_channels",
+      "key": [
+        "id"
+      ],
+      "columns": [
+        "id",
+        "channel_type",
+        "name",
+        "enabled",
+        "config_json"
+      ],
+      "normalizers": {
+        "id": "uuid_ordinal"
+      },
+      "order": "set",
+      "recorded": {
+        "added": [],
+        "removed": [],
+        "changed": [
+          {
+            "key": {
+              "id": "@uuid:1@"
+            },
+            "column": "name",
+            "before": "corpus-slack",
+            "after": "corpus-slack-renamed"
+          }
+        ]
+      }
+    }
+  ],
+  "side_effects": [
+    {
+      "channel": "provider_edge",
+      "match": {
+        "hosts": [
+          "slack.com"
+        ]
+      },
+      "recorded": [
+        {
+          "host": "slack.com",
+          "method": "POST",
+          "path": "/api/auth.test",
+          "semantic": {
+            "destination": "",
+            "text": "",
+            "filename": "",
+            "payload_sha256": ""
+          }
+        }
+      ]
+    }
+  ],
+  "normalizers": {
+    "/response/body/updated_at": "timestamp"
+  },
+  "mask": [
+    "/response/body/created_at"
+  ]
+}

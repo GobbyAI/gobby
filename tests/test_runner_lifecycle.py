@@ -5580,7 +5580,7 @@ class TestAgentRestartRecoveryHelpers:
 
     @pytest.mark.asyncio
     async def test_startup_terminal_redelivery_skips_parked_daemon_stop_originals(self) -> None:
-        """R2-P0-1: parked recovery-pending originals get no false cancellation."""
+        """Parked recovery-pending originals get no false cancellation."""
         genuine = SimpleNamespace(
             id="genuine-run",
             status="error",
@@ -6158,7 +6158,7 @@ def test_main_override_env_lets_a_worktree_package_start(
     ):
         main()
 
-    start_backend.assert_awaited_once_with(config_path=None, verbose=False)
+    start_backend.assert_awaited_once_with(config_path=None, verbose=False, worker=None)
     assert capsys.readouterr().err == ""
     load_bootstrap.assert_not_called()
 

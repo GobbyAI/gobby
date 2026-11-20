@@ -1,0 +1,32 @@
+{
+  "schema_version": 3,
+  "name": "comms_messages",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP GET /api/comms/messages",
+  "request": {
+    "method": "GET",
+    "path": "/api/comms/messages",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "seed": [
+    {
+      "http": {
+        "method": "POST",
+        "path": "/api/comms/send",
+        "credential": "operator",
+        "body": {"channel_name": "corpus-slack", "content": "corpus seed message"}
+      }
+    }
+  ],
+  "normalizers": {
+    "/response/body/0/id": "uuid_ordinal"
+  },
+  "mask": [
+    "/response/body/0/created_at"
+  ]
+}

@@ -1,9 +1,13 @@
-//! Rust side of the private worker protocol (R0 frozen contract, protocol v1).
+//! Rust side of the private worker protocol (frozen contract, protocol v1).
 //!
-//! Dormant in R0: `RUNNER_DEFAULT` is Python, so the supervisor performs no
-//! exchange, and R1 wires the call site. Each call makes exactly one exchange
-//! and never resends. A reply lost on any command is an unknown outcome for the
-//! caller to reconcile. Requests are built here, so their bytes equal the
+//! Under the Python default the supervisor performs no exchange. In Rust mode the
+//! supervisor runs the handshake for each worker it spawns, while that child's start
+//! is supervised (`lifecycle/backend/handshake.rs`): a sticky failure refuses the
+//! supervisor, and a crash ends the child so that the next spawn takes a new
+//! generation. Each call makes exactly one exchange and never resends. The reply is
+//! read under the command's byte limit and deadline; a reply over the limit, or no
+//! reply by the deadline, is a channel error. A channel error is an unknown outcome
+//! for the caller to reconcile. Requests are built here, so their bytes equal the
 //! corpus bytes (`tests/contracts/worker_protocol.json`). Replies are checked
 //! against the contract before they reach the caller: the envelope, the error
 //! object, each command's own error codes, the handshake result, and the
@@ -11,9 +15,12 @@
 
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
+use gobby_core::schema::SchemaIdentityContract;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use tokio::time::timeout;
 
 #[cfg(unix)]
 use super::backend::BackendSupervisor;
@@ -26,6 +33,14 @@ pub const ACCEPTED_WORKER_PROTOCOL_VERSIONS: &[u32] = &[1];
 pub const MAX_WORKER_REQUEST_BYTES: usize = 65_536;
 /// Bound for invoke requests (the hook route's bound).
 pub const MAX_DOMAIN_OP_REQUEST_BYTES: usize = 16 * 1024 * 1024;
+/// Bound for handshake and initialize replies. A larger frame is a channel error.
+pub const MAX_WORKER_REPLY_BYTES: usize = 65_536;
+/// Bound for invoke replies. A larger frame is a channel error.
+pub const MAX_DOMAIN_OP_REPLY_BYTES: usize = 16 * 1024 * 1024;
+/// Longest a handshake may wait for its reply before the wait is a channel error.
+pub const HANDSHAKE_REPLY_DEADLINE: Duration = Duration::from_secs(60);
+/// Longest an initialize or invoke may wait for its reply before the wait is a channel error.
+pub const COMMAND_REPLY_DEADLINE: Duration = Duration::from_secs(300);
 
 const HANDSHAKE: &str = "handshake";
 const INITIALIZE: &str = "initialize";
@@ -125,6 +140,12 @@ impl GenerationSource {
     pub fn next_generation(&self) -> u64 {
         self.0.fetch_add(1, Ordering::Relaxed)
     }
+
+    /// The number of generations drawn so far.
+    #[cfg(test)]
+    pub(crate) fn issued(&self) -> u64 {
+        self.0.load(Ordering::Relaxed).saturating_sub(1)
+    }
 }
 
 /// Why a worker session could not be created.
@@ -176,9 +197,11 @@ pub struct ChannelError;
 
 /// One request-reply exchange with the worker. A caller performs one exchange per command.
 pub trait WorkerChannel {
+    /// Sends `request` and returns the reply, which is at most `reply_limit` bytes.
     fn exchange(
         &mut self,
         request: &[u8],
+        reply_limit: usize,
     ) -> impl Future<Output = Result<Vec<u8>, ChannelError>> + Send;
 }
 
@@ -204,6 +227,7 @@ pub enum HandshakeField {
     ProtocolVersion,
     Generation,
     Commands,
+    SchemaIdentity,
 }
 
 /// A reply that failed envelope or handshake validation.
@@ -234,7 +258,31 @@ pub enum WorkerCallError {
     OpFailed(ErrorBody),
 }
 
-/// The handshake result. `schema_identity` is returned as JSON and compared by R1.
+/// What a failed handshake does to the supervisor: refuse it for good, or end the child so the
+/// next spawn starts a new generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandshakeOutcome {
+    Sticky,
+    Crash,
+}
+
+/// Classifies a failed handshake. An unknown outcome (no answer, a closed channel, a framing
+/// error or a deadline) is a crash: the child ends and the next spawn takes a new generation.
+/// Every other failure is sticky: the reply arrived and the worker refused it or broke the
+/// contract, so the supervisor refuses rather than respawning the same backend.
+pub fn handshake_outcome(error: &WorkerCallError) -> HandshakeOutcome {
+    match error {
+        WorkerCallError::Unknown(_) => HandshakeOutcome::Crash,
+        WorkerCallError::CredentialMissing
+        | WorkerCallError::RequestTooLarge { .. }
+        | WorkerCallError::Protocol(_)
+        | WorkerCallError::Refused(_)
+        | WorkerCallError::OpFailed(_) => HandshakeOutcome::Sticky,
+    }
+}
+
+/// The handshake result. `schema_identity` is returned as JSON and compared with the installed
+/// schema contract before the session is bound.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HandshakeResult {
@@ -311,6 +359,7 @@ pub async fn perform_handshake<C: WorkerChannel>(
         HANDSHAKE,
         json!({ "credential": credential }),
         MAX_WORKER_REQUEST_BYTES,
+        MAX_WORKER_REPLY_BYTES,
     )
     .await?;
     let value = into_result(&call, reply)?;
@@ -332,6 +381,7 @@ pub async fn perform_initialize<C: WorkerChannel>(
         INITIALIZE,
         json!({ "phase": phase }),
         MAX_WORKER_REQUEST_BYTES,
+        MAX_WORKER_REPLY_BYTES,
     )
     .await?;
     let value = into_result(&call, reply)?;
@@ -353,6 +403,7 @@ pub async fn perform_invoke<C: WorkerChannel>(
         INVOKE,
         json!({ "op": op, "params": params }),
         MAX_DOMAIN_OP_REQUEST_BYTES,
+        MAX_DOMAIN_OP_REPLY_BYTES,
     )
     .await?;
     into_result(&call, reply)
@@ -364,7 +415,8 @@ async fn exchange<C: WorkerChannel>(
     session: &mut WorkerSession,
     command: &'static str,
     body: Value,
-    limit: usize,
+    request_limit: usize,
+    reply_limit: usize,
 ) -> Result<(Call, Reply), WorkerCallError> {
     let call = Call {
         command,
@@ -380,22 +432,71 @@ async fn exchange<C: WorkerChannel>(
     })
     .to_string()
     .into_bytes();
-    if request.len() > limit {
+    if request.len() > request_limit {
         return Err(WorkerCallError::RequestTooLarge {
             bytes: request.len(),
-            limit,
+            limit: request_limit,
         });
     }
-    let reply_bytes = channel
-        .exchange(&request)
-        .await
-        .map_err(|ChannelError| call.unknown())?;
+    // A handshake waits for the shorter deadline. A reply that misses its deadline is lost.
+    let deadline = if command == HANDSHAKE {
+        HANDSHAKE_REPLY_DEADLINE
+    } else {
+        COMMAND_REPLY_DEADLINE
+    };
+    let reply_bytes = match timeout(deadline, channel.exchange(&request, reply_limit)).await {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(ChannelError)) | Err(_) => return Err(call.unknown()),
+    };
     let reply = read_reply(&reply_bytes, &call).map_err(|violation| call.violation(violation))?;
     Ok((call, reply))
 }
 
+/// Rejects an integer literal outside `[-2^63, 2^64 - 1]` anywhere in a reply. It runs on the
+/// raw bytes before the reply is parsed, because `serde_json::Value` would turn such a literal
+/// into a float. String literals are skipped, and a number with a fraction or an exponent is
+/// not an integer. A number that does not fit an `i128` is outside the range too.
+fn scan_integer_width(bytes: &[u8]) -> Result<(), ProtocolViolation> {
+    const LOWEST: i128 = -(1_i128 << 63);
+    const HIGHEST: i128 = (1_i128 << 64) - 1;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => {
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'"' {
+                    index += if bytes[index] == b'\\' { 2 } else { 1 };
+                }
+                index += 1;
+            }
+            b'-' | b'0'..=b'9' => {
+                let start = index;
+                while index < bytes.len()
+                    && matches!(bytes[index], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+                {
+                    index += 1;
+                }
+                let token = &bytes[start..index];
+                if token.iter().any(|byte| matches!(byte, b'.' | b'e' | b'E')) {
+                    continue;
+                }
+                let value: i128 = std::str::from_utf8(token)
+                    .ok()
+                    .and_then(|text| text.parse().ok())
+                    .ok_or(ProtocolViolation::Malformed)?;
+                if !(LOWEST..=HIGHEST).contains(&value) {
+                    return Err(ProtocolViolation::Malformed);
+                }
+            }
+            _ => index += 1,
+        }
+    }
+    Ok(())
+}
+
 /// Validates the envelope in the order the contract states, then the error object.
 fn read_reply(bytes: &[u8], call: &Call) -> Result<Reply, ProtocolViolation> {
+    scan_integer_width(bytes)?;
     let parsed: Value = serde_json::from_slice(bytes).map_err(|_| ProtocolViolation::Malformed)?;
     let Value::Object(mut fields) = parsed else {
         return Err(ProtocolViolation::Malformed);
@@ -484,8 +585,9 @@ fn into_result(call: &Call, reply: Reply) -> Result<Value, WorkerCallError> {
     }
 }
 
-/// Checks the handshake result's `protocol_version`, `generation` and `commands`.
-/// `schema_identity` is returned as JSON and compared by R1.
+/// Checks the handshake result's `protocol_version`, `generation`, `commands` and
+/// `schema_identity`. The identity must equal the installed schema contract. Key order is
+/// ignored by the JSON comparison. If the contract cannot be serialized, nothing matches.
 fn check_handshake(call: &Call, result: &HandshakeResult) -> Result<(), ProtocolViolation> {
     if result.protocol_version != WORKER_PROTOCOL_VERSION {
         return Err(ProtocolViolation::ResultMismatch(
@@ -499,6 +601,12 @@ fn check_handshake(call: &Call, result: &HandshakeResult) -> Result<(), Protocol
     }
     if result.commands != HANDSHAKE_COMMANDS {
         return Err(ProtocolViolation::ResultMismatch(HandshakeField::Commands));
+    }
+    let installed = serde_json::to_value(SchemaIdentityContract::embedded());
+    if !installed.is_ok_and(|expected| result.schema_identity == expected) {
+        return Err(ProtocolViolation::ResultMismatch(
+            HandshakeField::SchemaIdentity,
+        ));
     }
     Ok(())
 }
@@ -564,14 +672,14 @@ fn message_within_limit(message: Option<&str>) -> bool {
 
 #[cfg(unix)]
 impl BackendSupervisor {
-    /// Runs the handshake for the compiled runner default.
+    /// Runs the handshake for the supervisor's runner mode.
     pub async fn handshake_worker<C: WorkerChannel>(
         &self,
         channel: &mut C,
         session: &mut WorkerSession,
         credential: &str,
     ) -> Result<WorkerHandshake, WorkerCallError> {
-        self.handshake_worker_for(RUNNER_DEFAULT, channel, session, credential)
+        self.handshake_worker_for(self.runner_mode(), channel, session, credential)
             .await
     }
 
