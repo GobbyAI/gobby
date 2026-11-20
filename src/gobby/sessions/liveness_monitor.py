@@ -179,6 +179,7 @@ class SessionLivenessMonitor:
                 if self.terminal_manager is None:
                     continue
                 try:
+                    # Bound-only: a precheck; the named-row exited CAS proves the rest itself.
                     live = await asyncio.to_thread(
                         self.terminal_manager.get_live_for_session, record.session_id
                     )

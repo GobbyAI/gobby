@@ -60,6 +60,8 @@ def _make_event_handlers() -> EventHandlers:
     session_storage.db = MagicMock()
     # Make db.fetchall return empty lists so iteration works
     session_storage.db.fetchall.return_value = []
+    # No stored rows: the session has no project location, so no workspace is bound
+    session_storage.db.execute.return_value.fetchone.return_value = None
     session_manager = session_storage
     variables = SessionVariableManager(session_storage.db)
     if isinstance(variables, MagicMock):
@@ -199,6 +201,9 @@ class TestAgentNameOverride:
         ]
         assert activations == [("sess-1", "my-agent")]
 
+    # The change builder resolves the session's project again through its own
+    # module-level name; patching it makes this test hold in any import order.
+    @patch("gobby.mcp_proxy.tools.apply_agent_definition.resolve_session_project_id")
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.storage.definitions.variables.SessionVariableDefaultManager")
     @patch("gobby.storage.definitions.rules.RuleDefinitionManager")
@@ -211,6 +216,7 @@ class TestAgentNameOverride:
         mock_rules_cls: MagicMock,
         mock_vars_cls: MagicMock,
         _mock_svm: MagicMock,
+        _mock_builder_project: MagicMock,
     ) -> None:
         handlers = _make_event_handlers()
         mock_resolve.return_value = _make_agent_body("scoped-agent")
@@ -243,6 +249,7 @@ class TestAgentNameOverride:
             enabled=True,
         )
 
+    @patch("gobby.mcp_proxy.tools.apply_agent_definition.resolve_session_project_id")
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     @patch("gobby.storage.definitions.variables.SessionVariableDefaultManager")
     @patch("gobby.storage.definitions.rules.RuleDefinitionManager")
@@ -255,6 +262,7 @@ class TestAgentNameOverride:
         mock_rules_cls: MagicMock,
         mock_vars_cls: MagicMock,
         _mock_svm: MagicMock,
+        _mock_builder_project: MagicMock,
     ) -> None:
         handlers = _make_event_handlers()
         mock_resolve.return_value = _make_agent_body("scoped-agent")

@@ -797,7 +797,7 @@ async def _resolve_attention_pane(
     manager = getattr(services, "terminal_manager", None)
     registry = getattr(services, "terminal_runtime_registry", None)
     if state.session_id is not None and manager is not None and registry is not None:
-        row = manager.get_live_for_session(state.session_id)
+        row = manager.resolve_live_for_session_id(state.session_id)
         if row is not None:
             if not is_local_machine(row.machine_id):
                 return _remote_pane(row.id, row.machine_id)

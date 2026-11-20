@@ -464,7 +464,7 @@ async def test_native_submit_before_host_event_preserves_following_wake(
     if tracked:
         composer_ledger.record_spawn(TERMINAL_ID, HOST_EPOCH)
     terminals = MagicMock()
-    terminals.get_live_for_session.return_value = MagicMock(id=TERMINAL_ID, backend="native")
+    terminals.resolve_live_for_session_id.return_value = MagicMock(id=TERMINAL_ID, backend="native")
     handlers = EventHandlers(terminal_manager=terminals)
     monkeypatch.setattr(handlers, "_composer_ledger", lambda: composer_ledger)
     loop = asyncio.get_running_loop()
@@ -506,7 +506,7 @@ async def test_native_submit_before_host_event_preserves_following_wake(
                 )
             )
         await acknowledgement
-        terminals.get_live_for_session.assert_called_once_with(seat.session.id)
+        terminals.resolve_live_for_session_id.assert_called_once_with(seat.session.id)
         result = await seat.dispatcher.dispatch_live_wake(seat.session.id)
         assert result["delivered"] is (not later_draft)
         if later_draft:
@@ -528,7 +528,7 @@ async def test_submit_acknowledgement_wait_never_blocks_the_host_reader_loop(
     composer_ledger.observe_write(TERMINAL_ID, origin="operator", kind="input", payload="prompt\r")
     assert composer_ledger.read(TERMINAL_ID) == LedgerRead("draft")
     terminals = MagicMock()
-    terminals.get_live_for_session.return_value = MagicMock(id=TERMINAL_ID, backend="native")
+    terminals.resolve_live_for_session_id.return_value = MagicMock(id=TERMINAL_ID, backend="native")
     handlers = EventHandlers(terminal_manager=terminals)
     monkeypatch.setattr(handlers, "_composer_ledger", lambda: composer_ledger)
 
@@ -537,5 +537,5 @@ async def test_submit_acknowledgement_wait_never_blocks_the_host_reader_loop(
 
     monkeypatch.setattr(threading.Condition, "wait_for", refuse_wait)
     handlers._record_composer_submit("seat-session")
-    terminals.get_live_for_session.assert_called_once_with("seat-session")
+    terminals.resolve_live_for_session_id.assert_called_once_with("seat-session")
     assert composer_ledger.read(TERMINAL_ID) == LedgerRead("empty")

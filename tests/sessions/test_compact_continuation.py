@@ -2382,7 +2382,9 @@ async def test_schedule_continuation_resolves_native_terminal_without_runtime(
     runtime = NativeRuntime()
     terminal_manager = SimpleNamespace(
         db=MagicMock(),
-        get_live_for_session=lambda session_id: terminal if session_id == SESSION_ID else None,
+        resolve_live_for_session_id=lambda session_id: (
+            terminal if session_id == SESSION_ID else None
+        ),
     )
     registry = SimpleNamespace(resolve=lambda backend: runtime if backend == "native" else None)
 
@@ -2412,7 +2414,8 @@ async def test_schedule_continuation_resolves_native_terminal_without_runtime(
     assert not _HANDOFF_COMPACT_CONTINUATION_TASKS
 
 
-def test_continuation_pane_stops_when_context_terminal_row_disappears() -> None:
+def test_continuation_pane_has_no_pane_when_the_shared_resolver_declines() -> None:
+    """A context naming a row the shared resolver declines is never read on its own."""
     terminal_id = "11111111-1111-4111-8111-111111111111"
     session = SimpleNamespace(
         id="session-1",
@@ -2420,51 +2423,21 @@ def test_continuation_pane_stops_when_context_terminal_row_disappears() -> None:
         terminal_context={"gobby_terminal_id": terminal_id},
     )
     terminal_manager = MagicMock()
-    terminal_manager.get_live_for_session.return_value = None
-    terminal_manager.get.return_value = None
+    terminal_manager.resolve_live_for_session_id.return_value = None
     registry = MagicMock()
 
     pane = _continuation_pane(session, "session-1", terminal_manager, registry)
 
     assert pane is None
-    terminal_manager.get.assert_called_once_with(terminal_id)
+    terminal_manager.resolve_live_for_session_id.assert_called_once_with("session-1")
+    terminal_manager.get.assert_not_called()
     registry.resolve.assert_not_called()
-
-
-def test_continuation_pane_uses_unbound_gterm_named_by_context() -> None:
-    """Compact continuation uses the gterm row named by context when the session is unbound."""
-    terminal_id = "11111111-1111-4111-8111-111111111111"
-    terminal = SimpleNamespace(
-        backend="native",
-        id=terminal_id,
-        machine_id=require_machine_id(),
-        state="live",
-        project_id="proj-1",
-        agent_run_id=None,
-        session_id=None,
-    )
-    session = SimpleNamespace(
-        id="session-1",
-        project_id="proj-1",
-        terminal_context={
-            "gobby_terminal_id": terminal_id,
-        },
-    )
-    terminal_manager = MagicMock()
-    terminal_manager.get_live_for_session.return_value = None
-    terminal_manager.get.return_value = terminal
-    registry = MagicMock()
-
-    pane = _continuation_pane(session, "session-1", terminal_manager, registry)
-
-    assert isinstance(pane, RuntimePaneIO)
-    assert (pane.backend, pane.target) == ("native", terminal_id)
 
 
 def test_continuation_pane_rejects_legacy_runtime_context() -> None:
     session = SimpleNamespace(id="session-1", terminal_context={"gobby_terminal_id": "%12"})
     manager = MagicMock()
-    manager.get_live_for_session.return_value = None
+    manager.resolve_live_for_session_id.return_value = None
     registry = MagicMock()
 
     pane = _continuation_pane(session, "session-1", manager, registry)

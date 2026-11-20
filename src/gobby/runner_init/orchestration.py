@@ -165,8 +165,8 @@ async def _send_terminal_session_wake(
         terminal = None
     else:
         terminal = manager.get(identity)
-        if terminal is None and hasattr(manager, "get_live_for_session"):
-            terminal = manager.get_live_for_session(identity)
+        if terminal is None and hasattr(manager, "resolve_live_for_session_id"):
+            terminal = manager.resolve_live_for_session_id(identity)
     if terminal is None:
         raise RuntimeError(f"no terminal for wake identity {identity}")
     action_key = f"wake:{terminal.id}"

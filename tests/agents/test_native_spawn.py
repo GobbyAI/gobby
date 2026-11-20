@@ -103,6 +103,8 @@ async def test_is_live_requires_epoch_and_reconnect_has_arguments(tmp_path: Any)
     runtime = NativeTerminalRuntime(client, frame_host_epoch="stale-constructor-epoch")
     terminal = make_memory_terminal(terminal_id=str(uuid4()), backend="native")
     terminal.locator = {"host_terminal_id": "ht-1"}
+    # A row whose host epoch is not yet recorded
+    terminal.host_epoch = None
     client.rows = [
         _list_row(
             terminal_id=terminal.id,
