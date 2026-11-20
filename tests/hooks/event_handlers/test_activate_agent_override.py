@@ -60,6 +60,8 @@ def _make_event_handlers() -> EventHandlers:
     session_storage.db = MagicMock()
     # Make db.fetchall return empty lists so iteration works
     session_storage.db.fetchall.return_value = []
+    # No stored rows: the session has no project location, so no workspace is bound
+    session_storage.db.execute.return_value.fetchone.return_value = None
     session_manager = session_storage
     variables = SessionVariableManager(session_storage.db)
     if isinstance(variables, MagicMock):

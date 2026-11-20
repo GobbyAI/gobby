@@ -417,6 +417,10 @@ class MemoryTerminalStore:
             return None
         return terminal
 
+    def resolve_live_for_session_id(self, session_id: str) -> Terminal | None:
+        """The bound row: the store holds no session rows whose context could name one."""
+        return self.get_live_for_session(session_id)
+
     def list_stale_pending(self, max_age_seconds: float) -> list[Terminal]:
         now = datetime.now(UTC)
         stale: list[Terminal] = []

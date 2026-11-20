@@ -267,13 +267,13 @@ class EventHandlersBase:
         return None if coordinator is None else coordinator.composer_ledger
 
     def _composer_terminal(self, session_id: str) -> tuple[ComposerLedger, Terminal] | None:
-        """The composer ledger and the live terminal bound to ``session_id``, if both exist."""
+        """The composer ledger and the live terminal ``session_id`` types into, if both exist."""
         ledger = self._composer_ledger()
         manager = getattr(self, "terminal_manager", None)
         if ledger is None or manager is None:
             return None
         try:
-            row = manager.get_live_for_session(session_id)
+            row = manager.resolve_live_for_session_id(session_id)
         except Exception:
             self.logger.warning(
                 "Failed to resolve the composer terminal for session %s", session_id, exc_info=True

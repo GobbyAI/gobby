@@ -106,6 +106,8 @@ async def test_droid_command_is_wrapped_once_after_srt_preflight() -> None:
     session_manager = MagicMock()
     # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
     session_manager._storage.db.fetchone.return_value = None
+    # Nor a stored project location, so no seat workspace folder is granted.
+    session_manager._storage.db.execute.return_value.fetchone.return_value = None
     run_manager = MagicMock()
     request = SpawnRequest(
         prompt="work",
@@ -176,6 +178,8 @@ async def test_srt_preflight_failure_prevents_terminal_spawn() -> None:
     session_manager = MagicMock()
     # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
     session_manager._storage.db.fetchone.return_value = None
+    # Nor a stored project location, so no seat workspace folder is granted.
+    session_manager._storage.db.execute.return_value.fetchone.return_value = None
     run_manager = MagicMock()
     request = SpawnRequest(
         prompt="work",

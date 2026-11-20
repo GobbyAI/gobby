@@ -452,6 +452,18 @@ class TerminalManager(TerminalReapQueryMixin, TerminalSettlementMixin):
             return None
         return terminal
 
+    def resolve_live_for_session_id(self, session_id: str) -> Terminal | None:
+        """``resolve_live_for_session`` for a caller holding only the session id.
+
+        A bound row answers without loading the session; only a miss reads the
+        session row to try the row its terminal context names.
+        """
+        bound = self.get_live_for_session(session_id)
+        if bound is not None:
+            return bound
+        row = self.db.fetchone("SELECT * FROM sessions WHERE id = %s", (str(UUID(session_id)),))
+        return None if row is None else self.resolve_live_for_session(Session.from_row(row))
+
     def bind_session(self, terminal_id: str, session_id: str, project_id: str) -> Terminal | None:
         """Bind a CLI session to the terminal it started in, or refuse with None.
 

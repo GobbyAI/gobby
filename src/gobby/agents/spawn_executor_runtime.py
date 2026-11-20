@@ -40,7 +40,7 @@ def spawner_theme_source(
     spawner has no live native pane: cron, pipelines and other paneless spawners.
     """
     try:
-        parent = manager.get_live_for_session(parent_session_id)
+        parent = manager.resolve_live_for_session_id(parent_session_id)
     except ValueError:
         return None
     if parent is None or parent.backend != "native" or not parent.host_epoch:

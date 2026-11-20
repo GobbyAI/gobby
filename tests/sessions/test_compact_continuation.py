@@ -2382,7 +2382,9 @@ async def test_schedule_continuation_resolves_native_terminal_without_runtime(
     runtime = NativeRuntime()
     terminal_manager = SimpleNamespace(
         db=MagicMock(),
-        get_live_for_session=lambda session_id: terminal if session_id == SESSION_ID else None,
+        resolve_live_for_session_id=lambda session_id: (
+            terminal if session_id == SESSION_ID else None
+        ),
     )
     registry = SimpleNamespace(resolve=lambda backend: runtime if backend == "native" else None)
 
@@ -2420,7 +2422,7 @@ def test_continuation_pane_stops_when_context_terminal_row_disappears() -> None:
         terminal_context={"gobby_terminal_id": terminal_id},
     )
     terminal_manager = MagicMock()
-    terminal_manager.get_live_for_session.return_value = None
+    terminal_manager.resolve_live_for_session_id.return_value = None
     terminal_manager.get.return_value = None
     registry = MagicMock()
 
@@ -2451,7 +2453,7 @@ def test_continuation_pane_uses_unbound_gterm_named_by_context() -> None:
         },
     )
     terminal_manager = MagicMock()
-    terminal_manager.get_live_for_session.return_value = None
+    terminal_manager.resolve_live_for_session_id.return_value = None
     terminal_manager.get.return_value = terminal
     registry = MagicMock()
 
@@ -2464,7 +2466,7 @@ def test_continuation_pane_uses_unbound_gterm_named_by_context() -> None:
 def test_continuation_pane_rejects_legacy_runtime_context() -> None:
     session = SimpleNamespace(id="session-1", terminal_context={"gobby_terminal_id": "%12"})
     manager = MagicMock()
-    manager.get_live_for_session.return_value = None
+    manager.resolve_live_for_session_id.return_value = None
     registry = MagicMock()
 
     pane = _continuation_pane(session, "session-1", manager, registry)

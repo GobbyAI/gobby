@@ -221,8 +221,8 @@ class InteractiveAttentionMonitor:
                     await self._clear_attention_if_current(session_attention_entry_id(session.id))
                     continue
                 row = await asyncio.to_thread(
-                    TerminalManager(self._session_manager.db).get_live_for_session,
-                    session.id,
+                    TerminalManager(self._session_manager.db).resolve_live_for_session,
+                    session,
                 )
                 if row is None:
                     await self._clear_attention_if_current(session_attention_entry_id(session.id))

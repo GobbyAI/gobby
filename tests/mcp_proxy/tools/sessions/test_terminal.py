@@ -578,7 +578,7 @@ class TestRegisterTerminalTools:
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
         terminal_manager = MagicMock()
-        terminal_manager.get_live_for_session.return_value = None
+        terminal_manager.resolve_live_for_session_id.return_value = None
         terminal_manager.get.return_value = None
         runtime_registry = MagicMock()
 
@@ -606,7 +606,7 @@ class TestRegisterTerminalTools:
 
         assert result["success"] is False
         assert result["error_code"] == "no_live_pane_or_transcript"
-        terminal_manager.get_live_for_session.assert_called_once_with("session-1")
+        terminal_manager.resolve_live_for_session_id.assert_called_once_with("session-1")
         terminal_manager.get.assert_called_once_with(terminal_id)
         runtime_registry.resolve.assert_not_called()
 
@@ -693,7 +693,7 @@ class TestRegisterTerminalTools:
         session_manager = MagicMock()
         session_manager.get.return_value = session
         terminal_manager = MagicMock()
-        terminal_manager.get_live_for_session.return_value = None
+        terminal_manager.resolve_live_for_session_id.return_value = None
         terminal_manager.get.return_value = terminal
         runtime = MagicMock()
         runtime.snapshot = AsyncMock(return_value=SimpleNamespace(text="live pane"))

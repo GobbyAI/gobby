@@ -728,7 +728,7 @@ def register_terminal_tools(
     ) -> dict[str, Any]:
         # Configured rules decide target scope before dispatch.
         if terminal_manager is not None and terminal_runtime_registry is not None:
-            terminal = terminal_manager.get_live_for_session(session_id)
+            terminal = terminal_manager.resolve_live_for_session_id(session_id)
             if terminal is not None:
                 runtime = resolve_terminal_runtime(
                     terminal_runtime_registry, terminal, terminal_manager.db

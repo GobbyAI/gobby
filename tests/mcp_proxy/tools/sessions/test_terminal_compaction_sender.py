@@ -772,7 +772,7 @@ def test_resolve_pane_io_prefers_the_live_terminal_row() -> None:
 
     terminal = MagicMock(backend="native", id="term-1", machine_id=require_machine_id())
     terminal_manager = MagicMock()
-    terminal_manager.get_live_for_session.return_value = terminal
+    terminal_manager.resolve_live_for_session_id.return_value = terminal
     registry = MagicMock()
 
     pane, error = _terminal._resolve_pane_io(
@@ -807,7 +807,7 @@ def test_resolve_pane_io_uses_gterm_terminal_named_by_context() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = session
     terminal_manager = MagicMock()
-    terminal_manager.get_live_for_session.return_value = None
+    terminal_manager.resolve_live_for_session_id.return_value = None
     terminal_manager.get.return_value = terminal
     registry = MagicMock()
 
@@ -826,7 +826,7 @@ def test_resolve_pane_io_uses_gterm_terminal_named_by_context() -> None:
 
 def test_resolve_pane_io_requires_a_managed_terminal() -> None:
     terminal_manager = MagicMock()
-    terminal_manager.get_live_for_session.return_value = None
+    terminal_manager.resolve_live_for_session_id.return_value = None
 
     pane, error = _terminal._resolve_pane_io(
         "session-1",

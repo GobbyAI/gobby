@@ -316,7 +316,7 @@ async def test_usage_limit_blocks_the_composer_and_sends_no_keys(
     ledger = ComposerLedger()
     ledger.release("terminal-1")
     terminals = MagicMock(name="terminal_manager")
-    terminals.get_live_for_session.return_value = SimpleNamespace(id="terminal-1")
+    terminals.resolve_live_for_session_id.return_value = SimpleNamespace(id="terminal-1")
     handlers, session_id, lifecycle, attention = _case(
         temp_db, sample_project, asyncio.get_running_loop(), terminal_manager=terminals
     )
@@ -336,7 +336,7 @@ async def test_usage_limit_blocks_the_composer_and_sends_no_keys(
         await asyncio.wait_for(wake.called.wait(), 0.2)
 
     assert wake.calls == []
-    terminals.get_live_for_session.assert_called_with(session_id)
+    terminals.resolve_live_for_session_id.assert_called_with(session_id)
     assert ledger.read("terminal-1") == LedgerRead("blocked", "provider_limit")
     current = attention.get(session_attention_entry_id(session_id))
     assert current is not None
