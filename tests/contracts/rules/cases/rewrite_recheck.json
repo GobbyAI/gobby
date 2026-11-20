@@ -24,15 +24,25 @@
           ]
         },
         {
+          "name": "synthetic-proxy-queued",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "proxy_hook",
+              "handler": "rtk"
+            }
+          ]
+        },
+        {
           "name": "synthetic-deny-rewritten",
           "event": "before_tool",
+          "when": "'rewritten' in str(tool_input)",
           "effects": [
             {
               "type": "block",
               "reason": "rewritten input denied"
             }
-          ],
-          "when": "'rewritten' in str(tool_input)"
+          ]
         }
       ],
       "event": {
@@ -48,14 +58,21 @@
       },
       "seam_failures": [],
       "expect": {
-        "outcome_class": "allow",
+        "outcome_class": "block",
         "eager_variable_delta": {
           "project": {
             "name": "Unknown",
             "id": "unknown",
             "path": ""
           },
-          "_gobby_feedback_survey_active": false
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_tool": "Bash",
+          "_last_blocked_rule_name": "synthetic-deny-rewritten",
+          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-deny-rewritten]\nrewritten input denied",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "synthetic-deny-rewritten:<token>"
+          ]
         },
         "on_receipt_payload": null,
         "effect_log": [
@@ -76,19 +93,164 @@
             "write": "rule_eval",
             "call": "record_rule_evaluation",
             "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "seam": "metrics_events",
+            "call": "record_events",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
           }
         ],
         "audit_records": [
           {
+            "rule": "synthetic-proxy-queued",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
             "rule": "synthetic-rewrite-command",
             "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-deny-rewritten",
+            "result": "block",
             "event": "before_tool"
           }
         ],
         "response": {
-          "modified_input": {
-            "command": "echo rewritten"
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [synthetic-deny-rewritten]\nrewritten input denied"
+        }
+      }
+    },
+    {
+      "id": "synthetic-f4-recheck-proxy-block",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-F4-RECHECK-BLOCK"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "posix_only": true,
+      "proxy": {
+        "rtk": "echo-prefix"
+      },
+      "rules": [
+        {
+          "name": "synthetic-proxy-rtk",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "proxy_hook",
+              "handler": "rtk",
+              "timeout_seconds": 10
+            }
+          ]
+        },
+        {
+          "name": "synthetic-deny-proxy-rewritten",
+          "event": "before_tool",
+          "when": "str(tool_input.get('command', '')).startswith('rtk ')",
+          "effects": [
+            {
+              "type": "block",
+              "reason": "proxy rewrite denied"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
           }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "block",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_tool": "Bash",
+          "_last_blocked_rule_name": "synthetic-deny-proxy-rewritten",
+          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-deny-proxy-rewritten]\nproxy rewrite denied",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "synthetic-deny-proxy-rewritten:<token>"
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "seam": "metrics_events",
+            "call": "record_events",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-proxy-rtk",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-deny-proxy-rewritten",
+            "result": "block",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [synthetic-deny-proxy-rewritten]\nproxy rewrite denied"
         }
       }
     },
@@ -116,12 +278,34 @@
           ]
         },
         {
+          "name": "synthetic-proxy-queued",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "proxy_hook",
+              "handler": "rtk"
+            }
+          ]
+        },
+        {
           "name": "synthetic-observe-once",
           "event": "before_tool",
           "effects": [
             {
               "type": "observe",
               "message": "once"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-deny-rewritten-once",
+          "event": "before_tool",
+          "priority": 200,
+          "when": "'rewritten' in str(tool_input)",
+          "effects": [
+            {
+              "type": "block",
+              "reason": "rewritten input denied after one observation"
             }
           ]
         }
@@ -139,7 +323,7 @@
       },
       "seam_failures": [],
       "expect": {
-        "outcome_class": "allow",
+        "outcome_class": "block",
         "eager_variable_delta": {
           "project": {
             "name": "Unknown",
@@ -154,6 +338,13 @@
               "timestamp": "<volatile>",
               "rule": "synthetic-observe-once"
             }
+          ],
+          "_last_blocked_tool": "Bash",
+          "_last_blocked_rule_name": "synthetic-deny-rewritten-once",
+          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-deny-rewritten-once]\nrewritten input denied after one observation",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "synthetic-deny-rewritten-once:<token>"
           ]
         },
         "on_receipt_payload": null,
@@ -185,6 +376,26 @@
             "write": "rule_eval",
             "call": "record_rule_evaluation",
             "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "seam": "metrics_events",
+            "call": "record_events",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
           }
         ],
         "audit_records": [
@@ -194,15 +405,24 @@
             "event": "before_tool"
           },
           {
+            "rule": "synthetic-proxy-queued",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
             "rule": "synthetic-rewrite-command",
             "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-deny-rewritten-once",
+            "result": "block",
             "event": "before_tool"
           }
         ],
         "response": {
-          "modified_input": {
-            "command": "echo rewritten"
-          }
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [synthetic-deny-rewritten-once]\nrewritten input denied after one observation"
         }
       }
     },
@@ -216,14 +436,31 @@
       "family": null,
       "observer": null,
       "transition": null,
+      "posix_only": true,
+      "proxy": {
+        "rtk": "echo-prefix"
+      },
       "rules": [
+        {
+          "name": "synthetic-rewrite-command",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "rewrite_input",
+              "input_updates": {
+                "command": "echo rewritten"
+              }
+            }
+          ]
+        },
         {
           "name": "synthetic-proxy-rtk",
           "event": "before_tool",
           "effects": [
             {
               "type": "proxy_hook",
-              "handler": "rtk"
+              "handler": "rtk",
+              "timeout_seconds": 10
             }
           ]
         }
@@ -261,6 +498,16 @@
             "outcome": "ok"
           },
           {
+            "effect": "rewrite_input",
+            "delivery": "eager",
+            "rule": "synthetic-rewrite-command"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
             "write": "rule_eval",
             "call": "record_rule_evaluation",
             "outcome": "ok"
@@ -271,9 +518,221 @@
             "rule": "synthetic-proxy-rtk",
             "result": "allow",
             "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-rewrite-command",
+            "result": "allow",
+            "event": "before_tool"
           }
         ],
-        "response": {}
+        "response": {
+          "modified_input": {
+            "command": "rtk echo rewritten"
+          }
+        }
+      }
+    },
+    {
+      "id": "synthetic-proxy-rtk-deny",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "posix_only": true,
+      "proxy": {
+        "rtk": "echo-prefix"
+      },
+      "rules": [
+        {
+          "name": "synthetic-proxy-rtk",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "proxy_hook",
+              "handler": "rtk",
+              "timeout_seconds": 10
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo synthetic-denied"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "block",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_tool": "Bash",
+          "_last_blocked_rule_name": "rtk-pipeline",
+          "_last_blocked_reason": "synthetic rtk denial",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "rtk-pipeline:<token>"
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-proxy-rtk",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "decision": "block",
+          "reason": "synthetic rtk denial"
+        }
+      }
+    },
+    {
+      "id": "synthetic-recheck-agent-reserved-write",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-rewrite-variable-name",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "rewrite_input",
+              "input_updates": {
+                "name": "enforce_synthetic_flag"
+              }
+            }
+          ]
+        },
+        {
+          "name": "synthetic-proxy-queued",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "proxy_hook",
+              "handler": "rtk"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "mcp__gobby__call_tool",
+          "tool_input": {
+            "server_name": "synthetic-server",
+            "tool_name": "set_variable",
+            "arguments": {
+              "name": "synthetic_free",
+              "value": "x"
+            }
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "block",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_tool": "synthetic-server:set_variable",
+          "_last_blocked_rule_name": "agent-tool-enforcement",
+          "_last_blocked_reason": "Rule enforced by Gobby: [workflow-runtime-variable]\nVariable 'enforce_synthetic_flag' is managed by the workflow runtime.\nAbandon only this write to variable 'enforce_synthetic_flag'; set_variable remains available for other permitted variables. Continue with an allowed operation and do not retry this variable write. Repeating an identical denial three times ends an autonomous run in a terminal blocked state.",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "agent-tool-enforcement:<token>"
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "rewrite_input",
+            "delivery": "eager",
+            "rule": "synthetic-rewrite-variable-name"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-proxy-queued",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-rewrite-variable-name",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [workflow-runtime-variable]\nVariable 'enforce_synthetic_flag' is managed by the workflow runtime.\nAbandon only this write to variable 'enforce_synthetic_flag'; set_variable remains available for other permitted variables. Continue with an allowed operation and do not retry this variable write. Repeating an identical denial three times ends an autonomous run in a terminal blocked state."
+        }
       }
     },
     {
@@ -286,18 +745,78 @@
       "family": null,
       "observer": null,
       "transition": null,
+      "seed": {
+        "session": true,
+        "agent_definitions": [
+          {
+            "name": "synthetic-step-agent",
+            "body": {
+              "workflows": {
+                "rule_selectors": {
+                  "include": [
+                    "tag:default"
+                  ]
+                }
+              },
+              "prompts": {
+                "agent": "Synthetic corpus agent."
+              }
+            },
+            "step_workflow": {
+              "steps": [
+                {
+                  "name": "synthetic-gather",
+                  "allowed_tools": [
+                    "mcp__gobby__call_tool"
+                  ],
+                  "allowed_mcp_tools": [
+                    "synthetic-server:synthetic-tool"
+                  ],
+                  "on_mcp_before": [
+                    {
+                      "server": "synthetic-server",
+                      "tool": "synthetic-tool",
+                      "action": "set_variable",
+                      "variable": "synthetic_step_seen",
+                      "value": "allowed"
+                    }
+                  ]
+                },
+                {
+                  "name": "synthetic-finish",
+                  "allowed_tools": "all"
+                }
+              ]
+            }
+          }
+        ],
+        "step_instance": {
+          "agent": "synthetic-step-agent",
+          "current_step": "synthetic-gather",
+          "snapshot_step_workflow": {
+            "steps": [
+              {
+                "name": "synthetic-gather",
+                "allowed_tools": "all",
+                "allowed_mcp_tools": "all"
+              },
+              {
+                "name": "synthetic-finish",
+                "allowed_tools": "all"
+              }
+            ]
+          }
+        }
+      },
       "rules": [
         {
-          "name": "synthetic-step-allow",
+          "name": "synthetic-step-after-observe",
           "event": "before_tool",
           "effects": [
             {
               "type": "observe",
-              "message": "allowed step"
+              "message": "rules ran after the step check"
             }
-          ],
-          "tools": [
-            "Bash"
           ]
         }
       ],
@@ -305,9 +824,11 @@
         "type": "before_tool",
         "source": "claude",
         "data": {
-          "tool_name": "Bash",
+          "tool_name": "mcp__gobby__call_tool",
           "tool_input": {
-            "command": "echo hi"
+            "server_name": "synthetic-server",
+            "tool_name": "synthetic-tool",
+            "arguments": {}
           }
         },
         "metadata": {}
@@ -317,17 +838,18 @@
         "outcome_class": "allow",
         "eager_variable_delta": {
           "project": {
-            "name": "Unknown",
-            "id": "unknown",
+            "name": "synthetic-project",
+            "id": "<uuid>",
             "path": ""
           },
           "_gobby_feedback_survey_active": false,
+          "synthetic_step_seen": "allowed",
           "_observations": [
             {
               "category": "general",
-              "message": "allowed step",
+              "message": "rules ran after the step check",
               "timestamp": "<volatile>",
-              "rule": "synthetic-step-allow"
+              "rule": "synthetic-step-after-observe"
             }
           ]
         },
@@ -342,9 +864,14 @@
             "outcome": "ok"
           },
           {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
             "effect": "observe",
             "delivery": "eager",
-            "rule": "synthetic-step-allow"
+            "rule": "synthetic-step-after-observe"
           },
           {
             "write": "rule_eval",
@@ -354,7 +881,7 @@
         ],
         "audit_records": [
           {
-            "rule": "synthetic-step-allow",
+            "rule": "synthetic-step-after-observe",
             "result": "allow",
             "event": "before_tool"
           }
@@ -372,18 +899,78 @@
       "family": null,
       "observer": null,
       "transition": null,
+      "seed": {
+        "session": true,
+        "agent_definitions": [
+          {
+            "name": "synthetic-step-agent",
+            "body": {
+              "workflows": {
+                "rule_selectors": {
+                  "include": [
+                    "tag:default"
+                  ]
+                }
+              },
+              "prompts": {
+                "agent": "Synthetic corpus agent."
+              }
+            },
+            "step_workflow": {
+              "steps": [
+                {
+                  "name": "synthetic-gather",
+                  "allowed_tools": [
+                    "mcp__gobby__call_tool"
+                  ],
+                  "allowed_mcp_tools": [
+                    "synthetic-server:synthetic-tool"
+                  ],
+                  "on_mcp_before": [
+                    {
+                      "server": "synthetic-server",
+                      "tool": "synthetic-tool",
+                      "action": "set_variable",
+                      "variable": "synthetic_step_seen",
+                      "value": "allowed"
+                    }
+                  ]
+                },
+                {
+                  "name": "synthetic-finish",
+                  "allowed_tools": "all"
+                }
+              ]
+            }
+          }
+        ],
+        "step_instance": {
+          "agent": "synthetic-step-agent",
+          "current_step": "synthetic-gather",
+          "snapshot_step_workflow": {
+            "steps": [
+              {
+                "name": "synthetic-gather",
+                "allowed_tools": "all",
+                "allowed_mcp_tools": "all"
+              },
+              {
+                "name": "synthetic-finish",
+                "allowed_tools": "all"
+              }
+            ]
+          }
+        }
+      },
       "rules": [
         {
-          "name": "synthetic-step-block",
+          "name": "synthetic-step-after-observe",
           "event": "before_tool",
           "effects": [
             {
-              "type": "block",
-              "reason": "step tool blocked"
+              "type": "observe",
+              "message": "rules ran after the step check"
             }
-          ],
-          "tools": [
-            "Bash"
           ]
         }
       ],
@@ -403,17 +990,17 @@
         "outcome_class": "block",
         "eager_variable_delta": {
           "project": {
-            "name": "Unknown",
-            "id": "unknown",
+            "name": "synthetic-project",
+            "id": "<uuid>",
             "path": ""
           },
           "_gobby_feedback_survey_active": false,
           "_last_blocked_tool": "Bash",
-          "_last_blocked_rule_name": "synthetic-step-block",
-          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-step-block]\nstep tool blocked",
+          "_last_blocked_rule_name": "step-tool-enforcement",
+          "_last_blocked_reason": "Rule enforced by Gobby: [step-enforcement:synthetic-step-agent/synthetic-gather]\nTool 'Bash' is not allowed in the 'synthetic-gather' step.\nAllowed tools: mcp__gobby__call_tool\nThis capability is unavailable for the rest of the 'synthetic-gather' step. Abandon this call, continue with an allowed operation, and do not retry the same blocked tool in this step. Repeating an identical denial three times ends an autonomous run in a terminal blocked state.",
           "_last_blocked_recovery_conditions": [],
           "_block_reasons_shown": [
-            "synthetic-step-block:<token>"
+            "step-tool-enforcement:<token>"
           ]
         },
         "on_receipt_payload": null,
@@ -427,8 +1014,324 @@
             "outcome": "ok"
           },
           {
-            "seam": "metrics_events",
-            "call": "record_events",
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [],
+        "response": {
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [step-enforcement:synthetic-step-agent/synthetic-gather]\nTool 'Bash' is not allowed in the 'synthetic-gather' step.\nAllowed tools: mcp__gobby__call_tool\nThis capability is unavailable for the rest of the 'synthetic-gather' step. Abandon this call, continue with an allowed operation, and do not retry the same blocked tool in this step. Repeating an identical denial three times ends an autonomous run in a terminal blocked state."
+        }
+      }
+    },
+    {
+      "id": "synthetic-step-mcp-tool-block",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "seed": {
+        "session": true,
+        "agent_definitions": [
+          {
+            "name": "synthetic-step-agent",
+            "body": {
+              "workflows": {
+                "rule_selectors": {
+                  "include": [
+                    "tag:default"
+                  ]
+                }
+              },
+              "prompts": {
+                "agent": "Synthetic corpus agent."
+              }
+            },
+            "step_workflow": {
+              "steps": [
+                {
+                  "name": "synthetic-gather",
+                  "allowed_tools": [
+                    "mcp__gobby__call_tool"
+                  ],
+                  "allowed_mcp_tools": [
+                    "synthetic-server:synthetic-tool"
+                  ],
+                  "on_mcp_before": [
+                    {
+                      "server": "synthetic-server",
+                      "tool": "synthetic-tool",
+                      "action": "set_variable",
+                      "variable": "synthetic_step_seen",
+                      "value": "allowed"
+                    }
+                  ]
+                },
+                {
+                  "name": "synthetic-finish",
+                  "allowed_tools": "all"
+                }
+              ]
+            }
+          }
+        ],
+        "step_instance": {
+          "agent": "synthetic-step-agent",
+          "current_step": "synthetic-gather",
+          "snapshot_step_workflow": {
+            "steps": [
+              {
+                "name": "synthetic-gather",
+                "allowed_tools": "all",
+                "allowed_mcp_tools": "all"
+              },
+              {
+                "name": "synthetic-finish",
+                "allowed_tools": "all"
+              }
+            ]
+          }
+        }
+      },
+      "rules": [
+        {
+          "name": "synthetic-step-after-observe",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "rules ran after the step check"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "mcp__gobby__call_tool",
+          "tool_input": {
+            "server_name": "synthetic-server",
+            "tool_name": "synthetic-forbidden-tool",
+            "arguments": {}
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "block",
+        "eager_variable_delta": {
+          "project": {
+            "name": "synthetic-project",
+            "id": "<uuid>",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_tool": "synthetic-server:synthetic-forbidden-tool",
+          "_last_blocked_rule_name": "step-tool-enforcement",
+          "_last_blocked_reason": "Rule enforced by Gobby: [step-enforcement:synthetic-step-agent/synthetic-gather]\nMCP tool 'synthetic-server:synthetic-forbidden-tool' is not allowed in the 'synthetic-gather' step.\nAllowed MCP tools: synthetic-server:synthetic-tool\nThis capability is unavailable for the rest of the 'synthetic-gather' step. Abandon this call, continue with an allowed operation, and do not retry the same blocked tool in this step. Repeating an identical denial three times ends an autonomous run in a terminal blocked state.",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "step-tool-enforcement:<token>"
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [],
+        "response": {
+          "decision": "block",
+          "reason": "Rule enforced by Gobby: [step-enforcement:synthetic-step-agent/synthetic-gather]\nMCP tool 'synthetic-server:synthetic-forbidden-tool' is not allowed in the 'synthetic-gather' step.\nAllowed MCP tools: synthetic-server:synthetic-tool\nThis capability is unavailable for the rest of the 'synthetic-gather' step. Abandon this call, continue with an allowed operation, and do not retry the same blocked tool in this step. Repeating an identical denial three times ends an autonomous run in a terminal blocked state."
+        }
+      }
+    },
+    {
+      "id": "synthetic-step-recheck-handler-block",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "seed": {
+        "session": true,
+        "agent_definitions": [
+          {
+            "name": "synthetic-step-agent",
+            "body": {
+              "workflows": {
+                "rule_selectors": {
+                  "include": [
+                    "tag:default"
+                  ]
+                }
+              },
+              "prompts": {
+                "agent": "Synthetic corpus agent."
+              }
+            },
+            "step_workflow": {
+              "steps": [
+                {
+                  "name": "synthetic-gather",
+                  "allowed_tools": [
+                    "mcp__gobby__call_tool"
+                  ],
+                  "allowed_mcp_tools": [
+                    "synthetic-server:synthetic-tool"
+                  ],
+                  "on_mcp_before": [
+                    {
+                      "server": "synthetic-server",
+                      "tool": "synthetic-tool",
+                      "action": "set_variable",
+                      "variable": "synthetic_step_seen",
+                      "value": "allowed"
+                    },
+                    {
+                      "server": "synthetic-server",
+                      "tool": "synthetic-tool",
+                      "action": "block",
+                      "when": "tool_input.get('mode') == 'rewritten'",
+                      "reason": "synthetic step handler denied the rewritten call"
+                    }
+                  ]
+                },
+                {
+                  "name": "synthetic-finish",
+                  "allowed_tools": "all"
+                }
+              ]
+            }
+          }
+        ],
+        "step_instance": {
+          "agent": "synthetic-step-agent",
+          "current_step": "synthetic-gather",
+          "snapshot_step_workflow": {
+            "steps": [
+              {
+                "name": "synthetic-gather",
+                "allowed_tools": "all",
+                "allowed_mcp_tools": "all"
+              },
+              {
+                "name": "synthetic-finish",
+                "allowed_tools": "all"
+              }
+            ]
+          }
+        }
+      },
+      "rules": [
+        {
+          "name": "synthetic-rewrite-mode",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "rewrite_input",
+              "input_updates": {
+                "mode": "rewritten"
+              }
+            }
+          ]
+        },
+        {
+          "name": "synthetic-proxy-queued",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "proxy_hook",
+              "handler": "rtk"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "mcp__gobby__call_tool",
+          "tool_input": {
+            "server_name": "synthetic-server",
+            "tool_name": "synthetic-tool",
+            "arguments": {
+              "mode": "original"
+            }
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "block",
+        "eager_variable_delta": {
+          "project": {
+            "name": "synthetic-project",
+            "id": "<uuid>",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "synthetic_step_seen": "allowed",
+          "_last_blocked_tool": "synthetic-server:synthetic-tool",
+          "_last_blocked_rule_name": "step-tool-enforcement",
+          "_last_blocked_reason": "Rule enforced by Gobby: [step-enforcement:synthetic-step-agent/synthetic-gather]\nsynthetic step handler denied the rewritten call",
+          "_last_blocked_recovery_conditions": [],
+          "_block_reasons_shown": [
+            "step-tool-enforcement:<token>"
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
+            "effect": "rewrite_input",
+            "delivery": "eager",
+            "rule": "synthetic-rewrite-mode"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
             "outcome": "ok"
           },
           {
@@ -440,18 +1343,33 @@
             "write": "workflow_audit_log",
             "call": "log",
             "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
           }
         ],
         "audit_records": [
           {
-            "rule": "synthetic-step-block",
-            "result": "block",
+            "rule": "synthetic-proxy-queued",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-rewrite-mode",
+            "result": "allow",
             "event": "before_tool"
           }
         ],
         "response": {
           "decision": "block",
-          "reason": "Rule enforced by Gobby: [synthetic-step-block]\nstep tool blocked"
+          "reason": "Rule enforced by Gobby: [step-enforcement:synthetic-step-agent/synthetic-gather]\nsynthetic step handler denied the rewritten call"
         }
       }
     },
@@ -489,6 +1407,9 @@
         "metadata": {}
       },
       "seam_failures": [],
+      "variables": {
+        "_handoff_turn_end_pending": true
+      },
       "expect": {
         "outcome_class": "allow",
         "eager_variable_delta": {
@@ -560,9 +1481,6 @@
           }
         ],
         "response": {}
-      },
-      "variables": {
-        "_handoff_turn_end_pending": true
       }
     },
     {
@@ -689,6 +1607,19 @@
         "metadata": {}
       },
       "seam_failures": [],
+      "sequence": [
+        {
+          "type": "before_tool",
+          "source": "claude",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "echo hi"
+            }
+          },
+          "metadata": {}
+        }
+      ],
       "expect": {
         "outcome_class": "allow",
         "eager_variable_delta": {
@@ -760,20 +1691,7 @@
           }
         ],
         "response": {}
-      },
-      "sequence": [
-        {
-          "type": "before_tool",
-          "source": "claude",
-          "data": {
-            "tool_name": "Bash",
-            "tool_input": {
-              "command": "echo hi"
-            }
-          },
-          "metadata": {}
-        }
-      ]
+      }
     }
   ]
 }

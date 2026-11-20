@@ -1,6 +1,176 @@
 {
   "cases": [
     {
+      "id": "synthetic-run-command-inline-success",
+      "kind": "seam_caller",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "caller": "inline_run_command",
+      "posix_only": true,
+      "seed": {
+        "session": true
+      },
+      "rules": [
+        {
+          "name": "synthetic-inline-detector",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "run_command",
+              "command": [
+                "{python}",
+                "-c",
+                "import json, sys, time\nevent = json.load(sys.stdin)\ntime.sleep(float(sys.argv[1]))\nprint(json.dumps({\"additionalContext\": \"synthetic detector saw: \" + event[\"tool_input\"][\"command\"]}))\n",
+                "0"
+              ],
+              "inject_result": true,
+              "timeout_seconds": 20
+            }
+          ]
+        }
+      ],
+      "event": {},
+      "input": {
+        "rule_name": "synthetic-inline-detector",
+        "event": {
+          "type": "before_tool",
+          "source": "claude",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "echo hi"
+            }
+          },
+          "metadata": {}
+        },
+        "deadline": null
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {},
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "effect": "run_command",
+            "delivery": "eager",
+            "rule": "synthetic-inline-detector"
+          },
+          {
+            "run_command_deadline": "none"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [],
+        "response": {},
+        "returned": {
+          "context_parts": [
+            [
+              "rule:synthetic-inline-detector",
+              "synthetic detector saw: echo hi"
+            ]
+          ],
+          "audit_rows": [
+            [
+              "effect",
+              "success"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "synthetic-effect-run-command-rule-pass",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "posix_only": true,
+      "rules": [
+        {
+          "name": "synthetic-inline-detector",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "run_command",
+              "command": [
+                "{python}",
+                "-c",
+                "import json, sys, time\nevent = json.load(sys.stdin)\ntime.sleep(float(sys.argv[1]))\nprint(json.dumps({\"additionalContext\": \"synthetic detector saw: \" + event[\"tool_input\"][\"command\"]}))\n",
+                "0"
+              ],
+              "inject_result": true,
+              "timeout_seconds": 20
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "run_command",
+            "delivery": "eager",
+            "rule": "synthetic-inline-detector"
+          },
+          {
+            "run_command_deadline": "none"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-inline-detector",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
       "id": "synthetic-effect-set-variable",
       "kind": "rule_pass",
       "provenance": "synthetic",
@@ -943,6 +1113,7 @@
     {
       "id": "synthetic-effect-run-command",
       "kind": "rule_pass",
+      "posix_only": true,
       "provenance": "synthetic",
       "scenario_ids": [],
       "family": null,
@@ -1000,6 +1171,9 @@
             "rule": "synthetic-effect-run-command"
           },
           {
+            "run_command_deadline": "none"
+          },
+          {
             "write": "rule_eval",
             "call": "record_rule_evaluation",
             "outcome": "ok"
@@ -1018,6 +1192,10 @@
     {
       "id": "synthetic-effect-proxy-hook",
       "kind": "rule_pass",
+      "posix_only": true,
+      "proxy": {
+        "rtk": "echo-prefix"
+      },
       "provenance": "synthetic",
       "scenario_ids": [],
       "family": null,
@@ -1030,7 +1208,8 @@
           "effects": [
             {
               "type": "proxy_hook",
-              "handler": "synthetic-unknown-handler"
+              "handler": "synthetic-unknown-handler",
+              "timeout_seconds": 10
             }
           ]
         }

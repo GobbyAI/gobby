@@ -14,7 +14,8 @@ run over synthetic rules, plus the normalizer functions the rule conditions read
   encoding (a `null` write to a new key, and the turn-start reset that deletes a flag).
 - A case of kind `seam_caller` drives one real caller of a seam instead of the rule engine,
   because the engine never reaches that seam: `background_delivery` runs the background
-  run-command delivery, `tool_result_offload` runs the MCP proxy's result offload. Its
+  run-command delivery, `tool_result_offload` runs the MCP proxy's result offload and
+  `inline_run_command` applies one `run_command` effect (see "Engine-path keys"). Its
   `expect` adds the caller's `returned` value.
 - `normalize_vectors.json` holds the normalizer vectors. Eleven entry points each have a
   vector, and every cross-module function in `normalize_modules.json` has one. Each of the
@@ -66,6 +67,53 @@ run over synthetic rules, plus the normalizer functions the rule conditions read
   within the test's budget.
 - `normalize_modules.json` lists the 46 normalizer modules the vectors cover, with a goal
   clause for each.
+
+## Engine-path keys
+
+A case that names an engine path seeds the state that path reads, so replacing the path with
+a constant changes the recorded outcome. `tests/contracts/test_rules_engine_paths.py` holds
+the table of paths, the cases each reaches and both outcomes.
+
+- `seed` names domain rows written before the rules, in this order: `session` (`true`: the
+  synthetic user, machine, project and the `SESSION_ID` session row), `agent_definitions`
+  (synthetic agent definitions, installed globally with their `step_workflow`; a key the
+  engine's models drop fails the seed) and `step_instance` (`agent`, `current_step` and an
+  optional `snapshot_step_workflow`). The snapshot is what the instance stores; the installed
+  definition keeps its own `step_workflow`, so a case whose snapshot allows everything shows
+  that the engine enforces the installed policy. `tests/contracts/rules_seed.py` validates
+  and applies it.
+- `proxy`: `{"rtk": "echo-prefix"}` opts into a fake RTK, a shebang script the real proxy
+  handler runs: it rewrites a command to `rtk <command>` and denies one that holds
+  `synthetic-denied` (exit status 2). Without the key RTK is unavailable.
+- `posix_only: true` marks a case that spawns a process (a rule-pass `run_command`, the
+  background delivery, an inline command without a boundary, or the fake RTK). It is the only
+  replay skip: such a case is skipped on Windows, where a spawn with a cwd has no shell to run
+  through. A case that spawns nothing never carries the key.
+- `{python}` in a `run_command` command list is replaced by the running interpreter when the
+  rule is seeded, so the recorded data names no interpreter path.
+- `engine_skip_group` names the group the engine skips for a CLI-internal request, and
+  `pairs_with` names the main case a partner belongs to. Each CLI-internal case has partners
+  with the request metadata absent and false, and the expected skipped groups are derived from
+  the case input.
+- `skipped_groups` is observed, not inferred: the recorder records which rules reached the
+  engine's event-match check, and a group is skipped when it has a member and none reached
+  it. A member whose condition was false still reached it, so its group is not skipped.
+- Every `run_command` effect logs `{"run_command_deadline": "expired" | "none"}` before it
+  runs: `expired` when the effect context holds the pass's blocking deadline object, `none`
+  when it holds none. This is the effect-seam contract "a run_command effect receives the
+  pass's blocking deadline"; the Rust port records the same entry at its effect dispatch.
+- The seam caller `inline_run_command` reads its seeded rule back by `input.rule_name` and
+  applies its `run_command` effect through `RuleEngine._apply_effect` with a live event. The
+  rule pass hands effects a frozen event that the payload builder cannot write into, so a
+  rule-pass `run_command` never runs in Python; this caller is how the corpus reaches the
+  effect's execution, result handling and audit write. It needs `seed.session`, and its
+  `returned` holds `context_parts` and `audit_rows`, the `(event_type, result)` pairs read
+  back from `workflow_audit_log`. `input.deadline` is `"expired"` or null. A case with
+  `input.command_boundary` (`{"duration", "context"}`) starts no process and reads no real
+  clock: the command execution is replaced by a boundary that succeeds when the duration fits
+  the timeout it is handed, the clock does not move, `input.deadline_remaining` sets the
+  deadline (seconds, negative for an expired one, or null), and `returned.command_timeouts`
+  lists the timeout the effect code supplied.
 
 ## Synthetic only
 

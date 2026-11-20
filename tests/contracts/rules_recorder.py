@@ -19,6 +19,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ from uuid import UUID
 from gobby.config.features import ToolResultOffloadConfig
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.integrations.rtk import RtkProbe
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.storage.coordination_waits import CoordinationWaitManager
@@ -46,7 +48,9 @@ from gobby.workflows.engine import evaluation as evaluation_module
 from gobby.workflows.engine import proxy_hooks
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.effects import EffectsMixin
-from tests.contracts import rules_seed
+from gobby.workflows.engine.evaluation import EvaluationMixin
+from gobby.workflows.engine.run_command_effects import RunCommandEffectsMixin
+from tests.contracts import rules_engine_seams, rules_seed
 from tests.fixtures.hub_guard import hub_database_url
 from tests.fixtures.postgres import isolated_test_schema
 
@@ -179,14 +183,30 @@ def response_defaults() -> dict[str, Any]:
     return defaults
 
 
-def _event_from(spec: Mapping[str, Any]) -> HookEvent:
+def _event_from(
+    spec: Mapping[str, Any],
+    *,
+    session_id: str | None = None,
+    project_id: str | None = None,
+    cwd: str | None = None,
+) -> HookEvent:
+    """Build a case event; with no keyword the event carries no platform session or cwd.
+
+    ``session_id`` is written as ``_platform_session_id`` metadata, the key the effects read
+    the platform session from; ``project_id`` and ``cwd`` fill the event fields.
+    """
+    metadata = copy.deepcopy(dict(spec.get("metadata", {})))
+    if session_id is not None:
+        metadata["_platform_session_id"] = session_id
     return HookEvent(
         event_type=HookEventType(spec["type"]),
         session_id=SESSION_ID,
         source=SessionSource(spec.get("source", "claude")),
         timestamp=FIXED_TIMESTAMP,
         data=copy.deepcopy(dict(spec.get("data", {}))),
-        metadata=copy.deepcopy(dict(spec.get("metadata", {}))),
+        metadata=metadata,
+        cwd=cwd,
+        project_id=project_id,
     )
 
 
@@ -207,7 +227,8 @@ def _hub_database() -> Iterator[PostgresHubDatabase]:
 
 def _seed_rules(db: PostgresHubDatabase, rules: list[Mapping[str, Any]]) -> None:
     manager = RuleDefinitionManager(db)
-    for rule in rules:
+    for raw_rule in rules:
+        rule = rules_engine_seams._expand_placeholders(raw_rule)
         body = {
             key: value for key, value in rule.items() if key not in ROW_KEYS and key != "corrupt"
         }
@@ -249,6 +270,54 @@ class _Recorder:
         self.failing = failing
         self.effect_log: list[dict[str, Any]] = []
         self.audit_records: list[dict[str, Any]] = []
+        # Names of the rules whose effects reached the event-match check, so a rule the
+        # group check skipped is told apart from one whose condition was false.
+        self.rules_reached: set[str] = set()
+        self._effect_owner: dict[int, str] = {}
+
+    def rule_loop_pass_wrapper(self, original: Callable[..., Any]) -> Callable[..., Any]:
+        async def wrapper(
+            owner: Any,
+            rules: Any,
+            evaluation: Any,
+            bridge: Any,
+            *,
+            aggregate_blocks: bool,
+            block_effects_only: bool,
+        ) -> Any:
+            self._effect_owner = {
+                id(effect): row.name for row, body in rules for effect in body.resolved_effects
+            }
+            return await original(
+                owner,
+                rules,
+                evaluation,
+                bridge,
+                aggregate_blocks=aggregate_blocks,
+                block_effects_only=block_effects_only,
+            )
+
+        return wrapper
+
+    def effect_matches_wrapper(self, original: Callable[..., bool]) -> Callable[..., bool]:
+        def wrapper(owner: Any, effect: Any, event: Any) -> bool:
+            name = self._effect_owner.get(id(effect))
+            if name is not None:
+                self.rules_reached.add(name)
+            return original(owner, effect, event)
+
+        return wrapper
+
+    def run_command_wrapper(self, original: Callable[..., Any]) -> Callable[..., Any]:
+        async def wrapper(
+            owner: Any, effect: Any, row: Any, ctx: dict[str, Any], context_parts: Any
+        ) -> Any:
+            # The effect-seam contract: a run_command effect receives the pass's deadline.
+            expired = isinstance(ctx.get("_blocking_deadline"), BlockingEffectDeadline)
+            self.effect_log.append({"run_command_deadline": "expired" if expired else "none"})
+            return await original(owner, effect, row, ctx, context_parts)
+
+        return wrapper
 
     def seam_wrapper(
         self, kind: str, attr: str, original: Callable[..., Any]
@@ -299,7 +368,9 @@ class _Recorder:
         return wrapper
 
 
-def _patched_recorder(recorder: _Recorder, stack: contextlib.ExitStack) -> None:
+def _patched_recorder(
+    recorder: _Recorder, stack: contextlib.ExitStack, *, rtk_probe: RtkProbe | None = None
+) -> None:
     for kind, (owner, attr) in seam_registry().items():
         if kind == "rule_allow_audit":
             continue
@@ -321,8 +392,40 @@ def _patched_recorder(recorder: _Recorder, stack: contextlib.ExitStack) -> None:
             recorder.apply_effect_wrapper(EffectsMixin._apply_effect),
         )
     )
-    # The rtk binary is machine-specific. Pinning it unavailable keeps the corpus portable.
-    stack.enter_context(mock.patch.object(proxy_hooks, "resolve_rtk", return_value=None))
+    stack.enter_context(
+        mock.patch.object(
+            EvaluationMixin,
+            "_run_rule_loop_pass",
+            recorder.rule_loop_pass_wrapper(EvaluationMixin._run_rule_loop_pass),
+        )
+    )
+    stack.enter_context(
+        mock.patch.object(
+            EffectsMixin,
+            "_effect_matches_event",
+            recorder.effect_matches_wrapper(EffectsMixin._effect_matches_event),
+        )
+    )
+    stack.enter_context(
+        mock.patch.object(
+            RunCommandEffectsMixin,
+            "_apply_run_command",
+            recorder.run_command_wrapper(RunCommandEffectsMixin._apply_run_command),
+        )
+    )
+    # The rtk binary is machine-specific. A case pins it unavailable, or opts into the fake.
+    stack.enter_context(mock.patch.object(proxy_hooks, "resolve_rtk", return_value=rtk_probe))
+
+
+def _rtk_probe(case: Mapping[str, Any], stack: contextlib.ExitStack) -> RtkProbe | None:
+    """The fake RTK probe a case opts into with ``proxy``, written to a temp directory."""
+    proxy = case.get("proxy")
+    if proxy is None:
+        return None
+    if proxy != {"rtk": rules_engine_seams.RTK_FAKE}:
+        raise ValueError(f"{case.get('id')}: unknown proxy {proxy!r}")
+    directory = stack.enter_context(tempfile.TemporaryDirectory())
+    return rules_engine_seams._fake_rtk_probe(Path(directory))
 
 
 async def _fake_mcp_dispatcher(
@@ -400,9 +503,15 @@ async def _run_tool_result_offload(db: PostgresHubDatabase, spec: Mapping[str, A
     )
 
 
+async def _run_inline_command(db: PostgresHubDatabase, spec: Mapping[str, Any]) -> Any:
+    """Drive one seeded run_command effect with a live event (rules_engine_seams)."""
+    return await rules_engine_seams._run_inline_command(db, spec, event_from=_event_from)
+
+
 CALLERS: dict[str, Callable[[PostgresHubDatabase, Mapping[str, Any]], Awaitable[Any]]] = {
     "background_delivery": _run_background_delivery,
     "tool_result_offload": _run_tool_result_offload,
+    "inline_run_command": _run_inline_command,
 }
 
 
@@ -422,8 +531,11 @@ def _observe_caller(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[
     recorder = _Recorder(set(case.get("seam_failures", [])))
     caller = CALLERS[str(case["caller"])]
     with _hub_database() as db:
+        rules_seed.apply_case_seed(db, case.get("seed"))
+        if case.get("rules"):
+            _seed_rules(db, case["rules"])
         with contextlib.ExitStack() as stack:
-            _patched_recorder(recorder, stack)
+            _patched_recorder(recorder, stack, rtk_probe=_rtk_probe(case, stack))
             returned, error = asyncio.run(_guarded_call(caller, db, case["input"]))
     if error is not None:
         recorder.effect_log.append({"raised": error})
@@ -440,8 +552,15 @@ def _observe_caller(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[
 
 
 def skipped_groups(rules: list[Mapping[str, Any]], reached: set[str]) -> list[str]:
-    """Return the sorted groups the engine skipped, given the names of the rules it reached."""
-    return sorted({rule["group"] for rule in rules if "group" in rule} - reached)
+    """Return the sorted groups the engine skipped, given the names of the rules it reached.
+
+    A group is skipped when it has a member and no member reached the event-match check.
+    """
+    members: dict[str, set[str]] = {}
+    for rule in rules:
+        if "group" in rule:
+            members.setdefault(str(rule["group"]), set()).add(str(rule["name"]))
+    return sorted(group for group, names in members.items() if not names & reached)
 
 
 def _observe(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -450,9 +569,10 @@ def _observe(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, An
         return _observe_caller(case)
     recorder = _Recorder(set(case.get("seam_failures", [])))
     with _hub_database() as db:
+        rules_seed.apply_case_seed(db, case.get("seed"))
         _seed_rules(db, case["rules"])
         with contextlib.ExitStack() as stack:
-            _patched_recorder(recorder, stack)
+            _patched_recorder(recorder, stack, rtk_probe=_rtk_probe(case, stack))
             response, initial, variables, error = asyncio.run(_run_events(db, case, recorder))
     if error is not None:
         recorder.effect_log.append({"raised": error})
@@ -475,8 +595,7 @@ def _observe(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, An
     }
     if deletions:
         expect[EAGER_VARIABLE_DELETIONS_KEY] = deletions
-    evaluated = {record["rule"] for record in recorder.audit_records}
-    skipped = skipped_groups(case["rules"], evaluated)
+    skipped = skipped_groups(case["rules"], recorder.rules_reached)
     if skipped:
         expect["skipped_groups"] = skipped
     return expect, recorder.effect_log

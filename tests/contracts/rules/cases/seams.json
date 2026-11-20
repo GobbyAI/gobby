@@ -398,6 +398,7 @@
     {
       "id": "synthetic-seam-fail-inter-session-messages",
       "kind": "seam_caller",
+      "posix_only": true,
       "provenance": "synthetic",
       "scenario_ids": [
         "S-SEAM-FAIL-INTER-SESSION-MESSAGES"

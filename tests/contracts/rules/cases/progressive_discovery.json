@@ -10,17 +10,29 @@
       "family": null,
       "observer": null,
       "transition": null,
+      "engine_skip_group": "progressive-discovery",
       "rules": [
         {
           "name": "synthetic-discovery-group",
           "event": "before_tool",
+          "group": "progressive-discovery",
           "effects": [
             {
               "type": "observe",
               "message": "discovery"
             }
-          ],
-          "group": "progressive-discovery"
+          ]
+        },
+        {
+          "name": "synthetic-other-grouped",
+          "event": "before_tool",
+          "group": "synthetic-other-group",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "other group"
+            }
+          ]
         },
         {
           "name": "synthetic-ungrouped",
@@ -59,6 +71,12 @@
           "_observations": [
             {
               "category": "general",
+              "message": "other group",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-other-grouped"
+            },
+            {
+              "category": "general",
               "message": "ungrouped",
               "timestamp": "<volatile>",
               "rule": "synthetic-ungrouped"
@@ -78,7 +96,17 @@
           {
             "effect": "observe",
             "delivery": "eager",
+            "rule": "synthetic-other-grouped"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
             "rule": "synthetic-ungrouped"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
           },
           {
             "write": "rule_eval",
@@ -87,6 +115,11 @@
           }
         ],
         "audit_records": [
+          {
+            "rule": "synthetic-other-grouped",
+            "result": "allow",
+            "event": "before_tool"
+          },
           {
             "rule": "synthetic-ungrouped",
             "result": "allow",
@@ -100,6 +133,451 @@
       }
     },
     {
+      "id": "synthetic-cli-internal-before-absent",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "engine_skip_group": "progressive-discovery",
+      "pairs_with": "synthetic-cli-internal-before",
+      "rules": [
+        {
+          "name": "synthetic-discovery-group",
+          "event": "before_tool",
+          "group": "progressive-discovery",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "discovery"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-other-grouped",
+          "event": "before_tool",
+          "group": "synthetic-other-group",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "other group"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-ungrouped",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "ungrouped"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_observations": [
+            {
+              "category": "general",
+              "message": "discovery",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-discovery-group"
+            },
+            {
+              "category": "general",
+              "message": "other group",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-other-grouped"
+            },
+            {
+              "category": "general",
+              "message": "ungrouped",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-ungrouped"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-discovery-group"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-other-grouped"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-ungrouped"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-discovery-group",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-other-grouped",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-ungrouped",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-cli-internal-before-false",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "engine_skip_group": "progressive-discovery",
+      "pairs_with": "synthetic-cli-internal-before",
+      "rules": [
+        {
+          "name": "synthetic-discovery-group",
+          "event": "before_tool",
+          "group": "progressive-discovery",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "discovery"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-other-grouped",
+          "event": "before_tool",
+          "group": "synthetic-other-group",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "other group"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-ungrouped",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "ungrouped"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {
+          "_cli_internal_request": false
+        }
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_observations": [
+            {
+              "category": "general",
+              "message": "discovery",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-discovery-group"
+            },
+            {
+              "category": "general",
+              "message": "other group",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-other-grouped"
+            },
+            {
+              "category": "general",
+              "message": "ungrouped",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-ungrouped"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-discovery-group"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-other-grouped"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-ungrouped"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-discovery-group",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-other-grouped",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-ungrouped",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-cli-internal-before-string",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "engine_skip_group": "progressive-discovery",
+      "pairs_with": "synthetic-cli-internal-before",
+      "rules": [
+        {
+          "name": "synthetic-discovery-group",
+          "event": "before_tool",
+          "group": "progressive-discovery",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "discovery"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-other-grouped",
+          "event": "before_tool",
+          "group": "synthetic-other-group",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "other group"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-ungrouped",
+          "event": "before_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "ungrouped"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {
+          "_cli_internal_request": "true"
+        }
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "_observations": [
+            {
+              "category": "general",
+              "message": "discovery",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-discovery-group"
+            },
+            {
+              "category": "general",
+              "message": "other group",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-other-grouped"
+            },
+            {
+              "category": "general",
+              "message": "ungrouped",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-ungrouped"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-discovery-group"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-other-grouped"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-ungrouped"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-discovery-group",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-other-grouped",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-ungrouped",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
       "id": "synthetic-cli-internal-after",
       "kind": "rule_pass",
       "provenance": "synthetic",
@@ -109,17 +587,29 @@
       "family": null,
       "observer": null,
       "transition": null,
+      "engine_skip_group": "progressive-discovery",
       "rules": [
         {
           "name": "synthetic-discovery-group-after",
           "event": "after_tool",
+          "group": "progressive-discovery",
           "effects": [
             {
               "type": "observe",
               "message": "discovery"
             }
-          ],
-          "group": "progressive-discovery"
+          ]
+        },
+        {
+          "name": "synthetic-other-grouped-after",
+          "event": "after_tool",
+          "group": "synthetic-other-group",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "other group"
+            }
+          ]
         },
         {
           "name": "synthetic-ungrouped-after",
@@ -165,6 +655,12 @@
           "_observations": [
             {
               "category": "general",
+              "message": "other group",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-other-grouped-after"
+            },
+            {
+              "category": "general",
               "message": "ungrouped",
               "timestamp": "<volatile>",
               "rule": "synthetic-ungrouped-after"
@@ -184,7 +680,17 @@
           {
             "effect": "observe",
             "delivery": "eager",
+            "rule": "synthetic-other-grouped-after"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
             "rule": "synthetic-ungrouped-after"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
           },
           {
             "write": "rule_eval",
@@ -193,6 +699,11 @@
           }
         ],
         "audit_records": [
+          {
+            "rule": "synthetic-other-grouped-after",
+            "result": "allow",
+            "event": "after_tool"
+          },
           {
             "rule": "synthetic-ungrouped-after",
             "result": "allow",
@@ -203,6 +714,478 @@
         "skipped_groups": [
           "progressive-discovery"
         ]
+      }
+    },
+    {
+      "id": "synthetic-cli-internal-after-absent",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "engine_skip_group": "progressive-discovery",
+      "pairs_with": "synthetic-cli-internal-after",
+      "rules": [
+        {
+          "name": "synthetic-discovery-group-after",
+          "event": "after_tool",
+          "group": "progressive-discovery",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "discovery"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-other-grouped-after",
+          "event": "after_tool",
+          "group": "synthetic-other-group",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "other group"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-ungrouped-after",
+          "event": "after_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "ungrouped"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "after_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "tool_block_pending": false,
+          "_last_blocked_tool": "",
+          "_last_blocked_rule_name": "",
+          "_last_blocked_reason": "",
+          "_last_blocked_recovery_conditions": [],
+          "_last_blocked_batch_counted": false,
+          "consecutive_tool_blocks": 0,
+          "_observations": [
+            {
+              "category": "general",
+              "message": "discovery",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-discovery-group-after"
+            },
+            {
+              "category": "general",
+              "message": "other group",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-other-grouped-after"
+            },
+            {
+              "category": "general",
+              "message": "ungrouped",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-ungrouped-after"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-discovery-group-after"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-other-grouped-after"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-ungrouped-after"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-discovery-group-after",
+            "result": "allow",
+            "event": "after_tool"
+          },
+          {
+            "rule": "synthetic-other-grouped-after",
+            "result": "allow",
+            "event": "after_tool"
+          },
+          {
+            "rule": "synthetic-ungrouped-after",
+            "result": "allow",
+            "event": "after_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-cli-internal-after-false",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "engine_skip_group": "progressive-discovery",
+      "pairs_with": "synthetic-cli-internal-after",
+      "rules": [
+        {
+          "name": "synthetic-discovery-group-after",
+          "event": "after_tool",
+          "group": "progressive-discovery",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "discovery"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-other-grouped-after",
+          "event": "after_tool",
+          "group": "synthetic-other-group",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "other group"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-ungrouped-after",
+          "event": "after_tool",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "ungrouped"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "after_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {
+          "_cli_internal_request": false
+        }
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "tool_block_pending": false,
+          "_last_blocked_tool": "",
+          "_last_blocked_rule_name": "",
+          "_last_blocked_reason": "",
+          "_last_blocked_recovery_conditions": [],
+          "_last_blocked_batch_counted": false,
+          "consecutive_tool_blocks": 0,
+          "_observations": [
+            {
+              "category": "general",
+              "message": "discovery",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-discovery-group-after"
+            },
+            {
+              "category": "general",
+              "message": "other group",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-other-grouped-after"
+            },
+            {
+              "category": "general",
+              "message": "ungrouped",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-ungrouped-after"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "after_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-discovery-group-after"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-other-grouped-after"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-ungrouped-after"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-discovery-group-after",
+            "result": "allow",
+            "event": "after_tool"
+          },
+          {
+            "rule": "synthetic-other-grouped-after",
+            "result": "allow",
+            "event": "after_tool"
+          },
+          {
+            "rule": "synthetic-ungrouped-after",
+            "result": "allow",
+            "event": "after_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-cli-internal-turn-start",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "engine_skip_group": "progressive-discovery",
+      "rules": [
+        {
+          "name": "synthetic-discovery-group-agent",
+          "event": "before_agent",
+          "group": "progressive-discovery",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "discovery"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-other-grouped-agent",
+          "event": "before_agent",
+          "group": "synthetic-other-group",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "other group"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-ungrouped-agent",
+          "event": "before_agent",
+          "effects": [
+            {
+              "type": "observe",
+              "message": "ungrouped"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_agent",
+        "source": "claude",
+        "data": {
+          "prompt": "synthetic prompt"
+        },
+        "metadata": {
+          "_cli_internal_request": true
+        }
+      },
+      "seam_failures": [],
+      "variables": {
+        "servers_listed": true
+      },
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "consecutive_tool_blocks": 0,
+          "_last_blocked_tool": "",
+          "_last_blocked_rule_name": "",
+          "_last_blocked_reason": "",
+          "_last_blocked_recovery_conditions": [],
+          "_last_blocked_batch_counted": false,
+          "tool_block_pending": false,
+          "stop_attempts": 0,
+          "_block_reasons_shown": [],
+          "_observations": [
+            {
+              "category": "general",
+              "message": "discovery",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-discovery-group-agent"
+            },
+            {
+              "category": "general",
+              "message": "other group",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-other-grouped-agent"
+            },
+            {
+              "category": "general",
+              "message": "ungrouped",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-ungrouped-agent"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_agent"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-discovery-group-agent"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-other-grouped-agent"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-ungrouped-agent"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-discovery-group-agent",
+            "result": "allow",
+            "event": "before_agent"
+          },
+          {
+            "rule": "synthetic-other-grouped-agent",
+            "result": "allow",
+            "event": "before_agent"
+          },
+          {
+            "rule": "synthetic-ungrouped-agent",
+            "result": "allow",
+            "event": "before_agent"
+          }
+        ],
+        "response": {}
       }
     }
   ]

@@ -19,6 +19,7 @@ import sys
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
 
@@ -826,6 +827,23 @@ def _no_process(*args: Any, **kwargs: Any) -> Any:
     raise _ProcessStarted("a budget case started a process")
 
 
+def _without_process(caller: Any) -> Any:
+    """Run the seam caller with process creation raising the sentinel.
+
+    The sentinel covers the caller only: the replay harness builds each case's schema with
+    the native schema tool, a process that is not the case's.
+    """
+
+    async def guarded(db: Any, spec: Any) -> Any:
+        with (
+            mock.patch.object(asyncio, "create_subprocess_exec", _no_process),
+            mock.patch.object(subprocess, "Popen", _no_process),
+        ):
+            return await caller(db, spec)
+
+    return guarded
+
+
 def _inline_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [c for c in cases if c.get("kind") == CALLER_KIND and c.get("caller") == INLINE_CALLER]
 
@@ -842,8 +860,8 @@ def test_budget_cases_run_no_process_and_no_real_clock(monkeypatch: pytest.Monke
         f"at least {MIN_BOUNDARY_CASES} are required"
     )
     with monkeypatch.context() as patch:
-        patch.setattr(asyncio, "create_subprocess_exec", _no_process)
-        patch.setattr(subprocess, "Popen", _no_process)
+        caller = rules_recorder.CALLERS[INLINE_CALLER]
+        patch.setitem(rules_recorder.CALLERS, INLINE_CALLER, _without_process(caller))
         for case in boundary:
             replay = rules_corpus.replay_case(copy.deepcopy(case))
             assert replay == case["expect"], f"{case['id']}: replay without a process differs"

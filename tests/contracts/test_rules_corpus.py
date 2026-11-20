@@ -688,16 +688,8 @@ def test_corpus_has_required_scenarios() -> None:
 
 
 def _needs_posix_shell(case: dict[str, Any]) -> bool:
-    """True for a case marked ``posix_only``, or a seam caller whose command is a POSIX shell."""
-    if case.get("posix_only") is True:
-        return True
-    command = case.get("input", {}).get("command")
-    return (
-        case.get("kind") == rules_recorder.CALLER_KIND
-        and isinstance(command, list)
-        and bool(command)
-        and str(command[0]).startswith("/bin/")
-    )
+    """True for a case marked ``posix_only``: the marker is the only replay skip."""
+    return case.get("posix_only") is True
 
 
 def test_python_engine_replays_corpus() -> None:

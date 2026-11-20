@@ -10,36 +10,71 @@
       "family": null,
       "observer": null,
       "transition": null,
+      "seed": {
+        "agent_definitions": [
+          {
+            "name": "synthetic-scope-agent",
+            "body": {
+              "workflows": {
+                "rule_selectors": {
+                  "include": [
+                    "*"
+                  ]
+                }
+              },
+              "prompts": {
+                "agent": "Synthetic corpus agent."
+              }
+            }
+          }
+        ]
+      },
       "rules": [
         {
           "name": "synthetic-in-scope",
           "event": "before_tool",
+          "mandatory": true,
+          "agent_scope": [
+            "synthetic-scope-agent"
+          ],
           "effects": [
             {
               "type": "inject_context",
               "template": "in scope",
               "delivery": "eager"
             }
-          ],
-          "agent_scope": [
-            "synthetic-agent"
-          ],
-          "mandatory": true
+          ]
         },
         {
           "name": "synthetic-out-scope",
           "event": "before_tool",
+          "mandatory": true,
+          "agent_scope": [
+            "synthetic-other-agent"
+          ],
           "effects": [
             {
               "type": "inject_context",
               "template": "out of scope",
               "delivery": "eager"
             }
-          ],
+          ]
+        },
+        {
+          "name": "synthetic-excluded-scope",
+          "event": "before_tool",
+          "mandatory": true,
           "agent_scope": [
-            "synthetic-other"
+            "*",
+            "!synthetic-scope-agent"
           ],
-          "mandatory": true
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "excluded by name",
+              "delivery": "eager"
+            }
+          ]
         }
       ],
       "event": {
@@ -54,6 +89,98 @@
         "metadata": {}
       },
       "seam_failures": [],
+      "variables": {
+        "_agent_type": "synthetic-scope-agent"
+      },
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-in-scope"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-in-scope",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "in scope",
+          "context_parts": [
+            [
+              "rule:synthetic-in-scope",
+              "in scope"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "synthetic-agent-definition-missing",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-in-scope",
+          "event": "before_tool",
+          "mandatory": true,
+          "agent_scope": [
+            "synthetic-scope-agent"
+          ],
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "in scope",
+              "delivery": "eager"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "variables": {
+        "_agent_type": "synthetic-missing-agent"
+      },
       "expect": {
         "outcome_class": "block",
         "eager_variable_delta": {
@@ -65,7 +192,7 @@
           "_gobby_feedback_survey_active": false,
           "_last_blocked_tool": "Bash",
           "_last_blocked_rule_name": "unresolved-agent-definition",
-          "_last_blocked_reason": "Rule enforced by Gobby: [unresolved-agent-definition]\nThis session's agent definition 'synthetic-agent' is missing or disabled, so it has no tool authority. Restore or re-enable the definition from the web UI or another session, or reassign this seat. Ending the turn stays allowed.",
+          "_last_blocked_reason": "Rule enforced by Gobby: [unresolved-agent-definition]\nThis session's agent definition 'synthetic-missing-agent' is missing or disabled, so it has no tool authority. Restore or re-enable the definition from the web UI or another session, or reassign this seat. Ending the turn stays allowed.",
           "_last_blocked_recovery_conditions": [],
           "_block_reasons_shown": [
             "unresolved-agent-definition:<token>"
@@ -90,11 +217,8 @@
         "audit_records": [],
         "response": {
           "decision": "block",
-          "reason": "Rule enforced by Gobby: [unresolved-agent-definition]\nThis session's agent definition 'synthetic-agent' is missing or disabled, so it has no tool authority. Restore or re-enable the definition from the web UI or another session, or reassign this seat. Ending the turn stays allowed."
+          "reason": "Rule enforced by Gobby: [unresolved-agent-definition]\nThis session's agent definition 'synthetic-missing-agent' is missing or disabled, so it has no tool authority. Restore or re-enable the definition from the web UI or another session, or reassign this seat. Ending the turn stays allowed."
         }
-      },
-      "variables": {
-        "_agent_type": "synthetic-agent"
       }
     },
     {
@@ -145,6 +269,9 @@
         "metadata": {}
       },
       "seam_failures": [],
+      "variables": {
+        "_audience": "interactive"
+      },
       "expect": {
         "outcome_class": "allow",
         "eager_variable_delta": {
@@ -192,13 +319,220 @@
             ]
           ]
         }
-      },
-      "variables": {
-        "_audience": "interactive"
       }
     },
     {
-      "id": "synthetic-active-name",
+      "id": "synthetic-active-name-selected",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-ACTIVE-NAME"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "seed": {
+        "agent_definitions": [
+          {
+            "name": "synthetic-selector-agent",
+            "body": {
+              "workflows": {
+                "rules": [
+                  "synthetic-explicit"
+                ],
+                "rule_selectors": {
+                  "include": [
+                    "tag:synthetic-selected"
+                  ],
+                  "exclude": [
+                    "name:synthetic-excluded-*"
+                  ]
+                }
+              },
+              "prompts": {
+                "agent": "Synthetic corpus agent."
+              }
+            }
+          }
+        ]
+      },
+      "rules": [
+        {
+          "name": "synthetic-explicit",
+          "event": "before_tool",
+          "tags": [
+            "synthetic-unlisted"
+          ],
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "explicit",
+              "delivery": "eager"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-selected",
+          "event": "before_tool",
+          "tags": [
+            "synthetic-selected"
+          ],
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "selected",
+              "delivery": "eager"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-excluded-selected",
+          "event": "before_tool",
+          "tags": [
+            "synthetic-selected"
+          ],
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "excluded",
+              "delivery": "eager"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-default-only",
+          "event": "before_tool",
+          "tags": [
+            "default"
+          ],
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "baseline only",
+              "delivery": "eager"
+            }
+          ]
+        },
+        {
+          "name": "synthetic-mandatory-any",
+          "event": "before_tool",
+          "tags": [
+            "synthetic-unlisted"
+          ],
+          "mandatory": true,
+          "effects": [
+            {
+              "type": "inject_context",
+              "template": "mandatory",
+              "delivery": "eager"
+            }
+          ]
+        }
+      ],
+      "event": {
+        "type": "before_tool",
+        "source": "claude",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "echo hi"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "variables": {
+        "_agent_type": "synthetic-selector-agent"
+      },
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-explicit"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-mandatory-any"
+          },
+          {
+            "effect": "inject_context",
+            "delivery": "eager",
+            "rule": "synthetic-selected"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-explicit",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-mandatory-any",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-selected",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {
+          "context": "explicit\n\nmandatory\n\nselected",
+          "context_parts": [
+            [
+              "rule:synthetic-explicit",
+              "explicit"
+            ],
+            [
+              "rule:synthetic-mandatory-any",
+              "mandatory"
+            ],
+            [
+              "rule:synthetic-selected",
+              "selected"
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "id": "synthetic-active-baseline",
       "kind": "rule_pass",
       "provenance": "synthetic",
       "scenario_ids": [

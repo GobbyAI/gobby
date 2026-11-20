@@ -21,6 +21,7 @@ from gobby.workflows.definitions import (
     RuleEffect,
 )
 from gobby.workflows.rule_validation_yaml import normalize_rule_yaml_entry
+from tests.contracts import rules_seed
 
 CORPUS_DIR = Path(__file__).resolve().parent / "rules"
 BUNDLED_RULES_DIR = (
@@ -49,6 +50,10 @@ DELIVERY_CLASSES: tuple[str, ...] = tuple(get_args(RuleEffect.model_fields["deli
 BUNDLED_TOP_LEVEL_KEYS = frozenset(
     {"rules", "version", "tags", "description", "group", "audience", "sources"}
 )
+CALLER_KIND = "seam_caller"
+INLINE_CALLER = "inline_run_command"
+# The one fake RTK a case may opt into (``proxy``); its script lives in rules_engine_seams.
+RTK_FAKE = "echo-prefix"
 _LABELLED_ID = re.compile(r"^S-(FAM|OBS)-(.+)-(?:ALLOW|BLOCK|SEAMERR|OBSERVED|NOTOBSERVED)$")
 
 
@@ -101,6 +106,52 @@ def validate_case(case: dict[str, Any]) -> None:
     gaps = _label_gaps(case)
     if gaps:
         raise ValueError(f"{case_id}: scenario IDs need a matching {', '.join(gaps)} label")
+    _validate_engine_path_keys(case_id, case)
+
+
+def _validate_engine_path_keys(case_id: str, case: dict[str, Any]) -> None:
+    """Refuse a malformed seed, POSIX marker, proxy opt-in, skip-group label or inline input."""
+    rules_seed.validate_seed(case_id, case.get("seed"))
+    if "posix_only" in case and not isinstance(case["posix_only"], bool):
+        raise ValueError(f"{case_id}: posix_only must be a bool, got {case['posix_only']!r}")
+    if "proxy" in case and case["proxy"] != {"rtk": RTK_FAKE}:
+        raise ValueError(f"{case_id}: proxy must be {{'rtk': {RTK_FAKE!r}}}, got {case['proxy']!r}")
+    if "engine_skip_group" in case:
+        label = case["engine_skip_group"]
+        if not isinstance(label, str) or not label:
+            raise ValueError(f"{case_id}: engine_skip_group must be a non-empty string")
+    if "pairs_with" in case and not isinstance(case["pairs_with"], str):
+        raise ValueError(f"{case_id}: pairs_with must name a case id")
+    spec = case.get("input")
+    spec = spec if isinstance(spec, dict) else {}
+    inline = case.get("kind") == CALLER_KIND and case.get("caller") == INLINE_CALLER
+    if inline:
+        seed = case.get("seed")
+        if not isinstance(seed, dict) or seed.get("session") is not True:
+            raise ValueError(f"{case_id}: an {INLINE_CALLER} case needs seed session true")
+    if "command_boundary" in spec:
+        if not inline:
+            raise ValueError(f"{case_id}: command_boundary is for {INLINE_CALLER} cases only")
+        boundary = spec["command_boundary"]
+        duration = boundary.get("duration") if isinstance(boundary, dict) else None
+        context = boundary.get("context") if isinstance(boundary, dict) else None
+        if (
+            not isinstance(boundary, dict)
+            or set(boundary) != {"duration", "context"}
+            or isinstance(duration, bool)
+            or not isinstance(duration, int | float)
+            or duration < 0
+            or not isinstance(context, str)
+            or not context
+        ):
+            raise ValueError(
+                f"{case_id}: command_boundary must be {{'duration': number >= 0, "
+                f"'context': non-empty str}}, got {boundary!r}"
+            )
+        if "deadline" in spec:
+            raise ValueError(f"{case_id}: give deadline_remaining or deadline, not both")
+    elif "deadline_remaining" in spec:
+        raise ValueError(f"{case_id}: deadline_remaining needs an input.command_boundary")
 
 
 def load_corpus(corpus_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -142,6 +193,10 @@ def load_corpus(corpus_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]
                 raise ValueError(f"duplicate case id {case['id']!r}")
             seen.add(case["id"])
             cases.append(case)
+    for case in cases:
+        partner = case.get("pairs_with")
+        if partner is not None and partner not in seen:
+            raise ValueError(f"{case['id']}: pairs_with names no loaded case: {partner!r}")
     return manifest, cases
 
 
