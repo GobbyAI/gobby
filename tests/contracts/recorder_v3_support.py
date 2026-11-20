@@ -44,7 +44,10 @@ class RecorderError(RuntimeError):
 
 
 class ProviderEdgeLog(Protocol):
-    """A provider edge's arrival log: every arrival since the last clear, in arrival order."""
+    """A provider edge's arrival log: every arrival since the last clear, in arrival order.
+
+    Each ``clear`` ends one generation and opens the next; the recorder makes one per case.
+    """
 
     def hits(self) -> list[dict[str, Any]]: ...
 
@@ -212,8 +215,10 @@ class ProviderEdgeCapture:
     An arrival the edge could not decode keeps its ``DECODE_ERROR_KEY`` marker, so it differs
     from a well-formed request that sends no semantic field. A request still in flight keeps its
     ``PENDING_KEY`` marker, so it differs from any recording and is refused by the recorder.
-    Entering the capture clears the edge log, which ends the edge's previous generation, so the
-    window holds only the requests that begin inside it. Headers and raw bodies are never kept.
+    A capture is a host-filtered view of the edge's current generation: entering it does not
+    clear the edge. The case boundary is the one ``clear`` the recorder makes per edge per case,
+    before any view of that edge exists, so every view of one edge in a case shares that case's
+    generation and reports only its own hosts. Headers and raw bodies are never kept.
     """
 
     def __init__(self, edge: ProviderEdgeLog, hosts: Sequence[str]) -> None:
@@ -221,7 +226,7 @@ class ProviderEdgeCapture:
         self._hosts = frozenset(hosts)
 
     def __enter__(self) -> ProviderEdgeCapture:
-        self._edge.clear()
+        """Begin viewing the edge's current generation; the edge log is left as it is."""
         return self
 
     def __exit__(self, *exc: object) -> None:

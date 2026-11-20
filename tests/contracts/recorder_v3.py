@@ -788,6 +788,12 @@ def _run_case(
             for index, effect in enumerate(effects)
             if effect["channel"] == "files_home_write"
         }
+        if any(effect["channel"] == "provider_edge" for effect in effects):
+            if edge is None:
+                raise RecorderError("a provider_edge side effect needs an edge")
+            # The case boundary: the edge's generation opens once per case, before any capture
+            # view of it exists and before the case's request is sent, and every view shares it.
+            edge.clear()
         with ExitStack() as stack:
             captures: dict[int, Any] = {}
             for index, effect in enumerate(effects):
@@ -805,8 +811,7 @@ def _run_case(
                         )
                     )
                 elif channel == "provider_edge":
-                    if edge is None:
-                        raise RecorderError("a provider_edge side effect needs an edge")
+                    assert edge is not None, "the case boundary above requires the edge"
                     captures[index] = stack.enter_context(
                         ProviderEdgeCapture(edge, effect["match"]["hosts"])
                     )

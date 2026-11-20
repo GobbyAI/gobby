@@ -10,13 +10,14 @@ its first byte, when the edge appends a pending hit (the host, placeholder metho
 semantic fields and a ``pending`` marker) tagged with the log's generation. When the request
 completes, the edge replaces that same hit with host, method, path and the sanitized
 ``semantic`` fields (``http_semantics``): the destination, the message text, the attachment
-filename and the SHA-256 of the uploaded bytes. A completion whose generation a ``clear`` has
-since ended is discarded, so the window it began in saw it as pending and no later window sees
-it. Headers and raw bodies are never logged, so no request credential reaches the log. A request
-whose head the edge cannot read (including a peer that ends the stream inside it), whose target
-it cannot parse, whose body it cannot read or whose payload it cannot decode completes with empty
-semantic fields and a ``decode_error`` marker naming the stage and the error type, never the
-error message. What such a request never revealed, and a target that cannot be parsed, is logged
+filename and the SHA-256 of the uploaded bytes. Every ``clear`` ends the generation, and the
+recorder clears an edge once per case, so a generation is one case's window. A completion whose
+generation a ``clear`` has since ended is discarded, so the window it began in saw it as pending
+and no later window sees it. Headers and raw bodies are never logged, so no request credential
+reaches the log. A request whose head the edge cannot read (including a peer that ends the
+stream inside it), whose target it cannot parse, whose body it cannot read or whose payload it
+cannot decode completes with empty semantic fields and a ``decode_error`` marker naming the
+stage and the error type, never the error message. What such a request never revealed, and a target that cannot be parsed, is logged
 as a fixed placeholder. A tunnel that carries no byte of a request, fresh or reused, logs
 nothing, and the CONNECT itself is not logged. A Telegram bot token in a path is replaced before
 the log keeps the path. Any host or path no script names answers HTTP 200 with a generic JSON
@@ -501,14 +502,14 @@ class FakeEdge:
     def clear(self) -> None:
         """End the current generation and empty the log, atomically under the log lock.
 
-        A request that began before the clear completes into nothing. A clear of a log that no
-        request has entered keeps the generation, so several captures that enter one after
-        another for the same case share one generation.
+        Every clear is a boundary, a clear of an empty log included: a request that began before
+        it, whether or not its pending hit is still in the log, completes into nothing. The
+        recorder clears an edge once per case, before any capture view of it exists, so every
+        view of the case shares that one generation.
         """
         with self._hits_lock:
-            if self._hits:
-                self._generation += 1
-                self._hits = []
+            self._generation += 1
+            self._hits = []
 
     def _begin(self, host: str) -> _Slot:
         """Append the pending hit of a request whose first byte has arrived, in this generation."""

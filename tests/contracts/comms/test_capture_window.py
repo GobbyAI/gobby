@@ -301,6 +301,7 @@ def test_a_request_in_flight_is_pending_in_its_window_and_absent_from_the_next(
         f"the window of a request held in flight drained {drained}"
     )
     assert outcome == DIFF, f"a refused send with a request in flight classifies {outcome}"
+    harness.edge.clear()
     with ProviderEdgeCapture(harness.edge, _hosts(case)) as later:
         release.set()
         assert peer.finished.wait(GATE_SECONDS), "the released peer never completed"
@@ -453,6 +454,7 @@ def test_a_tunnel_with_no_request_byte_leaves_the_capture_empty(
     else:
         harness.peer(SLACK_HOST, *held)
     assert ready.wait(GATE_SECONDS), f"the {tunnel} tunnel never opened"
+    harness.edge.clear()
     with ProviderEdgeCapture(harness.edge, [SLACK_HOST]) as capture:
         drained = capture.drain()
         release.set()
