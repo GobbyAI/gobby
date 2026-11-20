@@ -47,7 +47,7 @@ impl BackendSupervisor {
                 _ = shutdown_signal(shutdown) => return HandshakeStep::Shutdown,
                 _ = heartbeats.tick() => {
                     if let Err(error) = self.heartbeat().await {
-                        eprintln!("backend lease lost: {error:#}");
+                        tracing::warn!(target: "gobby.lifecycle", "backend lease lost: {error:#}");
                         return HandshakeStep::LeaseLost;
                     }
                 }

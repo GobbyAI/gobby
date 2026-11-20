@@ -37,14 +37,7 @@ mod handshake;
 
 use handshake::HandshakeStep;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BackendStatus {
-    Standby,
-    Starting { pid: u32 },
-    Backoff { delay: Duration },
-    Refused { reason: String },
-    Stopped,
-}
+pub use gobby_core::family::BackendStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupervisorExit {
@@ -114,7 +107,7 @@ impl BackendConfig {
             exit_grace: Duration::from_secs(60),
             report_interval: Duration::from_secs(60),
             lease_lock_limit: Duration::from_secs(120),
-            reporter: Arc::new(|line: &str| eprintln!("{line}")),
+            reporter: Arc::new(|line: &str| crate::logging::raw_stderr(line)),
         })
     }
 }
@@ -190,6 +183,11 @@ impl BackendSupervisor {
         self.state.subscribe()
     }
 
+    /// Publishes a sticky refusal without running: a start failure no relaunch clears.
+    pub(crate) fn refuse(&self, reason: String) {
+        self.state.send_replace(BackendStatus::Refused { reason });
+    }
+
     /// The supervisor's current wait reason, or None when it is not waiting.
     pub fn subscribe_wait(&self) -> watch::Receiver<Option<String>> {
         self.wait.subscribe()
@@ -262,7 +260,7 @@ impl BackendSupervisor {
         match result {
             Err(error) => {
                 if let Err(release_error) = release {
-                    eprintln!("lease release: {release_error:#}");
+                    tracing::warn!(target: "gobby.lifecycle", "lease release: {release_error:#}");
                 }
                 Err(error)
             }
@@ -291,7 +289,7 @@ impl BackendSupervisor {
                 return Ok(SupervisorExit::Stopped);
             }
             if let Err(error) = self.heartbeat().await {
-                eprintln!("backend lease lost: {error:#}");
+                tracing::warn!(target: "gobby.lifecycle", "backend lease lost: {error:#}");
                 return Ok(SupervisorExit::LeaseLost);
             }
             markers.before_spawn().await?;
@@ -356,7 +354,7 @@ impl BackendSupervisor {
                     status = backend.child.wait() => break (status?, false),
                     _ = heartbeats.tick() => {
                         if let Err(error) = self.heartbeat().await {
-                            eprintln!("backend lease lost: {error:#}");
+                            tracing::warn!(target: "gobby.lifecycle", "backend lease lost: {error:#}");
                             backend.drain(self.config.drain_timeout).await?;
                             self.state.send_replace(BackendStatus::Stopped);
                             return Ok(SupervisorExit::LeaseLost);
@@ -448,7 +446,7 @@ impl BackendSupervisor {
                 _ = sleep_until(deadline) => return None,
                 _ = heartbeats.tick() => {
                     if let Err(error) = self.heartbeat().await {
-                        eprintln!("backend lease lost: {error:#}");
+                        tracing::warn!(target: "gobby.lifecycle", "backend lease lost: {error:#}");
                         return Some(SupervisorExit::LeaseLost);
                     }
                 }
@@ -816,8 +814,12 @@ impl BackendChild {
     async fn finish_stderr(&mut self) {
         match timeout(Duration::from_millis(250), &mut self.stderr).await {
             Ok(Ok(Ok(()))) => {}
-            Ok(Ok(Err(error))) => eprintln!("backend stderr read: {error}"),
-            Ok(Err(error)) => eprintln!("backend stderr task: {error}"),
+            Ok(Ok(Err(error))) => {
+                tracing::warn!(target: "gobby.lifecycle", "backend stderr read: {error}");
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(target: "gobby.lifecycle", "backend stderr task: {error}");
+            }
             Err(_) => self.stderr.abort(), // A descendant may retain the output pipe.
         }
     }
@@ -869,7 +871,7 @@ impl Drop for BackendChild {
     fn drop(&mut self) {
         self.stderr.abort();
         if let Err(error) = self.kill_group() {
-            eprintln!("backend group cleanup: {error}");
+            tracing::warn!(target: "gobby.lifecycle", "backend group cleanup: {error}");
         }
     }
 }
@@ -910,7 +912,7 @@ fn signal_group(group: i32, signal: i32) -> io::Result<bool> {
 fn publish_line(line: &mut Vec<u8>, last: &watch::Sender<String>) {
     let text = String::from_utf8_lossy(line).trim().to_string();
     if !text.is_empty() {
-        eprintln!("{text}");
+        crate::logging::raw_stderr(&text);
         last.send_replace(text);
     }
     line.clear();

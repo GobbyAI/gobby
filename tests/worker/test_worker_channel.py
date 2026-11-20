@@ -13,6 +13,7 @@ import json
 import os
 import socket
 import struct
+import sys
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from unittest.mock import patch
@@ -145,6 +146,9 @@ def _serve_only(
     return serve_worker(worker)
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="a marked start needs the worker channel, which is unix-only"
+)
 @pytest.mark.parametrize("channel_kind", ["closed", "not-a-socket"])
 def test_marked_start_refuses_an_unusable_channel_descriptor_with_exit_78(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], channel_kind: str

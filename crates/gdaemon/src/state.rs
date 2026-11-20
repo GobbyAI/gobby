@@ -191,6 +191,7 @@ impl RuntimeState {
         bootstrap: HubDatabaseBootstrap,
         terminals: gobby_terminals::family::RouteLatch,
         home: std::path::PathBuf,
+        families: crate::family_start::ProcessFamilies,
     ) -> Result<()> {
         loop {
             if *shutdown.borrow() {
@@ -229,6 +230,7 @@ impl RuntimeState {
                 &terminals,
                 &home,
                 self.write_token.clone(),
+                &families,
             )
             .await?;
             *self
@@ -249,11 +251,7 @@ impl RuntimeState {
                 SupervisorExit::Refused => {
                     // Refusal is sticky and keeps the machine claim, but releases
                     // database ownership. Only a full process restart retries.
-                    while !*shutdown.borrow() {
-                        if shutdown.changed().await.is_err() {
-                            break;
-                        }
-                    }
+                    wait_for_shutdown(&mut shutdown).await;
                     return Ok(());
                 }
                 SupervisorExit::Standby
@@ -263,6 +261,20 @@ impl RuntimeState {
         }
     }
 
+    /// Holds a supervisor whose start was refused before any lease: it publishes the
+    /// sticky refusal and keeps the machine claim, starts no services, and returns at
+    /// shutdown. Only a full process restart retries.
+    pub async fn hold_refused(
+        supervisor: BackendSupervisor,
+        reason: String,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> Result<()> {
+        supervisor.refuse(reason);
+        wait_for_shutdown(&mut shutdown).await;
+        drop(supervisor);
+        Ok(())
+    }
+
     pub fn standby(&self) -> bool {
         if matches!(*self.backend.borrow(), BackendStatus::Refused { .. }) {
             return false;
@@ -270,6 +282,15 @@ impl RuntimeState {
         match &self.lease_state {
             Some(state) => *state.borrow() != LeaseState::Active,
             None => false,
+        }
+    }
+}
+
+/// Returns once `shutdown` is true or its sender is gone.
+async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
+    while !*shutdown.borrow() {
+        if shutdown.changed().await.is_err() {
+            break;
         }
     }
 }

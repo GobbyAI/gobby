@@ -12,6 +12,7 @@ use gobby_core::bootstrap::RouteBackend;
 use gobby_core::family::lifecycle::ActivationEntry;
 use gobby_core::postgres_pool::Pool;
 use gobby_core::route_family::RouteFamily;
+use gobby_runtime::RuntimeFamily;
 
 use super::FrontDoorState;
 use super::health::HealthFamily;
@@ -60,13 +61,24 @@ pub fn surfaces() -> Vec<&'static dyn RouteFamily<FrontDoorState>> {
     ]
 }
 
-/// The families the front door may route to, for a pool and a home directory. Families
-/// run in `start_rank` order, with registry order inside each rank.
+/// The families the front door may route to, for a pool and a home directory: the
+/// registry, plus the runtime family when a pool exists. Families run in `start_rank`
+/// order, with registry order inside each rank.
+///
+/// The runtime family is leaked so it lives as long as the routes, so the serve path calls
+/// this once per process and shares the one list.
 pub fn selectable(
-    _pool: Option<&Arc<Pool>>,
-    _home: &Path,
+    pool: Option<&Arc<Pool>>,
+    home: &Path,
 ) -> Vec<&'static dyn RouteFamily<FrontDoorState>> {
     let mut families = FAMILIES.to_vec();
+    if let Some(pool) = pool {
+        let runtime: &'static RuntimeFamily = Box::leak(Box::new(RuntimeFamily::new(
+            Arc::clone(pool),
+            home.to_owned(),
+        )));
+        families.push(runtime);
+    }
     families.sort_by_key(|family| family.start_rank());
     families
 }
@@ -74,8 +86,17 @@ pub fn selectable(
 /// The activation entries of `families`: each family with the backend its route resolves
 /// to, as the routing table resolves it. Surfaces are not families and are not activated.
 pub fn activation_plan(
-    _families: &[&'static dyn RouteFamily<FrontDoorState>],
-    _routes: &BTreeMap<String, RouteBackend>,
+    families: &[&'static dyn RouteFamily<FrontDoorState>],
+    routes: &BTreeMap<String, RouteBackend>,
 ) -> Vec<ActivationEntry<FrontDoorState>> {
-    Vec::new()
+    families
+        .iter()
+        .map(|&family| ActivationEntry {
+            family,
+            backend: routes
+                .get(family.name())
+                .copied()
+                .unwrap_or_else(|| family.default_backend()),
+        })
+        .collect()
 }

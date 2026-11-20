@@ -4,20 +4,29 @@
 #[path = "../tests/fixtures/host_process.rs"]
 mod host_process_fixture;
 
+use crate::family_start::{FAMILY_STOP_BUDGET, ProcessFamilies};
+use crate::front_door::FrontDoorState;
+use crate::heartbeat::HeartbeatHost;
 use anyhow::{Context, Result};
-use gobby_core::{
-    bootstrap::HubDatabaseBootstrap,
-    postgres_pool::{Pool, PoolSettings},
+use gobby_core::bootstrap::HubDatabaseBootstrap;
+use gobby_core::family::FamilyContext;
+use gobby_core::family::lifecycle::{
+    ActivationEntry, StopMode, activate_families, deactivate_families,
 };
+use gobby_core::postgres_pool::Pool;
 use gobby_terminals::family::{RouteLatch, SupervisorMode};
 use gobby_terminals::write_api::{Route, TokenSlot};
-use std::{path::Path, sync::Arc, time::Duration};
-use tokio::{sync::watch, task::JoinHandle};
+use std::{path::Path, sync::Arc};
+use tokio::{sync::watch, task::JoinHandle, time::Instant};
 
 pub(crate) struct ActiveServices {
     retention_stop: watch::Sender<bool>,
     retention: Option<JoinHandle<()>>,
     terminals: Option<gobby_terminals::family::TerminalFamily>,
+    /// The lease's family jobs, scheduled from activation until stop.
+    jobs: HeartbeatHost,
+    /// The families this lease activated, deactivated at stop.
+    activated: Vec<ActivationEntry<FrontDoorState>>,
 }
 
 impl ActiveServices {
@@ -28,11 +37,15 @@ impl ActiveServices {
             .and_then(gobby_terminals::family::TerminalFamily::route)
     }
 
+    /// Starts the lease's services: the native pools at their share, the terminal host when
+    /// this daemon owns the terminals, retention, and then the families' activation and
+    /// their jobs. A fatal activation stops what already started and fails the start.
     pub(crate) async fn start(
         bootstrap: &HubDatabaseBootstrap,
         terminals: &RouteLatch,
         home: &Path,
         token: TokenSlot,
+        families: &ProcessFamilies,
     ) -> Result<Self> {
         let mode = terminals.select(crate::front_door::routes::terminal_route(
             &bootstrap.front_door.routes,
@@ -42,64 +55,85 @@ impl ActiveServices {
             retention_stop,
             retention: None,
             terminals: None,
+            jobs: HeartbeatHost::new(),
+            activated: Vec::new(),
         };
-        let Some(url) = &bootstrap.database_url else {
-            return Ok(services);
-        };
-        let machine = gobby_core::machine::read_machine_id_from_home(home)?;
-        let pool = Pool::build(
-            url,
-            PoolSettings {
-                max_size: 8,
-                application_name: "gobby-gdaemon-active".into(),
-                acquire_timeout: Duration::from_secs(2),
-            },
-        )?;
-        if mode == SupervisorMode::Owner {
-            let options =
-                gobby_terminals::host::HostOptions::from_pool(&pool, home, machine.clone()).await?;
-            if let Some(options) = options {
-                let writes = Pool::build(
-                    url,
-                    PoolSettings {
-                        max_size: 8,
-                        application_name: "gobby-gdaemon-terminal-writes".into(),
-                        acquire_timeout: Duration::from_secs(2),
-                    },
-                )?;
-                let family = gobby_terminals::family::TerminalFamily::new(
+        if let Some(url) = &bootstrap.database_url {
+            let machine = gobby_core::machine::read_machine_id_from_home(home)?;
+            let pools = crate::native_pools::build_set(url, mode == SupervisorMode::Owner)?;
+            if let (Some(writes), Some(authority)) =
+                (pools.terminal_writes, pools.terminal_authority)
+            {
+                services.terminals = start_terminal_host(
                     terminals,
-                    options.clone(),
-                    Arc::new(gobby_terminals::host::PostgresEpochAuthority::new(
-                        Pool::build(
-                            url,
-                            PoolSettings {
-                                max_size: 8,
-                                application_name: "gobby-gdaemon-terminals".into(),
-                                acquire_timeout: Duration::from_secs(2),
-                            },
-                        )?,
-                    )),
+                    &pools.active,
+                    home,
+                    &machine,
+                    (writes, authority),
+                    token,
+                    &families.ctx,
                 )
-                .with_write_route(&options, Arc::new(writes), token);
-                if let Err(error) = family.start().await {
-                    tracing::warn!(target: "gobby.daemon", "gdaemon terminal host: {error}");
+                .await?;
+            }
+            services.retention = Some(tokio::spawn(crate::retention::run(
+                pools.active,
+                uuid::Uuid::parse_str(&machine)?,
+                retention_shutdown,
+            )));
+        }
+        let deadline = Instant::now() + FAMILY_STOP_BUDGET;
+        match activate_families(
+            &families.activation,
+            &families.ctx,
+            &mut services.jobs,
+            deadline,
+        )
+        .await
+        {
+            Ok(report) => {
+                for failure in report.ordinary {
+                    tracing::warn!(
+                        target: "gobby.daemon",
+                        "family {} activated degraded: {}",
+                        failure.family,
+                        failure.message
+                    );
                 }
-                services.terminals = Some(family);
+            }
+            Err(failure) => {
+                // The runner already unwound the families of this pass.
+                services.stop(false).await?;
+                anyhow::bail!(
+                    "family {} failed to activate: {}",
+                    failure.family,
+                    failure.message
+                );
             }
         }
-        services.retention = Some(tokio::spawn(crate::retention::run(
-            pool,
-            uuid::Uuid::parse_str(&machine)?,
-            retention_shutdown,
-        )));
+        services.activated = families.activation.clone();
+        services.jobs.start()?;
         Ok(services)
     }
 
-    pub(crate) async fn stop(self, drain: bool) -> Result<()> {
-        self.retention_stop.send_replace(true);
-        if let Some(task) = self.retention {
-            task.await.context("token-event retention task failed")?;
+    /// Stops the lease's services in order: the jobs, so none calls a deactivated family;
+    /// the families, sharing one stop deadline; the terminal host, drained or left running;
+    /// then retention. A drain fails on the first family that could not deactivate.
+    pub(crate) async fn stop(mut self, drain: bool) -> Result<()> {
+        let jobs = self.jobs.stop().await;
+        let mode = if drain {
+            StopMode::Drain
+        } else {
+            StopMode::Stop
+        };
+        let deadline = Instant::now() + FAMILY_STOP_BUDGET;
+        let failures = deactivate_families(&self.activated, mode, deadline).await;
+        for failure in &failures {
+            tracing::warn!(
+                target: "gobby.daemon",
+                "family {} deactivate: {}",
+                failure.family,
+                failure.message
+            );
         }
         if let Some(family) = self.terminals {
             if drain {
@@ -111,18 +145,56 @@ impl ActiveServices {
                 family.stop().await;
             }
         }
+        self.retention_stop.send_replace(true);
+        if let Some(task) = self.retention {
+            task.await.context("token-event retention task failed")?;
+        }
+        jobs.context("the lease's family jobs did not stop")?;
+        if drain && let Some(failure) = failures.into_iter().next() {
+            anyhow::bail!(
+                "family {} did not drain: {}",
+                failure.family,
+                failure.message
+            );
+        }
         Ok(())
     }
 }
 
+/// Starts the terminal host this daemon owns, on its write and authority pools. A host
+/// whose start fails is kept (its supervisor retries) and marks the context degraded.
+async fn start_terminal_host(
+    terminals: &RouteLatch,
+    active: &Pool,
+    home: &Path,
+    machine: &str,
+    (writes, authority): (Pool, Pool),
+    token: TokenSlot,
+    ctx: &FamilyContext,
+) -> Result<Option<gobby_terminals::family::TerminalFamily>> {
+    let Some(options) =
+        gobby_terminals::host::HostOptions::from_pool(active, home, machine.to_owned()).await?
+    else {
+        return Ok(None);
+    };
+    let family = gobby_terminals::family::TerminalFamily::new(
+        terminals,
+        options.clone(),
+        Arc::new(gobby_terminals::host::PostgresEpochAuthority::new(
+            authority,
+        )),
+    )
+    .with_write_route(&options, Arc::new(writes), token);
+    if let Err(error) = family.start().await {
+        let line = report_terminal_host_failure(ctx, &error.to_string());
+        tracing::warn!(target: "gobby.daemon", "{line}");
+    }
+    Ok(Some(family))
+}
+
 /// Marks the terminal host degraded after its start failed and returns the line that
-/// reports the failure. Only its test calls it until the terminal host's start failure is
-/// wired to the process's family context, which removes the test-only gate.
-#[cfg(test)]
-pub(crate) fn report_terminal_host_failure(
-    ctx: &gobby_core::family::FamilyContext,
-    error: &str,
-) -> String {
+/// reports the failure.
+pub(crate) fn report_terminal_host_failure(ctx: &FamilyContext, error: &str) -> String {
     ctx.degraded().mark("gterm_host");
     format!("gdaemon terminal host: {error}")
 }
@@ -130,9 +202,8 @@ pub(crate) fn report_terminal_host_failure(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gobby_core::family::FamilyContext;
     use gobby_terminals::host::{EpochAuthority, EpochBinding, HostFailure, HostOptions};
-    use std::{future::Future, pin::Pin};
+    use std::{future::Future, pin::Pin, time::Duration};
 
     #[test]
     fn report_terminal_host_failure_marks_and_returns_line() {
@@ -246,6 +317,8 @@ mod tests {
                 retention_stop,
                 retention: None,
                 terminals: Some(family),
+                jobs: HeartbeatHost::new(),
+                activated: Vec::new(),
             };
             let script = format!(
                 "import os,pathlib,json,time; p=pathlib.Path(os.environ['GOBBY_HOME']); (p/'shutdown_intent_active.json').write_text(json.dumps({{'intent':'stop','timestamp':time.time(),'details':{{'drain_terminals':{}}}}})); raise SystemExit(0)",

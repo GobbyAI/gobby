@@ -16,9 +16,10 @@ use gobby_core::bootstrap::{
 };
 #[cfg(unix)]
 use gobby_core::bootstrap::{RunMode, backend_ports, bootstrap_path};
-use gobby_core::route_family::RouteFamily;
 #[cfg(unix)]
-use gobby_runtime::RuntimeFamily;
+use gobby_core::family::Extensions;
+use gobby_core::family::FamilyContext;
+use gobby_core::route_family::RouteFamily;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
@@ -28,23 +29,38 @@ use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::ServerConfig;
 
+#[cfg(unix)]
+use crate::family_start::{ActiveConfigSource, Disposition, disposition};
 use crate::front_door::auth::AuthState;
 #[cfg(unix)]
 use crate::front_door::auth::{KeyResolver, PostgresKeyResolver};
 use crate::front_door::compare::CompareLog;
 use crate::front_door::health::BackendState;
+#[cfg(unix)]
+use crate::front_door::registry::selectable;
 use crate::front_door::routes::{FAMILIES, RouteTable};
 #[cfg(unix)]
 use crate::front_door::routes::{terminal_route_latch, unimplemented_families};
 #[cfg(unix)]
 use crate::front_door::tls;
 use crate::front_door::{FrontDoor, FrontDoorState};
+#[cfg(unix)]
+use crate::lifecycle::backend::BackendConfig;
 use crate::nodes::NativeRoutes;
+#[cfg(unix)]
+use crate::websocket::broker::BroadcastBrokerPublisher;
 use crate::websocket::transport::NativeWs;
 
 /// How long an accepted connection may take to send its first byte and, for
 /// TLS, finish the handshake before it is dropped.
 const PREAUTH_DEADLINE: Duration = Duration::from_secs(10);
+
+/// The routed target of the serve path's records.
+const TARGET: &str = "gobby.daemon";
+
+/// How often the configuration poller reads the active configuration.
+#[cfg(unix)]
+const CONFIG_POLL: Duration = Duration::from_secs(5);
 
 /// First byte of a TLS record carrying a handshake (a ClientHello).
 const TLS_HANDSHAKE: u8 = 0x16;
@@ -125,15 +141,17 @@ pub struct PublicListener {
 #[cfg(unix)]
 pub fn run() -> Result<()> {
     use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-    use gobby_core::postgres_pool::{Pool, PoolSettings};
     use rand::RngCore;
     let path = bootstrap_path().context("cannot resolve the Gobby home directory")?;
     let bootstrap = load_enabled_bootstrap(&path)?;
     match raise_nofile_limit(NOFILE_TARGET) {
-        Ok((before, after)) => eprintln!("gdaemon serve: fd soft limit {before} -> {after}"),
-        Err(error) => {
-            eprintln!("gdaemon serve: warning: could not raise the fd soft limit: {error}")
+        Ok((before, after)) => {
+            tracing::warn!(target: TARGET, "gdaemon serve: fd soft limit {before} -> {after}");
         }
+        Err(error) => tracing::warn!(
+            target: TARGET,
+            "gdaemon serve: warning: could not raise the fd soft limit: {error}"
+        ),
     }
     let native = if bootstrap.mode == RunMode::Node {
         None
@@ -141,38 +159,24 @@ pub fn run() -> Result<()> {
         let mut secret = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut secret);
         let secret = URL_SAFE_NO_PAD.encode(secret);
-        // One pool serves key resolution, the lease and the hub node routes.
+        // One pool serves key resolution, the lease, the hub node routes and the families.
         let pool = bootstrap
             .database_url
             .as_deref()
-            .map(|url| {
-                Pool::build(
-                    url,
-                    PoolSettings {
-                        max_size: 8,
-                        application_name: "gobby-gdaemon".into(),
-                        acquire_timeout: Duration::from_secs(5),
-                    },
-                )
-                .map(Arc::new)
-            })
+            .map(|url| crate::native_pools::build_serve(url).map(Arc::new))
             .transpose()?;
         let resolver = pool
             .clone()
             .map(|pool| Arc::new(PostgresKeyResolver::new(pool)) as Arc<dyn KeyResolver>);
         let auth = Arc::new(AuthState::new(secret.clone(), resolver, path.clone())?);
         let ports = backend_ports(bootstrap.daemon_port, bootstrap.websocket_port)?;
-        let mut families = FAMILIES.to_vec();
-        if let Some(pool) = &pool {
-            let home = path.parent().context("bootstrap has no parent directory")?;
-            let runtime: &'static RuntimeFamily =
-                Box::leak(Box::new(RuntimeFamily::new(pool.clone(), home.to_owned())));
-            families.push(runtime);
-        }
+        let home = path.parent().context("bootstrap has no parent directory")?;
+        // The one family list of the process: routes, activation and start all read it.
         let families: &'static [&'static dyn RouteFamily<FrontDoorState>] =
-            Box::leak(families.into_boxed_slice());
+            Box::leak(selectable(pool.as_ref(), home).into_boxed_slice());
         for name in unimplemented_families(families, &bootstrap.front_door.routes) {
-            eprintln!(
+            tracing::warn!(
+                target: TARGET,
                 "gdaemon serve: front_door.routes.{name} requests a native backend gdaemon does not implement; proxying"
             );
         }
@@ -182,12 +186,13 @@ pub fn run() -> Result<()> {
     let tls = tls::load(&bootstrap.front_door.tls, &bootstrap.bind_host)?;
     if let Some(loaded) = &tls {
         for name in &loaded.missing_sans {
-            eprintln!(
+            tracing::warn!(
+                target: TARGET,
                 "gdaemon serve: front_door.tls.sans entry {name} is missing from the existing certificate; \
                  remove both certificate files and restart to regenerate (nodes must log in again)"
             );
         }
-        eprintln!("front door certificate {}", loaded.fingerprint);
+        crate::logging::raw_stderr(&format!("front door certificate {}", loaded.fingerprint));
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -201,6 +206,9 @@ pub fn run() -> Result<()> {
             else {
                 return Ok(());
             };
+            // A node has no configuration epoch and no backend worker: compiled defaults,
+            // and gdaemon rotates its own files.
+            crate::logging::activate(crate::logging::LogSettings::for_home(home), None)?;
             let terminal_host = match gobby_core::machine::read_machine_id_from_home(home) {
                 Ok(machine_id) => {
                     use crate::nodes::agents::host::{NodeEpochAuthority, node_host_options};
@@ -209,12 +217,18 @@ pub fn run() -> Result<()> {
                         Arc::new(NodeEpochAuthority { agents: node.agents.clone() }),
                     );
                     if let Err(error) = host.start().await {
-                        eprintln!("gdaemon node terminal host unavailable (supervisor will retry): {error}");
+                        tracing::warn!(
+                            target: TARGET,
+                            "gdaemon node terminal host unavailable (supervisor will retry): {error}"
+                        );
                     }
                     Some(host)
                 }
                 Err(error) => {
-                    eprintln!("gdaemon node terminal host identity unavailable: {error}");
+                    tracing::warn!(
+                        target: TARGET,
+                        "gdaemon node terminal host identity unavailable: {error}"
+                    );
                     None
                 }
             };
@@ -263,7 +277,8 @@ pub fn run() -> Result<()> {
         let Some((state, supervisor)) =
             crate::state::RuntimeState::prepare(&bootstrap, home, &secret, pool.clone())?
         else {
-            eprintln!(
+            tracing::warn!(
+                target: TARGET,
                 "gdaemon serve: runtime singleton claim unavailable \
                  (another owner or live service reservation): {}",
                 home.join("gobby.pid").display()
@@ -271,14 +286,65 @@ pub fn run() -> Result<()> {
             return Ok(());
         };
         let pool = pool.context("backend requires database_url")?;
+        let broker = crate::websocket::broker::BroadcastBroker::default();
+        let started = crate::family_start::prepare(crate::family_start::PrepareInputs {
+            serve_pool: Some(Arc::clone(&pool)),
+            home: home.to_owned(),
+            routes: bootstrap.front_door.routes.clone(),
+            publisher: Arc::new(BroadcastBrokerPublisher::new(broker.clone())),
+            backend: Some(state.backend.clone()),
+            lease: state.lease_state.clone(),
+            epoch_source: Arc::new(ActiveConfigSource {
+                pool: Arc::clone(&pool),
+                token: gobby_core::grant::deployment_token(home),
+            }),
+            cpu_count: std::thread::available_parallelism()
+                .map_or(1, |count| u32::try_from(count.get()).unwrap_or(u32::MAX)),
+            families: families.to_vec(),
+            extensions: Extensions::new(),
+            startup: None,
+        })
+        .await;
+        let started = match started {
+            Ok(started) => Ok(started),
+            Err(failure) => match disposition(&failure) {
+                Disposition::Exit => anyhow::bail!(
+                    "family {} failed to start: {}",
+                    failure.family,
+                    failure.message
+                ),
+                Disposition::Refuse { reason } => {
+                    tracing::warn!(
+                        target: TARGET,
+                        "gdaemon serve: family {} refused the start: {}",
+                        failure.family,
+                        failure.message
+                    );
+                    Err(reason)
+                }
+            },
+        };
+        let applier = match &started {
+            Ok(started) => {
+                // The backend worker's handler rotates the files it shares with gdaemon.
+                let command = BackendConfig::from_environment(home)?.command;
+                let command: Vec<_> = command.iter().map(|part| part.to_string_lossy()).collect();
+                crate::logging::activate(
+                    crate::logging::LogSettings::for_home(home),
+                    Some(&command.join(" ")),
+                )?;
+                Some(crate::logging::epoch::spawn_applier(started.ctx.subscribe_config()))
+            }
+            Err(_) => None,
+        };
         let native_routes = if bootstrap.mode == RunMode::Hub {
             NativeRoutes::Hub(Arc::new(crate::nodes::HubNodes {
-                db: pool,
+                db: Arc::clone(&pool),
                 registry: Default::default(),
                 timing: Default::default(),
             }))
         } else {
-            NativeRoutes::Standalone(Some(pool))
+            NativeRoutes::Standalone(Some(Arc::clone(&pool)))
         };
         let compare_log = Arc::new(CompareLog::open(home).with_context(|| {
             format!(
@@ -302,8 +368,19 @@ pub fn run() -> Result<()> {
             )
             .await?,
         );
+        // The configuration poller runs once the doors are bound.
+        let poller = started.as_ref().ok().map(|started| {
+            crate::family_start::spawn_config_poller(
+                Arc::new(ActiveConfigSource {
+                    pool: Arc::clone(&pool),
+                    token: gobby_core::grant::deployment_token(home),
+                }),
+                started.ctx.config_publisher(),
+                CONFIG_POLL,
+            )
+        });
         let native_ws = NativeWs::new(
-            crate::websocket::broker::BroadcastBroker::default(),
+            broker,
             secret.clone(),
             Some(state.write_token.clone()),
             SocketAddr::from(([127, 0, 0, 1], backend_http)),
@@ -314,15 +391,26 @@ pub fn run() -> Result<()> {
             async move { native_ws.retire_on_backend_change(backend).await }
         });
         let (stop, shutdown) = tokio::sync::watch::channel(false);
-        let owner = state.clone();
-        let mut lifecycle = tokio::spawn(owner_run(
-            owner,
-            supervisor,
-            shutdown,
-            bootstrap.clone(),
-            terminals,
-            home.to_owned(),
-        ));
+        let (context, mut lifecycle) = match started {
+            Ok(started) => (
+                Some(Arc::new(started.ctx.clone())),
+                tokio::spawn(owner_run(
+                    state.clone(),
+                    supervisor,
+                    shutdown,
+                    bootstrap.clone(),
+                    terminals,
+                    home.to_owned(),
+                    started,
+                )),
+            ),
+            Err(reason) => (
+                None,
+                tokio::spawn(crate::state::RuntimeState::hold_refused(
+                    supervisor, reason, shutdown,
+                )),
+            ),
+        };
         let mut owner_result = None;
         let result = serve_with_runtime(
             listeners,
@@ -335,6 +423,7 @@ pub fn run() -> Result<()> {
                 compare_log: Some(compare_log),
                 families,
                 native_ws: Some(native_ws),
+                context,
             },
             async {
                 tokio::select! {
@@ -345,6 +434,9 @@ pub fn run() -> Result<()> {
         )
         .await;
         retire.abort();
+        for task in poller.iter().chain(&applier) {
+            task.abort();
+        }
         stop.send_replace(true);
         match owner_result {
             Some(finished) => finished,
@@ -370,9 +462,10 @@ async fn owner_run(
     bootstrap: HubDatabaseBootstrap,
     terminals: gobby_terminals::family::RouteLatch,
     home: std::path::PathBuf,
+    families: crate::family_start::ProcessFamilies,
 ) -> Result<()> {
     state
-        .run(supervisor, shutdown, bootstrap, terminals, home)
+        .run(supervisor, shutdown, bootstrap, terminals, home, families)
         .await
 }
 
@@ -501,6 +594,8 @@ struct ListenerShared {
     families: &'static [&'static dyn RouteFamily<FrontDoorState>],
     /// One transport shared by every listener; drained after the doors stop.
     native_ws: Option<NativeWs>,
+    /// The process's family context; without one each door keeps the unconfigured one.
+    context: Option<Arc<FamilyContext>>,
 }
 
 async fn serve_with_runtime(
@@ -528,6 +623,9 @@ async fn serve_with_runtime(
         };
         if let Some(native_ws) = &shared.native_ws {
             state.native_ws = native_ws.clone();
+        }
+        if let Some(context) = &shared.context {
+            state.context = Arc::clone(context);
         }
         let table = RouteTable::new(shared.families, routes, &state);
         doors.push((listener, FrontDoor::new(state, table)));
@@ -581,7 +679,8 @@ async fn accept(
             Ok(accepted) => accepted,
             Err(error) if transient_accept_error(&error) => {
                 if last_warning.is_none_or(|at| at.elapsed() >= ACCEPT_WARNING_INTERVAL) {
-                    eprintln!(
+                    tracing::warn!(
+                        target: TARGET,
                         "gdaemon serve: accept failed, retrying in {}ms \
                          ({suppressed} similar failures suppressed): {error}",
                         ACCEPT_BACKOFF.as_millis()
@@ -678,150 +777,4 @@ async fn shutdown_signal() {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn disabled_front_door_refuses_with_typed_message() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("bootstrap.yaml");
-        std::fs::write(&path, "front_door:\n  enabled: false\n").expect("write bootstrap");
-
-        let error = load_enabled_bootstrap(&path).expect_err("disabled front door must refuse");
-
-        assert!(
-            error.to_string().starts_with("front_door_disabled:"),
-            "{error}"
-        );
-    }
-
-    #[tokio::test]
-    async fn bind_host_family_matches_the_python_backend() -> Result<()> {
-        let localhost = bind_addr("localhost", 60887).await?;
-        let ipv6 = bind_addr("::1", 60887).await?;
-
-        assert_eq!(localhost, SocketAddr::from(([127, 0, 0, 1], 60887)));
-        assert!(ipv6.is_ipv6());
-        Ok(())
-    }
-
-    #[test]
-    fn missing_bootstrap_serves_default_ports() {
-        let dir = tempfile::tempdir().expect("tempdir");
-
-        let bootstrap =
-            load_enabled_bootstrap(&dir.path().join("bootstrap.yaml")).expect("defaults");
-
-        assert_eq!(
-            (bootstrap.daemon_port, bootstrap.websocket_port),
-            (DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT)
-        );
-        assert!(bootstrap.front_door.enabled);
-    }
-
-    /// A listener whose first `emfiles` accepts fail with EMFILE.
-    #[cfg(unix)]
-    struct ExhaustedListener {
-        listener: TcpListener,
-        emfiles: std::sync::Mutex<usize>,
-    }
-
-    #[cfg(unix)]
-    impl AcceptSource for ExhaustedListener {
-        fn accept(&self) -> impl Future<Output = std::io::Result<(TcpStream, SocketAddr)>> + Send {
-            let exhausted = {
-                let mut left = self.emfiles.lock().expect("fixture exhaustion counter");
-                let exhausted = *left > 0;
-                *left = left.saturating_sub(1);
-                exhausted
-            };
-            async move {
-                if exhausted {
-                    return Err(std::io::Error::from_raw_os_error(libc::EMFILE));
-                }
-                self.listener.accept().await
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    #[tokio::test]
-    async fn accept_loop_serves_after_transient_emfile() -> Result<()> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
-        let addr = listener.local_addr()?;
-        let auth = Arc::new(AuthState::new(
-            "test-secret".into(),
-            None,
-            Default::default(),
-        )?);
-        let state = FrontDoorState::new("127.0.0.1:1".parse()?, BackendState::Down, auth);
-        let table = RouteTable::new(FAMILIES, &BTreeMap::new(), &state);
-        let exhausted = ExhaustedListener {
-            listener,
-            emfiles: 2.into(),
-        };
-        let mut accept_loop = tokio::spawn(accept(exhausted, FrontDoor::new(state, table), None));
-
-        let round_trip = async {
-            let mut client = TcpStream::connect(addr).await?;
-            client
-                .write_all(
-                    b"GET /api/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-                )
-                .await?;
-            let mut response = String::new();
-            client.read_to_string(&mut response).await?;
-            anyhow::Ok(response)
-        };
-        let response = tokio::select! {
-            biased;
-            finished = &mut accept_loop => panic!("accept loop exited on EMFILE: {finished:?}"),
-            response = tokio::time::timeout(Duration::from_secs(10), round_trip) => response??,
-        };
-
-        assert!(response.starts_with("HTTP/1.1 "), "{response}");
-        accept_loop.abort();
-        Ok(())
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn serve_startup_raises_the_launchd_fd_soft_limit() {
-        let mut limit = libc::rlimit {
-            rlim_cur: 0,
-            rlim_max: 0,
-        };
-        // SAFETY: `limit` is a valid, writable rlimit for getrlimit to fill.
-        assert_eq!(
-            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
-            0
-        );
-        assert!(
-            limit.rlim_max > 256,
-            "hard limit {} leaves no room",
-            limit.rlim_max
-        );
-        limit.rlim_cur = 256;
-        // SAFETY: `limit` is initialized and lowers only the soft value, which is
-        // always permitted; nextest runs this test in its own process.
-        assert_eq!(unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) }, 0);
-
-        let (before, after) = raise_nofile_limit(NOFILE_TARGET).expect("raise fd limit");
-
-        // SAFETY: as above for getrlimit.
-        assert_eq!(
-            unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) },
-            0
-        );
-        assert_eq!(before, 256);
-        assert_eq!(after, NOFILE_TARGET.min(limit.rlim_max));
-        assert_eq!(limit.rlim_cur, after);
-        assert!(
-            limit.rlim_cur > 256,
-            "soft limit stayed at {}",
-            limit.rlim_cur
-        );
-    }
-}
+mod tests;

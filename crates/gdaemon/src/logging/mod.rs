@@ -106,6 +106,12 @@ impl LogSettings {
             ),
         }
     }
+
+    /// The compiled defaults for this process, writing where `GOBBY_LOGGING_DIR` names, or
+    /// under `home/logs` without it.
+    pub fn for_home(home: &std::path::Path) -> Self {
+        Self::defaults(resolve_dir(&|name| std::env::var(name).ok(), None, home))
+    }
 }
 
 /// Installs the routed layer as the process's subscriber, once per process. The files
@@ -115,8 +121,8 @@ impl LogSettings {
 /// [`writer::owner_for`]: with one, the worker's handler rotates and this writer only
 /// reopens a file the worker renamed; with none (node mode has no backend worker), this
 /// writer rotates the files itself.
-pub fn activate(settings: LogSettings, _backend_command: Option<&str>) -> anyhow::Result<()> {
-    let routes = layer::RouteHandle::new(settings, writer::RotationOwner::Worker);
+pub fn activate(settings: LogSettings, backend_command: Option<&str>) -> anyhow::Result<()> {
+    let routes = layer::RouteHandle::new(settings, writer::owner_for(backend_command));
     routes
         .open_all()
         .context("routed logging cannot open its files")?;
