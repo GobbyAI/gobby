@@ -1653,6 +1653,134 @@ async fn a_lost_lease_cancels_the_family_jobs_before_the_lease_is_released() -> 
     .await
 }
 
+/// Writes the backend's PID once it is ready, then waits for the supervisor's EOF; the
+/// shutdown drain's SIGTERM ends it.
+const PID_UNTIL_EOF: &str = "import os,pathlib; (pathlib.Path(os.environ['GOBBY_HOME'])/'ready').write_text(str(os.getpid())); open(int(os.environ['GOBBY_SUPERVISOR_FD']),'rb').read()";
+
+#[tokio::test]
+async fn a_lease_whose_session_ends_during_the_shutdown_drain_is_seen_as_lost_and_aborts_the_draining_job()
+-> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let lease = db.lease("drain-loss-owner")?;
+        let application = lease.application_name().to_string();
+        let observer = lease.subscribe();
+        let lease = Arc::new(NamedLock::new(lease));
+        let claim =
+            claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("PID claim")?;
+        let argv = backend_argv(PID_UNTIL_EOF)?;
+        let mut config = backend_config(home.path(), &argv)?;
+        config
+            .environment
+            .insert("HOME".into(), home.path().as_os_str().to_owned());
+        config.drain_timeout = TERM_GRACE;
+        config.heartbeat_interval = Duration::from_millis(100);
+        let write_token = config.write_token.clone();
+        let supervisor = BackendSupervisor::with_lease(Some(Arc::clone(&lease)), claim, config);
+        // The job host is fenced by the lease watch, so a published loss aborts its job.
+        let state = RuntimeState {
+            mode: RunMode::Hub,
+            lease: Some(lease),
+            lease_state: Some(observer.clone()),
+            backend: supervisor.subscribe(),
+            backend_wait: supervisor.subscribe_wait(),
+            write_token,
+            terminal_route: Default::default(),
+        };
+        let running = Arc::new(Notify::new());
+        let ended: Arc<JobEnd> = Arc::default();
+        let family: &'static TimesAJob = Box::leak(Box::new(TimesAJob {
+            lease: observer.clone(),
+            running: Arc::clone(&running),
+            ended: Arc::clone(&ended),
+        }));
+        let families = prepare(PrepareInputs {
+            serve_pool: None,
+            home: home.path().to_owned(),
+            routes: BTreeMap::from([(family.name().to_owned(), RouteBackend::Native)]),
+            publisher: Arc::new(NoFrames),
+            backend: None,
+            lease: Some(observer),
+            epoch_source: Arc::new(NoStoredEpoch),
+            cpu_count: 8,
+            families: vec![family],
+            extensions: Extensions::new(),
+            startup: None,
+        })
+        .await
+        .map_err(|failure| anyhow::anyhow!("{}: {}", failure.family, failure.message))?;
+        let bootstrap = HubDatabaseBootstrap {
+            mode: RunMode::Hub,
+            hub_daemon_url: None,
+            hub_cert: None,
+            database_url: None,
+            api_key: None,
+            daemon_url: None,
+            bind_host: "127.0.0.1".into(),
+            daemon_port: 0,
+            websocket_port: 0,
+            front_door: Default::default(),
+        };
+        let terminals = terminal_route_latch(&bootstrap.front_door.routes)?;
+        let owner_home = home.path().to_owned();
+        let (stop, shutdown) = watch::channel(false);
+        let task = tokio::spawn(async move {
+            state
+                .run(
+                    supervisor, shutdown, bootstrap, terminals, owner_home, families,
+                )
+                .await
+        });
+        let _abort = AbortOnDrop(task.abort_handle());
+
+        timeout(Duration::from_secs(30), running.notified())
+            .await
+            .context("the family job never ran")?;
+        let pid: i32 = wait_for_file(&home.path().join("ready")).await?.parse()?;
+        stop.send(true)?;
+        // The worker drain reaps the backend just before the exit hook drains the jobs, so
+        // the session ends after the heartbeat loop has been left, with the job still running.
+        timeout(Duration::from_secs(30), async {
+            let mut poll = tokio::time::interval(Duration::from_millis(10));
+            loop {
+                // SAFETY: signal zero observes only the PID written by this test's backend.
+                if unsafe { libc::kill(pid, 0) } != 0 {
+                    break;
+                }
+                poll.tick().await;
+            }
+        })
+        .await
+        .context("the shutdown drain never reaped the backend")?;
+        let terminated_at = Instant::now();
+        let rows = db
+            .admin
+            .query(
+                "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name=$1",
+                &[&application],
+            )
+            .await?;
+        assert_eq!(rows.len(), 1, "the lease session was not terminated");
+        let (at_job_end, ended_at) = timeout(Duration::from_secs(30), ended.wait())
+            .await
+            .context("the family job never ended after the lease session was terminated")?;
+
+        assert_eq!(
+            at_job_end,
+            LeaseState::Lost,
+            "the lease watch did not reach Lost before the draining job ended"
+        );
+        let grace = ended_at.saturating_duration_since(terminated_at);
+        assert!(
+            grace < gobby_daemon::heartbeat::SHUTDOWN_GRACE / 2,
+            "the draining job ended {grace:?} after the lease session ended; it must be aborted at once, not drained"
+        );
+        timeout(Duration::from_secs(30), task).await???;
+        Ok(())
+    })
+    .await
+}
+
 /// Takes the lease a terminated session held, once PostgreSQL has freed its lock. The
 /// bound is a hang guard: the terminated backend frees the lock as it exits.
 async fn take_freed_lease(db: &TestDb, machine: &str) -> Result<ActiveDaemonLease> {
