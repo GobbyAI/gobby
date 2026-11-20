@@ -860,6 +860,36 @@ def test_variable_delta_records_a_deleted_variable() -> None:
     assert "stop_attempts" not in delta, f"stop_attempts was reset with the flag set: {delta}"
 
 
+def test_variable_delta_records_a_boolean_replaced_by_a_number() -> None:
+    """True and 1 are different JSON values, so a write of one over the other is a change."""
+    initial = {
+        "synthetic_flag": True,
+        "synthetic_off": False,
+        "synthetic_nested": {"inner": True, "items": [False]},
+        "synthetic_same": True,
+    }
+    final = {
+        "synthetic_flag": 1,
+        "synthetic_off": 0,
+        "synthetic_nested": {"inner": 1, "items": [0]},
+        "synthetic_same": True,
+    }
+    changed, deleted = rules_recorder.variable_delta(initial, final)
+    assert deleted == [], f"no key was removed, recorded deletions: {deleted}"
+    assert "synthetic_same" not in changed, f"an unchanged boolean appears in the delta: {changed}"
+    recorded = {
+        key: (changed[key], type(changed[key]).__name__) if key in changed else "absent"
+        for key in ("synthetic_flag", "synthetic_off")
+    }
+    assert recorded == {"synthetic_flag": (1, "int"), "synthetic_off": (0, "int")}, (
+        f"a top-level boolean-to-number write is dropped or kept as a boolean: {recorded}"
+    )
+    nested = changed.get("synthetic_nested", "absent")
+    assert json.dumps(nested) == json.dumps({"inner": 1, "items": [0]}), (
+        f"a nested boolean-to-number write is dropped or kept as a boolean: {nested!r}"
+    )
+
+
 def test_cli_internal_request_skips_declared_group() -> None:
     cases = _load_committed_cases()
     _assert_enough(cases)
@@ -1195,6 +1225,54 @@ def test_unused_field_guard_flags_a_loop_over_a_wrapped_set_display(tmp_path: Pa
             fixture.write_text(template.replace(FIELD_TOKEN, field))
             if not _writers_of(field, [fixture], literals=True):
                 unflagged.append(f"{field}:{name}")
+    assert not unflagged, f"the guard misses these (field, write form) pairs: {unflagged}"
+
+
+# A set display reaches the loop through a keyword argument of the iterated call or as an
+# operand of a set operator, at any depth; each of these writes the field.
+KEYWORD_AND_OPERATOR_LOOP_WRITE_FORMS = {
+    "for_keyword_argument_setattr": (
+        'for name in frozenset(iterable={"FIELD_NAME"}):\n    setattr(resp, name, "synthetic")\n'
+    ),
+    "for_set_union_setattr": (
+        'for name in {"FIELD_NAME"} | {"synthetic_other"}:\n    setattr(resp, name, "synthetic")\n'
+    ),
+    "comprehension_set_difference_setattr": (
+        '[setattr(resp, name, "synthetic") for name in {"FIELD_NAME"} - {"synthetic_other"}]\n'
+    ),
+    "for_nested_keyword_and_operator_setattr": (
+        'for name in sorted(frozenset(iterable={"synthetic_other"} | {"FIELD_NAME"}), key=str):\n'
+        '    setattr(resp, name, "synthetic")\n'
+    ),
+}
+# The same displays bound to a name and never iterated name the field without writing it.
+KEYWORD_AND_OPERATOR_LISTINGS = {
+    "union_listing": 'FIELDS = {"FIELD_NAME"} | {"synthetic_other"}\n',
+    "keyword_listing": 'FIELDS = frozenset(iterable={"FIELD_NAME"})\n',
+}
+
+
+def test_unused_field_guard_flags_a_loop_through_a_keyword_or_set_operator(
+    tmp_path: Path,
+) -> None:
+    fields = [
+        field for field in FIELDS_WITHOUT_RESPONSE_WRITER if _string_literal_rule_applies(field)
+    ]
+    assert fields, "no field without a response writer takes the string-literal rule"
+    unflagged: list[str] = []
+    flagged_listings: list[str] = []
+    for field in fields:
+        for name, template in KEYWORD_AND_OPERATOR_LOOP_WRITE_FORMS.items():
+            fixture = tmp_path / f"write-{field}-{name}.py"
+            fixture.write_text(template.replace(FIELD_TOKEN, field))
+            if not _writers_of(field, [fixture], literals=True):
+                unflagged.append(f"{field}:{name}")
+        for name, template in KEYWORD_AND_OPERATOR_LISTINGS.items():
+            fixture = tmp_path / f"listing-{field}-{name}.py"
+            fixture.write_text(template.replace(FIELD_TOKEN, field))
+            if _writers_of(field, [fixture], literals=True):
+                flagged_listings.append(f"{field}:{name}")
+    assert not flagged_listings, f"the guard flags these un-iterated listings: {flagged_listings}"
     assert not unflagged, f"the guard misses these (field, write form) pairs: {unflagged}"
 
 
@@ -1639,6 +1717,47 @@ def test_every_vectored_entry_is_discriminating() -> None:
     assert not findings, (
         f"{len(findings)} of {len(entries)} vectored entries would replay unchanged under a "
         f"constant, identity or no-op stub: {findings}"
+    )
+
+
+def _returns_bool(function: Callable[..., Any]) -> bool:
+    """True when the evaluated return annotation is bool (text fallback as for None)."""
+    try:
+        return typing.get_type_hints(function).get("return") is bool
+    except (NameError, TypeError, AttributeError):
+        return inspect.signature(function).return_annotation in (bool, "bool")
+
+
+def test_every_boolean_classifier_vector_set_records_both_returns() -> None:
+    """A Boolean classification is shown only by two different return values.
+
+    A recorded argument change, such as a cache write, does not distinguish the classifier
+    from one that always returns the same value, so only the results are compared.
+    """
+    vectors = _committed_vectors()
+    entries = _required_entries() | {vector["entry"] for vector in vectors}
+    by_entry: dict[str, list[dict[str, Any]]] = {}
+    for vector in vectors:
+        by_entry.setdefault(vector["entry"], []).append(vector)
+    classifiers = sorted(
+        entry for entry in entries if _returns_bool(rules_vectors.resolve_entry(entry))
+    )
+    assert classifiers, "no vectored entry returns bool"
+    one_sided = {
+        entry: sorted(results)
+        for entry in classifiers
+        if len(
+            results := {
+                _canonical(_vector_result(vector["expect"]))
+                for vector in by_entry.get(entry, [])
+                if not _is_raised(vector["expect"])
+            }
+        )
+        < 2
+    }
+    assert not one_sided, (
+        f"{len(one_sided)} of {len(classifiers)} Boolean classifiers record one return value "
+        f"only: {one_sided}"
     )
 
 

@@ -16,6 +16,7 @@ import dataclasses
 import json
 import subprocess
 import sys
+import tempfile
 import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -34,7 +35,13 @@ from gobby.workflows.engine.run_command import execute_run_command
 from gobby.workflows.engine.templating import TemplatingMixin
 from gobby.workflows.evaluation_context import mutable_evaluation_result
 from gobby.workflows.step_instances import AgentStepInstanceManager
-from tests.contracts import rules_corpus, rules_mutation, rules_recorder, rules_seed
+from tests.contracts import (
+    rules_corpus,
+    rules_engine_seams,
+    rules_mutation,
+    rules_recorder,
+    rules_seed,
+)
 
 CORPUS_DIR = Path(__file__).resolve().parent / "rules"
 CALLER_KIND = rules_recorder.CALLER_KIND
@@ -1386,3 +1393,134 @@ def test_loader_rejects_malformed_engine_path_keys(tmp_path: Path) -> None:
     for index, (member, case, needle) in enumerate(_malformed_engine_path_members()):
         cases = _replaced(corpus, case)
         _assert_refused(tmp_path / f"key-{index}", cases, case["id"], needle, member)
+
+
+def _boundary_case(**spec: Any) -> dict[str, Any]:
+    return _inline_case("synthetic-loader-boundary", {"event": {}, **spec})
+
+
+# A remaining budget is a finite JSON number or null; a boundary duration is a finite number.
+LOOSE_DEADLINE_INPUTS: tuple[tuple[str, dict[str, Any], str], ...] = (
+    (
+        "remaining budget true",
+        _boundary_case(command_boundary=dict(BOUNDARY), deadline_remaining=True),
+        "deadline_remaining",
+    ),
+    (
+        "remaining budget false",
+        _boundary_case(command_boundary=dict(BOUNDARY), deadline_remaining=False),
+        "deadline_remaining",
+    ),
+    (
+        "remaining budget numeric string",
+        _boundary_case(command_boundary=dict(BOUNDARY), deadline_remaining="1.5"),
+        "deadline_remaining",
+    ),
+    (
+        "remaining budget NaN",
+        _boundary_case(command_boundary=dict(BOUNDARY), deadline_remaining=float("nan")),
+        "deadline_remaining",
+    ),
+    (
+        "remaining budget infinite",
+        _boundary_case(command_boundary=dict(BOUNDARY), deadline_remaining=float("inf")),
+        "deadline_remaining",
+    ),
+    (
+        "remaining budget negative infinite",
+        _boundary_case(command_boundary=dict(BOUNDARY), deadline_remaining=float("-inf")),
+        "deadline_remaining",
+    ),
+    (
+        "boundary duration NaN",
+        _boundary_case(command_boundary={"duration": float("nan"), "context": "x"}),
+        "command_boundary",
+    ),
+    (
+        "boundary duration infinite",
+        _boundary_case(command_boundary={"duration": float("inf"), "context": "x"}),
+        "command_boundary",
+    ),
+)
+ACCEPTED_REMAINING_BUDGETS: tuple[float | int | None, ...] = (None, -1.0, 0, 2.5)
+
+
+def test_loader_accepts_only_a_finite_remaining_budget_and_duration(tmp_path: Path) -> None:
+    corpus = _engine_path_corpus()
+    for index, remaining in enumerate(ACCEPTED_REMAINING_BUDGETS):
+        case = _boundary_case(command_boundary=dict(BOUNDARY), deadline_remaining=remaining)
+        root = _write_loader_corpus(tmp_path / f"ok-{index}", _replaced(corpus, case))
+        _manifest, loaded = rules_corpus.load_corpus(root)
+        assert len(loaded) == len(corpus), f"remaining budget {remaining!r} did not load"
+    accepted: list[str] = []
+    for index, (member, case, needle) in enumerate(LOOSE_DEADLINE_INPUTS):
+        root = _write_loader_corpus(tmp_path / f"loose-{index}", _replaced(corpus, case))
+        try:
+            rules_corpus.load_corpus(root)
+        except ValueError as refused:
+            message = str(refused)
+            if case["id"] not in message or needle not in message:
+                accepted.append(f"{member} (refused without naming {needle}: {message})")
+        else:
+            accepted.append(member)
+    assert not accepted, f"the loader accepts these deadline inputs: {accepted}"
+
+
+# Over the kernel's shebang length, and holding a space the kernel splits a shebang at.
+LONG_INTERPRETER_DIRECTORY_BYTES = 160
+FAKE_RTK_EXPECTED_STDOUT = "rtk echo hi\n"
+
+
+def _interpreter_link(directory: Path) -> Path:
+    directory.mkdir(parents=True)
+    link = directory / "python"
+    link.symlink_to(Path(sys.executable).resolve())
+    return link
+
+
+def _fake_rtk_outcome(directory: Path, interpreter: Path) -> str:
+    """Run the fake RTK written while ``interpreter`` is the running one; stdout or the error."""
+    with mock.patch.object(sys, "executable", str(interpreter)):
+        try:
+            probe = rules_engine_seams._fake_rtk_probe(directory)
+        except RuntimeError as refused:
+            return f"probe refused: {refused}"
+    try:
+        completed = subprocess.run(
+            [str(probe.path), "rewrite", "--", "echo hi"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except OSError as failed:
+        return f"exec failed: {failed}"
+    if completed.returncode != 0:
+        return f"exit {completed.returncode}: {completed.stderr.strip()}"
+    return completed.stdout
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="the fake RTK is a POSIX script")
+def test_fake_rtk_runs_with_a_long_or_spaced_interpreter_path(tmp_path: Path) -> None:
+    # The spaced path sits under the short system /tmp so it stays inside the shebang limit
+    # and only the space is under test; the pytest base directory is often longer than it.
+    with tempfile.TemporaryDirectory(prefix="rtk-", dir="/tmp") as short_base:
+        spaced = _interpreter_link(Path(short_base) / "synthetic dir")
+        assert len(f"#!{spaced}".encode()) <= rules_engine_seams.SHEBANG_LIMIT_BYTES
+        _assert_fake_rtk_runs_with(tmp_path, spaced, tmp_path / "synthetic-long")
+
+
+def _assert_fake_rtk_runs_with(tmp_path: Path, spaced: Path, long_base: Path) -> None:
+    long_link = _interpreter_link(long_base / ("x" * LONG_INTERPRETER_DIRECTORY_BYTES))
+    assert len(str(long_link).encode()) > rules_engine_seams.SHEBANG_LIMIT_BYTES
+    outcomes: dict[str, str] = {}
+    for label, link in (("spaced", spaced), ("long", long_link)):
+        control = subprocess.run(
+            [str(link), "-c", "print('ok')"], capture_output=True, text=True, check=False
+        )
+        assert control.stdout == "ok\n", f"the {label} interpreter link does not run: {control}"
+        rtk_dir = tmp_path / f"rtk-{label}"
+        rtk_dir.mkdir()
+        outcomes[label] = _fake_rtk_outcome(rtk_dir, link)
+    expected = {"spaced": FAKE_RTK_EXPECTED_STDOUT, "long": FAKE_RTK_EXPECTED_STDOUT}
+    assert outcomes == expected, f"the fake RTK breaks on the interpreter path: {outcomes}"
