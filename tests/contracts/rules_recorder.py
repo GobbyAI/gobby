@@ -46,11 +46,12 @@ from gobby.workflows.engine import evaluation as evaluation_module
 from gobby.workflows.engine import proxy_hooks
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.effects import EffectsMixin
+from tests.contracts import rules_seed
 from tests.fixtures.hub_guard import hub_database_url
 from tests.fixtures.postgres import isolated_test_schema
 
 RECORD_ENV = "GOBBY_CORPUS_RECORD"
-SESSION_ID = "11111111-1111-4111-8111-111111111111"
+SESSION_ID = rules_seed.SESSION_ID
 FIXED_TIMESTAMP = datetime(2026, 11, 19, 12, 0, tzinfo=UTC)
 ROW_KEYS = frozenset({"name", "project_id", "priority", "enabled", "sources", "tags"})
 STAGED_PAYLOAD_KEY = "_gobby_staged_effects"
@@ -438,6 +439,11 @@ def _observe_caller(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[
     return expect, recorder.effect_log
 
 
+def skipped_groups(rules: list[Mapping[str, Any]], reached: set[str]) -> list[str]:
+    """Return the sorted groups the engine skipped, given the names of the rules it reached."""
+    return sorted({rule["group"] for rule in rules if "group" in rule} - reached)
+
+
 def _observe(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Run one case and return ``(expect block, effect log)``."""
     if case.get("kind") == CALLER_KIND:
@@ -470,7 +476,7 @@ def _observe(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, An
     if deletions:
         expect[EAGER_VARIABLE_DELETIONS_KEY] = deletions
     evaluated = {record["rule"] for record in recorder.audit_records}
-    skipped = sorted({rule["group"] for rule in case["rules"] if "group" in rule} - evaluated)
+    skipped = skipped_groups(case["rules"], evaluated)
     if skipped:
         expect["skipped_groups"] = skipped
     return expect, recorder.effect_log

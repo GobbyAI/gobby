@@ -688,7 +688,9 @@ def test_corpus_has_required_scenarios() -> None:
 
 
 def _needs_posix_shell(case: dict[str, Any]) -> bool:
-    """True for a seam caller that runs an absolute POSIX shell binary as its command."""
+    """True for a case marked ``posix_only``, or a seam caller whose command is a POSIX shell."""
+    if case.get("posix_only") is True:
+        return True
     command = case.get("input", {}).get("command")
     return (
         case.get("kind") == rules_recorder.CALLER_KIND
@@ -712,7 +714,7 @@ def test_python_engine_replays_corpus() -> None:
 )
 def test_posix_shell_seam_callers_replay() -> None:
     cases = [case for case in _load_committed_cases() if _needs_posix_shell(case)]
-    assert cases, "no seam-caller case runs a POSIX shell"
+    assert cases, "no case is marked posix_only"
     mismatched = [case["id"] for case in cases if rules_corpus.replay_case(case) != case["expect"]]
     assert not mismatched, f"shell seam callers differ from the expect block for: {mismatched}"
 
