@@ -105,6 +105,8 @@ REPORT_REASONS = frozenset(
     }
 )
 SEMANTIC_PREFIX = "semantic-decision:"
+# Constructs Rust compiles with another meaning; every other fail construct Rust rejects.
+RUST_REINTERPRETED_IDS = frozenset({"possessive", "verbose-flag", "posix-class"})
 REQUIRED_CONSTRUCT_IDS = (
     "literal",
     "non-ascii-literal",
@@ -451,7 +453,7 @@ def _live() -> tuple[list[tool.FoundRegex], check.DomainTable, dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------------------------
-# 1. Enumeration
+# Enumeration
 # ---------------------------------------------------------------------------------------------
 
 SYNTHETIC_TREE: Mapping[str, Any] = {
@@ -521,7 +523,7 @@ def test_enumerator_attribution_matches_production_enumerator() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 2. Lexer against Python's parser
+# Lexer against Python's parser
 # ---------------------------------------------------------------------------------------------
 
 
@@ -571,7 +573,7 @@ def test_lexer_agrees_with_python_parser() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 3. The construct table on Python
+# The construct table on Python
 # ---------------------------------------------------------------------------------------------
 
 
@@ -579,12 +581,24 @@ def _probe_observable(pattern: str, text: str) -> bool:
     return re.search(pattern, text) is not None
 
 
+def _construct_fail_reason(row: Mapping[str, Any]) -> str:
+    """A fail row's reason: Python validity first, then what Rust does with the construct."""
+    compiles = row["python_compiles"]
+    minors = compiles.values() if isinstance(compiles, Mapping) else (compiles,)
+    if not all(minors):
+        return "python-invalid"
+    if row["id"] in RUST_REINTERPRETED_IDS:
+        return f"rust-reinterpreted:{row['id']}"
+    return f"rust-rejected:{row['id']}"
+
+
 def _check_dispositions(row: Mapping[str, Any]) -> None:
     exemplar = row["exemplar"]
     disposition = row["disposition"]
     tree = tool.lex(exemplar)
     if disposition == "fail":
-        _expect(exemplar, "BOOL", "fail")
+        verdict = _expect(exemplar, "BOOL", "fail")
+        assert verdict.reason == _construct_fail_reason(row), f"{row['id']}: {verdict}"
     elif disposition == "lookaround":
         verdict = _verdict(exemplar, "BOOL")
         assert verdict.kind in ("rewrite", "reported"), f"{row['id']}: {verdict}"
@@ -811,7 +825,7 @@ def test_construct_table_holds_on_python() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 4 and 5. Shape families and their counterexamples
+# Shape families and their counterexamples
 # ---------------------------------------------------------------------------------------------
 
 
@@ -957,7 +971,7 @@ def test_family_counterexamples_are_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 6. Consuming rewrites
+# Consuming rewrites
 # ---------------------------------------------------------------------------------------------
 
 
@@ -981,7 +995,7 @@ def test_consuming_rewrites_go_only_to_boolean_consumers() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 7. Consumer cases through production
+# Consumer cases through production
 # ---------------------------------------------------------------------------------------------
 
 
@@ -1100,7 +1114,7 @@ def test_consumer_cases_reach_the_production_consumer(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 8. The gate
+# The gate
 # ---------------------------------------------------------------------------------------------
 
 
@@ -1333,8 +1347,40 @@ def test_every_universe_regex_meets_the_portability_property() -> None:
             assert verdict == references.get(item.pattern), _row_message(item, verdict)
 
 
+def test_a_rewrite_that_fails_its_probe_check_fails_the_gate() -> None:
+    proved = _expect("a(?=b)", "BOOL", "rewrite")
+    assert set(proved.families) & set(CONSUMING_FAMILIES), proved
+    with mock.patch.object(check, "check_rewrite", return_value="ab"):
+        _expect("a(?=b)", "BOOL", "fail", "rewrite-mismatch:'ab'")
+        # A translation-only rewrite has no Python rewrite to check, so the probe check is not run.
+        translated = _expect("q\\Z", "UNKNOWN", "rewrite")
+    assert translated.families == ("T-END",), translated
+
+
+def _fail_reason(pattern: str) -> str | None:
+    verdict = _verdict(pattern, "BOOL")
+    return verdict.reason if verdict.kind == "fail" else f"not fail: {verdict}"
+
+
+def test_fail_reasons_name_the_cause_from_the_closed_set() -> None:
+    with pytest.raises(tool.UnknownConstruct) as unknown:
+        tool.lex("[a")
+    assert str(unknown.value) == "[a"
+    # The lexer runs before validity, so a Python-invalid unknown construct reads as unknown.
+    assert _fail_reason("[a") == "unknown-construct:[a"
+    assert _fail_reason("(a)\\1") == "rust-rejected:backreference"
+    assert _fail_reason("a{,2}") == "rust-rejected:brace-comma-n"
+    assert _fail_reason("a*+a") == "rust-reinterpreted:possessive"
+    assert _fail_reason("(?x)[ ]a") == "rust-reinterpreted:verbose-flag"
+    assert _verdict("a(b)", "BOOL").kind == "as_written"
+    with mock.patch.object(tool, "lex_shape", return_value={"groups": 2}):
+        assert _fail_reason("a(b)") == "parser-disagreement"
+    with mock.patch.object(tool, "min_width", return_value=0):
+        assert _fail_reason("a(b)") == "parser-disagreement"
+
+
 # ---------------------------------------------------------------------------------------------
-# 9 to 11. The report and its record
+# The report and its record
 # ---------------------------------------------------------------------------------------------
 
 REPORT_DEFINITION = """\
@@ -1503,7 +1549,7 @@ def test_rerecord_regex_audit_report() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 12 and 13. Data names and the README
+# Data names and the README
 # ---------------------------------------------------------------------------------------------
 
 
@@ -1575,7 +1621,7 @@ def test_regex_readme_states_the_generic_property() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 14. The Rust-safe syntax filter
+# The Rust-safe syntax filter
 # ---------------------------------------------------------------------------------------------
 
 
@@ -1618,7 +1664,7 @@ def test_rust_safe_predicate_flags_every_unsafe_construct() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 15. The two-engine driver
+# The two-engine driver
 # ---------------------------------------------------------------------------------------------
 
 
@@ -1796,7 +1842,7 @@ def test_two_engine_driver_detects_a_known_divergence() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 16. Engine-dependent constructs
+# Engine-dependent constructs
 # ---------------------------------------------------------------------------------------------
 
 
@@ -1910,7 +1956,7 @@ def test_engine_dependent_constructs_are_translated_restricted_or_reported() -> 
 
 
 # ---------------------------------------------------------------------------------------------
-# 17. Universal and witnessless rewrites
+# Universal and witnessless rewrites
 # ---------------------------------------------------------------------------------------------
 
 
@@ -1989,7 +2035,7 @@ def test_universal_and_witnessless_rewrites_are_classified() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 18. Consumer observables: flags, substitution and boundaries
+# Consumer observables: flags, substitution and boundaries
 # ---------------------------------------------------------------------------------------------
 
 DIGIT_13 = ((48, 57), (0x660, 0x669))
@@ -2411,7 +2457,7 @@ def test_consumer_observables_carry_flags_and_substitution() -> None:
 
 
 # ---------------------------------------------------------------------------------------------
-# 19. R5 independence under ignore-case
+# R5 independence under ignore-case
 # ---------------------------------------------------------------------------------------------
 
 R5_PATTERN = "(?i)q(?=.*a)(?=.*b)"

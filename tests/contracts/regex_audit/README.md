@@ -21,8 +21,14 @@ Every found pattern gets a consumer class from a code constant in `regex_audit_t
 - `rewrite`: an exact family rewrite gives a Rust text with the same observable;
 - `reported`: a report row for the operator (a proposal, a lookaround no family covers, an
   inert pattern, or a semantic decision); a reported row is never a failure;
-- `fail`: the pattern is not valid Python on every supported minor, or a text called exact
-  disagrees between the engines.
+- `fail`: the pattern cannot be ported and the cause is not a reportable shape. The reason names
+  the cause: `unknown-construct:<text>` (the lexer does not know a construct), `python-invalid`
+  (not valid Python on every supported minor), `parser-disagreement` (the lexer and Python's
+  parser disagree on its structure), `rust-rejected:<id>` (a construct Rust does not compile and
+  no translation covers), `rust-reinterpreted:<id>` (a construct Rust compiles with another
+  meaning, such as a possessive quantifier or the verbose flag), `rewrite-mismatch:<input>` (a
+  claimed family rewrite differs from the original on a probe) or `two-engine-mismatch:<input>`
+  (a text called exact disagrees between the engines).
 
 A verdict is exact only after the two-engine driver passes it: `verify` sends every exact text
 to the Rust driver and compares each probe with the Python observable of the original. `verify`

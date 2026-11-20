@@ -9,8 +9,10 @@ patches one of them there reaches this module too.
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import itertools
 import re
+import warnings
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
@@ -20,21 +22,25 @@ from tests.contracts import regex_audit_check as check
 from tests.contracts import regex_audit_tool as tool
 from tests.contracts.regex_audit_tool import FoundRegex, Node
 
-# Constructs Rust rejects or reads differently that no translation covers.
-_RUST_UNSUPPORTED = (
-    "backreference",
-    "named-backreference",
-    "atomic",
-    "possessive",
-    "conditional",
-    "octal-escape",
-    "named-char",
-    "class-backspace",
-    "verbose-flag",
-    "posix-class",
-    "brace-comma-n",
-    "literal-brace",
+# Constructs no translation covers, split by what Rust does with them: a rejected construct does
+# not compile in Rust (reason rust-rejected:<id>); a reinterpreted one compiles there with another
+# meaning (reason rust-reinterpreted:<id>). The verbose flag is reinterpreted because Rust drops
+# whitespace inside a class where Python keeps it, even though its fixture exemplar happens to
+# leave Rust an empty class it then rejects.
+_RUST_REJECTED = frozenset(
+    {
+        "backreference",
+        "named-backreference",
+        "atomic",
+        "conditional",
+        "octal-escape",
+        "named-char",
+        "class-backspace",
+        "brace-comma-n",
+        "literal-brace",
+    }
 )
+_RUST_REINTERPRETED = frozenset({"possessive", "verbose-flag", "posix-class", "unicode-property"})
 _SHAPE_SAFE_DOLLAR = ("FULLMATCH", "FULLMATCH-PATH")
 _DOLLAR_AS_WRITTEN = ("MATCH-GROUPS-FIRSTLINE", "SEARCH-PKG-M")
 
@@ -735,17 +741,48 @@ def _unsupported(tree: Node, source: str) -> str | None:
     return None
 
 
+def _rust_reason(construct: str) -> str:
+    """The fail reason for a construct no translation covers: rejected or reinterpreted."""
+    if construct in _RUST_REINTERPRETED:
+        return f"rust-reinterpreted:{construct}"
+    if construct in _RUST_REJECTED:
+        return f"rust-rejected:{construct}"
+    raise ValueError(f"construct {construct!r} has no Rust disposition")
+
+
+def _parser_agrees(tree: Node, pattern: str, consumer: str) -> bool:
+    """Whether the lexer tree and Python's own parser agree on the pattern's structure.
+
+    The comparison is the lexer test's: group, lookaround and backreference counts and the minimum
+    width, under the consumer's flags (none for the regex package's class, whose flags ``re`` does
+    not read). A pattern ``re._parser`` cannot read, which only the regex package accepts, has
+    nothing to compare.
+    """
+    flags = 0 if consumer == "SEARCH-PKG-M" else check.consumer_flags(consumer)
+    parser = importlib.import_module("re._parser")
+    try:
+        shape = tool.sre_shape(pattern, flags)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            width = int(parser.parse(pattern, flags).getwidth()[0])
+    except re.error:
+        return True
+    return tool.lex_shape(tree) == shape and tool.min_width(tree) == width
+
+
 def classify(pattern: str, consumer: str, domain: check.DomainTable) -> check.Verdict:
     """The verdict for one pattern under its consumer class, in the order of reasons."""
     try:
         tree = tool.lex(pattern)
-    except tool.UnknownConstruct:
-        return _verdict("fail", "unknown-construct")
+    except tool.UnknownConstruct as unknown:
+        return _verdict("fail", f"unknown-construct:{unknown}")
     if not _python_valid(pattern, consumer):
         return _verdict("fail", "python-invalid")
+    if not _parser_agrees(tree, pattern, consumer):
+        return _verdict("fail", "parser-disagreement")
     unsupported = _unsupported(tree, pattern)
     if unsupported is not None:
-        return _verdict("fail", f"rust-unsupported:{unsupported}")
+        return _verdict("fail", _rust_reason(unsupported))
     atoms = _Atoms(tree, pattern, consumer, domain)
     common = {
         "atoms": tuple(dict.fromkeys(atoms.atoms)),
@@ -769,7 +806,14 @@ def classify(pattern: str, consumer: str, domain: check.DomainTable) -> check.Ve
         return _verdict("reported", atom_reason, **common)
     python_text = _render_text(tree, pattern, replace) if replace else pattern
     universal = "R0" in families and check.matches_everything(python_text, consumer)
-    witness = _witness_reason(tree, pattern, python_text, consumer, families, universal)
+    probes = check.derive_probes(pattern, python_text, consumer)
+    if families:
+        # A claimed rewrite that disagrees with the original on a probe is a wrong proof, not a
+        # shape to report: the gate fails with the first input on which the two differ.
+        differing = check.check_rewrite(pattern, python_text, consumer, probes)
+        if differing is not None:
+            return _verdict("fail", f"rewrite-mismatch:{differing!r}")
+    witness = _witness_reason(tree, pattern, consumer, families, universal, probes)
     if witness is not None:
         proposal = python_text if families else None
         return _verdict("reported", witness, python_text=proposal, **common)
@@ -794,15 +838,12 @@ def _sub_matches(value: object) -> Sequence[object]:
 def _witness_reason(
     tree: Node,
     pattern: str,
-    python_text: str,
     consumer: str,
     families: Sequence[str],
     universal: bool,
+    probes: Sequence[str],
 ) -> str | None:
-    probes = check.derive_probes(pattern, python_text, consumer)
     if families:
-        if check.check_rewrite(pattern, python_text, consumer, probes) is not None:
-            return "lookaround-unsupported-shape"
         truths = [check.observable(consumer, pattern, probe) for probe in probes]
         if universal:
             if not all(truths):

@@ -322,7 +322,10 @@ async def _observe_proxy_route(
                 _workflow_handler=handler, _session_manager=sessions
             )
             client_manager: Any = types.SimpleNamespace()
-            resolver: Callable[[], Any] = lambda: hook_manager  # noqa: E731
+
+            def resolver() -> Any:
+                return hook_manager
+
             service = ToolProxyService(client_manager, hook_manager_resolver=resolver)
             with mock.patch.object(handler, "evaluate", new=recording_evaluate):
                 _, _, _, error, outcome = await apply_before_tool_enforcement(
