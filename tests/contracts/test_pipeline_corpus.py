@@ -20,6 +20,7 @@ import inspect
 import json
 import re
 import shutil
+from collections.abc import Mapping
 from functools import cache
 from pathlib import Path
 from typing import Any, NoReturn
@@ -233,22 +234,70 @@ def test_pipeline_corpus_has_required_cases() -> None:
     assert not gaps, f"pipeline corpus gaps: {gaps}"
 
 
+def _unread_collaborator_reads(root: Path, attributes: Mapping[str, str]) -> list[str]:
+    """Return ``file:line`` for each read of an unread collaborator's attribute under ``root``.
+
+    ``attributes`` maps each collaborator kind to the handler attribute that stores it. A plain
+    store of the injected kind and the attribute's declaration are not reads.
+    """
+    reads: list[str] = []
+    for path in sorted(root.rglob("*.py")):
+        for number, line in enumerate(path.read_text().splitlines(), start=1):
+            for kind, attribute in attributes.items():
+                stripped = line.strip()
+                stored = stripped == f"self.{attribute} = {kind}"
+                declared = stripped.startswith(f"{attribute}:")
+                if re.search(rf"\b{attribute}\b", line) and not (stored or declared):
+                    reads.append(f"{path.relative_to(root)}:{number}")
+    return reads
+
+
 def test_unread_collaborators_stay_unread() -> None:
     manifest, _cases = pipeline_corpus.load_corpus(CORPUS_DIR)
     assert set(manifest.get("unread_collaborators", {})) == set(UNREAD_COLLABORATORS)
     assert set(UNREAD_COLLABORATORS) <= set(COLLABORATOR_KINDS)
     sources = sorted(HOOKS_SOURCE.rglob("*.py"))
     assert sources, f"no hook sources under {HOOKS_SOURCE}"
-    reads: list[str] = []
-    for path in sources:
-        for number, line in enumerate(path.read_text().splitlines(), start=1):
-            for kind, attribute in UNREAD_COLLABORATORS.items():
-                stripped = line.strip()
-                stored = stripped == f"self.{attribute} = {kind}"
-                declared = stripped.startswith(f"{attribute}:")
-                if re.search(rf"\b{attribute}\b", line) and not (stored or declared):
-                    reads.append(f"{path.relative_to(HOOKS_SOURCE)}:{number}")
+    reads = _unread_collaborator_reads(HOOKS_SOURCE, UNREAD_COLLABORATORS)
     assert not reads, f"handlers now read an unread collaborator; re-record its case: {reads}"
+
+
+# Source forms of the unread call-tool collaborator, each written to its own module. A read form
+# must be reported by the guard; a non-read form (a store of the injected value, the attribute's
+# annotation, or a mention in a docstring or comment) must not be.
+COLLABORATOR_READ_FORMS = {
+    "attribute_load": "class Handlers:\n    def run(self) -> object:\n"
+    "        value = self._call_tool\n        return value\n",
+    "method_call": "class Handlers:\n    def run(self) -> object:\n"
+    '        return self._call_tool("s", "t", {})\n',
+    "getattr_literal": "class Handlers:\n    def run(self) -> object:\n"
+    '        return getattr(self, "_call_tool")\n',
+    "foreign_attribute_load": "def run(handlers: object) -> object:\n"
+    "    tool = handlers._call_tool\n    return tool\n",
+    "store_that_reads": "class Handlers:\n    def __init__(self, call_tool: object) -> None:\n"
+    "        self._call_tool = call_tool or self._call_tool\n",
+}
+COLLABORATOR_NON_READ_FORMS = {
+    "plain_store": "class Handlers:\n    def __init__(self, call_tool: object) -> None:\n"
+    "        self._call_tool = call_tool\n",
+    "annotation": "class Handlers:\n    _call_tool: object | None\n",
+    "docstring_mention": 'class Handlers:\n    """Holds _call_tool for later use."""\n',
+    "comment_mention": "class Handlers:\n    # _call_tool is injected by the factory.\n"
+    "    name = 'handlers'\n",
+}
+
+
+def test_unread_collaborator_guard_reads_code_not_text(tmp_path: Path) -> None:
+    for name, source in {**COLLABORATOR_READ_FORMS, **COLLABORATOR_NON_READ_FORMS}.items():
+        (tmp_path / f"{name}.py").write_text(source)
+    reads = _unread_collaborator_reads(tmp_path, UNREAD_COLLABORATORS)
+    reported = {entry.split(".py:", 1)[0] for entry in reads}
+    missed = sorted(set(COLLABORATOR_READ_FORMS) - reported)
+    assert not missed, f"the unread-collaborator guard misses these read forms: {missed}"
+    false_reads = sorted(reported & set(COLLABORATOR_NON_READ_FORMS))
+    assert not false_reads, (
+        f"the unread-collaborator guard reports these non-read forms as reads: {false_reads}"
+    )
 
 
 def test_rerecord_committed_corpus() -> None:
@@ -382,6 +431,137 @@ def test_pipeline_cases_change_outcome_when_their_path_is_broken(
             if _outcome(case) == case["expect"]:
                 unreached.append(f"{case['id']}: unchanged with {attribute} broken")
     assert not unreached, f"pipeline cases that never reach their named path: {unreached}"
+
+
+def test_reach_stub_escapes_the_handler_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    cases = [
+        case
+        for case in _committed_cases()
+        if case.get("kind") == "event" and str(case.get("scenario")) not in HANDLER_BYPASSED
+    ]
+    assert len(cases) >= MIN_CASES, (
+        f"pipeline corpus holds {len(cases)} handler-reaching cases; at least {MIN_CASES} required"
+    )
+    swallowed: list[str] = []
+    for case in cases:
+        handler = _handler_names().get(str(case.get("event_type")))
+        if handler is None:
+            swallowed.append(f"{case['id']}: event type has no handler")
+            continue
+        with monkeypatch.context() as patch:
+            patch.setattr(EventHandlers, handler, _broken)
+            if _outcome(case) != BROKEN_PATH:
+                swallowed.append(f"{case['id']}: {handler} stub did not reach the replay")
+    assert not swallowed, f"reach stubs swallowed between the handler and the replay: {swallowed}"
+
+
+SYNTHETIC_SESSION_ID = "3f2b1c0d-9e8f-4a7b-8c6d-5e4f3a2b1c0d"
+
+
+def _native_delivery(hook_type: str, hook_event_name: str) -> dict[str, Any]:
+    return {
+        "source": "claude",
+        "hook_type": hook_type,
+        "payload": {
+            "hook_event_name": hook_event_name,
+            "session_id": SYNTHETIC_SESSION_ID,
+            "cwd": pipeline_recorder.PROJECT_PLACEHOLDER,
+            "machine_id": pipeline_recorder.MACHINE_PLACEHOLDER,
+        },
+    }
+
+
+def _payload_case(case_id: str) -> dict[str, Any]:
+    return {
+        "id": case_id,
+        "kind": "event",
+        "provenance": "synthetic",
+        "scenario": "session_start_new",
+        "event_type": HookEventType.BEFORE_AGENT.value,
+        "setup": [_native_delivery("session-start", "SessionStart")],
+        **_native_delivery("user-prompt-submit", "UserPromptSubmit"),
+        "collaborator_script": [],
+        "expect": {"response": {}, "collaborator_calls": []},
+    }
+
+
+def _malformed_payload_case(member: str) -> tuple[dict[str, Any], str]:
+    """Return ``(case, needle)``: a payload case whose one defect the loader must name."""
+    case = _payload_case(f"synthetic-{member.replace('_', '-')}")
+    setup = case["setup"][0]
+    if member == "empty_payload":
+        case["payload"] = {}
+        return case, "payload"
+    if member == "missing_source":
+        del case["source"]
+        return case, "source"
+    if member == "unknown_source":
+        case["source"] = "synthetic-no-such-source"
+        return case, "synthetic-no-such-source"
+    if member == "unmapped_hook_type":
+        case["hook_type"] = "SyntheticUnmappedHook"
+        return case, "SyntheticUnmappedHook"
+    if member == "payload_and_event":
+        case["event"] = {"type": HookEventType.BEFORE_AGENT.value}
+        case["reason"] = "synthetic direct delivery"
+        return case, "event"
+    if member == "setup_empty_payload":
+        setup["payload"] = {}
+        return case, "payload"
+    if member == "setup_unknown_source":
+        setup["source"] = "synthetic-no-such-source"
+        return case, "synthetic-no-such-source"
+    if member == "setup_unmapped_hook_type":
+        setup["hook_type"] = "SyntheticUnmappedHook"
+        return case, "SyntheticUnmappedHook"
+    if member == "setup_payload_and_event":
+        setup["event"] = {"type": HookEventType.SESSION_START.value}
+        return case, "event"
+    raise ValueError(f"unknown malformed member {member!r}")
+
+
+MALFORMED_PAYLOAD_MEMBERS = (
+    "empty_payload",
+    "missing_source",
+    "unknown_source",
+    "unmapped_hook_type",
+    "payload_and_event",
+    "setup_empty_payload",
+    "setup_unknown_source",
+    "setup_unmapped_hook_type",
+    "setup_payload_and_event",
+)
+
+
+def test_pipeline_loader_requires_a_native_provider_payload(tmp_path: Path) -> None:
+    manifest: dict[str, Any] = {
+        "schema_version": pipeline_corpus.SCHEMA_VERSION,
+        "collaborators": ["task_manager"],
+        "case_kinds": list(CASE_KINDS),
+    }
+    well_formed = _write_corpus(tmp_path / "well-formed", manifest, [_payload_case("synthetic-ok")])
+    _loaded_manifest, loaded = pipeline_corpus.load_corpus(well_formed)
+    assert [case["id"] for case in loaded] == ["synthetic-ok"]
+    for member in MALFORMED_PAYLOAD_MEMBERS:
+        case, needle = _malformed_payload_case(member)
+        corpus = _write_corpus(tmp_path / member, manifest, [case])
+        with pytest.raises(ValueError, match=rf"{re.escape(case['id'])}.*{re.escape(needle)}"):
+            pipeline_corpus.load_corpus(corpus)
+    deliveries = [
+        (case["id"], delivery)
+        for case in _committed_cases()
+        for delivery in (case, *case.get("setup", []))
+        if "payload" in delivery
+    ]
+    assert len(deliveries) >= MIN_CASES, (
+        f"pipeline corpus holds {len(deliveries)} payload deliveries; at least {MIN_CASES} required"
+    )
+    empty = [
+        case_id
+        for case_id, delivery in deliveries
+        if not isinstance(delivery["payload"], dict) or not delivery["payload"]
+    ]
+    assert not empty, f"committed pipeline deliveries without a native payload: {empty}"
 
 
 def test_pipeline_rules_are_synthetic_definitions() -> None:

@@ -24,24 +24,27 @@ import inspect
 import json
 import re
 import shutil
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, NoReturn
+from unittest import mock
 
 import pytest
 
 from gobby.adapters import claude_code, droid, grok
+from gobby.adapters.acp_hook_adapter import ACPHookAdapter
 from gobby.adapters.agy import AgyAdapter
-from gobby.adapters.capabilities import get_provider_capabilities
+from gobby.adapters.capabilities import ACP_EVENT_MAP, get_provider_capabilities
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl import hooks_adapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.git import GIT_TOOL_NAME, GitAdapter
 from gobby.adapters.grok import GrokAdapter
+from gobby.hooks.events import SessionSource
 from gobby.servers.routes.mcp.hooks import SUPPORTED_HOOK_SOURCES
 from gobby.sessions.transcripts import agy as agy_transcripts
-from tests.contracts import adapters_corpus
+from tests.contracts import adapters_corpus, adapters_coverage, adapters_recorder
 
 CONTRACTS_DIR = Path(__file__).resolve().parent
 CORPUS_DIR = CONTRACTS_DIR / "adapters"
@@ -57,9 +60,16 @@ ADAPTER_CLASSES: dict[str, Any] = {
 }
 CLAUDE = "claude"
 CASE_KINDS = ("inbound", "outbound", "node_origin", "git_verdict", "route_refusal")
-# Response fields the adapter layer sets, not the rule engine. No declared capability row lists
-# modify_args, so each of these needs an outbound case of its own, whatever the source.
-ADAPTER_OWNED_RESPONSE_FIELDS = ("system_message", "modify_args")
+# Response fields the adapter layer sets, not the rule engine. Each needs an outbound case of
+# its own, whatever the source, whose non-null value the adapter emits.
+ADAPTER_OWNED_RESPONSE_FIELDS: tuple[str, ...] = ("system_message",)
+# Response fields with a writer in production that no routed adapter reaches: the ACP base
+# adapter emits modify_args only for its BeforeModel and BeforeToolSelection hook types, and no
+# routed source delivers either. A routed adapter that starts emitting one fails the guard.
+UNROUTED_RESPONSE_FIELDS = ("modify_args",)
+# A mapping no recorded adapter output contains, set on an unrouted field to see whether it is
+# emitted.
+UNROUTED_FIELD_SENTINEL = {"synthetic_probe": "corpus unrouted-field probe"}
 GIT_VERDICTS = ("allow", "block")
 GIT_GUARD_HOOK = "PreToolUse"
 ROUTE_REFUSALS = ("unknown_source", "malformed_payload")
@@ -259,14 +269,128 @@ def test_adapters_corpus_covers_hook_types_and_fields() -> None:
     assert not gaps, f"adapter corpus lacks cases for: {gaps}"
 
 
+def _without_field(case: dict[str, Any], field: str) -> dict[str, Any]:
+    response = {key: value for key, value in case.get("response", {}).items() if key != field}
+    return {**case, "response": response}
+
+
+def _emits_field(case: dict[str, Any], field: str) -> bool:
+    """True when an outbound case sets ``field`` to a value the adapter emits.
+
+    The value must not be null, and the recorded output must differ from the replay of the same
+    case with the field removed.
+    """
+    if case.get("kind") != "outbound" or case.get("response", {}).get(field) is None:
+        return False
+    stripped = adapters_corpus.replay_case(_without_field(case, field))
+    recorded: object = case.get("expect", {}).get("output")
+    return bool(stripped.get("output") != recorded)
+
+
 def test_adapters_corpus_sets_adapter_owned_response_fields() -> None:
     outbound = [case for case in _committed_cases() if case.get("kind") == "outbound"]
+    assert outbound, "adapter corpus holds no outbound case"
     unset = [
         field
         for field in ADAPTER_OWNED_RESPONSE_FIELDS
-        if not any(field in case.get("response", {}) for case in outbound)
+        if not any(_emits_field(case, field) for case in outbound)
     ]
-    assert not unset, f"no outbound adapter case sets: {unset}"
+    assert not unset, f"no outbound adapter case sets a value the adapter emits for: {unset}"
+
+
+def test_adapter_owned_fields_match_the_coverage_helper() -> None:
+    helper = adapters_coverage.ADAPTER_OWNED_RESPONSE_FIELDS
+    assert helper == ADAPTER_OWNED_RESPONSE_FIELDS, (
+        f"the coverage helper owns {helper}; the contract owns {ADAPTER_OWNED_RESPONSE_FIELDS}"
+    )
+
+
+def _emitted_field_corpus(tmp_path: Path, variant: str, field: str) -> Path:
+    """Copy the committed corpus with every outbound ``field`` made null or not emitted."""
+    corpus = tmp_path / "adapters"
+    shutil.copytree(CORPUS_DIR, corpus)
+    for path in sorted((corpus / "cases").glob("*.json")):
+        document = json.loads(path.read_text())
+        for case in document["cases"]:
+            if case.get("kind") != "outbound" or field not in case.get("response", {}):
+                continue
+            if variant == "null_value":
+                case["response"][field] = None
+            else:
+                case["expect"] = adapters_corpus.replay_case(_without_field(case, field))
+        path.write_text(json.dumps(document))
+    return corpus
+
+
+@pytest.mark.parametrize("variant", ("null_value", "dropped"))
+def test_adapter_owned_field_coverage_requires_an_emitted_value(
+    tmp_path: Path, variant: str
+) -> None:
+    cases = _committed_cases()
+    assert len(cases) >= MIN_CASES, (
+        f"adapter corpus holds {len(cases)} cases; at least {MIN_CASES} required"
+    )
+    field = ADAPTER_OWNED_RESPONSE_FIELDS[0]
+    corpus = _emitted_field_corpus(tmp_path, variant, field)
+    with pytest.raises(ValueError, match=re.escape(field)):
+        adapters_corpus.check_coverage(corpus, "response_field")
+
+
+def _replayed_output(case: dict[str, Any]) -> object:
+    try:
+        return adapters_corpus.replay_case(case)
+    except Exception as exc:
+        return f"raised {type(exc).__name__}"
+
+
+def _routed_emitters(field: str, sources: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """Return each ``(source, hook type)`` whose outbound output changes when ``field`` is set.
+
+    Each source is replayed through ``adapters_corpus.replay_case`` for every hook type of its
+    ``EVENT_MAP`` and every ACP hook name, once with ``field`` set to a sentinel mapping and once
+    without it. A raised error counts as an output.
+    """
+    emitters: list[tuple[str, str]] = []
+    with mock.patch.dict(adapters_recorder.ADAPTERS, dict(sources)):
+        for source, adapter in sources.items():
+            hook_types = sorted({*getattr(adapter, "EVENT_MAP", {}), *ACP_EVENT_MAP})
+            for hook_type in hook_types:
+                bare = {
+                    "id": f"synthetic-{source}-{hook_type}",
+                    "kind": "outbound",
+                    "source": source,
+                    "provenance": "synthetic",
+                    "hook_type": hook_type,
+                    "response": {},
+                }
+                probed = {**bare, "response": {field: dict(UNROUTED_FIELD_SENTINEL)}}
+                if _replayed_output(probed) != _replayed_output(bare):
+                    emitters.append((source, hook_type))
+    return emitters
+
+
+class _SyntheticAcpAdapter(ACPHookAdapter):
+    """A concrete ACP adapter that keeps the base ``EVENT_MAP``, so its model hooks are routed."""
+
+    @property
+    def source(self) -> SessionSource:
+        return SessionSource.GROK
+
+
+SYNTHETIC_ACP_SOURCE = "synthetic-acp"
+ACP_MODIFY_ARGS_HOOKS = {"BeforeModel", "BeforeToolSelection"}
+
+
+@pytest.mark.parametrize("field", UNROUTED_RESPONSE_FIELDS)
+def test_unrouted_response_fields_reach_no_routed_adapter_output(field: str) -> None:
+    routed = dict(adapters_recorder.ADAPTERS)
+    assert set(routed) == set(SUPPORTED_HOOK_SOURCES)
+    emitters = _routed_emitters(field, routed)
+    assert not emitters, f"routed adapters now emit the unrouted field {field}: {emitters}"
+    detected = _routed_emitters(field, {SYNTHETIC_ACP_SOURCE: _SyntheticAcpAdapter})
+    assert {hook for _source, hook in detected} == ACP_MODIFY_ARGS_HOOKS, (
+        f"the emitter probe found {detected} on an adapter that routes the ACP model hooks"
+    )
 
 
 def test_python_adapters_replay_corpus() -> None:
@@ -391,7 +515,6 @@ def test_route_refusals_never_reach_an_adapter(monkeypatch: pytest.MonkeyPatch) 
     (
         ("hook_type", sorted(ClaudeCodeAdapter.EVENT_MAP)[0]),
         ("response_field", "system_message"),
-        ("response_field", "modify_args"),
     ),
 )
 def test_adapters_coverage_negative(tmp_path: Path, axis: str, item: str) -> None:

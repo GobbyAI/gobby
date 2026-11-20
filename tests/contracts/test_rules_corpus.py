@@ -109,21 +109,23 @@ RESPONSE_FIELDS = (
 )
 MANIFEST_PATH = CORPUS_DIR / "manifest.json"
 RESPONSE_FIELD_OWNER_KEY = "response_field_owners"
-RESPONSE_OWNER_LAYERS = ("adapters", "pipeline", "none")
+RESPONSE_OWNER_LAYERS = ("adapters", "pipeline", "unrouted", "none")
 # The three response fields no rule-pass case can set, each with the layer that covers it.
 # This constant is the contract: the manifest repeats it, so a JSON-only edit cannot move a
-# field into the rule-pass layer. "none" means no production code writes the field.
+# field into the rule-pass layer. "none" means no production code writes the field;
+# "unrouted" means a production writer exists that no routed adapter reaches.
 RESPONSE_FIELD_OWNERS: dict[str, str] = {
     "system_message": "adapters",
-    "modify_args": "adapters",
+    "modify_args": "unrouted",
     "trigger_action": "none",
 }
 ENGINE_RESPONSE_FIELDS = tuple(
     field for field in RESPONSE_FIELDS if field not in RESPONSE_FIELD_OWNERS
 )
-# A field whose owner is "none" has no producer in Python, so no src writer may name it.
-FIELDS_WITHOUT_RULE_PRODUCER = tuple(
-    field for field, owner in RESPONSE_FIELD_OWNERS.items() if owner == "none"
+# A field whose owner is "none" or "unrouted" has no reachable producer in Python, so no src
+# code may store it on a response or pass it to one.
+FIELDS_WITHOUT_RESPONSE_WRITER = tuple(
+    field for field, owner in RESPONSE_FIELD_OWNERS.items() if owner in ("none", "unrouted")
 )
 UNUSED_FIELD_WRITE_FORMS = {
     "attribute_assign": 'resp.trigger_action = "synthetic"\n',
@@ -936,7 +938,7 @@ def _relaxed_manifest(edit: str) -> dict[str, Any]:
         owners.pop("trigger_action")
         manifest["required"]["response_field"].append("trigger_action")
     elif edit == "relabel-owner-layer":
-        owners["modify_args"] = "pipeline"
+        owners["modify_args"] = "adapters"
     else:
         raise ValueError(f"unknown edit {edit!r}")
     return manifest
@@ -948,7 +950,7 @@ def test_owner_check_rejects_a_json_only_relaxation(edit: str) -> None:
     assert findings, f"the owner check accepts the relaxed manifest ({edit}) with no finding"
 
 
-@pytest.mark.parametrize("field", FIELDS_WITHOUT_RULE_PRODUCER)
+@pytest.mark.parametrize("field", FIELDS_WITHOUT_RESPONSE_WRITER)
 def test_fields_without_a_rule_producer_have_no_src_writer(field: str) -> None:
     writers = _writers_of(field)
     assert not writers, f"{field} is now written in src at {writers}; give it an owner layer"
