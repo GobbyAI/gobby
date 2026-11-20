@@ -154,6 +154,30 @@ impl RouteHandle {
         count(surface, record.level);
         routes.write(surface, &record, fields.guard_refused);
     }
+
+    /// Writes a WARNING `message` from `target` again, for a warning emitted before these
+    /// routes activated: to its surface's file when the floor passes it, and to `errors.log`
+    /// whatever the floor, so a stored ERROR level cannot hide it.
+    pub(crate) fn write_warning(&self, target: &str, module: &str, message: &str) {
+        let Some(surface) = classify::surface_for_target(target) else {
+            return;
+        };
+        let record = Record {
+            time: local_timestamp(),
+            level: Level::Warning,
+            target: target.to_owned(),
+            module: module.to_owned(),
+            message: message.to_owned(),
+            extras: Vec::new(),
+        };
+        let mut routes = self.lock();
+        count(surface, Level::Warning);
+        if passes(surface, Level::Warning, &routes.settings) {
+            routes.write(surface, &record, false);
+        } else {
+            routes.write_errors(&record);
+        }
+    }
 }
 
 /// Whether a record at `level` passes the floor of `surface` under `settings`. A parser
@@ -206,13 +230,18 @@ impl Routes {
         }
         let guarded = record.level == Level::Warning && guard_refused;
         if record.level >= Level::Warning && !guarded {
-            let line = self.layout(record);
-            self.append(
-                classify::primary_file_name(Surface::Errors),
-                Keys::Daemon,
-                &line,
-            );
+            self.write_errors(record);
         }
+    }
+
+    /// Writes `record` to `errors.log`.
+    fn write_errors(&mut self, record: &Record) {
+        let line = self.layout(record);
+        self.append(
+            classify::primary_file_name(Surface::Errors),
+            Keys::Daemon,
+            &line,
+        );
     }
 
     fn layout(&self, record: &Record) -> String {

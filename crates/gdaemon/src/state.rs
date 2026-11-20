@@ -225,19 +225,23 @@ impl RuntimeState {
                     continue;
                 }
             }
-            let services = crate::state_services::ActiveServices::start(
+            let mut services = crate::state_services::ActiveServices::start(
                 &bootstrap,
                 &terminals,
                 &home,
                 self.write_token.clone(),
                 &families,
+                self.lease_state.clone(),
             )
             .await?;
             *self
                 .terminal_route
                 .write()
                 .unwrap_or_else(PoisonError::into_inner) = services.route();
-            let outcome = supervisor.run(shutdown.clone()).await;
+            // The family jobs end while the lease is still held, on every exit.
+            let outcome = supervisor
+                .run_ending(shutdown.clone(), |exit| services.end_jobs(exit))
+                .await;
             let drain = outcome
                 .as_ref()
                 .is_ok_and(|outcome| outcome.drains_terminals());

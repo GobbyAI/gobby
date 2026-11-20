@@ -669,38 +669,48 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Records {
 }
 
 #[tokio::test(start_paused = true)]
-async fn start_warnings_are_replayed_once_routed_logging_activates() {
+async fn start_warnings_are_emitted_once_and_their_replay_emits_no_second_event() {
     let degraded: &'static StartsDegraded = Box::leak(Box::new(StartsDegraded));
-    let families = prepare(inputs_reading(Scripted::new(vec![None]), vec![degraded]))
-        .await
-        .expect("a degraded family and an unreadable configuration do not fail the start");
-
-    // Routing activates after the start: the replay is what reaches the routed files.
     let records = Records::default();
-    let _routed = tracing::subscriber::set_default(Registry::default().with(records.clone()));
-    replay_start_warnings(&families.start_warnings);
+    let families = {
+        let _start = tracing::subscriber::set_default(Registry::default().with(records.clone()));
+        let families = prepare(inputs_reading(Scripted::new(vec![None]), vec![degraded]))
+            .await
+            .expect("a degraded family and an unreadable configuration do not fail the start");
+        // The replay writes to the activated routes directly, past the level floor, so it
+        // reaches no subscriber: the pre-configuration sink never prints a warning twice.
+        replay_start_warnings(&families.start_warnings);
+        families
+    };
 
-    let replayed = records
+    let emitted = records
         .0
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
-    let warned = |needle: &str| {
-        replayed
+    for needle in [
+        "the active configuration is unreadable at start",
+        "family fixture_starts_degraded started degraded",
+    ] {
+        let events = emitted
             .iter()
             .filter(|(level, target, message)| {
                 *level == Level::WARN && target == "gobby.daemon" && message.contains(needle)
             })
-            .count()
-    };
-    assert_eq!(
-        warned("the active configuration is unreadable at start"),
-        1,
-        "the unreadable configuration warning was not replayed exactly once: {replayed:?}"
-    );
-    assert_eq!(
-        warned("family fixture_starts_degraded started degraded"),
-        1,
-        "the degraded start warning was not replayed exactly once: {replayed:?}"
-    );
+            .count();
+        assert_eq!(
+            events, 1,
+            "the start warning {needle:?} is not one event: {emitted:?}"
+        );
+        let kept = families
+            .start_warnings
+            .iter()
+            .filter(|warning| warning.contains(needle))
+            .count();
+        assert_eq!(
+            kept, 1,
+            "the start warning {needle:?} is not kept once for the replay: {:?}",
+            families.start_warnings
+        );
+    }
 }

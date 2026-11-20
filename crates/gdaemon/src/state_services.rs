@@ -7,6 +7,8 @@ mod host_process_fixture;
 use crate::family_start::{FAMILY_STOP_BUDGET, ProcessFamilies};
 use crate::front_door::FrontDoorState;
 use crate::heartbeat::HeartbeatHost;
+use crate::lease::LeaseState;
+use crate::lifecycle::backend::SupervisorExit;
 use anyhow::{Context, Result};
 use gobby_core::bootstrap::HubDatabaseBootstrap;
 use gobby_core::family::FamilyContext;
@@ -27,6 +29,9 @@ pub(crate) struct ActiveServices {
     jobs: HeartbeatHost,
     /// The families this lease activated, deactivated at stop.
     activated: Vec<ActivationEntry<FrontDoorState>>,
+    /// How the jobs ended, once [`ActiveServices::end_jobs`] ended them before the lease
+    /// was released.
+    jobs_ended: Option<Result<()>>,
 }
 
 impl ActiveServices {
@@ -39,13 +44,15 @@ impl ActiveServices {
 
     /// Starts the lease's services: the native pools at their share, the terminal host when
     /// this daemon owns the terminals, retention, and then the families' activation and
-    /// their jobs. A fatal activation stops what already started and fails the start.
+    /// their jobs, fenced by `lease` when the daemon holds one. A fatal activation stops
+    /// what already started and fails the start.
     pub(crate) async fn start(
         bootstrap: &HubDatabaseBootstrap,
         terminals: &RouteLatch,
         home: &Path,
         token: TokenSlot,
         families: &ProcessFamilies,
+        lease: Option<watch::Receiver<LeaseState>>,
     ) -> Result<Self> {
         let mode = terminals.select(crate::front_door::routes::terminal_route(
             &bootstrap.front_door.routes,
@@ -57,6 +64,7 @@ impl ActiveServices {
             terminals: None,
             jobs: HeartbeatHost::new(),
             activated: Vec::new(),
+            jobs_ended: None,
         };
         if let Some(url) = &bootstrap.database_url {
             let machine = gobby_core::machine::read_machine_id_from_home(home)?;
@@ -110,15 +118,34 @@ impl ActiveServices {
             }
         }
         services.activated = families.activation.clone();
-        services.jobs.start()?;
+        match lease {
+            Some(lease) => services.jobs.start_fenced(lease)?,
+            None => services.jobs.start()?,
+        }
         Ok(services)
     }
 
-    /// Stops the lease's services in order: the jobs, so none calls a deactivated family;
-    /// the families, sharing one stop deadline; the terminal host, drained or left running;
-    /// then retention. A drain fails on the first family that could not deactivate.
+    /// Ends the lease's family jobs before the supervisor releases the lease, so no job
+    /// overlaps a new owner. A lost lease cannot be held through a drain, so its jobs are
+    /// cancelled at once; every other end (`exit` is None for a supervisor error) drains
+    /// them.
+    pub(crate) async fn end_jobs(&mut self, exit: Option<SupervisorExit>) {
+        let ended = match exit {
+            Some(SupervisorExit::LeaseLost) => self.jobs.cancel().await,
+            _ => self.jobs.stop().await,
+        };
+        self.jobs_ended = Some(ended);
+    }
+
+    /// Stops the lease's services in order: the jobs (unless [`ActiveServices::end_jobs`]
+    /// already ended them), so none calls a deactivated family; the families, sharing one
+    /// stop deadline; the terminal host, drained or left running; then retention. A drain
+    /// fails on the first family that could not deactivate.
     pub(crate) async fn stop(mut self, drain: bool) -> Result<()> {
-        let jobs = self.jobs.stop().await;
+        let jobs = match self.jobs_ended.take() {
+            Some(ended) => ended,
+            None => self.jobs.stop().await,
+        };
         let mode = if drain {
             StopMode::Drain
         } else {
@@ -323,6 +350,7 @@ mod tests {
                 terminals: Some(family),
                 jobs: HeartbeatHost::new(),
                 activated: Vec::new(),
+                jobs_ended: None,
             };
             let script = format!(
                 "import os,pathlib,json,time; p=pathlib.Path(os.environ['GOBBY_HOME']); (p/'shutdown_intent_active.json').write_text(json.dumps({{'intent':'stop','timestamp':time.time(),'details':{{'drain_terminals':{}}}}})); raise SystemExit(0)",

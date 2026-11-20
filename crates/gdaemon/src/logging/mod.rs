@@ -25,7 +25,7 @@ pub(crate) use format::{Record, format_json, format_text};
 #[cfg(test)]
 pub(crate) use layer::{RouteHandle, routed_layer};
 pub use settings::resolve_dir;
-pub use sink::{install_pre_config, raw_stderr};
+pub use sink::{install_pre_config, raw_stderr, replay_warning};
 
 /// The level threshold of the routed files, in Python's level names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -122,7 +122,20 @@ impl LogSettings {
 /// reopens a file the worker renamed; with none (node mode has no backend worker), this
 /// writer rotates the files itself.
 pub fn activate(settings: LogSettings, backend_command: Option<&str>) -> anyhow::Result<()> {
+    activate_at(settings, backend_command, &serde_json::Map::new())
+}
+
+/// [`activate`] for the configuration epoch whose `values` are current at activation: the
+/// files open where those values put them, so a configured directory is the first one
+/// written. `settings` stays the compiled defaults that a later epoch's absent keys
+/// return to.
+pub fn activate_at(
+    settings: LogSettings,
+    backend_command: Option<&str>,
+    values: &serde_json::Map<String, serde_json::Value>,
+) -> anyhow::Result<()> {
     let routes = layer::RouteHandle::new(settings, writer::owner_for(backend_command));
+    routes.replace_settings(epoch::initial_settings(values, &routes.defaults()));
     routes
         .open_all()
         .context("routed logging cannot open its files")?;

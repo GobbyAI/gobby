@@ -24,8 +24,17 @@ struct Job {
     callback: Callback,
 }
 
+/// How the host's owner ends the jobs.
+#[derive(Clone, Copy)]
+enum Stop {
+    /// The active child gets [`SHUTDOWN_GRACE`] to finish.
+    Drain,
+    /// The active child is aborted at once.
+    Cancel,
+}
+
 struct RunningHost {
-    shutdown: Option<oneshot::Sender<()>>,
+    shutdown: Option<oneshot::Sender<Stop>>,
     supervisor: JoinHandle<()>,
 }
 
@@ -107,6 +116,17 @@ impl HeartbeatHost {
 
     /// Start once, inside a Tokio runtime. Registration remains frozen after stop.
     pub fn start(&mut self) -> Result<()> {
+        self.start_with(None)
+    }
+
+    /// Starts once, like [`HeartbeatHost::start`], fenced by `lease`: once the lease is no
+    /// longer held (or its sender is gone), the running job is cancelled at once and no job
+    /// runs again.
+    pub fn start_fenced(&mut self, lease: watch::Receiver<LeaseState>) -> Result<()> {
+        self.start_with(Some(lease))
+    }
+
+    fn start_with(&mut self, lease: Option<watch::Receiver<LeaseState>>) -> Result<()> {
         if self.started {
             bail!("heartbeat host has already started");
         }
@@ -122,24 +142,29 @@ impl HeartbeatHost {
         let (shutdown, stopped) = oneshot::channel();
         self.running = Some(RunningHost {
             shutdown: Some(shutdown),
-            supervisor: tokio::spawn(supervise(jobs, stopped, now)),
+            supervisor: tokio::spawn(supervise(jobs, stopped, now, lease)),
         });
         self.started = true;
         Ok(())
     }
 
-    /// Starts once, like [`HeartbeatHost::start`], fenced by `lease`: once the lease is no
-    /// longer held, the running job is cancelled at once and no job runs again.
-    pub fn start_fenced(&mut self, _lease: watch::Receiver<LeaseState>) -> Result<()> {
-        self.start()
-    }
-
     /// Stop scheduling, drain the active child for at most five seconds, then
     /// abort and join it. Cancelling this wait leaves ownership with the host.
     pub async fn stop(&mut self) -> Result<()> {
+        self.end(Stop::Drain).await
+    }
+
+    /// Stop scheduling and abort and join the active child at once, with no grace: for
+    /// work that must not outlive a lease that is already lost.
+    pub async fn cancel(&mut self) -> Result<()> {
+        self.end(Stop::Cancel).await
+    }
+
+    async fn end(&mut self, stop: Stop) -> Result<()> {
         if let Some(running) = self.running.as_mut() {
             if let Some(shutdown) = running.shutdown.take() {
-                let _ = shutdown.send(());
+                // A supervisor the fence already ended has dropped its receiver.
+                let _ = shutdown.send(stop);
             }
             let result = (&mut running.supervisor).await;
             self.running = None;
@@ -188,8 +213,9 @@ impl JobSink for HeartbeatHost {
 
 async fn supervise(
     mut jobs: Vec<(Job, Interval)>,
-    mut shutdown: oneshot::Receiver<()>,
+    mut shutdown: oneshot::Receiver<Stop>,
     start: Instant,
+    mut lease: Option<watch::Receiver<LeaseState>>,
 ) {
     let mut base = interval_at(start + BASE_CADENCE, BASE_CADENCE);
     // Keep the base grid without replaying missed polls; each job delays its own timer.
@@ -198,12 +224,16 @@ async fn supervise(
         tokio::select! {
             biased;
             _ = &mut shutdown => return,
+            () = lease_ended(&mut lease) => return,
             _ = base.tick() => {}
         }
         for (job, timer) in &mut jobs {
             match shutdown.try_recv() {
                 Err(oneshot::error::TryRecvError::Empty) => {}
                 _ => return,
+            }
+            if !lease_held(lease.as_ref()) {
+                return;
             }
             let due = poll_fn(|cx| Poll::Ready(timer.poll_tick(cx).is_ready())).await;
             if !due {
@@ -214,19 +244,21 @@ async fn supervise(
             let mut run = Run(tokio::spawn(async move { callback().await }));
             let result = tokio::select! {
                 biased;
-                _ = &mut shutdown => {
-                    match timeout(SHUTDOWN_GRACE, &mut run.0).await {
-                        Ok(result) => report(&job.name, result),
-                        Err(_) => {
-                            tracing::warn!(
-                                target: "gobby.heartbeat",
-                                "gdaemon heartbeat job {} exceeded shutdown grace; aborting",
-                                job.name
-                            );
-                            run.0.abort();
-                            let _ = (&mut run.0).await;
-                        }
+                stop = &mut shutdown => {
+                    // A sender dropped without a stop ends the jobs as a stop does.
+                    match stop.unwrap_or(Stop::Drain) {
+                        Stop::Drain => drain(&job.name, &mut run).await,
+                        Stop::Cancel => abort(&mut run).await,
                     }
+                    return;
+                }
+                () = lease_ended(&mut lease) => {
+                    tracing::warn!(
+                        target: "gobby.heartbeat",
+                        "gdaemon heartbeat job {} cancelled: the lease is no longer held",
+                        job.name
+                    );
+                    abort(&mut run).await;
                     return;
                 }
                 result = &mut run.0 => result,
@@ -234,6 +266,44 @@ async fn supervise(
             report(&job.name, result);
         }
     }
+}
+
+/// Whether `lease`, when the host is fenced by one, is still held.
+fn lease_held(lease: Option<&watch::Receiver<LeaseState>>) -> bool {
+    lease.is_none_or(|lease| *lease.borrow() == LeaseState::Active && lease.has_changed().is_ok())
+}
+
+/// Resolves once the fencing lease is no longer held or its sender is gone; never for an
+/// unfenced host.
+async fn lease_ended(lease: &mut Option<watch::Receiver<LeaseState>>) {
+    match lease {
+        Some(lease) => {
+            // A closed channel is an end of the lease too.
+            let _ = lease.wait_for(|state| *state != LeaseState::Active).await;
+        }
+        None => std::future::pending().await,
+    }
+}
+
+/// Gives the active child [`SHUTDOWN_GRACE`] to finish, then aborts and joins it.
+async fn drain(name: &str, run: &mut Run) {
+    match timeout(SHUTDOWN_GRACE, &mut run.0).await {
+        Ok(result) => report(name, result),
+        Err(_) => {
+            tracing::warn!(
+                target: "gobby.heartbeat",
+                "gdaemon heartbeat job {name} exceeded shutdown grace; aborting"
+            );
+            abort(run).await;
+        }
+    }
+}
+
+/// Aborts the active child and joins it.
+async fn abort(run: &mut Run) {
+    run.0.abort();
+    // The join reports the cancellation this abort caused.
+    let _ = (&mut run.0).await;
 }
 
 fn report(name: &str, result: Result<Result<()>, tokio::task::JoinError>) {

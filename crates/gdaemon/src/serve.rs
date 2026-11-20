@@ -505,9 +505,11 @@ impl RoutedActivation {
             start_warnings,
             mut config,
         } = self;
-        // The gate hands over the epoch current at activation; the applier applies that
-        // epoch from the same channel, so the argument is not needed here.
-        let activate = move |_current| crate::logging::activate(settings, Some(&backend_command));
+        // The files open under the epoch current at activation; the applier then applies
+        // that epoch from the same channel and reports its rejected settings.
+        let activate = move |current: gobby_core::family::ConfigEpoch| {
+            crate::logging::activate_at(settings, Some(&backend_command), &current.active_values)
+        };
         if config_read {
             crate::family_start::activate_after_first_read(None, config.clone(), activate).await?;
             let applier = crate::logging::epoch::spawn_applier(config);

@@ -50,6 +50,17 @@ pub(super) fn active_routes() -> Option<RouteHandle> {
     ACTIVE.get().cloned()
 }
 
+/// Writes a WARNING emitted before routing activated to the activated routes again, past
+/// the level floor for `errors.log` (see `RouteHandle::write_warning`). `module_path` is
+/// the emitting module's path, as `module_path!()` gives it. Before activation it writes
+/// nothing: the warning has already reached stderr.
+pub fn replay_warning(target: &str, module_path: &str, message: &str) {
+    if let Some(routes) = ACTIVE.get() {
+        let module = module_path.rsplit("::").next().unwrap_or(target);
+        routes.write_warning(target, module, message);
+    }
+}
+
 /// Writes `line` to stderr as it is, for output whose bytes other programs read.
 ///
 /// A failed write is dropped: this is the last reporter of logging's own errors, so

@@ -137,6 +137,18 @@ async fn prepare_from(
     if let Some(name) = pool.degraded {
         degraded.mark(name);
     }
+    if let Some(budget) = &pool.budget
+        && let Some(name) = budget.degraded
+    {
+        start_warning(
+            &mut start_warnings,
+            format!(
+                "the native pool budget is {} connections, below 8; {name} is degraded and \
+                 each native pool keeps its share of {}",
+                budget.native_budget, budget.share
+            ),
+        );
+    }
     let ctx = FamilyContext::new(ContextParts {
         publisher: inputs.publisher,
         backend: inputs.backend,
@@ -194,10 +206,11 @@ fn start_warning(warnings: &mut Vec<String>, warning: String) {
     warnings.push(warning);
 }
 
-/// Emits the start's warnings again, for routed logging that activated after them.
+/// Writes the start's warnings again, for routed logging that activated after them. Each
+/// reaches `errors.log` whatever the stored level, which may be above WARNING.
 pub fn replay_start_warnings(warnings: &[String]) {
     for warning in warnings {
-        tracing::warn!(target: TARGET, "{warning}");
+        crate::logging::replay_warning(TARGET, module_path!(), warning);
     }
 }
 

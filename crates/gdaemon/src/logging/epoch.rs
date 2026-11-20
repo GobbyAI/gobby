@@ -10,9 +10,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use gobby_core::family::ConfigEpoch;
+use serde_json::{Map, Value};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use super::LogSettings;
 use super::layer::RouteHandle;
 use super::settings::{from_values, resolve_dir};
 use super::sink::{active_routes, raw_stderr};
@@ -71,17 +73,34 @@ fn apply_latest(
     let Some(handle) = routes() else {
         return;
     };
-    let current = handle.settings();
-    let defaults = handle.defaults();
-    let (mut next, warnings) = from_values(&values, &current, &defaults);
-    // The activation directory is already resolved; a configured one resolves here.
-    if next.dir != defaults.dir {
-        next.dir = resolve(&next.dir).unwrap_or(current.dir);
-    }
+    let (next, warnings) = settings_from(&values, &handle.settings(), &handle.defaults(), resolve);
     handle.replace_settings(next);
     for warning in warnings {
         raw_stderr(&format!("gdaemon logging: {warning}"));
     }
+}
+
+/// The settings routing activated with `defaults` opens its files under, as the epoch
+/// `values` current at activation describe them. Its rejected settings are left to the
+/// applier that follows activation, which applies the same epoch and reports them once.
+pub(super) fn initial_settings(values: &Map<String, Value>, defaults: &LogSettings) -> LogSettings {
+    settings_from(values, defaults, defaults, resolve_configured_dir).0
+}
+
+/// The settings `values` describe after `current`, with the warnings their rejected keys
+/// add (see [`from_values`]). The activation directory is already resolved; a configured
+/// one resolves through `resolve`, and one that cannot keeps the current directory.
+fn settings_from(
+    values: &Map<String, Value>,
+    current: &LogSettings,
+    defaults: &LogSettings,
+    resolve: impl Fn(&Path) -> Option<PathBuf>,
+) -> (LogSettings, Vec<String>) {
+    let (mut next, warnings) = from_values(values, current, defaults);
+    if next.dir != defaults.dir {
+        next.dir = resolve(&next.dir).unwrap_or_else(|| current.dir.clone());
+    }
+    (next, warnings)
 }
 
 /// The directory a configured `logging.dir` names in this process: `GOBBY_LOGGING_DIR`

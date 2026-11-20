@@ -224,7 +224,17 @@ impl BackendSupervisor {
 
     /// Run one ownership lifetime. Refused instances never acquire or spawn again.
     /// Dropping/cancelling this future kills its child and closes the liveness writer.
-    pub async fn run(&mut self, mut shutdown: watch::Receiver<bool>) -> Result<SupervisorExit> {
+    pub async fn run(&mut self, shutdown: watch::Receiver<bool>) -> Result<SupervisorExit> {
+        self.run_ending(shutdown, |_| async {}).await
+    }
+
+    /// [`BackendSupervisor::run`], running `before_release` on the lifetime's exit (None for
+    /// an error) while the lease is still held, so lease-scoped work ends before release.
+    pub async fn run_ending<F: Future<Output = ()>>(
+        &mut self,
+        mut shutdown: watch::Receiver<bool>,
+        before_release: impl FnOnce(Option<SupervisorExit>) -> F,
+    ) -> Result<SupervisorExit> {
         if matches!(*self.state.borrow(), BackendStatus::Refused { .. }) {
             return Ok(SupervisorExit::Refused);
         }
@@ -237,6 +247,7 @@ impl BackendSupervisor {
             return Ok(SupervisorExit::Standby);
         }
         let result = self.supervise(&mut shutdown).await;
+        before_release(result.as_ref().ok().copied()).await;
         // release takes the dedicated connection before awaiting, so failures and
         // cancellation cannot retain the advisory lock. Keep the machine claim
         // through lease loss and sticky refusal; release it on stop or error.
