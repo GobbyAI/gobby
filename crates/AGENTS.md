@@ -185,15 +185,23 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   (`SpawnKind::FirstStart` or `Respawn`), `after_healthy` and `recovery_complete`
   are the hook points of the worker supervisor and the recovery driver.
 - Hook errors. `HookError::Ordinary` marks the family degraded and the pass
-  continues with the other families. `HookError::Fatal` stops the pass, unwinds the
-  families already started under the shared deadline, and says whether a relaunch
-  could clear the cause. `deactivate` must be safe on a family whose `start` or
-  `activate` stopped part way.
+  continues with the other families. `HookError::Fatal` stops the pass and says
+  whether a relaunch could clear the cause. The unwind deactivates in reverse the
+  failing family first, since its hook may hold part of what it acquired, then the
+  families already started, all under one deadline that `start_families` and
+  `activate_families` count from the moment the unwind begins (their
+  `unwind_budget`), so a slow hook cannot spend the cleanup budget. `deactivate`
+  must therefore be safe on a family whose `start` or `activate` stopped part way.
 - Jobs. `Activation::register_job(name, interval, run)` stages a periodic job for
   the lease. Only a Native family may register one; Compare is refused with
-  `JobRefused::Compare`, and a zero interval or a name already held is refused.
-  Staged jobs reach the job sink only when the activation pass succeeds, so a fatal
-  failure leaves nothing registered and a retry registers the same names cleanly.
+  `JobRefused::Compare`. Staging applies the job sink's own rule
+  (`JobSink::validate_job`; the daemon's sink refuses a zero interval, an empty
+  name, a name already held and any registration after it started), so the family sees the refusal when it stages. Staged jobs reach the
+  sink only when the activation pass succeeds, so a fatal failure leaves nothing
+  registered and a retry registers the same names cleanly. An ordinary failure
+  discards only that family's staged jobs. If the sink still refuses a job at
+  commit, that is an ordinary failure of its family, and the jobs that pass
+  registered for the family are removed (`JobSink::remove_job`).
 - Pool. A family queries through `FamilyContext::serve_pool`, the shared serve pool.
   Each native pool takes `POOL_SHARE` connections from the budget that
   `gobby_core::database_concurrency::pool_budget` resolves from the stored
@@ -213,8 +221,9 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   rollback restores an earlier binary generation (`docs/guides/configuration.md`,
   Family activation and rollback). `front_door.routes` is a harness and
   isolated-test override, not an operator switch.
-- Freeze. The seam's production files are frozen: the project record's seam
-  contract lists them, and `gport check-slice` refuses a change to one unless a
+- Freeze. The seam's production files are frozen: the `### Frozen files` list in
+  the `seam-contract` kept block of `docs/port/record.md` (section Frozen seam
+  contract) names them, and `gport check-slice` refuses a change to one unless a
   Found Work line under the changing chunk names its path.
 
 The crate → binary map and the rebuild-and-reinstall requirement (including the

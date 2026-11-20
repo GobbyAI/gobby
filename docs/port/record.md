@@ -4818,6 +4818,42 @@ Josh's rulings about the port as Gobby memory held them on 2026-11-18, each with
 ## Frozen seam contract
 
 <!-- gport:kept seam-contract -->
+Contract of the SEAM-FAMILY chunk (#25950), as built on its branch. The frozen types, traits and signatures are: the claim shape (`Credential::AfterAuthenticate`, `Gate`, `PeerRule::LoopbackOnly` as the canonical loopback test, and equal path specificity going to the lower `start_rank`, then registry order); `FrontDoorState.context` and `run_claims(&mut FrontDoorState, ...)`; the `RouteFamily` hooks `before_spawn`, `after_healthy`, `recovery_complete` and `start_rank`, with `SpawnKind`, and `deactivate` safe on a partly started or activated family; the family context (`ContextParts` with `publisher`, `startup`, `extensions`; `FamilyContext` with `config_publisher`, `startup`, `extension`, `unconfigured`), `Extensions`, `StartupRecorder`, `ConfigEpochPublisher` (a struct with a private sender, behind an `Arc`, whose `reload` reads and publishes under one lock), `DegradedServices` and `FamilyLogger` (both with private fields, and the logger counters); `JobSink` with the required `validate_job` and `remove_job` and the defaulted `statuses`; `start_families(entries, ctx, unwind_budget)` and `activate_families(entries, ctx, jobs, unwind_budget)`, whose fatal unwind deactivates the failing family first and counts its one deadline from the moment the unwind begins, and `deactivate_families(entries, mode, deadline)`; the telemetry owned labels, `set_gauge` and `SampleValue::Gauge`; `FAMILIES` (multi-line, one family per line) and `activation_plan(families, routes)`; `PrepareInputs` (families, extensions, startup), `prepare` with three sequential reads and `start_families`, `ProcessFamilies` with `config_read` and `start_warnings`, and `Disposition` with `disposition(&StartFailure)`; `spawn_config_poller(source, Arc<ConfigEpochPublisher>, every, first_read)` and `activate_after_first_read`, so routed logging activates only after a successful configuration read; `logging::activate(settings, backend_command)` taking its rotation owner from `writer::owner_for`; `settings::from_values(values, previous, defaults)`, where an absent key takes its activation default and an invalid one keeps the previous setting; `logging::classify::surface_for_target` returning `Option<Surface>`; the logging test seams; `SizeRotatingFile::open` seeking to the end, with rollover counting a line in characters as CPython's `RotatingFileHandler` does.
+
+### Frozen files
+
+- `crates/gcore/src/database_concurrency.rs`
+- `crates/gcore/src/database_concurrency/pool_budget.rs`
+- `crates/gcore/src/domain_error.rs`
+- `crates/gcore/src/family/config_epoch.rs`
+- `crates/gcore/src/family/degraded.rs`
+- `crates/gcore/src/family/identity.rs`
+- `crates/gcore/src/family/lifecycle.rs`
+- `crates/gcore/src/family/logger.rs`
+- `crates/gcore/src/family/mod.rs`
+- `crates/gcore/src/family/publisher.rs`
+- `crates/gcore/src/family/status.rs`
+- `crates/gcore/src/json.rs`
+- `crates/gcore/src/route_family.rs`
+- `crates/gcore/src/telemetry/mod.rs`
+- `crates/gdaemon/src/family_start.rs`
+- `crates/gdaemon/src/front_door/claims.rs`
+- `crates/gdaemon/src/front_door/mod.rs`
+- `crates/gdaemon/src/front_door/registry.rs`
+- `crates/gdaemon/src/front_door/routes.rs`
+- `crates/gdaemon/src/front_door/surfaces.rs`
+- `crates/gdaemon/src/heartbeat.rs`
+- `crates/gdaemon/src/logging/classify.rs`
+- `crates/gdaemon/src/logging/epoch.rs`
+- `crates/gdaemon/src/logging/format.rs`
+- `crates/gdaemon/src/logging/layer.rs`
+- `crates/gdaemon/src/logging/mod.rs`
+- `crates/gdaemon/src/logging/settings.rs`
+- `crates/gdaemon/src/logging/sink.rs`
+- `crates/gdaemon/src/logging/writer.rs`
+- `crates/gdaemon/src/native_pools.rs`
+- `crates/gdaemon/src/state_services.rs`
+- `crates/gdaemon/src/websocket/broker.rs`
 <!-- gport:end seam-contract -->
 
 ## Known-bad index
