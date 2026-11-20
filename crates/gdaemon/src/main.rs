@@ -1,3 +1,5 @@
+#![deny(clippy::print_stderr)]
+
 use std::env;
 
 use anyhow::{Context, Result};

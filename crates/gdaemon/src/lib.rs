@@ -1,4 +1,5 @@
 //! Library surface of `gdaemon`, shared by the binary and its integration tests.
+#![deny(clippy::print_stderr)]
 
 mod casefold;
 pub mod family_start;
