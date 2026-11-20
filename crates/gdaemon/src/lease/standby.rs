@@ -39,6 +39,9 @@ impl ActiveDaemonLease {
     /// Never promotes. Termination rechecks PID, application identity,
     /// freshness and the exact database-wide lock in a single statement.
     pub async fn recover_stale_owner(&self, stale_after: Duration) -> Result<LeaseOwner> {
+        if self.lifetime_open {
+            bail!(super::LIFETIME_OPEN);
+        }
         let (client, keys, owner) = timeout(RECOVERY_TIMEOUT, async {
             let client = self.connect("gobby-lease-probe").await?;
             let keys = resolve_keys(&client).await?;

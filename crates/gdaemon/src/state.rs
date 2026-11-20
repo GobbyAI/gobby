@@ -5,7 +5,7 @@
 
 use crate::{
     front_door::relay::HubRelay,
-    lease::{ActiveDaemonLease, LeaseState, NamedLock},
+    lease::{ActiveDaemonLease, LeaseLifetime, LeaseState, NamedLock},
     lifecycle::{
         backend::{BackendConfig, BackendStatus, BackendSupervisor, SupervisorExit},
         pid_file::{PidFileClaim, claim_from_environment},
@@ -193,38 +193,43 @@ impl RuntimeState {
         home: std::path::PathBuf,
         families: crate::family_start::ProcessFamilies,
     ) -> Result<()> {
+        // The lifetime the next acquisition ends. A guard dropped any other way is abandoned
+        // and keeps every other acquisition refused for the rest of the process.
+        let mut previous: Option<LeaseLifetime> = None;
         loop {
             if *shutdown.borrow() {
                 return Ok(());
             }
-            if let Some(lease) = &self.lease {
-                let acquired = match lease
-                    .lock_as("startup lease acquisition")
-                    .await
-                    .try_acquire()
-                    .await
-                {
-                    Ok(acquired) => acquired,
-                    Err(error) => {
-                        tracing::warn!(
-                            target: "gobby.daemon",
-                            "gdaemon lease acquisition: {error:#}"
-                        );
-                        false
-                    }
-                };
-                if !acquired {
-                    tokio::select! {
-                        changed = shutdown.changed() => {
-                            if changed.is_err() {
-                                return Ok(());
+            let lifetime = match &self.lease {
+                None => None,
+                Some(lease) => {
+                    let begun = lease
+                        .lock_as("startup lease acquisition")
+                        .await
+                        .begin_lifetime(previous.take())
+                        .await;
+                    match begun {
+                        Ok(Some(lifetime)) => Some(lifetime),
+                        other => {
+                            if let Err(error) = other {
+                                tracing::warn!(
+                                    target: "gobby.daemon",
+                                    "gdaemon lease acquisition: {error:#}"
+                                );
                             }
+                            tokio::select! {
+                                changed = shutdown.changed() => {
+                                    if changed.is_err() {
+                                        return Ok(());
+                                    }
+                                }
+                                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                            }
+                            continue;
                         }
-                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
                     }
-                    continue;
                 }
-            }
+            };
             let mut services = crate::state_services::ActiveServices::start(
                 &bootstrap,
                 &terminals,
@@ -263,7 +268,7 @@ impl RuntimeState {
                 }
                 SupervisorExit::Standby
                 | SupervisorExit::LeaseLost
-                | SupervisorExit::RestartTerminals => {}
+                | SupervisorExit::RestartTerminals => previous = lifetime,
             }
         }
     }

@@ -220,6 +220,18 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   spool prune's `spawn_blocking` is an example of such work) is neither cancelled
   nor joined, so a leased-family job's work must be safe to finish after a lost
   lease or be fenced by its own SQL.
+- Lease lifetime. `ActiveDaemonLease::begin_lifetime` is the run loop's only
+  acquisition and returns a `LeaseLifetime`. While a lifetime is open, `try_acquire`
+  and `recover_stale_owner` refuse, and the admin promote and recover routes answer
+  409 `this daemon's lease lifetime has not ended` unless the lease is active (an
+  active lease keeps its answers: promote 200 without promoting, recover its own 409
+  `lease owner is already active`). A lifetime stays open until the run loop passes
+  its guard to the next `begin_lifetime`, which ends it and acquires under one hold
+  of the lease lock; a guard dropped any other way (stop, refusal, error) never
+  reopens acquisition in this process. Inside one lifetime the watch leaves Active
+  at most once and never returns, so the job host needs no generation on its watch.
+  `fence()` is None unless the watch reads Active, and `heartbeat()` fails, keeping
+  its session, on a lease published Lost.
 - Pool. A family queries through `FamilyContext::serve_pool`, the shared serve pool.
   Each native pool takes `POOL_SHARE` connections from the budget that
   `gobby_core::database_concurrency::pool_budget` resolves from the stored

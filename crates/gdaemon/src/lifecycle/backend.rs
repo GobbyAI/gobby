@@ -509,13 +509,6 @@ impl BackendSupervisor {
         SupervisorExit::Refused
     }
 
-    async fn heartbeat(&self) -> Result<()> {
-        if let Some(lease) = &self.lease {
-            self.lock_lease(lease).await?.heartbeat().await?;
-        }
-        Ok(())
-    }
-
     /// Logs what a live backend is still waited on; called once per report interval.
     fn report_wait(&self, pid: u32, started_at: Instant, announced: Option<(Intent, Duration)>) {
         let elapsed = started_at.elapsed().as_secs();

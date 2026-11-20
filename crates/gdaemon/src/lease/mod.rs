@@ -25,6 +25,9 @@ pub(crate) const NAMESPACE: &str = "gobby-single-active-daemon-v1";
 pub(crate) const APPLICATION_PREFIX: &str = "gobby-lease-v1:";
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Why every other acquisition is refused while a lease lifetime is open.
+pub(crate) const LIFETIME_OPEN: &str = "this daemon's lease lifetime has not ended";
+
 /// Node mode has no local hub authority, even if database credentials exist.
 pub use gobby_core::bootstrap::RunMode as LeaseMode;
 
@@ -44,20 +47,47 @@ struct Authority {
 }
 
 /// Publishes the lease as lost without taking its lock, so a monitor that cannot reach the lease
-/// still fails closed. Authority published as lost is never reused: the next `try_acquire`
+/// still fails closed. Authority published as lost is never reused: the next acquisition
 /// discards it and acquires afresh.
 #[derive(Clone)]
 pub struct LeaseLoss(watch::Sender<LeaseState>);
 
 impl LeaseLoss {
+    /// Lost only ever replaces Active, so a publish after the release leaves Standby.
     pub fn publish(&self) {
-        self.0.send_replace(LeaseState::Lost);
+        self.0.send_if_modified(|state| {
+            let held = *state == LeaseState::Active;
+            if held {
+                *state = LeaseState::Lost;
+            }
+            held
+        });
     }
 }
 
-/// One lifetime of the services that run under this lease.
-#[must_use]
-pub struct LeaseLifetime(());
+/// One lifetime of the services that run under this lease. While it is open, nothing else
+/// acquires. Dropping it without passing it to the next `begin_lifetime` abandons it: that
+/// lifetime never ends and acquisition stays refused for the rest of the process.
+#[must_use = "a dropped lifetime is abandoned: acquisition stays refused in this process"]
+pub struct LeaseLifetime {
+    loss: LeaseLoss,
+    ended: bool,
+}
+
+impl LeaseLifetime {
+    /// Publishes Lost if the watch still reads Active.
+    pub fn lose(&self) {
+        self.loss.publish();
+    }
+}
+
+impl Drop for LeaseLifetime {
+    fn drop(&mut self) {
+        if !self.ended {
+            self.loss.publish();
+        }
+    }
+}
 
 struct LossOnDrop(Option<LeaseLoss>);
 
@@ -77,6 +107,7 @@ pub struct ActiveDaemonLease {
     deployment_token: String,
     authority: Option<Authority>,
     state: watch::Sender<LeaseState>,
+    lifetime_open: bool,
 }
 
 impl ActiveDaemonLease {
@@ -111,7 +142,13 @@ impl ActiveDaemonLease {
             deployment_token: deployment_token.into(),
             authority: None,
             state,
+            lifetime_open: false,
         })
+    }
+
+    /// Whether a lifetime begun by `begin_lifetime` has not yet been ended by the next one.
+    pub fn lifetime_open(&self) -> bool {
+        self.lifetime_open
     }
 
     pub fn subscribe(&self) -> watch::Receiver<LeaseState> {
@@ -127,10 +164,12 @@ impl ActiveDaemonLease {
         &self.application_name
     }
 
+    /// None unless the session is open and the watch reads Active.
     pub fn fence(&self) -> Option<&Fence> {
         self.authority
             .as_ref()
             .filter(|owner| !owner.client.is_closed())
+            .filter(|_| *self.state.borrow() == LeaseState::Active)
             .map(|owner| &owner.fence)
     }
 
@@ -155,9 +194,18 @@ impl ActiveDaemonLease {
         Ok(client)
     }
 
+    /// Acquisition outside the run loop, refused while a lease lifetime is open.
+    pub async fn try_acquire(&mut self) -> Result<bool> {
+        if self.lifetime_open {
+            bail!(LIFETIME_OPEN);
+        }
+        self.acquire().await
+    }
+
     /// A failed lock attempt never writes deployment_runtime. Cancellation
     /// before authority installation drops the detached connection and lock.
-    pub async fn try_acquire(&mut self) -> Result<bool> {
+    /// Every `Err` and `Ok(false)` leaves the slot empty.
+    async fn acquire(&mut self) -> Result<bool> {
         if self.authority.is_some() {
             if *self.state.borrow() != LeaseState::Lost {
                 self.heartbeat().await?;
@@ -212,17 +260,35 @@ impl ActiveDaemonLease {
         Ok(true)
     }
 
-    /// The run loop's acquisition, returning the lifetime it begins.
+    /// The run loop's only acquisition. Ends `previous` and begins the next lifetime in one
+    /// critical section, so the gate is never clear over a spent authority.
     pub async fn begin_lifetime(
         &mut self,
-        _previous: Option<LeaseLifetime>,
+        previous: Option<LeaseLifetime>,
     ) -> Result<Option<LeaseLifetime>> {
-        Ok(self.try_acquire().await?.then_some(LeaseLifetime(())))
+        if self.lifetime_open && previous.is_none() {
+            bail!(LIFETIME_OPEN);
+        }
+        // `previous` is still unended here: a cancelled acquisition abandons it. The result is
+        // bound, not propagated, so the `Err` path ends `previous` and clears the gate too.
+        let acquired = self.acquire().await;
+        if let Some(mut previous) = previous {
+            previous.ended = true;
+        }
+        self.lifetime_open = matches!(acquired, Ok(true));
+        Ok(acquired?.then(|| LeaseLifetime {
+            loss: self.loss(),
+            ended: false,
+        }))
     }
 
     /// Removes authority while awaiting I/O, so cancelling this operation also
-    /// fails closed instead of retaining an unverified lease session.
+    /// fails closed instead of retaining an unverified lease session. A lease published
+    /// Lost fails without touching its session.
     pub async fn heartbeat(&mut self) -> Result<()> {
+        if self.authority.is_some() && *self.state.borrow() == LeaseState::Lost {
+            bail!("active-daemon lease was published as lost");
+        }
         let Some(owner) = self.authority.take() else {
             bail!("active-daemon lease is not held");
         };

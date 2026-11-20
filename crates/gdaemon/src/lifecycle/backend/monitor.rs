@@ -3,10 +3,30 @@
 //! This lives apart from `backend.rs` to keep that file under the 1,000-line ceiling.
 
 use super::{BackendSupervisor, SupervisorExit};
+use anyhow::Result;
 use std::{future::Future, pin::pin};
 use tokio::time::{MissedTickBehavior, interval};
 
 impl BackendSupervisor {
+    /// One supervised heartbeat. Every error, a lease lock wait that fails at its bound
+    /// included, publishes Lost before it is returned, so a `LeaseLost` exit never leaves
+    /// the watch reading Active.
+    pub(super) async fn heartbeat(&self) -> Result<()> {
+        let Some(lease) = &self.lease else {
+            return Ok(());
+        };
+        let beaten = match self.lock_lease(lease).await {
+            Ok(mut guard) => guard.heartbeat().await,
+            Err(error) => Err(error),
+        };
+        if beaten.is_err()
+            && let Some(loss) = &self.loss
+        {
+            loss.publish();
+        }
+        beaten
+    }
+
     /// Runs `work` while the lease keeps its heartbeat, so a database session that ends during
     /// the worker drain or the pre-release hook publishes Lost at once and the fenced job host
     /// aborts its running job. `exit` is the lifetime's exit so far (None for an error or while
@@ -33,9 +53,6 @@ impl BackendSupervisor {
                 output = &mut work => return output,
                 _ = heartbeats.tick() => {
                     if let Err(error) = self.heartbeat().await {
-                        if let Some(loss) = &self.loss {
-                            loss.publish();
-                        }
                         tracing::warn!(
                             target: "gobby.lifecycle",
                             "backend lease lost before release: {error:#}"

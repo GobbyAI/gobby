@@ -356,8 +356,8 @@ Lease administration uses these native routes with an operator bearer key:
 | Method | Route | Behavior |
 | --- | --- | --- |
 | GET | `/api/admin/lease/status` | Reports active/standby mode, holder PID and heartbeat age. |
-| POST | `/api/admin/lease/promote` | Promotes a standby when the lease is free; a held lease returns 409. |
-| POST | `/api/admin/lease/recover?stale_after_seconds=30` | Recovers a verified stale owner and attempts promotion; a fresh owner returns 409. |
+| POST | `/api/admin/lease/promote` | Promotes a standby when the lease is free; a held lease returns 409, and so does a call while this daemon's own lease lifetime has not ended. |
+| POST | `/api/admin/lease/recover?stale_after_seconds=30` | Recovers a verified stale owner and attempts promotion; a fresh owner returns 409, and so does a call while this daemon's own lease lifetime has not ended. |
 
 The recovery threshold defaults to 30 seconds and must be greater than zero
 and at most 86,400 seconds. A refused runtime requires a full restart, and
