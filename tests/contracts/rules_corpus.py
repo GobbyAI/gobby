@@ -9,10 +9,11 @@ vectors in ``rules_vectors``. This module keeps the loader and the names the tes
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, TypeGuard, get_args
 
 import yaml
 
@@ -109,6 +110,11 @@ def validate_case(case: dict[str, Any]) -> None:
     _validate_engine_path_keys(case_id, case)
 
 
+def _is_finite_number(value: object) -> TypeGuard[int | float]:
+    """True for a JSON number: an int or float, never a bool, and never NaN or infinite."""
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+
+
 def _validate_engine_path_keys(case_id: str, case: dict[str, Any]) -> None:
     """Refuse a malformed seed, POSIX marker, proxy opt-in, skip-group label or inline input."""
     rules_seed.validate_seed(case_id, case.get("seed"))
@@ -138,18 +144,22 @@ def _validate_engine_path_keys(case_id: str, case: dict[str, Any]) -> None:
         if (
             not isinstance(boundary, dict)
             or set(boundary) != {"duration", "context"}
-            or isinstance(duration, bool)
-            or not isinstance(duration, int | float)
+            or not _is_finite_number(duration)
             or duration < 0
             or not isinstance(context, str)
             or not context
         ):
             raise ValueError(
-                f"{case_id}: command_boundary must be {{'duration': number >= 0, "
+                f"{case_id}: command_boundary must be {{'duration': finite number >= 0, "
                 f"'context': non-empty str}}, got {boundary!r}"
             )
         if "deadline" in spec:
             raise ValueError(f"{case_id}: give deadline_remaining or deadline, not both")
+        remaining = spec.get("deadline_remaining")
+        if remaining is not None and not _is_finite_number(remaining):
+            raise ValueError(
+                f"{case_id}: deadline_remaining must be a finite number or null, got {remaining!r}"
+            )
     elif "deadline_remaining" in spec:
         raise ValueError(f"{case_id}: deadline_remaining needs an input.command_boundary")
 

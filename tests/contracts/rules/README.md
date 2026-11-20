@@ -82,16 +82,16 @@ the table of paths, the cases each reaches and both outcomes.
   definition keeps its own `step_workflow`, so a case whose snapshot allows everything shows
   that the engine enforces the installed policy. `tests/contracts/rules_seed.py` validates
   and applies it.
-- `proxy`: `{"rtk": "echo-prefix"}` opts into a fake RTK, a shebang script the real proxy
+- `proxy`: `{"rtk": "echo-prefix"}` opts into a fake RTK, a fixed `#!/bin/sh` launcher that
+  execs the quoted interpreter path on a Python script beside it, which the real proxy
   handler runs: it rewrites a command to `rtk <command>` and denies one that holds
   `synthetic-denied` (exit status 2). Without the key RTK is unavailable.
-- `posix_only: true` marks a case whose path spawns through `/bin/sh`: the background
-  delivery, an inline command without a boundary, the fake RTK, and a rule-pass
-  `run_command`. A rule-pass `run_command` starts no process in Python's replay, because the
-  frozen event stops the payload build first (see `inline_run_command` below), a recorded
-  Python flaw. It is marked because the correct effect spawns once the payload builds, as the
-  deadline-handoff test shows with the event thawed, so a port that fixes the flaw spawns
-  through `/bin/sh` for it. It is the only replay skip: such a
+- `posix_only: true` marks a case whose intended path spawns through `/bin/sh`: the
+  background delivery, an inline command without a boundary, the fake RTK, and a rule-pass
+  `run_command`. In Python's replay a rule-pass `run_command` fails open before the spawn,
+  because the frozen event stops the payload build (the known-bad registry's frozen
+  run-command payload row and its tagged cases); the marker stays on those cases for the
+  port, whose correct effect spawns through `/bin/sh`. It is the only replay skip: such a
   case is skipped on Windows, where a spawn with a cwd has no shell to run through. A case
   with none of these paths never carries the key.
 - `{python}` in a `run_command` command list is replaced by the running interpreter when the

@@ -1,8 +1,8 @@
 """Engine-path seams of the rule-pass corpus that the recorder module does not hold.
 
 - ``{python}`` in a ``run_command`` command list is replaced by the running interpreter.
-- The fake RTK (``"proxy": {"rtk": "echo-prefix"}``) is a shebang script the real proxy
-  handler runs: it prefixes a command with ``rtk ``, and denies one holding
+- The fake RTK (``"proxy": {"rtk": "echo-prefix"}``) is a ``/bin/sh`` launcher, running a
+  Python script beside it, that the real proxy handler runs: it prefixes a command with ``rtk ``, and denies one holding
   ``synthetic-denied`` with exit status 2.
 - ``inline_run_command`` drives one ``run_command`` effect through
   ``RuleEngine._apply_effect`` with a live event. The rule pass hands effects a frozen event
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import shlex
 import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -41,6 +42,7 @@ from tests.contracts import rules_corpus, rules_seed
 
 PYTHON_PLACEHOLDER = "{python}"
 RTK_FAKE = rules_corpus.RTK_FAKE
+# The kernel's shebang length limit, which the fixed launcher's own shebang stays under.
 SHEBANG_LIMIT_BYTES = 127
 CONTROLLED_CLOCK_START = 1000.0
 _FAKE_RTK_SCRIPT = """
@@ -82,12 +84,18 @@ def _expand_placeholders(rule: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _fake_rtk_probe(directory: Path) -> RtkProbe:
-    """Write the fake RTK executable into ``directory`` and return a compatible probe."""
-    shebang = f"#!{sys.executable}"
-    if len(shebang.encode()) > SHEBANG_LIMIT_BYTES:
-        raise RuntimeError(f"the interpreter path is too long for a shebang: {shebang!r}")
+    """Write the fake RTK executable into ``directory`` and return a compatible probe.
+
+    The executable is a fixed ``#!/bin/sh`` launcher that execs the running interpreter on
+    the script beside it. Both paths are shell-quoted, so an interpreter path holding a space
+    or longer than the kernel's shebang limit still runs.
+    """
+    script = directory / "rtk.py"
+    script.write_text(_FAKE_RTK_SCRIPT)
     path = directory / "rtk"
-    path.write_text(shebang + "\n" + _FAKE_RTK_SCRIPT)
+    path.write_text(
+        f'#!/bin/sh\nexec {shlex.quote(sys.executable)} {shlex.quote(str(script))} "$@"\n'
+    )
     os.chmod(path, 0o755)
     return RtkProbe(path=path, version=RTK_VERSION, compatible=True)
 

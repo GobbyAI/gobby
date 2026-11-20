@@ -157,14 +157,34 @@ def variable_delta(
     """Return ``(changed, deleted)`` between two variable snapshots.
 
     A key counts as changed when it is new (a new key written to None included) or its value
-    differs; a key present before and absent after is listed as deleted.
+    differs as a JSON value (see ``_json_equal``); a key present before and absent after is
+    listed as deleted.
     """
     changed = {
         key: _jsonable(value)
         for key, value in final.items()
-        if key not in initial or initial[key] != value
+        if key not in initial or not _json_equal(initial[key], value)
     }
     return changed, sorted(key for key in initial if key not in final)
+
+
+def _json_equal(left: Any, right: Any) -> bool:
+    """Equality of the raw values as JSON values, compared before scrubbing.
+
+    Python's ``==`` treats ``True == 1`` and ``False == 0``; JSON booleans and numbers are
+    different types, so a boolean equals only a boolean, at every depth of a mapping or list.
+    """
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left is right
+    if isinstance(left, Mapping) and isinstance(right, Mapping):
+        return left.keys() == right.keys() and all(
+            _json_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list | tuple) and isinstance(right, list | tuple):
+        return len(left) == len(right) and all(
+            _json_equal(item, other) for item, other in zip(left, right, strict=True)
+        )
+    return bool(left == right)
 
 
 def _decision(response: HookResponse | None) -> str:

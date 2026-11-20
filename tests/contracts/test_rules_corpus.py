@@ -593,8 +593,9 @@ def _exempt_literal_ids(tree: ast.AST) -> set[int]:
 
     These are docstrings, elements of a set display that no ``for`` statement or
     comprehension iterates, and the name argument of ``getattr`` or ``hasattr``. A set
-    display passed to a call that a loop iterates (``for name in frozenset({...})``) counts
-    as iterated, through any depth of such calls.
+    display that a loop iterates counts as iterated when it reaches the loop through a
+    positional or keyword argument of a call (``for name in frozenset(iterable={...})``) or
+    as an operand of a set operator (``{...} | {...}``), through any depth of such nodes.
     """
     exempt: set[int] = set()
     iterated: set[int] = set()
@@ -606,6 +607,9 @@ def _exempt_literal_ids(tree: ast.AST) -> set[int]:
                 iterated.add(id(source))
                 if isinstance(source, ast.Call):
                     pending.extend(source.args)
+                    pending.extend(keyword.value for keyword in source.keywords)
+                elif isinstance(source, ast.BinOp):
+                    pending.extend((source.left, source.right))
     for node in ast.walk(tree):
         if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             first = node.body[0] if node.body else None
