@@ -641,16 +641,21 @@ async fn start_warnings_are_replayed_once_routed_logging_activates() {
         .unwrap_or_else(PoisonError::into_inner)
         .clone();
     let warned = |needle: &str| {
-        replayed.iter().any(|(level, target, message)| {
-            *level == Level::WARN && target == "gobby.daemon" && message.contains(needle)
-        })
+        replayed
+            .iter()
+            .filter(|(level, target, message)| {
+                *level == Level::WARN && target == "gobby.daemon" && message.contains(needle)
+            })
+            .count()
     };
-    assert!(
+    assert_eq!(
         warned("the active configuration is unreadable at start"),
-        "the unreadable configuration warning was not replayed: {replayed:?}"
+        1,
+        "the unreadable configuration warning was not replayed exactly once: {replayed:?}"
     );
-    assert!(
+    assert_eq!(
         warned("family fixture_starts_degraded started degraded"),
-        "the degraded start warning was not replayed: {replayed:?}"
+        1,
+        "the degraded start warning was not replayed exactly once: {replayed:?}"
     );
 }
