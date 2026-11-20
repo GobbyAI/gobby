@@ -24,6 +24,7 @@ pub enum LeaseState {
     Standby,
     /// The lease is held.
     Active,
-    /// The lease was held and has been lost.
+    /// The lease was held and is no longer verified: it has been lost, or its lifetime has
+    /// stopped in order and the lease is not yet released.
     Lost,
 }

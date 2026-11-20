@@ -185,9 +185,11 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   of an `activate` hook that needs the lease's authority must carry its own fence:
   stop on the context's lease state, or guard the effect in its own SQL. Heartbeats
   verify that lease state only from the admission to the lifetime's last heartbeat
-  before its release. Before the admission, through the wait for the release, and
-  through the teardown that follows a terminal restart (which keeps the lease), it
-  can read Active with nothing verifying it. `deactivate` runs at lease
+  before its release. Before the admission, and through the teardown that follows a
+  terminal restart (which keeps the lease), it can read Active with nothing verifying
+  it. On every other exit the lifetime publishes Lost where its heartbeats end,
+  before it waits to release, so the lease state does not read Active through that
+  wait. `deactivate` runs at lease
   release (`StopMode::Stop`, a stop) or a drain (`StopMode::Drain`), in reverse
   start order, and the whole pass shares one stop deadline. `before_spawn`
   (`SpawnKind::FirstStart` or `Respawn`), `after_healthy` and `recovery_complete`
@@ -223,9 +225,38 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   through the drain grace, and a loss that is ready with the stop or arrives during
   the drain aborts and joins the running job at once, and a job whose result is
   ready in the same poll as the loss is logged as cancelled, not reported. The
-  lease keeps its heartbeat through the worker drain and the pre-release end
-  (`LeaseScoped::end`) until release, so a database session that ends there publishes Lost and the
-  fence aborts the running job. Aborting a job cancels only its task: work it
+  lease keeps its heartbeat through the worker drain and the pre-release end, and
+  no further. A supervised heartbeat waits for the lease lock for at most
+  `HEARTBEAT_LOCK_LIMIT` (6 s; the 120 s `lease_lock_limit` is the budget of a
+  lifetime's entry and release only) and is polled beside everything else the
+  supervisor waits on (a shutdown, the worker's exit, the handshake, a backoff, the
+  worker drain, the pre-release end), so a lock wait holds none of them. Every
+  heartbeat error, a lock wait that reaches its bound included, publishes Lost,
+  which aborts the running job. While the supervisor waits in one of those selects,
+  a lease that can no longer be verified is published Lost within 12 s of its last
+  verified heartbeat (interval 1 s, lock bound 6 s, operation bound 5 s). A worker
+  spawn (at most 10 s) is awaited outside them: the heartbeat due after it starts
+  at once, so across a spawn the bound is 21 s (spawn 10 s, lock bound 6 s,
+  operation bound 5 s) plus the intent marker's snapshot read that precedes the
+  spawn, which is awaited outside them too and has no bound. So a leased-family job
+  can run 21 s past the last verified heartbeat before it is aborted, and longer by
+  however long that one file read takes: nothing bounds it. The supervisor never
+  drops a heartbeat in flight: the lifetime's `Pulse` owns it across select arms,
+  and `run_ending` awaits it before it takes the PID claim or releases. It never
+  leaves one unpolled either. A heartbeat queued on the lease lock is handed the
+  lock unpolled and would then hold it, with its own bounds stopped, until it is
+  polled. So every await of the supervised lifetime is a `Pulse` method or a select
+  with a pulse arm, or is passed to `Pulse::through` (the reap after a worker's exit
+  or a failed handshake, the marker read after an exit or a drain, and the marker
+  read after each heartbeat in the wait loop), or is a bare await directly after a
+  pulse call returned the heartbeat's result, when none is in flight (the marker
+  snapshot, the spawn, the two drains after a lost lease). The first two kinds hold
+  by construction, since the await itself polls the heartbeat. The four bare awaits
+  hold only by where they stand, and nothing in the code checks that. A new await in
+  `supervise` must be one of the three; a wait that can follow a select another arm
+  won is never bare, however short, and when in doubt a wait goes through
+  `through`. A heartbeat that fails beside a wait passed to `through` publishes
+  Lost, and the wait still returns its own result. Aborting a job cancels only its task: work it
   already dispatched to a blocking thread or already sent as SQL (the node hook
   spool prune's `spawn_blocking` is an example of such work) is neither cancelled
   nor joined, so a leased-family job's work must be safe to finish after a lost
@@ -247,7 +278,11 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   replaces Active. The lease watch fences the job host and nothing else: the terminal
   host (with its own epoch authority) and token-event retention (elected by its own
   advisory lock) start in `ActiveServices::start`, before the entry heartbeat, and
-  run until `ActiveServices::stop`.
+  run until `ActiveServices::stop`. `run_ending` publishes Lost itself where its
+  heartbeats end, after the pre-release end and before it waits for the lease lock
+  to release, on every exit but RestartTerminals. Through that wait status reads
+  standby and promote and recover answer the lifetime 409; the release then
+  publishes Standby.
 - Pool. A family queries through `FamilyContext::serve_pool`, the shared serve pool.
   Each native pool takes `POOL_SHARE` connections from the budget that
   `gobby_core::database_concurrency::pool_budget` resolves from the stored

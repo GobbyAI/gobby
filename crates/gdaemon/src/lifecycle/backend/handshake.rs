@@ -1,9 +1,9 @@
 //! Supervision of the worker handshake: how a child's handshake ends while the child is supervised,
 //! and what a failed handshake does to the supervisor.
 
-use tokio::{sync::watch, time::Interval};
+use tokio::sync::watch;
 
-use super::{BackendStatus, BackendSupervisor, SupervisorExit, shutdown_signal};
+use super::{BackendStatus, BackendSupervisor, SupervisorExit, monitor::Pulse, shutdown_signal};
 use crate::lifecycle::{
     worker_channel::WorkerAttachment,
     worker_handshake::{HandshakeOutcome, WorkerCallError, handshake_outcome},
@@ -28,7 +28,7 @@ impl BackendSupervisor {
         &self,
         attachment: &mut WorkerAttachment,
         shutdown: &mut watch::Receiver<bool>,
-        heartbeats: &mut Interval,
+        pulse: &mut Pulse<'_>,
     ) -> HandshakeStep {
         let handshake = self.handshake_worker(
             &mut attachment.link,
@@ -45,8 +45,8 @@ impl BackendSupervisor {
                     };
                 }
                 _ = shutdown_signal(shutdown) => return HandshakeStep::Shutdown,
-                _ = heartbeats.tick() => {
-                    if let Err(error) = self.heartbeat().await {
+                beaten = pulse.next() => {
+                    if let Err(error) = beaten {
                         tracing::warn!(target: "gobby.lifecycle", "backend lease lost: {error:#}");
                         return HandshakeStep::LeaseLost;
                     }
