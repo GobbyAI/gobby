@@ -957,60 +957,92 @@ def test_recorder_labels_the_deadline_by_its_state() -> None:
     assert labels == list(contexts), f"deadline labels {labels}, want {list(contexts)}"
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="run_command spawns through /bin/sh")
-def test_deadline_handoff_case_reaches_the_detector_spawn(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The handoff case proves the spent budget reaches the process, not only the effect.
+def _handoff_spawn_timeouts(
+    monkeypatch: pytest.MonkeyPatch, *, thaw_event: bool, deadline_dropped: bool
+) -> tuple[int, list[float]]:
+    """Replay the committed handoff case; return the effect calls and each spawn's timeout.
 
-    Python's rule pass hands the effect a frozen event that the payload builder cannot write
-    into, so the committed case fails open before the spawn and records no process. This
-    test thaws only the event, keeping the effect context and the deadline object the engine
-    handed over, so the spawn it observes is the one the pass's deadline arithmetic gives.
-    With the deadline dropped from the effect context, the same spawn gets the full budget.
+    With ``thaw_event`` the effect is called with a mutable copy of the frozen event and the
+    engine's own effect context and deadline object; without it the effect gets exactly what
+    the rule pass hands it. ``deadline_dropped`` removes the blocking deadline from the
+    effect context.
     """
     case = {c["id"]: c for c in _committed_cases()}[DEADLINE_HANDOFF]
     assert case.get("deadline") == "expired", f"{DEADLINE_HANDOFF}: {case.get('deadline')!r}"
     original_apply = run_command_effects.RunCommandEffectsMixin._apply_run_command
+    applied: list[Any] = []
+    timeouts: list[float] = []
 
-    async def thawed_event(
+    async def observed_apply(
         self: Any, effect: Any, row: Any, ctx: dict[str, Any], context_parts: Any
     ) -> None:
         event = ctx["event"]
-        live = dataclasses.replace(
-            event,
-            data=mutable_evaluation_result(event.data),
-            metadata=mutable_evaluation_result(event.metadata),
-        )
-        await original_apply(self, effect, row, {**ctx, "event": live}, context_parts)
-
-    def spawn_timeouts(*, deadline_dropped: bool) -> list[float]:
-        timeouts: list[float] = []
-
-        async def observed_spawn(command: list[str], **kwargs: Any) -> Any:
-            timeouts.append(kwargs["timeout_seconds"])
-            return await execute_run_command(command, **kwargs)
-
-        with monkeypatch.context() as patch:
-            patch.setattr(run_command_effects, "execute_run_command", observed_spawn)
-            patch.setattr(
-                run_command_effects.RunCommandEffectsMixin, "_apply_run_command", thawed_event
+        applied.append(event)
+        if thaw_event:
+            event = dataclasses.replace(
+                event,
+                data=mutable_evaluation_result(event.data),
+                metadata=mutable_evaluation_result(event.metadata),
             )
-            if deadline_dropped:
-                original_build = TemplatingMixin._build_eval_context
-                patch.setattr(
-                    TemplatingMixin, "_build_eval_context", _deadline_dropped(original_build)
-                )
-            rules_corpus.replay_case(copy.deepcopy(case))
-        return timeouts
+        await original_apply(self, effect, row, {**ctx, "event": event}, context_parts)
 
+    async def observed_spawn(command: list[str], **kwargs: Any) -> Any:
+        timeouts.append(kwargs["timeout_seconds"])
+        return await execute_run_command(command, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(run_command_effects, "execute_run_command", observed_spawn)
+        patch.setattr(
+            run_command_effects.RunCommandEffectsMixin, "_apply_run_command", observed_apply
+        )
+        if deadline_dropped:
+            original_build = TemplatingMixin._build_eval_context
+            patch.setattr(TemplatingMixin, "_build_eval_context", _deadline_dropped(original_build))
+        rules_corpus.replay_case(copy.deepcopy(case))
+    return len(applied), timeouts
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="run_command spawns through /bin/sh")
+def test_deadline_handoff_case_fails_open_before_the_spawn_on_the_frozen_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Python's rule pass starts no detector process for the committed handoff case.
+
+    The rule pass hands the effect a frozen event, the payload builder raises writing into
+    it, and the effect fails open before the spawn. This pins a recorded Python flaw, not
+    the correct behaviour: the correct effect spawns with the handed deadline. The test
+    fails once the payload is built from a detached copy; the committed case then reaches
+    the spawn itself and the thawed-event test below is no longer needed.
+    """
+    applied, spawned = _handoff_spawn_timeouts(
+        monkeypatch, thaw_event=False, deadline_dropped=False
+    )
+    assert applied == 1, f"{DEADLINE_HANDOFF}: run_command effect called {applied} times, want 1"
+    assert spawned == [], (
+        f"{DEADLINE_HANDOFF}: the frozen event reached the detector spawn with timeouts "
+        f"{spawned}; the payload build no longer fails open"
+    )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="run_command spawns through /bin/sh")
+def test_deadline_handoff_with_a_thawed_event_reaches_the_detector_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With only the event thawed, the handed deadline sets the detector spawn's budget.
+
+    The committed case cannot reach the spawn in Python (the frozen-event test above), so
+    this test swaps the frozen event for a mutable copy and keeps the effect context and the
+    deadline object the engine handed over. The spawn it observes is the one the pass's
+    deadline arithmetic gives; with the deadline dropped from the effect context, the same
+    spawn gets the full budget.
+    """
     floor = run_command_effects._RUN_COMMAND_INLINE_FLOOR_SECONDS
-    handed = spawn_timeouts(deadline_dropped=False)
+    _, handed = _handoff_spawn_timeouts(monkeypatch, thaw_event=True, deadline_dropped=False)
     assert handed == [floor], (
         f"{DEADLINE_HANDOFF}: detector spawn timeouts {handed}, want one spawn at the "
         f"{floor}s floor an expired deadline leaves"
     )
-    dropped = spawn_timeouts(deadline_dropped=True)
+    _, dropped = _handoff_spawn_timeouts(monkeypatch, thaw_event=True, deadline_dropped=True)
     assert len(dropped) == 1 and dropped[0] > floor, (
         f"{DEADLINE_HANDOFF}: without the handed deadline the spawn timeouts are {dropped}, "
         f"want one spawn above the {floor}s floor"
