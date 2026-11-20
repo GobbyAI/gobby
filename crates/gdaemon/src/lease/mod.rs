@@ -67,7 +67,8 @@ impl LeaseLoss {
 
 /// One lifetime of the services that run under this lease. While it is open, nothing else
 /// acquires. Dropping it without passing it to the next `begin_lifetime` abandons it: that
-/// lifetime never ends and acquisition stays refused for the rest of the process.
+/// lifetime never ends and acquisition stays refused for the rest of the process. A lifetime
+/// ends only through the lease that issued it; another lease refuses it.
 #[must_use = "a dropped lifetime is abandoned: acquisition stays refused in this process"]
 pub struct LeaseLifetime {
     loss: LeaseLoss,
@@ -262,12 +263,18 @@ impl ActiveDaemonLease {
 
     /// The run loop's only acquisition. Ends `previous` and begins the next lifetime in one
     /// critical section, so the gate is never clear over a spent authority.
+    /// `previous` must be a lifetime this lease issued: a token from another lease is refused
+    /// before any acquisition and leaves this lease unchanged.
     pub async fn begin_lifetime(
         &mut self,
         previous: Option<LeaseLifetime>,
     ) -> Result<Option<LeaseLifetime>> {
-        if self.lifetime_open && previous.is_none() {
-            bail!(LIFETIME_OPEN);
+        match &previous {
+            None if self.lifetime_open => bail!(LIFETIME_OPEN),
+            Some(token) if !token.loss.0.same_channel(&self.state) => {
+                bail!("the lease lifetime passed to begin_lifetime was issued by another lease")
+            }
+            _ => {}
         }
         // `previous` is still unended here: a cancelled acquisition abandons it. The result is
         // bound, not propagated, so the `Err` path ends `previous` and clears the gate too.
