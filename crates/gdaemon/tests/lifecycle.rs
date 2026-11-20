@@ -28,10 +28,12 @@ use tokio::{
 use tokio_postgres::{Client, NoTls};
 use uuid::Uuid;
 
-use super::lease::hub_lock;
+use super::lease::{LIFETIME_OPEN, hub_lock};
 
+use axum::body::{Body, to_bytes};
+use axum::http::{Method, Request, StatusCode};
 use gobby_core::bootstrap::{HubDatabaseBootstrap, RouteBackend, RunMode};
-use gobby_core::family::lifecycle::{Activation, HookError, JobRun};
+use gobby_core::family::lifecycle::{Activation, HookError, JobRun, StopFailure, StopMode};
 use gobby_core::family::{ConfigEpoch, Extensions, FramePublisher, PublishRefused};
 use gobby_core::route_family::{BoxFut, RouteFamily};
 use gobby_daemon::family_start::{ConfigEpochSource, PrepareInputs, prepare};
@@ -1945,4 +1947,538 @@ async fn take_freed_lease(db: &TestDb, machine: &str) -> Result<ActiveDaemonLeas
     .await
     .context("the terminated session's lease was never freed")??;
     Ok(peer)
+}
+
+impl TestDb {
+    /// The fencing epoch of the lifecycle fixtures' deployment row.
+    async fn epoch(&self) -> Result<i64> {
+        Ok(self
+            .admin
+            .query_one(
+                &format!(
+                    "SELECT fencing_epoch FROM {}.deployment_runtime \
+                     WHERE deployment_token = 'lifecycle-test'",
+                    self.schema
+                ),
+                &[],
+            )
+            .await?
+            .try_get(0)?)
+    }
+}
+
+/// Ends the lease's dedicated PostgreSQL session, as a crashed or partitioned database would.
+async fn terminate_lease_session(db: &TestDb, application: &str) -> Result<()> {
+    let rows = db
+        .admin
+        .query(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name=$1",
+            &[&application],
+        )
+        .await?;
+    ensure!(rows.len() == 1, "the lease session was not terminated");
+    Ok(())
+}
+
+/// Waits until no session holds the lease's PostgreSQL lock. The bound is a hang guard.
+async fn wait_until_unowned(db: &TestDb) -> Result<()> {
+    let probe = db.lease("probe")?;
+    timeout(Duration::from_secs(10), async {
+        while probe.owner().await?.is_some() {
+            sleep(Duration::from_millis(10)).await;
+        }
+        anyhow::Ok(())
+    })
+    .await
+    .context("the lease lock was never freed")?
+}
+
+/// Calls a native lease admin route in-process and decodes its JSON body.
+pub(super) async fn lease_admin(
+    state: &RuntimeState,
+    method: Method,
+    path: &str,
+) -> Result<(StatusCode, serde_json::Value)> {
+    let request = Request::builder()
+        .method(method)
+        .uri(path)
+        .body(Body::empty())?;
+    let response = gobby_daemon::lease::admin_api::handle(state, request).await;
+    let status = response.status();
+    let body = serde_json::from_slice(&to_bytes(response.into_body(), 65536).await?)?;
+    Ok((status, body))
+}
+
+/// A family whose hooks report and can pause. `activate` signals `activating`, waits for
+/// `proceed` when given, and registers a job that signals `running` and never ends on its own.
+/// `deactivate` records the lease state it first ran under, signals `deactivating`, and waits
+/// for `resume` when given.
+struct PausesHooks {
+    lease: watch::Receiver<LeaseState>,
+    activating: Arc<Notify>,
+    proceed: Option<Arc<Notify>>,
+    running: Arc<Notify>,
+    at_deactivate: Arc<Mutex<Option<LeaseState>>>,
+    deactivating: Arc<Notify>,
+    resume: Option<Arc<Notify>>,
+}
+
+impl PausesHooks {
+    /// Hooks that never pause, with fresh handles.
+    fn new(lease: watch::Receiver<LeaseState>) -> Self {
+        Self {
+            lease,
+            activating: Arc::new(Notify::new()),
+            proceed: None,
+            running: Arc::new(Notify::new()),
+            at_deactivate: Arc::default(),
+            deactivating: Arc::new(Notify::new()),
+            resume: None,
+        }
+    }
+}
+
+impl RouteFamily<FrontDoorState> for PausesHooks {
+    fn name(&self) -> &'static str {
+        "fixture_pauses_hooks"
+    }
+
+    fn prefixes(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn router(&self) -> axum::Router<FrontDoorState> {
+        axum::Router::new()
+    }
+
+    fn activate<'a>(
+        &'a self,
+        activation: &'a mut Activation<'_>,
+    ) -> BoxFut<'a, Result<(), HookError>> {
+        Box::pin(async move {
+            // `notify_one` stores a permit, so a test that waits later still sees the signal.
+            self.activating.notify_one();
+            if let Some(proceed) = &self.proceed {
+                proceed.notified().await;
+            }
+            let running = Arc::clone(&self.running);
+            let job: JobRun = Arc::new(move || {
+                let running = Arc::clone(&running);
+                Box::pin(async move {
+                    running.notify_one();
+                    std::future::pending::<()>().await;
+                    Ok(())
+                })
+            });
+            activation
+                .register_job("fixture_pauses_hooks.work", Duration::from_secs(1), job)
+                .map_err(|refused| HookError::Ordinary {
+                    message: format!("the fixture job was refused: {refused:?}"),
+                })
+        })
+    }
+
+    fn deactivate<'a>(&'a self, _mode: StopMode) -> BoxFut<'a, Result<(), StopFailure>> {
+        Box::pin(async move {
+            let state = *self.lease.borrow();
+            self.at_deactivate
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .get_or_insert(state);
+            self.deactivating.notify_one();
+            if let Some(resume) = &self.resume {
+                resume.notified().await;
+            }
+            Ok(())
+        })
+    }
+}
+
+/// A runtime started through `RuntimeState::run` on a fresh lease, with its handles.
+struct Runtime {
+    state: Arc<RuntimeState>,
+    lease: Arc<NamedLock<ActiveDaemonLease>>,
+    observer: watch::Receiver<LeaseState>,
+    application: String,
+    stop: watch::Sender<bool>,
+    task: tokio::task::JoinHandle<Result<()>>,
+    home: TempDir,
+}
+
+/// Starts `RuntimeState::run` with a fenced job host, one family built from the lease's watch,
+/// a 100 ms heartbeat and a `TERM_GRACE` drain unless `tune` changes them.
+async fn start_runtime(
+    db: &TestDb,
+    machine: &str,
+    script: &str,
+    tune: impl FnOnce(&mut BackendConfig),
+    family: impl FnOnce(watch::Receiver<LeaseState>) -> &'static dyn RouteFamily<FrontDoorState>,
+) -> Result<Runtime> {
+    let home = TempDir::new()?;
+    let lease = db.lease(machine)?;
+    let application = lease.application_name().to_owned();
+    let observer = lease.subscribe();
+    let lease = Arc::new(NamedLock::new(lease));
+    let claim =
+        claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("PID claim")?;
+    let argv = backend_argv(script)?;
+    let mut config = backend_config(home.path(), &argv)?;
+    config
+        .environment
+        .insert("HOME".into(), home.path().as_os_str().to_owned());
+    config.drain_timeout = TERM_GRACE;
+    config.heartbeat_interval = Duration::from_millis(100);
+    tune(&mut config);
+    let write_token = config.write_token.clone();
+    let supervisor = BackendSupervisor::with_lease(Some(Arc::clone(&lease)), claim, config);
+    let state = Arc::new(RuntimeState {
+        mode: RunMode::Hub,
+        lease: Some(Arc::clone(&lease)),
+        lease_state: Some(observer.clone()),
+        backend: supervisor.subscribe(),
+        backend_wait: supervisor.subscribe_wait(),
+        write_token,
+        terminal_route: Default::default(),
+    });
+    let family = family(observer.clone());
+    let families = prepare(PrepareInputs {
+        serve_pool: None,
+        home: home.path().to_owned(),
+        routes: BTreeMap::from([(family.name().to_owned(), RouteBackend::Native)]),
+        publisher: Arc::new(NoFrames),
+        backend: None,
+        lease: Some(observer.clone()),
+        epoch_source: Arc::new(NoStoredEpoch),
+        cpu_count: 8,
+        families: vec![family],
+        extensions: Extensions::new(),
+        startup: None,
+    })
+    .await
+    .map_err(|failure| anyhow::anyhow!("{}: {}", failure.family, failure.message))?;
+    let bootstrap = HubDatabaseBootstrap {
+        mode: RunMode::Hub,
+        hub_daemon_url: None,
+        hub_cert: None,
+        database_url: None,
+        api_key: None,
+        daemon_url: None,
+        bind_host: "127.0.0.1".into(),
+        daemon_port: 0,
+        websocket_port: 0,
+        front_door: Default::default(),
+    };
+    let terminals = terminal_route_latch(&bootstrap.front_door.routes)?;
+    let owner_home = home.path().to_owned();
+    let (stop, shutdown) = watch::channel(false);
+    let runner = Arc::clone(&state);
+    let task = tokio::spawn(async move {
+        runner
+            .run(
+                supervisor, shutdown, bootstrap, terminals, owner_home, families,
+            )
+            .await
+    });
+    Ok(Runtime {
+        state,
+        lease,
+        observer,
+        application,
+        stop,
+        task,
+        home,
+    })
+}
+
+/// Counts its starts in `starts`. The first start announces a restart of the terminals (the
+/// marker of `terminal_drain_marker_reaches_runtime_owner`) and exits; every later start writes
+/// `ready` and waits for the supervisor's EOF. The marker stays on disk, and the next
+/// lifetime's pre-spawn snapshot makes it inert, so only the first start announces.
+const RESTARTS_TERMINALS_ONCE: &str = r#"import os,pathlib,json,time
+home=pathlib.Path(os.environ['GOBBY_HOME']); p=home/'starts'
+n=len(p.read_text())+1 if p.exists() else 1
+p.write_text('a'*n)
+if n==1:
+    (home/'shutdown_intent_active.json').write_text(json.dumps({'intent':'restart','timestamp':time.time(),'details':{'drain_terminals':True}}))
+    raise SystemExit(0)
+(home/'ready').write_text('ready')
+open(int(os.environ['GOBBY_SUPERVISOR_FD']),'rb').read()
+"#;
+
+#[tokio::test]
+async fn a_promote_while_a_lost_lease_drains_is_refused_and_installs_no_epoch() -> Result<()> {
+    database_case(async |db| {
+        let running = Arc::new(Notify::new());
+        let family_running = Arc::clone(&running);
+        let runtime = start_runtime(
+            db,
+            "drain-promote-owner",
+            IGNORE_TERM,
+            |config| config.drain_timeout = Duration::from_secs(5),
+            move |lease| {
+                Box::leak(Box::new(TimesAJob {
+                    lease,
+                    running: family_running,
+                    ended: Arc::default(),
+                }))
+            },
+        )
+        .await?;
+        let _abort = AbortOnDrop(runtime.task.abort_handle());
+        let mut observer = runtime.observer.clone();
+        let pid: i32 = wait_for_file(&runtime.home.path().join("ready"))
+            .await?
+            .parse()?;
+        ensure!(
+            db.epoch().await? == 1,
+            "the runtime did not acquire the first epoch"
+        );
+        terminate_lease_session(db, &runtime.application).await?;
+        timeout(
+            Duration::from_secs(10),
+            observer.wait_for(|state| *state == LeaseState::Lost),
+        )
+        .await
+        .context("the lost lease was never published")??;
+        wait_for_file(&runtime.home.path().join("term")).await?;
+        wait_until_unowned(db).await?;
+        ensure!(
+            !runtime.task.is_finished(),
+            "the runtime ended before the drain"
+        );
+        // SAFETY: signal zero probes only the PID written by this test's backend.
+        ensure!(
+            unsafe { libc::kill(pid, 0) } == 0,
+            "the backend was gone before the promote"
+        );
+
+        let (status, body) =
+            lease_admin(&runtime.state, Method::POST, "/api/admin/lease/promote").await?;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "a promote during the lost lease's drain was not refused: {body}"
+        );
+        assert_eq!(body["detail"], LIFETIME_OPEN, "{body}");
+        assert_eq!(db.epoch().await?, 1, "a refused promote installed an epoch");
+        let (status, body) =
+            lease_admin(&runtime.state, Method::POST, "/api/admin/lease/recover").await?;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "a recover during the lost lease's drain was not refused: {body}"
+        );
+        timeout(
+            Duration::from_secs(30),
+            observer.wait_for(|state| *state == LeaseState::Active),
+        )
+        .await
+        .context("the run loop never acquired the lease again after the drain")??;
+        assert_eq!(
+            db.epoch().await?,
+            2,
+            "the run loop's own acquisition after the drain is the only new epoch"
+        );
+        runtime.stop.send(true)?;
+        timeout(Duration::from_secs(30), runtime.task).await???;
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_promote_after_the_lease_is_released_and_before_the_services_stop_is_refused()
+-> Result<()> {
+    database_case(async |db| {
+        let resume = Arc::new(Notify::new());
+        let deactivating = Arc::new(Notify::new());
+        let (hook_resume, hook_deactivating) = (Arc::clone(&resume), Arc::clone(&deactivating));
+        let runtime = start_runtime(
+            db,
+            "stopping-owner",
+            READY_UNTIL_EOF,
+            |_| {},
+            move |lease| {
+                Box::leak(Box::new(PausesHooks {
+                    resume: Some(hook_resume),
+                    deactivating: hook_deactivating,
+                    ..PausesHooks::new(lease)
+                }))
+            },
+        )
+        .await?;
+        let _abort = AbortOnDrop(runtime.task.abort_handle());
+        wait_for_file(&runtime.home.path().join("ready")).await?;
+        runtime.stop.send(true)?;
+        timeout(Duration::from_secs(30), deactivating.notified())
+            .await
+            .context("the families were never deactivated")?;
+        ensure!(
+            !runtime.task.is_finished(),
+            "the runtime ended before its services stopped"
+        );
+
+        let (status, body) =
+            lease_admin(&runtime.state, Method::POST, "/api/admin/lease/promote").await?;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "a promote on a stopping daemon was not refused: {body}"
+        );
+        assert_eq!(body["detail"], LIFETIME_OPEN, "{body}");
+        assert_eq!(db.epoch().await?, 1, "a stopping daemon installed an epoch");
+        resume.notify_one();
+        timeout(Duration::from_secs(30), runtime.task).await???;
+        let (status, body) =
+            lease_admin(&runtime.state, Method::POST, "/api/admin/lease/promote").await?;
+        assert_eq!(
+            status,
+            StatusCode::CONFLICT,
+            "a promote after the runtime returned was not refused: {body}"
+        );
+        assert_eq!(
+            db.epoch().await?,
+            1,
+            "a daemon that has stopped installed an epoch"
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_lease_lock_wait_that_ends_supervision_publishes_the_lease_as_lost() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let mut lease = db.lease("lock-wait-owner")?;
+        ensure!(lease.try_acquire().await?, "fixture must hold lease");
+        let application = lease.application_name().to_owned();
+        let observer = lease.subscribe();
+        let lease = Arc::new(NamedLock::new(lease));
+        let claim =
+            claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("PID claim")?;
+        let argv = backend_argv(IGNORE_TERM)?;
+        let mut config = backend_config(home.path(), &argv)?;
+        config
+            .environment
+            .insert("HOME".into(), home.path().as_os_str().to_owned());
+        config.drain_timeout = TERM_GRACE;
+        config.heartbeat_interval = Duration::from_millis(100);
+        config.lease_lock_limit = Duration::from_millis(500);
+        let mut supervisor = BackendSupervisor::with_lease(Some(Arc::clone(&lease)), claim, config);
+        let (_stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        wait_for_file(&home.path().join("ready")).await?;
+        let held = lease.lock_as("test lease holder").await;
+        // The heartbeat's lock wait fails at its bound, and supervision ends in the drain.
+        wait_for_file(&home.path().join("term")).await?;
+
+        assert_eq!(
+            *observer.borrow(),
+            LeaseState::Lost,
+            "a lock wait that ended supervision left the lease watch reading Active"
+        );
+        assert!(
+            held.fence().is_none(),
+            "a lease published lost still offers its fence"
+        );
+        let probe = db.lease("lock-wait-probe")?;
+        assert_eq!(
+            probe.owner().await?.map(|owner| owner.application_name),
+            Some(application),
+            "the failed lock wait touched the lease session"
+        );
+        drop(held);
+        assert_eq!(
+            timeout(Duration::from_secs(10), task).await???,
+            SupervisorExit::LeaseLost
+        );
+        let mut peer = db.lease("lock-wait-peer")?;
+        assert!(
+            peer.try_acquire().await?,
+            "the lease was not released after supervision ended"
+        );
+        peer.release().await
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_restart_of_the_terminals_hands_the_lease_to_the_next_lifetime_at_the_same_epoch()
+-> Result<()> {
+    database_case(async |db| {
+        let at_deactivate: Arc<Mutex<Option<LeaseState>>> = Arc::default();
+        let hook_seen = Arc::clone(&at_deactivate);
+        let runtime = start_runtime(
+            db,
+            "restart-owner",
+            RESTARTS_TERMINALS_ONCE,
+            |_| {},
+            move |lease| {
+                Box::leak(Box::new(PausesHooks {
+                    at_deactivate: hook_seen,
+                    ..PausesHooks::new(lease)
+                }))
+            },
+        )
+        .await?;
+        let _abort = AbortOnDrop(runtime.task.abort_handle());
+        let changes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut watched = runtime.observer.clone();
+        let counted = Arc::clone(&changes);
+        let counter = tokio::spawn(async move {
+            if watched
+                .wait_for(|state| *state == LeaseState::Active)
+                .await
+                .is_err()
+            {
+                return;
+            }
+            while watched.changed().await.is_ok() {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
+        let _counter = AbortOnDrop(counter.abort_handle());
+        // Only the second start writes `ready`.
+        wait_for_file(&runtime.home.path().join("ready")).await?;
+
+        // Every assertion but the last is made before the stop, whose release publishes.
+        assert_eq!(
+            fs::read_to_string(runtime.home.path().join("starts"))?,
+            "aa"
+        );
+        assert_eq!(
+            *at_deactivate
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            Some(LeaseState::Active),
+            "the first lifetime's teardown did not run under the kept lease"
+        );
+        assert_eq!(
+            changes.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "the lease watch changed between the two lifetimes"
+        );
+        assert_eq!(*runtime.observer.borrow(), LeaseState::Active);
+        assert_eq!(db.epoch().await?, 1, "the restart rotated the epoch");
+        assert_eq!(
+            runtime
+                .lease
+                .lock_as("test")
+                .await
+                .fence()
+                .map(|fence| fence.epoch),
+            Some(1),
+            "the next lifetime does not hold the first epoch"
+        );
+        let (status, body) =
+            lease_admin(&runtime.state, Method::GET, "/api/admin/lease/status").await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["mode"], "active", "{body}");
+        runtime.stop.send(true)?;
+        timeout(Duration::from_secs(30), runtime.task).await???;
+        Ok(())
+    })
+    .await
 }

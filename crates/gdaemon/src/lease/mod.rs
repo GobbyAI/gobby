@@ -55,6 +55,10 @@ impl LeaseLoss {
     }
 }
 
+/// One lifetime of the services that run under this lease.
+#[must_use]
+pub struct LeaseLifetime(());
+
 struct LossOnDrop(Option<LeaseLoss>);
 
 impl Drop for LossOnDrop {
@@ -206,6 +210,14 @@ impl ActiveDaemonLease {
         self.authority = Some(Authority { client, fence });
         self.state.send_replace(LeaseState::Active);
         Ok(true)
+    }
+
+    /// The run loop's acquisition, returning the lifetime it begins.
+    pub async fn begin_lifetime(
+        &mut self,
+        _previous: Option<LeaseLifetime>,
+    ) -> Result<Option<LeaseLifetime>> {
+        Ok(self.try_acquire().await?.then_some(LeaseLifetime(())))
     }
 
     /// Removes authority while awaiting I/O, so cancelling this operation also
