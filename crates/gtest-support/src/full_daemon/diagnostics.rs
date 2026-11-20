@@ -6,11 +6,16 @@ use std::path::Path;
 /// The most lines a readiness failure shows from each log.
 const TAIL_LINES: usize = 40;
 
-/// The diagnostics a readiness failure carries for a daemon whose home is `home`.
-///
-/// This stub shows only the captured stderr, as before routed logging.
+/// The diagnostics a readiness failure carries for a daemon whose home is `home`: the
+/// tail of the routed error log, where warnings go once routed logging activates, and the
+/// tail of the captured stderr, where they go before it does.
 pub(super) fn ready_diagnostics(home: &Path) -> String {
-    log_tail(&home.join("logs/daemon_error.log"))
+    let logs = home.join("logs");
+    format!(
+        "routed errors.log (last {TAIL_LINES} lines):\n{}\nstderr (last {TAIL_LINES} lines):\n{}",
+        log_tail(&logs.join("errors.log")),
+        log_tail(&logs.join("daemon_error.log"))
+    )
 }
 
 fn log_tail(path: &Path) -> String {

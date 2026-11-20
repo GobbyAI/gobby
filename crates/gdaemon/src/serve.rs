@@ -324,18 +324,20 @@ pub fn run() -> Result<()> {
                 }
             },
         };
-        let applier = match &started {
+        let (applier, mut first_read) = match &started {
             Ok(started) => {
                 // The backend worker's handler rotates the files it shares with gdaemon.
                 let command = BackendConfig::from_environment(home)?.command;
                 let command: Vec<_> = command.iter().map(|part| part.to_string_lossy()).collect();
-                crate::logging::activate(
-                    crate::logging::LogSettings::for_home(home),
-                    Some(&command.join(" ")),
-                )?;
-                Some(crate::logging::epoch::spawn_applier(started.ctx.subscribe_config()))
+                let routed = RoutedActivation {
+                    settings: crate::logging::LogSettings::for_home(home),
+                    backend_command: command.join(" "),
+                    start_warnings: started.start_warnings.clone(),
+                    config: started.ctx.subscribe_config(),
+                };
+                routed.start(started.config_read).await?
             }
-            Err(_) => None,
+            Err(_) => (None, None),
         };
         let native_routes = if bootstrap.mode == RunMode::Hub {
             NativeRoutes::Hub(Arc::new(crate::nodes::HubNodes {
@@ -377,7 +379,7 @@ pub fn run() -> Result<()> {
                 }),
                 started.ctx.config_publisher(),
                 CONFIG_POLL,
-                None,
+                first_read.take(),
             )
         });
         let native_ws = NativeWs::new(
@@ -435,7 +437,8 @@ pub fn run() -> Result<()> {
         )
         .await;
         retire.abort();
-        for task in poller.iter().chain(&applier) {
+        // The applier first: a gate still waiting must not see the poller's signal dropped.
+        for task in applier.iter().chain(&poller) {
             task.abort();
         }
         stop.send_replace(true);
@@ -468,6 +471,68 @@ async fn owner_run(
     state
         .run(supervisor, shutdown, bootstrap, terminals, home, families)
         .await
+}
+
+/// Routed logging for a hub or standalone start. It activates only after the first
+/// successful configuration read; until then the pre-configuration sink (stderr) stays.
+#[cfg(unix)]
+struct RoutedActivation {
+    settings: crate::logging::LogSettings,
+    backend_command: String,
+    start_warnings: Vec<String>,
+    config: tokio::sync::watch::Receiver<gobby_core::family::ConfigEpoch>,
+}
+
+/// The epoch applier task, and the signal the poller fires on its first successful read
+/// when activation waits for it.
+#[cfg(unix)]
+type RoutedTasks = (
+    Option<tokio::task::JoinHandle<()>>,
+    Option<tokio::sync::oneshot::Sender<()>>,
+);
+
+#[cfg(unix)]
+impl RoutedActivation {
+    /// When the start's own read succeeded, activates now, so files that cannot be opened
+    /// fail the start. Otherwise a task waits for the poller's first successful read and
+    /// activates then; a failure there is reported on stderr and the pre-configuration
+    /// sink stays. Each path activates, applies the current epoch, replays the start's
+    /// warnings, then follows the epochs.
+    async fn start(self, config_read: bool) -> Result<RoutedTasks> {
+        let Self {
+            settings,
+            backend_command,
+            start_warnings,
+            mut config,
+        } = self;
+        // The gate hands over the epoch current at activation; the applier applies that
+        // epoch from the same channel, so the argument is not needed here.
+        let activate = move |_current| crate::logging::activate(settings, Some(&backend_command));
+        if config_read {
+            crate::family_start::activate_after_first_read(None, config.clone(), activate).await?;
+            let applier = crate::logging::epoch::spawn_applier(config);
+            crate::family_start::replay_start_warnings(&start_warnings);
+            return Ok((Some(applier), None));
+        }
+        let (signal, readable) = tokio::sync::oneshot::channel();
+        let applier = tokio::spawn(async move {
+            let gate = config.clone();
+            match crate::family_start::activate_after_first_read(Some(readable), gate, activate)
+                .await
+            {
+                Ok(()) => {
+                    crate::logging::epoch::apply_current(&mut config);
+                    crate::family_start::replay_start_warnings(&start_warnings);
+                    crate::logging::epoch::follow(config).await;
+                }
+                Err(error) => crate::logging::raw_stderr(&format!(
+                    "gdaemon serve: routed logging did not activate; records stay on stderr: \
+                     {error:#}"
+                )),
+            }
+        });
+        Ok((Some(applier), Some(signal)))
+    }
 }
 
 /// Load front-door bootstrap; the contained corpus uses the unsupervised entry.

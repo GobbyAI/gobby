@@ -99,7 +99,9 @@ pub struct PrepareInputs {
 ///
 /// The reads run one after another, each on its own checkout: the budget keys, the
 /// capacity, then the epoch. A failed epoch read is not fatal: the epoch stays unpublished
-/// until the poller reads it. A fatal `start` unwinds the started families within
+/// until the poller reads it, and [`ProcessFamilies::config_read`] says so. The start's
+/// warnings are emitted as they happen and kept in [`ProcessFamilies::start_warnings`].
+/// A fatal `start` unwinds the started families within
 /// [`FAMILY_STOP_BUDGET`], counted from the moment the unwind begins.
 pub async fn prepare(inputs: PrepareInputs) -> Result<ProcessFamilies, StartFailure> {
     let outcome = match &inputs.serve_pool {
@@ -107,14 +109,22 @@ pub async fn prepare(inputs: PrepareInputs) -> Result<ProcessFamilies, StartFail
         None => None,
     };
     let pool = fold_outcome(outcome)?;
+    let mut start_warnings = Vec::new();
     let (config_publisher, config) = config_channel(ConfigEpoch::unpublished());
     let source = Arc::clone(&inputs.epoch_source);
-    if let Err(error) = config_publisher.reload(|| source.read()).await {
-        tracing::warn!(
-            target: TARGET,
-            "the active configuration is unreadable at start; it stays unpublished: {error:#}"
-        );
-    }
+    let config_read = match config_publisher.reload(|| source.read()).await {
+        Ok(_) => true,
+        Err(error) => {
+            start_warning(
+                &mut start_warnings,
+                format!(
+                    "the active configuration is unreadable at start; it stays unpublished: \
+                     {error:#}"
+                ),
+            );
+            false
+        }
+    };
     let degraded = DegradedServices::default();
     if let Some(name) = pool.degraded {
         degraded.mark(name);
@@ -135,41 +145,52 @@ pub async fn prepare(inputs: PrepareInputs) -> Result<ProcessFamilies, StartFail
     let activation = activation_plan(&inputs.families, &inputs.routes);
     let report = start_families(&activation, &ctx, FAMILY_STOP_BUDGET).await?;
     for failure in report.ordinary {
-        tracing::warn!(
-            target: TARGET,
-            "family {} started degraded: {}",
-            failure.family,
-            failure.message
+        start_warning(
+            &mut start_warnings,
+            format!(
+                "family {} started degraded: {}",
+                failure.family, failure.message
+            ),
         );
     }
     Ok(ProcessFamilies {
         ctx,
         activation,
-        config_read: true,
-        start_warnings: Vec::new(),
+        config_read,
+        start_warnings,
     })
 }
 
 /// Waits for the first successful configuration read, then runs `activate` with the epoch
 /// current at that moment. `first_read` is None when the start's own read succeeded, and
-/// otherwise fires on the poller's first successful read.
-///
-/// This stub activates at once, whatever `first_read` says.
+/// otherwise fires on the poller's first successful read. A poller that stops before
+/// reading successfully is an error, and `activate` does not run.
 pub async fn activate_after_first_read<T>(
     first_read: Option<oneshot::Receiver<()>>,
     config: watch::Receiver<ConfigEpoch>,
     activate: impl FnOnce(ConfigEpoch) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
-    drop(first_read);
+    if let Some(first_read) = first_read {
+        first_read.await.map_err(|_| {
+            anyhow::anyhow!("the configuration poller stopped before its first successful read")
+        })?;
+    }
     let current = config.borrow().clone();
     activate(current)
 }
 
+/// Emits `warning` now, which before routed logging activates reaches stderr, and keeps
+/// it for [`replay_start_warnings`].
+fn start_warning(warnings: &mut Vec<String>, warning: String) {
+    tracing::warn!(target: TARGET, "{warning}");
+    warnings.push(warning);
+}
+
 /// Emits the start's warnings again, for routed logging that activated after them.
-///
-/// This stub emits nothing.
 pub fn replay_start_warnings(warnings: &[String]) {
-    let _ = warnings;
+    for warning in warnings {
+        tracing::warn!(target: TARGET, "{warning}");
+    }
 }
 
 /// Reads the stored configuration epoch.
@@ -206,22 +227,28 @@ impl ConfigEpochSource for ActiveConfigSource {
 /// A failed poll keeps the current epoch. It logs one warning on the transition into
 /// failure, one notice on recovery, and the repeated failures in between at debug.
 ///
-/// `first_read`, when given, is meant to fire on the poller's first successful read; this
-/// stub drops it.
+/// `first_read`, when given, fires once, after the poller's first successful read, even
+/// when that read published nothing (a read of no stored row is the unpublished epoch).
 pub fn spawn_config_poller(
     source: Arc<dyn ConfigEpochSource>,
     publisher: Arc<ConfigEpochPublisher>,
     every: Duration,
-    first_read: Option<oneshot::Sender<()>>,
+    mut first_read: Option<oneshot::Sender<()>>,
 ) -> JoinHandle<()> {
-    drop(first_read);
     tokio::spawn(async move {
         let mut ticks = tokio::time::interval(every);
         ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);
         let mut failing = false;
         loop {
             ticks.tick().await;
-            match publisher.reload(|| source.read()).await {
+            let read = publisher.reload(|| source.read()).await;
+            if read.is_ok()
+                && let Some(first_read) = first_read.take()
+            {
+                // The receiver may be gone; nothing then waits on the signal.
+                let _ = first_read.send(());
+            }
+            match read {
                 Ok(_) if failing => {
                     failing = false;
                     tracing::info!(target: TARGET, "the active configuration is readable again");

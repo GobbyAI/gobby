@@ -629,7 +629,8 @@ fn hex(bytes: &[u8]) -> String {
 /// contract; the parsed value keeps integer digits as written and floats as floats.
 fn canonical(raw: &RawValue) -> io::Result<String> {
     let value = Json::parse(raw.get()).map_err(io::Error::other)?;
-    Ok(dumps(&value, CANONICAL).expect("CANONICAL writes every float"))
+    dumps(&value, CANONICAL)
+        .map_err(|error| io::Error::other(format!("pid record is not encodable: {error:?}")))
 }
 
 pub fn encode_record<T: Serialize + ?Sized>(record: &T) -> io::Result<Vec<u8>> {

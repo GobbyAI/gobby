@@ -1,7 +1,10 @@
 //! Applies each configuration epoch's `logging.*` keys to the routed layer.
 //!
 //! Every epoch the channel carries is applied, whatever its revision: the publisher
-//! decides which epoch is current, and a restore can lower the stored revision.
+//! decides which epoch is current, and a restore can lower the stored revision. An epoch
+//! is the whole stored configuration, so a key it does not carry returns to the settings
+//! routing activated with. A rejected setting is reported on stderr, not through the
+//! routes, so the floor it leaves in force cannot hide it.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,12 +15,25 @@ use tokio::task::JoinHandle;
 
 use super::layer::RouteHandle;
 use super::settings::{from_values, resolve_dir};
-use super::sink::active_routes;
+use super::sink::{active_routes, raw_stderr};
 
-/// Applies every epoch `rx` sees to the process's activated routed layer. An epoch that
-/// arrives before activation is not applied; the next one after activation is.
-pub fn spawn_applier(rx: watch::Receiver<ConfigEpoch>) -> JoinHandle<()> {
-    tokio::spawn(apply_each(rx, active_routes, resolve_configured_dir))
+/// Applies the current epoch of `rx` now, then spawns the task that applies each later
+/// one, to the process's activated routed layer. An epoch applied before activation
+/// changes nothing; the next one after activation is applied.
+pub fn spawn_applier(mut rx: watch::Receiver<ConfigEpoch>) -> JoinHandle<()> {
+    apply_current(&mut rx);
+    tokio::spawn(follow(rx))
+}
+
+/// Applies the current epoch of `rx` to the process's activated routed layer.
+pub fn apply_current(rx: &mut watch::Receiver<ConfigEpoch>) {
+    apply_latest(rx, active_routes, resolve_configured_dir);
+}
+
+/// Applies each epoch `rx` sees after the current one to the process's activated routed
+/// layer, until the publisher is gone.
+pub async fn follow(rx: watch::Receiver<ConfigEpoch>) {
+    follow_with(rx, active_routes, resolve_configured_dir).await;
 }
 
 /// Applies every epoch `rx` sees to the layer behind `handle`, including an epoch whose
@@ -26,35 +42,45 @@ pub fn spawn_applier(rx: watch::Receiver<ConfigEpoch>) -> JoinHandle<()> {
 #[cfg(test)]
 pub(crate) fn spawn_applier_to(
     handle: RouteHandle,
-    rx: watch::Receiver<ConfigEpoch>,
+    mut rx: watch::Receiver<ConfigEpoch>,
 ) -> JoinHandle<()> {
-    tokio::spawn(apply_each(
-        rx,
-        move || Some(handle.clone()),
-        |dir: &Path| Some(dir.to_path_buf()),
-    ))
+    let routes = move || Some(handle.clone());
+    let resolve = |dir: &Path| Some(dir.to_path_buf());
+    apply_latest(&mut rx, &routes, resolve);
+    tokio::spawn(follow_with(rx, routes, resolve))
 }
 
-/// Applies the current epoch, then each change, until the publisher is gone.
-async fn apply_each(
+/// Applies each change `rx` sees until the publisher is gone.
+async fn follow_with(
     mut rx: watch::Receiver<ConfigEpoch>,
     routes: impl Fn() -> Option<RouteHandle>,
     resolve: impl Fn(&Path) -> Option<PathBuf>,
 ) {
-    loop {
-        let values = Arc::clone(&rx.borrow_and_update().active_values);
-        if let Some(handle) = routes() {
-            let current = handle.settings();
-            let (mut next, warnings) = from_values(&values, &current, &current);
-            next.dir = resolve(&next.dir).unwrap_or(current.dir);
-            handle.replace_settings(next);
-            for warning in warnings {
-                tracing::warn!(target: "gobby.daemon", "{warning}");
-            }
-        }
-        if rx.changed().await.is_err() {
-            return;
-        }
+    while rx.changed().await.is_ok() {
+        apply_latest(&mut rx, &routes, &resolve);
+    }
+}
+
+/// Applies the latest epoch of `rx` to the layer `routes` returns, when there is one.
+fn apply_latest(
+    rx: &mut watch::Receiver<ConfigEpoch>,
+    routes: impl Fn() -> Option<RouteHandle>,
+    resolve: impl Fn(&Path) -> Option<PathBuf>,
+) {
+    let values = Arc::clone(&rx.borrow_and_update().active_values);
+    let Some(handle) = routes() else {
+        return;
+    };
+    let current = handle.settings();
+    let defaults = handle.defaults();
+    let (mut next, warnings) = from_values(&values, &current, &defaults);
+    // The activation directory is already resolved; a configured one resolves here.
+    if next.dir != defaults.dir {
+        next.dir = resolve(&next.dir).unwrap_or(current.dir);
+    }
+    handle.replace_settings(next);
+    for warning in warnings {
+        raw_stderr(&format!("gdaemon logging: {warning}"));
     }
 }
 

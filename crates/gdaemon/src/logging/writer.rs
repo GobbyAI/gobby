@@ -102,7 +102,8 @@ impl SizeRotatingFile {
     }
 
     /// Appends `line` and a newline. Under `Gdaemon`, the file rotates first when its
-    /// size plus the line and its newline would reach `max_bytes`, unless it is empty.
+    /// size in bytes plus the line's length in characters and its newline would reach
+    /// `max_bytes`, unless it is empty.
     pub fn write_line(&self, line: &[u8]) -> io::Result<()> {
         let mut handle = self.handle.lock().unwrap_or_else(PoisonError::into_inner);
         // One stat of the path serves both the identity check and the size, so bytes
@@ -125,10 +126,7 @@ impl SizeRotatingFile {
             *handle = Some(reopened);
             size
         };
-        let line_bytes = u64::try_from(line.len())
-            .unwrap_or(u64::MAX)
-            .saturating_add(1);
-        if self.rotates_before(size, line_bytes) {
+        if self.rotates_before(size, line_length(line)) {
             // Close the handle first: Windows cannot rename an open file.
             *handle = None;
             self.rotate()?;
@@ -143,16 +141,16 @@ impl SizeRotatingFile {
         open.file.write_all(&buffer)
     }
 
-    /// `RotatingFileHandler.shouldRollover`: a non-empty file whose size plus the next
-    /// line would reach the limit. CPython never rolls over an empty file (gh-116263),
-    /// even when one line alone reaches the limit. The worker's handler rotates its own
-    /// files.
-    fn rotates_before(&self, size: u64, line_bytes: u64) -> bool {
+    /// `RotatingFileHandler.shouldRollover`: a non-empty file whose size in bytes plus the
+    /// next line's [`line_length`] would reach the limit. CPython never rolls over an empty
+    /// file (gh-116263), even when one line alone reaches the limit. The worker's handler
+    /// rotates its own files.
+    fn rotates_before(&self, size: u64, line_length: u64) -> bool {
         self.owner == RotationOwner::Gdaemon
             && self.max_bytes > 0
             && self.backups > 0
             && size > 0
-            && size.saturating_add(line_bytes) >= self.max_bytes
+            && size.saturating_add(line_length) >= self.max_bytes
     }
 
     /// `RotatingFileHandler.doRollover`: `.N-1` becomes `.N` (the oldest is replaced),
@@ -175,6 +173,16 @@ impl SizeRotatingFile {
         name.push(format!(".{index}"));
         PathBuf::from(name)
     }
+}
+
+/// The length `RotatingFileHandler` compares for `line` and its newline: `len()` of the
+/// formatted text, which counts characters, not the UTF-8 bytes written. A UTF-8
+/// character is one byte that is not a continuation byte.
+fn line_length(line: &[u8]) -> u64 {
+    let characters = line.iter().filter(|byte| (**byte & 0xC0) != 0x80).count();
+    u64::try_from(characters)
+        .unwrap_or(u64::MAX)
+        .saturating_add(1)
 }
 
 /// Renames `source` over `destination`, removing `destination` first as Python does.

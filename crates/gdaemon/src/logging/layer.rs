@@ -45,6 +45,8 @@ pub(crate) struct RouteHandle {
 #[derive(Debug)]
 struct Routes {
     settings: LogSettings,
+    /// The settings routing activated with, which an epoch's absent keys return to.
+    defaults: LogSettings,
     owner: RotationOwner,
     /// The open files, by path. Emptied when the settings change, so each file reopens
     /// with the new directory, threshold and backups; append mode makes that lossless.
@@ -63,6 +65,7 @@ impl RouteHandle {
     pub(crate) fn new(settings: LogSettings, owner: RotationOwner) -> Self {
         Self {
             routes: Arc::new(Mutex::new(Routes {
+                defaults: settings.clone(),
                 settings,
                 owner,
                 files: HashMap::new(),
@@ -77,6 +80,11 @@ impl RouteHandle {
     /// The settings the routes write under now.
     pub(crate) fn settings(&self) -> LogSettings {
         self.lock().settings.clone()
+    }
+
+    /// The settings routing activated with.
+    pub(crate) fn defaults(&self) -> LogSettings {
+        self.lock().defaults.clone()
     }
 
     /// Writes under `settings` from the next record on.
@@ -111,6 +119,8 @@ impl RouteHandle {
     ///
     /// The fields are recorded with the routes unlocked: recording runs the fields' own
     /// formatting, which may log a `gobby.*` record that comes back here on this thread.
+    /// The settings can change meanwhile, so the floor is checked again under the lock the
+    /// record is counted and written under.
     pub(crate) fn route(&self, event: &Event<'_>) {
         let metadata = event.metadata();
         let target = metadata.target();
@@ -120,11 +130,7 @@ impl RouteHandle {
         ) else {
             return;
         };
-        let floor = match surface {
-            Surface::Parser => Level::Info,
-            _ => self.lock().settings.level,
-        };
-        if level < floor {
+        if !passes(surface, level, &self.lock().settings) {
             return;
         }
         let mut fields = Fields::default();
@@ -141,9 +147,23 @@ impl RouteHandle {
             message: fields.message,
             extras: fields.extras,
         };
+        let mut routes = self.lock();
+        if !passes(surface, level, &routes.settings) {
+            return;
+        }
         count(surface, record.level);
-        self.lock().write(surface, &record, fields.guard_refused);
+        routes.write(surface, &record, fields.guard_refused);
     }
+}
+
+/// Whether a record at `level` passes the floor of `surface` under `settings`. A parser
+/// record is written at INFO whatever the configured level.
+fn passes(surface: Surface, level: Level, settings: &LogSettings) -> bool {
+    let floor = match surface {
+        Surface::Parser => Level::Info,
+        _ => settings.level,
+    };
+    level >= floor
 }
 
 impl Routes {

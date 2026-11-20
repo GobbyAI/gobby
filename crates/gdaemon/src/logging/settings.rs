@@ -14,77 +14,109 @@ const DEFAULT_DIR: &str = "~/.gobby/logs";
 const ALLOW_AUDIT_EVENTS_PER_DAY: u128 = 368_000;
 const ALLOW_AUDIT_BYTES_PER_LINE: u128 = 512;
 
-/// The settings that `values` describe. Only the seven live keys change anything. A key
-/// with an invalid value keeps its `previous` setting and adds one warning naming the key.
-/// `defaults` are the settings routing activated with; this stub does not read them yet.
+/// The settings that `values` describe. An epoch is the whole stored configuration, so a
+/// live key it does not carry takes its `defaults` setting (the settings routing activated
+/// with), and a key it carries with an invalid value keeps its `previous` setting and adds
+/// one warning naming the key. Only the seven live keys change anything.
 pub fn from_values(
     values: &Map<String, Value>,
     previous: &LogSettings,
-    _defaults: &LogSettings,
+    defaults: &LogSettings,
 ) -> (LogSettings, Vec<String>) {
-    let mut next = previous.clone();
     let mut warnings = Vec::new();
-    let mut take = |key: &str, apply: &mut dyn FnMut(&Value) -> bool| {
-        if let Some(value) = values.get(key)
-            && !apply(value)
-        {
-            warnings.push(format!(
-                "{key} has an invalid value {value}; the previous setting is kept"
-            ));
-        }
+    let mut key = Key {
+        values,
+        warnings: &mut warnings,
     };
-    take("logging.level", &mut |value| {
-        let level = match value.as_str() {
-            Some("debug") => Level::Debug,
-            Some("info") => Level::Info,
-            Some("warning") => Level::Warning,
-            Some("error") => Level::Error,
-            _ => return false,
-        };
-        next.level = level;
-        true
-    });
-    take("logging.format", &mut |value| {
-        let format = match value.as_str() {
-            Some("text") => Format::Text,
-            Some("json") => Format::Json,
-            _ => return false,
-        };
-        next.format = format;
-        true
-    });
-    take("logging.dir", &mut |value| match value.as_str() {
-        Some(dir) if !dir.is_empty() => {
-            next.dir = PathBuf::from(dir);
-            true
-        }
-        _ => false,
-    });
-    take("logging.max_size_mb", &mut |value| {
-        positive(value).is_some_and(|size| {
-            next.max_size_mb = size;
-            true
-        })
-    });
-    take("logging.backup_count", &mut |value| {
-        positive_count(value).is_some_and(|count| {
-            next.backup_count = count;
-            true
-        })
-    });
-    take("logging.llm_max_size_mb", &mut |value| {
-        positive(value).is_some_and(|size| {
-            next.llm_max_size_mb = size;
-            true
-        })
-    });
-    take("logging.llm_backup_count", &mut |value| {
-        positive_count(value).is_some_and(|count| {
-            next.llm_backup_count = count;
-            true
-        })
-    });
+    let next = LogSettings {
+        level: key.pick("logging.level", level, previous.level, defaults.level),
+        format: key.pick("logging.format", format, previous.format, defaults.format),
+        dir: key.pick(
+            "logging.dir",
+            dir,
+            previous.dir.clone(),
+            defaults.dir.clone(),
+        ),
+        max_size_mb: key.pick(
+            "logging.max_size_mb",
+            positive,
+            previous.max_size_mb,
+            defaults.max_size_mb,
+        ),
+        backup_count: key.pick(
+            "logging.backup_count",
+            positive_count,
+            previous.backup_count,
+            defaults.backup_count,
+        ),
+        llm_max_size_mb: key.pick(
+            "logging.llm_max_size_mb",
+            positive,
+            previous.llm_max_size_mb,
+            defaults.llm_max_size_mb,
+        ),
+        llm_backup_count: key.pick(
+            "logging.llm_backup_count",
+            positive_count,
+            previous.llm_backup_count,
+            defaults.llm_backup_count,
+        ),
+        ..defaults.clone()
+    };
     (next, warnings)
+}
+
+/// One epoch's values, and the warnings its invalid keys add.
+struct Key<'a> {
+    values: &'a Map<String, Value>,
+    warnings: &'a mut Vec<String>,
+}
+
+impl Key<'_> {
+    /// The setting `name` describes: `default` when the epoch does not carry it, its parsed
+    /// value when it is valid, and `previous` (with a warning) when it is not.
+    fn pick<T>(
+        &mut self,
+        name: &str,
+        parse: impl Fn(&Value) -> Option<T>,
+        previous: T,
+        default: T,
+    ) -> T {
+        match self.values.get(name) {
+            None => default,
+            Some(value) => parse(value).unwrap_or_else(|| {
+                self.warnings.push(format!(
+                    "{name} has an invalid value {value}; the previous setting is kept"
+                ));
+                previous
+            }),
+        }
+    }
+}
+
+fn level(value: &Value) -> Option<Level> {
+    match value.as_str()? {
+        "debug" => Some(Level::Debug),
+        "info" => Some(Level::Info),
+        "warning" => Some(Level::Warning),
+        "error" => Some(Level::Error),
+        _ => None,
+    }
+}
+
+fn format(value: &Value) -> Option<Format> {
+    match value.as_str()? {
+        "text" => Some(Format::Text),
+        "json" => Some(Format::Json),
+        _ => None,
+    }
+}
+
+fn dir(value: &Value) -> Option<PathBuf> {
+    value
+        .as_str()
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
 }
 
 /// A JSON integer above zero, as Python's positive-value validator accepts.
