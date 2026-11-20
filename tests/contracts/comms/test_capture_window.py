@@ -2,10 +2,12 @@
 
 A request begins when the edge has its first byte. One that begins inside a capture window makes
 that window's capture non-empty, as a pending hit until it completes, and never appears in a
-later window. A tunnel that carries no request byte registers nothing. Each test drives the real
-edge, the recorder's real drain and, where a case is named, the replay comparison. Every held
-peer waits on an event the test sets, and the drain bounds are shortened so no test waits for the
-recorder's five second cap.
+later window. A tunnel that carries no request byte registers nothing. A case opens each edge's
+window once, before any capture view of it exists, and every view of that edge shares the window,
+so a request that arrives between two views stays in the case. Each test drives the real edge, the
+recorder's real drain and, where a case is named, the replay comparison or the recorder's per-case
+run. Every held peer waits on an event the test sets, and the drain bounds are shortened so no
+test waits for the recorder's five second cap.
 """
 
 from __future__ import annotations
@@ -18,9 +20,11 @@ import socket
 import ssl
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import ExitStack
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -488,3 +492,135 @@ def test_a_peer_fin_inside_the_head_is_captured_with_the_head_marker(
         "path": UNKNOWN_FIELD,
         "semantic": empty_semantic(),
     }, f"a peer FIN inside the head was captured as {drained[0]}"
+
+
+def _drain_two_views_around_an_arrival(
+    harness: _Harness, first_hosts: Sequence[str], second_hosts: Sequence[str]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Drain two views of one edge after a send begins between their registrations.
+
+    The case's window is opened once, before either view exists. The send's first byte is
+    registered after the first view is entered and before the second is, and the send completes
+    before either view drains.
+    """
+    release = harness.gate()
+    harness.edge.clear()
+    with ExitStack() as stack:
+        first = stack.enter_context(ProviderEdgeCapture(harness.edge, first_hosts))
+        peer = harness.peer(
+            SLACK_HOST, _send(SEND_BEGIN), _wait(release), _send(SEND_REST), _read_to_eof
+        )
+        assert harness.next_begin() == SLACK_HOST, "the send never began between the two views"
+        second = stack.enter_context(ProviderEdgeCapture(harness.edge, second_hosts))
+        release.set()
+        assert peer.finished.wait(GATE_SECONDS), "the released send never completed"
+        return first.drain(), second.drain()
+
+
+@pytest.mark.integration
+def test_an_arrival_for_the_later_view_between_two_views_is_captured_by_it(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _bound_drain(monkeypatch, LONG_CAP_SECONDS)
+    first, second = _drain_two_views_around_an_arrival(harness, [UPLOAD_HOST], [SLACK_HOST])
+    assert second == [SEND_HIT], (
+        f"the later view of {SLACK_HOST} drained {second} for a send that began before it"
+    )
+    assert first == [], f"the earlier view of {UPLOAD_HOST} drained {first}"
+
+
+@pytest.mark.integration
+def test_an_arrival_for_the_earlier_view_between_two_views_is_captured_by_it(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _bound_drain(monkeypatch, LONG_CAP_SECONDS)
+    first, second = _drain_two_views_around_an_arrival(harness, [SLACK_HOST], [UPLOAD_HOST])
+    assert first == [SEND_HIT], (
+        f"the earlier view of {SLACK_HOST} drained {first} after a second view was registered"
+    )
+    assert second == [], f"the later view of {UPLOAD_HOST} drained {second}"
+
+
+class _BoundaryEdge(FakeEdge):
+    """An unstarted edge that appends ``clear`` to a shared event list on every clear."""
+
+    def __init__(self, root: Path, events: list[str]) -> None:
+        super().__init__(root)
+        self._events = events
+
+    def clear(self) -> None:
+        self._events.append("clear")
+        super().clear()
+
+
+@pytest.mark.integration
+def test_the_recorder_opens_an_edge_window_once_per_case_before_its_views(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _bound_drain(monkeypatch, LONG_CAP_SECONDS)
+    events: list[str] = []
+
+    class _RecordedView(ProviderEdgeCapture):
+        def __init__(self, edge: Any, hosts: Sequence[str]) -> None:
+            events.append("view")
+            super().__init__(edge, hosts)
+
+    def sent(*_: Any, **__: Any) -> Any:
+        events.append("send")
+        return {"ok": True}
+
+    monkeypatch.setattr(recorder_v3, "ProviderEdgeCapture", _RecordedView)
+    monkeypatch.setattr(recorder_v3, "_send", sent)
+    case = {
+        "name": "two_edge_views_one_case",
+        "kind": "http",
+        "response": {"ok": True},
+        "side_effects": [
+            {"channel": "provider_edge", "match": {"hosts": [SLACK_HOST]}},
+            {"channel": "provider_edge", "match": {"hosts": [UPLOAD_HOST]}},
+        ],
+    }
+    # No seed or db_delta is declared and the send is substituted, so no database or daemon
+    # is reached.
+    unreached = recorder_v3.RunDatabase(name="", url="", base_url="")
+    daemon = SimpleNamespace(http_url="http://127.0.0.1:9", home=tmp_path)
+    observation, _ = recorder_v3._run_case(
+        unreached,
+        daemon,
+        case,
+        operator={},
+        scratch=tmp_path,
+        edge=_BoundaryEdge(tmp_path, events),
+    )
+    assert events == ["clear", "view", "view", "send"], (
+        f"a case with two views of one edge ran its boundary as {events}"
+    )
+    assert observation.side_effects == [[], []], (
+        f"two views of an edge nothing reached drained {observation.side_effects}"
+    )
+
+
+@pytest.mark.integration
+def test_a_clear_of_an_empty_log_still_ends_the_generation(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _bound_drain(monkeypatch, SHORT_CAP_SECONDS)
+    release = harness.gate()
+    harness.edge.clear()
+    peer = harness.peer(
+        SLACK_HOST, _send(SEND_BEGIN), _wait(release), _send(SEND_REST), _read_to_eof
+    )
+    assert harness.next_begin() == SLACK_HOST, "the request never began"
+    harness.edge.clear()
+    emptied = harness.edge.hits()
+    retired = harness.edge._generation
+    harness.edge.clear()
+    advanced = harness.edge._generation - retired
+    release.set()
+    assert peer.finished.wait(GATE_SECONDS), "the released request never completed"
+    with ProviderEdgeCapture(harness.edge, [SLACK_HOST]) as window:
+        drained = window.drain()
+    assert emptied == [], f"the clear of a log with a request in flight left {emptied}"
+    assert drained == [], f"a request begun before two clears completed into {drained}"
+    assert harness.edge.hits() == [], f"the new window logs {harness.edge.hits()}"
+    assert advanced == 1, f"a clear of the empty log advanced the generation by {advanced}, not one"
