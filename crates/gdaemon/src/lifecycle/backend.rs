@@ -3,6 +3,11 @@
 use super::{
     pid_file::PidFileClaim,
     shutdown_intent::{Intent, IntentMarker},
+    worker_channel::{
+        WORKER_CHANNEL_FD_ENV, WORKER_CREDENTIAL_FD_ENV, WORKER_MARKER_ENV, WorkerAttachment,
+        WorkerSpawn, attach,
+    },
+    worker_handshake::{GenerationSource, RUNNER_DEFAULT, RunnerMode, WorkerSession},
 };
 use crate::lease::{ActiveDaemonLease, NamedGuard, NamedLock};
 use anyhow::{Context, Result, bail, ensure};
@@ -13,7 +18,7 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     io::{self, Write as _},
-    os::fd::AsRawFd,
+    os::fd::{AsRawFd, OwnedFd},
     path::{Path, PathBuf},
     process::{ExitStatus, Stdio},
     sync::Arc,
@@ -24,8 +29,13 @@ use tokio::{
     process::{Child, Command},
     sync::{oneshot, watch},
     task::JoinHandle,
-    time::{Instant, interval, interval_at, sleep_until, timeout},
+    time::{Instant, Interval, interval, interval_at, sleep_until, timeout},
 };
+
+#[cfg(unix)]
+mod handshake;
+
+use handshake::HandshakeStep;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BackendStatus {
@@ -117,6 +127,10 @@ pub struct BackendSupervisor {
     /// The reason the supervisor is waiting now (a lease-lock holder or the backend's exit),
     /// or None when it is not waiting. The front door reports it beside the backend state.
     wait: watch::Sender<Option<String>>,
+    /// Which runner the spawned workers serve. Only Rust mode runs the handshake.
+    mode: RunnerMode,
+    /// Assigns the generation of each worker session this supervisor spawns.
+    generations: GenerationSource,
 }
 
 impl BackendSupervisor {
@@ -129,6 +143,16 @@ impl BackendSupervisor {
         pid_claim: PidFileClaim,
         config: BackendConfig,
     ) -> Self {
+        Self::with_runner(lease, pid_claim, config, RUNNER_DEFAULT)
+    }
+
+    /// Builds a supervisor whose worker handshake runs for `mode`.
+    pub fn with_runner(
+        lease: Option<Arc<NamedLock<ActiveDaemonLease>>>,
+        pid_claim: PidFileClaim,
+        config: BackendConfig,
+        mode: RunnerMode,
+    ) -> Self {
         let (state, _) = watch::channel(BackendStatus::Standby);
         let (wait, _) = watch::channel(None);
         Self {
@@ -137,7 +161,29 @@ impl BackendSupervisor {
             config,
             state,
             wait,
+            mode,
+            generations: GenerationSource::default(),
         }
+    }
+
+    /// The runner mode the worker handshake runs for.
+    pub fn runner_mode(&self) -> RunnerMode {
+        self.mode
+    }
+
+    /// The generation source for a spawned worker: Some only in Rust mode, where each spawn
+    /// draws a generation and runs the handshake. Python spawns draw none.
+    fn spawn_generations(&self) -> Option<&GenerationSource> {
+        match self.mode {
+            RunnerMode::Python => None,
+            RunnerMode::Rust => Some(&self.generations),
+        }
+    }
+
+    /// The number of generations this supervisor has drawn for its workers.
+    #[cfg(test)]
+    pub(crate) fn issued_generations(&self) -> u64 {
+        self.generations.issued()
     }
 
     pub fn subscribe(&self) -> watch::Receiver<BackendStatus> {
@@ -252,10 +298,49 @@ impl BackendSupervisor {
             if shutdown_requested(shutdown) {
                 return Ok(SupervisorExit::Stopped);
             }
-            let mut backend = BackendChild::spawn(&self.config).await?;
+            let mut backend = BackendChild::spawn(&self.config, self.spawn_generations()).await?;
             let started_at = Instant::now();
             let pid = backend.child.id().context("spawned backend has no PID")?;
             self.state.send_replace(BackendStatus::Starting { pid });
+            // A Rust-mode child answers its handshake before the wait loop supervises it.
+            if let Some(attachment) = backend.worker.as_mut() {
+                match self
+                    .await_handshake(attachment, shutdown, &mut heartbeats)
+                    .await
+                {
+                    HandshakeStep::Ready => {}
+                    HandshakeStep::Shutdown => {
+                        return self.drain_for_shutdown(&mut backend, &mut markers).await;
+                    }
+                    HandshakeStep::LeaseLost => {
+                        backend.drain(self.config.drain_timeout).await?;
+                        self.state.send_replace(BackendStatus::Stopped);
+                        return Ok(SupervisorExit::LeaseLost);
+                    }
+                    HandshakeStep::Failed(error) => {
+                        // The child is ended and reaped here, so its status is known.
+                        backend.kill_group()?;
+                        let status = backend.child.wait().await?;
+                        backend.finish_stderr().await;
+                        if let Some(exit) = self.handle_handshake_failure(&error) {
+                            return Ok(exit);
+                        }
+                        if status.code() == Some(78) {
+                            return Ok(self.refuse_on_exit_78(&backend));
+                        }
+                        // Any other end is a lost reply: a crash. No intent is consulted before a
+                        // handshake, so the next spawn follows the crash backoff directly.
+                        self.state.send_replace(BackendStatus::Stopped);
+                        let delay = crash_delay(crashes);
+                        crashes = crashes.saturating_add(1);
+                        self.state.send_replace(BackendStatus::Backoff { delay });
+                        if let Some(exit) = self.back_off(delay, shutdown, &mut heartbeats).await {
+                            return Ok(exit);
+                        }
+                        continue;
+                    }
+                }
+            }
             let mut reports = interval_at(
                 Instant::now() + self.config.report_interval,
                 self.config.report_interval,
@@ -266,12 +351,7 @@ impl BackendSupervisor {
             let (status, reaped): (ExitStatus, bool) = loop {
                 tokio::select! { biased;
                     _ = shutdown_signal(shutdown) => {
-                        backend.drain(self.config.drain_timeout).await?;
-                        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
-                        if matches!(markers.after_exit(now).await?, Some(Intent::StopTerminals | Intent::RestartTerminals)) {
-                            return Ok(SupervisorExit::StopTerminals);
-                        }
-                        return Ok(SupervisorExit::Stopped);
+                        return self.drain_for_shutdown(&mut backend, &mut markers).await;
                     }
                     status = backend.child.wait() => break (status?, false),
                     _ = heartbeats.tick() => {
@@ -316,15 +396,7 @@ impl BackendSupervisor {
                 crashes = 0;
             }
             if status.code() == Some(78) {
-                let reason = backend.last_line.borrow().clone();
-                self.state.send_replace(BackendStatus::Refused {
-                    reason: if reason.is_empty() {
-                        "backend exited with status 78".into()
-                    } else {
-                        reason
-                    },
-                });
-                return Ok(SupervisorExit::Refused);
+                return Ok(self.refuse_on_exit_78(&backend));
             }
             // The child is gone: report it down until the next spawn or stop, not starting.
             self.state.send_replace(BackendStatus::Stopped);
@@ -355,20 +427,64 @@ impl BackendSupervisor {
             let delay = crash_delay(crashes);
             crashes = crashes.saturating_add(1);
             self.state.send_replace(BackendStatus::Backoff { delay });
-            let deadline = Instant::now() + delay;
-            loop {
-                tokio::select! { biased;
-                    _ = shutdown_signal(shutdown) => return Ok(SupervisorExit::Stopped),
-                    _ = sleep_until(deadline) => break,
-                    _ = heartbeats.tick() => {
-                        if let Err(error) = self.heartbeat().await {
-                            eprintln!("backend lease lost: {error:#}");
-                            return Ok(SupervisorExit::LeaseLost);
-                        }
+            if let Some(exit) = self.back_off(delay, shutdown, &mut heartbeats).await {
+                return Ok(exit);
+            }
+        }
+    }
+
+    /// Sleeps out a crash backoff while heartbeating. Returns the exit when a shutdown or a lost
+    /// lease ends the wait first, and None when the delay has passed.
+    async fn back_off(
+        &self,
+        delay: Duration,
+        shutdown: &mut watch::Receiver<bool>,
+        heartbeats: &mut Interval,
+    ) -> Option<SupervisorExit> {
+        let deadline = Instant::now() + delay;
+        loop {
+            tokio::select! { biased;
+                _ = shutdown_signal(shutdown) => return Some(SupervisorExit::Stopped),
+                _ = sleep_until(deadline) => return None,
+                _ = heartbeats.tick() => {
+                    if let Err(error) = self.heartbeat().await {
+                        eprintln!("backend lease lost: {error:#}");
+                        return Some(SupervisorExit::LeaseLost);
                     }
                 }
             }
         }
+    }
+
+    /// Drains a child after a shutdown was observed, and returns the exit its intent asks for.
+    async fn drain_for_shutdown(
+        &self,
+        backend: &mut BackendChild,
+        markers: &mut IntentMarker,
+    ) -> Result<SupervisorExit> {
+        backend.drain(self.config.drain_timeout).await?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
+        if matches!(
+            markers.after_exit(now).await?,
+            Some(Intent::StopTerminals | Intent::RestartTerminals)
+        ) {
+            return Ok(SupervisorExit::StopTerminals);
+        }
+        Ok(SupervisorExit::Stopped)
+    }
+
+    /// The exit for a child that ended with status 78, its own refusal. The refusal is sticky, and
+    /// its reason is the child's last line.
+    fn refuse_on_exit_78(&self, backend: &BackendChild) -> SupervisorExit {
+        let reason = backend.last_line.borrow().clone();
+        self.state.send_replace(BackendStatus::Refused {
+            reason: if reason.is_empty() {
+                "backend exited with status 78".into()
+            } else {
+                reason
+            },
+        });
+        SupervisorExit::Refused
     }
 
     async fn heartbeat(&self) -> Result<()> {
@@ -444,10 +560,11 @@ const SPAWN_DEADLINE: Duration = Duration::from_secs(10);
 /// thread keeps that blocked call, and the async wait gives up at the deadline. A child produced
 /// after the deadline is dropped on the helper thread, and `kill_on_drop` ends it.
 ///
-/// The helper owns `read_ends` until spawn returns. A `pre_exec` captures their raw numbers, so
-/// those numbers stay occupied when the caller gives up at the deadline.
+/// The helper owns `read_ends`, the descriptors the child inherits, until spawn returns. A
+/// `pre_exec` captures their raw numbers, so those numbers stay occupied when the caller gives up
+/// at the deadline.
 async fn spawn_bounded(
-    read_ends: Vec<io::PipeReader>,
+    read_ends: Vec<OwnedFd>,
     spawn: impl FnOnce() -> io::Result<Child> + Send + 'static,
     deadline: Duration,
 ) -> Result<Child> {
@@ -542,10 +659,35 @@ struct BackendChild {
     _write_token: TokenLease,
     stderr: JoinHandle<io::Result<()>>,
     last_line: watch::Receiver<String>,
+    /// The parent's attachment to the worker this child serves, or None when it serves none.
+    worker: Option<WorkerAttachment>,
 }
 
 impl BackendChild {
-    async fn spawn(config: &BackendConfig) -> Result<Self> {
+    async fn spawn(config: &BackendConfig, generations: Option<&GenerationSource>) -> Result<Self> {
+        // A Rust-mode spawn draws its generation once, here, and the attachment serves that
+        // session. A source that yields no session is a spawn failure.
+        let worker = match generations {
+            Some(source) => {
+                let session = WorkerSession::spawn(source)
+                    .map_err(|error| anyhow::anyhow!("worker session: {error:?}"))?;
+                Some(attach(session).context("attach the worker channel")?)
+            }
+            None => None,
+        };
+        let (worker, worker_fds, worker_raw) = match worker {
+            Some(WorkerSpawn {
+                attachment,
+                child_fds,
+                channel_fd,
+                credential_fd,
+            }) => (
+                Some(attachment),
+                child_fds,
+                Some((channel_fd, credential_fd)),
+            ),
+            None => (None, Vec::new(), None),
+        };
         let (reader, writer) = std::io::pipe()?;
         let read_fd = reader.as_raw_fd();
         // The secret rides its own pipe, filled and closed before spawn so the
@@ -576,14 +718,30 @@ impl BackendChild {
         if let Some(fd) = secret_fd {
             command.env("GOBBY_FRONT_DOOR_SECRET_FD", fd.to_string());
         }
+        // The worker's descriptors and their variables are set in this one step, so a child never
+        // sees the marker without the descriptors it names.
+        if let Some((channel_fd, credential_fd)) = worker_raw {
+            command
+                .env(WORKER_MARKER_ENV, "1")
+                .env(WORKER_CHANNEL_FD_ENV, channel_fd.to_string())
+                .env(WORKER_CREDENTIAL_FD_ENV, credential_fd.to_string());
+        }
+        // The raw numbers the child must keep, captured as plain integers so that pre_exec
+        // allocates nothing.
+        let inherited = [
+            Some(read_fd),
+            secret_fd,
+            worker_raw.map(|(channel, _)| channel),
+            worker_raw.map(|(_, credential)| credential),
+        ];
         let descriptor_bound = inherited_descriptor_bound()?;
         // SAFETY: this closure runs only in the child after fork. It calls only
         // async-signal-safe descriptor operations and reads captured integers.
-        // Seal all inherited FDs; only the liveness and secret read ends survive.
+        // Seal all inherited FDs; only the descriptors captured in `inherited` survive.
         unsafe {
             command.pre_exec(move || {
                 seal_inherited_descriptors(descriptor_bound)?;
-                for fd in std::iter::once(read_fd).chain(secret_fd) {
+                for fd in inherited.into_iter().flatten() {
                     let flags = libc::fcntl(fd, libc::F_GETFD);
                     if flags < 0 || libc::fcntl(fd, libc::F_SETFD, flags & !libc::FD_CLOEXEC) < 0 {
                         return Err(io::Error::last_os_error());
@@ -592,9 +750,12 @@ impl BackendChild {
                 Ok(())
             });
         }
-        // The helper owns both read ends until command.spawn returns, so the raw numbers that
-        // pre_exec captures stay valid even when the caller gives up at the deadline.
-        let read_ends: Vec<io::PipeReader> = std::iter::once(reader).chain(secret).collect();
+        // The helper owns every descriptor the child inherits until command.spawn returns, so the
+        // raw numbers that pre_exec captures stay valid even when the caller gives up at the
+        // deadline. The parent's copies of the child ends close when the helper drops them.
+        let mut read_ends: Vec<OwnedFd> = vec![OwnedFd::from(reader)];
+        read_ends.extend(secret.map(OwnedFd::from));
+        read_ends.extend(worker_fds);
         let mut child = spawn_bounded(read_ends, move || command.spawn(), SPAWN_DEADLINE).await?;
         let group = i32::try_from(child.id().context("spawned backend has no PID")?)?;
         let mut token = [0u8; 32];
@@ -640,7 +801,16 @@ impl BackendChild {
             _write_token: write_token,
             stderr,
             last_line,
+            worker,
         })
+    }
+
+    /// The generation of the worker session this child serves, or None when it serves none.
+    #[cfg(test)]
+    fn worker_generation(&self) -> Option<u64> {
+        self.worker
+            .as_ref()
+            .map(|worker| worker.session.generation())
     }
 
     async fn finish_stderr(&mut self) {

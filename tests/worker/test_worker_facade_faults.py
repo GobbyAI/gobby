@@ -1,5 +1,5 @@
-"""Facade fault tests (R31, R47, R49): lone surrogates, registration faults, results that
-cannot be encoded, op exception text, and invoke ordering.
+"""Facade fault tests: lone surrogates, registration faults, results that cannot be encoded,
+op exception text, and invoke ordering.
 
 Every test drives WorkerFacade.handle with bytes, as the Rust client does. Each reply must be
 canonical UTF-8 JSON, and handle must answer rather than raise. The ops and registrations are
@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from gobby.worker import identity
 from gobby.worker.decode import Anything, DataclassFields, Int, JsonObject
 from gobby.worker.facade import WorkerFacade
 from gobby.worker.gate import phase_scope
@@ -71,7 +72,7 @@ class RaisingFinder:
 Unresolvable = make_dataclass(
     "Unresolvable", [("label", "NoSuchTypeForRegistration")], module=__name__
 )
-# Annotations that typing.get_type_hints cannot evaluate (R62): a string that does not parse,
+# Annotations that typing.get_type_hints cannot evaluate: a string that does not parse,
 # and a string whose evaluation raises ZeroDivisionError.
 BadSyntax = make_dataclass("BadSyntax", [("label", "1 +")], module=__name__)
 DivideByZero = make_dataclass("DivideByZero", [("label", "1 / 0")], module=__name__)
@@ -191,21 +192,21 @@ SYNTHETIC_OPS: dict[str, DomainOp] = {op.name: op for op in _SYNTHETIC_OPS}
 
 # (op, params, fragment of the registration message). Each op is broken in one way.
 FAULT_CASES: tuple[tuple[str, dict[str, object], str], ...] = (
-    # OpRegistrationError (R31): the module does not import, the path names no callable,
+    # OpRegistrationError: the module does not import, the path names no callable,
     # a declared parameter is not taken, a required parameter is not declared.
     ("no_module", {}, "op module does not import: no_such_fault_module"),
     ("no_callable", {}, "op path does not name a callable"),
     ("undeclared_param", {"missing": 1}, "declared parameters the op does not take"),
     ("undeclared_required", {}, "required parameters the op does not declare"),
-    # ImportError (R31): a dataclass target whose module does not import.
+    # ImportError: a dataclass target whose module does not import.
     ("dataclass_no_module", {"record": {"label": "x"}}, "No module named 'no_such_fault_module'"),
-    # TypeError (R31): a dataclass target that is not a dataclass, and a field annotation
+    # TypeError: a dataclass target that is not a dataclass, and a field annotation
     # outside the decoder table.
     ("dataclass_not_dataclass", {"record": {}}, "is not a dataclass"),
     ("dataclass_outside_table", {"record": {}}, "<class 'float'>"),
-    # NameError (R47): an annotation that typing.get_type_hints cannot resolve.
+    # NameError: an annotation that typing.get_type_hints cannot resolve.
     ("dataclass_unresolved", {"record": {}}, "NoSuchTypeForRegistration"),
-    # Any Exception from evaluating an annotation is a TypeError registration fault (R62): a
+    # Any Exception from evaluating an annotation is a TypeError registration fault: a
     # SyntaxError from a string that does not parse, and a ZeroDivisionError from one that raises.
     ("syntax_annotation", {"record": {}}, "dataclass annotations do not resolve: BadSyntax"),
     (
@@ -403,7 +404,7 @@ async def test_op_exception_text_with_lone_surrogate_is_escaped() -> None:
 
 
 async def test_constructor_exception_is_invalid_request() -> None:
-    # A constructor or __post_init__ that raises any Exception rejects the client's value (R53).
+    # A constructor or __post_init__ that raises any Exception rejects the client's value.
     facade = await ready_facade()
     reply = await send(facade, invoke_bytes("keyed", {"record": {"key": "missing"}}))
     assert error_code(reply) == "invalid_request"
@@ -414,7 +415,7 @@ async def test_constructor_exception_is_invalid_request() -> None:
 
 
 async def test_import_time_fault_in_op_module_is_op_failed(monkeypatch: pytest.MonkeyPatch) -> None:
-    # An op module that raises at import is a registration fault of any Exception class (R53).
+    # An op module that raises at import is a registration fault of any Exception class.
     facade = await ready_facade()
     monkeypatch.setattr(sys, "meta_path", [RaisingFinder(), *sys.meta_path])
     reply = await send(facade, invoke_bytes("op_import_fault"))
@@ -430,7 +431,7 @@ async def test_import_time_fault_in_op_module_is_op_failed(monkeypatch: pytest.M
 async def test_import_time_fault_in_dataclass_module_is_op_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A dataclass module that raises at import is a registration fault of any class (R53).
+    # A dataclass module that raises at import is a registration fault of any class.
     facade = await ready_facade()
     monkeypatch.setattr(sys, "meta_path", [RaisingFinder(), *sys.meta_path])
     reply = await send(facade, invoke_bytes("dataclass_import_fault", {"record": {"label": "x"}}))
@@ -445,10 +446,14 @@ async def test_schema_identity_fault_is_op_failed_and_binds_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A handshake whose schema identity cannot be loaded answers op_failed and binds no generation.
+    # The process-wide identity cache is cleared on both sides, so a value read earlier in the
+    # process cannot mask the fault and the faulted state cannot outlive the test.
+    identity._cached_identity.cache_clear()
+
     def unreadable() -> object:
         raise OSError("schema identity file is missing")
 
-    monkeypatch.setattr("gobby.worker.facade.expected_schema_identity", unreadable)
+    monkeypatch.setattr("gobby.worker.identity.expected_schema_identity", unreadable)
     facade = WorkerFacade(credential=CREDENTIAL, ops=SYNTHETIC_OPS, create=fake_create())
     reply = await send(facade, envelope("handshake", {"credential": CREDENTIAL}))
     assert error_code(reply) == "op_failed"
@@ -460,13 +465,15 @@ async def test_schema_identity_fault_is_op_failed_and_binds_nothing(
     )
     assert error_code(later) == "not_handshaken"
     monkeypatch.undo()
+    identity._cached_identity.cache_clear()
     bound = await send(facade, envelope("handshake", {"credential": CREDENTIAL}))
     assert bound["result"]["generation"] == GENERATION
+    identity._cached_identity.cache_clear()
 
 
 @pytest.mark.parametrize("value", [2**64, -(2**63) - 1])
 async def test_out_of_range_integer_param_is_invalid_request(value: int) -> None:
-    # The wire carries integers in [-2^63, 2^64-1] only (R54).
+    # The wire carries integers in [-2^63, 2^64-1] only.
     facade = await ready_facade()
     reply = await send(facade, invoke_bytes("echo", {"n": value}))
     assert error_code(reply) == "invalid_request"
@@ -482,7 +489,7 @@ async def test_wire_bound_integer_param_is_accepted(value: int) -> None:
 
 
 async def test_anything_and_json_object_params_pass_wide_integers_through() -> None:
-    # Only an Int parameter refuses an integer outside the wire range (R54, R65). Anything and
+    # Only an Int parameter refuses an integer outside the wire range. Anything and
     # JsonObject values reach the op as decoded JSON.
     facade = await ready_facade()
     scalar = await send(facade, invoke_bytes("wide_any", {"value": 2**70}))
@@ -494,13 +501,13 @@ async def test_anything_and_json_object_params_pass_wide_integers_through() -> N
 @pytest.mark.parametrize("annotated", [BadSyntax, DivideByZero], ids=["syntax", "zero-division"])
 def test_class_target_with_unevaluable_annotation_fails_at_registration(annotated: type) -> None:
     # A class target builds its field specs when it is registered, so the fault surfaces there
-    # as a TypeError (R62), not as the SyntaxError or ZeroDivisionError underneath.
+    # as a TypeError, not as the SyntaxError or ZeroDivisionError underneath.
     with pytest.raises(TypeError, match="dataclass annotations do not resolve"):
         DataclassFields(annotated)
 
 
 def test_bounds_paragraph_states_what_the_decoders_refuse() -> None:
-    # R65: the Bounds paragraph names the one decoder that refuses a wide integer, and the two
+    # The Bounds paragraph names the one decoder that refuses a wide integer, and the two
     # decoders that pass it through as decoded JSON.
     text = DOC_PATH.read_text(encoding="utf-8")
     assert "An `Int` parameter outside it is `invalid_request`." in text

@@ -1,9 +1,12 @@
-version: "1.3.0"
+version: "1.4.0"
 tags: [context-handoff, handoff, compact, enforcement, gobby, default]
 
 # These gates hold the parent's own turn. A Claude subagent shares its parent's
 # session but carries agent_id in its hook payload; its tools never hold that
 # turn open, so every before_tool gate here skips subagent-issued events.
+# The MCP proxy's own before_tool event carries no agent_id; when the CLI hook
+# already evaluated the same call the proxy marks it a duplicate, and these gates
+# skip it, because the hook-level pass decided that call.
 rules:
   require-handoff-at-context-limit:
     description: "Restrict tool use to handoff prerequisites at the configured context limit"
@@ -14,6 +17,7 @@ rules:
       source != 'pipeline'
       and variables.get('native_terminal_hosted') is not False
       and not event.data.get('agent_id')
+      and not event.metadata.get('_mcp_proxy_duplicate_before_tool')
       and variables.get('context_compact_mid_turn_pressure_band') == 'block'
       and variables.get('context_compact_block_message')
       and not variables.get('plan_mode')
@@ -76,6 +80,7 @@ rules:
     when: >-
       event.metadata.get('session_type') != 'web_chat'
       and not event.data.get('agent_id')
+      and not event.metadata.get('_mcp_proxy_duplicate_before_tool')
       and isinstance(variables.get('context_compact_handoff_result'), dict)
       and (
         variables.get('context_compact_handoff_result').get('delivery_pending') is True
@@ -96,6 +101,7 @@ rules:
     when: >-
       event.metadata.get('session_type') != 'web_chat'
       and not event.data.get('agent_id')
+      and not event.metadata.get('_mcp_proxy_duplicate_before_tool')
       and isinstance(variables.get('context_compact_handoff_result'), dict)
       and variables.get('context_compact_handoff_result').get('delivery_failed') is True
       and (

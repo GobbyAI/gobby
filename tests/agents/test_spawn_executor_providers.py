@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.agents import spawn_executor_codex
-from gobby.agents.agent_workspaces import _SESSION_LOCATION_SQL
+from gobby.agents.agent_workspaces import session_workspace_dir
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
+from gobby.agents.session import ChildSessionManager
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_executor_providers import (
     ProviderSpawnPlan,
@@ -28,9 +29,11 @@ from gobby.storage.project_checkouts import (
     CheckoutSentinelRejectedError,
     MissingMachineContextError,
 )
+from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_sandbox_config
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.fixtures.agent_definitions import make_agent_definition
+from tests.fixtures.workspace_seat import WorkspaceSeat
 
 
 def test_spawn_preamble_renders_launch_assignment(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,6 +73,16 @@ def _sandbox_request() -> tuple[SpawnRequest, PreparedSpawn, MagicMock]:
         prepared_spawn=spawn_context,
     )
     return request, spawn_context, run_manager
+
+
+def _seat_request(seat: WorkspaceSeat) -> tuple[SpawnRequest, PreparedSpawn]:
+    """A sandboxed spawn whose child is a real session row in a registered project."""
+    request, prepared, _ = _sandbox_request()
+    spawn_context = replace(prepared, session_id=seat.session_id)
+    request.prepared_spawn = spawn_context
+    request.session_manager = ChildSessionManager(SessionManager(seat.db))
+    request.project_id = seat.project_id
+    return request, spawn_context
 
 
 @pytest.mark.parametrize("execution_mode", ["one_shot", "interactive"])
@@ -314,6 +327,7 @@ async def test_claude_spawn_folds_caller_settings_under_the_managed_keys(
 async def test_sandbox_policy_grants_only_declared_main_nextest_store(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    workspace_seat: WorkspaceSeat,
     declared_store: bool,
     lookup_error: type[ValueError] | None,
 ) -> None:
@@ -329,11 +343,7 @@ async def test_sandbox_policy_grants_only_declared_main_nextest_store(
         (root / ".gobby/project.json").write_text(
             json.dumps({"id": "project", "sandbox": {"extra_write_paths": grants}})
         )
-    request, spawn_context, _ = _sandbox_request()
-    manager = MagicMock()
-    # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
-    manager._storage.db.fetchone.return_value = None
-    request.session_manager = manager
+    request, spawn_context = _seat_request(workspace_seat)
     request.machine_id = "machine"
     request.project_path = str(lane)
     request.cwd = str(lane)
@@ -360,7 +370,7 @@ async def test_sandbox_policy_grants_only_declared_main_nextest_store(
     )
 
     assert isinstance(result, SandboxLaunch)
-    lookup.assert_called_once_with(manager._storage.db, "project", "machine")
+    lookup.assert_called_once_with(workspace_seat.db, workspace_seat.project_id, "machine")
     expected_store = declared_store and lookup_error is None
     assert (str(main / ".nextest") in captured_writes) is expected_store
     assert str(main) not in captured_writes
@@ -372,7 +382,7 @@ async def test_sandbox_policy_grants_only_declared_main_nextest_store(
 
 @pytest.mark.asyncio
 async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_starts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, workspace_seat: WorkspaceSeat
 ) -> None:
     # SRT refuses to create an absent ancestor of a denyWrite entry. The control
     # denies under each grant stay, so spawn must create the grant directories
@@ -389,21 +399,8 @@ async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_st
     (lane / ".gobby/project.json").write_text(
         json.dumps({"id": "project", "sandbox": {"extra_write_paths": grants}})
     )
-    request, spawn_context, _ = _sandbox_request()
-    request.session_manager = MagicMock()
-    # The seat has no assigned task worktree, so the run's worktree lookup finds no row.
-    request.session_manager._storage.db.fetchone.return_value = None
-
     # The seat's own folder is named from its session row, which spawn reads at spawn time.
-    def fetch_session_row(sql: str, _params: object) -> MagicMock:
-        cursor = MagicMock()
-        is_location = sql == _SESSION_LOCATION_SQL
-        cursor.fetchone.return_value = (
-            {"project_id": "project", "seq_num": 7} if is_location else None
-        )
-        return cursor
-
-    request.session_manager._storage.db.execute.side_effect = fetch_session_row
+    request, spawn_context = _seat_request(workspace_seat)
     request.machine_id = "machine"
     request.project_path = str(lane)
     request.cwd = str(lane)
@@ -454,6 +451,10 @@ async def test_spawn_creates_absent_directory_write_grants_before_the_sandbox_st
     assert str(lane / ".gobby/tmp/.codex/hooks.json") in denied
     assert (lane / "notes.txt").read_text() == "kept"
     assert {str(lane / ".nextest"), str(lane / ".gobby/tmp")} <= set(granted)
+    seat_folder = session_workspace_dir(
+        workspace_seat.project_name, "backend-developer", workspace_seat.seq_num
+    )
+    assert str(seat_folder.resolve()) in granted
     assert absent_roots == []
     assert at_launch == {
         "nextest_dir": True,

@@ -347,8 +347,8 @@ def test_a_new_human_codex_thread_binds_only_with_matching_tty(
     same_tty: bool,
 ) -> None:
     monkeypatch.setattr(
-        "gobby.hooks.event_handlers._session_start.terminal_runtime.cli_shares_shell_tty",
-        lambda _pid, _terminal: same_tty,
+        "gobby.hooks.event_handlers._session_start.terminal_runtime.cli_tty_refusal",
+        lambda _pid, _terminal: None if same_tty else "tty mismatch",
     )
     project_id = sample_project["id"]
     terminals = TerminalManager(temp_db)

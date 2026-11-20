@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shutil
 import subprocess
 import tempfile
 from collections.abc import Callable, Generator, Iterator
@@ -889,6 +890,11 @@ def protect_production_resources(
 
     safe_hooks_dir = temp_dir / "hooks"
     safe_hooks_dir.mkdir(exist_ok=True)
+
+    # The home is shared by the whole session while the database resets per test, so a
+    # workspace ownership receipt left by one test would refuse the next test's project
+    # of the same name. Each test starts with no agent workspaces.
+    shutil.rmtree(safe_gobby_home_dir / "agents_workspaces", ignore_errors=True)
 
     # Set environment variables as a first line of defense
     safe_config_file = safe_logs_dir / "config-test.yaml"

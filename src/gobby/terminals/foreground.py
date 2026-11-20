@@ -15,11 +15,13 @@ would be wrong the moment the user ran anything. Resolution costs a single
 
 from __future__ import annotations
 
+import functools
 import logging
 import os
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Protocol
 
 import psutil
 
@@ -206,6 +208,48 @@ def shell_pid(row: object) -> int | None:
     if isinstance(pgid, bool) or not isinstance(pgid, int) or pgid <= 0:
         return None
     return pgid
+
+
+class _HasTerminal(Protocol):
+    def terminal(self) -> str | None: ...
+
+
+@functools.cache
+def _warn_terminal_map_cache_missing() -> None:
+    """Say once per process that the device map cannot be reread."""
+    logger.warning(
+        "psutil %s has no psutil._psposix.get_terminal_map.cache_clear; panes on pty "
+        "nodes created after its device map was built report no tty and cannot bind",
+        psutil.__version__,
+    )
+
+
+def _clear_terminal_map_cache() -> None:
+    """Drop psutil's device-to-tty map, which it otherwise keeps for the process lifetime.
+
+    The map is private psutil API. Without it a long-lived process sees no tty for new
+    pty nodes, so its absence is logged rather than ignored.
+    """
+    posix = getattr(psutil, "_psposix", None)
+    cache_clear = getattr(getattr(posix, "get_terminal_map", None), "cache_clear", None)
+    if not callable(cache_clear):
+        _warn_terminal_map_cache_missing()
+        return
+    cache_clear()
+
+
+def process_tty(process: _HasTerminal) -> str | None:
+    """A process's tty, rereading the device map once when it has no entry for it.
+
+    psutil builds its map of /dev device numbers once per process, so a long-lived
+    daemon misses every pty node created after that and reports no tty for the
+    processes on them. Errors from inspecting the process propagate to the caller.
+    """
+    tty = process.terminal()
+    if tty:
+        return tty
+    _clear_terminal_map_cache()
+    return process.terminal() or None
 
 
 def process_shell(row: object) -> str | None:

@@ -472,3 +472,11 @@ Source: AskUserQuestion answers and chat messages in session gobby#19401.
     The port session's reading, which Josh corrects where it is wrong. A chunk lands on local
     0.9.0 with land_commit and is not pushed. 0.9.0 is pushed to origin at each cutover. This
     replaces the push in protocol step 8; its text is not rewritten.
+35. Agent tiers and Codex review (Josh, 2026-11-19, over Telegram to the port session): "No, opus
+    medium performs better" and "Are you using the codex code-reviewers?"
+    The port session's reading, which Josh corrects where it is wrong. Implementer and fix
+    agents run Opus 5.5 at medium effort; per-commit verifiers stay Haiku 5.5 at xhigh. Four
+    Codex code-reviewer sessions that Josh opened (sol-6.2, medium effort) review every chunk's
+    plan, its checkpoints and its final SHA, and no chunk lands before its Codex verdict on the
+    final SHA. Implementers record an exact-SHA test attestation and an evidence file for each
+    commit they make. This amends ruling 27's Haiku-only fan-out; its text is not rewritten.

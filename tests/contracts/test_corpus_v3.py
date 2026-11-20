@@ -270,7 +270,7 @@ def _ledger_mismatches(root: Path) -> list[str]:
 @pytest.mark.unit
 def test_ledger_and_waiver_manifest_match_the_digests_taken_at_head() -> None:
     assert _ledger_mismatches(recorder_v3.REPO_ROOT) == [], (
-        "the ledger and waiver manifest must not change in a chunk landing (design section 13.2)"
+        "the ledger and waiver manifest must not change in a chunk's landed commit (design section 13.2)"
     )
 
 

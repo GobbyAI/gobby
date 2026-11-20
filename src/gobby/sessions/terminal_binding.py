@@ -14,7 +14,7 @@ from gobby import terminal_ownership
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.terminals import Terminal, TerminalManager
-from gobby.terminals.foreground import shell_pid
+from gobby.terminals.foreground import process_tty, shell_pid
 from gobby.utils.machine_id import get_machine_id
 
 
@@ -36,16 +36,26 @@ class TerminalBindingResult:
     terminal_id: str | None = None
 
 
-def cli_shares_shell_tty(cli_pid: int, terminal: Terminal) -> bool:
-    """Require OS proof that the CLI and native shell use the same terminal."""
+def cli_tty_refusal(cli_pid: int, terminal: Terminal) -> str | None:
+    """Name why the CLI and native shell cannot be proven to share a tty, or None."""
     native_pid = shell_pid(terminal)
     if native_pid is None:
-        return False
+        return "no shell pid"
     try:
-        tty = psutil.Process(cli_pid).terminal()
-        return bool(tty) and tty == psutil.Process(native_pid).terminal()
-    except (psutil.Error, OSError):
-        return False
+        cli_tty = process_tty(psutil.Process(cli_pid))
+        shell_tty = process_tty(psutil.Process(native_pid))
+    except (psutil.Error, OSError) as exc:
+        return f"tty inspection failed ({type(exc).__name__})"
+    if not cli_tty or not shell_tty:
+        return f"empty tty (cli {cli_tty!r}, shell {shell_tty!r})"
+    if cli_tty != shell_tty:
+        return f"tty mismatch (cli {cli_tty!r}, shell {shell_tty!r})"
+    return None
+
+
+def cli_shares_shell_tty(cli_pid: int, terminal: Terminal) -> bool:
+    """Require OS proof that the CLI and native shell use the same terminal."""
+    return cli_tty_refusal(cli_pid, terminal) is None
 
 
 def _native_seat_context(
@@ -72,7 +82,7 @@ def _native_seat_context(
         return None
     if not cli_shares_shell_tty(pid, terminal):
         return None
-    tty = process.terminal()
+    tty = process_tty(process)
     return {
         "parent_pid": pid,
         "parent_create_time": process.create_time(),
