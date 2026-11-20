@@ -45,7 +45,7 @@ async fn apply_each(
         let values = Arc::clone(&rx.borrow_and_update().active_values);
         if let Some(handle) = routes() {
             let current = handle.settings();
-            let (mut next, warnings) = from_values(&values, &current);
+            let (mut next, warnings) = from_values(&values, &current, &current);
             next.dir = resolve(&next.dir).unwrap_or(current.dir);
             handle.replace_settings(next);
             for warning in warnings {

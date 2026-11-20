@@ -377,6 +377,7 @@ pub fn run() -> Result<()> {
                 }),
                 started.ctx.config_publisher(),
                 CONFIG_POLL,
+                None,
             )
         });
         let native_ws = NativeWs::new(

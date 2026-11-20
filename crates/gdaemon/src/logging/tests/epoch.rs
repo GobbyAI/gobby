@@ -113,6 +113,81 @@ async fn a_lower_revision_epoch_is_still_applied() {
 }
 
 #[tokio::test]
+async fn a_deleted_row_returns_routing_to_its_activation_settings() {
+    // Deleting the active row publishes the unpublished epoch, which carries no keys: the
+    // level and directory go back to what routing activated with.
+    let start = tempfile::tempdir().expect("temporary logs directory");
+    let custom = tempfile::tempdir().expect("temporary logs directory");
+    let routed = Routed::start(settings_in(start.path())).await;
+
+    routed
+        .apply(
+            2,
+            json!({
+                "logging.level": "warning",
+                "logging.dir": custom.path().to_string_lossy(),
+            }),
+        )
+        .await;
+    tracing::info!(target: "gobby.daemon", "info under the custom epoch");
+    routed.apply(0, json!({})).await;
+    tracing::info!(target: "gobby.daemon", "info after the row is deleted");
+
+    let restored = read(start.path(), "daemon.log");
+    assert!(
+        restored.contains("info after the row is deleted"),
+        "the default directory at the default level has no record: {restored:?}"
+    );
+    assert!(
+        !restored.contains("info under the custom epoch"),
+        "{restored}"
+    );
+    assert!(
+        !read(custom.path(), "daemon.log").contains("info after the row is deleted"),
+        "the record stayed in the deleted row's directory"
+    );
+}
+
+#[test]
+fn an_epoch_without_a_key_defaults_it_and_an_invalid_value_keeps_it() {
+    let start = tempfile::tempdir().expect("temporary logs directory");
+    let custom = tempfile::tempdir().expect("temporary logs directory");
+    // Held across the whole run, outside the runtime: the rejected level's diagnostic and
+    // the warning below may both be counted.
+    let _counted = counted_warnings();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("test runtime");
+    runtime.block_on(async {
+        let routed = Routed::start(settings_in(start.path())).await;
+        routed
+            .apply(
+                2,
+                json!({
+                    "logging.level": "warning",
+                    "logging.dir": custom.path().to_string_lossy(),
+                }),
+            )
+            .await;
+        // The level is invalid, so WARNING stays; the directory is absent, so it defaults.
+        routed.apply(3, json!({"logging.level": "verbose"})).await;
+        tracing::info!(target: "gobby.daemon", "info below the kept level");
+        tracing::warn!(target: "gobby.daemon", "warning in the default directory");
+    });
+
+    let restored = read(start.path(), "daemon.log");
+    assert!(
+        restored.contains("warning in the default directory"),
+        "the absent directory did not default: {restored:?}"
+    );
+    assert!(
+        !restored.contains("info below the kept level"),
+        "the invalid level did not keep WARNING: {restored}"
+    );
+}
+
+#[tokio::test]
 async fn remaining_live_keys_apply_at_next_epoch() {
     // logging.max_size_mb: a lower threshold rotates on the next record.
     let dir = tempfile::tempdir().expect("temporary logs directory");

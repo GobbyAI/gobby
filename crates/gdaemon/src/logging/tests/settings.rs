@@ -26,6 +26,7 @@ fn settings_from_active_values_map_keys_and_reject_bad_values() {
             "logging.runtime_max_size_mb": 99,
         })),
         &previous,
+        &previous,
     );
     assert_eq!(
         next,
@@ -48,6 +49,7 @@ fn settings_from_active_values_map_keys_and_reject_bad_values() {
             "logging.format": "yaml",
             "logging.max_size_mb": 0,
         })),
+        &next,
         &next,
     );
     assert_eq!(kept, next);
@@ -75,8 +77,50 @@ fn allow_audit_defaults_match_python() {
             "logging.allow_audit_retention_days": 30,
         })),
         &defaults,
+        &defaults,
     );
     assert_eq!(unchanged, defaults);
+}
+
+#[test]
+fn absent_keys_take_the_defaults_and_invalid_values_keep_the_previous_setting() {
+    // An epoch is the whole stored configuration: a key it does not carry is at its
+    // default, while a key it carries with a bad value keeps what was in force.
+    let defaults = settings_in(Path::new("/default/logs"));
+    let previous = LogSettings {
+        level: Level::Warning,
+        format: Format::Json,
+        dir: PathBuf::from("/custom/logs"),
+        max_size_mb: 20,
+        backup_count: 3,
+        llm_max_size_mb: 60,
+        llm_backup_count: 4,
+        ..defaults.clone()
+    };
+
+    let (next, warnings) = from_values(
+        &values(json!({
+            "logging.level": "trace",
+            "logging.backup_count": 7,
+        })),
+        &previous,
+        &defaults,
+    );
+
+    assert_eq!(
+        next,
+        LogSettings {
+            level: Level::Warning,
+            backup_count: 7,
+            ..defaults.clone()
+        }
+    );
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(warnings[0].contains("logging.level"), "{warnings:?}");
+
+    let (deleted, warnings) = from_values(&Map::new(), &previous, &defaults);
+    assert_eq!(deleted, defaults, "a deleted row is the compiled defaults");
+    assert_eq!(warnings, Vec::<String>::new());
 }
 
 #[test]

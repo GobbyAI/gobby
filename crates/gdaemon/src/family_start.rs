@@ -18,7 +18,7 @@ use gobby_core::family::{
 };
 use gobby_core::postgres_pool::Pool;
 use gobby_core::route_family::RouteFamily;
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
@@ -30,6 +30,11 @@ use crate::native_pools::{PoolOutcome, resolve_outcome};
 pub struct ProcessFamilies {
     pub ctx: FamilyContext,
     pub activation: Vec<ActivationEntry<FrontDoorState>>,
+    /// Whether the start's configuration read succeeded. A read that finds no stored row
+    /// succeeded: it is the unpublished epoch.
+    pub config_read: bool,
+    /// The start's warnings, which routed logging replays once it activates.
+    pub start_warnings: Vec<String>,
 }
 
 /// The pool budget the start resolved, and the degraded mark it leaves.
@@ -137,7 +142,34 @@ pub async fn prepare(inputs: PrepareInputs) -> Result<ProcessFamilies, StartFail
             failure.message
         );
     }
-    Ok(ProcessFamilies { ctx, activation })
+    Ok(ProcessFamilies {
+        ctx,
+        activation,
+        config_read: true,
+        start_warnings: Vec::new(),
+    })
+}
+
+/// Waits for the first successful configuration read, then runs `activate` with the epoch
+/// current at that moment. `first_read` is None when the start's own read succeeded, and
+/// otherwise fires on the poller's first successful read.
+///
+/// This stub activates at once, whatever `first_read` says.
+pub async fn activate_after_first_read<T>(
+    first_read: Option<oneshot::Receiver<()>>,
+    config: watch::Receiver<ConfigEpoch>,
+    activate: impl FnOnce(ConfigEpoch) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    drop(first_read);
+    let current = config.borrow().clone();
+    activate(current)
+}
+
+/// Emits the start's warnings again, for routed logging that activated after them.
+///
+/// This stub emits nothing.
+pub fn replay_start_warnings(warnings: &[String]) {
+    let _ = warnings;
 }
 
 /// Reads the stored configuration epoch.
@@ -173,11 +205,16 @@ impl ConfigEpochSource for ActiveConfigSource {
 ///
 /// A failed poll keeps the current epoch. It logs one warning on the transition into
 /// failure, one notice on recovery, and the repeated failures in between at debug.
+///
+/// `first_read`, when given, is meant to fire on the poller's first successful read; this
+/// stub drops it.
 pub fn spawn_config_poller(
     source: Arc<dyn ConfigEpochSource>,
     publisher: Arc<ConfigEpochPublisher>,
     every: Duration,
+    first_read: Option<oneshot::Sender<()>>,
 ) -> JoinHandle<()> {
+    drop(first_read);
     tokio::spawn(async move {
         let mut ticks = tokio::time::interval(every);
         ticks.set_missed_tick_behavior(MissedTickBehavior::Delay);

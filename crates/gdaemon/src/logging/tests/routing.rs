@@ -1,4 +1,7 @@
+use std::fmt;
 use std::process::Command;
+use std::sync::{Mutex, PoisonError, mpsc};
+use std::time::Duration;
 
 use gobby_core::json::{Json, PYTHON, dumps};
 use gobby_core::telemetry::{SampleValue, Telemetry, names::LOGGING_RECORDS_TOTAL};
@@ -473,6 +476,74 @@ fn a_rejected_parser_name_counts_only_its_source_record() {
     );
     assert_eq!(record_count("daemon", "WARNING"), daemon_before);
     assert_eq!(record_count("parser", "WARNING"), parser_before + 1);
+}
+
+/// A field whose formatting says it started, then waits until it is released.
+struct HeldWhileFormatted {
+    started: Mutex<mpsc::Sender<()>>,
+    release: Mutex<mpsc::Receiver<()>>,
+}
+
+impl fmt::Debug for HeldWhileFormatted {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let _ = self
+            .started
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .send(());
+        // Bounded, so a test that failed before releasing does not hang this thread.
+        let _ = self
+            .release
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .recv_timeout(Duration::from_secs(20));
+        formatter.write_str("held field")
+    }
+}
+
+#[test]
+fn a_record_formatted_while_the_floor_rises_is_held_to_the_new_floor() {
+    let dir = tempfile::tempdir().expect("temporary logs directory");
+    let (dispatch, handle) = routed(settings_in(dir.path()));
+    let _counted = counted_warnings();
+    let warnings_before = record_count("hooks", "WARNING");
+    let (started, formatting) = mpsc::channel();
+    let (release, released) = mpsc::channel();
+    let field = HeldWhileFormatted {
+        started: Mutex::new(started),
+        release: Mutex::new(released),
+    };
+
+    let emitter = std::thread::spawn(move || {
+        with_default(&dispatch, || {
+            tracing::warn!(target: "gobby.hooks", held = ?field, "warning formatted across the change");
+        });
+    });
+    formatting
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the record passed the WARNING floor and began formatting");
+    handle.replace_settings(LogSettings {
+        level: Level::Error,
+        ..settings_in(dir.path())
+    });
+    release.send(()).expect("the formatting thread waits");
+    emitter.join().expect("the emitting thread finishes");
+
+    let message = "warning formatted across the change";
+    assert_eq!(
+        holders(dir.path(), message),
+        Vec::<&str>::new(),
+        "a record below the floor in force when it is written reached a primary file"
+    );
+    assert!(
+        !read(dir.path(), "errors.log").contains(message),
+        "a record below the floor in force when it is written reached errors.log"
+    );
+    assert_eq!(
+        record_count("hooks", "WARNING"),
+        warnings_before,
+        "a record below the floor in force when it is written was counted"
+    );
 }
 
 #[test]

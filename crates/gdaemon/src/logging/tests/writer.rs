@@ -106,6 +106,45 @@ fn an_empty_file_never_rotates_even_when_one_line_reaches_the_limit() {
     assert_eq!(read(dir.path(), "daemon.log.1"), "longer than the limit\n");
 }
 
+#[test]
+fn rotation_counts_a_line_in_characters_as_rotating_handler_does() {
+    // RotatingFileHandler compares tell() (bytes in the file) plus len() of the formatted
+    // line and its newline in characters. Under CPython with a 25-byte limit, a file
+    // of "aaaaaaaaa\n" (10 bytes) takes seven two-byte characters without a rollover
+    // (10 + 8 = 18), and the next such line rolls over (25 + 8 = 33).
+    let dir = tempfile::tempdir().expect("temporary logs directory");
+    let path = dir.path().join("daemon.log");
+    let file = open(&path, 25, 2, RotationOwner::Gdaemon);
+    let accented = "\u{e9}".repeat(7);
+
+    write(&file, "aaaaaaaaa");
+    write(&file, &accented);
+    assert_eq!(
+        read(dir.path(), "daemon.log"),
+        format!("aaaaaaaaa\n{accented}\n"),
+        "the line rolled over on its UTF-8 byte length"
+    );
+    assert!(!exists(dir.path(), "daemon.log.1"));
+
+    write(&file, &accented);
+    assert_eq!(read(dir.path(), "daemon.log"), format!("{accented}\n"));
+    assert_eq!(
+        read(dir.path(), "daemon.log.1"),
+        format!("aaaaaaaaa\n{accented}\n")
+    );
+
+    // At the boundary: 10 bytes plus fourteen characters and the newline is exactly 25.
+    let boundary = dir.path().join("hooks.log");
+    let file = open(&boundary, 25, 2, RotationOwner::Gdaemon);
+    write(&file, "aaaaaaaaa");
+    write(&file, &"\u{e9}".repeat(14));
+    assert_eq!(
+        read(dir.path(), "hooks.log"),
+        format!("{}\n", "\u{e9}".repeat(14))
+    );
+    assert_eq!(read(dir.path(), "hooks.log.1"), "aaaaaaaaa\n");
+}
+
 #[cfg(unix)]
 #[test]
 fn identity_uses_dev_and_ino_on_unix() {

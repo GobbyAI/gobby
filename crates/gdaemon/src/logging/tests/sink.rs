@@ -97,6 +97,88 @@ fn activation_without_a_backend_command_rotates_its_own_files() {
     );
 }
 
+/// Set in the child process of the setting-diagnostic tests, to the logs directory.
+const DIAGNOSTIC_CHILD: &str = "GOBBY_LOGGING_TEST_DIAGNOSTIC_CHILD";
+
+/// Child: activates routing with `settings`, applies one epoch of `values` through the
+/// process's applier, and returns once the applier has run.
+fn apply_one_epoch_as_the_process(settings: LogSettings, values: serde_json::Value) {
+    let serde_json::Value::Object(active_values) = values else {
+        panic!("active values are an object");
+    };
+    activate(settings, None).expect("routed logging activates");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("child runtime");
+    runtime.block_on(async {
+        let (_epochs, rx) = tokio::sync::watch::channel(gobby_core::family::ConfigEpoch {
+            revision: 2,
+            active_values: std::sync::Arc::new(active_values),
+        });
+        let applier = crate::logging::epoch::spawn_applier(rx);
+        // The applier applies the current epoch on its first poll.
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        applier.abort();
+    });
+}
+
+/// Runs `test` in a child process with its logs under a new directory, and returns the
+/// child's stderr once it has succeeded.
+fn child_stderr(test: &str) -> String {
+    let logs = tempfile::tempdir().expect("temporary logs directory");
+    let output = Command::new(std::env::current_exe().expect("test binary path"))
+        .args(["--exact", test, "--nocapture"])
+        .env(DIAGNOSTIC_CHILD, logs.path())
+        .env_remove("GOBBY_LOGGING_DIR")
+        .output()
+        .expect("child test runs");
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(output.status.success(), "{:?}: {stderr}", output.status);
+    stderr
+}
+
+#[test]
+fn an_invalid_setting_is_reported_on_stderr_at_an_error_floor() {
+    if let Some(logs) = std::env::var_os(DIAGNOSTIC_CHILD) {
+        let settings = LogSettings {
+            level: Level::Error,
+            ..settings_in(Path::new(&logs))
+        };
+        apply_one_epoch_as_the_process(settings, serde_json::json!({"logging.format": "yaml"}));
+        return;
+    }
+
+    let stderr = child_stderr(
+        "logging::tests::sink::an_invalid_setting_is_reported_on_stderr_at_an_error_floor",
+    );
+    assert!(
+        stderr.contains("logging.format has an invalid value"),
+        "the rejected logging.format was not reported on stderr: {stderr:?}"
+    );
+}
+
+#[test]
+fn an_invalid_setting_is_reported_when_its_epoch_raises_the_floor_to_error() {
+    if let Some(logs) = std::env::var_os(DIAGNOSTIC_CHILD) {
+        apply_one_epoch_as_the_process(
+            settings_in(Path::new(&logs)),
+            serde_json::json!({"logging.level": "error", "logging.backup_count": 0}),
+        );
+        return;
+    }
+
+    let stderr = child_stderr(
+        "logging::tests::sink::an_invalid_setting_is_reported_when_its_epoch_raises_the_floor_to_error",
+    );
+    assert!(
+        stderr.contains("logging.backup_count has an invalid value"),
+        "the rejected logging.backup_count was not reported on stderr: {stderr:?}"
+    );
+}
+
 /// Set in the child process of the closed-stderr test.
 #[cfg(unix)]
 const CLOSED_STDERR_CHILD: &str = "GOBBY_LOGGING_TEST_CLOSED_STDERR_CHILD";

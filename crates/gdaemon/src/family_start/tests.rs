@@ -235,7 +235,7 @@ async fn poller_publishes_only_when_the_epoch_changes() {
         Some(epoch(1, json!({}))),
         Some(epoch(2, json!({}))),
     ]);
-    let poller = spawn_config_poller(source.clone(), Arc::clone(&publisher), EVERY);
+    let poller = spawn_config_poller(source.clone(), Arc::clone(&publisher), EVERY, None);
 
     let seen = published(&mut rx).await;
     poller.abort();
@@ -256,7 +256,7 @@ async fn poller_publishes_a_restored_lower_revision_and_changed_values() {
         Some(epoch(3, json!({"logging.level": "warning"}))),
         Some(epoch(3, json!({"logging.level": "info"}))),
     ]);
-    let poller = spawn_config_poller(source, Arc::clone(&publisher), EVERY);
+    let poller = spawn_config_poller(source, Arc::clone(&publisher), EVERY, None);
 
     let seen = published(&mut rx).await;
     poller.abort();
@@ -294,7 +294,7 @@ async fn poller_reads_only_under_the_publisher_lock() {
     };
     tokio::task::yield_now().await;
     let source = Scripted::new(vec![Some(epoch(8, json!({})))]);
-    let poller = spawn_config_poller(source.clone(), Arc::clone(&publisher), EVERY);
+    let poller = spawn_config_poller(source.clone(), Arc::clone(&publisher), EVERY, None);
 
     let_time_pass(EVERY * 5).await;
     let reads_while_held = source.reads();
@@ -327,7 +327,7 @@ async fn failed_poll_keeps_epoch_and_warns_once() {
         None,
         Some(epoch(2, json!({}))),
     ]);
-    let poller = spawn_config_poller(source.clone(), Arc::clone(&publisher), EVERY);
+    let poller = spawn_config_poller(source.clone(), Arc::clone(&publisher), EVERY, None);
 
     let seen = published(&mut rx).await;
     poller.abort();
@@ -445,5 +445,212 @@ async fn start_unwind_budget_begins_when_the_unwind_begins() {
     assert!(
         stops.stopped.load(Ordering::SeqCst),
         "the started family finished its deactivate inside the unwind budget"
+    );
+}
+
+/// A family whose start fails without stopping the phase, so it runs degraded.
+struct StartsDegraded;
+
+impl RouteFamily<FrontDoorState> for StartsDegraded {
+    fn name(&self) -> &'static str {
+        "fixture_starts_degraded"
+    }
+
+    fn prefixes(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn router(&self) -> Router<FrontDoorState> {
+        Router::new()
+    }
+
+    fn start<'a>(&'a self, _ctx: &'a FamilyContext) -> BoxFut<'a, Result<(), HookError>> {
+        Box::pin(async {
+            Err(HookError::Ordinary {
+                message: "the fixture's store is unavailable".into(),
+            })
+        })
+    }
+}
+
+/// Inputs for a start with no database, reading its epoch from `source`.
+fn inputs_reading(
+    source: Arc<Scripted>,
+    families: Vec<&'static dyn RouteFamily<FrontDoorState>>,
+) -> PrepareInputs {
+    let routes = families
+        .iter()
+        .map(|family| (family.name().to_owned(), RouteBackend::Native))
+        .collect();
+    PrepareInputs {
+        serve_pool: None,
+        home: PathBuf::from("/nonexistent/gobby-home"),
+        routes,
+        publisher: Arc::new(NoFrames),
+        backend: None,
+        lease: None,
+        epoch_source: source,
+        cpu_count: 8,
+        families,
+        extensions: Extensions::new(),
+        startup: None,
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn prepare_reports_whether_its_configuration_read_succeeded() {
+    let failed = prepare(inputs_reading(Scripted::new(vec![None]), Vec::new()))
+        .await
+        .ok()
+        .map(|families| families.config_read);
+    assert_eq!(
+        failed,
+        Some(false),
+        "a failed epoch read is reported as failed"
+    );
+
+    let no_row = prepare(inputs_reading(
+        Scripted::new(vec![Some(ConfigEpoch::unpublished())]),
+        Vec::new(),
+    ))
+    .await
+    .ok()
+    .map(|families| families.config_read);
+    assert_eq!(no_row, Some(true), "a read that finds no row succeeded");
+}
+
+#[tokio::test(start_paused = true)]
+async fn poller_signals_its_first_successful_read_even_when_no_row_is_stored() {
+    // A read of no row equals the unpublished epoch, so it publishes nothing: only the
+    // signal says the configuration became readable.
+    let (publisher, _rx) = config_channel(ConfigEpoch::unpublished());
+    let source = Scripted::new(vec![None, None, Some(ConfigEpoch::unpublished())]);
+    let (first_read, readable) = oneshot::channel();
+    let poller = spawn_config_poller(
+        source.clone(),
+        Arc::clone(&publisher),
+        EVERY,
+        Some(first_read),
+    );
+
+    let signalled = tokio::time::timeout(QUIET, readable).await;
+    let reads_at_signal = source.reads();
+    poller.abort();
+
+    assert!(
+        matches!(signalled, Ok(Ok(()))),
+        "the poller did not signal its first successful read: {signalled:?}"
+    );
+    assert_eq!(
+        reads_at_signal, 3,
+        "the signal came before the successful read"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn activation_waits_for_the_first_successful_read_and_takes_the_stored_epoch() {
+    let (publisher, rx) = config_channel(ConfigEpoch::unpublished());
+    let (first_read, readable) = oneshot::channel();
+    let activated: Arc<Mutex<Option<ConfigEpoch>>> = Arc::default();
+    let gate = tokio::spawn({
+        let activated = Arc::clone(&activated);
+        activate_after_first_read(Some(readable), rx, move |epoch| {
+            *activated.lock().unwrap_or_else(PoisonError::into_inner) = Some(epoch);
+            Ok(())
+        })
+    });
+
+    let_time_pass(EVERY * 5).await;
+    let before_read = activated
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    assert_eq!(
+        before_read, None,
+        "routed logging activated before any configuration read succeeded"
+    );
+
+    let stored = epoch(3, json!({"logging.level": "warning"}));
+    let published = publisher
+        .reload(|| async { Ok::<_, anyhow::Error>(stored.clone()) })
+        .await;
+    assert_eq!(published.ok(), Some(true));
+    first_read
+        .send(())
+        .expect("the gate waits for the first read");
+    let finished = gate.await.expect("the gate task finishes");
+
+    assert!(finished.is_ok(), "{finished:?}");
+    assert_eq!(
+        activated
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone(),
+        Some(stored),
+        "activation did not take the stored epoch"
+    );
+}
+
+/// Records the level, target and message of every event.
+#[derive(Clone, Default)]
+struct Records(Arc<Mutex<Vec<(Level, String, String)>>>);
+
+/// The `message` field of one event.
+#[derive(Default)]
+struct MessageOf(String);
+
+impl tracing::field::Visit for MessageOf {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = format!("{value:?}");
+        }
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Records {
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        _context: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let mut message = MessageOf::default();
+        event.record(&mut message);
+        self.0.lock().unwrap_or_else(PoisonError::into_inner).push((
+            *event.metadata().level(),
+            event.metadata().target().to_owned(),
+            message.0,
+        ));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn start_warnings_are_replayed_once_routed_logging_activates() {
+    let degraded: &'static StartsDegraded = Box::leak(Box::new(StartsDegraded));
+    let families = prepare(inputs_reading(Scripted::new(vec![None]), vec![degraded]))
+        .await
+        .expect("a degraded family and an unreadable configuration do not fail the start");
+
+    // Routing activates after the start: the replay is what reaches the routed files.
+    let records = Records::default();
+    let _routed = tracing::subscriber::set_default(Registry::default().with(records.clone()));
+    replay_start_warnings(&families.start_warnings);
+
+    let replayed = records
+        .0
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone();
+    let warned = |needle: &str| {
+        replayed.iter().any(|(level, target, message)| {
+            *level == Level::WARN && target == "gobby.daemon" && message.contains(needle)
+        })
+    };
+    assert!(
+        warned("the active configuration is unreadable at start"),
+        "the unreadable configuration warning was not replayed: {replayed:?}"
+    );
+    assert!(
+        warned("family fixture_starts_degraded started degraded"),
+        "the degraded start warning was not replayed: {replayed:?}"
     );
 }

@@ -14,12 +14,13 @@ const DEFAULT_DIR: &str = "~/.gobby/logs";
 const ALLOW_AUDIT_EVENTS_PER_DAY: u128 = 368_000;
 const ALLOW_AUDIT_BYTES_PER_LINE: u128 = 512;
 
-/// The settings that `values` describe, starting from `previous`. Only the seven live
-/// keys change anything. A key with an invalid value keeps its previous setting and adds
-/// one warning naming the key.
+/// The settings that `values` describe. Only the seven live keys change anything. A key
+/// with an invalid value keeps its `previous` setting and adds one warning naming the key.
+/// `defaults` are the settings routing activated with; this stub does not read them yet.
 pub fn from_values(
     values: &Map<String, Value>,
     previous: &LogSettings,
+    _defaults: &LogSettings,
 ) -> (LogSettings, Vec<String>) {
     let mut next = previous.clone();
     let mut warnings = Vec::new();

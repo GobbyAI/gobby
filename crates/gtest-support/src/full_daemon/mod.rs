@@ -24,6 +24,7 @@ use crate::hub_guard::{GuardMode, HubGuardError, check_test_hub};
 use crate::loopback::{self, LoopbackError, LoopbackGuard};
 use crate::ports::{DaemonPorts, daemon_ports};
 
+mod diagnostics;
 mod process;
 #[cfg(all(test, unix))]
 mod teardown_tests;
@@ -865,7 +866,7 @@ fn wait_ready(daemon: &mut FullDaemon, home: &Path) -> Result<(), FullDaemonErro
         if let Some(status) = child.try_wait().map_err(io_error("poll gdaemon"))? {
             return Err(FullDaemonError::Ready(format!(
                 "gdaemon exited with {status}:\n{}",
-                log_tail(&home.join("logs/daemon_error.log"))
+                diagnostics::ready_diagnostics(home)
             )));
         }
         // Record the worker while gdaemon lives: once gdaemon exits, the worker is reparented and
@@ -879,15 +880,9 @@ fn wait_ready(daemon: &mut FullDaemon, home: &Path) -> Result<(), FullDaemonErro
         if Instant::now() >= deadline {
             return Err(FullDaemonError::Ready(format!(
                 "no 200 from {url} within {ceiling:?}:\n{}",
-                log_tail(&home.join("logs/daemon_error.log"))
+                diagnostics::ready_diagnostics(home)
             )));
         }
         sleep(POLL);
     }
-}
-
-fn log_tail(path: &Path) -> String {
-    let text = fs::read_to_string(path).unwrap_or_default();
-    let lines: Vec<&str> = text.lines().collect();
-    lines[lines.len().saturating_sub(40)..].join("\n")
 }
