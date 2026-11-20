@@ -21,7 +21,7 @@ PATH_MARKERS = ("/Users/", "/home/", "/private/var/", "/transcripts/")
 # A Windows user path as JSON text stores it: every backslash is doubled.
 WINDOWS_USER_PATH = re.compile(r"[A-Za-z]:\\+Users\\+")
 
-# Minimum committed case counts. Rules: one case for each required scenario ID (92).
+# Minimum committed case counts. Rules: one case for each required scenario ID (94).
 # Adapters: one inbound and one outbound case for each of the five adapters (10), four
 # node-origin cases, two git-source verdicts and two route refusals (18). Pipeline:
 # four session-start cases, a node session with a missing row, a deferred activation,
@@ -30,7 +30,7 @@ LAYERS: dict[str, dict[str, Any]] = {
     "rules": {
         "dir": CONTRACTS_DIR / "rules",
         "test": "tests/contracts/test_rules_corpus.py",
-        "min_cases": 92,
+        "min_cases": 94,
         "vectors": "normalize_vectors.json",
     },
     "adapters": {

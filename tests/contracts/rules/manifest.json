@@ -150,7 +150,9 @@
       "S-STEP-TOOL-BLOCK",
       "S-TRANS-CLAIM",
       "S-TRANS-PLANMODE",
-      "S-TRANS-REVIEW-GATE"
+      "S-TRANS-REVIEW-GATE",
+      "S-VAR-DELETE",
+      "S-VAR-SET-NONE"
     ],
     "effect_type": [
       "block",

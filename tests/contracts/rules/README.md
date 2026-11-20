@@ -8,7 +8,10 @@ run over synthetic rules, plus the normalizer functions the rule conditions read
 - `cases/*.json` hold the rule-pass cases. Each case defines synthetic rules, fires one
   event, and carries an `expect` block: outcome class, eager variable delta, the staged
   receipt payload, the effect log, the audit records, the non-default response fields and
-  any skipped groups.
+  any skipped groups. The eager variable delta holds every key the pass added or changed,
+  a key newly written to `null` included; a key the pass deleted is listed in the optional
+  `eager_variable_deletions`. `cases/variables.json` holds the two cases that prove this
+  encoding (a `null` write to a new key, and the turn-start reset that deletes a flag).
 - A case of kind `seam_caller` drives one real caller of a seam instead of the rule engine,
   because the engine never reaches that seam: `background_delivery` runs the background
   run-command delivery, `tool_result_offload` runs the MCP proxy's result offload. Its
@@ -17,14 +20,39 @@ run over synthetic rules, plus the normalizer functions the rule conditions read
   vector, and every cross-module function in `normalize_modules.json` has one. Each of the
   151 listed functions whose parameters are all builtin types (`str`, `int`, `bool`, `bytes`,
   containers of those, or `Optional` of those) has at least one vector with a non-empty input
-  and a result that is not an exception. The 148 realistic vectors (`id` prefix `realistic-`)
-  hold calls captured from committed vectors and from shell commands run through the hook
-  normalizer (87 vectors), or hand-written shell inputs where no captured call gave a stronger
-  result (61 vectors): 41 return true, 100 return a value, and 7 return false or null for a
-  realistic input that does not match. Every vector of a function that takes a parameter
-  outside the builtin set, or no parameter, carries `metadata.reason`, a one-line note (146
-  vectors, the gate vector included). A vector with `setup` builds a fixture checkout; a
-  `bytes` argument is written `{"bytes": text}`.
+  whose result differs from every input argument or that records an argument it changed.
+  Realistic vectors (`id` prefix `realistic-`) cover 148 of those 151 functions;
+  `extract_heredoc_bodies`, `tokenize_shell_command` and `command_patterns_match` are covered
+  by their `entry-` and `negative-` vectors. A vector of a function that takes a parameter
+  outside the builtin set, or no parameter, carries `metadata.reason`, a one-line note; a
+  vector that records a raise its callers never reach carries `metadata.precondition`
+  instead, naming the caller that guards it. A `bytes` argument is written `{"bytes": text}`.
+- Every vectored function discriminates: its vectors record at least two distinct outcomes,
+  one result that differs from every input argument or a recorded argument change, and a
+  function that returns None records the change it makes. So a constant, identity or no-op
+  stub of the function fails its replay. `contrast-` vectors are calls captured from the
+  hook normalizer that give a function its second outcome, `hand-` vectors are written inputs
+  where no captured call did, and `caller-` vectors reach a function whose argument JSON
+  cannot carry (a map keyed by token identity) through `normalize_tool_fields`. The test file
+  lists the seven exempt functions, each with its reason.
+- Vector envelope. Replay snapshots every argument after the `prepare` steps and again after
+  the call; when one changed, the expect is `{"result": ..., "mutated_args": {"<index or
+  keyword>": <value after the call>}}`. `result_from_arg` stays accepted: it names the
+  argument recorded as the result, which `mutated_args` then leaves out. A `scan_budget`
+  adds `scan_within_budget` and `scan_observed`, a `scope` adds `node_requests`, and
+  `within` adds the values read inside the context manager the entry returns.
+- Arguments. A `construct` entry builds an argument from exactly one of `data`, `args` or
+  `items`; an argument written `{"from": {"entry", "args", "kwargs", "pick"}}` is built by a
+  production builder, nested derivations resolved first. A list reaches a parameter
+  annotated `tuple`, `set` or `frozenset` as that type.
+- Fixtures and scopes. A vector with `setup` builds a fixture checkout under the system
+  `/tmp`, with HOME, USERPROFILE and GOBBY_HOME pointed at an empty home beside it, and
+  records every path under the checkout relative to `{repo}`; `nested_repo` and `symlinks`
+  add a second repository and links. A vector with `scope` runs inside a node-origin
+  delivery that a scripted node answers, so it reads nothing of the host. Every vector that
+  reads the filesystem, git, the cwd, HOME or the machine id is a fixture or scope vector;
+  the rest read no host state, which a test checks with call-through spies. Fixture vectors
+  run on Linux and macOS only; scope vectors run everywhere.
   Every parametrize combination of the 27 negative tests in
   `tests/workflows/test_command_matching.py` and `tests/hooks/test_code_navigation_recovery.py`
   replays through its own vector. The two combinations of

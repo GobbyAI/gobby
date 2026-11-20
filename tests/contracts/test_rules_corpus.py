@@ -568,13 +568,12 @@ def _display_path(path: Path) -> str:
         return path.name
 
 
-def _names_field_in_call(node: ast.Call, field: str) -> bool:
-    """True when a call passes ``field`` as a keyword, as a ``**`` dict key or as a setattr name.
+def _callee_name(node: ast.Call) -> str:
+    return node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
 
-    Only literal names are seen: a field name built at run time is not detected.
-    """
-    if any(keyword.arg == field for keyword in node.keywords):
-        return True
+
+def _names_field_in_call(node: ast.Call, field: str) -> bool:
+    """True when a call passes ``field`` as a ``**`` dict-literal key or as a setattr name."""
     for keyword in node.keywords:
         if (
             keyword.arg is None
@@ -584,32 +583,75 @@ def _names_field_in_call(node: ast.Call, field: str) -> bool:
             )
         ):
             return True
-    callee = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
-    return callee in ("setattr", "__setattr__") and any(
+    return _callee_name(node) in ("setattr", "__setattr__") and any(
         isinstance(arg, ast.Constant) and arg.value == field for arg in node.args
     )
 
 
-def _writers_of(field: str, paths: Iterable[Path] | None = None) -> list[str]:
-    """Return ``file:line`` for each call that names ``field`` or attribute assignment to it.
+def _exempt_literal_ids(tree: ast.AST) -> set[int]:
+    """Ids of string constants that name a field without writing it.
 
-    ``paths`` defaults to every module under ``src/gobby``.
+    These are docstrings, elements of a set display that no ``for`` statement or
+    comprehension iterates, and the name argument of ``getattr`` or ``hasattr``.
+    """
+    exempt: set[int] = set()
+    iterated: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.For | ast.AsyncFor | ast.comprehension):
+            iterated.add(id(node.iter))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            first = node.body[0] if node.body else None
+            if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+                exempt.add(id(first.value))
+        elif isinstance(node, ast.Set) and id(node) not in iterated:
+            exempt.update(id(element) for element in node.elts)
+        elif (
+            isinstance(node, ast.Call)
+            and _callee_name(node) in ("getattr", "hasattr")
+            and len(node.args) > 1
+        ):
+            exempt.add(id(node.args[1]))
+    return exempt
+
+
+def _writers_of(field: str, paths: Iterable[Path] | None = None, *, literals: bool) -> list[str]:
+    """Return ``file:line`` for each place that may store ``field`` on an object.
+
+    ``paths`` defaults to every module under ``src/gobby``. Four rules, in one pass per file:
+    an attribute named ``field`` in a store or delete position (any target, including tuple,
+    ``for`` and ``with`` targets); a keyword argument named ``field`` in any call; ``field`` as
+    a key of a dict literal unpacked into a call or as the literal name argument of setattr
+    or ``__setattr__``; and, with ``literals``, ``field`` as any other string constant outside
+    a docstring, a set display that is not iterated, or a getattr or hasattr name. The last
+    rule catches dict keys, subscript stores, a variable or tuple binding of the literal and a
+    loop over a literal listing. The scan is static: a name built at run time, a listing held
+    in a variable or ``dataclasses.fields`` feeding setattr, and a constructor unpacking
+    external data are not seen.
     """
     found: list[str] = []
     sources = sorted((SRC_DIR / "gobby").rglob("*.py")) if paths is None else list(paths)
     for path in sources:
         tree = ast.parse(path.read_text(), filename=str(path))
         location = _display_path(path)
+        exempt = _exempt_literal_ids(tree) if literals else set()
         for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if _names_field_in_call(node, field):
-                    found.append(f"{location}:{node.lineno}")
-            elif isinstance(node, ast.Assign | ast.AugAssign | ast.AnnAssign):
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                if any(
-                    isinstance(target, ast.Attribute) and target.attr == field for target in targets
-                ):
-                    found.append(f"{location}:{node.lineno}")
+            if (
+                (
+                    isinstance(node, ast.Attribute)
+                    and node.attr == field
+                    and isinstance(node.ctx, ast.Store | ast.Del)
+                )
+                or (isinstance(node, ast.keyword) and node.arg == field)
+                or (isinstance(node, ast.Call) and _names_field_in_call(node, field))
+                or (
+                    literals
+                    and isinstance(node, ast.Constant)
+                    and node.value == field
+                    and id(node) not in exempt
+                )
+            ):
+                found.append(f"{location}:{getattr(node, 'lineno', 0)}")
     return found
 
 
@@ -1098,7 +1140,7 @@ def test_owner_check_rejects_a_json_only_relaxation(edit: str) -> None:
 
 @pytest.mark.parametrize("field", FIELDS_WITHOUT_RESPONSE_WRITER)
 def test_fields_without_a_rule_producer_have_no_src_writer(field: str) -> None:
-    writers = _writers_of(field)
+    writers = _writers_of(field, literals=_string_literal_rule_applies(field))
     assert not writers, f"{field} is now written in src at {writers}; give it an owner layer"
 
 
@@ -1111,17 +1153,18 @@ def test_unused_field_guard_flags_every_write_form(tmp_path: Path) -> None:
     unflagged: list[str] = []
     flagged_reads: list[str] = []
     for field in FIELDS_WITHOUT_RESPONSE_WRITER:
+        literals = _string_literal_rule_applies(field)
         for name, (rule, template) in UNUSED_FIELD_WRITE_FORMS.items():
-            if rule == STRING_LITERAL_RULE and not _string_literal_rule_applies(field):
+            if rule == STRING_LITERAL_RULE and not literals:
                 continue
             fixture = tmp_path / f"write-{field}-{name}.py"
             fixture.write_text(template.replace(FIELD_TOKEN, field))
-            if not _writers_of(field, [fixture]):
+            if not _writers_of(field, [fixture], literals=literals):
                 unflagged.append(f"{field}:{name}")
         for name, template in UNUSED_FIELD_READS.items():
             fixture = tmp_path / f"read-{field}-{name}.py"
             fixture.write_text(template.replace(FIELD_TOKEN, field))
-            if _writers_of(field, [fixture]):
+            if _writers_of(field, [fixture], literals=literals):
                 flagged_reads.append(f"{field}:{name}")
     assert not unflagged, f"the guard misses these (field, write form) pairs: {unflagged}"
     assert not flagged_reads, f"the guard flags these (field, read form) pairs: {flagged_reads}"
@@ -1409,6 +1452,11 @@ def test_no_two_combinations_of_one_test_replay_the_same_input() -> None:
                 vector["entry"],
                 vector.get("input"),
                 vector.get("setup"),
+                vector.get("construct"),
+                vector.get("prepare"),
+                vector.get("scope"),
+                vector.get("within"),
+                vector.get("result_from_arg"),
             ],
             sort_keys=True,
         )

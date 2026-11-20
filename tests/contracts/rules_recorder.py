@@ -23,7 +23,7 @@ import time
 from collections.abc import Awaitable, Callable, Iterator, Mapping
 from datetime import UTC, datetime
 from enum import Enum
-from pathlib import Path
+from pathlib import Path, PurePath
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -84,53 +84,81 @@ def seam_registry() -> dict[str, tuple[object, str]]:
     }
 
 
-def _scrub_text(text: str) -> str:
+def _scrub_text(text: str, *, repo_root: str | None = None) -> str:
+    """Scrub volatile values; a path under ``repo_root`` is written relative to ``{repo}``."""
+    if repo_root:
+        text = text.replace(repo_root, "{repo}")
     text = _UUID.sub("<uuid>", text)
     text = _ISO_TIME.sub("<timestamp>", text)
     text = _RANDOM_TOKEN.sub("<token>", text)
     return _WINDOWS_PATH.sub("<path>", _ABS_PATH.sub("<path>", text))
 
 
-def _jsonable(value: Any) -> Any:
-    """Return a JSON-native, scrubbed copy of ``value`` (the form the corpus stores)."""
+def _jsonable(value: Any, *, repo_root: str | None = None) -> Any:
+    """Return a JSON-native, scrubbed copy of ``value`` (the form the corpus stores).
+
+    ``repo_root`` names a fixture checkout whose paths are recorded relative to ``{repo}``;
+    case recording passes none. A path is rendered in POSIX form on every platform.
+    """
     if value is None or isinstance(value, bool | int):
         return value
     if isinstance(value, float):
         return value if value == value and abs(value) != float("inf") else str(value)
     if isinstance(value, str):
-        return _scrub_text(value)
+        return _scrub_text(value, repo_root=repo_root)
     if isinstance(value, bytes):
-        return _scrub_text(value.decode("utf-8", errors="replace"))
+        return _scrub_text(value.decode("utf-8", errors="replace"), repo_root=repo_root)
     if isinstance(value, Enum):
-        return _jsonable(value.value)
+        return _jsonable(value.value, repo_root=repo_root)
     if isinstance(value, UUID):
         return "<uuid>"
     if isinstance(value, datetime):
         return "<timestamp>"
-    if isinstance(value, Path):
-        return _scrub_text(str(value))
+    if isinstance(value, PurePath):
+        return _scrub_text(value.as_posix(), repo_root=repo_root)
     if isinstance(value, Mapping):
         return {
-            str(key): ("<volatile>" if str(key) in VOLATILE_KEYS else _jsonable(item))
+            str(key): (
+                "<volatile>" if str(key) in VOLATILE_KEYS else _jsonable(item, repo_root=repo_root)
+            )
             for key, item in value.items()
         }
     if isinstance(value, list | tuple):
-        return [_jsonable(item) for item in value]
+        return [_jsonable(item, repo_root=repo_root) for item in value]
     if isinstance(value, set | frozenset):
-        return sorted((_jsonable(item) for item in value), key=repr)
+        return sorted((_jsonable(item, repo_root=repo_root) for item in value), key=repr)
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return _jsonable(dataclasses.asdict(value))
+        return _jsonable(dataclasses.asdict(value), repo_root=repo_root)
     if isinstance(value, subprocess.CompletedProcess):
         return {
             "returncode": value.returncode,
-            "stdout": _jsonable(value.stdout),
-            "stderr": _jsonable(value.stderr),
+            "stdout": _jsonable(value.stdout, repo_root=repo_root),
+            "stderr": _jsonable(value.stderr, repo_root=repo_root),
         }
     if isinstance(value, ast.AST):
-        return _scrub_text(ast.dump(value, include_attributes=False))
+        return _scrub_text(ast.dump(value, include_attributes=False), repo_root=repo_root)
     if hasattr(value, "model_dump"):
-        return _jsonable(value.model_dump(mode="json"))
+        return _jsonable(value.model_dump(mode="json"), repo_root=repo_root)
     return f"<{type(value).__name__}>"
+
+
+EAGER_VARIABLE_DELETIONS_KEY = "eager_variable_deletions"
+
+
+def variable_delta(
+    initial: Mapping[str, Any], final: Mapping[str, Any]
+) -> tuple[dict[str, Any], list[str]]:
+    """Return ``(changed, deleted)`` between two variable snapshots.
+
+    A key counts as changed when it is new (a new key written to None included) or its value
+    differs; a key present before and absent after is listed as deleted.
+    """
+    changed = {
+        key: _jsonable(value)
+        for key, value in final.items()
+        if key not in initial or initial[key] != value
+    }
+    return changed, sorted(key for key in initial if key not in final)
 
 
 def _decision(response: HookResponse | None) -> str:
@@ -430,7 +458,7 @@ def _observe(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, An
             if value != default:
                 response_block[name] = _jsonable(value)
     staged = response.metadata.get(STAGED_PAYLOAD_KEY) if response is not None else None
-    delta = {key: _jsonable(value) for key, value in variables.items() if initial.get(key) != value}
+    delta, deletions = variable_delta(initial, variables)
     expect: dict[str, Any] = {
         "outcome_class": "error" if error is not None else _decision(response),
         "eager_variable_delta": delta,
@@ -439,6 +467,8 @@ def _observe(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, An
         "audit_records": recorder.audit_records,
         "response": response_block,
     }
+    if deletions:
+        expect[EAGER_VARIABLE_DELETIONS_KEY] = deletions
     evaluated = {record["rule"] for record in recorder.audit_records}
     skipped = sorted({rule["group"] for rule in case["rules"] if "group" in rule} - evaluated)
     if skipped:

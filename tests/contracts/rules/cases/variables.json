@@ -1,0 +1,226 @@
+{
+  "cases": [
+    {
+      "id": "synthetic-variable-set-none",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-VAR-SET-NONE"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-clear-new",
+          "event": "before_tool",
+          "priority": 10,
+          "effects": [
+            {
+              "type": "set_variable",
+              "variable": "synthetic_cleared",
+              "value": null
+            }
+          ]
+        },
+        {
+          "name": "synthetic-clear-existing",
+          "event": "before_tool",
+          "priority": 20,
+          "effects": [
+            {
+              "type": "set_variable",
+              "variable": "synthetic_overwritten",
+              "value": null
+            }
+          ]
+        }
+      ],
+      "variables": {
+        "synthetic_overwritten": "before",
+        "synthetic_kept": null
+      },
+      "event": {
+        "type": "before_tool",
+        "data": {
+          "tool_name": "Bash",
+          "tool_input": {
+            "command": "true"
+          }
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "synthetic_overwritten": null,
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "synthetic_cleared": null
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_variable",
+            "delivery": "eager",
+            "rule": "synthetic-clear-new"
+          },
+          {
+            "effect": "set_variable",
+            "delivery": "eager",
+            "rule": "synthetic-clear-existing"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-clear-new",
+            "result": "allow",
+            "event": "before_tool"
+          },
+          {
+            "rule": "synthetic-clear-existing",
+            "result": "allow",
+            "event": "before_tool"
+          }
+        ],
+        "response": {}
+      }
+    },
+    {
+      "id": "synthetic-variable-delete",
+      "kind": "rule_pass",
+      "provenance": "synthetic",
+      "scenario_ids": [
+        "S-VAR-DELETE"
+      ],
+      "family": null,
+      "observer": null,
+      "transition": null,
+      "rules": [
+        {
+          "name": "synthetic-turn-start-observer",
+          "event": "before_agent",
+          "effects": [
+            {
+              "type": "observe",
+              "category": "synthetic",
+              "message": "turn start"
+            }
+          ]
+        }
+      ],
+      "variables": {
+        "_blocked_turn_end_pending": true,
+        "stop_attempts": 2
+      },
+      "event": {
+        "type": "before_agent",
+        "data": {
+          "prompt": "synthetic prompt"
+        },
+        "metadata": {}
+      },
+      "seam_failures": [],
+      "expect": {
+        "outcome_class": "allow",
+        "eager_variable_delta": {
+          "project": {
+            "name": "Unknown",
+            "id": "unknown",
+            "path": ""
+          },
+          "_gobby_feedback_survey_active": false,
+          "consecutive_tool_blocks": 0,
+          "_last_blocked_tool": "",
+          "_last_blocked_rule_name": "",
+          "_last_blocked_reason": "",
+          "_last_blocked_recovery_conditions": [],
+          "_last_blocked_batch_counted": false,
+          "tool_block_pending": false,
+          "servers_listed": true,
+          "_observations": [
+            {
+              "category": "synthetic",
+              "message": "turn start",
+              "timestamp": "<volatile>",
+              "rule": "synthetic-turn-start-observer"
+            }
+          ]
+        },
+        "on_receipt_payload": null,
+        "effect_log": [
+          {
+            "event": "before_agent"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "observe",
+            "delivery": "eager",
+            "rule": "synthetic-turn-start-observer"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
+            "outcome": "ok"
+          }
+        ],
+        "audit_records": [
+          {
+            "rule": "synthetic-turn-start-observer",
+            "result": "allow",
+            "event": "before_agent"
+          }
+        ],
+        "response": {
+          "metadata": {
+            "mcp_calls": [
+              {
+                "server": "_proxy",
+                "tool": "list_mcp_servers",
+                "arguments": {
+                  "name_filter": "gobby-*"
+                },
+                "inject_result": true
+              }
+            ]
+          }
+        },
+        "eager_variable_deletions": [
+          "_blocked_turn_end_pending"
+        ]
+      }
+    }
+  ]
+}
