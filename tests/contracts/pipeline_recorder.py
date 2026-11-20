@@ -5,7 +5,8 @@ staging scopes the route opens, on a worker thread beside a running event loop, 
 ``HookManager`` built on an isolated test-hub schema. The input is the provider's native hook
 payload, so the real adapter translation runs before ``HookManager.handle``. A case may carry
 setup deliveries (run first, not recorded) and synthetic rule rows seeded through
-``RuleDefinitionManager``.
+``RuleDefinitionManager``. A setup delivery inherits the case's other keys but never its
+``payload`` or ``event`` (``pipeline_corpus.setup_delivery``).
 
 Every collaborator kind the manifest names is wrapped in a recording proxy where it is injected:
 the ``EventHandlers`` keyword arguments, and the manager's memory manager, webhook dispatcher and
@@ -61,6 +62,7 @@ from gobby.hooks.webhooks import WebhookDispatcher
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils import machine_id as machine_id_module
+from tests.contracts.pipeline_corpus import setup_delivery
 from tests.contracts.rules_recorder import (
     FIXED_TIMESTAMP,
     _hub_database,
@@ -462,7 +464,9 @@ async def _run(db: PostgresHubDatabase, case: Mapping[str, Any], project: str) -
         try:
             for setup in case.get("setup", []):
                 await asyncio.wait_for(
-                    asyncio.to_thread(_deliver, manager, {**case, **setup}, project, loop),
+                    asyncio.to_thread(
+                        _deliver, manager, setup_delivery(case, setup), project, loop
+                    ),
                     WORKER_TIMEOUT_SECONDS,
                 )
             log.recording = True

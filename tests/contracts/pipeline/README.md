@@ -19,10 +19,22 @@ pipeline reads.
   lives only in `failing_collaborator` and `failure`; removing those keys leaves the healthy
   twin, whose outcome differs. A collaborator that is injected but never read (`call_tool`)
   has a failing case too: it records the healthy response, and the reach check makes the
-  case's handler read the collaborator, which must change the outcome.
+  case's handler read the collaborator, which must change the outcome. A guard parses every
+  source under `src/gobby/hooks` and fails on any read of the stored attribute: an attribute
+  load on any object, or a `getattr` with the literal name. A store, the annotation and a
+  mention in a docstring or comment are not reads. A reader of the private attribute outside
+  `src/gobby/hooks` is outside the guard.
 
 Each case may carry `setup` deliveries, run with recording off, that bring the session to the
-state the case needs. `expect` holds the event type, the non-default response fields, the
+state the case needs. A setup delivery inherits the case's other keys but never the case's own
+`payload` or `event`, so it delivers exactly what it names.
+
+The loader requires every delivery, the case's own and each setup delivery, to start from a
+non-empty native provider payload with a `source` the route's adapter table holds and a
+`hook_type` that adapter's `EVENT_MAP` maps. Only an event type no routed adapter produces is
+delivered as `event` with a `reason`, and no delivery carries both. The `git` adapter has no
+`EVENT_MAP`, so no pipeline case can deliver through it; none does, and the adapter corpus
+covers it. `expect` holds the event type, the non-default response fields, the
 adapter's native output, the collaborator reads in the order they ran and, when the delivery raised, the
 exception type. Placeholders `<project>` and `<machine>` are filled at replay time with a
 temporary checkout and the hub's pinned machine id; outputs are scrubbed of timestamps, UUIDs

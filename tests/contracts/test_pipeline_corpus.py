@@ -15,6 +15,7 @@ Every rule a case carries is a synthetic definition written in the case.
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import inspect
 import json
@@ -102,8 +103,12 @@ FAILURE_INJECTION_KEYS = ("failing_collaborator", FAILURE_KEY)
 BROKEN_PATH = "corpus reach check: production path broken"
 
 
-class _PathBrokenError(Exception):
-    """Raised by a production path the reach checks have stubbed out."""
+class _PathBrokenError(BaseException):
+    """Raised by a production path the reach checks have stubbed out.
+
+    It derives from ``BaseException`` so no ``except Exception`` handler in the hook manager,
+    the handlers or the recorder can swallow it and hide that the stubbed path ran.
+    """
 
 
 def _broken(*_args: object, **_kwargs: object) -> NoReturn:
@@ -237,19 +242,29 @@ def test_pipeline_corpus_has_required_cases() -> None:
 def _unread_collaborator_reads(root: Path, attributes: Mapping[str, str]) -> list[str]:
     """Return ``file:line`` for each read of an unread collaborator's attribute under ``root``.
 
-    ``attributes`` maps each collaborator kind to the handler attribute that stores it. A plain
-    store of the injected kind and the attribute's declaration are not reads.
+    ``attributes`` maps each collaborator kind to the handler attribute that stores it. The scan
+    reads the syntax tree: a read is an attribute access of that name in load context, on any
+    object, or a ``getattr`` call with the name as a literal. A store, the attribute's
+    annotation and a mention in a docstring or comment are not reads.
     """
+    names = set(attributes.values())
     reads: list[str] = []
     for path in sorted(root.rglob("*.py")):
-        for number, line in enumerate(path.read_text().splitlines(), start=1):
-            for kind, attribute in attributes.items():
-                stripped = line.strip()
-                stored = stripped == f"self.{attribute} = {kind}"
-                declared = stripped.startswith(f"{attribute}:")
-                if re.search(rf"\b{attribute}\b", line) and not (stored or declared):
-                    reads.append(f"{path.relative_to(root)}:{number}")
-    return reads
+        for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            if isinstance(node, ast.Attribute):
+                if node.attr in names and isinstance(node.ctx, ast.Load):
+                    reads.append(f"{path.relative_to(root)}:{node.lineno}")
+            elif isinstance(node, ast.Call):
+                fetched = (
+                    isinstance(node.func, ast.Name)
+                    and node.func.id == "getattr"
+                    and len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Constant)
+                    and node.args[1].value in names
+                )
+                if fetched:
+                    reads.append(f"{path.relative_to(root)}:{node.lineno}")
+    return sorted(set(reads))
 
 
 def test_unread_collaborators_stay_unread() -> None:

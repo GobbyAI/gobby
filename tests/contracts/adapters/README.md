@@ -13,13 +13,18 @@ provider's output.
   - `outbound`: a `HookResponse` (`response`) for one hook type, run through
     `translate_from_hook_response`. Each hook type in a source's capability table has a case
     that sets every field the table declares for it, and each hook that declares
-    `permission_decision` also has a deny case. `system_message` is set on many cases;
-    `modify_args`, which no capability row declares, is set on
-    `agy-out-PreToolUse-modify-args`, whose output shows that AGY drops it. Only the abstract
-    ACP base adapter writes `modify_args` into its output (for `BeforeModel` and
+    `permission_decision` also has a deny case. `expect.output` is the provider output.
+  - `system_message` is the adapter-owned response field. It is covered only by an outbound
+    case that sets it to a non-null value the adapter emits: the recorded output must differ
+    from the replay of the same case with the field removed. A null value, or a case whose
+    adapter drops the field, does not count.
+  - `modify_args` is unrouted: a writer exists in production, but no routed adapter reaches
+    it. Only the abstract ACP base adapter writes it into its output (for `BeforeModel` and
     `BeforeToolSelection`); its `source` raises, and the hooks route builds no adapter that
-    reaches that branch, so no routed adapter emits the field. `expect.output` is the provider
-    output.
+    reaches that branch. It is required by no coverage check. A guard replays every routed
+    source and hook type with and without the field and fails if any output changes, and it
+    proves it can fail on a synthetic ACP subclass that routes the model hooks.
+    `agy-out-PreToolUse-modify-args` stays as a recorded drop and satisfies no requirement.
   Inbound payloads use the field names of the captured payloads in
   `tests/fixtures/provider_contracts/<source>/` where a capture exists for the hook type.
 - `cases/node_origin.json`: one payload per node-origin branch that skips a hub-side file

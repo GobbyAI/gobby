@@ -11,11 +11,17 @@ in ``failing_collaborator`` and the failure in ``failure`` (``{"method": ..., "e
 no script entry carries a failure. Removing those two keys leaves the healthy twin. A read the
 script does not list goes to the real collaborator, or answers ``None`` for a stand-in that has
 no real object in the harness, so a twin never fails merely because its script is shorter.
+
+Every delivery, the case's own and each ``setup`` entry, starts from a non-empty native provider
+payload with a ``source`` the route's adapter table holds and a ``hook_type`` that adapter's
+``EVENT_MAP`` maps. Only an event type no routed adapter produces is delivered directly, as
+``event`` with a ``reason``; a delivery never carries both.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +31,41 @@ SYNTHETIC_RULE_PREFIX = "synthetic-"
 # A case delivers either a native provider payload or, for an event type no adapter
 # produces, the hook event itself.
 DELIVERY_KEYS = ("payload", "event")
+
+
+def setup_delivery(case: Mapping[str, Any], setup: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the delivery one ``setup`` entry makes: the entry over the case's other keys.
+
+    The case's own ``payload`` or ``event`` is not inherited, so a setup entry delivers exactly
+    the payload or event it names.
+    """
+    inherited = {key: value for key, value in case.items() if key not in DELIVERY_KEYS}
+    return {**inherited, **setup}
+
+
+def _validate_delivery(case_id: str, delivery: Mapping[str, Any], where: str) -> None:
+    """Require a native provider payload the delivery's source adapter maps, or a direct event."""
+    if all(key in delivery for key in DELIVERY_KEYS):
+        raise ValueError(f"{case_id}: {where} carries both a payload and an event")
+    if "event" in delivery:
+        return
+    payload = delivery.get("payload")
+    if not isinstance(payload, Mapping) or not payload:
+        raise ValueError(f"{case_id}: {where} needs a non-empty native provider payload")
+    if "source" not in delivery:
+        raise ValueError(f"{case_id}: {where} names no source for its payload")
+    from tests.contracts import pipeline_recorder
+
+    source = str(delivery["source"])
+    adapter = pipeline_recorder.ADAPTERS.get(source)
+    if adapter is None:
+        raise ValueError(f"{case_id}: {where} names source {source!r}, which no adapter routes")
+    hook_type = delivery.get("hook_type")
+    if hook_type not in (getattr(adapter, "EVENT_MAP", None) or {}):
+        raise ValueError(
+            f"{case_id}: {where} names hook type {hook_type!r}, which the {source} adapter "
+            "does not map"
+        )
 
 
 def _validate_case(case: dict[str, Any], kinds: set[str], collaborators: set[str]) -> None:
@@ -45,6 +86,9 @@ def _validate_case(case: dict[str, Any], kinds: set[str], collaborators: set[str
         raise ValueError(f"{case_id}: case carries neither a payload nor an event")
     if "event" in case and not case.get("reason"):
         raise ValueError(f"{case_id}: a direct event case must say why no adapter produces it")
+    _validate_delivery(case_id, case, "the case delivery")
+    for index, setup in enumerate(case.get("setup", [])):
+        _validate_delivery(case_id, setup_delivery(case, setup), f"setup delivery {index}")
     if case["kind"] == "collaborator_failure" and not (case.get("failure") or {}).get("method"):
         raise ValueError(f"{case_id}: a collaborator failure must name the failing method")
     for rule in case.get("rules", []):

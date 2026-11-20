@@ -221,7 +221,7 @@
   },
   "response_field_owners": {
     "system_message": "adapters",
-    "modify_args": "adapters",
+    "modify_args": "unrouted",
     "trigger_action": "none"
   },
   "platform_record": {
