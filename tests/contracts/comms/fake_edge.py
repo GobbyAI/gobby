@@ -5,17 +5,22 @@ terminates TLS with a test certificate authority, mints a leaf certificate for e
 demand, answers each request from the scripts in ``edge/`` and never forwards upstream. An IMAP
 server with implicit TLS and an SMTP server with STARTTLS serve the email adapter's mailbox.
 
-Every request through the proxy is logged, in arrival order, as host, method, path and its
-sanitized ``semantic`` fields (``http_semantics``): the destination, the message text, the
-attachment filename and the SHA-256 of the uploaded bytes. Headers and raw bodies are never
-logged, so no request credential reaches the log. A request whose head the edge cannot read,
-whose target it cannot parse, whose body it cannot read or whose payload it cannot decode is
-still logged, with empty semantic fields and a ``decode_error`` marker naming the stage and the
-error type, never the error message. What such a request never revealed, and a target that
-cannot be parsed, is logged as a fixed placeholder. A tunnel that carries no byte of a request
-logs nothing, and the CONNECT itself is not logged. A Telegram bot token in a path is replaced
-before the log keeps the path. Any host or path no script names answers HTTP 200 with a
-generic JSON body.
+Every request through the proxy is logged in the order the requests begin. A request begins at
+its first byte, when the edge appends a pending hit (the host, placeholder method and path, empty
+semantic fields and a ``pending`` marker) tagged with the log's generation. When the request
+completes, the edge replaces that same hit with host, method, path and the sanitized
+``semantic`` fields (``http_semantics``): the destination, the message text, the attachment
+filename and the SHA-256 of the uploaded bytes. A completion whose generation a ``clear`` has
+since ended is discarded, so the window it began in saw it as pending and no later window sees
+it. Headers and raw bodies are never logged, so no request credential reaches the log. A request
+whose head the edge cannot read (including a peer that ends the stream inside it), whose target
+it cannot parse, whose body it cannot read or whose payload it cannot decode completes with empty
+semantic fields and a ``decode_error`` marker naming the stage and the error type, never the
+error message. What such a request never revealed, and a target that cannot be parsed, is logged
+as a fixed placeholder. A tunnel that carries no byte of a request, fresh or reused, logs
+nothing, and the CONNECT itself is not logged. A Telegram bot token in a path is replaced before
+the log keeps the path. Any host or path no script names answers HTTP 200 with a generic JSON
+body.
 """
 
 from __future__ import annotations
@@ -317,11 +322,6 @@ class _Authority:
             return context
 
 
-def _read_request_line(reader: BinaryIO) -> str:
-    """One request line without its line ending."""
-    return reader.readline(MAX_LINE_BYTES).decode("latin-1").rstrip("\r\n")
-
-
 def _read_headers(reader: BinaryIO) -> dict[str, str]:
     """The header block after a request line, with names lowercased."""
     headers: dict[str, str] = {}
@@ -331,6 +331,34 @@ def _read_headers(reader: BinaryIO) -> dict[str, str]:
             return headers
         name, _, value = line.decode("latin-1").partition(":")
         headers[name.strip().lower()] = value.strip()
+
+
+def _read_head_line(reader: BinaryIO) -> bytes:
+    """One whole line of a tunnelled request head, refusing a head the peer ends inside."""
+    line = reader.readline(MAX_LINE_BYTES)
+    if line.endswith(b"\n"):
+        return line
+    if len(line) >= MAX_LINE_BYTES:
+        raise ValueError("a request head line exceeds the line limit")
+    raise EOFError("the peer ended the stream inside the request head")
+
+
+def _read_request_head(reader: BinaryIO) -> tuple[str, dict[str, str]]:
+    """A tunnelled request's line and its headers, names lowercased, ended by a blank line."""
+    request_line = _read_head_line(reader).decode("latin-1").rstrip("\r\n")
+    headers: dict[str, str] = {}
+    while (line := _read_head_line(reader)) not in (b"\r\n", b"\n"):
+        name, _, value = line.decode("latin-1").partition(":")
+        headers[name.strip().lower()] = value.strip()
+    return request_line, headers
+
+
+@dataclass(frozen=True)
+class _Slot:
+    """The hit a request registered at its first byte and the log generation it belongs to."""
+
+    hit: dict[str, Any]
+    generation: int
 
 
 def _read_head(reader: BinaryIO) -> tuple[str, dict[str, str]] | None:
@@ -411,6 +439,7 @@ class FakeEdge:
         self._listeners: dict[str, socket.socket] = {}
         self._addresses: dict[str, tuple[str, int]] = {}
         self._hits: list[dict[str, Any]] = []
+        self._generation = 0
         self._hits_lock = threading.Lock()
         self._closing = False
 
@@ -459,17 +488,40 @@ class FakeEdge:
         return self._root / CA_FILE
 
     def hits(self) -> list[dict[str, Any]]:
-        """Every arrival since the last clear, in arrival order: host, method, path, semantic.
+        """A detached snapshot of every request begun in this generation, in the order they began.
 
-        An arrival the edge could not decode also carries its ``DECODE_ERROR_KEY`` marker.
+        Each hit is host, method, path and semantic. A request still in flight carries
+        ``PENDING_KEY`` as True with placeholder method and path; a completed one the edge could
+        not decode carries its ``DECODE_ERROR_KEY`` marker. A later completion never changes a
+        snapshot already returned.
         """
         with self._hits_lock:
             return [{**hit, "semantic": dict(hit["semantic"])} for hit in self._hits]
 
     def clear(self) -> None:
-        """Forget every arrival so far."""
+        """End the current generation and empty the log, atomically under the log lock.
+
+        A request that began before the clear completes into nothing. A clear of a log that no
+        request has entered keeps the generation, so several captures that enter one after
+        another for the same case share one generation.
+        """
         with self._hits_lock:
-            self._hits.clear()
+            if self._hits:
+                self._generation += 1
+                self._hits = []
+
+    def _begin(self, host: str) -> _Slot:
+        """Append the pending hit of a request whose first byte has arrived, in this generation."""
+        hit: dict[str, Any] = {
+            "host": host,
+            "method": UNKNOWN_FIELD,
+            "path": UNKNOWN_FIELD,
+            "semantic": empty_semantic(),
+            PENDING_KEY: True,
+        }
+        with self._hits_lock:
+            self._hits.append(hit)
+            return _Slot(hit=hit, generation=self._generation)
 
     def _accept_forever(
         self, listener: socket.socket, handler: Callable[[socket.socket], None]
@@ -498,25 +550,28 @@ class FakeEdge:
             return script.default
         return UNSCRIPTED_REPLY
 
-    def _log(
+    def _complete(
         self,
-        host: str,
+        slot: _Slot,
         method: str,
         path: str,
         semantic: dict[str, str],
         decode_error: str | None = None,
     ) -> None:
-        logged = TELEGRAM_BOT_PATH.sub(TELEGRAM_BOT_MARKER, path)
-        hit: dict[str, Any] = {
-            "host": host,
+        """Replace a request's pending hit in its slot, or discard it if its generation ended."""
+        final: dict[str, Any] = {
+            "host": slot.hit["host"],
             "method": method,
-            "path": logged,
+            "path": TELEGRAM_BOT_PATH.sub(TELEGRAM_BOT_MARKER, path),
             "semantic": dict(semantic),
         }
         if decode_error is not None:
-            hit[DECODE_ERROR_KEY] = decode_error
+            final[DECODE_ERROR_KEY] = decode_error
         with self._hits_lock:
-            self._hits.append(hit)
+            if slot.generation != self._generation:
+                return
+            slot.hit.clear()
+            slot.hit.update(final)
 
     def _serve_proxy_client(self, conn: socket.socket) -> None:
         assert self._authority is not None
@@ -553,25 +608,28 @@ class FakeEdge:
     def _serve_request(self, tls: ssl.SSLSocket, reader: io.BufferedReader, host: str) -> bool:
         """Answer one tunnelled request; False when the tunnel closes after it.
 
-        A request begins with its first byte. A tunnel that ends, idles out or resets before
-        one carries no request and logs nothing. Every request that begins is logged exactly
-        once, in the ``finally`` that every later exit passes through. A failure at any stage
-        (head read, target parse, body read, payload decode) leaves empty semantic fields and a
-        marker naming that stage and the error type. Until the head is read the method and path
-        are ``UNKNOWN_FIELD``; a target that cannot be parsed is logged as ``UNPARSEABLE_PATH``.
+        A request begins with its first byte, even a partial request line: the edge appends its
+        pending hit before reading anything more, then calls ``on_request_begin``. A tunnel that
+        ends, idles out or resets before a first byte, fresh or reused, carries no request and
+        logs nothing. A request that began completes exactly once, replacing its pending hit in
+        place when its generation is still current. A failure at any stage (head read, a peer
+        that ends the stream inside the head, target parse, body read, payload decode) completes
+        it with empty semantic fields and a marker naming that stage and the error type. Until
+        the whole head is read the method and path are ``UNKNOWN_FIELD``; a target that cannot
+        be parsed is logged as ``UNPARSEABLE_PATH``.
         """
         if not reader.peek(1):
             return False
-        if self._on_request_begin is not None:
-            self._on_request_begin(host)
+        slot = self._begin(host)
         method = path = UNKNOWN_FIELD
         headers: dict[str, str] = {}
         semantic = empty_semantic()
         stage = "head"
         failure: Exception | None = None
         try:
-            request_line = _read_request_line(reader)
-            headers = _read_headers(reader)
+            if self._on_request_begin is not None:
+                self._on_request_begin(host)
+            request_line, headers = _read_request_head(reader)
             method, _, rest = request_line.partition(" ")
             target = rest.rpartition(" ")[0] or rest
             stage = "target"
@@ -582,14 +640,15 @@ class FakeEdge:
             body = _read_body(reader, headers)
             stage = "payload"
             semantic = http_semantics(method, path, headers, body)
-        except Exception as error:  # every failure is logged by stage; see the finally
+        except Exception as error:  # every failure completes the request with its stage marker
             failure = error
         finally:
+            # An exception the handler does not catch still resolves the pending hit.
             raised = failure or sys.exception()
             if raised is None:
-                self._log(host, method, path, semantic)
+                self._complete(slot, method, path, semantic)
             else:
-                self._log(host, method, path, empty_semantic(), _decode_error(stage, raised))
+                self._complete(slot, method, path, empty_semantic(), _decode_error(stage, raised))
         if failure is not None and stage != "payload":
             # The framing is lost, so the tunnel closes after the logged arrival.
             return False

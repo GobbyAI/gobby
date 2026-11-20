@@ -24,7 +24,7 @@ from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.secrets import SecretStore
 from tests.contracts import http_corpus
-from tests.contracts.comms.fake_edge import DECODE_ERROR_KEY
+from tests.contracts.comms.fake_edge import DECODE_ERROR_KEY, PENDING_KEY
 
 # The quiet period and the cap that bound every capture window. The recorder's other channels
 # drain with the same values.
@@ -210,9 +210,10 @@ class ProviderEdgeCapture:
     uploaded bytes. An arrival logged with no ``semantic`` (an edge that keeps signatures only)
     is captured as its signature, which then differs from a recording that carries semantics.
     An arrival the edge could not decode keeps its ``DECODE_ERROR_KEY`` marker, so it differs
-    from a well-formed request that sends no semantic field. Entering the capture clears the
-    edge log, so the window holds only the arrivals its request makes. Headers and raw bodies
-    are never kept.
+    from a well-formed request that sends no semantic field. A request still in flight keeps its
+    ``PENDING_KEY`` marker, so it differs from any recording and is refused by the recorder.
+    Entering the capture clears the edge log, which ends the edge's previous generation, so the
+    window holds only the requests that begin inside it. Headers and raw bodies are never kept.
     """
 
     def __init__(self, edge: ProviderEdgeLog, hosts: Sequence[str]) -> None:
@@ -227,31 +228,58 @@ class ProviderEdgeCapture:
         """The log is left as the request left it, for ``drain`` to read."""
 
     def hits(self) -> list[dict[str, Any]]:
+        """A detached snapshot of the listed hosts' hits in the edge log, in the order they began."""
         return [
             {
                 "host": arrival["host"],
                 "method": arrival["method"],
                 "path": arrival["path"],
                 **({"semantic": dict(arrival["semantic"])} if "semantic" in arrival else {}),
-                **(
-                    {DECODE_ERROR_KEY: arrival[DECODE_ERROR_KEY]}
-                    if DECODE_ERROR_KEY in arrival
-                    else {}
-                ),
+                **{key: arrival[key] for key in (DECODE_ERROR_KEY, PENDING_KEY) if key in arrival},
             }
             for arrival in self._edge.hits()
             if arrival["host"] in self._hosts
         ]
 
     def drain(self) -> list[dict[str, Any]]:
-        """Return the listed hits once the log is quiet for the quiet period, or at the cap."""
+        """Return a detached snapshot of the listed hits once they settle, or at the cap.
+
+        The listed hits settle when neither their count nor how many of them are pending has
+        changed for the quiet period and none is pending. A pending hit keeps the drain waiting
+        up to the cap, which then returns the snapshot with its pending marker. Hits for other
+        hosts neither delay nor enter the capture.
+        """
         started = time.monotonic()
-        seen, last_change = len(self._edge.hits()), started
+        snapshot = self.hits()
+        state, last_change = _settle_state(snapshot), started
         while True:
             time.sleep(0.05)
             now = time.monotonic()
-            count = len(self._edge.hits())
-            if count != seen:
-                seen, last_change = count, now
-            if now - last_change >= CAPTURE_QUIET_SECONDS or now - started >= CAPTURE_CAP_SECONDS:
-                return self.hits()
+            snapshot = self.hits()
+            current = _settle_state(snapshot)
+            if current != state:
+                state, last_change = current, now
+            quiet = now - last_change >= CAPTURE_QUIET_SECONDS and state[1] == 0
+            if quiet or now - started >= CAPTURE_CAP_SECONDS:
+                return snapshot
+
+
+def _settle_state(snapshot: Sequence[Mapping[str, Any]]) -> tuple[int, int]:
+    """The hits in a capture snapshot and how many of them are still pending."""
+    return len(snapshot), sum(1 for hit in snapshot if hit.get(PENDING_KEY) is True)
+
+
+def refuse_pending_captures(case_name: str, side_effects: Sequence[Any]) -> None:
+    """Refuse to record a case whose captures hold a request that was still in flight.
+
+    A pending hit records only that a request began, not what it sent, so writing it as a golden
+    value would pin an unfinished request.
+    """
+    for index, items in enumerate(side_effects):
+        if not isinstance(items, list):
+            continue
+        if any(isinstance(item, Mapping) and item.get(PENDING_KEY) is True for item in items):
+            raise RecorderError(
+                f"{case_name}: side effect {index} captured a provider request still in flight "
+                "at the capture cap; it cannot be recorded"
+            )

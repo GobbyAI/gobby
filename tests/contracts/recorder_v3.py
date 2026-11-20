@@ -60,6 +60,7 @@ from tests.contracts.recorder_v3_support import (
     ProviderEdgeLog,
     recorded_db_delta,
     recorder_credential_headers,
+    refuse_pending_captures,
     send_mcp_rest,
 )
 from tests.contracts.recorder_v3_support import RecorderError as RecorderError
@@ -941,11 +942,15 @@ def record_template(
     scratch: Path,
     edge: ProviderEdgeLog | None = None,
 ) -> dict[str, Any]:
-    """Run one raw template and return the recorded case, keys in the frozen order."""
+    """Run one raw template and return the recorded case, keys in the frozen order.
+
+    A capture that holds a provider request still in flight is refused, never recorded.
+    """
     case = copy.deepcopy(dict(template))
     observation, _window = _run_case(
         run, daemon, case, operator=operator, scratch=scratch, edge=edge
     )
+    refuse_pending_captures(str(case.get("name", "")), observation.side_effects)
     if "waiver" in case and str(case["waiver"]).endswith(".native-extension"):
         case.pop("response", None)
     else:
