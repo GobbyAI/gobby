@@ -3,13 +3,13 @@
 use anyhow::{Context, Result, ensure};
 use futures_util::FutureExt;
 use gobby_core::postgres_pool::{Pool, PoolSettings};
-use gobby_daemon::lifecycle::shutdown_intent::{Intent, IntentMarker};
+use gobby_daemon::lifecycle::shutdown_intent::{ExitReadHold, Intent, IntentMarker};
 use gobby_daemon::{
     lease::{ActiveDaemonLease, LeaseMode, NamedLock},
     lifecycle::{
         backend::{
-            BackendConfig, BackendStatus, BackendSupervisor, LeaseScoped, SupervisorExit,
-            crash_delay,
+            BackendConfig, BackendStatus, BackendSupervisor, HEARTBEAT_LOCK_LIMIT, LeaseScoped,
+            SupervisorExit, crash_delay,
         },
         pid_file::{Role, claim_pid_file},
     },
@@ -47,6 +47,7 @@ use gobby_daemon::state::RuntimeState;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use tokio::sync::Notify;
+use tokio::sync::mpsc::UnboundedReceiver;
 
 /// The repo's synced `.venv`. A cold managed env makes `uv run` sync the whole project inside
 /// the test deadline.
@@ -2768,6 +2769,549 @@ async fn the_supervised_lifetime_admits_only_after_a_heartbeat_on_the_lease_sess
             "the failed admission released or discarded the lease session"
         );
         held.release().await
+    })
+    .await
+}
+
+/// Appends `a` to `starts`, writes its PID to `ready`, then polls every 10 ms for `leave` and
+/// exits 1. It writes no intent, so its exit is a crash.
+const EXITS_WHEN_TOLD: &str = r#"import os,pathlib,time
+home=pathlib.Path(os.environ['GOBBY_HOME']); p=home/'starts'
+p.write_text((p.read_text() if p.exists() else '')+'a')
+(home/'ready').write_text(str(os.getpid()))
+while not (home/'leave').exists(): time.sleep(.01)
+raise SystemExit(1)
+"#;
+
+/// A supervisor on an acquired lease, with the handles the lease lock wait tests read.
+struct Supervised {
+    home: TempDir,
+    lease: Arc<NamedLock<ActiveDaemonLease>>,
+    observer: watch::Receiver<LeaseState>,
+    application: String,
+    supervisor: BackendSupervisor,
+    /// Every line the supervisor reports, a lease lock wait's included.
+    lines: UnboundedReceiver<String>,
+}
+
+/// Builds a [`Supervised`] with a 100 ms heartbeat and a `TERM_GRACE` drain, applying `tune`
+/// last.
+async fn supervised(
+    db: &TestDb,
+    machine: &str,
+    script: &str,
+    tune: impl FnOnce(&mut BackendConfig),
+) -> Result<Supervised> {
+    let home = TempDir::new()?;
+    let mut lease = db.lease(machine)?;
+    ensure!(lease.try_acquire().await?, "fixture must hold lease");
+    let application = lease.application_name().to_owned();
+    let observer = lease.subscribe();
+    let lease = Arc::new(NamedLock::new(lease));
+    let claim =
+        claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("PID claim")?;
+    let argv = backend_argv(script)?;
+    let mut config = backend_config(home.path(), &argv)?;
+    config
+        .environment
+        .insert("HOME".into(), home.path().as_os_str().to_owned());
+    config.drain_timeout = TERM_GRACE;
+    config.heartbeat_interval = Duration::from_millis(100);
+    let (line_tx, lines) = tokio::sync::mpsc::unbounded_channel::<String>();
+    config.reporter = Arc::new(move |line: &str| {
+        let _ = line_tx.send(line.to_owned());
+    });
+    tune(&mut config);
+    let supervisor = BackendSupervisor::with_lease(Some(Arc::clone(&lease)), claim, config);
+    Ok(Supervised {
+        home,
+        lease,
+        observer,
+        application,
+        supervisor,
+        lines,
+    })
+}
+
+/// A startup budget far above the supervised heartbeat's own lock bound, and a report each
+/// 100 ms, so a lease lock wait is reported almost at once.
+fn long_lock_budget(config: &mut BackendConfig) {
+    config.lease_lock_limit = Duration::from_secs(30);
+    config.report_interval = Duration::from_millis(100);
+}
+
+/// Waits until the supervisor reports a wait on the lease lock the test holds, which shows
+/// that a heartbeat is queued on it. The bound is a hang guard.
+async fn wait_for_lock_wait(lines: &mut UnboundedReceiver<String>) -> Result<()> {
+    timeout(Duration::from_secs(5), async {
+        while let Some(line) = lines.recv().await {
+            if line.contains("lease lock held by test lease holder") {
+                return Ok(());
+            }
+        }
+        anyhow::bail!("the reporter closed before a lease lock wait was reported")
+    })
+    .await
+    .context("no lease lock wait was reported")?
+}
+
+/// A hold on the marker read after an exit: the sender that sets it, the signal that the
+/// supervisor is parked in the read, and the hold to pass to `hold_exit_reads`.
+fn exit_read_hold() -> (watch::Sender<bool>, Arc<Notify>, ExitReadHold) {
+    let (held, receiver) = watch::channel(false);
+    let parked = Arc::new(Notify::new());
+    let hold = ExitReadHold {
+        held: receiver,
+        parked: Arc::clone(&parked),
+    };
+    (held, parked, hold)
+}
+
+/// Lease-scoped work whose end signals `ending` and then waits for `proceed`.
+struct PausesAtEnd {
+    ending: Arc<Notify>,
+    proceed: Arc<Notify>,
+}
+
+impl LeaseScoped for PausesAtEnd {
+    fn admit(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn end(&mut self, _: Option<SupervisorExit>) -> impl Future<Output = ()> + Send {
+        let (ending, proceed) = (Arc::clone(&self.ending), Arc::clone(&self.proceed));
+        // `notify_one` stores a permit, so neither side can miss the other.
+        async move {
+            ending.notify_one();
+            proceed.notified().await;
+        }
+    }
+}
+
+/// Whether the process `pid` is gone within `bound`, probed every 10 ms.
+async fn gone_within(pid: i32, bound: Duration) -> bool {
+    timeout(bound, async {
+        // SAFETY: signal zero only probes the PID this test's backend wrote.
+        while unsafe { libc::kill(pid, 0) } == 0 {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
+/// Whether the lease watch reads `state` within `bound`.
+async fn lease_within(
+    observer: &mut watch::Receiver<LeaseState>,
+    bound: Duration,
+    state: LeaseState,
+) -> bool {
+    timeout(bound, observer.wait_for(|current| *current == state))
+        .await
+        .is_ok_and(|seen| seen.is_ok())
+}
+
+/// Whether the backend status satisfies `predicate` within `bound`.
+async fn status_within(
+    status: &mut watch::Receiver<BackendStatus>,
+    bound: Duration,
+    predicate: impl Fn(&BackendStatus) -> bool,
+) -> bool {
+    timeout(bound, status.wait_for(|current| predicate(current)))
+        .await
+        .is_ok_and(|seen| seen.is_ok())
+}
+
+/// Whether `path` is written within `bound`.
+async fn file_within(path: &Path, bound: Duration) -> bool {
+    timeout(bound, wait_for_file(path))
+        .await
+        .is_ok_and(|read| read.is_ok())
+}
+
+#[tokio::test]
+async fn a_lease_lock_wait_in_the_pre_release_heartbeat_does_not_hold_the_worker_drain()
+-> Result<()> {
+    database_case(async |db| {
+        let run = supervised(db, "drain-lock-wait-owner", IGNORE_TERM, |config| {
+            config.lease_lock_limit = Duration::from_secs(10);
+        })
+        .await?;
+        let mut supervisor = run.supervisor;
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        let pid: i32 = wait_for_file(&run.home.path().join("ready"))
+            .await?
+            .parse()?;
+        let stopped_at = Instant::now();
+        stop.send(true)?;
+        // The TERM marker shows the drain is running before the lock is taken.
+        wait_for_file(&run.home.path().join("term")).await?;
+        let held = run.lease.lock_as("test lease holder").await;
+
+        let gone = gone_within(
+            pid,
+            Duration::from_secs(6).saturating_sub(stopped_at.elapsed()),
+        )
+        .await;
+        assert!(
+            gone,
+            "the backend outlived its drain bound while a heartbeat waited on the lease lock"
+        );
+        drop(held);
+        assert_eq!(
+            timeout(Duration::from_secs(30), task).await???,
+            SupervisorExit::Stopped
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_shutdown_while_a_heartbeat_waits_on_the_lease_lock_sends_term_at_once() -> Result<()> {
+    database_case(async |db| {
+        let mut run = supervised(
+            db,
+            "shutdown-lock-wait-owner",
+            IGNORE_TERM,
+            long_lock_budget,
+        )
+        .await?;
+        let mut supervisor = run.supervisor;
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        let pid: i32 = wait_for_file(&run.home.path().join("ready"))
+            .await?
+            .parse()?;
+        let held = run.lease.lock_as("test lease holder").await;
+        let held_at = Instant::now();
+        wait_for_lock_wait(&mut run.lines).await?;
+        let stopped_at = Instant::now();
+        stop.send(true)?;
+
+        let term = file_within(&run.home.path().join("term"), Duration::from_secs(3)).await;
+        assert!(
+            term,
+            "no TERM reached the backend within 3 s of a stop sent during a lease lock wait"
+        );
+        let gone = gone_within(
+            pid,
+            (TERM_GRACE + Duration::from_secs(3)).saturating_sub(stopped_at.elapsed()),
+        )
+        .await;
+        assert!(
+            gone,
+            "the backend outlived its drain bound while a heartbeat waited on the lease lock"
+        );
+        let lost = lease_within(
+            &mut run.observer,
+            (HEARTBEAT_LOCK_LIMIT + Duration::from_secs(3)).saturating_sub(held_at.elapsed()),
+            LeaseState::Lost,
+        )
+        .await;
+        assert!(
+            lost,
+            "the lease watch did not read Lost at the heartbeat's own lock bound"
+        );
+        drop(held);
+        assert_eq!(
+            timeout(Duration::from_secs(30), task).await???,
+            SupervisorExit::Stopped
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_worker_exit_is_seen_while_a_heartbeat_waits_on_the_lease_lock() -> Result<()> {
+    database_case(async |db| {
+        let mut run = supervised(
+            db,
+            "exit-lock-wait-owner",
+            EXITS_WHEN_TOLD,
+            long_lock_budget,
+        )
+        .await?;
+        let mut status = run.supervisor.subscribe();
+        let mut supervisor = run.supervisor;
+        let (_stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        wait_for_file(&run.home.path().join("ready")).await?;
+        let held = run.lease.lock_as("test lease holder").await;
+        let held_at = Instant::now();
+        wait_for_lock_wait(&mut run.lines).await?;
+        fs::write(run.home.path().join("leave"), "leave")?;
+
+        let backoff = status_within(&mut status, Duration::from_secs(3), |current| {
+            matches!(current, BackendStatus::Backoff { .. })
+        })
+        .await;
+        assert!(
+            backoff,
+            "the worker's exit was not acted on while a heartbeat waited on the lease lock: {:?}",
+            *status.borrow()
+        );
+        let lost = lease_within(
+            &mut run.observer,
+            (HEARTBEAT_LOCK_LIMIT + Duration::from_secs(3)).saturating_sub(held_at.elapsed()),
+            LeaseState::Lost,
+        )
+        .await;
+        assert!(
+            lost,
+            "the lease watch did not read Lost at the heartbeat's own lock bound"
+        );
+        assert_eq!(
+            fs::read_to_string(run.home.path().join("starts"))?,
+            "a",
+            "a worker was spawned without a verified heartbeat"
+        );
+        drop(held);
+        assert_eq!(
+            timeout(Duration::from_secs(30), task).await???,
+            SupervisorExit::LeaseLost
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_lease_is_published_lost_before_its_release_waits_on_the_lease_lock() -> Result<()> {
+    database_case(async |db| {
+        let mut run = supervised(db, "release-wait-owner", READY_UNTIL_EOF, |config| {
+            config.lease_lock_limit = Duration::from_secs(30);
+            // No heartbeat is due again once the first has run, so none can be the publisher.
+            config.heartbeat_interval = Duration::from_secs(3600);
+        })
+        .await?;
+        let mut status = run.supervisor.subscribe();
+        let mut supervisor = run.supervisor;
+        let (ending, proceed) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+        let mut scoped = PausesAtEnd {
+            ending: Arc::clone(&ending),
+            proceed: Arc::clone(&proceed),
+        };
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run_ending(rx, &mut scoped).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        wait_for_file(&run.home.path().join("ready")).await?;
+        stop.send(true)?;
+        timeout(Duration::from_secs(30), ending.notified())
+            .await
+            .context("the lifetime never reached its pre-release end")?;
+        let held = run.lease.lock_as("test lease holder").await;
+        ensure!(
+            *run.observer.borrow() == LeaseState::Active,
+            "the lease was not Active at the pre-release end"
+        );
+        proceed.notify_one();
+
+        let lost = lease_within(&mut run.observer, Duration::from_secs(3), LeaseState::Lost).await;
+        assert!(
+            lost,
+            "the lease watch read Active while the release waited on the lease lock"
+        );
+        let stopped = status_within(&mut status, Duration::from_secs(3), |current| {
+            matches!(current, BackendStatus::Stopped)
+        })
+        .await;
+        assert!(stopped, "the lifetime never reached its release");
+        assert!(
+            held.fence().is_none(),
+            "a lease published lost still offers its fence"
+        );
+        let probe = db.lease("release-wait-probe")?;
+        assert_eq!(
+            probe.owner().await?.map(|owner| owner.application_name),
+            Some(run.application.clone()),
+            "the lease session no longer holds the lease lock before its release"
+        );
+        assert!(
+            !task.is_finished(),
+            "the lifetime ended while its release waited on the lease lock"
+        );
+        drop(held);
+        assert_eq!(
+            timeout(Duration::from_secs(30), task).await???,
+            SupervisorExit::Stopped
+        );
+        assert_eq!(*run.observer.borrow(), LeaseState::Standby);
+        assert!(
+            probe.owner().await?.is_none(),
+            "the release left the lease lock held"
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_heartbeat_queued_on_the_lease_lock_is_polled_through_a_pending_marker_read_after_a_worker_exit()
+-> Result<()> {
+    database_case(async |db| {
+        let mut run = supervised(db, "exit-read-owner", EXITS_WHEN_TOLD, long_lock_budget).await?;
+        let (hold, parked, exit_hold) = exit_read_hold();
+        run.supervisor.hold_exit_reads(exit_hold);
+        let mut status = run.supervisor.subscribe();
+        let mut supervisor = run.supervisor;
+        let (_stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        wait_for_file(&run.home.path().join("ready")).await?;
+        let held = run.lease.lock_as("test lease holder").await;
+        wait_for_lock_wait(&mut run.lines).await?;
+        hold.send(true)?;
+        fs::write(run.home.path().join("leave"), "leave")?;
+
+        let in_read = timeout(Duration::from_secs(3), parked.notified())
+            .await
+            .is_ok();
+        assert!(
+            in_read,
+            "the worker's exit was not seen while a heartbeat waited on the lease lock"
+        );
+        drop(held);
+        let returned = timeout(Duration::from_secs(3), run.lease.lock_as("test probe"))
+            .await
+            .is_ok();
+        assert!(
+            returned,
+            "the heartbeat queued on the lease lock was not polled during the marker read"
+        );
+        terminate_lease_session(db, &run.application).await?;
+        let lost = lease_within(&mut run.observer, Duration::from_secs(3), LeaseState::Lost).await;
+        assert!(
+            lost,
+            "a heartbeat that failed beside the marker read did not publish Lost"
+        );
+        assert!(
+            matches!(*status.borrow(), BackendStatus::Stopped),
+            "the marker read ended before its hold was released: {:?}",
+            *status.borrow()
+        );
+        hold.send(false)?;
+        let backoff = status_within(&mut status, Duration::from_secs(3), |current| {
+            matches!(current, BackendStatus::Backoff { .. })
+        })
+        .await;
+        assert!(
+            backoff,
+            "the marker read's own result was not acted on: {:?}",
+            *status.borrow()
+        );
+        assert_eq!(
+            timeout(Duration::from_secs(30), task).await???,
+            SupervisorExit::LeaseLost
+        );
+        assert_eq!(
+            fs::read_to_string(run.home.path().join("starts"))?,
+            "a",
+            "a worker was spawned on a lost lease"
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_heartbeat_queued_on_the_lease_lock_is_polled_through_a_pending_marker_read_after_a_shutdown_drain()
+-> Result<()> {
+    database_case(async |db| {
+        let mut run = supervised(db, "drain-read-owner", IGNORE_TERM, long_lock_budget).await?;
+        let (hold, parked, exit_hold) = exit_read_hold();
+        run.supervisor.hold_exit_reads(exit_hold);
+        let mut supervisor = run.supervisor;
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        wait_for_file(&run.home.path().join("ready")).await?;
+        let held = run.lease.lock_as("test lease holder").await;
+        wait_for_lock_wait(&mut run.lines).await?;
+        hold.send(true)?;
+        stop.send(true)?;
+
+        let in_read = timeout(TERM_GRACE + Duration::from_secs(3), parked.notified())
+            .await
+            .is_ok();
+        assert!(
+            in_read,
+            "the shutdown drain did not reach its marker read while a heartbeat waited on the lease lock"
+        );
+        drop(held);
+        let returned = timeout(Duration::from_secs(3), run.lease.lock_as("test probe"))
+            .await
+            .is_ok();
+        assert!(
+            returned,
+            "the heartbeat queued on the lease lock was not polled during the marker read"
+        );
+        hold.send(false)?;
+        assert_eq!(
+            timeout(Duration::from_secs(30), task).await???,
+            SupervisorExit::Stopped
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_lease_lock_held_for_four_seconds_costs_no_lifetime() -> Result<()> {
+    database_case(async |db| {
+        let mut run = supervised(db, "short-lock-owner", EXITS_WHEN_TOLD, long_lock_budget).await?;
+        let mut supervisor = run.supervisor;
+        let (stop, rx) = watch::channel(false);
+        let task = tokio::spawn(async move { supervisor.run(rx).await });
+        let _abort = AbortOnDrop(task.abort_handle());
+        let pid: i32 = wait_for_file(&run.home.path().join("ready"))
+            .await?
+            .parse()?;
+        run.observer.borrow_and_update();
+        let held = run.lease.lock_as("test lease holder").await;
+        let held_at = Instant::now();
+        wait_for_lock_wait(&mut run.lines).await?;
+        // The lock is held for 4 s from taking it, one status probe's worth and less than the
+        // heartbeat's own lock bound, and the watch is watched for 1 s after it is dropped.
+        let hold = Duration::from_secs(4).saturating_sub(held_at.elapsed());
+        let changed_while_held = timeout(hold, run.observer.changed()).await.is_ok();
+        drop(held);
+        let changed_after = timeout(Duration::from_secs(1), run.observer.changed())
+            .await
+            .is_ok();
+
+        assert!(
+            !changed_while_held && !changed_after,
+            "a 4 s lease lock hold changed the lease watch to {:?}",
+            *run.observer.borrow()
+        );
+        assert_eq!(*run.observer.borrow(), LeaseState::Active);
+        assert_eq!(
+            fs::read_to_string(run.home.path().join("starts"))?,
+            "a",
+            "a 4 s lease lock hold cost the worker"
+        );
+        // SAFETY: signal zero only probes the PID this test's backend wrote.
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            0,
+            "a 4 s lease lock hold cost the worker"
+        );
+        assert!(
+            !task.is_finished(),
+            "a 4 s lease lock hold ended the lifetime"
+        );
+        stop.send(true)?;
+        assert_eq!(
+            timeout(Duration::from_secs(30), task).await???,
+            SupervisorExit::Stopped
+        );
+        Ok(())
     })
     .await
 }

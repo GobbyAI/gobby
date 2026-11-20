@@ -7,7 +7,10 @@ use deadpool_postgres::ClientWrapper;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
-const RECOVERY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bound of one probe or one recovery phase. The supervised heartbeat's lock bound,
+/// `HEARTBEAT_LOCK_LIMIT`, is derived from it: the status probe is the only I/O done under the
+/// lease lock while a lifetime is open.
+pub(crate) const RECOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub(crate) struct FreshLeaseOwner;

@@ -3,9 +3,18 @@
 //! This lives apart from `backend.rs` to keep that file under the 1,000-line ceiling.
 
 use super::{BackendSupervisor, SupervisorExit};
+use crate::lease::standby::RECOVERY_TIMEOUT;
+use crate::lifecycle::shutdown_intent::ExitReadHold;
 use anyhow::Result;
-use std::{future::Future, pin::pin};
+use std::{future::Future, pin::pin, time::Duration};
 use tokio::time::{MissedTickBehavior, interval};
+
+/// Longest a supervised heartbeat waits for the lease lock. While a lifetime is open the only
+/// other I/O done under that lock is the status probe's, bounded by `RECOVERY_TIMEOUT`; this is
+/// that bound plus one production heartbeat interval, so one slow probe never costs a lifetime
+/// and nothing longer is waited for. It is not `BackendConfig::lease_lock_limit`, the startup
+/// budget of a lifetime that has admitted nothing.
+pub const HEARTBEAT_LOCK_LIMIT: Duration = RECOVERY_TIMEOUT.saturating_add(Duration::from_secs(1));
 
 /// Work that runs only inside a verified lease lifetime.
 pub trait LeaseScoped {
@@ -27,6 +36,12 @@ impl LeaseScoped for () {
 }
 
 impl BackendSupervisor {
+    /// Holds the intent marker's read after each backend exit while `hold.held` is true.
+    #[doc(hidden)]
+    pub fn hold_exit_reads(&mut self, hold: ExitReadHold) {
+        self.exit_read_hold = Some(hold);
+    }
+
     /// One supervised heartbeat. Every error, a lease lock wait that fails at its bound
     /// included, publishes Lost before it is returned, so a `LeaseLost` exit never leaves
     /// the watch reading Active.

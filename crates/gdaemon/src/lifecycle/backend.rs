@@ -2,7 +2,7 @@
 
 use super::{
     pid_file::PidFileClaim,
-    shutdown_intent::{Intent, IntentMarker},
+    shutdown_intent::{ExitReadHold, Intent, IntentMarker},
     worker_channel::{
         WORKER_CHANNEL_FD_ENV, WORKER_CREDENTIAL_FD_ENV, WORKER_MARKER_ENV, WorkerAttachment,
         WorkerSpawn, attach,
@@ -39,7 +39,7 @@ mod monitor;
 use handshake::HandshakeStep;
 
 pub use gobby_core::family::BackendStatus;
-pub use monitor::LeaseScoped;
+pub use monitor::{HEARTBEAT_LOCK_LIMIT, LeaseScoped};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupervisorExit {
@@ -128,6 +128,8 @@ pub struct BackendSupervisor {
     mode: RunnerMode,
     /// Assigns the generation of each worker session this supervisor spawns.
     generations: GenerationSource,
+    /// A test's hold on the marker read after each exit; production sets none.
+    exit_read_hold: Option<ExitReadHold>,
 }
 
 impl BackendSupervisor {
@@ -161,6 +163,7 @@ impl BackendSupervisor {
             wait,
             mode,
             generations: GenerationSource::default(),
+            exit_read_hold: None,
         }
     }
 
@@ -307,7 +310,8 @@ impl BackendSupervisor {
             !self.config.report_interval.is_zero(),
             "report interval must be positive"
         );
-        let mut markers = IntentMarker::new(&self.config.home);
+        let mut markers =
+            IntentMarker::new(&self.config.home).with_hold(self.exit_read_hold.clone());
         let mut crashes = 0u32;
         let mut heartbeats = interval(self.config.heartbeat_interval);
         heartbeats.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
