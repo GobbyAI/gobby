@@ -111,10 +111,11 @@ impl LogSettings {
 /// Installs the routed layer as the process's subscriber, once per process. The files
 /// open under `settings.dir` now, so a directory that cannot be written fails here.
 ///
-/// A backend command always resolves today (`GOBBY_BACKEND_COMMAND`, or the compiled
-/// default of the backend configuration), so the worker's handler owns rotation and this
-/// writer only reopens a file the worker renamed.
-pub fn activate(settings: LogSettings) -> anyhow::Result<()> {
+/// The rotation owner follows `backend_command`, the configured backend command, through
+/// [`writer::owner_for`]: with one, the worker's handler rotates and this writer only
+/// reopens a file the worker renamed; with none (node mode has no backend worker), this
+/// writer rotates the files itself.
+pub fn activate(settings: LogSettings, _backend_command: Option<&str>) -> anyhow::Result<()> {
     let routes = layer::RouteHandle::new(settings, writer::RotationOwner::Worker);
     routes
         .open_all()

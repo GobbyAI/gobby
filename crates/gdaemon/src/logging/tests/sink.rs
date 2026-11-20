@@ -24,7 +24,7 @@ impl fmt::Debug for LogsWhenFormatted {
 fn a_field_that_logs_while_formatted_does_not_block_its_record() {
     if let Some(logs) = std::env::var_os(REENTRANT_CHILD) {
         // Child: the routed layer is the process's global subscriber, as in gdaemon.
-        activate(settings_in(Path::new(&logs))).expect("routed logging activates");
+        activate(settings_in(Path::new(&logs)), None).expect("routed logging activates");
         let (done, finished) = mpsc::channel();
         std::thread::spawn(move || {
             tracing::info!(target: "gobby.daemon", field = ?LogsWhenFormatted, "outer record");
@@ -55,6 +55,45 @@ fn a_field_that_logs_while_formatted_does_not_block_its_record() {
     assert!(
         daemon.contains("outer record | field=formatted field"),
         "{daemon}"
+    );
+}
+
+/// Set in the child process of the rotation-owner test, to the logs directory.
+const NO_BACKEND_CHILD: &str = "GOBBY_LOGGING_TEST_NO_BACKEND_CHILD";
+
+#[test]
+fn activation_without_a_backend_command_rotates_its_own_files() {
+    if let Some(logs) = std::env::var_os(NO_BACKEND_CHILD) {
+        // Child: node mode, so no backend command and no worker to rotate the files.
+        let settings = LogSettings {
+            max_size_mb: 1,
+            backup_count: 2,
+            ..settings_in(Path::new(&logs))
+        };
+        activate(settings, None).expect("routed logging activates");
+        tracing::info!(target: "gobby.daemon", "{}", large_message('a'));
+        tracing::info!(target: "gobby.daemon", "{}", large_message('b'));
+        return;
+    }
+
+    let logs = tempfile::tempdir().expect("temporary logs directory");
+    let output = Command::new(std::env::current_exe().expect("test binary path"))
+        .args([
+            "--exact",
+            "logging::tests::sink::activation_without_a_backend_command_rotates_its_own_files",
+            "--nocapture",
+        ])
+        .env(NO_BACKEND_CHILD, logs.path())
+        .output()
+        .expect("child test runs");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert!(
+        exists(logs.path(), "daemon.log.1"),
+        "with no backend command gdaemon owns rotation, so the second large record \
+         rotated daemon.log; found {:?}",
+        files_under(logs.path())
     );
 }
 

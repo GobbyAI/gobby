@@ -1,15 +1,16 @@
 //! Family lifecycle hooks, the job sink and dormancy, driven through the gcore runners
 //! with fixture families and the daemon's own heartbeat host.
 //!
-//! The runners share one deadline per stop or unwind phase, and activation is
-//! transactional: jobs reach the sink only when the whole pass succeeds.
+//! The runners share one deadline per stop or unwind phase, and a fatal failure unwinds
+//! the failing family first. Activation is transactional: jobs reach the sink only when
+//! the whole pass succeeds, and staging refuses what the sink would refuse.
 
 use super::common;
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -293,20 +294,35 @@ impl RouteFamily<FrontDoorState> for Plain {
     }
 }
 
-/// A job sink that keeps its registrations in order and refuses a duplicate name.
+/// A job sink that keeps its registrations in order and refuses a duplicate name. It can
+/// also refuse one name only when the pass commits it, after validation accepted it.
 #[derive(Default)]
 struct RecordingSink {
     jobs: Vec<(String, Duration)>,
+    refused_at_commit: Option<&'static str>,
 }
 
 impl JobSink for RecordingSink {
     fn register_job(&mut self, name: &str, interval: Duration, _run: JobRun) -> anyhow::Result<()> {
+        self.validate_job(name, interval)?;
+        anyhow::ensure!(
+            self.refused_at_commit != Some(name),
+            "job {name} is refused at commit"
+        );
+        self.jobs.push((name.to_owned(), interval));
+        Ok(())
+    }
+
+    fn validate_job(&self, name: &str, _interval: Duration) -> anyhow::Result<()> {
         anyhow::ensure!(
             !self.jobs.iter().any(|(existing, _)| existing == name),
             "duplicate job {name}"
         );
-        self.jobs.push((name.to_owned(), interval));
         Ok(())
+    }
+
+    fn remove_job(&mut self, name: &str) {
+        self.jobs.retain(|(existing, _)| existing != name);
     }
 
     fn statuses(&self) -> Vec<(String, JobStatus)> {
@@ -480,7 +496,10 @@ async fn fatal_start_error_stops_later_hooks_and_returns_the_form() {
             relaunch_could_clear: true,
         })
     );
-    assert_eq!(events(&log), vec!["start:a", "start:b", "deactivate:a"]);
+    assert_eq!(
+        events(&log),
+        vec!["start:a", "start:b", "deactivate:b", "deactivate:a"]
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -492,6 +511,7 @@ async fn fatal_start_unwind_shares_one_deadline() {
     b.set_deactivate(Step::Hang);
     let c = Hooked::leak("c", RouteBackend::Native, &log);
     c.set_start(Step::Fatal("refused", false));
+    c.set_deactivate(Step::Hang);
     let ctx = FamilyContext::unconfigured();
     let began = Instant::now();
     let budget = Duration::from_millis(100);
@@ -512,13 +532,14 @@ async fn fatal_start_unwind_shares_one_deadline() {
             "start:a",
             "start:b",
             "start:c",
+            "deactivate:c",
             "deactivate:b",
             "deactivate:a"
         ]
     );
     assert!(
         began.elapsed() <= budget,
-        "two hung unwinds took {:?}, beyond the one {budget:?} deadline",
+        "three hung unwinds took {:?}, beyond the one {budget:?} deadline",
         began.elapsed()
     );
 }
@@ -836,7 +857,7 @@ async fn fatal_activation_discards_staged_jobs_and_retries_cleanly() {
     );
     assert_eq!(
         events(&log),
-        vec!["activate:a", "activate:b", "deactivate:a"]
+        vec!["activate:a", "activate:b", "deactivate:b", "deactivate:a"]
     );
 
     b.set_activate(Step::Pass);
@@ -868,6 +889,7 @@ async fn fatal_activation_unwind_shares_one_deadline() {
     b.set_deactivate(Step::Hang);
     let c = Hooked::leak("c", RouteBackend::Native, &log);
     c.set_activate(Step::Fatal("lease refused", false));
+    c.set_deactivate(Step::Hang);
     let ctx = FamilyContext::unconfigured();
     let mut sink = RecordingSink::default();
     let began = Instant::now();
@@ -895,13 +917,14 @@ async fn fatal_activation_unwind_shares_one_deadline() {
             "activate:a",
             "activate:b",
             "activate:c",
+            "deactivate:c",
             "deactivate:b",
             "deactivate:a"
         ]
     );
     assert!(
         began.elapsed() <= budget,
-        "two hung unwinds took {:?}, beyond the one {budget:?} deadline",
+        "three hung unwinds took {:?}, beyond the one {budget:?} deadline",
         began.elapsed()
     );
 }
@@ -929,6 +952,305 @@ async fn ordinary_activation_error_discards_only_that_family_jobs() {
     );
     assert_eq!(job_names(&sink), vec!["a.tick", "c.tick"]);
     assert!(ctx.degraded().contains("b"));
+}
+
+/// A Native family that takes one resource in `start` or `activate` and then does what
+/// that hook's step says, so a fatal step leaves the family partly started or activated.
+/// `deactivate` releases the resource. A hook that finds the resource still held fails
+/// fatally, so a retry after a leaked resource cannot succeed.
+struct Acquirer {
+    name: &'static str,
+    start: Mutex<Step>,
+    activate: Mutex<Step>,
+    held: AtomicBool,
+    log: Log,
+}
+
+impl Acquirer {
+    fn leak(name: &'static str, log: &Log) -> &'static Acquirer {
+        Box::leak(Box::new(Acquirer {
+            name,
+            start: Mutex::new(Step::Pass),
+            activate: Mutex::new(Step::Pass),
+            held: AtomicBool::new(false),
+            log: Arc::clone(log),
+        }))
+    }
+
+    fn holds(&self) -> bool {
+        self.held.load(Ordering::SeqCst)
+    }
+
+    /// Takes the resource, then runs `step`.
+    fn acquire_then(&self, hook: &str, step: Step) -> BoxFut<'_, Result<(), HookError>> {
+        self.log
+            .lock()
+            .expect("hook log")
+            .push(format!("{hook}:{}", self.name));
+        if self.held.swap(true, Ordering::SeqCst) {
+            return Box::pin(perform(Step::Fatal("the resource is still held", false)));
+        }
+        Box::pin(perform(step))
+    }
+}
+
+impl RouteFamily<FrontDoorState> for Acquirer {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn prefixes(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn router(&self) -> Router<FrontDoorState> {
+        Router::new()
+    }
+
+    fn start<'a>(&'a self, _ctx: &'a FamilyContext) -> BoxFut<'a, Result<(), HookError>> {
+        let step = *self.start.lock().expect("start step");
+        self.acquire_then("start", step)
+    }
+
+    fn activate<'a>(
+        &'a self,
+        _activation: &'a mut Activation<'_>,
+    ) -> BoxFut<'a, Result<(), HookError>> {
+        let step = *self.activate.lock().expect("activate step");
+        self.acquire_then("activate", step)
+    }
+
+    fn deactivate<'a>(&'a self, _mode: StopMode) -> BoxFut<'a, Result<(), StopFailure>> {
+        self.log
+            .lock()
+            .expect("hook log")
+            .push(format!("deactivate:{}", self.name));
+        self.held.store(false, Ordering::SeqCst);
+        Box::pin(async { Ok(()) })
+    }
+}
+
+fn native(family: &'static dyn RouteFamily<FrontDoorState>) -> ActivationEntry<FrontDoorState> {
+    ActivationEntry {
+        family,
+        backend: RouteBackend::Native,
+    }
+}
+
+#[tokio::test]
+async fn fatal_start_unwinds_the_failing_family_first_and_retries_cleanly() {
+    let log = new_log();
+    let a = Hooked::leak("a", RouteBackend::Native, &log);
+    let b = Acquirer::leak("b", &log);
+    *b.start.lock().expect("start step") = Step::Fatal("start refused", true);
+    let entries = [entry(a), native(b)];
+    let ctx = FamilyContext::unconfigured();
+
+    let failed = start_families(&entries, &ctx, soon()).await;
+
+    assert_eq!(
+        failed,
+        Err(StartFailure {
+            family: "b",
+            message: "start refused".into(),
+            relaunch_could_clear: true,
+        })
+    );
+    assert!(
+        !b.holds(),
+        "the unwind released what the failing family's start acquired"
+    );
+    assert_eq!(
+        events(&log),
+        vec!["start:a", "start:b", "deactivate:b", "deactivate:a"],
+        "the failing family is deactivated first"
+    );
+
+    *b.start.lock().expect("start step") = Step::Pass;
+    assert_eq!(
+        start_families(&entries, &ctx, soon()).await,
+        Ok(StartReport::default()),
+        "a retry starts cleanly"
+    );
+    assert!(b.holds());
+}
+
+#[tokio::test]
+async fn fatal_activation_unwinds_the_failing_family_first_and_retries_cleanly() {
+    let log = new_log();
+    let a = Hooked::with_jobs("a", RouteBackend::Native, &log, TICK);
+    let b = Acquirer::leak("b", &log);
+    *b.activate.lock().expect("activate step") = Step::Fatal("lease refused", true);
+    let entries = [entry(a), native(b)];
+    let ctx = FamilyContext::unconfigured();
+    let mut sink = RecordingSink::default();
+
+    let failed = activate_families(&entries, &ctx, &mut sink, soon()).await;
+
+    assert_eq!(
+        failed,
+        Err(StartFailure {
+            family: "b",
+            message: "lease refused".into(),
+            relaunch_could_clear: true,
+        })
+    );
+    assert!(
+        !b.holds(),
+        "the unwind released what the failing family's activate acquired"
+    );
+    assert_eq!(
+        events(&log),
+        vec!["activate:a", "activate:b", "deactivate:b", "deactivate:a"],
+        "the failing family is deactivated first"
+    );
+    assert!(
+        job_names(&sink).is_empty(),
+        "a failed pass registers nothing"
+    );
+
+    *b.activate.lock().expect("activate step") = Step::Pass;
+    assert_eq!(
+        activate_families(&entries, &ctx, &mut sink, soon()).await,
+        Ok(StartReport::default()),
+        "a retry activates cleanly"
+    );
+    assert!(b.holds());
+    assert_eq!(job_names(&sink), vec!["a.tick"]);
+}
+
+/// A Native family that stages its jobs under their literal names and, on the first
+/// refusal, fails its activation in the ordinary way, naming the refusal.
+struct Registrar {
+    name: &'static str,
+    jobs: &'static [(&'static str, Duration)],
+    refusals: Mutex<Vec<JobRefused>>,
+}
+
+impl RouteFamily<FrontDoorState> for Registrar {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn prefixes(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn router(&self) -> Router<FrontDoorState> {
+        Router::new()
+    }
+
+    fn activate<'a>(
+        &'a self,
+        activation: &'a mut Activation<'_>,
+    ) -> BoxFut<'a, Result<(), HookError>> {
+        for (job, interval) in self.jobs {
+            if let Err(refused) = activation.register_job(job, *interval, noop_job()) {
+                let message = format!("{refused:?}");
+                self.refusals.lock().expect("job refusals").push(refused);
+                return Box::pin(perform_ordinary(message));
+            }
+        }
+        Box::pin(async { Ok(()) })
+    }
+}
+
+async fn perform_ordinary(message: String) -> Result<(), HookError> {
+    Err(HookError::Ordinary { message })
+}
+
+#[tokio::test]
+async fn staging_refuses_what_the_job_sink_refuses() {
+    const VALID_THEN_UNNAMED: &[(&str, Duration)] = &[
+        ("registrar.valid", Duration::from_secs(5)),
+        ("", Duration::from_secs(5)),
+    ];
+    let registrar: &'static Registrar = Box::leak(Box::new(Registrar {
+        name: "registrar",
+        jobs: VALID_THEN_UNNAMED,
+        refusals: Mutex::new(Vec::new()),
+    }));
+    let ctx = FamilyContext::unconfigured();
+    let mut host = HeartbeatHost::new();
+
+    let report = activate_families(&[native(registrar)], &ctx, &mut host, soon()).await;
+
+    let refusals = registrar.refusals.lock().expect("job refusals").clone();
+    assert!(
+        matches!(refusals.as_slice(), [JobRefused::Sink(_)]),
+        "the hook sees the sink's refusal of the unnamed job when it stages it: {refusals:?}"
+    );
+    assert!(
+        job_names(&host).is_empty(),
+        "nothing the refused family staged stays registered: {:?}",
+        job_names(&host)
+    );
+    let failed: Vec<&str> = report
+        .expect("an ordinary refusal does not fail the pass")
+        .ordinary
+        .iter()
+        .map(|failure| failure.family)
+        .collect();
+    assert_eq!(failed, vec!["registrar"]);
+}
+
+#[tokio::test]
+async fn job_sink_validates_with_its_registration_rule() {
+    let mut host = HeartbeatHost::new();
+    let interval = Duration::from_secs(5);
+
+    assert!(
+        host.validate_job("", interval).is_err(),
+        "an empty name is refused"
+    );
+    assert!(
+        host.validate_job("zero", Duration::ZERO).is_err(),
+        "a zero interval is refused"
+    );
+    assert!(host.validate_job("tick", interval).is_ok());
+    assert!(JobSink::register_job(&mut host, "tick", interval, noop_job()).is_ok());
+    assert!(
+        host.validate_job("tick", interval).is_err(),
+        "a registered name is refused"
+    );
+    host.start().expect("host starts");
+    assert!(
+        host.validate_job("late", interval).is_err(),
+        "a registration after start is refused"
+    );
+    host.stop().await.expect("host stops");
+}
+
+#[tokio::test]
+async fn commit_failure_removes_the_family_jobs_that_pass_registered() {
+    const TWO: &[(&str, Duration)] = &[
+        ("first", Duration::from_secs(5)),
+        ("second", Duration::from_secs(10)),
+    ];
+    let log = new_log();
+    let a = Hooked::with_jobs("a", RouteBackend::Native, &log, TWO);
+    let b = Hooked::with_jobs("b", RouteBackend::Native, &log, TICK);
+    let ctx = FamilyContext::unconfigured();
+    let mut sink = RecordingSink {
+        refused_at_commit: Some("a.second"),
+        ..RecordingSink::default()
+    };
+
+    let report = activate_families(&[entry(a), entry(b)], &ctx, &mut sink, soon()).await;
+
+    assert_eq!(
+        job_names(&sink),
+        vec!["b.tick"],
+        "the family whose commit failed keeps none of that pass's jobs"
+    );
+    let failed: Vec<&str> = report
+        .expect("a refused commit is an ordinary failure")
+        .ordinary
+        .iter()
+        .map(|failure| failure.family)
+        .collect();
+    assert_eq!(failed, vec!["a"]);
+    assert!(ctx.degraded().contains("a"));
 }
 
 #[tokio::test]

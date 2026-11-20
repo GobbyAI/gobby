@@ -13,7 +13,7 @@ const PROBE: &str = "routed logging probe panic";
 fn panic_still_reaches_stderr_after_routing_installs() {
     if let Some(logs) = std::env::var_os(CHILD_LOGS) {
         // Child: install routing for the whole process, write one record, then panic.
-        let activated = logging::activate(LogSettings::defaults(PathBuf::from(logs)));
+        let activated = logging::activate(LogSettings::defaults(PathBuf::from(logs)), None);
         assert!(activated.is_ok(), "routing did not install: {activated:?}");
         tracing::info!(target: "gobby.daemon", "routing installed");
         panic!("{PROBE}");

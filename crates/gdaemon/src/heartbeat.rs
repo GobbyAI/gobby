@@ -146,6 +146,12 @@ impl JobSink for HeartbeatHost {
         self.push(name.to_owned(), interval, run)
     }
 
+    fn validate_job(&self, _name: &str, _interval: Duration) -> Result<()> {
+        Ok(())
+    }
+
+    fn remove_job(&mut self, _name: &str) {}
+
     fn statuses(&self) -> Vec<(String, JobStatus)> {
         self.registered
             .iter()

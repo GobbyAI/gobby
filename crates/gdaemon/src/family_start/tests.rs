@@ -220,11 +220,10 @@ fn disposition_refuses_when_relaunch_cannot_clear() {
         Some(Disposition::Refuse { reason }) => Some(reason),
         _ => None,
     };
-    assert!(
-        reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("database_pool")),
-        "a refused pool refuses, naming database_pool: {reason:?}"
+    assert_eq!(
+        reason.as_deref(),
+        Some("database_pool"),
+        "a refused pool refuses with the reason database_pool"
     );
 }
 

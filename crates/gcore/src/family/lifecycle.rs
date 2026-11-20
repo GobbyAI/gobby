@@ -103,6 +103,12 @@ pub trait JobSink: Send {
     /// Registers a job. A duplicate name, a zero interval and a registration after the
     /// sink started are refused.
     fn register_job(&mut self, name: &str, interval: Duration, run: JobRun) -> anyhow::Result<()>;
+    /// Checks a registration against the rule [`JobSink::register_job`] applies, without
+    /// registering it, so staging refuses every job the commit would refuse.
+    fn validate_job(&self, name: &str, interval: Duration) -> anyhow::Result<()>;
+    /// Removes the registered job `name`; an unknown name is ignored. A pass whose commit
+    /// failed for a family removes the jobs it had registered for that family.
+    fn remove_job(&mut self, name: &str);
     /// The status of the job `name`, when the sink tracks it.
     fn status(&self, _name: &str) -> Option<JobStatus> {
         None
