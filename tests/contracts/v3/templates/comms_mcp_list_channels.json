@@ -1,0 +1,20 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_list_channels",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:list_channels",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "list_channels",
+    "arguments": {}
+  },
+  "normalizers": {
+    "/response/result/channels": {"name": "unordered", "key": "name"},
+    "/response/result/channels/1/id": "uuid_ordinal"
+  },
+  "mask": []
+}

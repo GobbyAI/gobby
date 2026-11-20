@@ -1,0 +1,25 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_send_proactive_message",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:send_proactive_message",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "send_proactive_message",
+    "arguments": {
+      "channel": "corpus-slack",
+      "conversation_id": "C0CORPUS0001",
+      "content": "corpus proactive"
+    }
+  },
+  "response": {
+    "success": false,
+    "error": "Channel 'corpus-slack' does not support proactive messaging"
+  },
+  "normalizers": {},
+  "mask": []
+}

@@ -1,0 +1,147 @@
+{
+  "provider": "telegram",
+  "operation": "inbound",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/telegram.py",
+  "source_test": "tests/communications/adapters/test_telegram.py::test_poll",
+  "contract_ref": "https://core.telegram.org/bots/api#getupdates",
+  "drive": {
+    "channel": {
+      "name": "corpus-telegram",
+      "config": {
+        "bot_token": "$secret:TELEGRAM_BOT_TOKEN"
+      }
+    },
+    "secrets": {
+      "TELEGRAM_BOT_TOKEN": "1000001:corpus-wire-telegram-token"
+    },
+    "call": "poll"
+  },
+  "provider_contract": {
+    "responses": [
+      {
+        "host": "api.telegram.org",
+        "method": "POST",
+        "path": "/bot@TELEGRAM_TOKEN@/getMe",
+        "body": {
+          "ok": true,
+          "result": {
+            "id": 1000001,
+            "is_bot": true,
+            "first_name": "corpus",
+            "username": "corpus_bot"
+          }
+        }
+      },
+      {
+        "host": "api.telegram.org",
+        "method": "POST",
+        "path": "/bot@TELEGRAM_TOKEN@/setMyCommands",
+        "body": {
+          "ok": true,
+          "result": true
+        }
+      },
+      {
+        "host": "api.telegram.org",
+        "method": "POST",
+        "path": "/bot@TELEGRAM_TOKEN@/deleteWebhook",
+        "body": {
+          "ok": true,
+          "result": true,
+          "description": "Webhook is already deleted"
+        }
+      },
+      {
+        "host": "api.telegram.org",
+        "method": "GET",
+        "path": "/bot@TELEGRAM_TOKEN@/getUpdates",
+        "body": {
+          "ok": true,
+          "result": [
+            {
+              "update_id": 5001,
+              "message": {
+                "message_id": 201,
+                "date": 1700000000,
+                "chat": {
+                  "id": 1000002,
+                  "type": "private",
+                  "first_name": "Corpus"
+                },
+                "from": {
+                  "id": 1000002,
+                  "is_bot": false,
+                  "first_name": "Corpus",
+                  "username": "corpus_user"
+                },
+                "text": "corpus telegram inbound"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "exchanges": [
+    {
+      "host": "api.telegram.org",
+      "method": "POST",
+      "path": "/bot@TELEGRAM_TOKEN@/getMe",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "api.telegram.org",
+      "method": "POST",
+      "path": "/bot@TELEGRAM_TOKEN@/setMyCommands",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "api.telegram.org",
+      "method": "POST",
+      "path": "/bot@TELEGRAM_TOKEN@/deleteWebhook",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "api.telegram.org",
+      "method": "GET",
+      "path": "/bot@TELEGRAM_TOKEN@/getUpdates",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    }
+  ],
+  "outcome": {
+    "messages": [
+      {
+        "content": "corpus telegram inbound",
+        "content_type": "text",
+        "identity_id": "1000002",
+        "platform_message_id": "201",
+        "platform_thread_id": null,
+        "platform_channel_id": "1000002",
+        "external_username": "corpus_user"
+      }
+    ]
+  }
+}

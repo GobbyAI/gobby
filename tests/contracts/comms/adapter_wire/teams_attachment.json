@@ -1,0 +1,82 @@
+{
+  "provider": "teams",
+  "operation": "attachment",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/teams.py",
+  "source_test": "tests/communications/adapters/test_communications_adapters_teams.py::test_send_message_adaptive_card",
+  "contract_ref": "https://learn.microsoft.com/en-us/azure/bot-service/rest-api/bot-framework-rest-connector-add-rich-cards",
+  "drive": {
+    "channel": {
+      "name": "corpus-teams",
+      "config": {
+        "app_id": "$secret:TEAMS_APP_ID",
+        "app_password": "$secret:TEAMS_APP_PASSWORD"
+      }
+    },
+    "secrets": {
+      "TEAMS_APP_ID": "corpus-wire-teams-app-id",
+      "TEAMS_APP_PASSWORD": "corpus-wire-teams-password"
+    },
+    "call": "send_message",
+    "message": {
+      "content": "{\"body\": [{\"text\": \"corpus teams attachment\", \"type\": \"TextBlock\"}], \"type\": \"AdaptiveCard\", \"version\": \"1.4\"}",
+      "content_type": "adaptive_card",
+      "metadata": {
+        "platform_destination": "a:1corpus-conversation",
+        "service_url": "https://smba.trafficmanager.net/amer/"
+      }
+    }
+  },
+  "provider_contract": {
+    "responses": [
+      {
+        "host": "login.microsoftonline.com",
+        "method": "POST",
+        "path": "/botframework.com/oauth2/v2.0/token",
+        "body": {
+          "token_type": "Bearer",
+          "expires_in": 3600,
+          "ext_expires_in": 3600,
+          "access_token": "corpus-wire-teams-access-token"
+        }
+      },
+      {
+        "host": "smba.trafficmanager.net",
+        "method": "POST",
+        "path": "/amer/v3/conversations/a:1corpus-conversation/activities",
+        "body": {
+          "id": "1700000000102"
+        }
+      }
+    ]
+  },
+  "exchanges": [
+    {
+      "host": "login.microsoftonline.com",
+      "method": "POST",
+      "path": "/botframework.com/oauth2/v2.0/token",
+      "semantic": {
+        "destination": "",
+        "text": "",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    },
+    {
+      "host": "smba.trafficmanager.net",
+      "method": "POST",
+      "path": "/amer/v3/conversations/a:1corpus-conversation/activities",
+      "semantic": {
+        "destination": "a:1corpus-conversation",
+        "text": "",
+        "filename": "",
+        "payload_sha256": "f5024e6bc9a1f44ac8e36d022a5efcab079a7335b0e3944319a89b5fd59b164b"
+      }
+    }
+  ],
+  "outcome": {
+    "message_id": "1700000000102"
+  }
+}

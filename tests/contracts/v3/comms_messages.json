@@ -1,0 +1,60 @@
+{
+  "schema_version": 3,
+  "name": "comms_messages",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP GET /api/comms/messages",
+  "request": {
+    "method": "GET",
+    "path": "/api/comms/messages",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "seed": [
+    {
+      "http": {
+        "method": "POST",
+        "path": "/api/comms/send",
+        "credential": "operator",
+        "body": {
+          "channel_name": "corpus-slack",
+          "content": "corpus seed message"
+        }
+      }
+    }
+  ],
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": [
+      {
+        "id": "@uuid:1@",
+        "channel_id": "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+        "direction": "outbound",
+        "content": "corpus seed message",
+        "created_at": "@mask@",
+        "identity_id": null,
+        "content_type": "text",
+        "platform_message_id": "1700000000.000100",
+        "platform_thread_id": null,
+        "session_id": null,
+        "status": "sent",
+        "error": null,
+        "metadata_json": {
+          "platform_destination": "C0CORPUS0001"
+        }
+      }
+    ]
+  },
+  "normalizers": {
+    "/response/body/0/id": "uuid_ordinal"
+  },
+  "mask": [
+    "/response/body/0/created_at"
+  ]
+}

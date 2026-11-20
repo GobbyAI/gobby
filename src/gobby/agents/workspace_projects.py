@@ -1,4 +1,4 @@
-"""Registered project names and preservation of legacy workspace roots."""
+"""Registered project names that anchor agent workspaces, and their ownership receipts."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from gobby.storage.hub.protocol import HubDatabase
 
 
 def validate_workspace_project_name(name: str) -> str:
-    """Accept one unambiguous, portable directory component."""
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name) or name.lower().endswith(".git"):
+    """Accept one unambiguous, portable directory component, system projects included."""
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", name) or name.lower().endswith(".git"):
         raise ValueError("Invalid project name for agent workspaces")
     try:
         UUID(name)
@@ -36,17 +36,13 @@ def registered_workspace_project_name(db: HubDatabase, project_id: str) -> str:
 
 
 def workspace_project_name(db: HubDatabase, project_id: str) -> str:
-    """Resolve metadata and migrate whole roots under the existing advisory-lock pattern.
+    """Resolve the registered name and hold this machine's ownership receipt for its folder.
 
-    The receipt moves with the Git directory, distinguishing an interrupted
-    rename from an unrelated destination. Contents are never combined. Live
-    owners must release their legacy bindings before those paths can move.
+    The receipt lives in the project's Git directory and names the project id, so a
+    folder left by another project of the same name is refused, never adopted.
     """
     from gobby.agents.agent_workspaces import workspaces_root
-    from gobby.agents.persistent_workspaces import _save, _sync_directory
-    from gobby.agents.workspace_backups import _BACKUP_EXECUTOR, _init_git_dir
-    from gobby.storage.sessions import LIVE_SESSION_STATUSES
-    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.agents.persistent_workspaces import _save
 
     with db.transaction() as connection:
         connection.execute(
@@ -54,9 +50,8 @@ def workspace_project_name(db: HubDatabase, project_id: str) -> str:
         )
         name = registered_workspace_project_name(db, project_id)
         root = workspaces_root()
-        old, target = root / project_id, root / name
-        old_git, target_git = root / f"{project_id}.git", root / f"{name}.git"
-        paths = (root, old, target, old_git, target_git)
+        target, target_git = root / name, root / f"{name}.git"
+        paths = (root, target, target_git)
         if any(path.is_symlink() for path in paths):
             raise ValueError("Agent workspace project paths must not be symbolic links")
         if any(path.exists() and not path.is_dir() for path in paths):
@@ -68,55 +63,8 @@ def workspace_project_name(db: HubDatabase, project_id: str) -> str:
         recorded = json.loads(marker.read_text()) if marker.exists() else None
         if recorded is not None and recorded != receipt:
             raise ValueError("Agent workspace destination belongs to another project")
-        if target.exists() and recorded is None and not (old.exists() or old_git.exists()):
-            raise ValueError("Agent workspace migration destination has no ownership receipt")
-        if old.exists() or old_git.exists():
-            if (target.exists() or target_git.exists()) and recorded != receipt:
-                raise ValueError("Agent workspace migration destination collision")
-            if old.exists() and target.exists():
-                raise ValueError("Agent workspace migration has two anchors")
-            if old_git.exists() and target_git.exists():
-                raise ValueError("Agent workspace migration has two Git directories")
-            live = connection.execute(
-                "SELECT s.id FROM sessions s JOIN session_variables v ON v.session_id = s.id "
-                "WHERE s.project_id = %s AND s.status = ANY(%s) "
-                "AND (v.variables ->> '_agent_workspace_dir' LIKE %s "
-                "OR v.variables ->> '_agent_workspace_epic_dir' LIKE %s) LIMIT 1",
-                (project_id, list(LIVE_SESSION_STATUSES), f"{old}/%", f"{old}/%"),
-            ).fetchone()
-            if live is not None:
-                raise ValueError(f"Legacy workspace has a live owner: {live['id']}")
-            root.mkdir(parents=True, exist_ok=True)
-            if not target_git.exists():
-                _save(old_git / "workspace-project.json", receipt)
-                old_git.rename(target_git)
-                _sync_directory(root)
-            if old.exists():
-                old.rename(target)
-                _sync_directory(root)
-        if not marker.exists():
+        if target.exists() and recorded is None:
+            raise ValueError("Agent workspace destination has no ownership receipt")
+        if recorded is None:
             _save(marker, receipt)
-        if (target_git / "HEAD").is_file():
-            _BACKUP_EXECUTOR.submit(_init_git_dir, name).result()
-        # Renames survive database rollback; refresh bindings on every replay.
-        variables = SessionVariableManager(db)
-        rows = connection.execute(
-            "SELECT session_id, variables FROM session_variables WHERE session_id IN "
-            "(SELECT id FROM sessions WHERE project_id = %s) "
-            "AND (variables ->> '_agent_workspace_dir' LIKE %s "
-            "OR variables ->> '_agent_workspace_epic_dir' LIKE %s)",
-            (project_id, f"{old}/%", f"{old}/%"),
-        ).fetchall()
-        for binding in rows:
-            changes: dict[str, object] = {}
-            values = binding["variables"]
-            if isinstance(values, str):
-                values = json.loads(values)
-            for key in ("_agent_workspace_dir", "_agent_workspace_epic_dir"):
-                value = values.get(key)
-                if isinstance(value, str) and value.startswith(f"{old}/"):
-                    changes[key] = f"{target}/{value[len(str(old)) + 1 :]}"
-            if changes:
-                changes["_agent_workspace_injected"] = False
-                variables.merge_variables(binding["session_id"], changes)
         return name

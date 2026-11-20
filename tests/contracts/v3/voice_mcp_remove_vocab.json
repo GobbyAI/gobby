@@ -1,0 +1,123 @@
+{
+  "schema_version": 3,
+  "name": "voice_mcp_remove_vocab",
+  "kind": "mcp",
+  "family": "voice",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-voice:remove_vocab",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-voice",
+    "tool": "remove_vocab",
+    "arguments": {
+      "terms": "corpus-term-one"
+    }
+  },
+  "seed": [
+    {
+      "http": {
+        "method": "POST",
+        "path": "/api/mcp/gobby-voice/tools/add_vocab",
+        "credential": "operator",
+        "body": {
+          "terms": "corpus-term-one, corpus-term-two"
+        }
+      }
+    }
+  ],
+  "response": {
+    "success": true,
+    "result": {
+      "removed": 1,
+      "not_found": 0,
+      "total": 33
+    }
+  },
+  "db_delta": [
+    {
+      "table": "config_state",
+      "key": [
+        "id"
+      ],
+      "columns": [
+        "id",
+        "revision"
+      ],
+      "normalizers": {},
+      "order": "set",
+      "recorded": {
+        "added": [],
+        "removed": [],
+        "changed": [
+          {
+            "key": {
+              "id": true
+            },
+            "column": "revision",
+            "before": 3,
+            "after": 4
+          }
+        ]
+      }
+    },
+    {
+      "table": "config_store",
+      "key": [
+        "key"
+      ],
+      "columns": [
+        "key",
+        "value",
+        "source",
+        "is_secret",
+        "revision"
+      ],
+      "normalizers": {},
+      "order": "set",
+      "recorded": {
+        "added": [],
+        "removed": [],
+        "changed": [
+          {
+            "key": {
+              "key": "voice.whisper_vocabulary"
+            },
+            "column": "revision",
+            "before": 3,
+            "after": 4
+          },
+          {
+            "key": {
+              "key": "voice.whisper_vocabulary"
+            },
+            "column": "value",
+            "before": "[\"Gobby\", \"MCP\", \"worktree\", \"Kubernetes\", \"PostgreSQL\", \"FastAPI\", \"Pydantic\", \"TypeScript\", \"GraphQL\", \"WebSocket\", \"Redis\", \"MongoDB\", \"OAuth\", \"JWT\", \"REST\", \"gRPC\", \"YAML\", \"JSON\", \"Docker\", \"Terraform\", \"GitHub\", \"GitLab\", \"Claude\", \"Anthropic\", \"Gemini\", \"Codex\", \"npm\", \"pip\", \"pytest\", \"ESLint\", \"webpack\", \"Vite\", \"corpus-term-one\", \"corpus-term-two\"]",
+            "after": "[\"Gobby\", \"MCP\", \"worktree\", \"Kubernetes\", \"PostgreSQL\", \"FastAPI\", \"Pydantic\", \"TypeScript\", \"GraphQL\", \"WebSocket\", \"Redis\", \"MongoDB\", \"OAuth\", \"JWT\", \"REST\", \"gRPC\", \"YAML\", \"JSON\", \"Docker\", \"Terraform\", \"GitHub\", \"GitLab\", \"Claude\", \"Anthropic\", \"Gemini\", \"Codex\", \"npm\", \"pip\", \"pytest\", \"ESLint\", \"webpack\", \"Vite\", \"corpus-term-two\"]"
+          }
+        ]
+      }
+    }
+  ],
+  "side_effects": [
+    {
+      "channel": "pg_notify",
+      "match": {
+        "channels": [
+          "gobby_config_changed"
+        ]
+      },
+      "normalizers": {
+        "/payload": "monotonic"
+      },
+      "recorded": [
+        {
+          "channel": "gobby_config_changed",
+          "payload": "@seq@"
+        }
+      ]
+    }
+  ],
+  "normalizers": {},
+  "mask": []
+}

@@ -65,7 +65,7 @@ impl WorkspaceScope {
                     && name
                         .bytes()
                         .next()
-                        .is_some_and(|c| c.is_ascii_alphanumeric())
+                        .is_some_and(|c| c.is_ascii_alphanumeric() || c == b'_')
                     && name
                         .bytes()
                         .all(|c| c.is_ascii_alphanumeric() || b"_.-".contains(&c))
@@ -73,17 +73,6 @@ impl WorkspaceScope {
                     && uuid::Uuid::parse_str(name).is_err(),
                 "invalid project name for agent workspaces"
             );
-            for legacy in [
-                lexical_root.join(&inputs.project_id),
-                lexical_root.join(format!("{}.git", inputs.project_id)),
-            ] {
-                anyhow::ensure!(
-                    std::fs::symlink_metadata(&legacy)
-                        .is_err_and(|error| { error.kind() == std::io::ErrorKind::NotFound }),
-                    "legacy agent workspace requires migration before launch: {}",
-                    legacy.display()
-                );
-            }
             let anchor = lexical_root.join(name);
             let live = if inputs.persistent_workspace && definition != "default" {
                 "current".to_owned()

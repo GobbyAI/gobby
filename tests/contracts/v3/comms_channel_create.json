@@ -1,0 +1,110 @@
+{
+  "schema_version": 3,
+  "name": "comms_channel_create",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP POST /api/comms/channels",
+  "request": {
+    "method": "POST",
+    "path": "/api/comms/channels",
+    "query": {},
+    "headers": {},
+    "body": {
+      "channel_type": "slack",
+      "name": "corpus-created",
+      "config": {
+        "bot_token": "$secret:corpus_slack_bot_token",
+        "signing_secret": "$secret:corpus_slack_signing_secret"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "id": "@uuid:1@",
+      "channel_type": "slack",
+      "name": "corpus-created",
+      "enabled": true,
+      "config_json": {
+        "bot_token": "$secret:corpus_slack_bot_token",
+        "signing_secret": "$secret:corpus_slack_signing_secret"
+      },
+      "created_at": "@ts@",
+      "updated_at": "@ts@",
+      "active": true,
+      "init_error": null,
+      "retry_pending": false,
+      "retry_attempts": 0,
+      "next_retry_at": null
+    }
+  },
+  "db_delta": [
+    {
+      "table": "comms_channels",
+      "key": [
+        "id"
+      ],
+      "columns": [
+        "id",
+        "channel_type",
+        "name",
+        "enabled",
+        "config_json"
+      ],
+      "normalizers": {
+        "id": "uuid_ordinal"
+      },
+      "order": "set",
+      "recorded": {
+        "added": [
+          {
+            "id": "@uuid:1@",
+            "channel_type": "slack",
+            "name": "corpus-created",
+            "enabled": true,
+            "config_json": {
+              "bot_token": "$secret:corpus_slack_bot_token",
+              "signing_secret": "$secret:corpus_slack_signing_secret"
+            }
+          }
+        ],
+        "removed": [],
+        "changed": []
+      }
+    }
+  ],
+  "side_effects": [
+    {
+      "channel": "provider_edge",
+      "match": {
+        "hosts": [
+          "slack.com"
+        ]
+      },
+      "recorded": [
+        {
+          "host": "slack.com",
+          "method": "POST",
+          "path": "/api/auth.test",
+          "semantic": {
+            "destination": "",
+            "text": "",
+            "filename": "",
+            "payload_sha256": ""
+          }
+        }
+      ]
+    }
+  ],
+  "normalizers": {
+    "/response/body/id": "uuid_ordinal",
+    "/response/body/created_at": "timestamp",
+    "/response/body/updated_at": "timestamp"
+  },
+  "mask": []
+}

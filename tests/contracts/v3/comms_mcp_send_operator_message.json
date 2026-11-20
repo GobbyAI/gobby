@@ -1,0 +1,24 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_send_operator_message",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:send_operator_message",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "send_operator_message",
+    "arguments": {
+      "channel": "corpus-slack",
+      "content": "corpus operator message"
+    }
+  },
+  "response": {
+    "success": false,
+    "error": "Operator messaging requires a registered caller"
+  },
+  "normalizers": {},
+  "mask": []
+}

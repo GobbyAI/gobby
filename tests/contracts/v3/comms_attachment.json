@@ -1,0 +1,147 @@
+{
+  "schema_version": 3,
+  "name": "comms_attachment",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP POST /api/comms/attachment",
+  "request": {
+    "method": "POST",
+    "path": "/api/comms/attachment",
+    "query": {},
+    "headers": {},
+    "body": {
+      "channel_name": "corpus-slack",
+      "filename": "corpus-errors.txt",
+      "content": "corpus attachment line one\n",
+      "caption": "corpus caption"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "message": {
+        "id": "@uuid:1@",
+        "channel_id": "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+        "direction": "outbound",
+        "content": "corpus caption",
+        "created_at": "@ts@",
+        "identity_id": null,
+        "content_type": "attachment",
+        "platform_message_id": "1700000000.000200",
+        "platform_thread_id": null,
+        "session_id": null,
+        "status": "sent",
+        "error": null,
+        "metadata_json": {
+          "platform_destination": "C0CORPUS0001"
+        }
+      },
+      "attachment": {
+        "id": "@uuid:2@",
+        "message_id": "@uuid:1@",
+        "filename": "corpus-errors.txt",
+        "content_type": "text/plain",
+        "size_bytes": 27,
+        "machine_id": "21000000-0000-4000-8000-000000000002",
+        "local_path": null,
+        "platform_url": null,
+        "created_at": "@ts@"
+      }
+    }
+  },
+  "db_delta": [
+    {
+      "table": "comms_messages",
+      "key": [
+        "id"
+      ],
+      "columns": [
+        "id",
+        "channel_id",
+        "direction",
+        "content",
+        "content_type",
+        "platform_message_id",
+        "status"
+      ],
+      "normalizers": {
+        "id": "uuid_ordinal"
+      },
+      "order": "set",
+      "recorded": {
+        "added": [
+          {
+            "id": "@uuid:1@",
+            "channel_id": "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+            "direction": "outbound",
+            "content": "corpus caption",
+            "content_type": "attachment",
+            "platform_message_id": "1700000000.000200",
+            "status": "sent"
+          }
+        ],
+        "removed": [],
+        "changed": []
+      }
+    }
+  ],
+  "side_effects": [
+    {
+      "channel": "provider_edge",
+      "match": {
+        "hosts": [
+          "slack.com",
+          "upload.corpus.test"
+        ]
+      },
+      "recorded": [
+        {
+          "host": "slack.com",
+          "method": "POST",
+          "path": "/api/files.getUploadURLExternal",
+          "semantic": {
+            "destination": "",
+            "text": "",
+            "filename": "corpus-errors.txt",
+            "payload_sha256": ""
+          }
+        },
+        {
+          "host": "upload.corpus.test",
+          "method": "PUT",
+          "path": "/upload/corpus-1",
+          "semantic": {
+            "destination": "",
+            "text": "",
+            "filename": "",
+            "payload_sha256": "d5f5536929050d2d40529d1cda6dec93cbdec2246cc4034a4266d08ce1f11842"
+          }
+        },
+        {
+          "host": "slack.com",
+          "method": "POST",
+          "path": "/api/files.completeUploadExternal",
+          "semantic": {
+            "destination": "C0CORPUS0001",
+            "text": "corpus caption",
+            "filename": "corpus-errors.txt",
+            "payload_sha256": ""
+          }
+        }
+      ]
+    }
+  ],
+  "normalizers": {
+    "/response/body/message/id": "uuid_ordinal",
+    "/response/body/message/created_at": "timestamp",
+    "/response/body/attachment/id": "uuid_ordinal",
+    "/response/body/attachment/message_id": "uuid_ordinal",
+    "/response/body/attachment/created_at": "timestamp"
+  },
+  "mask": []
+}

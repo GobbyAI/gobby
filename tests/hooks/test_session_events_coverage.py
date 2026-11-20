@@ -679,6 +679,8 @@ class TestSessionMoreCoverage:
                 return_value=listed_skills,
             ),
             patch.object(handler, "_build_agent_changes") as mock_build,
+            # The MagicMock database has no project row to name the workspace folder.
+            patch("gobby.agents.workspace_bindings.bind_session_workspace"),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.get_variable_subset",
                 side_effect=lambda _session_id, keys: {

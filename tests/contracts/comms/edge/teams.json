@@ -1,0 +1,27 @@
+{
+  "hosts": ["login.microsoftonline.com", "api.botframework.com", "login.botframework.com"],
+  "default": {
+    "status": 200,
+    "content_type": "application/json",
+    "body": {"ok": true}
+  },
+  "routes": [
+    {
+      "host": "login.botframework.com",
+      "method": "GET",
+      "path": "/v1/.well-known/keys",
+      "body": {
+        "keys": [
+          {
+            "kty": "RSA",
+            "use": "sig",
+            "kid": "corpus-kid-1",
+            "alg": "RS256",
+            "n": "lVhzIpWRil6rs7LZATq-f4_JvM7Fxf9Rr7S0B5v4dcla10_vRgXwW-Wuy-KDjt1kflUdD7KaeluUFaO2EkuNaQJHfRGSG0CYxci2ECQ5IWpA-L5N0ebBZ5MUdbJSmUBTEWQ9JNLcdrvHtin8fsatzr3BKGa9azgqm4zNmD9tRYO4Ez9ogxnqL0FTpPI4SlqNrTTtx1yDjhoIZ1S_7Wsm3TSZN_sbhyVP34bqVChgVJhaaKYoLaanmgxePNrknajJGjemPhZsxvznTnGw1Ud6T2EUTimrQaB848f-BixUO2cyjvzPfqa4QXqv6jTuejp9Ot8OoHBUVPrA12t6tYKVFQ",
+            "e": "AQAB"
+          }
+        ]
+      }
+    }
+  ]
+}

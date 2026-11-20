@@ -1,0 +1,17 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_resolve_operator_conversation",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:resolve_operator_conversation",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "resolve_operator_conversation",
+    "arguments": {"channel": "corpus-slack"}
+  },
+  "normalizers": {},
+  "mask": []
+}

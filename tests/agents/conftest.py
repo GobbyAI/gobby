@@ -10,6 +10,7 @@ import pytest
 from gobby.agents.spawn_models import SpawnRequest
 from tests.agents import terminal_fixtures
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
+from tests.fixtures.workspace_seat import WorkspaceSeat, register_workspace_seat
 from tests.storage.definitions.conftest import (
     _reset_revision_globals,
     definition_db,
@@ -18,6 +19,7 @@ from tests.storage.definitions.conftest import (
 from tests.terminals.fakes import bind_spawn_runtime
 
 if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.projects import LocalProjectManager
     from gobby.terminals.composer_ledger import ComposerLedger
 
@@ -68,3 +70,9 @@ def sample_project(
         monkeypatch=monkeypatch,
     )
     return isolated.project.to_dict()
+
+
+@pytest.fixture
+def workspace_seat(temp_db: HubDatabase, sample_project: dict[str, Any]) -> WorkspaceSeat:
+    """A child session row in ``sample_project`` on the package's local machine."""
+    return register_workspace_seat(temp_db, sample_project, AGENT_TEST_MACHINE_ID)

@@ -102,5 +102,7 @@ def bind_session_workspace(db: HubDatabase, session_id: str) -> Path | None:
             changes["_agent_workspace_injected"] = False
         if definition == "default":
             changes[WORKSPACE_EPIC_DIR_VARIABLE] = None
-        variables.merge_variables(session_id, changes)
+        # An unchanged bind (resume, compact, same-pin re-apply) writes nothing.
+        if any(current.get(key) != value for key, value in changes.items()):
+            variables.merge_variables(session_id, changes)
         return folder

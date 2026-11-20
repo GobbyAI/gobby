@@ -1,0 +1,44 @@
+{
+  "schema_version": 3,
+  "name": "comms_channel_create",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP POST /api/comms/channels",
+  "request": {
+    "method": "POST",
+    "path": "/api/comms/channels",
+    "query": {},
+    "headers": {},
+    "body": {
+      "channel_type": "slack",
+      "name": "corpus-created",
+      "config": {
+        "bot_token": "$secret:corpus_slack_bot_token",
+        "signing_secret": "$secret:corpus_slack_signing_secret"
+      }
+    }
+  },
+  "side_effects": [
+    {
+      "channel": "provider_edge",
+      "match": {"hosts": ["slack.com"]}
+    }
+  ],
+  "db_delta": [
+    {
+      "table": "comms_channels",
+      "key": ["id"],
+      "columns": ["id", "channel_type", "name", "enabled", "config_json"],
+      "normalizers": {"id": "uuid_ordinal"},
+      "order": "set"
+    }
+  ],
+  "normalizers": {
+    "/response/body/id": "uuid_ordinal",
+    "/response/body/created_at": "timestamp",
+    "/response/body/updated_at": "timestamp"
+  },
+  "mask": []
+}

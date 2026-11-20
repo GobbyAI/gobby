@@ -595,3 +595,29 @@ fn document_keys_are_numbered_in_insertion_order_as_python_dicts_are() {
         Ok(json!({"b": "@uuid:1@", "a": "@uuid:2@"}))
     );
 }
+
+#[test]
+fn an_unordered_rule_sorts_a_collection_by_key_before_positional_rules() {
+    // Golden (Python normalize_document): the rows sort by name first, so /body/1/id is beta's id
+    // in either input order.
+    let rules = json!({
+        "/body": {"name": "unordered", "key": "name"},
+        "/body/1/id": "uuid_ordinal"
+    });
+    let alpha = json!({"name": "alpha", "id": U1});
+    let beta = json!({"name": "beta", "id": U2});
+    let expected =
+        json!({"body": [{"name": "alpha", "id": U1}, {"name": "beta", "id": "@uuid:1@"}]});
+    for rows in [
+        json!([alpha.clone(), beta.clone()]),
+        json!([beta.clone(), alpha.clone()]),
+    ] {
+        let vector =
+            json!({"kind": "document", "normalizers": rules, "document": {"body": rows.clone()}});
+        assert_eq!(
+            run_vector(&vector, &one_hour_window()),
+            Ok(expected.clone()),
+            "the rows {rows} do not normalize to the sorted rows"
+        );
+    }
+}

@@ -1,0 +1,63 @@
+{
+  "provider": "email",
+  "operation": "send",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/email.py",
+  "source_test": "tests/communications/adapters/test_communications_adapters_email.py::TestEmailAdapter::test_send_message_success",
+  "contract_ref": "https://www.rfc-editor.org/rfc/rfc5321",
+  "drive": {
+    "channel": {
+      "name": "corpus-email",
+      "config": {
+        "smtp_host": "127.0.0.1",
+        "smtp_port": 587,
+        "from_address": "gobby@corpus.test",
+        "default_recipient": "operator@corpus.test",
+        "password": "$secret:EMAIL_PASSWORD"
+      }
+    },
+    "secrets": {
+      "EMAIL_PASSWORD": "corpus-wire-mail-password"
+    },
+    "mailbox": {
+      "user": "gobby@corpus.test",
+      "password": "corpus-wire-mail-password"
+    },
+    "message_id": "<corpus-wire-1@corpus.test>",
+    "call": "send_message",
+    "message": {
+      "content": "corpus email send",
+      "metadata": {
+        "subject": "corpus email send"
+      }
+    }
+  },
+  "provider_contract": {
+    "responses": [
+      {
+        "host": "127.0.0.1",
+        "method": "SMTP",
+        "path": "DATA",
+        "body": "250 2.0.0 Ok: queued as CORPUS0001"
+      }
+    ]
+  },
+  "exchanges": [
+    {
+      "host": "127.0.0.1",
+      "method": "SMTP",
+      "path": "DATA",
+      "semantic": {
+        "destination": "operator@corpus.test",
+        "text": "corpus email send\r\n",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    }
+  ],
+  "outcome": {
+    "message_id": "<corpus-wire-1@corpus.test>"
+  }
+}

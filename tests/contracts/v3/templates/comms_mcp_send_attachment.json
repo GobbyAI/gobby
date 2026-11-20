@@ -1,0 +1,20 @@
+{
+  "schema_version": 3,
+  "name": "comms_mcp_send_attachment",
+  "kind": "mcp",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-communications:send_attachment",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-communications",
+    "tool": "send_attachment",
+    "arguments": {
+      "channel": "corpus-slack",
+      "file_path": "/corpus-missing/corpus-attachment.txt"
+    }
+  },
+  "normalizers": {},
+  "mask": []
+}

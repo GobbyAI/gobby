@@ -1,0 +1,66 @@
+{
+  "provider": "sms",
+  "operation": "send",
+  "capture": "exchange",
+  "verified": false,
+  "oracle": false,
+  "source_file": "src/gobby/communications/adapters/sms.py",
+  "source_test": "tests/communications/adapters/test_communications_adapters_sms.py::test_send_message_success",
+  "contract_ref": "https://www.twilio.com/docs/messaging/api/message-resource#create-a-message-resource",
+  "drive": {
+    "channel": {
+      "name": "corpus-sms",
+      "config": {
+        "auth_token": "$secret:TWILIO_AUTH_TOKEN",
+        "account_sid": "AC00000000000000000000000000000001",
+        "from_number": "+15550000001",
+        "webhook_url": "https://gobby.corpus.test/api/comms/webhooks/corpus-sms"
+      }
+    },
+    "secrets": {
+      "TWILIO_AUTH_TOKEN": "corpus-wire-twilio-auth-token"
+    },
+    "call": "send_message",
+    "message": {
+      "content": "corpus sms send",
+      "metadata": {
+        "platform_destination": "+15550000002"
+      }
+    }
+  },
+  "provider_contract": {
+    "responses": [
+      {
+        "host": "api.twilio.com",
+        "method": "POST",
+        "path": "/2010-04-01/Accounts/AC00000000000000000000000000000001/Messages.json",
+        "status": 201,
+        "body": {
+          "sid": "SM00000000000000000000000000000001",
+          "account_sid": "AC00000000000000000000000000000001",
+          "to": "+15550000002",
+          "from": "+15550000001",
+          "body": "corpus sms send",
+          "status": "queued",
+          "direction": "outbound-api"
+        }
+      }
+    ]
+  },
+  "exchanges": [
+    {
+      "host": "api.twilio.com",
+      "method": "POST",
+      "path": "/2010-04-01/Accounts/AC00000000000000000000000000000001/Messages.json",
+      "semantic": {
+        "destination": "+15550000002",
+        "text": "corpus sms send",
+        "filename": "",
+        "payload_sha256": ""
+      }
+    }
+  ],
+  "outcome": {
+    "message_id": "SM00000000000000000000000000000001"
+  }
+}

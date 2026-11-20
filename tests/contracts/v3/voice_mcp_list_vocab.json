@@ -1,0 +1,72 @@
+{
+  "schema_version": 3,
+  "name": "voice_mcp_list_vocab",
+  "kind": "mcp",
+  "family": "voice",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "MCP gobby-voice:list_vocab",
+  "invocation": {
+    "transport": "rest",
+    "server": "gobby-voice",
+    "tool": "list_vocab",
+    "arguments": {}
+  },
+  "seed": [
+    {
+      "http": {
+        "method": "POST",
+        "path": "/api/mcp/gobby-voice/tools/add_vocab",
+        "credential": "operator",
+        "body": {
+          "terms": "corpus-term-one, corpus-term-two"
+        }
+      }
+    }
+  ],
+  "response": {
+    "success": true,
+    "result": {
+      "vocabulary": [
+        "Gobby",
+        "MCP",
+        "worktree",
+        "Kubernetes",
+        "PostgreSQL",
+        "FastAPI",
+        "Pydantic",
+        "TypeScript",
+        "GraphQL",
+        "WebSocket",
+        "Redis",
+        "MongoDB",
+        "OAuth",
+        "JWT",
+        "REST",
+        "gRPC",
+        "YAML",
+        "JSON",
+        "Docker",
+        "Terraform",
+        "GitHub",
+        "GitLab",
+        "Claude",
+        "Anthropic",
+        "Gemini",
+        "Codex",
+        "npm",
+        "pip",
+        "pytest",
+        "ESLint",
+        "webpack",
+        "Vite",
+        "corpus-term-one",
+        "corpus-term-two"
+      ],
+      "count": 34,
+      "whisper_prompt": "Gobby"
+    }
+  },
+  "normalizers": {},
+  "mask": []
+}

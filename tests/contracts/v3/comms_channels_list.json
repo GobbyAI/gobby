@@ -1,0 +1,69 @@
+{
+  "schema_version": 3,
+  "name": "comms_channels_list",
+  "kind": "http",
+  "family": "communications",
+  "backend": "up",
+  "credential": "operator",
+  "ledger_key": "HTTP GET /api/comms/channels",
+  "request": {
+    "method": "GET",
+    "path": "/api/comms/channels",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": [
+      {
+        "id": "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001",
+        "channel_type": "slack",
+        "name": "corpus-slack",
+        "enabled": true,
+        "config_json": {
+          "bot_token": "$secret:corpus_slack_bot_token",
+          "default_destination": "C0CORPUS0001",
+          "signing_secret": "$secret:corpus_slack_signing_secret"
+        },
+        "created_at": "@mask@",
+        "updated_at": "@mask@",
+        "active": true,
+        "init_error": null,
+        "retry_pending": false,
+        "retry_attempts": 0,
+        "next_retry_at": null
+      },
+      {
+        "id": "@uuid:1@",
+        "channel_type": "gobby_chat",
+        "name": "gobby_chat",
+        "enabled": true,
+        "config_json": {},
+        "created_at": "@mask@",
+        "updated_at": "@mask@",
+        "active": true,
+        "init_error": null,
+        "retry_pending": false,
+        "retry_attempts": 0,
+        "next_retry_at": null
+      }
+    ]
+  },
+  "normalizers": {
+    "/response/body": {
+      "name": "unordered",
+      "key": "name"
+    },
+    "/response/body/1/id": "uuid_ordinal"
+  },
+  "mask": [
+    "/response/body/0/created_at",
+    "/response/body/0/updated_at",
+    "/response/body/1/created_at",
+    "/response/body/1/updated_at"
+  ]
+}

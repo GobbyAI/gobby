@@ -14,14 +14,17 @@ import queue
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
+import httpx
 import psycopg
 import pytest
 from websockets.sync.server import ServerConnection, serve
@@ -33,6 +36,13 @@ from gobby.utils.daemon_url import resolve_daemon_url
 from scripts.parity_waivers import PASSED
 from tests.contracts import corpus_v3, http_corpus, normalizers_v3, recorder_v3
 from tests.contracts.http_corpus import CorpusError
+from tests.contracts.recorder_v3_support import (
+    ProviderEdgeCapture,
+    send_mcp_rest,
+)
+from tests.contracts.recorder_v3_support import (
+    RecorderError as SupportRecorderError,
+)
 from tests.fixtures.hub_guard import HARNESS_DATABASE_PATTERN, HubGuardError, maintenance_url
 
 VECTORS: dict[str, Any] = json.loads(
@@ -339,6 +349,63 @@ def test_grant_encoding_vector_is_byte_stable() -> None:
     grant = GrantBundle.model_validate(vector["grant"])
     assert encode_grant_header(grant) == vector["header"]
     assert decode_grant_header(vector["header"]) == grant
+
+
+@pytest.mark.unit
+def test_v3_recorder_sends_a_runtime_grant_for_a_case_that_declares_one(tmp_path: Path) -> None:
+    """A case whose credential is grant is sent with the runtime grant the daemon issues.
+
+    The fake daemon answers the handshake with the pinned grant vector, so the header the case
+    request carries must be that vector's header. The handshake is asked once with the operator
+    bearer, and the case request presents that bearer beside the grant. A refusal by the recorder
+    is captured and asserted, so a failure names it.
+    """
+    vector_path = corpus_v3.V3_DIR / "grant_encoding.json"
+    assert vector_path.is_file(), f"the pinned grant vector is missing: {vector_path}"
+    vector = json.loads(vector_path.read_text())
+    seen: list[httpx.Request] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/api/runtime/handshake":
+            return httpx.Response(200, json={"grant": vector["grant"]})
+        return httpx.Response(
+            200, json={"enabled": False, "stt_enabled": False, "tts_enabled": False}
+        )
+
+    case = {
+        "schema_version": 3,
+        "name": "grant_probe",
+        "kind": "http",
+        "family": "voice",
+        "credential": "grant",
+        "ledger_key": "HTTP GET /api/voice/status",
+        "request": {
+            "method": "GET",
+            "path": "/api/voice/status",
+            "query": {},
+            "headers": {},
+            "body": None,
+        },
+        "normalizers": {},
+        "mask": [],
+    }
+    client = httpx.Client(base_url="http://127.0.0.1:9", transport=httpx.MockTransport(answer))
+    refusal: str | None = None
+    try:
+        recorder_v3._send(
+            "http", case, client, None, operator={"Authorization": "Bearer probe"}, scratch=tmp_path
+        )
+    except recorder_v3.RecorderError as error:
+        refusal = str(error)
+    assert refusal is None, f"the recorder refused a case that declares a grant: {refusal}"
+    handshakes = [request for request in seen if request.url.path == "/api/runtime/handshake"]
+    assert [request.method for request in handshakes] == ["POST"]
+    assert handshakes[0].headers.get("Authorization") == "Bearer probe"
+    case_requests = [request for request in seen if request.url.path == "/api/voice/status"]
+    assert len(case_requests) == 1
+    assert case_requests[0].headers.get("X-Gobby-Runtime-Grant") == vector["header"]
+    assert case_requests[0].headers.get("Authorization") == "Bearer probe"
 
 
 @pytest.mark.unit
@@ -703,3 +770,284 @@ def test_redaction_leaves_a_committed_recording_unchanged() -> None:
     )
     recorder_v3._recorded_entries(case, observation)
     assert case == committed
+
+
+def _client(status: int, body: Any, seen: list[httpx.Request] | None = None) -> httpx.Client:
+    """An httpx client answering every request with status and body, without leaving the process."""
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        if seen is not None:
+            seen.append(request)
+        return httpx.Response(status, json=body)
+
+    return httpx.Client(base_url="http://testserver", transport=httpx.MockTransport(answer))
+
+
+@pytest.mark.unit
+def test_seed_http_step_refuses_a_non_success_answer() -> None:
+    step = {
+        "method": "POST",
+        "path": "/api/comms/send",
+        "credential": "none",
+        "body": {"channel_name": "corpus-slack", "content": "corpus seed message"},
+    }
+    recorder_v3.send_seed_http(_client(200, {"status": "sent"}), step, operator={})
+    with pytest.raises(recorder_v3.RecorderError):
+        recorder_v3.send_seed_http(_client(500, {"detail": "boom"}), step, operator={})
+
+
+@pytest.mark.unit
+def test_rest_seed_step_refuses_a_success_false_answer() -> None:
+    step = {
+        "method": "POST",
+        "path": "/api/mcp/gobby-voice/tools/add_vocab",
+        "credential": "none",
+        "body": {"terms": "corpus-term-one, corpus-term-two"},
+    }
+    recorder_v3.send_seed_http(_client(200, {"success": True, "added": 2}), step, operator={})
+    with pytest.raises(recorder_v3.RecorderError):
+        recorder_v3.send_seed_http(
+            _client(200, {"success": False, "error": "refused"}), step, operator={}
+        )
+
+
+@pytest.mark.unit
+def test_mcp_rest_sender_requires_http_200() -> None:
+    invocation = {
+        "server": "gobby-communications",
+        "tool": "remove_channel",
+        "arguments": {"name": "corpus-slack"},
+    }
+    body = {"success": True, "channels": [{"name": "corpus-slack"}]}
+    seen: list[httpx.Request] = []
+    assert send_mcp_rest(_client(200, body, seen), invocation, operator={}) == body
+    assert [(request.method, request.url.path) for request in seen] == [
+        ("POST", "/api/mcp/gobby-communications/tools/remove_channel")
+    ]
+    assert json.loads(seen[0].content) == {"name": "corpus-slack"}
+    with pytest.raises(SupportRecorderError):
+        send_mcp_rest(_client(500, {"detail": "boom"}), invocation, operator={})
+
+
+@pytest.mark.unit
+def test_mcp_recording_carries_the_case_masks() -> None:
+    case = _v3_case(
+        kind="mcp",
+        ledger_key="MCP gobby-communications:list_channels",
+        invocation={
+            "transport": "rest",
+            "server": "gobby-communications",
+            "tool": "list_channels",
+            "arguments": {},
+        },
+        mask=["/response/result/checked_at"],
+    )
+    del case["request"]
+    raw = {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {"checked_at": "2026-11-19T06:00:00Z", "channels": []},
+    }
+    normalized = recorder_v3._normalize_response(case, raw, WINDOW)
+    assert normalized["result"]["channels"] == [], "the unmasked field survives"
+    assert normalized["result"]["checked_at"] == http_corpus.MASK
+
+
+@pytest.mark.unit
+def test_recorded_db_values_carry_the_case_masks() -> None:
+    entry = {
+        "table": "comms_channels",
+        "key": ["id"],
+        "columns": "all",
+        "normalizers": {},
+        "order": "set",
+    }
+    case = _v3_case(db_delta=[entry], mask=["/db_delta/0/recorded/added/0/id"])
+    observation = recorder_v3.Observation(
+        response={"status": 200, "headers": {}, "body": None},
+        db_delta=[
+            {
+                "added": [{"id": "5b0c7a1e-3f2d-4c8a-9e61-0c0a0c0a0001", "name": "corpus-slack"}],
+                "removed": [],
+                "changed": [],
+            }
+        ],
+    )
+    recorder_v3._recorded_entries(case, observation)
+    assert case["db_delta"][0]["recorded"]["added"][0]["name"] == "corpus-slack"
+    assert case["db_delta"][0]["recorded"]["added"][0]["id"] == http_corpus.MASK
+
+
+@pytest.mark.unit
+def test_each_template_records_in_its_own_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    for name in ("alpha", "beta", "gamma"):
+        (templates / f"{name}.json").write_text(json.dumps({"name": name}))
+    out = tmp_path / "out"
+    out.mkdir()
+    opened: list[str] = []
+
+    @contextmanager
+    def counting_run(**_: Any) -> Iterator[SimpleNamespace]:
+        opened.append("run")
+        yield SimpleNamespace(
+            name=f"run-{len(opened)}", url="postgresql://run", base_url="postgresql://base"
+        )
+
+    @contextmanager
+    def counting_daemon(**_: Any) -> Iterator[SimpleNamespace]:
+        yield SimpleNamespace(operator_headers=lambda: {})
+
+    def record(run: Any, daemon: Any, template: Mapping[str, Any], **_: Any) -> dict[str, Any]:
+        return {"name": template["name"]}
+
+    monkeypatch.setattr(recorder_v3, "open_run_database", counting_run)
+    monkeypatch.setattr(recorder_v3, "recorder_daemon", counting_daemon)
+    monkeypatch.setattr(recorder_v3, "record_template", record)
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda **_: str(tmp_path / "scratch"))
+    assert recorder_v3.main(["--templates", str(templates), "--out", str(out)]) == 0
+    assert sorted(path.name for path in out.iterdir()) == ["alpha.json", "beta.json", "gamma.json"]
+    assert len(opened) == 3, "each template opens its own run"
+
+
+class _EdgeLog:
+    """A stand-in for the provider edge's arrival log: arrivals in order, cleared on demand."""
+
+    def __init__(self) -> None:
+        self._arrivals: list[dict[str, Any]] = []
+
+    def add(self, arrival: dict[str, Any]) -> None:
+        self._arrivals.append(arrival)
+
+    def hits(self) -> list[dict[str, Any]]:
+        return list(self._arrivals)
+
+    def clear(self) -> None:
+        self._arrivals.clear()
+
+
+@pytest.mark.unit
+def test_provider_edge_capture_keeps_listed_hosts_in_arrival_order() -> None:
+    edge = _EdgeLog()
+    capture = ProviderEdgeCapture(edge, hosts=["slack.com"])
+    edge.add(
+        {
+            "host": "slack.com",
+            "method": "POST",
+            "path": "/api/chat.postMessage",
+            "headers": {"authorization": "Bearer test-token"},
+            "body": {"text": "corpus message one"},
+        }
+    )
+    edge.add(
+        {"host": "other.test", "method": "GET", "path": "/ignored", "headers": {}, "body": None}
+    )
+    edge.add(
+        {
+            "host": "slack.com",
+            "method": "GET",
+            "path": "/api/auth.test",
+            "headers": {},
+            "body": None,
+        }
+    )
+    assert len(edge.hits()) == 3, "the stub edge log holds the three arrivals"
+    assert capture.hits() == [
+        {"host": "slack.com", "method": "POST", "path": "/api/chat.postMessage"},
+        {"host": "slack.com", "method": "GET", "path": "/api/auth.test"},
+    ]
+
+
+@pytest.mark.unit
+def test_provider_edge_capture_keeps_the_sanitized_semantics_of_each_arrival() -> None:
+    edge = _EdgeLog()
+    capture = ProviderEdgeCapture(edge, hosts=["slack.com"])
+    sent = {
+        "destination": "C0CORPUS0001",
+        "text": "corpus message one",
+        "filename": "",
+        "payload_sha256": "",
+    }
+    edge.add(
+        {
+            "host": "slack.com",
+            "method": "POST",
+            "path": "/api/chat.postMessage",
+            "headers": {"authorization": "Bearer test-token"},
+            "body": {"channel": "C0CORPUS0001", "text": "corpus message one"},
+            "semantic": sent,
+        }
+    )
+    edge.add(
+        {
+            "host": "other.test",
+            "method": "POST",
+            "path": "/ignored",
+            "semantic": {**sent, "text": "ignored"},
+        }
+    )
+    assert capture.hits() == [
+        {"host": "slack.com", "method": "POST", "path": "/api/chat.postMessage", "semantic": sent}
+    ], "the capture drops what each provider request sent"
+
+
+_UNORDERED_RULES: dict[str, Any] = {
+    "/body": {"name": "unordered", "key": "name"},
+    "/body/1/id": "uuid_ordinal",
+}
+_ALPHA_ID = "11111111-1111-4111-8111-111111111111"
+_BETA_ID = "22222222-2222-4222-8222-222222222222"
+
+
+def _normalized_or_refusal(document: Any, rules: Mapping[str, Any]) -> Any:
+    try:
+        return normalizers_v3.normalize_document(document, rules, window=WINDOW)
+    except normalizers_v3.NormalizationError as error:
+        return f"refused: {error}"
+
+
+@pytest.mark.unit
+def test_an_unordered_rule_sorts_a_collection_by_key_before_positional_rules() -> None:
+    rows = [{"name": "alpha", "id": _ALPHA_ID}, {"name": "beta", "id": _BETA_ID}]
+    expected = {"body": [{"name": "alpha", "id": _ALPHA_ID}, {"name": "beta", "id": "@uuid:1@"}]}
+    for label, order in (("as listed", rows), ("reversed", list(reversed(rows)))):
+        normalized = _normalized_or_refusal({"body": copy.deepcopy(order)}, _UNORDERED_RULES)
+        assert normalized == expected, f"the rows {label} normalize to {normalized}"
+    renamed = [{"name": "alpha", "id": _ALPHA_ID}, {"name": "gamma", "id": _BETA_ID}]
+    assert _normalized_or_refusal({"body": renamed}, _UNORDERED_RULES) != expected, (
+        "a changed row still normalizes to the recorded rows"
+    )
+    keyless = {"/body": {"name": "unordered"}}
+    refusal = _normalized_or_refusal({"body": copy.deepcopy(rows)}, keyless)
+    assert isinstance(refusal, str) and refusal.startswith("refused: "), (
+        f"an unordered rule with no key normalized to {refusal}"
+    )
+
+
+def _recorded_http_answer(case: dict[str, Any], body: Any, tmp_path: Path) -> Any:
+    """The normalized response the recorder keeps when the daemon answers ``body`` to ``case``."""
+    client = httpx.Client(
+        base_url="http://127.0.0.1:9",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body)),
+    )
+    with client:
+        raw = recorder_v3._send("http", case, client, None, operator={}, scratch=tmp_path)
+    return recorder_v3._normalize_response(case, raw, WINDOW)
+
+
+@pytest.mark.unit
+def test_an_http_answer_is_sorted_before_a_positional_mask_applies(tmp_path: Path) -> None:
+    case = _v3_case(
+        normalizers={"/response/body": {"name": "unordered", "key": "name"}},
+        mask=["/response/body/0/id"],
+    )
+    rows = [{"name": "alpha", "id": _ALPHA_ID}, {"name": "beta", "id": _BETA_ID}]
+    expected = [{"name": "alpha", "id": http_corpus.MASK}, {"name": "beta", "id": _BETA_ID}]
+    for label, order in (("as listed", rows), ("reversed", list(reversed(rows)))):
+        normalized = _recorded_http_answer(case, copy.deepcopy(order), tmp_path)
+        assert normalized["body"] == expected, (
+            f"the rows {label} are recorded as {normalized['body']}, expected {expected}"
+        )

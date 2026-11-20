@@ -1,0 +1,412 @@
+{
+  "contract_refs": [
+    "docs/contracts/node-commands.md"
+  ],
+  "command_frames": [],
+  "cases": [
+    {
+      "id": "2.1.1",
+      "kind": "node_install",
+      "command": "gdaemon node release-info",
+      "plan_line": 613,
+      "anchor_text": "- 2.1.1 - `gdaemon node release-info --json` prints the crate version and `node_commands::CONTRACT_VERSION` in the sandbox, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::release_info_reports_version_and_contract_without_python`."
+    },
+    {
+      "id": "2.2.1",
+      "kind": "node_install",
+      "command": "gclient node install",
+      "plan_line": 654,
+      "description": "Shared exec behaviour of both gclient node install and gclient node enroll: each execs the sibling gdaemon node <verb> with its arguments unchanged and returns its exit status. install is the representative command; the plan anchor states both verbs. The Rust test the anchor names does not exist in this tree; the Rust port adds it.",
+      "anchor_text": "- 2.2.1 - With no daemon URL or token available, `gclient node install` and `gclient node enroll` exec the sibling `gdaemon node <verb>` with every argument unchanged and return its exit status. test: `crates/gclient/tests/node_verbs.rs::node_setup_verbs_exec_sibling_gdaemon`."
+    },
+    {
+      "id": "2.2.2",
+      "kind": "node_install",
+      "command": "gclient node install",
+      "plan_line": 655,
+      "description": "Shared exec behaviour of both gclient node install and gclient node enroll: either verb, with no sibling gdaemon beside gclient, exits 2 naming the expected gdaemon path. install is the representative command; the plan anchor's behaviour is shared by both verbs. The Rust test the anchor names does not exist in this tree; the Rust port adds it.",
+      "anchor_text": "- 2.2.2 - A missing sibling `gdaemon` exits 2 naming the expected path. test: `crates/gclient/tests/node_verbs.rs::node_setup_verbs_name_missing_gdaemon`."
+    },
+    {
+      "id": "2.3.1",
+      "kind": "enrollment",
+      "command": "gobby node enroll",
+      "plan_line": 755,
+      "anchor_text": "- 2.3.1 - On an empty home, against a self-signed TLS stub hub, enroll with the matching fingerprint and a piped password writes a 0600 remote bootstrap that gcore parses to that hub with `api_key`, `api_key_id` and `hub_cert`, writes `tls/hub.pem` at 0600 and creates `machine_id`, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::enroll_creates_node_bootstrap_without_python`.",
+      "http": [
+        {
+          "method": "POST",
+          "path": "/api/auth/keys/bootstrap",
+          "route_source_line": 718
+        }
+      ]
+    },
+    {
+      "id": "2.3.2",
+      "kind": "enrollment",
+      "command": "gobby node enroll",
+      "plan_line": 756,
+      "anchor_text": "- 2.3.2 - Enrolling again with the same hub replaces the key and keeps every other bootstrap key, and another hub, a local or hub bootstrap, or a `--hub` naming the node's own origin is refused before any request with nothing written. test: `crates/gdaemon/tests/node_setup.rs::enroll_refuses_rehome_and_local_bootstrap`."
+    },
+    {
+      "id": "2.3.3",
+      "kind": "enrollment",
+      "command": "gobby node enroll",
+      "plan_line": 757,
+      "anchor_text": "- 2.3.3 - Each malformed or mismatched hub reply (bad key, non-UUID ids, foreign machine, wrong hint, reused key id) refuses with nothing saved and names the unverified key id. test: `crates/gdaemon/tests/node_setup.rs::enroll_refuses_unverified_reply`.",
+      "http": [
+        {
+          "method": "POST",
+          "path": "/api/auth/keys/bootstrap",
+          "route_source_line": 718
+        }
+      ]
+    },
+    {
+      "id": "2.3.4",
+      "kind": "enrollment",
+      "command": "gobby node enroll",
+      "plan_line": 758,
+      "anchor_text": "- 2.3.4 - `--fingerprint` with http, and http to a non-loopback host without `--insecure`, are refused before any request. test: `crates/gdaemon/tests/node_setup.rs::enroll_refuses_insecure_transport`."
+    },
+    {
+      "id": "2.3.5",
+      "kind": "enrollment",
+      "command": "gobby node enroll",
+      "plan_line": 759,
+      "anchor_text": "- 2.3.5 - A 401, an unreachable hub, a stalled hub past 10 s, a fingerprint mismatch and a certificate that does not cover the host each leave the prior enrollment byte for byte, or no bootstrap on an empty home, and the SAN case says the password was not sent. test: `crates/gdaemon/tests/node_setup.rs::enroll_failure_keeps_prior_enrollment`.",
+      "http": [
+        {
+          "method": "POST",
+          "path": "/api/auth/keys/bootstrap",
+          "route_source_line": 718
+        }
+      ]
+    },
+    {
+      "id": "2.3.6",
+      "kind": "enrollment",
+      "command": "gobby node enroll",
+      "plan_line": 760,
+      "anchor_text": "- 2.3.6 - An unusable bootstrap lock or an unwritable home rolls back the pin and revokes the minted key through login and DELETE, and a failed revoke names the key id. test: `crates/gdaemon/tests/node_setup.rs::enroll_rolls_back_and_revokes`.",
+      "http": [
+        {
+          "method": "POST",
+          "path": "/api/auth/keys/bootstrap",
+          "route_source_line": 718
+        },
+        {
+          "method": "POST",
+          "path": "/api/auth/login",
+          "route_source_line": 733
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/auth/keys/{key_id}",
+          "route_source_line": 734
+        }
+      ]
+    },
+    {
+      "id": "2.3.7",
+      "kind": "enrollment",
+      "command": "gobby node enroll",
+      "plan_line": 761,
+      "anchor_text": "- 2.3.7 - Settle reports committed when the bootstrap names the key, and unresolved when the prior pin cannot be restored. test: `crates/gdaemon/src/node_setup/enroll/tests.rs::settle_decides_by_bootstrap`."
+    },
+    {
+      "id": "2.4.1",
+      "kind": "enrollment",
+      "command": "gdaemon serve",
+      "plan_line": 818,
+      "anchor_text": "- 2.4.1 - `gdaemon serve` on an unenrolled node home refuses naming `gobby node enroll`, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::serve_without_key_names_enroll_without_python`."
+    },
+    {
+      "id": "2.4.2",
+      "kind": "enrollment",
+      "command": "gdaemon serve",
+      "plan_line": 819,
+      "anchor_text": "- 2.4.2 - No file under `crates/*/src` contains `gobby auth login`. test: `crates/gdaemon/tests/node_setup.rs::no_crate_names_python_login`."
+    },
+    {
+      "id": "2.4.3",
+      "kind": "enrollment",
+      "command": "gdaemon serve",
+      "plan_line": 820,
+      "anchor_text": "- 2.4.3 - The node startup and claim tests assert the new remediation. test: `crates/gdaemon/tests/nodes.rs::node_startup_requires_a_pinned_hub`."
+    },
+    {
+      "id": "2.5.1",
+      "kind": "enrollment",
+      "command": "gdaemon node enroll",
+      "plan_line": 896,
+      "anchor_text": "- 2.5.1 - `pair_node` enrolls with `gdaemon node enroll` under a tripwire-only `PATH`, the tripwire stays silent, and the enrolled node relays and handshakes. test: `tests/e2e/test_hub_node_pair.py::test_node_enrolls_and_relays`."
+    },
+    {
+      "id": "2.5.2",
+      "kind": "enrollment",
+      "command": "gdaemon node enroll",
+      "plan_line": 897,
+      "anchor_text": "- 2.5.2 - `gdaemon node enroll` pins a self-signed live hub. test: `tests/e2e/test_auth_login_e2e.py::test_enroll_pins_self_signed_hub`."
+    },
+    {
+      "id": "3.1.1",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 978,
+      "anchor_text": "- 3.1.1 - A signature by the test key over `SHA256SUMS` verifies, and a changed byte, another key or a malformed public key refuses. test: `crates/gdaemon/src/release/tests.rs::signature_verifies_only_the_signed_bytes`."
+    },
+    {
+      "id": "3.1.2",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 979,
+      "anchor_text": "- 3.1.2 - The embedded `release-signing.pub` parses as an Ed25519 key. test: `crates/gdaemon/src/release/tests.rs::embedded_release_key_parses`."
+    },
+    {
+      "id": "3.1.3",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 980,
+      "anchor_text": "- 3.1.3 - `download_bundle` from a fake release yields a verified bundle directory, and a bad `SHA256SUMS` signature, a bundle hash mismatch or a member hash mismatch refuses with no staging directory left. test: `crates/gdaemon/src/release/tests.rs::download_bundle_verifies_before_and_after_extraction`."
+    },
+    {
+      "id": "3.1.4",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 981,
+      "anchor_text": "- 3.1.4 - `published_releases` keeps only published `gdaemon-v` tags, newest first. test: `crates/gdaemon/src/release/tests.rs::published_releases_keep_gdaemon_tags`."
+    },
+    {
+      "id": "3.1.5",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 982,
+      "anchor_text": "- 3.1.5 - `bundle_target` names the four bundle targets and nothing for other platforms. test: `crates/gdaemon/src/release/tests.rs::bundle_target_matches_uname_names`."
+    },
+    {
+      "id": "3.2.1",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1048,
+      "anchor_text": "- 3.2.1 - Install from a signed bundle directory on an empty home enrolls against the TLS stub hub, promotes all six members to new inodes at 0755, writes the identity stamp and `.node-release.json`, and prints the `export PATH` line, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_enrolls_and_promotes_bundle_without_python`."
+    },
+    {
+      "id": "3.2.2",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1049,
+      "anchor_text": "- 3.2.2 - An unsigned or tampered bundle, a missing member or disagreeing identities refuse before any member is promoted. test: `crates/gdaemon/tests/node_setup.rs::install_refuses_unverified_or_incoherent_bundle`."
+    },
+    {
+      "id": "3.2.3",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1050,
+      "anchor_text": "- 3.2.3 - Install run from `<gobby_home>/bin` on an enrolled home skips enrollment and promotion and needs no `--email`, while an unenrolled home without `--email` is refused with nothing written. test: `crates/gdaemon/tests/node_setup.rs::install_skips_done_steps`."
+    },
+    {
+      "id": "3.3.1",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1125,
+      "anchor_text": "- 3.3.1 - `install_from_tarball` stages the composed minimal tarball with stub `node` and `npm`, and #24374's verifier accepts the result. test: `crates/gdaemon/tests/node_setup.rs::srt_installs_from_minimal_tarball`."
+    },
+    {
+      "id": "3.3.2",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1126,
+      "anchor_text": "- 3.3.2 - The verb reuses a seeded verified install without running `npm`, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_reuses_verified_srt_without_python`."
+    },
+    {
+      "id": "3.3.3",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1127,
+      "anchor_text": "- 3.3.3 - The verb refuses a tarball off its pin (the composed one), Node older than 22.12.0, or no `npm`, leaving no staging directory and no install, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_refuses_srt_off_pin`."
+    },
+    {
+      "id": "3.3.4",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1128,
+      "anchor_text": "- 3.3.4 - The Rust pins, receipt fields and patch table equal the Python ones (read with `include_str!`), the lockfile and runner copies equal their Python originals byte for byte, and the embedded lockfile and runner match their pins. test: `crates/gdaemon/tests/node_setup.rs::srt_pins_match_python`."
+    },
+    {
+      "id": "3.3.5",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1129,
+      "anchor_text": "- 3.3.5 - Patches apply once, skip a patched file, and refuse unknown bytes; a failed promotion restores the previous install. test: `crates/gdaemon/src/node_setup/srt/tests.rs::patches_and_promotion_follow_python`."
+    },
+    {
+      "id": "3.3.6",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1130,
+      "anchor_text": "- 3.3.6 - Run as the opt-in check, with network and Node.js 22.12.0 or later on `PATH` after the tripwires, the verb fetches the registry tarball with `npm pack`, matches its pin, and #24374's verifier accepts the install, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_fetches_registry_srt`."
+    },
+    {
+      "id": "3.4.1",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1196,
+      "anchor_text": "- 3.4.1 - Install over the golden's input writes the golden's claude hooks and `gmcp` entry, keeps the user's handlers and other keys, and backs up `settings.json`, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_claude_hooks_match_python_golden`."
+    },
+    {
+      "id": "3.4.2",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1197,
+      "anchor_text": "- 3.4.2 - Python's installer produces the claude golden. test: `tests/install/test_node_setup_golden.py::test_claude_golden_matches_python`."
+    },
+    {
+      "id": "3.4.3",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1198,
+      "anchor_text": "- 3.4.3 - A CLI absent from `PATH` is skipped with its config untouched, and a path with a space is single-quoted as Python quotes it. test: `crates/gdaemon/tests/node_setup.rs::install_skips_absent_cli_and_quotes_like_python`."
+    },
+    {
+      "id": "3.4.4",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1199,
+      "anchor_text": "- 3.4.4 - The crate-local claude template copy equals `src/gobby/install/claude/hooks-template.json` byte for byte. test: `crates/gdaemon/tests/node_setup.rs::claude_template_copy_matches_python`."
+    },
+    {
+      "id": "3.5.1",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1254,
+      "anchor_text": "- 3.5.1 - Install over the golden's input writes the golden's codex hooks, trust-entry keys and `gmcp` block, each `trusted_hash` is the Rust hash of the hook it names, and a user comment in `config.toml` survives, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_codex_hooks_match_python_golden`."
+    },
+    {
+      "id": "3.5.2",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1255,
+      "anchor_text": "- 3.5.2 - Python's installer produces the codex golden. test: `tests/install/test_node_setup_golden.py::test_codex_golden_matches_python`."
+    },
+    {
+      "id": "3.5.3",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1256,
+      "anchor_text": "- 3.5.3 - The Rust trust hash equals each vector's Python hash. test: `crates/gdaemon/src/node_setup/codex/tests.rs::trust_hash_matches_python_vectors`."
+    },
+    {
+      "id": "3.5.4",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1257,
+      "anchor_text": "- 3.5.4 - Python's hash produces the trust vectors. test: `tests/install/test_node_setup_golden.py::test_codex_trust_vectors_match_python`."
+    },
+    {
+      "id": "3.5.5",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1258,
+      "anchor_text": "- 3.5.5 - The crate-local codex template copy equals `src/gobby/install/codex/hooks-template.json` byte for byte. test: `crates/gdaemon/tests/node_setup.rs::codex_template_copy_matches_python`."
+    },
+    {
+      "id": "3.6.1",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1291,
+      "anchor_text": "- 3.6.1 - Install over the golden's input writes the golden's droid hooks and `gmcp` entry, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_droid_hooks_match_python_golden`."
+    },
+    {
+      "id": "3.6.2",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1292,
+      "anchor_text": "- 3.6.2 - Python's installer produces the droid golden. test: `tests/install/test_node_setup_golden.py::test_droid_golden_matches_python`."
+    },
+    {
+      "id": "3.7.1",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1347,
+      "anchor_text": "- 3.7.1 - Install over the golden's input writes the golden's grok hooks, `compat.claude.hooks = false` and `gmcp` server, keeps the user comment and the other server, and backs up both files, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_grok_hooks_match_python_golden`."
+    },
+    {
+      "id": "3.7.2",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1348,
+      "anchor_text": "- 3.7.2 - Python's installer and MCP writer produce the grok golden. test: `tests/install/test_node_setup_golden.py::test_grok_golden_matches_python`."
+    },
+    {
+      "id": "3.7.3",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1349,
+      "anchor_text": "- 3.7.3 - The crate-local grok template copy equals `src/gobby/install/grok/hooks-template.json` byte for byte. test: `crates/gdaemon/tests/node_setup.rs::grok_template_copy_matches_python`."
+    },
+    {
+      "id": "3.8.1",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1399,
+      "anchor_text": "- 3.8.1 - Install over the golden's input writes the golden's agy hooks and `gmcp` entry, keeps the other named hook and server, and writes through a symlinked `mcp_config.json`, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_agy_hooks_match_python_golden`."
+    },
+    {
+      "id": "3.8.2",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1400,
+      "anchor_text": "- 3.8.2 - Python's installer produces the agy golden. test: `tests/install/test_node_setup_golden.py::test_agy_golden_matches_python`."
+    },
+    {
+      "id": "3.8.3",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1401,
+      "anchor_text": "- 3.8.3 - A stub `agy` whose `/hooks` lists the gobby hook is reported verified, and one that fails is reported without failing install. test: `crates/gdaemon/tests/node_setup.rs::install_agy_reports_hook_verification`."
+    },
+    {
+      "id": "3.8.4",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1402,
+      "anchor_text": "- 3.8.4 - The crate-local agy template copy equals `src/gobby/install/agy/hooks-template.json` byte for byte. test: `crates/gdaemon/tests/node_setup.rs::agy_template_copy_matches_python`."
+    },
+    {
+      "id": "3.9.1",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1469,
+      "anchor_text": "- 3.9.1 - On macOS, install writes the plist fixture's content for the sandbox, boots it out and in through `launchctl`, and returns once the stub hub lists the machine connected, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_loads_launch_agent_and_waits_without_python`."
+    },
+    {
+      "id": "3.9.2",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1470,
+      "anchor_text": "- 3.9.2 - On Linux, install writes the unit fixture's content, reloads, enables and restarts it through `systemctl --user`, prints the linger command when lingering is off, and returns once the stub hub lists the machine connected, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::install_starts_systemd_unit_and_waits_without_python`."
+    },
+    {
+      "id": "3.9.3",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1471,
+      "anchor_text": "- 3.9.3 - While the stub hub's row shows a refusal with a target, install prints that the node is moving to it and keeps waiting past the first bound, and it returns once the row shows the machine connected. test: `crates/gdaemon/tests/node_setup.rs::install_waits_while_node_moves_to_target`."
+    },
+    {
+      "id": "3.9.4",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1472,
+      "anchor_text": "- 3.9.4 - When the hub never lists the node connected, or refuses it with no target, install exits 1 after the bound and prints the refusal the hub reports and the log path. test: `crates/gdaemon/tests/node_setup.rs::install_reports_unconnected_node`."
+    },
+    {
+      "id": "3.9.5",
+      "kind": "node_install",
+      "command": "gobby node install",
+      "plan_line": 1473,
+      "anchor_text": "- 3.9.5 - The Overview's install command runs whole in one sandbox, from bundle and enrollment through SRT, the five CLIs and the service, and leaves a node home that `NodeServices::prepare` accepts, with no tripwire fired. test: `crates/gdaemon/tests/node_setup.rs::documented_node_install_runs_without_python`."
+    }
+  ]
+}

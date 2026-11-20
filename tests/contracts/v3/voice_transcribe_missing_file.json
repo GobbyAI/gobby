@@ -1,0 +1,37 @@
+{
+  "schema_version": 3,
+  "name": "voice_transcribe_missing_file",
+  "kind": "http",
+  "family": "voice",
+  "backend": "up",
+  "credential": "grant",
+  "ledger_key": "HTTP POST /api/voice/transcribe",
+  "request": {
+    "method": "POST",
+    "path": "/api/voice/transcribe",
+    "query": {},
+    "headers": {},
+    "body": {}
+  },
+  "response": {
+    "status": 422,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "detail": [
+        {
+          "type": "missing",
+          "loc": [
+            "body",
+            "file"
+          ],
+          "msg": "Field required",
+          "input": null
+        }
+      ]
+    }
+  },
+  "normalizers": {},
+  "mask": []
+}

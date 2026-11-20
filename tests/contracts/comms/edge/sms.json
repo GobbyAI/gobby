@@ -1,0 +1,13 @@
+{
+  "hosts": ["api.twilio.com"],
+  "default": {
+    "status": 200,
+    "content_type": "application/json",
+    "body": {
+      "sid": "SM0CORPUS0000000000000000000001",
+      "status": "queued",
+      "direction": "outbound-api"
+    }
+  },
+  "routes": []
+}
