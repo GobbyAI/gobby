@@ -10,19 +10,29 @@ Rule ids start with ``synthetic-``, and no case asserts the behavior of a bundle
 from __future__ import annotations
 
 import ast
+import collections
+import contextlib
 import dataclasses
+import inspect
 import json
 import os
+import pathlib
 import re
 import shutil
+import subprocess
 import sys
-from collections.abc import Iterable
+import tempfile
+import typing
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 import pytest
 import yaml
 
+import gobby.utils.machine_id as machine_id
+import gobby.utils.spawn as spawn
 from gobby.hooks.events import HookResponse
 from gobby.storage.tool_results import ToolResultStore
 from tests.contracts import rules_corpus, rules_recorder, rules_vectors
@@ -127,14 +137,61 @@ ENGINE_RESPONSE_FIELDS = tuple(
 FIELDS_WITHOUT_RESPONSE_WRITER = tuple(
     field for field, owner in RESPONSE_FIELD_OWNERS.items() if owner in ("none", "unrouted")
 )
-UNUSED_FIELD_WRITE_FORMS = {
-    "attribute_assign": 'resp.trigger_action = "synthetic"\n',
-    "keyword_argument": 'HookResponse(trigger_action="synthetic")\n',
-    "augmented_assign": 'resp.trigger_action += "synthetic"\n',
-    "setattr_call": 'setattr(resp, "trigger_action", "synthetic")\n',
-    "unpacked_keywords": 'HookResponse(**{"trigger_action": "synthetic"})\n',
+# Write and read forms are templates over the field name, so every field without a response
+# writer runs each of them. Each write form names the scan rule that detects it:
+# - "attribute_store": an attribute of that name in a store or delete position;
+# - "keyword": a keyword argument of that name in any call;
+# - "call_literal": the name as a key of a dict literal unpacked into a call, or as the literal
+#   name argument of setattr or __setattr__;
+# - "string_literal": the name as any other string constant. This rule applies only to a field
+#   whose owner is "none": an unrouted field's production capability tables hold its name as a
+#   string without writing it.
+FIELD_TOKEN = "FIELD_NAME"
+STRING_LITERAL_RULE = "string_literal"
+UNUSED_FIELD_WRITE_FORMS: dict[str, tuple[str, str]] = {
+    "attribute_assign": ("attribute_store", 'resp.FIELD_NAME = "synthetic"\n'),
+    "keyword_argument": ("keyword", 'HookResponse(FIELD_NAME="synthetic")\n'),
+    "augmented_assign": ("attribute_store", 'resp.FIELD_NAME += "synthetic"\n'),
+    "setattr_call": ("call_literal", 'setattr(resp, "FIELD_NAME", "synthetic")\n'),
+    "unpacked_keywords": ("call_literal", 'HookResponse(**{"FIELD_NAME": "synthetic"})\n'),
+    "tuple_target": ("attribute_store", 'resp.FIELD_NAME, other = "synthetic", 1\n'),
+    "for_target": ("attribute_store", 'for resp.FIELD_NAME in ["synthetic"]:\n    pass\n'),
+    "indirect_unpacked_keywords": (
+        STRING_LITERAL_RULE,
+        'kw = {"FIELD_NAME": "synthetic"}\nHookResponse(**kw)\n',
+    ),
+    "subscript_then_unpack": (
+        STRING_LITERAL_RULE,
+        'kw = {}\nkw["FIELD_NAME"] = "synthetic"\nHookResponse(**kw)\n',
+    ),
+    "setattr_bound_name": (
+        STRING_LITERAL_RULE,
+        'name = "FIELD_NAME"\nsetattr(resp, name, "synthetic")\n',
+    ),
+    "object_setattr_bound_name": (
+        STRING_LITERAL_RULE,
+        'name = "FIELD_NAME"\nobject.__setattr__(resp, name, "synthetic")\n',
+    ),
+    "vars_subscript": (STRING_LITERAL_RULE, 'vars(resp)["FIELD_NAME"] = "synthetic"\n'),
+    "tuple_unpack_setattr": (
+        STRING_LITERAL_RULE,
+        'name, value = "FIELD_NAME", "synthetic"\nsetattr(resp, name, value)\n',
+    ),
+    "dict_of_pairs": (
+        STRING_LITERAL_RULE,
+        'HookResponse(**dict([("FIELD_NAME", "synthetic")]))\n',
+    ),
+    "for_literal_tuple_setattr": (
+        STRING_LITERAL_RULE,
+        'for name in ("FIELD_NAME",):\n    setattr(resp, name, "synthetic")\n',
+    ),
 }
-UNUSED_FIELD_READ = "value = resp.trigger_action\n"
+UNUSED_FIELD_READS = {
+    "attribute_read": "value = resp.FIELD_NAME\n",
+    "getattr_literal": 'value = getattr(resp, "FIELD_NAME")\n',
+    "name_listing": 'FIELDS = frozenset({"FIELD_NAME"})\n',
+    "docstring": 'def f():\n    """Mentions FIELD_NAME."""\n',
+}
 RELAXING_EDITS = ("move-owned-field-to-required", "relabel-owner-layer")
 BUILTIN_SCALAR_NAMES = frozenset({"str", "int", "bool", "bytes"})
 BUILTIN_CONTAINER_NAMES = frozenset({"list", "tuple", "dict", "Optional"})
@@ -160,9 +217,11 @@ EXPECT_KEYS = (
     "effect_log",
     "audit_records",
 )
-# Optional expect key, present only on a case whose event skips a declared rule group.
+# Optional expect keys: skipped_groups is present only on a case whose event skips a declared
+# rule group, and eager_variable_deletions only on a case whose pass deletes a variable.
 SKIPPED_GROUPS_KEY = "skipped_groups"
-OPTIONAL_EXPECT_KEYS = (SKIPPED_GROUPS_KEY,)
+VARIABLE_DELETIONS_KEY = "eager_variable_deletions"
+OPTIONAL_EXPECT_KEYS = (SKIPPED_GROUPS_KEY, VARIABLE_DELETIONS_KEY)
 LABEL_AXES = (("family", FAMILIES, "S-FAM-"), ("observer", OBSERVERS, "S-OBS-"))
 
 
@@ -202,6 +261,8 @@ FIXED_SCENARIO_IDS = (
     "S-TRANS-PLANMODE",
     "S-CLI-INTERNAL-BEFORE",
     "S-CLI-INTERNAL-AFTER",
+    "S-VAR-SET-NONE",
+    "S-VAR-DELETE",
 )
 SEAM_FAIL_IDS = tuple(f"S-SEAM-FAIL-{_upper_id(kind)}" for kind in SEAM_KINDS)
 FAMILY_IDS = tuple(
@@ -677,6 +738,85 @@ def test_optional_expect_keys_load_with_or_without_the_key(tmp_path: Path) -> No
     assert not present, f"optional expect keys appear on a case that omits them: {present}"
 
 
+def _variable_set_none_case() -> dict[str, Any]:
+    """Two rules write None: one to a key the session lacks, one over an existing value."""
+    return {
+        "id": "synthetic-variable-set-none",
+        "kind": "rule_pass",
+        "provenance": "synthetic",
+        "scenario_ids": ["S-VAR-SET-NONE"],
+        "family": None,
+        "observer": None,
+        "transition": None,
+        "rules": [
+            {
+                "name": "synthetic-clear-new",
+                "event": "before_tool",
+                "priority": 10,
+                "effects": [
+                    {"type": "set_variable", "variable": "synthetic_cleared", "value": None}
+                ],
+            },
+            {
+                "name": "synthetic-clear-existing",
+                "event": "before_tool",
+                "priority": 20,
+                "effects": [
+                    {"type": "set_variable", "variable": "synthetic_overwritten", "value": None}
+                ],
+            },
+        ],
+        "variables": {"synthetic_overwritten": "before", "synthetic_kept": None},
+        "event": {
+            "type": "before_tool",
+            "data": {"tool_name": "Bash", "tool_input": {"command": "true"}},
+            "metadata": {},
+        },
+        "seam_failures": [],
+    }
+
+
+def _variable_delete_case() -> dict[str, Any]:
+    """A turn start with the blocked-turn-end flag set: the engine pops the flag."""
+    return {
+        "id": "synthetic-variable-delete",
+        "kind": "rule_pass",
+        "provenance": "synthetic",
+        "scenario_ids": ["S-VAR-DELETE"],
+        "family": None,
+        "observer": None,
+        "transition": None,
+        "rules": [
+            {
+                "name": "synthetic-turn-start-observer",
+                "event": "before_agent",
+                "effects": [{"type": "observe", "category": "synthetic", "message": "turn start"}],
+            }
+        ],
+        "variables": {"_blocked_turn_end_pending": True, "stop_attempts": 2},
+        "event": {"type": "before_agent", "data": {"prompt": "synthetic prompt"}, "metadata": {}},
+        "seam_failures": [],
+    }
+
+
+def test_variable_delta_records_none_written_to_a_new_key() -> None:
+    expect = rules_corpus.replay_case(_variable_set_none_case())
+    delta = expect["eager_variable_delta"]
+    assert "synthetic_cleared" in delta, f"a None write to a new key is missing from {delta}"
+    assert delta["synthetic_cleared"] is None, f"recorded value: {delta['synthetic_cleared']!r}"
+    assert delta.get("synthetic_overwritten", "absent") is None, f"overwrite to None: {delta}"
+    assert "synthetic_kept" not in delta, f"an unwritten key appears in the delta: {delta}"
+
+
+def test_variable_delta_records_a_deleted_variable() -> None:
+    expect = rules_corpus.replay_case(_variable_delete_case())
+    deletions = expect.get(VARIABLE_DELETIONS_KEY)
+    assert deletions == ["_blocked_turn_end_pending"], f"recorded deletions: {deletions!r}"
+    delta = expect["eager_variable_delta"]
+    assert "_blocked_turn_end_pending" not in delta, f"a deleted key appears in the delta: {delta}"
+    assert "stop_attempts" not in delta, f"stop_attempts was reset with the flag set: {delta}"
+
+
 def test_cli_internal_request_skips_declared_group() -> None:
     cases = _load_committed_cases()
     _assert_enough(cases)
@@ -770,6 +910,17 @@ def _replay_mismatches(vectors: list[dict[str, Any]]) -> list[str]:
     ]
 
 
+def _required_entries() -> set[str]:
+    """Return ``module.function`` for each listed module function another gobby module imports."""
+    listed = {entry["module"] for entry in json.loads(MODULES_PATH.read_text())["modules"]}
+    imported = _gobby_imported_names()
+    return {
+        f"{module}.{name}"
+        for module in listed
+        for name in _module_functions(module) & imported.get(module, set())
+    }
+
+
 def test_vectors_cover_every_cross_module_function() -> None:
     assert MODULES_PATH.is_file(), f"missing {MODULES_PATH.name}"
     assert VECTORS_PATH.is_file(), f"missing {VECTORS_PATH.name}"
@@ -781,12 +932,7 @@ def test_vectors_cover_every_cross_module_function() -> None:
     }
     unlisted = sorted(globbed - listed)
     assert not unlisted, f"normalizer modules missing from the manifest: {unlisted}"
-    imported = _gobby_imported_names()
-    required = {
-        f"{module}.{name}"
-        for module in listed
-        for name in _module_functions(module) & imported.get(module, set())
-    }
+    required = _required_entries()
     assert required, "no cross-module functions found in the listed modules"
     vectors = json.loads(VECTORS_PATH.read_text())["vectors"]
     covered = {vector["entry"] for vector in vectors}
@@ -956,18 +1102,29 @@ def test_fields_without_a_rule_producer_have_no_src_writer(field: str) -> None:
     assert not writers, f"{field} is now written in src at {writers}; give it an owner layer"
 
 
+def _string_literal_rule_applies(field: str) -> bool:
+    """True for a field no production code names as a string, so any string literal counts."""
+    return RESPONSE_FIELD_OWNERS[field] == "none"
+
+
 def test_unused_field_guard_flags_every_write_form(tmp_path: Path) -> None:
     unflagged: list[str] = []
-    for name, source in UNUSED_FIELD_WRITE_FORMS.items():
-        fixture = tmp_path / f"{name}.py"
-        fixture.write_text(source)
-        if not _writers_of("trigger_action", [fixture]):
-            unflagged.append(name)
-    assert not unflagged, f"the guard misses these write forms of trigger_action: {unflagged}"
-    read_only = tmp_path / "read_only.py"
-    read_only.write_text(UNUSED_FIELD_READ)
-    flagged = _writers_of("trigger_action", [read_only])
-    assert not flagged, f"the guard flags a read of trigger_action: {flagged}"
+    flagged_reads: list[str] = []
+    for field in FIELDS_WITHOUT_RESPONSE_WRITER:
+        for name, (rule, template) in UNUSED_FIELD_WRITE_FORMS.items():
+            if rule == STRING_LITERAL_RULE and not _string_literal_rule_applies(field):
+                continue
+            fixture = tmp_path / f"write-{field}-{name}.py"
+            fixture.write_text(template.replace(FIELD_TOKEN, field))
+            if not _writers_of(field, [fixture]):
+                unflagged.append(f"{field}:{name}")
+        for name, template in UNUSED_FIELD_READS.items():
+            fixture = tmp_path / f"read-{field}-{name}.py"
+            fixture.write_text(template.replace(FIELD_TOKEN, field))
+            if _writers_of(field, [fixture]):
+                flagged_reads.append(f"{field}:{name}")
+    assert not unflagged, f"the guard misses these (field, write form) pairs: {unflagged}"
+    assert not flagged_reads, f"the guard flags these (field, read form) pairs: {flagged_reads}"
 
 
 def test_negative_vectors_cover_every_parametrize_combination() -> None:
@@ -1156,13 +1313,77 @@ def _builtin_signature_entries() -> list[str]:
     return entries
 
 
-def _is_substantive(vector: dict[str, Any]) -> bool:
-    """A vector counts when its input is non-empty and its expectation is not a raised error."""
+# Keys a vector's expect block may carry beside "result" when replay records more than the
+# return value: argument mutations, a scan budget outcome, node requests and values read
+# inside an entered context.
+ENVELOPE_MARKERS = frozenset(
+    {"mutated_args", "scan_within_budget", "scan_observed", "node_requests", "within"}
+)
+
+
+def _is_envelope(expect: Any) -> bool:
+    return (
+        isinstance(expect, dict)
+        and "result" in expect
+        and bool(set(expect) & ENVELOPE_MARKERS)
+        and set(expect) <= {"result"} | ENVELOPE_MARKERS
+    )
+
+
+def _vector_result(expect: Any) -> Any:
+    """Return the recorded result of a vector: the envelope's ``result``, else the expect."""
+    return expect["result"] if _is_envelope(expect) else expect
+
+
+def _vector_mutations(expect: Any) -> dict[str, Any]:
+    """Return the envelope's ``mutated_args`` (argument index or keyword to value), else {}."""
+    if not _is_envelope(expect):
+        return {}
+    mutated = expect.get("mutated_args") or {}
+    return dict(mutated) if isinstance(mutated, dict) else {}
+
+
+def _canonical(value: Any) -> str:
+    return json.dumps(value, sort_keys=True)
+
+
+def _vector_inputs(vector: dict[str, Any]) -> list[Any]:
     arguments = vector.get("input", {})
-    values = [*arguments.get("args", []), *arguments.get("kwargs", {}).values()]
+    return [*arguments.get("args", []), *arguments.get("kwargs", {}).values()]
+
+
+def _is_raised(expect: Any) -> bool:
+    return isinstance(expect, dict) and "raised" in expect
+
+
+def _result_differs_from_inputs(vector: dict[str, Any]) -> bool:
+    result = _canonical(_vector_result(vector.get("expect")))
+    return all(result != _canonical(value) for value in _vector_inputs(vector))
+
+
+def _result_argument_changed(vector: dict[str, Any]) -> bool:
+    """True when a ``result_from_arg`` vector records that argument changed by the call."""
+    index = vector.get("result_from_arg")
+    args = vector.get("input", {}).get("args", [])
+    if not isinstance(index, int) or not 0 <= index < len(args):
+        return False
+    return _canonical(_vector_result(vector.get("expect"))) != _canonical(args[index])
+
+
+def _is_substantive(vector: dict[str, Any]) -> bool:
+    """A vector counts when its input is non-empty, it did not raise, and it shows the call.
+
+    The call shows when the recorded result differs from every input argument, an argument
+    mutation is recorded, or a ``result_from_arg`` argument differs from its input.
+    """
     expect = vector.get("expect")
-    raised = isinstance(expect, dict) and "raised" in expect
-    return any(bool(value) for value in values) and not raised
+    if not any(bool(value) for value in _vector_inputs(vector)) or _is_raised(expect):
+        return False
+    return (
+        _result_differs_from_inputs(vector)
+        or bool(_vector_mutations(expect))
+        or _result_argument_changed(vector)
+    )
 
 
 def test_every_builtin_signature_function_has_a_substantive_vector() -> None:
@@ -1194,3 +1415,433 @@ def test_no_two_combinations_of_one_test_replay_the_same_input() -> None:
         groups.setdefault(key, []).append(vector["id"])
     repeated = [ids for ids in groups.values() if len(ids) > 1]
     assert not repeated, f"combinations that replay the same input: {repeated}"
+
+
+NORMALIZE_TOOL_FIELDS_ENTRY = "gobby.hooks._normalization_tools.normalize_tool_fields"
+NAVIGATION_GATE_ENTRY = "gobby.hooks.code_navigation_recovery.navigation_requires_index"
+REFUSED_OUTLINE_GATE_ID = "gate-refused-outline-broad-read"
+REFUSED_OUTLINE_TEST = (
+    "tests/hooks/test_code_navigation_recovery.py::test_refused_outline_opens_only_requested_read"
+)
+OTHER_PATH_READ_COMMAND = "cat src/other.py"
+LIVE_TASK_REFERENCE = re.compile(r"(?:gobby-)?#\d{3,}")
+CONSTRUCT_SOURCES = ("data", "args", "items", "from")
+DERIVATION_KEYS = frozenset({"entry", "args", "kwargs", "pick"})
+EXEMPTION_REASON_CODES = frozenset({"identity-keyed-argument", "argument-independent-result"})
+# Entries the discrimination rules skip, each with a reason code and a cite. The set is closed:
+# an entry keyed by token identity cannot carry its argument in JSON and keeps a caller vector
+# through normalize_tool_fields; an argument-independent entry keeps its own committed vector.
+UNDISCRIMINATED_ENTRIES: dict[str, str] = {
+    "gobby.hooks._normalization_shell_stdin.shell_stdin_arguments": (
+        "identity-keyed-argument: raw is keyed by id() of each token "
+        "(_normalization_shell_stdin.py:67, :153)"
+    ),
+    "gobby.hooks._normalization_compound.case_arm_tokens": (
+        "identity-keyed-argument: spans are keyed by id() of each token "
+        "(_normalization_canonical.py:238)"
+    ),
+    "gobby.hooks._normalization_compound.case_pattern_process_bodies": (
+        "identity-keyed-argument: spans are keyed by id() of each token "
+        "(_normalization_canonical.py:238)"
+    ),
+    "gobby.hooks._normalization_compound.process_substitution_bodies": (
+        "identity-keyed-argument: spans are keyed by id() of each token "
+        "(_normalization_canonical.py:238)"
+    ),
+    "gobby.hooks._normalization_metadata._unknown_write_metadata": (
+        "argument-independent-result: takes no parameters (_normalization_metadata.py:122)"
+    ),
+    "gobby.workflows.engine.command_matching_variables.initial_names": (
+        "argument-independent-result: takes no parameters (command_matching_variables.py:40)"
+    ),
+    "gobby.hooks.code_navigation.search_navigation_metadata": (
+        "argument-independent-result: ignores its paths argument (code_navigation.py:245)"
+    ),
+}
+# A writer that returns None and records its change in the first argument.
+MUTATING_WRITER_VECTOR: dict[str, Any] = {
+    "id": "synthetic-mutating-writer",
+    "entry": "gobby.hooks._normalization_tool_input.mark_tool_input_unavailable",
+    "input": {
+        "args": [{"tool_name": "Bash", "tool_input": "{not json"}, "tool_input", "invalid_json"],
+        "kwargs": {},
+    },
+}
+
+
+def _committed_vectors() -> list[dict[str, Any]]:
+    vectors: list[dict[str, Any]] = json.loads(VECTORS_PATH.read_text())["vectors"]
+    return vectors
+
+
+def _returns_none(function: Callable[..., Any]) -> bool:
+    """True when the evaluated return annotation is None.
+
+    Modules with postponed annotations store the annotation as text, so the hints are evaluated;
+    a module whose hints do not evaluate falls back to the signature's text.
+    """
+    try:
+        return typing.get_type_hints(function).get("return") is type(None)
+    except (NameError, TypeError, AttributeError):
+        annotation = inspect.signature(function).return_annotation
+        return annotation is None or annotation == "None"
+
+
+def _discrimination_findings(
+    vectors: list[dict[str, Any]], entries: Iterable[str]
+) -> dict[str, str]:
+    """Return, per entry, why a constant, identity or no-op stub would replay its vectors.
+
+    An entry is discriminating when its non-raised vectors record two distinct outcomes, one of
+    them differs from every input argument or records a mutation, and an entry whose return is
+    None records the change it makes to an argument.
+    """
+    by_entry: dict[str, list[dict[str, Any]]] = {}
+    for vector in vectors:
+        by_entry.setdefault(vector["entry"], []).append(vector)
+    findings: dict[str, str] = {}
+    for entry in sorted(entries):
+        if entry in UNDISCRIMINATED_ENTRIES:
+            continue
+        recorded = [
+            vector for vector in by_entry.get(entry, []) if not _is_raised(vector["expect"])
+        ]
+        reasons: list[str] = []
+        if len({_canonical(vector["expect"]) for vector in recorded}) < 2:
+            reasons.append("fewer than two distinct outcomes")
+        mutated = any(_vector_mutations(vector["expect"]) for vector in recorded)
+        if not mutated and not any(_result_differs_from_inputs(vector) for vector in recorded):
+            reasons.append("every outcome equals an input argument")
+        if _returns_none(rules_vectors.resolve_entry(entry)) and not any(
+            _vector_mutations(vector["expect"]) or _result_argument_changed(vector)
+            for vector in recorded
+        ):
+            reasons.append("returns None and records no argument change")
+        if reasons:
+            findings[entry] = "; ".join(reasons)
+    return findings
+
+
+def test_vector_replay_records_a_mutated_argument() -> None:
+    replayed = rules_vectors.replay_vector(MUTATING_WRITER_VECTOR)
+    mutated = _vector_mutations(replayed).get("0")
+    assert isinstance(mutated, dict), f"replay records no change to argument 0: {replayed!r}"
+    assert "tool_input" not in mutated, f"the unusable tool_input is kept: {mutated}"
+    assert "tool_input_error" in mutated, f"no tool_input_error marker recorded: {mutated}"
+
+
+def test_every_vectored_entry_is_discriminating() -> None:
+    vectors = _committed_vectors()
+    entries = _required_entries() | {vector["entry"] for vector in vectors}
+    findings = _discrimination_findings(vectors, entries)
+    assert not findings, (
+        f"{len(findings)} of {len(entries)} vectored entries would replay unchanged under a "
+        f"constant, identity or no-op stub: {findings}"
+    )
+
+
+def _setup_less_vectors() -> list[dict[str, Any]]:
+    return [
+        vector
+        for vector in _committed_vectors()
+        if not vector.get("setup") and not vector.get("scope")
+    ]
+
+
+class _CountingEnviron(collections.UserDict[str, str]):
+    """A process environment stand-in that logs every key read (``get`` reads through both)."""
+
+    def __init__(self, data: Mapping[str, str], hits: list[str]) -> None:
+        super().__init__(data)
+        self.hits = hits
+
+    def __getitem__(self, key: str) -> str:
+        self.hits.append(f"environ[{key}]")
+        return super().__getitem__(key)
+
+    def __contains__(self, key: object) -> bool:
+        self.hits.append(f"environ contains {key}")
+        return super().__contains__(key)
+
+
+HOST_READ_TARGETS: tuple[tuple[object, str], ...] = (
+    (pathlib.Path, "resolve"),
+    (pathlib.Path, "exists"),
+    (pathlib.Path, "is_dir"),
+    (pathlib.Path, "is_file"),
+    (pathlib.Path, "stat"),
+    (pathlib.Path, "read_text"),
+    (pathlib.Path, "read_bytes"),
+    (pathlib.Path, "cwd"),
+    (pathlib.Path, "home"),
+    (pathlib.Path, "expanduser"),
+    (os.path, "realpath"),
+    (os.path, "exists"),
+    (os.path, "isdir"),
+    (os.path, "isfile"),
+    (os.path, "expanduser"),
+    (os, "getcwd"),
+    (subprocess, "run"),
+    (subprocess, "Popen"),
+    (spawn, "run"),
+    (machine_id, "get_machine_id"),
+    (tempfile, "gettempdir"),
+)
+
+
+def _spy(label: str, original: Callable[..., Any], hits: list[str]) -> Callable[..., Any]:
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        hits.append(label)
+        return original(*args, **kwargs)
+
+    return spy
+
+
+def _install_host_spies(stack: contextlib.ExitStack, hits: list[str]) -> None:
+    """Wrap each host read with a call-through spy, including every by-name module binding."""
+    loaded = [
+        module
+        for name, module in list(sys.modules.items())
+        if name.startswith("gobby") and module is not None
+    ]
+    for owner, attribute in HOST_READ_TARGETS:
+        label = f"{getattr(owner, '__name__', owner)}.{attribute}"
+        if isinstance(owner, type):
+            static = inspect.getattr_static(owner, attribute)
+            if isinstance(static, classmethod):
+                bound = getattr(owner, attribute)
+                replacement: Any = staticmethod(_spy(label, bound, hits))
+            else:
+                replacement = _spy(label, static, hits)
+            stack.enter_context(mock.patch.object(owner, attribute, replacement))
+            continue
+        original = getattr(owner, attribute)
+        spy = _spy(label, original, hits)
+        stack.enter_context(mock.patch.object(owner, attribute, spy))
+        for module in loaded:
+            for name, value in list(vars(module).items()):
+                if value is original:
+                    stack.enter_context(mock.patch.object(module, name, spy))
+
+
+def _import_vector_names(vectors: list[dict[str, Any]]) -> None:
+    """Import every entry, prepare step and constructed class, so imports read nothing later."""
+    for vector in vectors:
+        rules_vectors.resolve_entry(vector["entry"])
+        for name in vector.get("prepare", []):
+            rules_vectors.resolve_entry(name)
+        for spec in vector.get("construct", []):
+            rules_vectors.resolve_entry(spec["class"])
+
+
+def _host_read_summary(hits: list[str]) -> str:
+    """Name each spied read once; environment reads are counted, not listed by key."""
+    reads = sorted({hit for hit in hits if not hit.startswith("environ")})
+    environment = {hit for hit in hits if hit.startswith("environ")}
+    if environment:
+        reads.append(f"environ: {len(environment)} keys")
+    return ", ".join(reads)
+
+
+def test_setup_less_vectors_replay_without_host_access(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vectors = _setup_less_vectors()
+    assert vectors, "no setup-less normalizer vector"
+    _import_vector_names(vectors)
+    home = tmp_path / "home"
+    home.mkdir()
+    empty_cwd = tmp_path / "cwd"
+    empty_cwd.mkdir()
+    monkeypatch.chdir(empty_cwd)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+    offenders: list[str] = []
+    for vector in vectors:
+        machine_id.clear_cache()
+        hits: list[str] = []
+        with contextlib.ExitStack() as stack:
+            _install_host_spies(stack, hits)
+            stack.enter_context(
+                mock.patch.object(os, "environ", _CountingEnviron(dict(os.environ), hits))
+            )
+            replayed = rules_vectors.replay_vector(vector)
+        if hits or replayed != vector["expect"]:
+            differs = "" if replayed == vector["expect"] else ", output differs"
+            offenders.append(f"{vector['id']} ({_host_read_summary(hits)}{differs})")
+    assert not offenders, f"{len(offenders)} setup-less vectors read the host: {offenders}"
+
+
+def _fixture_vectors() -> list[dict[str, Any]]:
+    return [vector for vector in _committed_vectors() if vector.get("setup")]
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="fixture repositories run git init and use POSIX checkouts"
+)
+def test_fixture_vectors_record_paths_relative_to_the_fixture() -> None:
+    vectors = _fixture_vectors()
+    assert vectors, "no normalizer vector builds a fixture repository"
+    opaque = sorted(
+        {
+            vector["id"]
+            for vector in vectors
+            for leaf in _string_leaves(vector["expect"])
+            if "<path>" in leaf
+        }
+    )
+    assert not opaque, f"fixture vectors that record an opaque <path> marker: {opaque}"
+
+
+def _gate_variables(vector: dict[str, Any]) -> Any:
+    args = vector.get("input", {}).get("args", [])
+    return args[1] if len(args) > 1 else None
+
+
+def _gate_command(vector: dict[str, Any]) -> Any:
+    args = vector.get("input", {}).get("args", [])
+    event = args[0] if args else None
+    tool_input = event.get("tool_input") if isinstance(event, dict) else None
+    return tool_input.get("command") if isinstance(tool_input, dict) else None
+
+
+def test_refused_outline_other_path_read_is_replayed() -> None:
+    vectors = _committed_vectors()
+    gate = next((vector for vector in vectors if vector["id"] == REFUSED_OUTLINE_GATE_ID), None)
+    assert gate is not None, f"no {REFUSED_OUTLINE_GATE_ID} vector"
+    variables = _gate_variables(gate)
+    replayed = [
+        vector["id"]
+        for vector in vectors
+        if vector["entry"] == NAVIGATION_GATE_ENTRY
+        and _gate_command(vector) == OTHER_PATH_READ_COMMAND
+        and _gate_variables(vector) == variables
+        and _vector_result(vector["expect"]) is True
+    ]
+    assert replayed, (
+        f"no vector replays {OTHER_PATH_READ_COMMAND!r} through the refused-outline gate state"
+    )
+
+
+def _tracker_state(refusal: dict[str, Any]) -> dict[str, Any] | None:
+    """The gate variables a refusal vector's recorded event implies."""
+    recorded = _vector_result(refusal["expect"])
+    if not isinstance(recorded, dict):
+        return None
+    return {
+        "code_index_attempts": recorded.get("canonical_code_index_attempts"),
+        "code_index_verified": recorded.get("canonical_code_index_verified", []),
+        "code_index_recoveries": recorded.get("canonical_code_index_recovery", []),
+    }
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="fixture repositories run git init and use POSIX checkouts"
+)
+def test_gate_vectors_carry_the_refusal_tracker_state() -> None:
+    vectors = _committed_vectors()
+    refusals = [vector for vector in vectors if vector.get("negative_from") == REFUSED_OUTLINE_TEST]
+    gates = [vector for vector in vectors if vector["id"].startswith("gate-")]
+    assert refusals and gates, f"refusal vectors {len(refusals)}, gate vectors {len(gates)}"
+    mismatched = [
+        f"{gate['id']} against {refusal['id']}: gate {_gate_variables(gate)}, "
+        f"recorded {_tracker_state(refusal)}"
+        for gate in gates
+        for refusal in refusals
+        if _gate_variables(gate) != _tracker_state(refusal)
+    ]
+    assert not mismatched, f"gate state differs from the refusal record: {mismatched}"
+
+
+def test_committed_corpus_names_no_live_task_reference() -> None:
+    documents = [VECTORS_PATH, *sorted((CORPUS_DIR / "cases").glob("*.json"))]
+    found = sorted(
+        f"{path.name}: {leaf}"
+        for path in documents
+        for leaf in _string_leaves(json.loads(path.read_text()))
+        if LIVE_TASK_REFERENCE.search(leaf)
+    )
+    assert not found, f"committed corpus strings that name a live task: {found}"
+
+
+def _derivation_trees(value: Any) -> Iterable[Any]:
+    """Yield every ``{"from": ...}`` tree in an input value, at any depth."""
+    if isinstance(value, dict):
+        if list(value) == ["from"]:
+            yield value["from"]
+            return
+        for item in value.values():
+            yield from _derivation_trees(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _derivation_trees(item)
+
+
+def _derivation_findings(label: str, tree: Any) -> list[str]:
+    """Check a derivation tree's shape and entry names without calling any of them."""
+    if not isinstance(tree, dict):
+        return [f"{label}: derivation {tree!r} is not a mapping"]
+    findings: list[str] = []
+    extra = sorted(set(tree) - DERIVATION_KEYS)
+    if extra:
+        findings.append(f"{label}: derivation keys outside {sorted(DERIVATION_KEYS)}: {extra}")
+    entry = tree.get("entry")
+    try:
+        rules_vectors.resolve_entry(str(entry))
+    except (ImportError, AttributeError, ValueError):
+        findings.append(f"{label}: derivation entry {entry!r} does not resolve")
+    for item in [*tree.get("args", []), *tree.get("kwargs", {}).values()]:
+        for nested in _derivation_trees(item):
+            findings.extend(_derivation_findings(label, nested))
+    return findings
+
+
+def test_domain_vectors_reach_their_function() -> None:
+    findings: list[str] = []
+    for vector in _committed_vectors():
+        label = vector["id"]
+        for spec in vector.get("construct", []):
+            sources = [key for key in CONSTRUCT_SOURCES if spec.get(key)]
+            if len(sources) != 1:
+                findings.append(f"{label}: construct {spec.get('index')} has sources {sources}")
+            if "from" in spec:
+                findings.extend(_derivation_findings(label, spec["from"]))
+        if _is_raised(vector["expect"]) and not vector.get("metadata", {}).get("precondition"):
+            findings.append(f"{label}: records {vector['expect']} with no metadata.precondition")
+        for tree in _derivation_trees(vector.get("input", {})):
+            findings.extend(_derivation_findings(label, tree))
+    assert not findings, f"{len(findings)} vector rows do not reach their function: {findings}"
+
+
+def test_vector_exemption_set_is_closed_with_caller_vectors() -> None:
+    assert set(UNDISCRIMINATED_ENTRIES) == {
+        "gobby.hooks._normalization_shell_stdin.shell_stdin_arguments",
+        "gobby.hooks._normalization_compound.case_arm_tokens",
+        "gobby.hooks._normalization_compound.case_pattern_process_bodies",
+        "gobby.hooks._normalization_compound.process_substitution_bodies",
+        "gobby.hooks._normalization_metadata._unknown_write_metadata",
+        "gobby.workflows.engine.command_matching_variables.initial_names",
+        "gobby.hooks.code_navigation.search_navigation_metadata",
+    }, f"the exemption set changed: {sorted(UNDISCRIMINATED_ENTRIES)}"
+    malformed = sorted(
+        entry
+        for entry, reason in UNDISCRIMINATED_ENTRIES.items()
+        if reason.partition(": ")[0] not in EXEMPTION_REASON_CODES or not reason.partition(": ")[2]
+    )
+    assert not malformed, f"exemption reasons without a known code and a cite: {malformed}"
+    vectors = _committed_vectors()
+    by_id = {vector["id"]: vector for vector in vectors}
+    normalize = rules_vectors.resolve_entry(NORMALIZE_TOOL_FIELDS_ENTRY)
+    uncovered: list[str] = []
+    for entry, reason in sorted(UNDISCRIMINATED_ENTRIES.items()):
+        if reason.startswith("identity-keyed-argument: "):
+            caller = by_id.get(f"caller-{entry.rsplit('.', 1)[-1]}")
+            if (
+                caller is None
+                or not caller.get("setup")
+                or rules_vectors.resolve_entry(caller["entry"]) is not normalize
+            ):
+                uncovered.append(f"{entry}: no caller fixture vector through normalize_tool_fields")
+        elif not any(vector["entry"] == entry for vector in vectors):
+            uncovered.append(f"{entry}: no vector")
+    assert not uncovered, f"exempt entries without the vector their reason requires: {uncovered}"
