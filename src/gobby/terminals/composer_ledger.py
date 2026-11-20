@@ -756,7 +756,7 @@ def record_composer_local_command(terminal_id: str, *, row_at: datetime) -> None
 
 
 class LiveTerminalLookup(Protocol):
-    def get_live_for_session(self, session_id: str) -> Terminal | None: ...
+    def resolve_live_for_session_id(self, session_id: str) -> Terminal | None: ...
 
 
 class ComposerReleaseError(Exception):
@@ -780,7 +780,7 @@ def release_composer(
     ledger = _bound
     if ledger is None:
         raise ComposerReleaseError("ledger_unavailable", "No composer ledger is running")
-    terminal = terminals.get_live_for_session(session_id)
+    terminal = terminals.resolve_live_for_session_id(session_id)
     if terminal is None:
         raise ComposerReleaseError("no_live_terminal", f"Session {session_id} has no live terminal")
     ledger.release(terminal.id)

@@ -11,7 +11,6 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Protocol
-from uuid import UUID
 from weakref import WeakKeyDictionary
 
 from gobby.agents.detection.provider import DetectionRegistry
@@ -66,7 +65,6 @@ __all__ = [
     "clear_composer",
     "composer_reader",
     "composer_verdict",
-    "context_runtime_pane",
     "live_runtime_pane",
     "log_pane_failure",
     "send_pane_key",
@@ -149,49 +147,14 @@ def live_runtime_pane(
 ) -> RuntimePaneIO | None:
     """PaneIO over a terminals row, or None when it has none.
 
-    ``terminal`` is a row the caller already resolved. A context-bound unbound row has no
-    session binding, so the session lookup cannot find it.
+    ``terminal`` is a row the caller already resolved; otherwise the session's terminal
+    is resolved with the wake's rule.
     """
     if terminal_manager is None or terminal_runtime_registry is None:
         return None
     if terminal is None:
-        terminal = terminal_manager.get_live_for_session(session_id)
+        terminal = terminal_manager.resolve_live_for_session_id(session_id)
     if terminal is None:
-        return None
-    runtime = resolve_terminal_runtime(terminal_runtime_registry, terminal, terminal_manager.db)
-    return RuntimePaneIO(runtime, terminal)
-
-
-def context_runtime_pane(
-    session: Any,
-    terminal_manager: Any | None,
-    terminal_runtime_registry: Any | None,
-) -> RuntimePaneIO | None:
-    """Live gterm row named by terminal context when the session row is unbound."""
-    if terminal_manager is None or terminal_runtime_registry is None:
-        return None
-    context = getattr(session, "terminal_context", None)
-    if not isinstance(context, dict):
-        return None
-    raw_id = context.get("gobby_terminal_id")
-    if not isinstance(raw_id, str) or not raw_id:
-        return None
-    try:
-        terminal_id = str(UUID(raw_id))
-    except ValueError:
-        return None
-    getter = getattr(terminal_manager, "get", None)
-    if not callable(getter):
-        return None
-    terminal = getter(terminal_id)
-    if terminal is None or getattr(terminal, "state", None) not in {"pending", "live"}:
-        return None
-    if getattr(terminal, "project_id", None) != getattr(session, "project_id", None):
-        return None
-    if getattr(terminal, "agent_run_id", None) is not None:
-        return None
-    bound = getattr(terminal, "session_id", None)
-    if bound not in {None, getattr(session, "id", None)}:
         return None
     runtime = resolve_terminal_runtime(terminal_runtime_registry, terminal, terminal_manager.db)
     return RuntimePaneIO(runtime, terminal)

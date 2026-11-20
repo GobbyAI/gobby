@@ -578,7 +578,7 @@ class TestRegisterTerminalTools:
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
         terminal_manager = MagicMock()
-        terminal_manager.get_live_for_session.return_value = None
+        terminal_manager.resolve_live_for_session_id.return_value = None
         terminal_manager.get.return_value = None
         runtime_registry = MagicMock()
 
@@ -606,8 +606,9 @@ class TestRegisterTerminalTools:
 
         assert result["success"] is False
         assert result["error_code"] == "no_live_pane_or_transcript"
-        terminal_manager.get_live_for_session.assert_called_once_with("session-1")
-        terminal_manager.get.assert_called_once_with(terminal_id)
+        terminal_manager.resolve_live_for_session_id.assert_called_once_with("session-1")
+        # The shared resolver is the only lookup; the context row is never read apart from it.
+        terminal_manager.get.assert_not_called()
         runtime_registry.resolve.assert_not_called()
 
     def test_capture_output_falls_back_to_transcript_tail(self, tmp_path: Path) -> None:
@@ -671,55 +672,6 @@ class TestRegisterTerminalTools:
         assert result["success"] is False
         assert result["error_code"] == "no_live_pane_or_transcript"
         assert result["transcript_error"] == "missing_transcript_path"
-
-    def test_capture_output_uses_unbound_gterm_named_by_context(self) -> None:
-        """An unbound gterm row named by context is captured instead of the transcript."""
-        terminal_id = "11111111-1111-4111-8111-111111111111"
-        terminal = MagicMock(
-            backend="native",
-            id=terminal_id,
-            state="live",
-            project_id="proj-1",
-            agent_run_id=None,
-            session_id=None,
-            machine_id=None,
-        )
-        session = MagicMock(
-            id="session-1",
-            project_id="proj-1",
-            terminal_context={"gobby_terminal_id": terminal_id},
-            transcript_path=None,
-        )
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-        terminal_manager = MagicMock()
-        terminal_manager.get_live_for_session.return_value = None
-        terminal_manager.get.return_value = terminal
-        runtime = MagicMock()
-        runtime.snapshot = AsyncMock(return_value=SimpleNamespace(text="live pane"))
-        runtime_registry = MagicMock()
-        runtime_registry.resolve.return_value = runtime
-        registry = _TestRegistry(name="test", description="test")
-
-        with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
-            return_value=MagicMock(),
-        ):
-            register_terminal_tools(
-                registry,
-                session_manager,
-                MagicMock(fetchone=MagicMock(return_value=None)),
-                terminal_manager=terminal_manager,
-                terminal_runtime_registry=runtime_registry,
-            )
-
-        capture_output = registry.get_tool("capture_output")
-        assert capture_output is not None
-        result = asyncio.run(capture_output(session_id="session-1", lines=20))
-
-        assert result["success"] is True
-        assert result["via"] == "native"
-        assert result["output"] == "live pane"
 
 
 def test_send_keys_rejects_unhosted_context_after_native_lookup() -> None:

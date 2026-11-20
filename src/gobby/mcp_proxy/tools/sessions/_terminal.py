@@ -77,7 +77,7 @@ from gobby.sessions.transcript_cursor import (
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.session_activity import reconcile_compact_session_activity
-from gobby.terminals.pane_io import PaneIO, context_runtime_pane, live_runtime_pane
+from gobby.terminals.pane_io import PaneIO, live_runtime_pane
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
@@ -134,11 +134,8 @@ def _resolve_pane_io(
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
 ) -> tuple[PaneIO | None, str | None]:
-    """Route through the session's managed terminal row or context identity."""
+    """Route through the terminal the shared resolver gives the session."""
     pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry)
-    if pane is None:
-        session = session_manager.get(session_id)
-        pane = context_runtime_pane(session, terminal_manager, terminal_runtime_registry)
     if pane is not None:
         return pane, None
     return None, f"No live managed terminal for session {session_id}"
@@ -728,7 +725,7 @@ def register_terminal_tools(
     ) -> dict[str, Any]:
         # Configured rules decide target scope before dispatch.
         if terminal_manager is not None and terminal_runtime_registry is not None:
-            terminal = terminal_manager.get_live_for_session(session_id)
+            terminal = terminal_manager.resolve_live_for_session_id(session_id)
             if terminal is not None:
                 runtime = resolve_terminal_runtime(
                     terminal_runtime_registry, terminal, terminal_manager.db
@@ -742,12 +739,6 @@ def register_terminal_tools(
                     "dropped_bytes": snapshot.dropped_bytes,
                     "total_bytes": snapshot.total_bytes,
                 }
-            session = session_manager.get(session_id)
-            pane = context_runtime_pane(session, terminal_manager, terminal_runtime_registry)
-            if pane is not None:
-                text = await pane.snapshot(lines)
-                if text is not None:
-                    return {"success": True, "output": text, "via": pane.backend}
         error = f"No live managed terminal for session {session_id}"
         fallback, transcript_error = await _capture_transcript_tail(
             session_id,

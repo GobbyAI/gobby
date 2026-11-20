@@ -143,7 +143,6 @@ async def test_parked_agent_is_never_reprompted_until_its_wait_resolves(
         agent_run_manager,
         sample_session,
         run_id=_rid("run-parked"),
-        terminal_id="gobby-parked",
         child_session_id=sample_session["id"],
     )
     registry.register(_rid("validator-run"), subscribers=[sample_session["id"]])
@@ -170,7 +169,6 @@ async def test_agent_mid_turn_is_not_reprompted(
         agent_run_manager,
         sample_session,
         run_id=_rid("run-thinking"),
-        terminal_id="gobby-thinking",
     )
     monitor._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
 
@@ -232,7 +230,6 @@ async def test_open_tool_transcript_is_not_reprompted(
         agent_run_manager,
         sample_session,
         run_id=_rid("run-open-tool"),
-        terminal_id="gobby-open-tool",
         child_session_id=child.id,
         provider="grok",
     )

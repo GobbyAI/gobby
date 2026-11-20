@@ -107,7 +107,7 @@ class _Manager:
         self._terminal = terminal
         self._error = error
 
-    def get_live_for_session(self, session_id: str) -> object | None:
+    def resolve_live_for_session_id(self, session_id: str) -> object | None:
         if self._error is not None:
             raise self._error
         return self._terminal

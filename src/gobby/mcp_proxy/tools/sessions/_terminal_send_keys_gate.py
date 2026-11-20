@@ -289,7 +289,7 @@ async def send_keys_target_refusal(
     if terminal_manager is None or terminal_runtime_registry is None:
         return _refuse("send_keys_target_unconfirmed", "the target terminal cannot be inspected")
     try:
-        terminal = terminal_manager.get_live_for_session(session_id)
+        terminal = terminal_manager.resolve_live_for_session_id(session_id)
         if terminal is None:
             return _refuse("send_keys_no_live_terminal", "the target has no live terminal")
 

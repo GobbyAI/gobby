@@ -35,7 +35,7 @@ def ledger() -> Iterator[ComposerLedger]:
 @pytest.fixture
 def terminals() -> MagicMock:
     terminals = MagicMock(name="terminal_manager")
-    terminals.get_live_for_session.side_effect = lambda session_id: (
+    terminals.resolve_live_for_session_id.side_effect = lambda session_id: (
         SimpleNamespace(id=_TERMINAL, backend="native") if session_id == _SESSION else None
     )
     return terminals
@@ -88,8 +88,8 @@ def test_prompt_submit_adopts_an_untracked_seat_only_when_its_input_is_observed(
     has_terminal: bool,
     after: LedgerRead,
 ) -> None:
-    terminals.get_live_for_session.side_effect = None
-    terminals.get_live_for_session.return_value = (
+    terminals.resolve_live_for_session_id.side_effect = None
+    terminals.resolve_live_for_session_id.return_value = (
         SimpleNamespace(id="pre-ledger-seat", backend="native") if has_terminal else None
     )
 
@@ -192,7 +192,7 @@ def test_tool_work_with_no_dialog_open_skips_the_terminal_lookup(
 ) -> None:
     handlers.handle_before_tool(_event(HookEventType.BEFORE_TOOL, {"tool_name": "Bash"}))
 
-    terminals.get_live_for_session.assert_not_called()
+    terminals.resolve_live_for_session_id.assert_not_called()
     assert ledger.read(_TERMINAL) == _EMPTY
 
 
@@ -201,7 +201,7 @@ def test_unbound_session_records_nothing(
 ) -> None:
     ledger.observe_write(_TERMINAL, origin="operator", kind="text", payload="fix it", submit=True)
     terminals = MagicMock(name="terminal_manager")
-    terminals.get_live_for_session.return_value = None
+    terminals.resolve_live_for_session_id.return_value = None
     handlers = EventHandlers(terminal_manager=terminals, **mock_dependencies)
 
     handlers.handle_before_agent(_event(HookEventType.BEFORE_AGENT, {"prompt": "fix it"}))

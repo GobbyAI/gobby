@@ -772,7 +772,7 @@ def test_resolve_pane_io_prefers_the_live_terminal_row() -> None:
 
     terminal = MagicMock(backend="native", id="term-1", machine_id=require_machine_id())
     terminal_manager = MagicMock()
-    terminal_manager.get_live_for_session.return_value = terminal
+    terminal_manager.resolve_live_for_session_id.return_value = terminal
     registry = MagicMock()
 
     pane, error = _terminal._resolve_pane_io(
@@ -789,44 +789,9 @@ def test_resolve_pane_io_prefers_the_live_terminal_row() -> None:
     registry.resolve.assert_called_once_with("native")
 
 
-def test_resolve_pane_io_uses_gterm_terminal_named_by_context() -> None:
-    terminal_id = "11111111-1111-4111-8111-111111111111"
-    terminal = MagicMock(
-        backend="native",
-        id=terminal_id,
-        state="live",
-        project_id="proj-1",
-        agent_run_id=None,
-        session_id=None,
-    )
-    session = MagicMock(
-        id="session-1",
-        project_id="proj-1",
-        terminal_context={"gobby_terminal_id": terminal_id},
-    )
-    session_manager = MagicMock()
-    session_manager.get.return_value = session
-    terminal_manager = MagicMock()
-    terminal_manager.get_live_for_session.return_value = None
-    terminal_manager.get.return_value = terminal
-    registry = MagicMock()
-
-    pane, error = _terminal._resolve_pane_io(
-        "session-1",
-        session_manager,
-        MagicMock(),
-        terminal_manager=terminal_manager,
-        terminal_runtime_registry=registry,
-    )
-
-    assert error is None
-    assert isinstance(pane, RuntimePaneIO)
-    assert (pane.backend, pane.target) == ("native", terminal_id)
-
-
 def test_resolve_pane_io_requires_a_managed_terminal() -> None:
     terminal_manager = MagicMock()
-    terminal_manager.get_live_for_session.return_value = None
+    terminal_manager.resolve_live_for_session_id.return_value = None
 
     pane, error = _terminal._resolve_pane_io(
         "session-1",
