@@ -876,6 +876,49 @@ async fn a_lifetime_whose_session_died_is_ended_by_the_failed_begin_and_the_next
     .await
 }
 
+#[tokio::test]
+async fn a_lease_refuses_a_lifetime_token_issued_by_another_lease() -> Result<()> {
+    database_case(async |db| {
+        let token = Uuid::new_v4().to_string();
+        let mut issuer = db.lease(&token)?;
+        let mut lease = db.lease(&token)?;
+        let foreign = issuer
+            .begin_lifetime(None)
+            .await?
+            .context("the issuer's lifetime did not acquire")?;
+        issuer.release().await?;
+        let state = lease.subscribe();
+        let _own = lease
+            .begin_lifetime(None)
+            .await?
+            .context("the lease's own lifetime did not acquire")?;
+        assert_eq!(db.epoch(&token).await?, Some(2));
+
+        let refused = lease.begin_lifetime(Some(foreign)).await;
+        assert!(
+            refused.is_err(),
+            "a lifetime token issued by another lease ended this lease's lifetime"
+        );
+        assert!(lease.lifetime_open(), "the foreign token closed the gate");
+        assert_eq!(*state.borrow(), LeaseState::Active);
+        assert!(
+            lease.fence().is_some(),
+            "the foreign token cost the authority"
+        );
+        assert_eq!(
+            db.epoch(&token).await?,
+            Some(2),
+            "the foreign token rotated the epoch"
+        );
+        let Err(error) = lease.begin_lifetime(None).await else {
+            panic!("a begin with no token succeeded while the own lifetime is open");
+        };
+        assert!(error.to_string().contains(LIFETIME_OPEN), "{error:#}");
+        lease.release().await
+    })
+    .await
+}
+
 #[test]
 fn node_mode_is_refused_before_connecting() {
     // Pool::build does not connect, so an unreachable URL proves no connection.
