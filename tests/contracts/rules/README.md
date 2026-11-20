@@ -85,10 +85,14 @@ the table of paths, the cases each reaches and both outcomes.
 - `proxy`: `{"rtk": "echo-prefix"}` opts into a fake RTK, a shebang script the real proxy
   handler runs: it rewrites a command to `rtk <command>` and denies one that holds
   `synthetic-denied` (exit status 2). Without the key RTK is unavailable.
-- `posix_only: true` marks a case that spawns a process (a rule-pass `run_command`, the
-  background delivery, an inline command without a boundary, or the fake RTK). It is the only
-  replay skip: such a case is skipped on Windows, where a spawn with a cwd has no shell to run
-  through. A case that spawns nothing never carries the key.
+- `posix_only: true` marks a case whose path spawns through `/bin/sh`: the background
+  delivery, an inline command without a boundary, the fake RTK, and a rule-pass
+  `run_command`. A rule-pass `run_command` starts no process in Python's replay, because the
+  frozen event stops the payload build first (see `inline_run_command` below); it is marked
+  because the effect it names spawns once the payload builds, which the Rust port does and
+  the deadline-handoff test does with the event thawed. It is the only replay skip: such a
+  case is skipped on Windows, where a spawn with a cwd has no shell to run through. A case
+  with none of these paths never carries the key.
 - `{python}` in a `run_command` command list is replaced by the running interpreter when the
   rule is seeded, so the recorded data names no interpreter path.
 - `engine_skip_group` names the group the engine skips for a CLI-internal request, and
@@ -98,9 +102,10 @@ the table of paths, the cases each reaches and both outcomes.
 - `skipped_groups` is observed, not inferred: the recorder records which rules reached the
   engine's event-match check, and a group is skipped when it has a member and none reached
   it. A member whose condition was false still reached it, so its group is not skipped.
-- Every `run_command` effect logs `{"run_command_deadline": "expired" | "none"}` before it
-  runs: `expired` when the effect context holds the pass's blocking deadline object, `none`
-  when it holds none. This is the effect-seam contract "a run_command effect receives the
+- Every `run_command` effect logs `{"run_command_deadline": "none" | "live" | "expired"}`
+  before it runs, from the deadline's real state: `none` when the effect context holds no
+  blocking deadline object, `expired` when it holds one whose budget is spent on the effect
+  module's clock, and `live` when it holds one with budget left. This is the effect-seam contract "a run_command effect receives the
   pass's blocking deadline"; the Rust port records the same entry at its effect dispatch.
 - The seam caller `inline_run_command` reads its seeded rule back by `input.rule_name` and
   applies its `run_command` effect through `RuleEngine._apply_effect` with a live event. The

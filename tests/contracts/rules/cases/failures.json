@@ -415,7 +415,7 @@
             "rule": "synthetic-deadline-detector"
           },
           {
-            "run_command_deadline": "expired"
+            "run_command_deadline": "live"
           },
           {
             "write": "workflow_audit_log",

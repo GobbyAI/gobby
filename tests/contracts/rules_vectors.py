@@ -413,7 +413,7 @@ def _call(vector: dict[str, Any], repo: Path | None) -> Any:
     if meter is not None:
         envelope.update(meter.outcome())
     if node_requests is not None:
-        envelope["node_requests"] = rules_recorder._jsonable(node_requests)
+        envelope["node_requests"] = rules_recorder._jsonable(node_requests, repo_root=repo_root)
     if within:
         envelope["within"] = _snapshot(within_values, repo_root)
     value = rules_recorder._jsonable(result, repo_root=repo_root)

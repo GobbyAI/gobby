@@ -535,6 +535,9 @@ def _malformed_payload_case(member: str) -> tuple[dict[str, Any], str]:
     raise ValueError(f"unknown malformed member {member!r}")
 
 
+# No setup member drops the source: a setup delivery inherits the case's source
+# (pipeline_corpus.setup_delivery), so a setup entry without one is well formed, and the case's
+# own missing_source member covers the refusal.
 MALFORMED_PAYLOAD_MEMBERS = (
     "empty_payload",
     "missing_source",

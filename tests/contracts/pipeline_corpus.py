@@ -15,7 +15,8 @@ no real object in the harness, so a twin never fails merely because its script i
 Every delivery, the case's own and each ``setup`` entry, starts from a non-empty native provider
 payload with a ``source`` the route's adapter table holds and a ``hook_type`` that adapter's
 ``EVENT_MAP`` maps. Only an event type no routed adapter produces is delivered directly, as
-``event`` with a ``reason``; a delivery never carries both.
+``event`` with a ``reason``; a delivery never carries both. A setup entry that delivers an event
+carries its own ``reason``: it does not inherit the case's.
 """
 
 from __future__ import annotations
@@ -89,6 +90,12 @@ def _validate_case(case: dict[str, Any], kinds: set[str], collaborators: set[str
     _validate_delivery(case_id, case, "the case delivery")
     for index, setup in enumerate(case.get("setup", [])):
         _validate_delivery(case_id, setup_delivery(case, setup), f"setup delivery {index}")
+        # The entry's own reason: a case's reason explains the case's event, not a setup's.
+        if "event" in setup and "payload" not in setup and not setup.get("reason"):
+            raise ValueError(
+                f"{case_id}: setup delivery {index} delivers an event without its own reason "
+                "saying why no adapter produces it"
+            )
     if case["kind"] == "collaborator_failure" and not (case.get("failure") or {}).get("method"):
         raise ValueError(f"{case_id}: a collaborator failure must name the failing method")
     for rule in case.get("rules", []):

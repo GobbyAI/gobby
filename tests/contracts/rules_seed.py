@@ -75,6 +75,12 @@ def _validate_agent_definitions(case_id: str, specs: Any) -> dict[str, Mapping[s
             raise _refuse(case_id, "agent_definitions", f"name {name!r} is not synthetic")
         if not isinstance(spec.get("body"), Mapping):
             raise _refuse(case_id, "agent_definitions", f"{name!r} has no body mapping")
+        if "enabled" in spec and not isinstance(spec["enabled"], bool):
+            raise _refuse(
+                case_id,
+                "agent_definitions",
+                f"{name!r} enabled must be a bool: {spec['enabled']!r}",
+            )
         by_name[name] = spec
     return by_name
 
@@ -174,6 +180,14 @@ def seed_session(db: PostgresHubDatabase, spec: bool) -> None:
     )
 
 
+def _enabled_flag(spec: Mapping[str, Any]) -> bool:
+    """Return the definition's ``enabled`` flag, which must be a JSON boolean when given."""
+    enabled = spec.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError(f"agent definition {spec.get('name')!r} enabled must be a bool")
+    return enabled
+
+
 def seed_agent_definitions(db: PostgresHubDatabase, specs: Sequence[Mapping[str, Any]]) -> None:
     """Install each synthetic agent definition globally, with its step workflow."""
     manager = AgentDefinitionManager(db)
@@ -188,7 +202,7 @@ def seed_agent_definitions(db: PostgresHubDatabase, specs: Sequence[Mapping[str,
             name,
             body,
             dict(workflow) if workflow is not None else None,
-            enabled=bool(spec.get("enabled", True)),
+            enabled=_enabled_flag(spec),
         )
 
 

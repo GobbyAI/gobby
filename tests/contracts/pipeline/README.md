@@ -32,7 +32,8 @@ state the case needs. A setup delivery inherits the case's other keys but never 
 The loader requires every delivery, the case's own and each setup delivery, to start from a
 non-empty native provider payload with a `source` the route's adapter table holds and a
 `hook_type` that adapter's `EVENT_MAP` maps. Only an event type no routed adapter produces is
-delivered as `event` with a `reason`, and no delivery carries both. The `git` adapter has no
+delivered as `event` with a `reason`, and no delivery carries both. A setup entry that
+delivers an event carries its own `reason`; it does not inherit the case's. The `git` adapter has no
 `EVENT_MAP`, so no pipeline case can deliver through it; none does, and the adapter corpus
 covers it. `expect` holds the event type, the non-default response fields, the
 adapter's native output, the collaborator reads in the order they ran and, when the delivery raised, the

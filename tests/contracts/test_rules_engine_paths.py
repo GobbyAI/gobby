@@ -32,6 +32,7 @@ from gobby.workflows.engine.enforcement_checks import EnforcementCheckMixin
 from gobby.workflows.engine.event_utils import _resolve_rule_events
 from gobby.workflows.engine.run_command import execute_run_command
 from gobby.workflows.engine.templating import TemplatingMixin
+from gobby.workflows.evaluation_context import mutable_evaluation_result
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.contracts import rules_corpus, rules_mutation, rules_recorder, rules_seed
 
@@ -241,6 +242,7 @@ S2_BLOCK = _spec(
 S3_BLOCK = _spec(
     "block",
     reason_contains=(
+        STEP_REASON,
         "MCP tool 'synthetic-server:synthetic-forbidden-tool' is not allowed in the "
         "'synthetic-gather' step.",
     ),
@@ -850,7 +852,11 @@ def _inline_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [c for c in cases if c.get("kind") == CALLER_KIND and c.get("caller") == INLINE_CALLER]
 
 
-def test_budget_cases_run_no_process_and_no_real_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_budget_cases_replay_without_starting_a_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each command-boundary case replays its expect with process creation refused.
+
+    The seam caller fixes the clock for these cases; this test checks the process side only.
+    """
     cases = _committed_cases()
     boundary = [
         case
@@ -955,21 +961,59 @@ def test_recorder_labels_the_deadline_by_its_state() -> None:
 def test_deadline_handoff_case_reaches_the_detector_spawn(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The handoff case proves the spent budget reaches the process, not only the effect."""
+    """The handoff case proves the spent budget reaches the process, not only the effect.
+
+    Python's rule pass hands the effect a frozen event that the payload builder cannot write
+    into, so the committed case fails open before the spawn and records no process. This
+    test thaws only the event, keeping the effect context and the deadline object the engine
+    handed over, so the spawn it observes is the one the pass's deadline arithmetic gives.
+    With the deadline dropped from the effect context, the same spawn gets the full budget.
+    """
     case = {c["id"]: c for c in _committed_cases()}[DEADLINE_HANDOFF]
     assert case.get("deadline") == "expired", f"{DEADLINE_HANDOFF}: {case.get('deadline')!r}"
-    timeouts: list[float] = []
+    original_apply = run_command_effects.RunCommandEffectsMixin._apply_run_command
 
-    async def observed_spawn(command: list[str], **kwargs: Any) -> Any:
-        timeouts.append(kwargs["timeout_seconds"])
-        return await execute_run_command(command, **kwargs)
+    async def thawed_event(
+        self: Any, effect: Any, row: Any, ctx: dict[str, Any], context_parts: Any
+    ) -> None:
+        event = ctx["event"]
+        live = dataclasses.replace(
+            event,
+            data=mutable_evaluation_result(event.data),
+            metadata=mutable_evaluation_result(event.metadata),
+        )
+        await original_apply(self, effect, row, {**ctx, "event": live}, context_parts)
 
-    monkeypatch.setattr(run_command_effects, "execute_run_command", observed_spawn)
-    rules_corpus.replay_case(copy.deepcopy(case))
+    def spawn_timeouts(*, deadline_dropped: bool) -> list[float]:
+        timeouts: list[float] = []
+
+        async def observed_spawn(command: list[str], **kwargs: Any) -> Any:
+            timeouts.append(kwargs["timeout_seconds"])
+            return await execute_run_command(command, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(run_command_effects, "execute_run_command", observed_spawn)
+            patch.setattr(
+                run_command_effects.RunCommandEffectsMixin, "_apply_run_command", thawed_event
+            )
+            if deadline_dropped:
+                original_build = TemplatingMixin._build_eval_context
+                patch.setattr(
+                    TemplatingMixin, "_build_eval_context", _deadline_dropped(original_build)
+                )
+            rules_corpus.replay_case(copy.deepcopy(case))
+        return timeouts
+
     floor = run_command_effects._RUN_COMMAND_INLINE_FLOOR_SECONDS
-    assert timeouts == [floor], (
-        f"{DEADLINE_HANDOFF}: detector spawn timeouts {timeouts}, want one spawn at the "
+    handed = spawn_timeouts(deadline_dropped=False)
+    assert handed == [floor], (
+        f"{DEADLINE_HANDOFF}: detector spawn timeouts {handed}, want one spawn at the "
         f"{floor}s floor an expired deadline leaves"
+    )
+    dropped = spawn_timeouts(deadline_dropped=True)
+    assert len(dropped) == 1 and dropped[0] > floor, (
+        f"{DEADLINE_HANDOFF}: without the handed deadline the spawn timeouts are {dropped}, "
+        f"want one spawn above the {floor}s floor"
     )
 
 

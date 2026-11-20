@@ -31,6 +31,7 @@ from unittest import mock
 from uuid import UUID
 
 from gobby.config.features import ToolResultOffloadConfig
+from gobby.hooks import effect_deadline
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.integrations.rtk import RtkProbe
@@ -312,9 +313,16 @@ class _Recorder:
         async def wrapper(
             owner: Any, effect: Any, row: Any, ctx: dict[str, Any], context_parts: Any
         ) -> Any:
-            # The effect-seam contract: a run_command effect receives the pass's deadline.
-            expired = isinstance(ctx.get("_blocking_deadline"), BlockingEffectDeadline)
-            self.effect_log.append({"run_command_deadline": "expired" if expired else "none"})
+            # The effect-seam contract: a run_command effect receives the pass's deadline. The
+            # label is the deadline's real state, read through the effect module's own clock.
+            deadline = ctx.get("_blocking_deadline")
+            if not isinstance(deadline, BlockingEffectDeadline):
+                label = "none"
+            elif effect_deadline.blocking_budget_overrun(deadline):
+                label = "expired"
+            else:
+                label = "live"
+            self.effect_log.append({"run_command_deadline": label})
             return await original(owner, effect, row, ctx, context_parts)
 
         return wrapper

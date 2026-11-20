@@ -592,13 +592,20 @@ def _exempt_literal_ids(tree: ast.AST) -> set[int]:
     """Ids of string constants that name a field without writing it.
 
     These are docstrings, elements of a set display that no ``for`` statement or
-    comprehension iterates, and the name argument of ``getattr`` or ``hasattr``.
+    comprehension iterates, and the name argument of ``getattr`` or ``hasattr``. A set
+    display passed to a call that a loop iterates (``for name in frozenset({...})``) counts
+    as iterated, through any depth of such calls.
     """
     exempt: set[int] = set()
     iterated: set[int] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.For | ast.AsyncFor | ast.comprehension):
-            iterated.add(id(node.iter))
+            pending: list[ast.expr] = [node.iter]
+            while pending:
+                source = pending.pop()
+                iterated.add(id(source))
+                if isinstance(source, ast.Call):
+                    pending.extend(source.args)
     for node in ast.walk(tree):
         if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
             first = node.body[0] if node.body else None
