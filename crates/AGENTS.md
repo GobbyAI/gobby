@@ -269,7 +269,7 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   `lease owner is already active`). A lifetime stays open until the run loop passes
   its guard to the next `begin_lifetime`, which ends it and acquires under one hold
   of the lease lock (a guard issued by another lease is refused before acquiring and
-  changes nothing); a guard dropped any other way (stop, refusal, error) never
+  leaves this lease unchanged); a guard dropped any other way (stop, refusal, error) never
   reopens acquisition in this process. Inside one lifetime the watch leaves Active
   at most once and never returns, so the job host needs no generation on its watch.
   `fence()` is None unless the watch reads Active, and `heartbeat()` fails, keeping
