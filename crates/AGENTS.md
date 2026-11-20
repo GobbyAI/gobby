@@ -179,7 +179,15 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
 - Lifecycle. Hooks run only for Native and Compare entries; a Proxy family runs
   none. They run in `start_rank` order, lower first, with registry order inside a
   rank. `start` runs once per process, before admission. `activate` runs once per
-  lease and may register jobs through its `Activation`. `deactivate` runs at lease
+  lease and may register jobs through its `Activation`. It runs before the supervised
+  lifetime has verified the lease (the entry heartbeat and the job admission come
+  after every `activate`), so only the jobs it stages are held back. Any other effect
+  of an `activate` hook that needs the lease's authority must carry its own fence:
+  stop on the context's lease state, or guard the effect in its own SQL. Heartbeats
+  verify that lease state only from the admission to the lifetime's last heartbeat
+  before its release. Before the admission, through the wait for the release, and
+  through the teardown that follows a terminal restart (which keeps the lease), it
+  can read Active with nothing verifying it. `deactivate` runs at lease
   release (`StopMode::Stop`, a stop) or a drain (`StopMode::Drain`), in reverse
   start order, and the whole pass shares one stop deadline. `before_spawn`
   (`SpawnKind::FirstStart` or `Respawn`), `after_healthy` and `recovery_complete`
@@ -202,19 +210,21 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   discards only that family's staged jobs. If the sink still refuses a job at
   commit, that is an ordinary failure of its family, and the jobs that pass
   registered for the family are removed (`JobSink::remove_job`). The lease's jobs
-  end while the lease is still held, on every exit of a lease lifetime that reached
-  `supervise` (`BackendSupervisor::run_ending`): an orderly end drains them before
-  the lease is released, and a lost lease, which cannot be held through a drain,
-  cancels them at once. The four early returns of `run_ending` (a sticky refusal
-  at entry, no PID claim, standby, an error from `lock_lease` in the standby check)
-  call no hook; `ActiveServices::stop` ends the jobs there. The job host is fenced by
+  are admitted by the supervised lifetime: `BackendSupervisor::run_ending` calls
+  `LeaseScoped::admit` under the lease lock, right after its entry heartbeat
+  verified the lease, so its four early returns (a sticky refusal at entry, no PID
+  claim, standby, an error from `lock_lease` at entry) start no job, and neither
+  does an `admit` that fails. The lease's jobs end while it is still held
+  (`LeaseScoped::end`), on every exit of a lifetime that reached `supervise`: an
+  orderly end drains them before the lease is released, and a lost lease, which
+  cannot be held through a drain, cancels them at once. The job host is fenced by
   the lease watch, so once the lease is no longer held the running job is cancelled
   and no job starts again. Lease loss wins over shutdown: the fence is watched
   through the drain grace, and a loss that is ready with the stop or arrives during
   the drain aborts and joins the running job at once, and a job whose result is
   ready in the same poll as the loss is logged as cancelled, not reported. The
-  lease keeps its heartbeat through the worker drain and the `before_release` hook
-  until release, so a database session that ends there publishes Lost and the
+  lease keeps its heartbeat through the worker drain and the pre-release end
+  (`LeaseScoped::end`) until release, so a database session that ends there publishes Lost and the
   fence aborts the running job. Aborting a job cancels only its task: work it
   already dispatched to a blocking thread or already sent as SQL (the node hook
   spool prune's `spawn_blocking` is an example of such work) is neither cancelled
@@ -231,7 +241,13 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   reopens acquisition in this process. Inside one lifetime the watch leaves Active
   at most once and never returns, so the job host needs no generation on its watch.
   `fence()` is None unless the watch reads Active, and `heartbeat()` fails, keeping
-  its session, on a lease published Lost.
+  its session, on a lease published Lost. A lifetime is over, though still open,
+  once its `run_ending` has returned anything but RestartTerminals. From then on the
+  watch does not read Active: `LeaseLoss::publish` is the one loss path, and it only
+  replaces Active. The lease watch fences the job host and nothing else: the terminal
+  host (with its own epoch authority) and token-event retention (elected by its own
+  advisory lock) start in `ActiveServices::start`, before the entry heartbeat, and
+  run until `ActiveServices::stop`.
 - Pool. A family queries through `FamilyContext::serve_pool`, the shared serve pool.
   Each native pool takes `POOL_SHARE` connections from the budget that
   `gobby_core::database_concurrency::pool_budget` resolves from the stored

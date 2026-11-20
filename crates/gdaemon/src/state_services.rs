@@ -25,8 +25,11 @@ pub(crate) struct ActiveServices {
     retention_stop: watch::Sender<bool>,
     retention: Option<JoinHandle<()>>,
     terminals: Option<gobby_terminals::family::TerminalFamily>,
-    /// The lease's family jobs, scheduled from activation until stop.
+    /// The lease's family jobs, staged at activation and scheduled from their admission
+    /// ([`LeaseScoped::admit`]) until stop.
     jobs: HeartbeatHost,
+    /// The lease watch that fences the jobs once they are admitted; None without a lease.
+    job_fence: Option<watch::Receiver<LeaseState>>,
     /// The families this lease activated, deactivated at stop.
     activated: Vec<ActivationEntry<FrontDoorState>>,
     /// How the jobs ended, once [`ActiveServices::end_jobs`] ended them before the lease
@@ -43,9 +46,10 @@ impl ActiveServices {
     }
 
     /// Starts the lease's services: the native pools at their share, the terminal host when
-    /// this daemon owns the terminals, retention, and then the families' activation and
-    /// their jobs, fenced by `lease` when the daemon holds one. A fatal activation stops
-    /// what already started and fails the start.
+    /// this daemon owns the terminals, retention, and then the families' activation. The
+    /// jobs that activation stages start only at their admission ([`LeaseScoped::admit`]),
+    /// fenced by `lease` when the daemon holds one. A fatal activation stops what already
+    /// started and fails the start.
     pub(crate) async fn start(
         bootstrap: &HubDatabaseBootstrap,
         terminals: &RouteLatch,
@@ -63,6 +67,7 @@ impl ActiveServices {
             retention: None,
             terminals: None,
             jobs: HeartbeatHost::new(),
+            job_fence: lease,
             activated: Vec::new(),
             jobs_ended: None,
         };
@@ -118,10 +123,6 @@ impl ActiveServices {
             }
         }
         services.activated = families.activation.clone();
-        match lease {
-            Some(lease) => services.jobs.start_fenced(lease)?,
-            None => services.jobs.start()?,
-        }
         Ok(services)
     }
 
@@ -194,7 +195,10 @@ impl ActiveServices {
 
 impl LeaseScoped for ActiveServices {
     fn admit(&mut self) -> Result<()> {
-        Ok(())
+        match self.job_fence.take() {
+            Some(lease) => self.jobs.start_fenced(lease),
+            None => self.jobs.start(),
+        }
     }
 
     fn end(&mut self, exit: Option<SupervisorExit>) -> impl Future<Output = ()> + Send {
@@ -359,6 +363,7 @@ mod tests {
                 retention: None,
                 terminals: Some(family),
                 jobs: HeartbeatHost::new(),
+                job_fence: None,
                 activated: Vec::new(),
                 jobs_ended: None,
             };

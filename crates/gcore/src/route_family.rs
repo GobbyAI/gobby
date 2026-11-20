@@ -173,8 +173,16 @@ pub trait RouteFamily<S>: Send + Sync {
     fn start<'a>(&'a self, _ctx: &'a FamilyContext) -> BoxFut<'a, Result<(), HookError>> {
         Box::pin(async { Ok(()) })
     }
-    /// Runs once per lease acquisition. Jobs registered through `activation` are staged
-    /// for the lease.
+    /// Runs once per lease acquisition, before the lease is verified for the lifetime: the
+    /// supervised lifetime's entry heartbeat and its job admission come after every `activate`.
+    /// Jobs registered through `activation` are staged for the lease and start only at that
+    /// admission. Nothing else a hook does here is held back or fenced by the lease: an effect
+    /// that needs the lease's authority (a write, a spawned task, a call a peer daemon must not
+    /// repeat) must carry its own fence, by stopping on the context's lease state or by
+    /// guarding the effect in its own SQL. Heartbeats verify that lease state only from the
+    /// admission to the lifetime's last heartbeat before its release; outside that interval it
+    /// can read Active with nothing verifying it, so an effect that must not outlive the lease
+    /// needs its own SQL guard there.
     fn activate<'a>(
         &'a self,
         _activation: &'a mut Activation<'_>,

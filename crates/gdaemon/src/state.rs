@@ -243,11 +243,17 @@ impl RuntimeState {
                 .terminal_route
                 .write()
                 .unwrap_or_else(PoisonError::into_inner) = services.route();
-            // The family jobs end while the lease is still held, on every exit of a lifetime
-            // that reached `supervise`. The four early returns of `run_ending` (a sticky refusal
-            // at entry, no PID claim, standby, an error from `lock_lease` in the standby check)
-            // call no hook; `services.stop` ends the jobs there.
+            // The supervised lifetime admits the family jobs after its entry heartbeat and ends
+            // them while the lease is still held. The four early returns of `run_ending` (a
+            // sticky refusal at entry, no PID claim, standby, an error from `lock_lease` at
+            // entry) admit none. A lifetime that is over leaves the watch not Active before its
+            // services stop.
             let outcome = supervisor.run_ending(shutdown.clone(), &mut services).await;
+            if !matches!(outcome, Ok(SupervisorExit::RestartTerminals))
+                && let Some(lifetime) = &lifetime
+            {
+                lifetime.lose();
+            }
             let drain = outcome
                 .as_ref()
                 .is_ok_and(|outcome| outcome.drains_terminals());

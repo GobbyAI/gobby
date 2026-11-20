@@ -248,8 +248,9 @@ impl BackendSupervisor {
             return Ok(SupervisorExit::Stopped);
         }
         if let Some(lease) = &self.lease {
-            let guard = self.lock_lease(lease).await?;
-            if guard.fence().is_none() {
+            let mut guard = self.lock_lease(lease).await?;
+            if let Err(error) = guard.heartbeat().await {
+                tracing::warn!(target: "gobby.lifecycle", "backend lease not held at lifetime start: {error:#}");
                 return Ok(SupervisorExit::Standby);
             }
             let loss = guard.loss();
