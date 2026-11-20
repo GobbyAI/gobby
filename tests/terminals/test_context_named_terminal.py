@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
@@ -34,7 +34,6 @@ from gobby.terminals.composer_ledger import (
     LedgerRead,
     release_composer,
 )
-from tests.events.test_wake import FakeSession
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 
 pytestmark = pytest.mark.unit
@@ -134,23 +133,31 @@ def _release(terminals: TerminalManager, session_id: str) -> str:
 
 
 def _wake_dispatcher(scene: Scene, pane_sender: AsyncMock) -> WakeDispatcher:
-    seat = FakeSession(id=scene.session.id, terminal_context=scene.session.terminal_context)
+    """A dispatcher over the seat's real session row and the real terminal manager.
+
+    The seat is idle between turns, so only the terminal it resolves decides the wake.
+    """
     sessions = MagicMock()
-    sessions.get.return_value = seat
-
-    def resolve(_session: object) -> MagicMock | None:
-        row = scene.terminals.resolve_live_for_session(scene.session)
-        return None if row is None else MagicMock(id=row.id, machine_id=None)
-
-    terminals = MagicMock()
-    terminals.resolve_live_for_session.side_effect = resolve
+    sessions.get.return_value = replace(scene.session, status="paused")
     return WakeDispatcher(
         session_manager=sessions,
         ism_manager=MagicMock(),
         terminal_sender=pane_sender,
-        terminal_manager=terminals,
+        terminal_manager=scene.terminals,
         activity_probe=cast(ActivityProbe, probe_terminal_activity),
     )
+
+
+def _agent_cli_in_foreground(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Process inspection reports an agent CLI; returns the terminal ids it inspected."""
+    inspected: list[str] = []
+
+    async def foreground(terminal: Any, _context: object) -> str:
+        inspected.append(terminal.id)
+        return "codex"
+
+    monkeypatch.setattr(gate, "_foreground_agent_cli", foreground)
+    return inspected
 
 
 async def _gate_reached(
@@ -190,12 +197,16 @@ async def test_wake_delivers_after_the_submit_hook_clears_a_context_named_termin
     await asyncio.to_thread(_typed_then_submitted, scene, composer_ledger, monkeypatch)
     pane_sender = AsyncMock()
     dispatcher = _wake_dispatcher(scene, pane_sender)
+    inspected = _agent_cli_in_foreground(monkeypatch)
 
     result = await dispatcher.dispatch_live_wake(scene.session.id)
 
     assert result.get("decline_reason") != "composer_occupied"
     assert result["delivered"] is True
+    assert inspected == [scene.row.id]
     pane_sender.assert_awaited_once()
+    assert pane_sender.await_args is not None
+    assert pane_sender.await_args.args[0] == scene.row.id
 
 
 def test_release_composer_releases_a_context_named_terminal(
