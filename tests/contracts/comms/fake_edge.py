@@ -56,6 +56,11 @@ TELEGRAM_BOT_MARKER = "/bot@TELEGRAM_TOKEN@"
 # The sanitized fields kept for each provider request, and the request fields they are read from.
 SEMANTIC_FIELDS = ("destination", "text", "filename", "payload_sha256")
 DECODE_ERROR_KEY = "decode_error"
+# Logged in place of what an arrival never revealed: the method and path of a request whose
+# header block failed, and the path of a request target that cannot be parsed (which can carry
+# userinfo or other credential text, so it is never logged raw).
+UNKNOWN_FIELD = "<unknown>"
+UNPARSEABLE_PATH = "<unparseable target>"
 DESTINATION_KEYS = ("channel", "channel_id", "chat_id", "To")
 TEXT_KEYS = ("text", "initial_comment", "caption", "Body")
 TEAMS_ACTIVITY_PATH = re.compile(r".*/v3/conversations/([^/]+)/activities")

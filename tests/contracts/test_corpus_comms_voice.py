@@ -27,7 +27,12 @@ import pytest
 from scripts.parity_waivers import DIFF, PASSED
 from tests.contracts import corpus_v3, recorder_v3
 from tests.contracts.comms import fake_edge
-from tests.contracts.comms.fake_edge import DECODE_ERROR_KEY, FakeEdge
+from tests.contracts.comms.fake_edge import (
+    DECODE_ERROR_KEY,
+    UNKNOWN_FIELD,
+    UNPARSEABLE_PATH,
+    FakeEdge,
+)
 from tests.contracts.http_corpus import classify_replay
 from tests.contracts.normalizers_v3 import Window, normalize_captures
 from tests.contracts.recorder_daemon_v3 import (
@@ -856,11 +861,13 @@ def test_a_refused_send_that_made_a_malformed_provider_request_is_a_difference(
 
 
 # An arrival whose handling fails at any stage is still logged, by host and method, with a marker
-# naming the stage and the error type. A stalled body read ends at the edge's I/O timeout, which
-# these tests shorten so the read fails in about a second.
+# naming the stage and the error type. A stalled read ends at the edge's I/O timeout, which these
+# tests shorten so the read fails in about a second. A payload too deep to decode is simulated by
+# a decoder that raises, so the case does not depend on the interpreter's stack size.
 STALLED_READ_TIMEOUT_SECONDS = 1.0
-NESTING_DEPTH = 200_000
 TOKEN_FIELD = b'{"text": "' + RAW_BODY_TOKEN.encode() + b'"'
+TOKEN_DOCUMENT = TOKEN_FIELD + b"}"
+TARGET_SECRET = "corpus-target-secret-marker"
 
 
 def _slack_post(target: str, body: bytes, length: int) -> bytes:
@@ -872,11 +879,17 @@ def _slack_post(target: str, body: bytes, length: int) -> bytes:
     return head.encode("latin-1") + body
 
 
-DEEP_BODY = TOKEN_FIELD + b', "nested": ' + b"[" * NESTING_DEPTH
+def _decoder_out_of_stack(
+    content_type: str, body: bytes
+) -> tuple[dict[str, Any], list[tuple[str, bytes]]]:
+    """A payload decoder that fails as a JSON document nested past the stack limit does."""
+    raise RecursionError("maximum recursion depth exceeded while decoding a JSON array")
+
+
 # Each arrival, the raw request that makes it, and the marker its capture carries.
 FAILING_ARRIVALS: dict[str, tuple[bytes, str]] = {
     "payload-too-deep": (
-        _slack_post(MALFORMED_PATH, DEEP_BODY, len(DEEP_BODY)),
+        _slack_post(MALFORMED_PATH, TOKEN_DOCUMENT, len(TOKEN_DOCUMENT)),
         "payload: RecursionError",
     ),
     "target-unparseable": (
@@ -897,6 +910,8 @@ def test_an_arrival_whose_handling_fails_is_captured_with_its_stage(
 ) -> None:
     request, expected_marker = FAILING_ARRIVALS[name]
     monkeypatch.setattr(fake_edge, "IO_TIMEOUT_SECONDS", STALLED_READ_TIMEOUT_SECONDS)
+    if name == "payload-too-deep":
+        monkeypatch.setattr(fake_edge, "_decode_http_body", _decoder_out_of_stack)
     with _started_edge(tmp_path) as edge:
         _send_through_edge(edge, "slack.com", request)
         arrivals = edge.hits()
@@ -907,3 +922,41 @@ def test_an_arrival_whose_handling_fails_is_captured_with_its_stage(
         f"{name}: the capture {captured[0]} does not carry the marker {expected_marker!r}"
     )
     assert RAW_BODY_TOKEN not in json.dumps(arrivals), f"{name}: the edge log keeps the raw body"
+
+
+@pytest.mark.integration
+def test_an_arrival_whose_header_block_stalls_is_captured_by_its_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The request line and one header arrive; the blank line that ends the block never does.
+    partial_head = f"POST {MALFORMED_PATH} HTTP/1.1\r\nHost: slack.com\r\n".encode("latin-1")
+    monkeypatch.setattr(fake_edge, "IO_TIMEOUT_SECONDS", STALLED_READ_TIMEOUT_SECONDS)
+    with _started_edge(tmp_path) as edge:
+        _send_through_edge(edge, "slack.com", partial_head)
+        captured = ProviderEdgeCapture(edge, ["slack.com"]).hits()
+    expected = [
+        {
+            "host": "slack.com",
+            "method": UNKNOWN_FIELD,
+            "path": UNKNOWN_FIELD,
+            "semantic": fake_edge.empty_semantic(),
+            DECODE_ERROR_KEY: "head: TimeoutError",
+        }
+    ]
+    assert captured == expected, f"a stalled header block was captured as {captured}"
+
+
+@pytest.mark.integration
+def test_an_unparseable_target_is_logged_as_a_placeholder_path(tmp_path: Path) -> None:
+    # The userinfo of this target carries the marker; urlsplit refuses the unclosed bracket.
+    target = f"http://corpus:{TARGET_SECRET}@[slack.com/api/chat.postMessage"
+    with _started_edge(tmp_path) as edge:
+        _send_through_edge(edge, "slack.com", _slack_post(target, b"", 0))
+        arrivals = edge.hits()
+        captured = ProviderEdgeCapture(edge, ["slack.com"]).hits()
+    assert [item["path"] for item in captured] == [UNPARSEABLE_PATH], (
+        f"an unparseable target was captured as {captured}"
+    )
+    assert TARGET_SECRET not in json.dumps(arrivals), (
+        f"the edge log keeps the raw target: {arrivals}"
+    )
