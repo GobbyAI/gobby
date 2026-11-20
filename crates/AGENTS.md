@@ -205,10 +205,13 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   end while the lease is still held, on every exit of a lease lifetime that reached
   `supervise` (`BackendSupervisor::run_ending`): an orderly end drains them before
   the lease is released, and a lost lease, which cannot be held through a drain,
-  cancels them at once. The three early returns of `run_ending` (a sticky refusal
-  at entry, no PID claim, standby) call no hook; `ActiveServices::stop` ends the
-  jobs there. The job host is fenced by the lease watch, so once
-  the lease is no longer held the running job is cancelled and no job starts again.
+  cancels them at once. The four early returns of `run_ending` (a sticky refusal
+  at entry, no PID claim, standby, an error from `lock_lease` in the standby check)
+  call no hook; `ActiveServices::stop` ends the jobs there. The job host is fenced by
+  the lease watch, so once the lease is no longer held the running job is cancelled
+  and no job starts again. Lease loss wins over shutdown: the fence is watched
+  through the drain grace, and a loss that is ready with the stop or arrives during
+  the drain aborts and joins the running job at once.
 - Pool. A family queries through `FamilyContext::serve_pool`, the shared serve pool.
   Each native pool takes `POOL_SHARE` connections from the budget that
   `gobby_core::database_concurrency::pool_budget` resolves from the stored

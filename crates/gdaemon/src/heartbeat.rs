@@ -121,7 +121,7 @@ impl HeartbeatHost {
 
     /// Starts once, like [`HeartbeatHost::start`], fenced by `lease`: once the lease is no
     /// longer held (or its sender is gone), the running job is cancelled at once and no job
-    /// runs again.
+    /// runs again. The fence takes precedence over a stop and is watched through its drain.
     pub fn start_fenced(&mut self, lease: watch::Receiver<LeaseState>) -> Result<()> {
         self.start_with(Some(lease))
     }
@@ -223,8 +223,8 @@ async fn supervise(
     loop {
         tokio::select! {
             biased;
-            _ = &mut shutdown => return,
             () = lease_ended(&mut lease) => return,
+            _ = &mut shutdown => return,
             _ = base.tick() => {}
         }
         for (job, timer) in &mut jobs {
@@ -242,23 +242,20 @@ async fn supervise(
             // Invoke the factory inside the child too, so synchronous panics are isolated.
             let callback = Arc::clone(&job.callback);
             let mut run = Run(tokio::spawn(async move { callback().await }));
+            // Lease loss wins over shutdown: a loss already ready when the stop arrives
+            // cancels the job instead of draining it.
             let result = tokio::select! {
                 biased;
+                () = lease_ended(&mut lease) => {
+                    cancel_for_lost_lease(&job.name, &mut run).await;
+                    return;
+                }
                 stop = &mut shutdown => {
                     // A sender dropped without a stop ends the jobs as a stop does.
                     match stop.unwrap_or(Stop::Drain) {
-                        Stop::Drain => drain(&job.name, &mut run).await,
+                        Stop::Drain => drain(&job.name, &mut run, &mut lease).await,
                         Stop::Cancel => abort(&mut run).await,
                     }
-                    return;
-                }
-                () = lease_ended(&mut lease) => {
-                    tracing::warn!(
-                        target: "gobby.heartbeat",
-                        "gdaemon heartbeat job {} cancelled: the lease is no longer held",
-                        job.name
-                    );
-                    abort(&mut run).await;
                     return;
                 }
                 result = &mut run.0 => result,
@@ -285,11 +282,19 @@ async fn lease_ended(lease: &mut Option<watch::Receiver<LeaseState>>) {
     }
 }
 
-/// Gives the active child [`SHUTDOWN_GRACE`] to finish, then aborts and joins it.
-async fn drain(name: &str, run: &mut Run) {
-    match timeout(SHUTDOWN_GRACE, &mut run.0).await {
-        Ok(result) => report(name, result),
-        Err(_) => {
+/// Gives the active child [`SHUTDOWN_GRACE`] to finish, then aborts and joins it. The
+/// fencing lease stays watched through the grace: once it is no longer held, the child is
+/// aborted and joined at once.
+async fn drain(name: &str, run: &mut Run, lease: &mut Option<watch::Receiver<LeaseState>>) {
+    let finished = tokio::select! {
+        biased;
+        () = lease_ended(lease) => None,
+        finished = timeout(SHUTDOWN_GRACE, &mut run.0) => Some(finished),
+    };
+    match finished {
+        None => cancel_for_lost_lease(name, run).await,
+        Some(Ok(result)) => report(name, result),
+        Some(Err(_)) => {
             tracing::warn!(
                 target: "gobby.heartbeat",
                 "gdaemon heartbeat job {name} exceeded shutdown grace; aborting"
@@ -297,6 +302,15 @@ async fn drain(name: &str, run: &mut Run) {
             abort(run).await;
         }
     }
+}
+
+/// Aborts and joins the active child because the fencing lease is no longer held.
+async fn cancel_for_lost_lease(name: &str, run: &mut Run) {
+    tracing::warn!(
+        target: "gobby.heartbeat",
+        "gdaemon heartbeat job {name} cancelled: the lease is no longer held"
+    );
+    abort(run).await;
 }
 
 /// Aborts the active child and joins it.
