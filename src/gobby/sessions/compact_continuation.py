@@ -330,13 +330,11 @@ def _continuation_pane(
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
 ) -> PaneIO | None:
-    """Use a live native row or a bound native terminal context."""
-    from gobby.terminals.pane_io import context_runtime_pane, live_runtime_pane
+    """Use the terminal the shared resolver gives the session."""
+    from gobby.terminals.pane_io import live_runtime_pane
 
     try:
         pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry)
-        if pane is None:
-            pane = context_runtime_pane(session, terminal_manager, terminal_runtime_registry)
     except Exception:
         logger.warning(
             "Failed resolving the live terminal for set_handoff compact continuation %s",

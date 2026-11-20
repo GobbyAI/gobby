@@ -366,6 +366,7 @@ def register_lifecycle_routes(
                 return {"status": "already_expired", "session_id": session_id}
 
             # Prefer the daemon-tracked terminal so its row transitions before the reply.
+            # Bound-only: expiry kills only a row this session owns, never one context names.
             terminal_killed = False
             services = getattr(server, "services", None)
             terminal_manager = getattr(services, "terminal_manager", None)
