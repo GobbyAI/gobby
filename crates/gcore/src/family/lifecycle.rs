@@ -319,10 +319,12 @@ pub async fn start_families<S: 'static>(
 
 /// Runs each entry's `activate` once per lease. Jobs staged during the pass reach `jobs`
 /// only when the pass succeeds. A fatal error discards every staged job, deactivates in
-/// reverse under the one `unwind_deadline` the failing family first and then the
-/// families activated so far, and returns the failure, so a retry registers the same
-/// names cleanly. A family whose `activate` failed in the ordinary way counts as
-/// activated.
+/// reverse the failing family first and then the families activated so far, and returns
+/// the failure, so a retry registers the same names cleanly. A family whose `activate`
+/// failed in the ordinary way counts as activated.
+///
+/// That unwind shares one deadline across every hook it calls, `unwind_budget` from the
+/// moment the unwind begins, so time spent in a slow `activate` cannot exhaust the cleanup.
 ///
 /// Staging applies the sink's own rule, so a family sees a refusal when it stages the
 /// job. An ordinary error discards only that family's staged jobs and marks its name. If
@@ -333,7 +335,7 @@ pub async fn activate_families<S: 'static>(
     entries: &[ActivationEntry<S>],
     ctx: &FamilyContext,
     jobs: &mut (dyn JobSink + Send),
-    unwind_deadline: Instant,
+    unwind_budget: Duration,
 ) -> Result<StartReport, StartFailure> {
     let mut staged = Vec::new();
     let mut activated = Vec::new();
@@ -361,7 +363,8 @@ pub async fn activate_families<S: 'static>(
                 relaunch_could_clear,
             }) => {
                 drop(staged);
-                deactivate_families(&activated, StopMode::Stop, unwind_deadline).await;
+                let deadline = Instant::now() + unwind_budget;
+                deactivate_families(&activated, StopMode::Stop, deadline).await;
                 return Err(StartFailure {
                     family: family.name(),
                     message,

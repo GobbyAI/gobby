@@ -81,12 +81,11 @@ impl ActiveServices {
                 retention_shutdown,
             )));
         }
-        let deadline = Instant::now() + FAMILY_STOP_BUDGET;
         match activate_families(
             &families.activation,
             &families.ctx,
             &mut services.jobs,
-            deadline,
+            FAMILY_STOP_BUDGET,
         )
         .await
         {
@@ -135,20 +134,25 @@ impl ActiveServices {
                 failure.message
             );
         }
-        if let Some(family) = self.terminals {
-            if drain {
-                family
-                    .drain()
-                    .await
-                    .context("explicit terminal drain failed")?;
-            } else {
+        let terminals = match self.terminals {
+            Some(family) if drain => family
+                .drain()
+                .await
+                .context("explicit terminal drain failed"),
+            Some(family) => {
                 family.stop().await;
+                Ok(())
             }
-        }
+            None => Ok(()),
+        };
+        // A failed drain still stops and joins retention before it is reported.
         self.retention_stop.send_replace(true);
-        if let Some(task) = self.retention {
-            task.await.context("token-event retention task failed")?;
-        }
+        let retention = match self.retention {
+            Some(task) => task.await.context("token-event retention task failed"),
+            None => Ok(()),
+        };
+        terminals?;
+        retention?;
         jobs.context("the lease's family jobs did not stop")?;
         if drain && let Some(failure) = failures.into_iter().next() {
             anyhow::bail!(

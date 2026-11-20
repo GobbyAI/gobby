@@ -463,7 +463,7 @@ async fn default_hooks_change_nothing() {
         Ok(StartReport::default())
     );
     assert_eq!(
-        activate_families(&entries, &ctx, &mut sink, soon()).await,
+        activate_families(&entries, &ctx, &mut sink, UNWIND_BUDGET).await,
         Ok(StartReport::default())
     );
     assert!(job_names(&sink).is_empty());
@@ -613,7 +613,7 @@ async fn fatal_relaunch_flag_round_trips_for_start_and_activate() {
         activates.set_activate(Step::Fatal("lease refused", relaunch_could_clear));
         let mut sink = RecordingSink::default();
         assert_eq!(
-            activate_families(&[entry(activates)], &ctx, &mut sink, soon()).await,
+            activate_families(&[entry(activates)], &ctx, &mut sink, UNWIND_BUDGET).await,
             Err(StartFailure {
                 family: "activates",
                 message: "lease refused".into(),
@@ -636,12 +636,12 @@ async fn lease_cycles_reactivate_and_stop_in_reverse() {
 
     let mut first_lease = RecordingSink::default();
     assert_eq!(
-        activate_families(&entries, &ctx, &mut first_lease, soon()).await,
+        activate_families(&entries, &ctx, &mut first_lease, UNWIND_BUDGET).await,
         Ok(StartReport::default())
     );
     let mut second_lease = RecordingSink::default();
     assert_eq!(
-        activate_families(&entries, &ctx, &mut second_lease, soon()).await,
+        activate_families(&entries, &ctx, &mut second_lease, UNWIND_BUDGET).await,
         Ok(StartReport::default())
     );
 
@@ -791,7 +791,7 @@ async fn jobs_register_only_while_native_and_active() {
     let mut native_sink = RecordingSink::default();
     assert!(job_names(&native_sink).is_empty());
     assert_eq!(
-        activate_families(&[entry(native)], &ctx, &mut native_sink, soon()).await,
+        activate_families(&[entry(native)], &ctx, &mut native_sink, UNWIND_BUDGET).await,
         Ok(StartReport::default())
     );
     assert_eq!(job_names(&native_sink), vec!["timer.tick"]);
@@ -800,7 +800,7 @@ async fn jobs_register_only_while_native_and_active() {
     let compare = Hooked::with_jobs("timer_compare", RouteBackend::Compare, &log, TICK);
     let mut compare_sink = RecordingSink::default();
     assert_eq!(
-        activate_families(&[entry(compare)], &ctx, &mut compare_sink, soon()).await,
+        activate_families(&[entry(compare)], &ctx, &mut compare_sink, UNWIND_BUDGET).await,
         Ok(StartReport::default())
     );
     assert_eq!(compare.refusals(), vec![JobRefused::Compare]);
@@ -809,7 +809,7 @@ async fn jobs_register_only_while_native_and_active() {
     let proxy = Hooked::with_jobs("timer_proxy", RouteBackend::Proxy, &log, TICK);
     let mut proxy_sink = RecordingSink::default();
     assert_eq!(
-        activate_families(&[entry(proxy)], &ctx, &mut proxy_sink, soon()).await,
+        activate_families(&[entry(proxy)], &ctx, &mut proxy_sink, UNWIND_BUDGET).await,
         Ok(StartReport::default())
     );
     assert!(job_names(&proxy_sink).is_empty());
@@ -862,7 +862,7 @@ async fn job_sink_lists_registered_jobs() {
     let mut host = HeartbeatHost::new();
 
     assert_eq!(
-        activate_families(&[entry(lister)], &ctx, &mut host, soon()).await,
+        activate_families(&[entry(lister)], &ctx, &mut host, UNWIND_BUDGET).await,
         Ok(StartReport::default())
     );
 
@@ -890,7 +890,7 @@ async fn fatal_activation_discards_staged_jobs_and_retries_cleanly() {
     let ctx = FamilyContext::unconfigured();
     let mut host = HeartbeatHost::new();
 
-    let failed = activate_families(&entries, &ctx, &mut host, soon()).await;
+    let failed = activate_families(&entries, &ctx, &mut host, UNWIND_BUDGET).await;
 
     assert_eq!(
         failed,
@@ -910,7 +910,7 @@ async fn fatal_activation_discards_staged_jobs_and_retries_cleanly() {
     );
 
     b.set_activate(Step::Pass);
-    let retried = activate_families(&entries, &ctx, &mut host, soon()).await;
+    let retried = activate_families(&entries, &ctx, &mut host, UNWIND_BUDGET).await;
     assert_eq!(retried, Ok(StartReport::default()));
     assert_eq!(job_names(&host), vec!["a.tick", "b.tick"]);
 
@@ -944,13 +944,7 @@ async fn fatal_activation_unwind_shares_one_deadline() {
     let began = Instant::now();
     let budget = Duration::from_millis(100);
 
-    let result = activate_families(
-        &[entry(a), entry(b), entry(c)],
-        &ctx,
-        &mut sink,
-        began + budget,
-    )
-    .await;
+    let result = activate_families(&[entry(a), entry(b), entry(c)], &ctx, &mut sink, budget).await;
 
     assert_eq!(
         result,
@@ -978,6 +972,36 @@ async fn fatal_activation_unwind_shares_one_deadline() {
     );
 }
 
+#[tokio::test(start_paused = true)]
+async fn fatal_activate_unwind_budget_begins_when_the_unwind_begins() {
+    let log = new_log();
+    let stops = Hooked::leak("stops", RouteBackend::Native, &log);
+    stops.set_deactivate(Step::PassAfter(Duration::from_secs(1)));
+    let activates = Hooked::leak("activates", RouteBackend::Native, &log);
+    activates.set_activate(Step::FatalAfter(Duration::from_secs(3600)));
+    let ctx = FamilyContext::unconfigured();
+    let mut sink = RecordingSink::default();
+    let began = Instant::now();
+
+    let result = activate_families(
+        &[entry(stops), entry(activates)],
+        &ctx,
+        &mut sink,
+        UNWIND_BUDGET,
+    )
+    .await;
+
+    assert_eq!(
+        result.err().map(|failure| failure.family),
+        Some("activates")
+    );
+    assert_eq!(
+        began.elapsed(),
+        Duration::from_secs(3601),
+        "the hour-long activate left the activated family's one-second deactivate its budget"
+    );
+}
+
 #[tokio::test]
 async fn ordinary_activation_error_discards_only_that_family_jobs() {
     let log = new_log();
@@ -988,7 +1012,13 @@ async fn ordinary_activation_error_discards_only_that_family_jobs() {
     let ctx = FamilyContext::unconfigured();
     let mut sink = RecordingSink::default();
 
-    let report = activate_families(&[entry(a), entry(b), entry(c)], &ctx, &mut sink, soon()).await;
+    let report = activate_families(
+        &[entry(a), entry(b), entry(c)],
+        &ctx,
+        &mut sink,
+        UNWIND_BUDGET,
+    )
+    .await;
 
     assert_eq!(
         report,
@@ -1134,7 +1164,7 @@ async fn fatal_activation_unwinds_the_failing_family_first_and_retries_cleanly()
     let ctx = FamilyContext::unconfigured();
     let mut sink = RecordingSink::default();
 
-    let failed = activate_families(&entries, &ctx, &mut sink, soon()).await;
+    let failed = activate_families(&entries, &ctx, &mut sink, UNWIND_BUDGET).await;
 
     assert_eq!(
         failed,
@@ -1160,7 +1190,7 @@ async fn fatal_activation_unwinds_the_failing_family_first_and_retries_cleanly()
 
     *b.activate.lock().expect("activate step") = Step::Pass;
     assert_eq!(
-        activate_families(&entries, &ctx, &mut sink, soon()).await,
+        activate_families(&entries, &ctx, &mut sink, UNWIND_BUDGET).await,
         Ok(StartReport::default()),
         "a retry activates cleanly"
     );
@@ -1222,7 +1252,7 @@ async fn staging_refuses_what_the_job_sink_refuses() {
     let ctx = FamilyContext::unconfigured();
     let mut host = HeartbeatHost::new();
 
-    let report = activate_families(&[native(registrar)], &ctx, &mut host, soon()).await;
+    let report = activate_families(&[native(registrar)], &ctx, &mut host, UNWIND_BUDGET).await;
 
     let refusals = registrar.refusals.lock().expect("job refusals").clone();
     assert!(
@@ -1285,7 +1315,7 @@ async fn commit_failure_removes_the_family_jobs_that_pass_registered() {
         ..RecordingSink::default()
     };
 
-    let report = activate_families(&[entry(a), entry(b)], &ctx, &mut sink, soon()).await;
+    let report = activate_families(&[entry(a), entry(b)], &ctx, &mut sink, UNWIND_BUDGET).await;
 
     assert_eq!(
         job_names(&sink),
@@ -1317,7 +1347,7 @@ async fn commit_failure_registers_none_of_the_family_later_jobs() {
         ..RecordingSink::default()
     };
 
-    let report = activate_families(&[entry(a), entry(b)], &ctx, &mut sink, soon()).await;
+    let report = activate_families(&[entry(a), entry(b)], &ctx, &mut sink, UNWIND_BUDGET).await;
 
     assert_eq!(
         job_names(&sink),
@@ -1369,7 +1399,13 @@ async fn proxied_family_gets_no_hooks_or_jobs() {
     let mut sink = RecordingSink::default();
 
     assert_eq!(
-        activate_families(&[entry(proxied), entry(native)], &ctx, &mut sink, soon()).await,
+        activate_families(
+            &[entry(proxied), entry(native)],
+            &ctx,
+            &mut sink,
+            UNWIND_BUDGET
+        )
+        .await,
         Ok(StartReport::default())
     );
 
