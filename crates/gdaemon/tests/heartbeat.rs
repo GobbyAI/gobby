@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use gobby_daemon::heartbeat::HeartbeatHost;
+use gobby_daemon::lease::LeaseState;
+use tokio::sync::watch;
 use tokio::time::{Instant, advance, sleep};
 
 async fn settle() {
@@ -310,6 +312,52 @@ async fn dropping_host_aborts_its_active_child() -> Result<()> {
     settle().await;
     assert_eq!(active.load(Ordering::SeqCst), 0);
     Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lost_lease_cancels_the_running_job_at_once() -> Result<()> {
+    let (lease, fence) = watch::channel(LeaseState::Active);
+    let mut host = HeartbeatHost::new();
+    let active = blocking_job(&mut host, None)?;
+    host.start_fenced(fence)?;
+    settle().await;
+    tick(5).await;
+    assert_eq!(active.load(Ordering::SeqCst), 1, "the job is running");
+
+    lease.send_replace(LeaseState::Lost);
+    tick(1).await;
+
+    assert_eq!(
+        active.load(Ordering::SeqCst),
+        0,
+        "the running job outlived the lease by a second; it must be cancelled at once"
+    );
+    host.stop().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lost_lease_starts_no_job_again() -> Result<()> {
+    let (lease, fence) = watch::channel(LeaseState::Active);
+    let mut host = HeartbeatHost::new();
+    let runs = counter(&mut host, "owner work")?;
+    host.start_fenced(fence)?;
+    settle().await;
+    tick(5).await;
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        1,
+        "the job ran while the lease was held"
+    );
+
+    lease.send_replace(LeaseState::Lost);
+    tick(60).await;
+
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        1,
+        "a job ran as owner after the lease was lost"
+    );
+    host.stop().await
 }
 
 #[tokio::test(start_paused = true)]

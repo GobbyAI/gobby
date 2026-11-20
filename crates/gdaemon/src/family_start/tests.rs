@@ -519,6 +519,51 @@ async fn prepare_reports_whether_its_configuration_read_succeeded() {
     assert_eq!(no_row, Some(true), "a read that finds no row succeeded");
 }
 
+/// The start warnings that report the pool budget below eight with `database_pool`
+/// degraded.
+fn pool_budget_warnings(families: &ProcessFamilies) -> Vec<&String> {
+    families
+        .start_warnings
+        .iter()
+        .filter(|warning| warning.contains("database_pool") && warning.contains("below 8"))
+        .collect()
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pool_budget_below_eight_is_a_start_warning() {
+    let short = budget_for(Some("66"));
+    assert_eq!(short.native_budget, 6, "the fixture gives a budget of six");
+    let families = prepare_from(
+        inputs_reading(Scripted::new(vec![Some(epoch(1, json!({})))]), Vec::new()),
+        Some(PoolOutcome::Ready(short)),
+    )
+    .await
+    .expect("a short pool budget degrades the start without failing it");
+
+    assert!(
+        families.ctx.degraded().contains("database_pool"),
+        "the short budget marks database_pool degraded"
+    );
+    assert_eq!(
+        pool_budget_warnings(&families).len(),
+        1,
+        "the short pool budget is not one start warning: {:?}",
+        families.start_warnings
+    );
+
+    let full = prepare_from(
+        inputs_reading(Scripted::new(vec![Some(epoch(1, json!({})))]), Vec::new()),
+        Some(PoolOutcome::Ready(budget_for(None))),
+    )
+    .await
+    .expect("a full pool budget starts");
+    assert_eq!(
+        pool_budget_warnings(&full),
+        Vec::<&String>::new(),
+        "a budget of eight warns about the pool"
+    );
+}
+
 #[tokio::test(start_paused = true)]
 async fn poller_signals_its_first_successful_read_even_when_no_row_is_stored() {
     // A read of no row equals the unpublished epoch, so it publishes nothing: only the

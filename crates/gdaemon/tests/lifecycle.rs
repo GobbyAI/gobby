@@ -30,6 +30,19 @@ use uuid::Uuid;
 
 use super::lease::hub_lock;
 
+use gobby_core::bootstrap::{HubDatabaseBootstrap, RouteBackend, RunMode};
+use gobby_core::family::lifecycle::{Activation, HookError, JobRun};
+use gobby_core::family::{ConfigEpoch, Extensions, FramePublisher, PublishRefused};
+use gobby_core::route_family::{BoxFut, RouteFamily};
+use gobby_daemon::family_start::{ConfigEpochSource, PrepareInputs, prepare};
+use gobby_daemon::front_door::FrontDoorState;
+use gobby_daemon::front_door::routes::terminal_route_latch;
+use gobby_daemon::lease::LeaseState;
+use gobby_daemon::state::RuntimeState;
+use std::collections::BTreeMap;
+use std::sync::Mutex;
+use tokio::sync::Notify;
+
 /// The repo's synced `.venv`. A cold managed env makes `uv run` sync the whole project inside
 /// the test deadline.
 fn repo_venv() -> PathBuf {
@@ -1227,6 +1240,190 @@ async fn lease_lock_wait_writes_progress_to_startup_timings() -> Result<()> {
         ensure!(
             progress >= 3,
             "no progress reached startup timings during a lease-lock wait: {text:?}"
+        );
+        Ok(())
+    })
+    .await
+}
+
+/// A frame publisher with no subscribers.
+struct NoFrames;
+
+impl FramePublisher for NoFrames {
+    fn publish_frames(
+        &self,
+        _filter: &serde_json::Value,
+        _frames: Vec<String>,
+    ) -> Result<(), PublishRefused> {
+        Err(PublishRefused)
+    }
+}
+
+/// A configuration store holding no row.
+struct NoStoredEpoch;
+
+impl ConfigEpochSource for NoStoredEpoch {
+    fn read(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ConfigEpoch>> + Send + '_>> {
+        Box::pin(async { Ok(ConfigEpoch::unpublished()) })
+    }
+}
+
+/// Records the lease state at the moment a family job's run is dropped.
+struct LeaseAtJobEnd {
+    lease: watch::Receiver<LeaseState>,
+    seen: Arc<Mutex<Option<LeaseState>>>,
+}
+
+impl Drop for LeaseAtJobEnd {
+    fn drop(&mut self) {
+        let state = *self.lease.borrow();
+        *self
+            .seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(state);
+    }
+}
+
+/// A family whose activation registers one job that never finishes on its own.
+struct HoldsAJob {
+    lease: watch::Receiver<LeaseState>,
+    running: Arc<Notify>,
+    seen: Arc<Mutex<Option<LeaseState>>>,
+}
+
+impl RouteFamily<FrontDoorState> for HoldsAJob {
+    fn name(&self) -> &'static str {
+        "fixture_holds_a_job"
+    }
+
+    fn prefixes(&self) -> &'static [&'static str] {
+        &[]
+    }
+
+    fn router(&self) -> axum::Router<FrontDoorState> {
+        axum::Router::new()
+    }
+
+    fn activate<'a>(
+        &'a self,
+        activation: &'a mut Activation<'_>,
+    ) -> BoxFut<'a, Result<(), HookError>> {
+        let lease = self.lease.clone();
+        let running = Arc::clone(&self.running);
+        let seen = Arc::clone(&self.seen);
+        let job: JobRun = Arc::new(move || {
+            let guard = LeaseAtJobEnd {
+                lease: lease.clone(),
+                seen: Arc::clone(&seen),
+            };
+            let running = Arc::clone(&running);
+            Box::pin(async move {
+                let _guard = guard;
+                running.notify_one();
+                std::future::pending::<()>().await;
+                Ok(())
+            })
+        });
+        let registered =
+            activation.register_job("fixture_holds_a_job.work", Duration::from_secs(1), job);
+        Box::pin(async move {
+            registered.map_err(|refused| HookError::Ordinary {
+                message: format!("the fixture job was refused: {refused:?}"),
+            })
+        })
+    }
+}
+
+const READY_UNTIL_EOF: &str = "import os,pathlib; (pathlib.Path(os.environ['GOBBY_HOME'])/'ready').write_text('ready'); open(int(os.environ['GOBBY_SUPERVISOR_FD']),'rb').read()";
+
+#[tokio::test]
+async fn an_orderly_stop_drains_the_family_jobs_before_the_lease_is_released() -> Result<()> {
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let lease = db.lease("jobs-owner")?;
+        let lease_state = lease.subscribe();
+        let lease = Arc::new(NamedLock::new(lease));
+        let claim =
+            claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("PID claim")?;
+        let argv = backend_argv(READY_UNTIL_EOF)?;
+        let mut config = backend_config(home.path(), &argv)?;
+        config
+            .environment
+            .insert("HOME".into(), home.path().as_os_str().to_owned());
+        config.drain_timeout = TERM_GRACE;
+        config.heartbeat_interval = Duration::from_millis(100);
+        let write_token = config.write_token.clone();
+        let supervisor = BackendSupervisor::with_lease(Some(Arc::clone(&lease)), claim, config);
+        let state = RuntimeState {
+            mode: RunMode::Hub,
+            lease: Some(lease),
+            lease_state: Some(lease_state.clone()),
+            backend: supervisor.subscribe(),
+            backend_wait: supervisor.subscribe_wait(),
+            write_token,
+            terminal_route: Default::default(),
+        };
+        let running = Arc::new(Notify::new());
+        let seen: Arc<Mutex<Option<LeaseState>>> = Arc::default();
+        let family: &'static HoldsAJob = Box::leak(Box::new(HoldsAJob {
+            lease: lease_state.clone(),
+            running: Arc::clone(&running),
+            seen: Arc::clone(&seen),
+        }));
+        let families = prepare(PrepareInputs {
+            serve_pool: None,
+            home: home.path().to_owned(),
+            routes: BTreeMap::from([(family.name().to_owned(), RouteBackend::Native)]),
+            publisher: Arc::new(NoFrames),
+            backend: None,
+            lease: Some(lease_state),
+            epoch_source: Arc::new(NoStoredEpoch),
+            cpu_count: 8,
+            families: vec![family],
+            extensions: Extensions::new(),
+            startup: None,
+        })
+        .await
+        .map_err(|failure| anyhow::anyhow!("{}: {}", failure.family, failure.message))?;
+        let bootstrap = HubDatabaseBootstrap {
+            mode: RunMode::Hub,
+            hub_daemon_url: None,
+            hub_cert: None,
+            database_url: None,
+            api_key: None,
+            daemon_url: None,
+            bind_host: "127.0.0.1".into(),
+            daemon_port: 0,
+            websocket_port: 0,
+            front_door: Default::default(),
+        };
+        let terminals = terminal_route_latch(&bootstrap.front_door.routes)?;
+        let owner_home = home.path().to_owned();
+        let (stop, shutdown) = watch::channel(false);
+        let task = tokio::spawn(async move {
+            state
+                .run(
+                    supervisor, shutdown, bootstrap, terminals, owner_home, families,
+                )
+                .await
+        });
+        let _abort = AbortOnDrop(task.abort_handle());
+
+        timeout(Duration::from_secs(30), running.notified())
+            .await
+            .context("the family job never ran")?;
+        stop.send(true)?;
+        timeout(Duration::from_secs(30), task).await???;
+
+        let at_job_end = *seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            at_job_end,
+            Some(LeaseState::Active),
+            "the family job was still running when the lease was released"
         );
         Ok(())
     })

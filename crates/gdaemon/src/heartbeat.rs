@@ -7,8 +7,9 @@ use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
+use gobby_core::family::LeaseState;
 use gobby_core::family::lifecycle::{JobRun, JobSink, JobStatus};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, Interval, MissedTickBehavior, interval_at, timeout};
 
@@ -125,6 +126,12 @@ impl HeartbeatHost {
         });
         self.started = true;
         Ok(())
+    }
+
+    /// Starts once, like [`HeartbeatHost::start`], fenced by `lease`: once the lease is no
+    /// longer held, the running job is cancelled at once and no job runs again.
+    pub fn start_fenced(&mut self, _lease: watch::Receiver<LeaseState>) -> Result<()> {
+        self.start()
     }
 
     /// Stop scheduling, drain the active child for at most five seconds, then

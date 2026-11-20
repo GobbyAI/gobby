@@ -108,6 +108,14 @@ pub async fn prepare(inputs: PrepareInputs) -> Result<ProcessFamilies, StartFail
         Some(pool) => Some(resolve_outcome(pool, inputs.cpu_count).await),
         None => None,
     };
+    prepare_from(inputs, outcome).await
+}
+
+/// [`prepare`] after the pool budget read, with its `outcome`.
+async fn prepare_from(
+    inputs: PrepareInputs,
+    outcome: Option<PoolOutcome>,
+) -> Result<ProcessFamilies, StartFailure> {
     let pool = fold_outcome(outcome)?;
     let mut start_warnings = Vec::new();
     let (config_publisher, config) = config_channel(ConfigEpoch::unpublished());

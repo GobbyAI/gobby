@@ -104,9 +104,13 @@ async fn accept_loop_serves_after_transient_emfile() -> Result<()> {
     Ok(())
 }
 
-/// Set in the child process of the routed activation test, to its logs directory.
+/// Set in the child process of a routed activation test, to the directory it works in.
 #[cfg(unix)]
 const ROUTED_START_CHILD: &str = "GOBBY_SERVE_TEST_ROUTED_START_CHILD";
+
+/// The record a child emits once routed logging is active.
+#[cfg(unix)]
+const AFTER_ACTIVATION: &str = "fixture record after routed activation";
 
 /// The start's unreadable-configuration warning.
 #[cfg(unix)]
@@ -116,11 +120,40 @@ const UNREADABLE_AT_START: &str = "the active configuration is unreadable at sta
 #[cfg(unix)]
 const STARTED_DEGRADED: &str = "family fixture_starts_degraded started degraded";
 
-/// An epoch source whose reads fail until it is made readable.
+/// An epoch source whose reads fail until it is made readable, and then answer its stored
+/// epoch.
 #[cfg(unix)]
-#[derive(Default)]
 struct UnreadableUntilSet {
     readable: std::sync::atomic::AtomicBool,
+    stored: gobby_core::family::ConfigEpoch,
+}
+
+#[cfg(unix)]
+impl UnreadableUntilSet {
+    /// A source storing `values` at revision 1, readable from the start when `readable`.
+    fn storing(values: serde_json::Value, readable: bool) -> Self {
+        let serde_json::Value::Object(active_values) = values else {
+            panic!("active values are an object");
+        };
+        Self {
+            readable: std::sync::atomic::AtomicBool::new(readable),
+            stored: gobby_core::family::ConfigEpoch {
+                revision: 1,
+                active_values: Arc::new(active_values),
+            },
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Default for UnreadableUntilSet {
+    /// Unreadable, then storing no row.
+    fn default() -> Self {
+        Self {
+            readable: std::sync::atomic::AtomicBool::new(false),
+            stored: gobby_core::family::ConfigEpoch::unpublished(),
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -131,9 +164,10 @@ impl crate::family_start::ConfigEpochSource for UnreadableUntilSet {
         Box<dyn Future<Output = anyhow::Result<gobby_core::family::ConfigEpoch>> + Send + '_>,
     > {
         let readable = self.readable.load(std::sync::atomic::Ordering::SeqCst);
+        let stored = self.stored.clone();
         Box::pin(async move {
             anyhow::ensure!(readable, "the fixture's configuration store is unreachable");
-            Ok(gobby_core::family::ConfigEpoch::unpublished())
+            Ok(stored)
         })
     }
 }
@@ -311,6 +345,233 @@ fn an_unreadable_start_writes_no_routed_file_until_a_read_succeeds_then_replays_
              {stderr:?}"
         );
     }
+}
+
+/// Runs the test `name` of this module again as a child process, with `dir` as its working
+/// directory and Gobby home, and no logs directory override from the environment.
+#[cfg(unix)]
+fn run_child(name: &str, dir: &Path) -> std::process::Output {
+    std::process::Command::new(std::env::current_exe().expect("test binary path"))
+        .args(["--exact", &format!("serve::tests::{name}"), "--nocapture"])
+        .env(ROUTED_START_CHILD, dir)
+        .env("GOBBY_HOME", dir)
+        .env_remove("GOBBY_LOGGING_DIR")
+        .output()
+        .expect("child test runs")
+}
+
+/// Runs `child` on a paused current-thread runtime.
+#[cfg(unix)]
+fn block_on_paused(child: impl Future<Output = ()>) {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .expect("child runtime")
+        .block_on(child);
+}
+
+/// Child: a start whose stored level is ERROR and whose one family starts degraded. The
+/// stored epoch is readable at start, or only once the poller reads it.
+#[cfg(unix)]
+async fn start_at_an_error_floor(logs: std::path::PathBuf, readable_at_start: bool) {
+    const EVERY: Duration = Duration::from_secs(1);
+    crate::logging::install_pre_config();
+    let source = Arc::new(UnreadableUntilSet::storing(
+        serde_json::json!({"logging.level": "error"}),
+        readable_at_start,
+    ));
+    let degraded: &'static StartsDegraded = Box::leak(Box::new(StartsDegraded));
+    let started = crate::family_start::prepare(crate::family_start::PrepareInputs {
+        serve_pool: None,
+        home: std::path::PathBuf::from("/nonexistent/gobby-home"),
+        routes: BTreeMap::from([(degraded.name().to_owned(), RouteBackend::Native)]),
+        publisher: Arc::new(NoFrames),
+        backend: None,
+        lease: None,
+        epoch_source: source.clone(),
+        cpu_count: 8,
+        families: vec![degraded],
+        extensions: Extensions::new(),
+        startup: None,
+    })
+    .await
+    .expect("a degraded family does not fail the start");
+    assert_eq!(started.config_read, readable_at_start);
+
+    let routed = RoutedActivation {
+        settings: crate::logging::LogSettings::defaults(logs),
+        backend_command: "fixture-backend".to_owned(),
+        start_warnings: started.start_warnings.clone(),
+        config: started.ctx.subscribe_config(),
+    };
+    let (applier, first_read) = routed
+        .start(started.config_read)
+        .await
+        .expect("routed logging activates in a writable directory");
+    let poller = crate::family_start::spawn_config_poller(
+        source.clone(),
+        started.ctx.config_publisher(),
+        EVERY,
+        first_read,
+    );
+    let_time_pass(EVERY * 3).await;
+    source
+        .readable
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let_time_pass(EVERY * 3).await;
+    poller.abort();
+    if let Some(applier) = &applier {
+        applier.abort();
+    }
+}
+
+/// The child's stderr, and how often each of `warnings` appears in `errors.log` under
+/// `logs`.
+#[cfg(unix)]
+fn error_log_counts(
+    output: &std::process::Output,
+    logs: &Path,
+    warnings: &[&'static str],
+) -> (String, Vec<(&'static str, usize)>) {
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    let errors = std::fs::read_to_string(logs.join("errors.log")).unwrap_or_default();
+    let counts = warnings
+        .iter()
+        .map(|warning| (*warning, errors.matches(warning).count()))
+        .collect();
+    (stderr, counts)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_start_read_at_an_error_floor_replays_its_warning_into_the_error_log_once() {
+    if let Some(dir) = std::env::var_os(ROUTED_START_CHILD) {
+        let logs = std::path::PathBuf::from(dir).join("logs");
+        block_on_paused(start_at_an_error_floor(logs, true));
+        return;
+    }
+
+    let home = tempfile::tempdir().expect("temporary directory");
+    let output = run_child(
+        "a_start_read_at_an_error_floor_replays_its_warning_into_the_error_log_once",
+        home.path(),
+    );
+
+    let (stderr, counts) =
+        error_log_counts(&output, &home.path().join("logs"), &[STARTED_DEGRADED]);
+    assert!(output.status.success(), "{:?}: {stderr}", output.status);
+    assert_eq!(
+        counts,
+        [(STARTED_DEGRADED, 1)],
+        "the start warning is not in errors.log exactly once at an ERROR floor"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_late_first_read_at_an_error_floor_replays_the_start_warnings_into_the_error_log_once() {
+    if let Some(dir) = std::env::var_os(ROUTED_START_CHILD) {
+        let logs = std::path::PathBuf::from(dir).join("logs");
+        block_on_paused(start_at_an_error_floor(logs, false));
+        return;
+    }
+
+    let home = tempfile::tempdir().expect("temporary directory");
+    let output = run_child(
+        "a_late_first_read_at_an_error_floor_replays_the_start_warnings_into_the_error_log_once",
+        home.path(),
+    );
+
+    let (stderr, counts) = error_log_counts(
+        &output,
+        &home.path().join("logs"),
+        &[UNREADABLE_AT_START, STARTED_DEGRADED],
+    );
+    assert!(output.status.success(), "{:?}: {stderr}", output.status);
+    assert_eq!(
+        counts,
+        [(UNREADABLE_AT_START, 1), (STARTED_DEGRADED, 1)],
+        "the start warnings are not each in errors.log exactly once at an ERROR floor"
+    );
+}
+
+/// Child: a start whose default logs directory cannot be created and whose stored epoch
+/// names a writable one.
+#[cfg(unix)]
+async fn start_with_an_unusable_default_directory(dir: std::path::PathBuf) {
+    crate::logging::install_pre_config();
+    let blocked = dir.join("blocked");
+    std::fs::write(
+        &blocked,
+        "a file where the default logs directory's parent belongs",
+    )
+    .expect("the blocking file is written");
+    let configured = dir.join("configured");
+    let source = Arc::new(UnreadableUntilSet::storing(
+        serde_json::json!({"logging.dir": configured.to_str().expect("a UTF-8 path")}),
+        true,
+    ));
+    let started = crate::family_start::prepare(crate::family_start::PrepareInputs {
+        serve_pool: None,
+        home: dir.clone(),
+        routes: BTreeMap::new(),
+        publisher: Arc::new(NoFrames),
+        backend: None,
+        lease: None,
+        epoch_source: source,
+        cpu_count: 8,
+        families: Vec::new(),
+        extensions: Extensions::new(),
+        startup: None,
+    })
+    .await
+    .expect("a start with no families starts");
+    assert!(started.config_read, "the start's epoch read succeeded");
+
+    let routed = RoutedActivation {
+        settings: crate::logging::LogSettings::defaults(blocked.join("logs")),
+        backend_command: "fixture-backend".to_owned(),
+        start_warnings: started.start_warnings.clone(),
+        config: started.ctx.subscribe_config(),
+    };
+    match routed.start(started.config_read).await {
+        Ok((applier, _)) => {
+            tracing::warn!(target: "gobby.daemon", "{AFTER_ACTIVATION}");
+            if let Some(applier) = &applier {
+                applier.abort();
+            }
+        }
+        Err(error) => {
+            crate::logging::raw_stderr(&format!("routed logging did not activate: {error:#}"))
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn routed_logging_starts_in_the_configured_directory_when_the_default_is_unusable() {
+    if let Some(dir) = std::env::var_os(ROUTED_START_CHILD) {
+        block_on_paused(start_with_an_unusable_default_directory(dir.into()));
+        return;
+    }
+
+    let home = tempfile::tempdir().expect("temporary directory");
+    let output = run_child(
+        "routed_logging_starts_in_the_configured_directory_when_the_default_is_unusable",
+        home.path(),
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{:?}: {stderr}", output.status);
+    let errors = std::fs::read_to_string(home.path().join("configured").join("errors.log"))
+        .unwrap_or_default();
+    assert_eq!(
+        errors.matches(AFTER_ACTIVATION).count(),
+        1,
+        "routed logging did not start in the configured directory: errors.log {errors:?}, \
+         stderr {stderr:?}"
+    );
 }
 
 #[cfg(unix)]
