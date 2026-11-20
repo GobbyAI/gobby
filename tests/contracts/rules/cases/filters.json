@@ -138,7 +138,56 @@
               "in scope"
             ]
           ]
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "context": "in scope",
+              "context_parts": [
+                [
+                  "rule:synthetic-in-scope",
+                  "in scope"
+                ]
+              ]
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "inject_context",
+                "delivery": "eager",
+                "rule": "synthetic-in-scope"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-in-scope",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -218,7 +267,47 @@
         "response": {
           "decision": "block",
           "reason": "Rule enforced by Gobby: [unresolved-agent-definition]\nThis session's agent definition 'synthetic-missing-agent' is missing or disabled, so it has no tool authority. Restore or re-enable the definition from the web UI or another session, or reassign this seat. Ending the turn stays allowed."
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "block",
+            "response": {
+              "decision": "block",
+              "reason": "Rule enforced by Gobby: [unresolved-agent-definition]\nThis session's agent definition 'synthetic-missing-agent' is missing or disabled, so it has no tool authority. Restore or re-enable the definition from the web UI or another session, or reassign this seat. Ending the turn stays allowed."
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_last_blocked_tool": "Bash",
+              "_last_blocked_rule_name": "unresolved-agent-definition",
+              "_last_blocked_reason": "Rule enforced by Gobby: [unresolved-agent-definition]\nThis session's agent definition 'synthetic-missing-agent' is missing or disabled, so it has no tool authority. Restore or re-enable the definition from the web UI or another session, or reassign this seat. Ending the turn stays allowed.",
+              "_last_blocked_recovery_conditions": [],
+              "_block_reasons_shown": [
+                "unresolved-agent-definition:<token>"
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -318,7 +407,56 @@
               "all"
             ]
           ]
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "context": "all",
+              "context_parts": [
+                [
+                  "rule:synthetic-all-audiences",
+                  "all"
+                ]
+              ]
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "inject_context",
+                "delivery": "eager",
+                "rule": "synthetic-all-audiences"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-all-audiences",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -528,7 +666,94 @@
               "selected"
             ]
           ]
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "context": "explicit\n\nmandatory\n\nselected",
+              "context_parts": [
+                [
+                  "rule:synthetic-explicit",
+                  "explicit"
+                ],
+                [
+                  "rule:synthetic-mandatory-any",
+                  "mandatory"
+                ],
+                [
+                  "rule:synthetic-selected",
+                  "selected"
+                ]
+              ]
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "inject_context",
+                "delivery": "eager",
+                "rule": "synthetic-explicit"
+              },
+              {
+                "effect": "inject_context",
+                "delivery": "eager",
+                "rule": "synthetic-mandatory-any"
+              },
+              {
+                "effect": "inject_context",
+                "delivery": "eager",
+                "rule": "synthetic-selected"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-explicit",
+                "result": "allow",
+                "event": "before_tool"
+              },
+              {
+                "rule": "synthetic-mandatory-any",
+                "result": "allow",
+                "event": "before_tool"
+              },
+              {
+                "rule": "synthetic-selected",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -626,7 +851,56 @@
               "default rule"
             ]
           ]
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "context": "default rule",
+              "context_parts": [
+                [
+                  "rule:synthetic-default-tagged",
+                  "default rule"
+                ]
+              ]
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "inject_context",
+                "delivery": "eager",
+                "rule": "synthetic-default-tagged"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-default-tagged",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     }
   ]

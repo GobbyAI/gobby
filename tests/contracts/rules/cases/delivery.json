@@ -89,7 +89,58 @@
               }
             }
           }
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "metadata": {
+                "_gobby_staged_effects": {
+                  "session_id": "<uuid>",
+                  "session_variables": {
+                    "synthetic_staged": 1
+                  }
+                }
+              }
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "set_variable",
+                "delivery": "on_receipt",
+                "rule": "synthetic-stage"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-stage",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "synthetic_staged": 1
+            }
+          }
+        ]
       }
     },
     {
@@ -182,7 +233,64 @@
         "response": {
           "decision": "block",
           "reason": "Rule enforced by Gobby: [synthetic-ack-now]\nawaiting acknowledgement"
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "block",
+            "response": {
+              "decision": "block",
+              "reason": "Rule enforced by Gobby: [synthetic-ack-now]\nawaiting acknowledgement"
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "seam": "metrics_events",
+                "call": "record_events",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-ack-now",
+                "result": "block",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_last_blocked_tool": "Bash",
+              "synthetic_ack": true,
+              "_last_blocked_rule_name": "synthetic-ack-now",
+              "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-ack-now]\nawaiting acknowledgement",
+              "_last_blocked_recovery_conditions": [],
+              "_block_reasons_shown": [
+                "synthetic-ack-now:<token>"
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -288,7 +396,72 @@
               }
             }
           }
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "block",
+            "response": {
+              "decision": "block",
+              "reason": "Rule enforced by Gobby: [synthetic-ack-staged]\nawaiting acknowledgement",
+              "metadata": {
+                "_gobby_staged_effects": {
+                  "session_id": "<uuid>",
+                  "session_variables": {
+                    "synthetic_ack": true
+                  }
+                }
+              }
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "seam": "metrics_events",
+                "call": "record_events",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-ack-staged",
+                "result": "block",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_last_blocked_tool": "Bash",
+              "synthetic_ack": true,
+              "_last_blocked_rule_name": "synthetic-ack-staged",
+              "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-ack-staged]\nawaiting acknowledgement",
+              "_last_blocked_recovery_conditions": [],
+              "_block_reasons_shown": [
+                "synthetic-ack-staged:<token>"
+              ]
+            }
+          }
+        ]
       }
     }
   ]

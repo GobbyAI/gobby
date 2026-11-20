@@ -112,7 +112,72 @@
               "read later"
             ]
           ]
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "context": "read later",
+              "context_parts": [
+                [
+                  "rule:synthetic-reader",
+                  "read later"
+                ]
+              ]
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "set_variable",
+                "delivery": "eager",
+                "rule": "synthetic-setter"
+              },
+              {
+                "effect": "inject_context",
+                "delivery": "eager",
+                "rule": "synthetic-reader"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-setter",
+                "result": "allow",
+                "event": "before_tool"
+              },
+              {
+                "rule": "synthetic-reader",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "synthetic_flag": true
+            }
+          }
+        ]
       }
     },
     {
@@ -233,7 +298,76 @@
               "read mcp"
             ]
           ]
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "context": "**synthetic-tool result:**\n```json\n\"synthetic-server/synthetic-tool synthetic result\"\n```\n\nread mcp",
+              "context_parts": [
+                [
+                  "mcp:synthetic-server/synthetic-tool",
+                  "**synthetic-tool result:**\n```json\n\"synthetic-server/synthetic-tool synthetic result\"\n```"
+                ],
+                [
+                  "rule:synthetic-mcp-reader",
+                  "read mcp"
+                ]
+              ]
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "mcp_call",
+                "delivery": "eager",
+                "rule": "synthetic-caller"
+              },
+              {
+                "effect": "inject_context",
+                "delivery": "eager",
+                "rule": "synthetic-mcp-reader"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-caller",
+                "result": "allow",
+                "event": "before_tool"
+              },
+              {
+                "rule": "synthetic-mcp-reader",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "synthetic_mcp_ok": true
+            }
+          }
+        ]
       },
       "mcp": true
     }

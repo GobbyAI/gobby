@@ -1471,10 +1471,7 @@ def _interpreter_link(directory: Path) -> Path:
 def _fake_rtk_outcome(directory: Path, interpreter: Path) -> str:
     """Run the fake RTK written while ``interpreter`` is the running one; stdout or the error."""
     with mock.patch.object(sys, "executable", str(interpreter)):
-        try:
-            probe = rules_engine_seams._fake_rtk_probe(directory)
-        except RuntimeError as refused:
-            return f"probe refused: {refused}"
+        probe = rules_engine_seams._fake_rtk_probe(directory)
     try:
         completed = subprocess.run(
             [str(probe.path), "rewrite", "--", "echo hi"],

@@ -51,7 +51,13 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.engine.evaluation import EvaluationMixin
 from gobby.workflows.engine.run_command_effects import RunCommandEffectsMixin
-from tests.contracts import rules_engine_seams, rules_seed
+from tests.contracts import (
+    rules_domain,
+    rules_engine_seams,
+    rules_handler,
+    rules_paths,
+    rules_seed,
+)
 from tests.fixtures.hub_guard import hub_database_url
 from tests.fixtures.postgres import isolated_test_schema
 
@@ -90,8 +96,19 @@ def seam_registry() -> dict[str, tuple[object, str]]:
     }
 
 
-def _scrub_text(text: str, *, repo_root: str | None = None) -> str:
-    """Scrub volatile values; a path under ``repo_root`` is written relative to ``{repo}``."""
+TextReplace = Callable[[str], str]
+
+
+def _scrub_text(
+    text: str, *, repo_root: str | None = None, replace: TextReplace | None = None
+) -> str:
+    """Scrub volatile values; a path under ``repo_root`` is written relative to ``{repo}``.
+
+    ``replace`` (a handler-entry case's domain scrubber) runs first and writes the case's
+    own seeded identities back as placeholders.
+    """
+    if replace is not None:
+        text = replace(text)
     if repo_root:
         text = text.replace(repo_root, "{repo}")
     text = _UUID.sub("<uuid>", text)
@@ -100,51 +117,62 @@ def _scrub_text(text: str, *, repo_root: str | None = None) -> str:
     return _WINDOWS_PATH.sub("<path>", _ABS_PATH.sub("<path>", text))
 
 
-def _jsonable(value: Any, *, repo_root: str | None = None) -> Any:
+def _jsonable(
+    value: Any, *, repo_root: str | None = None, replace: TextReplace | None = None
+) -> Any:
     """Return a JSON-native, scrubbed copy of ``value`` (the form the corpus stores).
 
     ``repo_root`` names a fixture checkout whose paths are recorded relative to ``{repo}``;
-    case recording passes none. A path is rendered in POSIX form on every platform.
+    case recording passes none. A path is rendered in POSIX form on every platform. With
+    ``replace``, mapping keys and UUIDs go through it as well, so a seeded identity used as
+    a key is written as its placeholder.
     """
+
+    def again(item: Any) -> Any:
+        return _jsonable(item, repo_root=repo_root, replace=replace)
+
+    def text(item: str) -> str:
+        return _scrub_text(item, repo_root=repo_root, replace=replace)
+
     if value is None or isinstance(value, bool | int):
         return value
     if isinstance(value, float):
         return value if value == value and abs(value) != float("inf") else str(value)
     if isinstance(value, str):
-        return _scrub_text(value, repo_root=repo_root)
+        return text(value)
     if isinstance(value, bytes):
-        return _scrub_text(value.decode("utf-8", errors="replace"), repo_root=repo_root)
+        return text(value.decode("utf-8", errors="replace"))
     if isinstance(value, Enum):
-        return _jsonable(value.value, repo_root=repo_root)
+        return again(value.value)
     if isinstance(value, UUID):
-        return "<uuid>"
+        return text(str(value)) if replace is not None else "<uuid>"
     if isinstance(value, datetime):
         return "<timestamp>"
     if isinstance(value, PurePath):
-        return _scrub_text(value.as_posix(), repo_root=repo_root)
+        return text(value.as_posix())
     if isinstance(value, Mapping):
         return {
-            str(key): (
-                "<volatile>" if str(key) in VOLATILE_KEYS else _jsonable(item, repo_root=repo_root)
+            (text(str(key)) if replace is not None else str(key)): (
+                "<volatile>" if str(key) in VOLATILE_KEYS else again(item)
             )
             for key, item in value.items()
         }
     if isinstance(value, list | tuple):
-        return [_jsonable(item, repo_root=repo_root) for item in value]
+        return [again(item) for item in value]
     if isinstance(value, set | frozenset):
-        return sorted((_jsonable(item, repo_root=repo_root) for item in value), key=repr)
+        return sorted((again(item) for item in value), key=repr)
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return _jsonable(dataclasses.asdict(value), repo_root=repo_root)
+        return again(dataclasses.asdict(value))
     if isinstance(value, subprocess.CompletedProcess):
         return {
             "returncode": value.returncode,
-            "stdout": _jsonable(value.stdout, repo_root=repo_root),
-            "stderr": _jsonable(value.stderr, repo_root=repo_root),
+            "stdout": again(value.stdout),
+            "stderr": again(value.stderr),
         }
     if isinstance(value, ast.AST):
-        return _scrub_text(ast.dump(value, include_attributes=False), repo_root=repo_root)
+        return text(ast.dump(value, include_attributes=False))
     if hasattr(value, "model_dump"):
-        return _jsonable(value.model_dump(mode="json"), repo_root=repo_root)
+        return again(value.model_dump(mode="json"))
     return f"<{type(value).__name__}>"
 
 
@@ -152,16 +180,25 @@ EAGER_VARIABLE_DELETIONS_KEY = "eager_variable_deletions"
 
 
 def variable_delta(
-    initial: Mapping[str, Any], final: Mapping[str, Any]
+    initial: Mapping[str, Any],
+    final: Mapping[str, Any],
+    *,
+    scrub: Callable[[Any], Any] | None = None,
 ) -> tuple[dict[str, Any], list[str]]:
     """Return ``(changed, deleted)`` between two variable snapshots.
 
     A key counts as changed when it is new (a new key written to None included) or its value
     differs as a JSON value (see ``_json_equal``); a key present before and absent after is
-    listed as deleted.
+    listed as deleted. Values are compared raw and then scrubbed (``_jsonable`` by default);
+    a string under a ``rules_domain.CLOCK_DIGEST_KEYS`` variable is written as the masked digest.
     """
+    write = scrub or _jsonable
     changed = {
-        key: _jsonable(value)
+        key: (
+            rules_domain.MASKED_DIGEST
+            if key in rules_domain.CLOCK_DIGEST_KEYS and isinstance(value, str)
+            else write(value)
+        )
         for key, value in final.items()
         if key not in initial or not _json_equal(initial[key], value)
     }
@@ -287,14 +324,22 @@ def _config_runtime(values: Mapping[str, Any] | None) -> Any | None:
 class _Recorder:
     """Ordered effect log and audit records for one case run."""
 
-    def __init__(self, failing: set[str]) -> None:
+    def __init__(self, failing: set[str], rules: list[Mapping[str, Any]] | None = None) -> None:
         self.failing = failing
+        self.rules = list(rules or [])
         self.effect_log: list[dict[str, Any]] = []
         self.audit_records: list[dict[str, Any]] = []
         # Names of the rules whose effects reached the event-match check, so a rule the
-        # group check skipped is told apart from one whose condition was false.
+        # group check skipped is told apart from one whose condition was false; the whole
+        # case's, and the current pass's.
         self.rules_reached: set[str] = set()
+        self.pass_rules_reached: set[str] = set()
         self._effect_owner: dict[int, str] = {}
+
+    def mark(self) -> tuple[int, int]:
+        """Start a pass: return where its log slices begin and reset its reached rules."""
+        self.pass_rules_reached = set()
+        return len(self.effect_log), len(self.audit_records)
 
     def rule_loop_pass_wrapper(self, original: Callable[..., Any]) -> Callable[..., Any]:
         async def wrapper(
@@ -325,6 +370,7 @@ class _Recorder:
             name = self._effect_owner.get(id(effect))
             if name is not None:
                 self.rules_reached.add(name)
+                self.pass_rules_reached.add(name)
             return original(owner, effect, event)
 
         return wrapper
@@ -463,34 +509,81 @@ async def _fake_mcp_dispatcher(
     return {"success": True, "result": f"{server}/{tool} synthetic result"}
 
 
-async def _run_events(
-    db: PostgresHubDatabase, case: Mapping[str, Any], recorder: _Recorder
-) -> tuple[HookResponse | None, dict[str, Any], dict[str, Any], str | None]:
-    engine = RuleEngine(
+def _response_block(response: HookResponse | None, scrub: Callable[[Any], Any]) -> dict[str, Any]:
+    """The response fields that differ from their ``HookResponse`` default, scrubbed."""
+    block: dict[str, Any] = {}
+    if response is not None:
+        for name, default in response_defaults().items():
+            value = getattr(response, name)
+            if value != default:
+                block[name] = scrub(value)
+    return block
+
+
+def pass_entry(
+    spec: Mapping[str, Any],
+    response: HookResponse | None,
+    error: str | None,
+    recorder: _Recorder,
+    mark: tuple[int, int],
+    *,
+    scrub: Callable[[Any], Any],
+    delta: dict[str, Any],
+    deleted: list[str],
+) -> dict[str, Any]:
+    """One pass's record: its outcome and response, and the log slices it appended.
+
+    Every dispatched event opens its slice with an ``event`` entry, so a pass that matches
+    nothing still logs; a pass that raised ends its slice with a ``raised`` entry.
+    """
+    effect_start, audit_start = mark
+    entry: dict[str, Any] = {}
+    if "label" in spec:
+        entry["label"] = spec["label"]
+    entry["outcome_class"] = "error" if error is not None else _decision(response)
+    entry["response"] = _response_block(response, scrub)
+    entry["effect_log"] = recorder.effect_log[effect_start:]
+    entry["audit_records"] = recorder.audit_records[audit_start:]
+    entry["eager_variable_delta"] = delta
+    if deleted:
+        entry[EAGER_VARIABLE_DELETIONS_KEY] = deleted
+    skipped = skipped_groups(recorder.rules, recorder.pass_rules_reached)
+    if skipped:
+        entry["skipped_groups"] = skipped
+    return entry
+
+
+def _engine(case: Mapping[str, Any], db: PostgresHubDatabase, *, domain: bool) -> RuleEngine:
+    from gobby.storage.sessions import SessionManager
+    from gobby.storage.tasks import LocalTaskManager
+
+    return RuleEngine(
         db,
         metrics_event_store=MetricsEventStore(db),
         mcp_dispatcher=_fake_mcp_dispatcher if case.get("mcp") else None,
         config_runtime=_config_runtime(case.get("config")),
+        task_manager=LocalTaskManager(db) if domain else None,
+        session_manager=SessionManager(db) if domain else None,
     )
-    initial = copy.deepcopy(dict(case.get("variables", {})))
-    variables = copy.deepcopy(initial)
-    specs = [case["event"], *case.get("sequence", [])]
-    response: HookResponse | None = None
-    error: str | None = None
+
+
+async def _run_events(
+    db: PostgresHubDatabase,
+    case: Mapping[str, Any],
+    recorder: _Recorder,
+    state: rules_domain.DomainState | None,
+) -> rules_handler.CaseRun:
+    """Run every pass of a case through its entry: the engine, or the hook handler."""
+    if state is not None:
+        engine = _engine(case, db, domain=True)
+        return await rules_handler.run_handler_case(db, case, state, recorder, engine=engine)
     deadline = None
     if case.get("deadline") is not None:
         # A deadline that expired before the pass starts: every blocking effect is out of budget.
         deadline = BlockingEffectDeadline(expires_at=time.monotonic() - 1.0)
-    try:
-        for spec in specs:
-            # Every dispatched event is an entry, so a pass that matches nothing still logs.
-            recorder.effect_log.append({"event": spec["type"]})
-            response = await engine.evaluate(
-                _event_from(spec), SESSION_ID, variables, blocking_deadline=deadline
-            )
-    except Exception as exc:
-        error = type(exc).__name__
-    return response, initial, variables, error
+    return await rules_handler.run_engine_case(
+        db, case, recorder, engine=_engine(case, db, domain=False), deadline=deadline
+    )
 
 
 CALLER_KIND = "seam_caller"
@@ -536,10 +629,16 @@ async def _run_inline_command(db: PostgresHubDatabase, spec: Mapping[str, Any]) 
     return await rules_engine_seams._run_inline_command(db, spec, event_from=_event_from)
 
 
+async def _run_proxy_self_call_dispatch(db: PostgresHubDatabase, spec: Mapping[str, Any]) -> Any:
+    """Dispatch the engine's proxy self-call through the hook dispatcher (rules_engine_seams)."""
+    return await rules_engine_seams._run_proxy_self_call_dispatch(db, spec, event_from=_event_from)
+
+
 CALLERS: dict[str, Callable[[PostgresHubDatabase, Mapping[str, Any]], Awaitable[Any]]] = {
     "background_delivery": _run_background_delivery,
     "tool_result_offload": _run_tool_result_offload,
     "inline_run_command": _run_inline_command,
+    "proxy_self_call_dispatch": _run_proxy_self_call_dispatch,
 }
 
 
@@ -554,17 +653,54 @@ async def _guarded_call(
         return None, type(exc).__name__
 
 
+# The daemon boot instant the found-work analysis folds into its cache key, pinned per case.
+PROCESS_BOOT_AT = datetime(2001, 1, 1, tzinfo=UTC)
+
+
+def _case_environment(stack: contextlib.ExitStack) -> None:
+    """The per-case pins every case runs under, engine, handler or seam caller.
+
+    The machine id is the seeded synthetic machine; the engine process token and the
+    daemon boot instant are fixed, so pending-write marks and the found-work cache key
+    replay; the worktree-root cache starts empty; transcript evidence runs in a thread
+    instead of the spawn-context process pool, which no in-process patch reaches.
+    """
+    from gobby.tasks import transcript_evidence
+    from gobby.utils import machine_id
+    from gobby.workflows import found_work_gate, git_utils
+    from gobby.workflows.engine import event_utils
+
+    git_utils._WORKTREE_ROOT_CACHE.clear()
+    stack.callback(git_utils._WORKTREE_ROOT_CACHE.clear)
+    stack.enter_context(
+        mock.patch.object(machine_id, "_cached_machine_id", rules_seed.SYNTHETIC_MACHINE_ID)
+    )
+    stack.enter_context(
+        mock.patch.object(event_utils, "ENGINE_PROCESS_TOKEN", "synthetic-engine-process")
+    )
+    stack.enter_context(mock.patch.object(found_work_gate, "_PROCESS_BOOT_AT", PROCESS_BOOT_AT))
+
+    async def in_thread(function: Callable[..., Any], /, *args: Any) -> Any:
+        return await asyncio.to_thread(function, *args)
+
+    stack.enter_context(
+        mock.patch.object(transcript_evidence, "run_in_transcript_evidence_pool", in_thread)
+    )
+
+
 def _observe_caller(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Run a ``seam_caller`` case: one real caller with its seams wrapped, not the rule engine."""
     recorder = _Recorder(set(case.get("seam_failures", [])))
     caller = CALLERS[str(case["caller"])]
-    with _hub_database() as db:
+    with _hub_database() as db, contextlib.ExitStack() as stack:
+        _case_environment(stack)
         rules_seed.apply_case_seed(db, case.get("seed"))
         if case.get("rules"):
             _seed_rules(db, case["rules"])
-        with contextlib.ExitStack() as stack:
-            _patched_recorder(recorder, stack, rtk_probe=_rtk_probe(case, stack))
+        _patched_recorder(recorder, stack, rtk_probe=_rtk_probe(case, stack))
+        with rules_handler.instrumented(case) as (_session, probe_log, _probing):
             returned, error = asyncio.run(_guarded_call(caller, db, case["input"]))
+        reached = list(probe_log)
     if error is not None:
         recorder.effect_log.append({"raised": error})
     expect: dict[str, Any] = {
@@ -575,7 +711,12 @@ def _observe_caller(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[
         "audit_records": recorder.audit_records,
         "response": {},
         "returned": _jsonable(returned),
+        "reached": reached,
     }
+    if not rules_paths.stub_active():
+        for name, value in rules_handler._guard_entries(case):
+            if name != "reached" or value not in reached:
+                raise AssertionError(f"{case.get('id')}: guard {name} does not hold: {reached}")
     return expect, recorder.effect_log
 
 
@@ -595,37 +736,41 @@ def _observe(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, An
     """Run one case and return ``(expect block, effect log)``."""
     if case.get("kind") == CALLER_KIND:
         return _observe_caller(case)
-    recorder = _Recorder(set(case.get("seam_failures", [])))
-    with _hub_database() as db:
+    recorder = _Recorder(set(case.get("seam_failures", [])), case["rules"])
+    with (
+        _hub_database() as db,
+        tempfile.TemporaryDirectory() as tmp,
+        contextlib.ExitStack() as stack,
+    ):
+        _case_environment(stack)
         rules_seed.apply_case_seed(db, case.get("seed"))
+        state = None
+        if case.get("domain") is not None:
+            state = rules_domain.seed_domain(db, case["domain"], Path(tmp).resolve(), stack)
         _seed_rules(db, case["rules"])
-        with contextlib.ExitStack() as stack:
-            _patched_recorder(recorder, stack, rtk_probe=_rtk_probe(case, stack))
-            response, initial, variables, error = asyncio.run(_run_events(db, case, recorder))
-    if error is not None:
-        recorder.effect_log.append({"raised": error})
-    defaults = response_defaults()
-    response_block: dict[str, Any] = {}
-    if response is not None:
-        for name, default in defaults.items():
-            value = getattr(response, name)
-            if value != default:
-                response_block[name] = _jsonable(value)
+        _patched_recorder(recorder, stack, rtk_probe=_rtk_probe(case, stack))
+        if recorder.effect_log or recorder.audit_records:
+            raise RuntimeError(f"{case.get('id')}: seeding wrote to the recorder's logs")
+        run = asyncio.run(_run_events(db, case, recorder, state))
+    response = run.response
     staged = response.metadata.get(STAGED_PAYLOAD_KEY) if response is not None else None
-    delta, deletions = variable_delta(initial, variables)
+    delta, deletions = variable_delta(run.initial, run.final, scrub=run.scrub)
     expect: dict[str, Any] = {
-        "outcome_class": "error" if error is not None else _decision(response),
+        "outcome_class": run.passes[-1]["outcome_class"],
         "eager_variable_delta": delta,
-        "on_receipt_payload": _jsonable(staged),
+        "on_receipt_payload": run.scrub(staged),
         "effect_log": recorder.effect_log,
         "audit_records": recorder.audit_records,
-        "response": response_block,
+        "response": run.passes[-1]["response"],
     }
     if deletions:
         expect[EAGER_VARIABLE_DELETIONS_KEY] = deletions
     skipped = skipped_groups(case["rules"], recorder.rules_reached)
     if skipped:
         expect["skipped_groups"] = skipped
+    expect["passes"] = run.passes
+    if not rules_paths.stub_active():
+        rules_handler.check_requires(case, run)
     return expect, recorder.effect_log
 
 

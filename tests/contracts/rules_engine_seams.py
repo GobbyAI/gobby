@@ -2,14 +2,17 @@
 
 - ``{python}`` in a ``run_command`` command list is replaced by the running interpreter.
 - The fake RTK (``"proxy": {"rtk": "echo-prefix"}``) is a ``/bin/sh`` launcher, running a
-  Python script beside it, that the real proxy handler runs: it prefixes a command with ``rtk ``, and denies one holding
-  ``synthetic-denied`` with exit status 2.
+  Python script beside it, that the real proxy handler runs: it prefixes a command with
+  ``rtk ``, and denies one holding ``synthetic-denied`` with exit status 2.
 - ``inline_run_command`` drives one ``run_command`` effect through
   ``RuleEngine._apply_effect`` with a live event. The rule pass hands effects a frozen event
   that the payload builder cannot write into, so a rule-pass run_command never runs; this
   caller is how the corpus reaches the effect's deadline arithmetic, execution, result
   handling and audit write. A case with ``input.command_boundary`` replaces the command
   execution and the clock, so it starts no process and reads no real clock.
+- ``proxy_self_call_dispatch`` hands the engine's recorded proxy self-call ``mcp_calls`` to
+  the hook manager's dispatch with a recording fake proxy, so the dispatch and the proxy
+  route are reached.
 
 This module never imports ``rules_recorder``; it takes the identity constants from
 ``rules_seed`` and the recorder's event builder as an argument.
@@ -17,23 +20,28 @@ This module never imports ``rules_recorder``; it takes the identity constants fr
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import logging
 import os
 import shlex
 import sys
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
 from gobby.hooks import effect_deadline
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import ContextPart, HookEvent
+from gobby.hooks.hook_manager_dispatch import HookManagerDispatchMixin
 from gobby.integrations.rtk import RTK_VERSION, RtkProbe
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine import run_command_effects
 from gobby.workflows.engine.core import RuleEngine
@@ -59,6 +67,7 @@ sys.stdout.write("rtk " + command + "\\n")
 """
 
 EventBuilder = Callable[..., HookEvent]
+_LOGGER = logging.getLogger("tests.contracts.proxy_self_call")
 
 
 def _expand_placeholders(rule: Mapping[str, Any]) -> dict[str, Any]:
@@ -212,3 +221,47 @@ async def _run_inline_command(
     if clock is not None:
         returned["command_timeouts"] = seen
     return returned
+
+
+class _ListingProxy:
+    """A tool proxy whose server listing records each call and returns one synthetic server."""
+
+    def __init__(self, db: PostgresHubDatabase) -> None:
+        self.session_manager = SessionManager(db)
+        self.calls: list[list[Any]] = []
+
+    async def list_servers(self, name_filter: str | None = None) -> dict[str, Any]:
+        self.calls.append(["list_servers", name_filter])
+        server = {"name": "synthetic-server", "state": "connected", "enabled": True}
+        return {"success": True, "servers": [server]}
+
+
+async def _run_proxy_self_call_dispatch(
+    db: PostgresHubDatabase, spec: Mapping[str, Any], *, event_from: EventBuilder
+) -> dict[str, Any]:
+    """Run the engine pass, then dispatch its ``mcp_calls`` through the hook manager's dispatch.
+
+    The caller raises ValueError when the engine's emitted entry differs from
+    ``input.mcp_calls``. The host stands in for the hook manager with no loop, so the
+    captured call runs under ``asyncio.run`` on a worker thread. ``proxy_calls`` is the fake
+    proxy's own log.
+    """
+    session = db.fetchone("SELECT id FROM sessions WHERE id = %s", (rules_seed.SESSION_ID,))
+    if session is None:
+        raise ValueError("proxy_self_call_dispatch needs the seeded session row")
+    # The engine pass on the same event emits the entry the case dispatches, so the two
+    # halves cannot drift and the case logs the engine's own seam calls.
+    engine = RuleEngine(db, metrics_event_store=MetricsEventStore(db))
+    emitted = await engine.evaluate(
+        event_from(spec["event"], session_id=rules_seed.SESSION_ID), rules_seed.SESSION_ID, {}
+    )
+    calls = [dict(call) for call in spec["mcp_calls"]]
+    if emitted.metadata.get("mcp_calls") != calls:
+        raise ValueError(f"the engine emitted {emitted.metadata.get('mcp_calls')!r}, not {calls!r}")
+    proxy = _ListingProxy(db)
+    host = SimpleNamespace(tool_proxy_getter=lambda: proxy, _loop=None, logger=_LOGGER)
+    event = event_from(spec["event"], session_id=rules_seed.SESSION_ID)
+    # The mixin method reads only the three host attributes the namespace carries.
+    dispatch: Callable[..., list[dict[str, Any]]] = HookManagerDispatchMixin._dispatch_mcp_calls
+    results = await asyncio.to_thread(dispatch, host, calls, event)
+    return {"proxy_calls": proxy.calls, "dispatch_results": results}

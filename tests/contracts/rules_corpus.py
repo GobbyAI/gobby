@@ -22,7 +22,7 @@ from gobby.workflows.definitions import (
     RuleEffect,
 )
 from gobby.workflows.rule_validation_yaml import normalize_rule_yaml_entry
-from tests.contracts import rules_seed
+from tests.contracts import rules_case_paths, rules_seed
 
 CORPUS_DIR = Path(__file__).resolve().parent / "rules"
 BUNDLED_RULES_DIR = (
@@ -108,6 +108,7 @@ def validate_case(case: dict[str, Any]) -> None:
     if gaps:
         raise ValueError(f"{case_id}: scenario IDs need a matching {', '.join(gaps)} label")
     _validate_engine_path_keys(case_id, case)
+    rules_case_paths.validate_case_paths(case_id, case)
 
 
 def _is_finite_number(value: object) -> TypeGuard[int | float]:
@@ -207,6 +208,7 @@ def load_corpus(corpus_dir: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]
         partner = case.get("pairs_with")
         if partner is not None and partner not in seen:
             raise ValueError(f"{case['id']}: pairs_with names no loaded case: {partner!r}")
+    rules_case_paths.validate_corpus_paths(cases, manifest)
     return manifest, cases
 
 

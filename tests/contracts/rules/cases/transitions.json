@@ -2,7 +2,8 @@
   "cases": [
     {
       "id": "synthetic-transition-claim",
-      "kind": "rule_pass",
+      "kind": "handler_pass",
+      "entry": "handler",
       "provenance": "synthetic",
       "scenario_ids": [
         "S-TRANS-CLAIM"
@@ -10,96 +11,192 @@
       "family": null,
       "observer": null,
       "transition": "claim",
-      "rules": [
+      "posix_only": true,
+      "reaches": [
+        "transition.claim"
+      ],
+      "requires": [
         {
-          "name": "synthetic-claim-set",
-          "event": "before_tool",
-          "effects": [
-            {
-              "type": "set_variable",
-              "variable": "synthetic_claimed",
-              "value": true,
-              "delivery": "eager"
-            }
-          ]
+          "canonical": {
+            "mcp_server": "gobby-tasks",
+            "mcp_tool": "claim_task",
+            "pass": 1
+          }
         },
         {
-          "name": "synthetic-claim-check",
-          "event": "turn_end",
+          "variable": {
+            "name": "task_claimed",
+            "equals": true,
+            "pass": 1
+          }
+        },
+        {
+          "reached": {
+            "id": "transition.claim",
+            "pass": 1
+          }
+        }
+      ],
+      "rules": [
+        {
+          "name": "synthetic-claim-first",
+          "event": "before_tool",
+          "when": "not variables.get('task_claimed') and event.data.get('tool_name') == 'Edit'",
           "effects": [
             {
               "type": "block",
-              "reason": "claimed work"
+              "reason": "synthetic claim first"
             }
-          ],
-          "when": "variables.get('synthetic_claimed')"
+          ]
         }
       ],
+      "domain": {
+        "repo": {
+          "files": {
+            "a.py": "x = 1\n"
+          },
+          "commits": [
+            {
+              "message": "synthetic base",
+              "add": [
+                "a.py"
+              ]
+            }
+          ]
+        },
+        "sessions": {
+          "self": {
+            "source": "claude"
+          }
+        },
+        "tasks": {
+          "t1": {
+            "title": "synthetic task one"
+          }
+        }
+      },
       "event": {
         "type": "before_tool",
         "source": "claude",
+        "label": "before-claim",
         "data": {
-          "tool_name": "Bash",
+          "tool_name": "Edit",
           "tool_input": {
-            "command": "echo hi"
+            "file_path": "{repo}/a.py",
+            "old_string": "x = 1",
+            "new_string": "x = 2"
           }
         },
         "metadata": {}
       },
+      "sequence": [
+        {
+          "type": "after_tool",
+          "source": "claude",
+          "label": "claim",
+          "between": [
+            {
+              "op": "claim_task",
+              "task": "t1",
+              "session": "self",
+              "select": false
+            }
+          ],
+          "data": {
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {
+              "server_name": "gobby-tasks",
+              "tool_name": "claim_task",
+              "arguments": {
+                "task_id": "{task_ref:t1}"
+              }
+            },
+            "tool_output": {
+              "success": true,
+              "result": {
+                "id": "{task:t1}"
+              }
+            }
+          },
+          "metadata": {}
+        },
+        {
+          "type": "before_tool",
+          "source": "claude",
+          "label": "after-claim",
+          "data": {
+            "tool_name": "Edit",
+            "tool_input": {
+              "file_path": "{repo}/a.py",
+              "old_string": "x = 1",
+              "new_string": "x = 2"
+            }
+          },
+          "metadata": {}
+        }
+      ],
       "seam_failures": [],
       "expect": {
         "outcome_class": "allow",
         "eager_variable_delta": {
-          "project": {
-            "name": "Unknown",
-            "id": "unknown",
-            "path": ""
-          },
-          "_gobby_feedback_survey_active": false,
-          "synthetic_claimed": true,
-          "stop_attempts": 1,
-          "_blocked_turn_end_pending": true,
           "_block_reasons_shown": [
-            "synthetic-claim-check:<token>"
-          ]
+            "synthetic-claim-first:<token>"
+          ],
+          "_found_work_activity_revision": 1,
+          "_found_work_gate_armed_at": "<timestamp>",
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_batch_counted": false,
+          "_last_blocked_reason": "",
+          "_last_blocked_recovery_conditions": [],
+          "_last_blocked_rule_name": "",
+          "_last_blocked_tool": "",
+          "_variable_defaults_loaded": true,
+          "active_task_id": "{task:t1}",
+          "claimed_task_extra_skills": [],
+          "claimed_task_is_source_work": false,
+          "claimed_task_requires_tdd": false,
+          "claimed_tasks": {
+            "{task:t1}": "#1"
+          },
+          "consecutive_tool_blocks": 0,
+          "context_compact_block_message": "",
+          "context_compact_guidance_kind": "",
+          "context_compact_guidance_message": "",
+          "context_compact_mid_turn_pressure_band": "none",
+          "edit_write_pending": true,
+          "edit_write_pending_process": "synthetic-engine-process",
+          "edit_write_stop_blocks": 0,
+          "mcp_calls": {
+            "gobby-tasks": [
+              "claim_task"
+            ]
+          },
+          "mcp_results": {
+            "gobby-tasks": {
+              "claim_task": {
+                "id": "{task:t1}"
+              }
+            }
+          },
+          "project": {
+            "id": "{project}",
+            "name": "synthetic-project",
+            "path": "{repo}"
+          },
+          "task_claimed": true,
+          "task_selection_history": [
+            {
+              "epoch": "<timestamp>",
+              "task_id": "{task:t1}"
+            }
+          ],
+          "tool_block_pending": false,
+          "unresolvable_claimed_task_extra_skills": []
         },
         "on_receipt_payload": null,
         "effect_log": [
           {
             "event": "before_tool"
-          },
-          {
-            "seam": "rule_definitions",
-            "call": "list_by_event",
-            "outcome": "ok"
-          },
-          {
-            "effect": "set_variable",
-            "delivery": "eager",
-            "rule": "synthetic-claim-set"
-          },
-          {
-            "write": "rule_eval",
-            "call": "record_rule_evaluation",
-            "outcome": "ok"
-          },
-          {
-            "event": "after_agent"
-          },
-          {
-            "seam": "coordination_waits",
-            "call": "count_active_waits",
-            "outcome": "ok"
-          },
-          {
-            "seam": "completion_subscribers",
-            "call": "has_active_agent_wait",
-            "outcome": "ok"
-          },
-          {
-            "seam": "rule_definitions",
-            "call": "list_by_event",
-            "outcome": "ok"
           },
           {
             "seam": "rule_definitions",
@@ -122,66 +219,231 @@
             "outcome": "ok"
           },
           {
-            "event": "before_tool"
+            "event": "after_tool"
           },
           {
-            "effect": "set_variable",
-            "delivery": "eager",
-            "rule": "synthetic-claim-set"
-          },
-          {
-            "write": "rule_eval",
-            "call": "record_rule_evaluation",
+            "seam": "rule_definitions",
+            "call": "list_by_event",
             "outcome": "ok"
+          },
+          {
+            "event": "before_tool"
           }
         ],
         "audit_records": [
           {
-            "rule": "synthetic-claim-set",
-            "result": "allow",
-            "event": "before_tool"
-          },
-          {
-            "rule": "synthetic-claim-check",
+            "rule": "synthetic-claim-first",
             "result": "block",
-            "event": "after_agent"
-          },
-          {
-            "rule": "synthetic-claim-set",
-            "result": "allow",
             "event": "before_tool"
           }
         ],
-        "response": {}
-      },
-      "sequence": [
-        {
-          "type": "after_agent",
-          "source": "claude",
-          "data": {
-            "tool_name": "Bash",
-            "tool_input": {
-              "command": "echo hi"
-            }
+        "response": {},
+        "passes": [
+          {
+            "label": "before-claim",
+            "outcome_class": "block",
+            "response": {
+              "decision": "block",
+              "reason": "Rule enforced by Gobby: [synthetic-claim-first]\nsynthetic claim first"
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "seam": "metrics_events",
+                "call": "record_events",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-claim-first",
+                "result": "block",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "_block_reasons_shown": [
+                "synthetic-claim-first:<token>"
+              ],
+              "_gobby_feedback_survey_active": false,
+              "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-claim-first]\nsynthetic claim first",
+              "_last_blocked_recovery_conditions": [],
+              "_last_blocked_rule_name": "synthetic-claim-first",
+              "_last_blocked_tool": "Edit",
+              "_variable_defaults_loaded": true,
+              "edit_write_pending": false,
+              "edit_write_stop_blocks": 0,
+              "project": {
+                "id": "{project}",
+                "name": "synthetic-project",
+                "path": "{repo}"
+              }
+            },
+            "reached": [],
+            "between_reached": [],
+            "facts": {
+              "foreign_dirty_edit_conflict": "",
+              "foreign_landing_merge": false,
+              "session_owned_reviewable_paths": null,
+              "foreign_staged_commit_conflict": "",
+              "base_merge_git_step": false,
+              "base_merge_write": false,
+              "commit_has_reviewable_paths": true,
+              "commit_records_only_plan_paths": false,
+              "has_dirty_files": false,
+              "target_task_has_edits": false,
+              "has_target_task_dirty_files": false,
+              "found_work_shirk": false,
+              "found_work_shirk_confirmed": false,
+              "terminal_validation_failure": false,
+              "terminal_validation_failure_commands": [],
+              "unclaimed_found_work": false,
+              "unclaimed_found_work_tasks": []
+            },
+            "observer_failures": []
           },
-          "metadata": {}
-        },
-        {
-          "type": "before_tool",
-          "source": "claude",
-          "data": {
-            "tool_name": "Bash",
-            "tool_input": {
-              "command": "echo hi"
-            }
+          {
+            "label": "claim",
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "after_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [],
+            "eager_variable_delta": {
+              "_found_work_activity_revision": 1,
+              "_found_work_gate_armed_at": "<timestamp>",
+              "_last_blocked_batch_counted": false,
+              "_last_blocked_reason": "",
+              "_last_blocked_rule_name": "",
+              "_last_blocked_tool": "",
+              "active_task_id": "{task:t1}",
+              "claimed_task_extra_skills": [],
+              "claimed_task_is_source_work": false,
+              "claimed_task_requires_tdd": false,
+              "claimed_tasks": {
+                "{task:t1}": "#1"
+              },
+              "consecutive_tool_blocks": 0,
+              "context_compact_block_message": "",
+              "context_compact_guidance_kind": "",
+              "context_compact_guidance_message": "",
+              "context_compact_mid_turn_pressure_band": "none",
+              "mcp_calls": {
+                "gobby-tasks": [
+                  "claim_task"
+                ]
+              },
+              "mcp_results": {
+                "gobby-tasks": {
+                  "claim_task": {
+                    "id": "{task:t1}"
+                  }
+                }
+              },
+              "task_claimed": true,
+              "task_selection_history": [
+                {
+                  "epoch": "<timestamp>",
+                  "task_id": "{task:t1}"
+                }
+              ],
+              "tool_block_pending": false,
+              "unresolvable_claimed_task_extra_skills": []
+            },
+            "reached": [
+              "transition.claim"
+            ],
+            "between_reached": [],
+            "facts": {
+              "foreign_dirty_edit_conflict": "",
+              "foreign_landing_merge": false,
+              "session_owned_reviewable_paths": null,
+              "foreign_staged_commit_conflict": "",
+              "base_merge_git_step": false,
+              "base_merge_write": false,
+              "commit_has_reviewable_paths": true,
+              "commit_records_only_plan_paths": false,
+              "has_dirty_files": false,
+              "target_task_has_edits": false,
+              "has_target_task_dirty_files": false,
+              "found_work_shirk": false,
+              "found_work_shirk_confirmed": false,
+              "terminal_validation_failure": false,
+              "terminal_validation_failure_commands": [],
+              "unclaimed_found_work": false,
+              "unclaimed_found_work_tasks": []
+            },
+            "observer_failures": []
           },
-          "metadata": {}
-        }
-      ]
+          {
+            "label": "after-claim",
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              }
+            ],
+            "audit_records": [],
+            "eager_variable_delta": {
+              "edit_write_pending": true,
+              "edit_write_pending_process": "synthetic-engine-process"
+            },
+            "reached": [],
+            "between_reached": [],
+            "facts": {
+              "foreign_dirty_edit_conflict": "",
+              "foreign_landing_merge": false,
+              "session_owned_reviewable_paths": null,
+              "foreign_staged_commit_conflict": "",
+              "base_merge_git_step": false,
+              "base_merge_write": false,
+              "commit_has_reviewable_paths": true,
+              "commit_records_only_plan_paths": false,
+              "has_dirty_files": false,
+              "target_task_has_edits": false,
+              "has_target_task_dirty_files": false,
+              "found_work_shirk": false,
+              "found_work_shirk_confirmed": false,
+              "terminal_validation_failure": false,
+              "terminal_validation_failure_commands": [],
+              "unclaimed_found_work": false,
+              "unclaimed_found_work_tasks": []
+            },
+            "observer_failures": []
+          }
+        ]
+      }
     },
     {
       "id": "synthetic-transition-review-gate",
-      "kind": "rule_pass",
+      "kind": "handler_pass",
+      "entry": "handler",
       "provenance": "synthetic",
       "scenario_ids": [
         "S-TRANS-REVIEW-GATE"
@@ -189,62 +451,146 @@
       "family": null,
       "observer": null,
       "transition": "review_gate",
+      "posix_only": true,
+      "reaches": [
+        "transition.review_gate"
+      ],
+      "requires": [
+        {
+          "variable": {
+            "name": "synthetic_review_done",
+            "equals": true,
+            "pass": 1
+          }
+        },
+        {
+          "fact": {
+            "key": "commit_has_reviewable_paths",
+            "equals": true,
+            "pass": 0
+          }
+        },
+        {
+          "reached": {
+            "id": "transition.review_gate",
+            "pass": 0
+          }
+        }
+      ],
       "rules": [
         {
-          "name": "synthetic-arm-gate",
+          "name": "synthetic-review-gate",
           "event": "before_tool",
+          "when": "event.data.get('tool_name') == 'Bash' and commit_has_reviewable_paths and not variables.get('synthetic_review_done')",
           "effects": [
             {
-              "type": "set_variable",
-              "variable": "synthetic_gate",
-              "value": true,
-              "delivery": "eager"
+              "type": "block",
+              "reason": "synthetic review first"
             }
           ]
         },
         {
-          "name": "synthetic-gate-check",
-          "event": "before_tool",
+          "name": "synthetic-review-seen",
+          "event": "after_tool",
+          "when": "shell_command_runs_ocr_review(tool_input.get('command'))",
           "effects": [
             {
-              "type": "block",
-              "reason": "review gate armed"
+              "type": "set_variable",
+              "variable": "synthetic_review_done",
+              "value": true
             }
-          ],
-          "when": "variables.get('synthetic_gate')"
+          ]
         }
       ],
+      "domain": {
+        "repo": {
+          "files": {
+            "a.py": "x = 1\n"
+          },
+          "commits": [
+            {
+              "message": "synthetic base",
+              "add": [
+                "a.py"
+              ]
+            }
+          ],
+          "staged": {
+            "src/b.py": "y = 2\n"
+          }
+        },
+        "sessions": {
+          "self": {
+            "source": "claude"
+          }
+        }
+      },
       "event": {
         "type": "before_tool",
         "source": "claude",
+        "label": "unreviewed-commit",
         "data": {
           "tool_name": "Bash",
           "tool_input": {
-            "command": "echo hi"
+            "command": "git commit -m synthetic"
           }
         },
         "metadata": {}
       },
+      "sequence": [
+        {
+          "type": "after_tool",
+          "source": "claude",
+          "label": "review",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "ocr delegate rule --format json src/b.py"
+            },
+            "tool_output": "{}\n"
+          },
+          "metadata": {}
+        },
+        {
+          "type": "before_tool",
+          "source": "claude",
+          "label": "reviewed-commit",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "git commit -m synthetic"
+            }
+          },
+          "metadata": {}
+        }
+      ],
       "seam_failures": [],
       "expect": {
-        "outcome_class": "block",
+        "outcome_class": "allow",
         "eager_variable_delta": {
-          "project": {
-            "name": "Unknown",
-            "id": "unknown",
-            "path": ""
-          },
-          "_gobby_feedback_survey_active": false,
-          "synthetic_gate": true,
-          "_last_blocked_tool": "Bash",
-          "_last_blocked_rule_name": "synthetic-gate-check",
-          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-gate-check]\nreview gate armed",
-          "_last_blocked_recovery_conditions": [],
           "_block_reasons_shown": [
-            "synthetic-gate-check:<token>"
+            "synthetic-review-gate:<token>"
           ],
-          "consecutive_tool_blocks": 1,
-          "_last_blocked_batch_counted": true
+          "_found_work_activity_revision": 1,
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_batch_counted": false,
+          "_last_blocked_reason": "",
+          "_last_blocked_recovery_conditions": [],
+          "_last_blocked_rule_name": "",
+          "_last_blocked_tool": "",
+          "_variable_defaults_loaded": true,
+          "consecutive_tool_blocks": 0,
+          "context_compact_block_message": "",
+          "context_compact_guidance_kind": "",
+          "context_compact_guidance_message": "",
+          "context_compact_mid_turn_pressure_band": "none",
+          "project": {
+            "id": "{project}",
+            "name": "synthetic-project",
+            "path": "{repo}"
+          },
+          "synthetic_review_done": true,
+          "tool_block_pending": false
         },
         "on_receipt_payload": null,
         "effect_log": [
@@ -257,11 +603,6 @@
             "outcome": "ok"
           },
           {
-            "effect": "set_variable",
-            "delivery": "eager",
-            "rule": "synthetic-arm-gate"
-          },
-          {
             "seam": "metrics_events",
             "call": "record_events",
             "outcome": "ok"
@@ -272,88 +613,237 @@
             "outcome": "ok"
           },
           {
-            "write": "rule_eval",
-            "call": "record_rule_evaluation",
+            "write": "workflow_audit_log",
+            "call": "log",
             "outcome": "ok"
           },
           {
-            "write": "workflow_audit_log",
-            "call": "log",
+            "event": "after_tool"
+          },
+          {
+            "seam": "rule_definitions",
+            "call": "list_by_event",
+            "outcome": "ok"
+          },
+          {
+            "effect": "set_variable",
+            "delivery": "eager",
+            "rule": "synthetic-review-seen"
+          },
+          {
+            "write": "rule_eval",
+            "call": "record_rule_evaluation",
             "outcome": "ok"
           },
           {
             "event": "before_tool"
-          },
-          {
-            "effect": "set_variable",
-            "delivery": "eager",
-            "rule": "synthetic-arm-gate"
-          },
-          {
-            "seam": "metrics_events",
-            "call": "record_events",
-            "outcome": "ok"
-          },
-          {
-            "write": "rule_eval",
-            "call": "record_rule_evaluation",
-            "outcome": "ok"
-          },
-          {
-            "write": "rule_eval",
-            "call": "record_rule_evaluation",
-            "outcome": "ok"
-          },
-          {
-            "write": "workflow_audit_log",
-            "call": "log",
-            "outcome": "ok"
           }
         ],
         "audit_records": [
           {
-            "rule": "synthetic-arm-gate",
-            "result": "allow",
-            "event": "before_tool"
-          },
-          {
-            "rule": "synthetic-gate-check",
+            "rule": "synthetic-review-gate",
             "result": "block",
             "event": "before_tool"
           },
           {
-            "rule": "synthetic-arm-gate",
+            "rule": "synthetic-review-seen",
             "result": "allow",
-            "event": "before_tool"
-          },
-          {
-            "rule": "synthetic-gate-check",
-            "result": "block",
-            "event": "before_tool"
+            "event": "after_tool"
           }
         ],
-        "response": {
-          "decision": "block",
-          "reason": "Rule enforced by Gobby: [synthetic-gate-check] (full reason shown earlier this turn — scroll up)."
-        }
-      },
-      "sequence": [
-        {
-          "type": "before_tool",
-          "source": "claude",
-          "data": {
-            "tool_name": "Bash",
-            "tool_input": {
-              "command": "echo hi"
-            }
+        "response": {},
+        "passes": [
+          {
+            "label": "unreviewed-commit",
+            "outcome_class": "block",
+            "response": {
+              "decision": "block",
+              "reason": "Rule enforced by Gobby: [synthetic-review-gate]\nsynthetic review first"
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "seam": "metrics_events",
+                "call": "record_events",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-review-gate",
+                "result": "block",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "_block_reasons_shown": [
+                "synthetic-review-gate:<token>"
+              ],
+              "_gobby_feedback_survey_active": false,
+              "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-review-gate]\nsynthetic review first",
+              "_last_blocked_recovery_conditions": [],
+              "_last_blocked_rule_name": "synthetic-review-gate",
+              "_last_blocked_tool": "Bash",
+              "_variable_defaults_loaded": true,
+              "project": {
+                "id": "{project}",
+                "name": "synthetic-project",
+                "path": "{repo}"
+              }
+            },
+            "reached": [
+              "transition.review_gate"
+            ],
+            "between_reached": [],
+            "facts": {
+              "foreign_dirty_edit_conflict": "",
+              "foreign_landing_merge": false,
+              "session_owned_reviewable_paths": [],
+              "foreign_staged_commit_conflict": "",
+              "base_merge_git_step": false,
+              "base_merge_write": false,
+              "commit_has_reviewable_paths": true,
+              "commit_records_only_plan_paths": false,
+              "has_dirty_files": false,
+              "target_task_has_edits": false,
+              "has_target_task_dirty_files": false,
+              "found_work_shirk": false,
+              "found_work_shirk_confirmed": false,
+              "terminal_validation_failure": false,
+              "terminal_validation_failure_commands": [],
+              "unclaimed_found_work": false,
+              "unclaimed_found_work_tasks": []
+            },
+            "observer_failures": []
           },
-          "metadata": {}
-        }
-      ]
+          {
+            "label": "review",
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "after_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "set_variable",
+                "delivery": "eager",
+                "rule": "synthetic-review-seen"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-review-seen",
+                "result": "allow",
+                "event": "after_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "_found_work_activity_revision": 1,
+              "_last_blocked_batch_counted": false,
+              "_last_blocked_reason": "",
+              "_last_blocked_rule_name": "",
+              "_last_blocked_tool": "",
+              "consecutive_tool_blocks": 0,
+              "context_compact_block_message": "",
+              "context_compact_guidance_kind": "",
+              "context_compact_guidance_message": "",
+              "context_compact_mid_turn_pressure_band": "none",
+              "synthetic_review_done": true,
+              "tool_block_pending": false
+            },
+            "reached": [],
+            "between_reached": [],
+            "facts": {
+              "foreign_dirty_edit_conflict": "",
+              "foreign_landing_merge": false,
+              "session_owned_reviewable_paths": null,
+              "foreign_staged_commit_conflict": "",
+              "base_merge_git_step": false,
+              "base_merge_write": false,
+              "commit_has_reviewable_paths": true,
+              "commit_records_only_plan_paths": false,
+              "has_dirty_files": false,
+              "target_task_has_edits": false,
+              "has_target_task_dirty_files": false,
+              "found_work_shirk": false,
+              "found_work_shirk_confirmed": false,
+              "terminal_validation_failure": false,
+              "terminal_validation_failure_commands": [],
+              "unclaimed_found_work": false,
+              "unclaimed_found_work_tasks": []
+            },
+            "observer_failures": []
+          },
+          {
+            "label": "reviewed-commit",
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              }
+            ],
+            "audit_records": [],
+            "eager_variable_delta": {},
+            "reached": [
+              "transition.review_gate"
+            ],
+            "between_reached": [],
+            "facts": {
+              "foreign_dirty_edit_conflict": "",
+              "foreign_landing_merge": false,
+              "session_owned_reviewable_paths": [],
+              "foreign_staged_commit_conflict": "",
+              "base_merge_git_step": false,
+              "base_merge_write": false,
+              "commit_has_reviewable_paths": true,
+              "commit_records_only_plan_paths": false,
+              "has_dirty_files": false,
+              "target_task_has_edits": false,
+              "has_target_task_dirty_files": false,
+              "found_work_shirk": false,
+              "found_work_shirk_confirmed": false,
+              "terminal_validation_failure": false,
+              "terminal_validation_failure_commands": [],
+              "unclaimed_found_work": false,
+              "unclaimed_found_work_tasks": []
+            },
+            "observer_failures": []
+          }
+        ]
+      }
     },
     {
       "id": "synthetic-transition-plan-mode",
-      "kind": "rule_pass",
+      "kind": "handler_pass",
+      "entry": "handler",
       "provenance": "synthetic",
       "scenario_ids": [
         "S-TRANS-PLANMODE"
@@ -361,41 +851,125 @@
       "family": null,
       "observer": null,
       "transition": "plan_mode",
-      "rules": [
+      "posix_only": true,
+      "reaches": [
+        "transition.planmode"
+      ],
+      "requires": [
         {
-          "name": "synthetic-plan-mode-context",
-          "event": "before_tool",
-          "effects": [
-            {
-              "type": "inject_context",
-              "template": "plan mode active",
-              "delivery": "eager"
-            }
-          ],
-          "when": "variables.get('synthetic_plan_mode')"
+          "variable": {
+            "name": "plan_mode",
+            "equals": true,
+            "pass": 0
+          }
+        },
+        {
+          "variable": {
+            "name": "plan_mode",
+            "equals": false,
+            "pass": 1
+          }
+        },
+        {
+          "reached": {
+            "id": "transition.planmode",
+            "pass": 0
+          }
         }
       ],
+      "rules": [
+        {
+          "name": "synthetic-plan-mode-gate",
+          "event": "before_tool",
+          "when": "variables.get('plan_mode') and event.data.get('tool_name') == 'Edit'",
+          "effects": [
+            {
+              "type": "block",
+              "reason": "synthetic plan mode"
+            }
+          ]
+        }
+      ],
+      "domain": {
+        "repo": {
+          "files": {
+            "a.py": "x = 1\n"
+          },
+          "commits": [
+            {
+              "message": "synthetic base",
+              "add": [
+                "a.py"
+              ]
+            }
+          ]
+        },
+        "sessions": {
+          "self": {
+            "source": "claude"
+          }
+        }
+      },
       "event": {
         "type": "before_tool",
         "source": "claude",
+        "label": "plan",
         "data": {
-          "tool_name": "Bash",
+          "tool_name": "Edit",
+          "permission_mode": "plan",
           "tool_input": {
-            "command": "echo hi"
+            "file_path": "{repo}/a.py",
+            "old_string": "x = 1",
+            "new_string": "x = 2"
           }
         },
         "metadata": {}
       },
+      "sequence": [
+        {
+          "type": "before_tool",
+          "source": "claude",
+          "label": "default",
+          "data": {
+            "tool_name": "Edit",
+            "permission_mode": "default",
+            "tool_input": {
+              "file_path": "{repo}/a.py",
+              "old_string": "x = 1",
+              "new_string": "x = 2"
+            }
+          },
+          "metadata": {}
+        }
+      ],
       "seam_failures": [],
       "expect": {
         "outcome_class": "allow",
         "eager_variable_delta": {
+          "_block_reasons_shown": [
+            "synthetic-plan-mode-gate:<token>"
+          ],
+          "_gobby_feedback_survey_active": false,
+          "_last_blocked_batch_counted": true,
+          "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-plan-mode-gate]\nsynthetic plan mode",
+          "_last_blocked_recovery_conditions": [],
+          "_last_blocked_rule_name": "synthetic-plan-mode-gate",
+          "_last_blocked_tool": "Edit",
+          "_variable_defaults_loaded": true,
+          "chat_mode": "normal",
+          "consecutive_tool_blocks": 1,
+          "edit_write_pending": true,
+          "edit_write_pending_process": "synthetic-engine-process",
+          "edit_write_stop_blocks": 0,
+          "mode_level": 1,
+          "plan_memory_write_nudge_fired": false,
+          "plan_mode": false,
+          "plan_skill_directive_delivered": false,
           "project": {
-            "name": "Unknown",
-            "id": "unknown",
-            "path": ""
-          },
-          "_gobby_feedback_survey_active": false
+            "id": "{project}",
+            "name": "synthetic-project",
+            "path": "{repo}"
+          }
         },
         "on_receipt_payload": null,
         "effect_log": [
@@ -408,67 +982,165 @@
             "outcome": "ok"
           },
           {
-            "effect": "inject_context",
-            "delivery": "eager",
-            "rule": "synthetic-plan-mode-context"
+            "seam": "metrics_events",
+            "call": "record_events",
+            "outcome": "ok"
           },
           {
             "write": "rule_eval",
             "call": "record_rule_evaluation",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
             "outcome": "ok"
           },
           {
             "event": "before_tool"
-          },
-          {
-            "effect": "inject_context",
-            "delivery": "eager",
-            "rule": "synthetic-plan-mode-context"
-          },
-          {
-            "write": "rule_eval",
-            "call": "record_rule_evaluation",
-            "outcome": "ok"
           }
         ],
         "audit_records": [
           {
-            "rule": "synthetic-plan-mode-context",
-            "result": "allow",
-            "event": "before_tool"
-          },
-          {
-            "rule": "synthetic-plan-mode-context",
-            "result": "allow",
+            "rule": "synthetic-plan-mode-gate",
+            "result": "block",
             "event": "before_tool"
           }
         ],
-        "response": {
-          "context": "plan mode active",
-          "context_parts": [
-            [
-              "rule:synthetic-plan-mode-context",
-              "plan mode active"
-            ]
-          ]
-        }
-      },
-      "variables": {
-        "synthetic_plan_mode": true
-      },
-      "sequence": [
-        {
-          "type": "before_tool",
-          "source": "claude",
-          "data": {
-            "tool_name": "Bash",
-            "tool_input": {
-              "command": "echo hi"
-            }
+        "response": {},
+        "passes": [
+          {
+            "label": "plan",
+            "outcome_class": "block",
+            "response": {
+              "decision": "block",
+              "reason": "Rule enforced by Gobby: [synthetic-plan-mode-gate]\nsynthetic plan mode"
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "seam": "metrics_events",
+                "call": "record_events",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-plan-mode-gate",
+                "result": "block",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "_block_reasons_shown": [
+                "synthetic-plan-mode-gate:<token>"
+              ],
+              "_gobby_feedback_survey_active": false,
+              "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-plan-mode-gate]\nsynthetic plan mode",
+              "_last_blocked_recovery_conditions": [],
+              "_last_blocked_rule_name": "synthetic-plan-mode-gate",
+              "_last_blocked_tool": "Edit",
+              "_variable_defaults_loaded": true,
+              "edit_write_pending": false,
+              "edit_write_stop_blocks": 0,
+              "mode_level": 0,
+              "plan_memory_write_nudge_fired": false,
+              "plan_mode": true,
+              "project": {
+                "id": "{project}",
+                "name": "synthetic-project",
+                "path": "{repo}"
+              }
+            },
+            "reached": [
+              "transition.planmode"
+            ],
+            "between_reached": [],
+            "facts": {
+              "foreign_dirty_edit_conflict": "",
+              "foreign_landing_merge": false,
+              "session_owned_reviewable_paths": null,
+              "foreign_staged_commit_conflict": "",
+              "base_merge_git_step": false,
+              "base_merge_write": false,
+              "commit_has_reviewable_paths": true,
+              "commit_records_only_plan_paths": false,
+              "has_dirty_files": false,
+              "target_task_has_edits": false,
+              "has_target_task_dirty_files": false,
+              "found_work_shirk": false,
+              "found_work_shirk_confirmed": false,
+              "terminal_validation_failure": false,
+              "terminal_validation_failure_commands": [],
+              "unclaimed_found_work": false,
+              "unclaimed_found_work_tasks": []
+            },
+            "observer_failures": []
           },
-          "metadata": {}
-        }
-      ]
+          {
+            "label": "default",
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              }
+            ],
+            "audit_records": [],
+            "eager_variable_delta": {
+              "_last_blocked_batch_counted": true,
+              "chat_mode": "normal",
+              "consecutive_tool_blocks": 1,
+              "edit_write_pending": true,
+              "edit_write_pending_process": "synthetic-engine-process",
+              "mode_level": 1,
+              "plan_mode": false,
+              "plan_skill_directive_delivered": false
+            },
+            "reached": [
+              "transition.planmode"
+            ],
+            "between_reached": [],
+            "facts": {
+              "foreign_dirty_edit_conflict": "",
+              "foreign_landing_merge": false,
+              "session_owned_reviewable_paths": null,
+              "foreign_staged_commit_conflict": "",
+              "base_merge_git_step": false,
+              "base_merge_write": false,
+              "commit_has_reviewable_paths": true,
+              "commit_records_only_plan_paths": false,
+              "has_dirty_files": false,
+              "target_task_has_edits": false,
+              "has_target_task_dirty_files": false,
+              "found_work_shirk": false,
+              "found_work_shirk_confirmed": false,
+              "terminal_validation_failure": false,
+              "terminal_validation_failure_commands": [],
+              "unclaimed_found_work": false,
+              "unclaimed_found_work_tasks": []
+            },
+            "observer_failures": []
+          }
+        ]
+      }
     }
   ]
 }

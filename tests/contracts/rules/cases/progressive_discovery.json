@@ -129,6 +129,79 @@
         "response": {},
         "skipped_groups": [
           "progressive-discovery"
+        ],
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-other-grouped"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-ungrouped"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-other-grouped",
+                "result": "allow",
+                "event": "before_tool"
+              },
+              {
+                "rule": "synthetic-ungrouped",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_observations": [
+                {
+                  "category": "general",
+                  "message": "other group",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-other-grouped"
+                },
+                {
+                  "category": "general",
+                  "message": "ungrouped",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-ungrouped"
+                }
+              ]
+            },
+            "skipped_groups": [
+              "progressive-discovery"
+            ]
+          }
         ]
       }
     },
@@ -276,7 +349,98 @@
             "event": "before_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-discovery-group"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-other-grouped"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-ungrouped"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-discovery-group",
+                "result": "allow",
+                "event": "before_tool"
+              },
+              {
+                "rule": "synthetic-other-grouped",
+                "result": "allow",
+                "event": "before_tool"
+              },
+              {
+                "rule": "synthetic-ungrouped",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_observations": [
+                {
+                  "category": "general",
+                  "message": "discovery",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-discovery-group"
+                },
+                {
+                  "category": "general",
+                  "message": "other group",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-other-grouped"
+                },
+                {
+                  "category": "general",
+                  "message": "ungrouped",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-ungrouped"
+                }
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -425,7 +589,98 @@
             "event": "before_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-discovery-group"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-other-grouped"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-ungrouped"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-discovery-group",
+                "result": "allow",
+                "event": "before_tool"
+              },
+              {
+                "rule": "synthetic-other-grouped",
+                "result": "allow",
+                "event": "before_tool"
+              },
+              {
+                "rule": "synthetic-ungrouped",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_observations": [
+                {
+                  "category": "general",
+                  "message": "discovery",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-discovery-group"
+                },
+                {
+                  "category": "general",
+                  "message": "other group",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-other-grouped"
+                },
+                {
+                  "category": "general",
+                  "message": "ungrouped",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-ungrouped"
+                }
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -574,7 +829,98 @@
             "event": "before_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-discovery-group"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-other-grouped"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-ungrouped"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-discovery-group",
+                "result": "allow",
+                "event": "before_tool"
+              },
+              {
+                "rule": "synthetic-other-grouped",
+                "result": "allow",
+                "event": "before_tool"
+              },
+              {
+                "rule": "synthetic-ungrouped",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_observations": [
+                {
+                  "category": "general",
+                  "message": "discovery",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-discovery-group"
+                },
+                {
+                  "category": "general",
+                  "message": "other group",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-other-grouped"
+                },
+                {
+                  "category": "general",
+                  "message": "ungrouped",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-ungrouped"
+                }
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -713,6 +1059,86 @@
         "response": {},
         "skipped_groups": [
           "progressive-discovery"
+        ],
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "after_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-other-grouped-after"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-ungrouped-after"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-other-grouped-after",
+                "result": "allow",
+                "event": "after_tool"
+              },
+              {
+                "rule": "synthetic-ungrouped-after",
+                "result": "allow",
+                "event": "after_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "tool_block_pending": false,
+              "_last_blocked_tool": "",
+              "_last_blocked_rule_name": "",
+              "_last_blocked_reason": "",
+              "_last_blocked_recovery_conditions": [],
+              "_last_blocked_batch_counted": false,
+              "consecutive_tool_blocks": 0,
+              "_observations": [
+                {
+                  "category": "general",
+                  "message": "other group",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-other-grouped-after"
+                },
+                {
+                  "category": "general",
+                  "message": "ungrouped",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-ungrouped-after"
+                }
+              ]
+            },
+            "skipped_groups": [
+              "progressive-discovery"
+            ]
+          }
         ]
       }
     },
@@ -867,7 +1293,105 @@
             "event": "after_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "after_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-discovery-group-after"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-other-grouped-after"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-ungrouped-after"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-discovery-group-after",
+                "result": "allow",
+                "event": "after_tool"
+              },
+              {
+                "rule": "synthetic-other-grouped-after",
+                "result": "allow",
+                "event": "after_tool"
+              },
+              {
+                "rule": "synthetic-ungrouped-after",
+                "result": "allow",
+                "event": "after_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "tool_block_pending": false,
+              "_last_blocked_tool": "",
+              "_last_blocked_rule_name": "",
+              "_last_blocked_reason": "",
+              "_last_blocked_recovery_conditions": [],
+              "_last_blocked_batch_counted": false,
+              "consecutive_tool_blocks": 0,
+              "_observations": [
+                {
+                  "category": "general",
+                  "message": "discovery",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-discovery-group-after"
+                },
+                {
+                  "category": "general",
+                  "message": "other group",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-other-grouped-after"
+                },
+                {
+                  "category": "general",
+                  "message": "ungrouped",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-ungrouped-after"
+                }
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -1023,7 +1547,105 @@
             "event": "after_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "after_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-discovery-group-after"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-other-grouped-after"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-ungrouped-after"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-discovery-group-after",
+                "result": "allow",
+                "event": "after_tool"
+              },
+              {
+                "rule": "synthetic-other-grouped-after",
+                "result": "allow",
+                "event": "after_tool"
+              },
+              {
+                "rule": "synthetic-ungrouped-after",
+                "result": "allow",
+                "event": "after_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "tool_block_pending": false,
+              "_last_blocked_tool": "",
+              "_last_blocked_rule_name": "",
+              "_last_blocked_reason": "",
+              "_last_blocked_recovery_conditions": [],
+              "_last_blocked_batch_counted": false,
+              "consecutive_tool_blocks": 0,
+              "_observations": [
+                {
+                  "category": "general",
+                  "message": "discovery",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-discovery-group-after"
+                },
+                {
+                  "category": "general",
+                  "message": "other group",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-other-grouped-after"
+                },
+                {
+                  "category": "general",
+                  "message": "ungrouped",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-ungrouped-after"
+                }
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -1185,7 +1807,112 @@
             "event": "before_agent"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_agent"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-discovery-group-agent"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-other-grouped-agent"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-ungrouped-agent"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-discovery-group-agent",
+                "result": "allow",
+                "event": "before_agent"
+              },
+              {
+                "rule": "synthetic-other-grouped-agent",
+                "result": "allow",
+                "event": "before_agent"
+              },
+              {
+                "rule": "synthetic-ungrouped-agent",
+                "result": "allow",
+                "event": "before_agent"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "consecutive_tool_blocks": 0,
+              "_last_blocked_tool": "",
+              "_last_blocked_rule_name": "",
+              "_last_blocked_reason": "",
+              "_last_blocked_recovery_conditions": [],
+              "_last_blocked_batch_counted": false,
+              "tool_block_pending": false,
+              "stop_attempts": 0,
+              "_block_reasons_shown": [],
+              "_observations": [
+                {
+                  "category": "general",
+                  "message": "discovery",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-discovery-group-agent"
+                },
+                {
+                  "category": "general",
+                  "message": "other group",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-other-grouped-agent"
+                },
+                {
+                  "category": "general",
+                  "message": "ungrouped",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-ungrouped-agent"
+                }
+              ]
+            }
+          }
+        ]
       }
     }
   ]

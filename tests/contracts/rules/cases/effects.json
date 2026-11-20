@@ -83,7 +83,8 @@
               "success"
             ]
           ]
-        }
+        },
+        "reached": []
       }
     },
     {
@@ -167,7 +168,51 @@
             "event": "before_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "run_command",
+                "delivery": "eager",
+                "rule": "synthetic-inline-detector"
+              },
+              {
+                "run_command_deadline": "none"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-inline-detector",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -242,7 +287,49 @@
             "event": "before_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "set_variable",
+                "delivery": "eager",
+                "rule": "synthetic-effect-set-variable"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-set-variable",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "synthetic_v": "x"
+            }
+          }
+        ]
       }
     },
     {
@@ -323,7 +410,56 @@
               "synthetic context"
             ]
           ]
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "context": "synthetic context",
+              "context_parts": [
+                [
+                  "rule:synthetic-effect-inject-context",
+                  "synthetic context"
+                ]
+              ]
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "inject_context",
+                "delivery": "eager",
+                "rule": "synthetic-effect-inject-context"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-inject-context",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -398,7 +534,50 @@
         ],
         "response": {
           "display_content": "shown"
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "display_content": "shown"
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "set_display_content",
+                "delivery": "eager",
+                "rule": "synthetic-effect-set-display-content"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-set-display-content",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -487,7 +666,62 @@
               }
             ]
           }
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "metadata": {
+                "mcp_calls": [
+                  {
+                    "server": "synthetic-server",
+                    "tool": "synthetic-tool",
+                    "arguments": {},
+                    "background": false,
+                    "inject_result": false,
+                    "block_on_failure": false,
+                    "block_on_success": false
+                  }
+                ]
+              }
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "mcp_call",
+                "delivery": "eager",
+                "rule": "synthetic-effect-mcp-call"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-mcp-call",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -568,7 +802,56 @@
             "event": "before_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-effect-observe"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-observe",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_observations": [
+                {
+                  "category": "general",
+                  "message": "synthetic observation",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-effect-observe"
+                }
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -647,7 +930,52 @@
           "modified_input": {
             "command": "echo rewritten"
           }
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "modified_input": {
+                "command": "echo rewritten"
+              }
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "rewrite_input",
+                "delivery": "eager",
+                "rule": "synthetic-effect-rewrite-input"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-rewrite-input",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -722,7 +1050,50 @@
         ],
         "response": {
           "permission_decision": "allow"
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "permission_decision": "allow"
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "set_permission_response",
+                "delivery": "eager",
+                "rule": "synthetic-effect-set-permission-response"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-set-permission-response",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -797,7 +1168,50 @@
         ],
         "response": {
           "retry": true
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "retry": true
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "set_retry",
+                "delivery": "eager",
+                "rule": "synthetic-effect-set-retry"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-set-retry",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -876,7 +1290,52 @@
           "watch_paths": [
             "synthetic/path"
           ]
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "watch_paths": [
+                "synthetic/path"
+              ]
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "set_watch_paths",
+                "delivery": "eager",
+                "rule": "synthetic-effect-set-watch-paths"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-set-watch-paths",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -951,7 +1410,50 @@
         ],
         "response": {
           "worktree_path": "synthetic/worktree"
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "worktree_path": "synthetic/worktree"
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "set_worktree_path",
+                "delivery": "eager",
+                "rule": "synthetic-effect-set-worktree-path"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-set-worktree-path",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -1026,7 +1528,50 @@
         ],
         "response": {
           "elicitation_action": "accept"
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "elicitation_action": "accept"
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "set_elicitation",
+                "delivery": "eager",
+                "rule": "synthetic-effect-set-elicitation"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-set-elicitation",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -1107,7 +1652,56 @@
               "Load and fully read the skill in its own outer tool result: call_tool(\"gobby-skills\", \"get_skill\", {\"name\":\"synthetic-skill\"}). Then continue."
             ]
           ]
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {
+              "context": "Load and fully read the skill in its own outer tool result: call_tool(\"gobby-skills\", \"get_skill\", {\"name\":\"synthetic-skill\"}). Then continue.",
+              "context_parts": [
+                [
+                  "skill:synthetic-skill",
+                  "Load and fully read the skill in its own outer tool result: call_tool(\"gobby-skills\", \"get_skill\", {\"name\":\"synthetic-skill\"}). Then continue."
+                ]
+              ]
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "load_skill",
+                "delivery": "eager",
+                "rule": "synthetic-effect-load-skill"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-load-skill",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -1186,7 +1780,51 @@
             "event": "before_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "run_command",
+                "delivery": "eager",
+                "rule": "synthetic-effect-run-command"
+              },
+              {
+                "run_command_deadline": "none"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-run-command",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -1259,7 +1897,43 @@
             "event": "before_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-proxy-hook",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -1347,7 +2021,63 @@
         "response": {
           "decision": "block",
           "reason": "Rule enforced by Gobby: [synthetic-effect-block]\nsynthetic block"
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "block",
+            "response": {
+              "decision": "block",
+              "reason": "Rule enforced by Gobby: [synthetic-effect-block]\nsynthetic block"
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "seam": "metrics_events",
+                "call": "record_events",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-effect-block",
+                "result": "block",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_last_blocked_tool": "Bash",
+              "_last_blocked_rule_name": "synthetic-effect-block",
+              "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-effect-block]\nsynthetic block",
+              "_last_blocked_recovery_conditions": [],
+              "_block_reasons_shown": [
+                "synthetic-effect-block:<token>"
+              ]
+            }
+          }
+        ]
       }
     }
   ]

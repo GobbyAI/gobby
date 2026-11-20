@@ -3,7 +3,17 @@
   "layer": "rules",
   "case_kinds": [
     "rule_pass",
+    "handler_pass",
     "seam_caller"
+  ],
+  "fault_kinds": [
+    "git",
+    "git_command",
+    "raise_at",
+    "session_variables",
+    "session_read",
+    "task_read",
+    "hub_query"
   ],
   "seams": [
     "rule_definitions",

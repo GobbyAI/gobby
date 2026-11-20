@@ -84,7 +84,51 @@
             "event": "before_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "run_command",
+                "delivery": "eager",
+                "rule": "synthetic-deadline-handoff"
+              },
+              {
+                "run_command_deadline": "expired"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-deadline-handoff",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -173,7 +217,8 @@
           "command_timeouts": [
             1.0
           ]
-        }
+        },
+        "reached": []
       }
     },
     {
@@ -259,7 +304,8 @@
           "command_timeouts": [
             1.0
           ]
-        }
+        },
+        "reached": []
       }
     },
     {
@@ -350,7 +396,8 @@
           "command_timeouts": [
             5.0
           ]
-        }
+        },
+        "reached": []
       }
     },
     {
@@ -441,7 +488,8 @@
           "command_timeouts": [
             2.5
           ]
-        }
+        },
+        "reached": []
       }
     },
     {
@@ -537,7 +585,56 @@
             "event": "before_tool"
           }
         ],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "effect": "observe",
+                "delivery": "eager",
+                "rule": "synthetic-valid-row"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-valid-row",
+                "result": "allow",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_observations": [
+                {
+                  "category": "general",
+                  "message": "valid",
+                  "timestamp": "<volatile>",
+                  "rule": "synthetic-valid-row"
+                }
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -628,7 +725,63 @@
         "response": {
           "decision": "block",
           "reason": "Rule enforced by Gobby: [synthetic-broken-block]\nunreachable"
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "block",
+            "response": {
+              "decision": "block",
+              "reason": "Rule enforced by Gobby: [synthetic-broken-block]\nunreachable"
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "seam": "metrics_events",
+                "call": "record_events",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-broken-block",
+                "result": "block",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_last_blocked_tool": "Bash",
+              "_last_blocked_rule_name": "synthetic-broken-block",
+              "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-broken-block]\nunreachable",
+              "_last_blocked_recovery_conditions": [],
+              "_block_reasons_shown": [
+                "synthetic-broken-block:<token>"
+              ]
+            }
+          }
+        ]
       }
     },
     {
@@ -688,7 +841,32 @@
           }
         ],
         "audit_records": [],
-        "response": {}
+        "response": {},
+        "passes": [
+          {
+            "outcome_class": "allow",
+            "response": {},
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false
+            }
+          }
+        ]
       }
     },
     {
@@ -778,7 +956,63 @@
         "response": {
           "decision": "block",
           "reason": "Rule enforced by Gobby: [synthetic-deadline-block]\ndeadline block"
-        }
+        },
+        "passes": [
+          {
+            "outcome_class": "block",
+            "response": {
+              "decision": "block",
+              "reason": "Rule enforced by Gobby: [synthetic-deadline-block]\ndeadline block"
+            },
+            "effect_log": [
+              {
+                "event": "before_tool"
+              },
+              {
+                "seam": "rule_definitions",
+                "call": "list_by_event",
+                "outcome": "ok"
+              },
+              {
+                "seam": "metrics_events",
+                "call": "record_events",
+                "outcome": "ok"
+              },
+              {
+                "write": "rule_eval",
+                "call": "record_rule_evaluation",
+                "outcome": "ok"
+              },
+              {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              }
+            ],
+            "audit_records": [
+              {
+                "rule": "synthetic-deadline-block",
+                "result": "block",
+                "event": "before_tool"
+              }
+            ],
+            "eager_variable_delta": {
+              "project": {
+                "name": "Unknown",
+                "id": "unknown",
+                "path": ""
+              },
+              "_gobby_feedback_survey_active": false,
+              "_last_blocked_tool": "Bash",
+              "_last_blocked_rule_name": "synthetic-deadline-block",
+              "_last_blocked_reason": "Rule enforced by Gobby: [synthetic-deadline-block]\ndeadline block",
+              "_last_blocked_recovery_conditions": [],
+              "_block_reasons_shown": [
+                "synthetic-deadline-block:<token>"
+              ]
+            }
+          }
+        ]
       },
       "deadline": {
         "seconds": 0.0
