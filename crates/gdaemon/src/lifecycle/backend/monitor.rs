@@ -7,6 +7,25 @@ use anyhow::Result;
 use std::{future::Future, pin::pin};
 use tokio::time::{MissedTickBehavior, interval};
 
+/// Work that runs only inside a verified lease lifetime.
+pub trait LeaseScoped {
+    /// Starts the work. Called once, under the lease lock, right after the lifetime's entry
+    /// heartbeat verified the lease.
+    fn admit(&mut self) -> Result<()>;
+    /// Ends the work while the lease is still held (`exit` is None for an error).
+    fn end(&mut self, exit: Option<SupervisorExit>) -> impl Future<Output = ()> + Send;
+}
+
+impl LeaseScoped for () {
+    fn admit(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn end(&mut self, _: Option<SupervisorExit>) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
+    }
+}
+
 impl BackendSupervisor {
     /// One supervised heartbeat. Every error, a lease lock wait that fails at its bound
     /// included, publishes Lost before it is returned, so a `LeaseLost` exit never leaves

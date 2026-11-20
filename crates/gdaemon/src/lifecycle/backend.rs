@@ -39,6 +39,7 @@ mod monitor;
 use handshake::HandshakeStep;
 
 pub use gobby_core::family::BackendStatus;
+pub use monitor::LeaseScoped;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupervisorExit {
@@ -229,15 +230,16 @@ impl BackendSupervisor {
     /// Run one ownership lifetime. Refused instances never acquire or spawn again.
     /// Dropping/cancelling this future kills its child and closes the liveness writer.
     pub async fn run(&mut self, shutdown: watch::Receiver<bool>) -> Result<SupervisorExit> {
-        self.run_ending(shutdown, |_| async {}).await
+        self.run_ending(shutdown, &mut ()).await
     }
 
-    /// [`BackendSupervisor::run`], running `before_release` on the lifetime's exit (None for
-    /// an error) while the lease is still held, so lease-scoped work ends before release.
-    pub async fn run_ending<F: Future<Output = ()>>(
+    /// [`BackendSupervisor::run`], admitting `scoped` at the lifetime's start and ending it on
+    /// the lifetime's exit (None for an error) while the lease is still held, so lease-scoped
+    /// work ends before release.
+    pub async fn run_ending(
         &mut self,
         mut shutdown: watch::Receiver<bool>,
-        before_release: impl FnOnce(Option<SupervisorExit>) -> F,
+        scoped: &mut impl LeaseScoped,
     ) -> Result<SupervisorExit> {
         if matches!(*self.state.borrow(), BackendStatus::Refused { .. }) {
             return Ok(SupervisorExit::Refused);
@@ -251,13 +253,16 @@ impl BackendSupervisor {
                 return Ok(SupervisorExit::Standby);
             }
             let loss = guard.loss();
+            scoped.admit()?;
             drop(guard);
             self.loss = Some(loss);
+        } else {
+            scoped.admit()?;
         }
         let result = self.supervise(&mut shutdown).await;
         // The lease keeps its heartbeat until release, so a loss during the hook is published.
         let exit = result.as_ref().ok().copied();
-        self.heartbeat_through(exit, before_release(exit)).await;
+        self.heartbeat_through(exit, scoped.end(exit)).await;
         // release takes the dedicated connection before awaiting, so failures and
         // cancellation cannot retain the advisory lock. Keep the machine claim
         // through lease loss and sticky refusal; release it on stop or error.

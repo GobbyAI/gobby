@@ -7,7 +7,10 @@ use gobby_daemon::lifecycle::shutdown_intent::{Intent, IntentMarker};
 use gobby_daemon::{
     lease::{ActiveDaemonLease, LeaseMode, NamedLock},
     lifecycle::{
-        backend::{BackendConfig, BackendStatus, BackendSupervisor, SupervisorExit, crash_delay},
+        backend::{
+            BackendConfig, BackendStatus, BackendSupervisor, LeaseScoped, SupervisorExit,
+            crash_delay,
+        },
         pid_file::{Role, claim_pid_file},
     },
 };
@@ -2479,6 +2482,292 @@ async fn a_restart_of_the_terminals_hands_the_lease_to_the_next_lifetime_at_the_
         runtime.stop.send(true)?;
         timeout(Duration::from_secs(30), runtime.task).await???;
         Ok(())
+    })
+    .await
+}
+
+/// The lease session's last statement and when its state last changed (seconds since the
+/// epoch). The fixture role owns both sessions, so `query` is readable.
+async fn lease_session_activity(db: &TestDb, application: &str) -> Result<(String, f64)> {
+    let rows = db
+        .admin
+        .query(
+            "SELECT query, EXTRACT(EPOCH FROM state_change)::double precision \
+             FROM pg_stat_activity WHERE application_name = $1",
+            &[&application],
+        )
+        .await?;
+    ensure!(rows.len() == 1, "the lease session is not listed once");
+    Ok((rows[0].try_get(0)?, rows[0].try_get(1)?))
+}
+
+/// Lease-scoped work whose admission ends the lifetime: `admit` records that it ran and fails.
+struct StopsAtAdmission {
+    admitted: bool,
+}
+
+impl LeaseScoped for StopsAtAdmission {
+    fn admit(&mut self) -> Result<()> {
+        self.admitted = true;
+        Err(anyhow::anyhow!("stopped at admission"))
+    }
+
+    fn end(&mut self, _: Option<SupervisorExit>) -> impl Future<Output = ()> + Send {
+        std::future::ready(())
+    }
+}
+
+/// Waits for the paused activation, ends the lease session under it, waits until the lease
+/// sees its socket closed, and returns a peer that holds the freed lease. The peer keeps the
+/// run loop in standby afterwards, so no second activation pauses.
+async fn end_the_session_during_activation(
+    db: &TestDb,
+    runtime: &Runtime,
+    activating: &Notify,
+) -> Result<ActiveDaemonLease> {
+    timeout(Duration::from_secs(30), activating.notified())
+        .await
+        .context("the family was never activated")?;
+    terminate_lease_session(db, &runtime.application).await?;
+    timeout(Duration::from_secs(10), async {
+        while runtime.lease.lock_as("test").await.fence().is_some() {
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .context("the lease never saw its session closed")?;
+    take_freed_lease(db, "activation-peer").await
+}
+
+#[tokio::test]
+async fn a_lease_session_that_ends_during_activation_leaves_no_active_watch_at_the_stop()
+-> Result<()> {
+    database_case(async |db| {
+        let (activating, proceed) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+        let deactivating = Arc::new(Notify::new());
+        let at_deactivate: Arc<Mutex<Option<LeaseState>>> = Arc::default();
+        let (hook_activating, hook_proceed) = (Arc::clone(&activating), Arc::clone(&proceed));
+        let (hook_deactivating, hook_seen) =
+            (Arc::clone(&deactivating), Arc::clone(&at_deactivate));
+        let runtime = start_runtime(
+            db,
+            "activation-owner",
+            READY_UNTIL_EOF,
+            |_| {},
+            move |lease| {
+                Box::leak(Box::new(PausesHooks {
+                    activating: hook_activating,
+                    proceed: Some(hook_proceed),
+                    at_deactivate: hook_seen,
+                    deactivating: hook_deactivating,
+                    ..PausesHooks::new(lease)
+                }))
+            },
+        )
+        .await?;
+        let _abort = AbortOnDrop(runtime.task.abort_handle());
+        let mut peer = end_the_session_during_activation(db, &runtime, &activating).await?;
+        proceed.notify_one();
+        timeout(Duration::from_secs(30), deactivating.notified())
+            .await
+            .context("the families were never deactivated")?;
+
+        let seen = *at_deactivate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            matches!(seen, Some(state) if state != LeaseState::Active),
+            "the families were deactivated under an Active watch on a dead lease: {seen:?}"
+        );
+        runtime.stop.send(true)?;
+        timeout(Duration::from_secs(30), runtime.task).await???;
+        peer.release().await
+    })
+    .await
+}
+
+#[tokio::test]
+async fn no_family_job_is_admitted_on_a_lease_that_ended_during_activation() -> Result<()> {
+    database_case(async |db| {
+        let (activating, proceed) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+        let (running, deactivating) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+        let at_deactivate: Arc<Mutex<Option<LeaseState>>> = Arc::default();
+        let (hook_activating, hook_proceed) = (Arc::clone(&activating), Arc::clone(&proceed));
+        let (hook_running, hook_deactivating) = (Arc::clone(&running), Arc::clone(&deactivating));
+        let hook_seen = Arc::clone(&at_deactivate);
+        let runtime = start_runtime(
+            db,
+            "admission-owner",
+            READY_UNTIL_EOF,
+            |_| {},
+            move |lease| {
+                Box::leak(Box::new(PausesHooks {
+                    activating: hook_activating,
+                    proceed: Some(hook_proceed),
+                    running: hook_running,
+                    at_deactivate: hook_seen,
+                    deactivating: hook_deactivating,
+                    ..PausesHooks::new(lease)
+                }))
+            },
+        )
+        .await?;
+        let _abort = AbortOnDrop(runtime.task.abort_handle());
+        let mut peer = end_the_session_during_activation(db, &runtime, &activating).await?;
+        let held = runtime.lease.lock_as("test lease holder").await;
+        proceed.notify_one();
+        let ran = timeout(
+            gobby_daemon::heartbeat::BASE_CADENCE + Duration::from_secs(3),
+            running.notified(),
+        )
+        .await
+        .is_ok();
+
+        assert!(
+            !ran,
+            "a family job ran on a lease whose session ended during activation"
+        );
+        drop(held);
+        timeout(Duration::from_secs(30), deactivating.notified())
+            .await
+            .context("the families were never deactivated")?;
+        let seen = *at_deactivate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_ne!(
+            seen,
+            Some(LeaseState::Active),
+            "the families were deactivated under an Active watch on a dead lease"
+        );
+        runtime.stop.send(true)?;
+        timeout(Duration::from_secs(30), runtime.task).await???;
+        peer.release().await
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_lease_lock_error_at_the_lifetime_start_leaves_no_active_watch_at_the_stop() -> Result<()>
+{
+    database_case(async |db| {
+        let (activating, proceed) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+        let (running, deactivating) = (Arc::new(Notify::new()), Arc::new(Notify::new()));
+        let at_deactivate: Arc<Mutex<Option<LeaseState>>> = Arc::default();
+        let (hook_activating, hook_proceed) = (Arc::clone(&activating), Arc::clone(&proceed));
+        let (hook_running, hook_deactivating) = (Arc::clone(&running), Arc::clone(&deactivating));
+        let hook_seen = Arc::clone(&at_deactivate);
+        let runtime = start_runtime(
+            db,
+            "entry-lock-owner",
+            READY_UNTIL_EOF,
+            |config| config.lease_lock_limit = Duration::from_millis(500),
+            move |lease| {
+                Box::leak(Box::new(PausesHooks {
+                    activating: hook_activating,
+                    proceed: Some(hook_proceed),
+                    running: hook_running,
+                    at_deactivate: hook_seen,
+                    deactivating: hook_deactivating,
+                    ..PausesHooks::new(lease)
+                }))
+            },
+        )
+        .await?;
+        let _abort = AbortOnDrop(runtime.task.abort_handle());
+        timeout(Duration::from_secs(30), activating.notified())
+            .await
+            .context("the family was never activated")?;
+        let held = runtime.lease.lock_as("test lease holder").await;
+        proceed.notify_one();
+        timeout(Duration::from_secs(30), deactivating.notified())
+            .await
+            .context("the families were never deactivated")?;
+        drop(held);
+        let joined = timeout(Duration::from_secs(30), runtime.task).await??;
+
+        let seen = *at_deactivate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(
+            seen,
+            Some(LeaseState::Lost),
+            "a lease lock error at the lifetime start left the watch Active through the stop"
+        );
+        assert!(
+            running.notified().now_or_never().is_none(),
+            "a family job ran in a lifetime whose start failed"
+        );
+        assert!(
+            joined.is_err(),
+            "the runtime did not fail on the lease lock error: {joined:?}"
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn the_supervised_lifetime_admits_only_after_a_heartbeat_on_the_lease_session() -> Result<()>
+{
+    database_case(async |db| {
+        let home = TempDir::new()?;
+        let mut lease = db.lease("admission-heartbeat-owner")?;
+        ensure!(lease.try_acquire().await?, "fixture must hold lease");
+        let application = lease.application_name().to_owned();
+        let (before, changed_before) = lease_session_activity(db, &application).await?;
+        ensure!(
+            before != "SELECT 1",
+            "the acquisition's last statement was already a heartbeat"
+        );
+        let lease = Arc::new(NamedLock::new(lease));
+        let claim =
+            claim_pid_file(&home.path().join("gobby.pid"), Role::Daemon)?.context("PID claim")?;
+        let argv = backend_argv(
+            "import os,pathlib; (pathlib.Path(os.environ['GOBBY_HOME'])/'starts').write_text('a')",
+        )?;
+        let mut config = backend_config(home.path(), &argv)?;
+        config
+            .environment
+            .insert("HOME".into(), home.path().as_os_str().to_owned());
+        config.heartbeat_interval = Duration::from_millis(100);
+        let mut supervisor = BackendSupervisor::with_lease(Some(Arc::clone(&lease)), claim, config);
+        let (_stop, rx) = watch::channel(false);
+        let mut scoped = StopsAtAdmission { admitted: false };
+        let result = timeout(
+            Duration::from_secs(10),
+            supervisor.run_ending(rx, &mut scoped),
+        )
+        .await
+        .context("the lifetime did not end at its admission")?;
+        let (after, changed_after) = lease_session_activity(db, &application).await?;
+
+        match &result {
+            Err(error) => assert!(
+                format!("{error:#}").contains("stopped at admission"),
+                "the lifetime failed for another reason: {error:#}"
+            ),
+            Ok(exit) => panic!("the lifetime did not end at its admission: {exit:?}"),
+        }
+        assert!(scoped.admitted, "the lifetime never admitted its work");
+        assert_eq!(
+            after, "SELECT 1",
+            "the lifetime admitted its work with no heartbeat on the lease session"
+        );
+        assert!(
+            changed_after > changed_before,
+            "the lease session did not run a statement before the admission"
+        );
+        assert!(
+            !home.path().join("starts").exists(),
+            "a worker was spawned although the admission failed"
+        );
+        let mut held = lease.lock_as("test").await;
+        assert_eq!(
+            held.fence().map(|fence| fence.epoch),
+            Some(1),
+            "the failed admission released or discarded the lease session"
+        );
+        held.release().await
     })
     .await
 }

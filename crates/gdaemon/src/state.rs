@@ -247,9 +247,7 @@ impl RuntimeState {
             // that reached `supervise`. The four early returns of `run_ending` (a sticky refusal
             // at entry, no PID claim, standby, an error from `lock_lease` in the standby check)
             // call no hook; `services.stop` ends the jobs there.
-            let outcome = supervisor
-                .run_ending(shutdown.clone(), |exit| services.end_jobs(exit))
-                .await;
+            let outcome = supervisor.run_ending(shutdown.clone(), &mut services).await;
             let drain = outcome
                 .as_ref()
                 .is_ok_and(|outcome| outcome.drains_terminals());

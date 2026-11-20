@@ -8,7 +8,7 @@ use crate::family_start::{FAMILY_STOP_BUDGET, ProcessFamilies};
 use crate::front_door::FrontDoorState;
 use crate::heartbeat::HeartbeatHost;
 use crate::lease::LeaseState;
-use crate::lifecycle::backend::SupervisorExit;
+use crate::lifecycle::backend::{LeaseScoped, SupervisorExit};
 use anyhow::{Context, Result};
 use gobby_core::bootstrap::HubDatabaseBootstrap;
 use gobby_core::family::FamilyContext;
@@ -189,6 +189,16 @@ impl ActiveServices {
             );
         }
         Ok(())
+    }
+}
+
+impl LeaseScoped for ActiveServices {
+    fn admit(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn end(&mut self, exit: Option<SupervisorExit>) -> impl Future<Output = ()> + Send {
+        self.end_jobs(exit)
     }
 }
 
