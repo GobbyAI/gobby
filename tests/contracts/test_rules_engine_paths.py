@@ -804,6 +804,18 @@ def _has_run_command(case: Mapping[str, Any]) -> bool:
     )
 
 
+def _seeds_posix_paths(case: Mapping[str, Any]) -> bool:
+    """A git fixture or a transcript file: the domain writes POSIX paths and runs git."""
+    domain = case.get("domain")
+    if not isinstance(domain, Mapping):
+        return False
+    sessions = domain.get("sessions")
+    specs = sessions.values() if isinstance(sessions, Mapping) else []
+    return domain.get("repo") is not None or any(
+        isinstance(spec, Mapping) and spec.get("transcript") is not None for spec in specs
+    )
+
+
 def _needs_posix_marker(case: Mapping[str, Any]) -> bool:
     """A case needs the marker when it can spawn a process or needs a POSIX path."""
     caller = case.get("caller") if case.get("kind") == CALLER_KIND else None
@@ -814,6 +826,7 @@ def _needs_posix_marker(case: Mapping[str, Any]) -> bool:
         or caller == BACKGROUND_CALLER
         or (caller == INLINE_CALLER and "command_boundary" not in spec)
         or "proxy" in case
+        or _seeds_posix_paths(case)
     )
 
 

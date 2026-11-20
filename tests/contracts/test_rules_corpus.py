@@ -218,10 +218,12 @@ EXPECT_KEYS = (
     "audit_records",
 )
 # Optional expect keys: skipped_groups is present only on a case whose event skips a declared
-# rule group, and eager_variable_deletions only on a case whose pass deletes a variable.
+# rule group, eager_variable_deletions only on a case whose pass deletes a variable, and
+# passes (one entry per item of [event, *sequence]) on rule-pass and handler-pass cases.
 SKIPPED_GROUPS_KEY = "skipped_groups"
 VARIABLE_DELETIONS_KEY = "eager_variable_deletions"
-OPTIONAL_EXPECT_KEYS = (SKIPPED_GROUPS_KEY, VARIABLE_DELETIONS_KEY)
+PASSES_KEY = "passes"
+OPTIONAL_EXPECT_KEYS = (SKIPPED_GROUPS_KEY, VARIABLE_DELETIONS_KEY, PASSES_KEY)
 LABEL_AXES = (("family", FAMILIES, "S-FAM-"), ("observer", OBSERVERS, "S-OBS-"))
 
 

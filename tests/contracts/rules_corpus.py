@@ -297,6 +297,161 @@ def seam_registry() -> dict[str, tuple[object, str]]:
     return rules_recorder.seam_registry()
 
 
+# Every JSON position whose value names a rule, agent, step, step workflow or pipeline, as a
+# path pattern matched against the end of a value's path (``[*]`` is any list index or
+# mapping key, ``<key>`` checks the keys of the mapping at that path), with its value form:
+# ``name`` must start with the synthetic prefix; ``agent_scope`` allows ``*`` and strips a
+# leading ``!`` first; ``selector`` is split by the production selector parser and only its
+# name dimension is checked. Tags, groups, sources and categories are labels, not names.
+DEFINITION_REFERENCE_PATHS: tuple[tuple[str, str], ...] = (
+    ("rules[*].name", "name"),
+    ("definitions.rules[*].name", "name"),
+    ("demonstration.rules[*].name", "name"),
+    ("definitions.agent.name", "name"),
+    ("agent_definitions[*].name", "name"),
+    ("domain.agents.<key>", "name"),
+    ("domain.agents[*].name", "name"),
+    ("workflows.rules[*]", "name"),
+    ("agent_scope[*]", "agent_scope"),
+    ("variables._agent_type", "agent_scope"),
+    ("variables.agent_type", "agent_scope"),
+    ("variables[*]._agent_type", "agent_scope"),
+    ("variables[*].agent_type", "agent_scope"),
+    ("rule_selectors.include[*]", "selector"),
+    ("rule_selectors.exclude[*]", "selector"),
+    ("step_workflow.steps[*].name", "name"),
+    ("snapshot_step_workflow.steps[*].name", "name"),
+    ("steps[*].transitions[*].to", "name"),
+    ("step_instance.current_step", "name"),
+    ("step_instance.agent", "name"),
+    ("step_instances[*].current_step", "name"),
+    ("step_instances[*].agent", "name"),
+    ("sessions[*].agent", "name"),
+    ("pipeline", "name"),
+    ("pipelines[*]", "name"),
+    ("rule_name", "name"),
+)
+BUNDLED_ROOTS = ("src/gobby/install/shared", ".gobby/workflows")
+# The directories the regex audit scans; a corpus file may name them alone or with a glob.
+SCANNED_DIRECTORIES = ("src/gobby/install/shared", ".gobby/workflows/rules")
+_KEYS_SEGMENT = "<key>"
+_ANY_SEGMENT = "*"
+_TRAILING_PUNCTUATION = ".,:;"
+
+
+def _pattern_segments(pattern: str) -> tuple[str, ...]:
+    return tuple(pattern.replace("[*]", "." + _ANY_SEGMENT).split("."))
+
+
+_REFERENCE_PATTERNS = tuple(
+    (_pattern_segments(pattern), form) for pattern, form in DEFINITION_REFERENCE_PATHS
+)
+
+
+def _ends_with(path: tuple[str, ...], pattern: tuple[str, ...]) -> bool:
+    if len(pattern) > len(path):
+        return False
+    tail = path[len(path) - len(pattern) :]
+    return all(want in (_ANY_SEGMENT, got) for want, got in zip(pattern, tail, strict=True))
+
+
+def _reference_violation(value: str, form: str) -> bool:
+    """True when ``value`` at a reference position names something outside the namespace."""
+    from gobby.workflows.selectors import parse_selector
+
+    if form == "agent_scope":
+        if value == _ANY_SEGMENT:
+            return False
+        return not value.removeprefix("!").startswith(SYNTHETIC_RULE_PREFIX)
+    if form == "selector":
+        if value == _ANY_SEGMENT:
+            return False
+        dimension, name = parse_selector(value)
+        return dimension == "name" and not name.startswith(SYNTHETIC_RULE_PREFIX)
+    return not value.startswith(SYNTHETIC_RULE_PREFIX)
+
+
+def _name_findings(value: Any, path: tuple[str, ...], label: str) -> list[str]:
+    findings: list[str] = []
+    if isinstance(value, dict):
+        for pattern, form in _REFERENCE_PATTERNS:
+            if pattern[-1] != _KEYS_SEGMENT or not _ends_with(path, pattern[:-1]):
+                continue
+            for key in value:
+                if isinstance(key, str) and _reference_violation(key, form):
+                    findings.append(f"{label}: {'.'.join(path)} key {key!r}")
+        for key, item in value.items():
+            findings.extend(_name_findings(item, (*path, str(key)), label))
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            findings.extend(_name_findings(item, (*path, f"[{index}]"), label))
+    elif isinstance(value, str):
+        for pattern, form in _REFERENCE_PATTERNS:
+            if _ends_with(path, pattern) and _reference_violation(value, form):
+                findings.append(f"{label}: {'.'.join(path)} = {value!r}")
+                break
+    return findings
+
+
+def _path_ends_in_globs(path: str) -> bool:
+    for member in SCANNED_DIRECTORIES:
+        if path == member:
+            return True
+        if path.startswith(member + "/"):
+            rest = path[len(member) + 1 :].split("/")
+            if all(_ANY_SEGMENT in segment for segment in rest):
+                return True
+    return False
+
+
+_BUNDLED_PATH = re.compile(
+    "(" + "|".join(re.escape(root) for root in BUNDLED_ROOTS) + r")((?:/[A-Za-z0-9_.*-]+)*)/?"
+)
+
+
+def _bundled_path_findings(text: str, label: str) -> list[str]:
+    findings: list[str] = []
+    for match in _BUNDLED_PATH.finditer(text):
+        path = (match.group(1) + match.group(2)).rstrip(_TRAILING_PUNCTUATION)
+        if path in BUNDLED_ROOTS or _path_ends_in_globs(path):
+            continue
+        findings.append(f"{label}: names a path below a bundled root: {path!r}")
+    return findings
+
+
+def _json_strings(value: Any) -> Iterable[str]:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield str(key)
+            yield from _json_strings(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _json_strings(item)
+    elif isinstance(value, str):
+        yield value
+
+
+def find_definition_references(paths: Iterable[Path]) -> list[str]:
+    """Return one finding per definition reference outside the synthetic namespace.
+
+    A JSON file is checked at every position of ``DEFINITION_REFERENCE_PATHS``; every JSON
+    string, and the whole text of any other file, is checked for a path below a bundled
+    root. No list of bundled names is consulted, and prose words are never read as names.
+    """
+    findings: list[str] = []
+    for raw in paths:
+        path = Path(raw)
+        text = path.read_text()
+        if path.suffix == ".json":
+            document = json.loads(text)
+            findings.extend(_name_findings(document, (), path.name))
+            for string in _json_strings(document):
+                findings.extend(_bundled_path_findings(string, path.name))
+        else:
+            findings.extend(_bundled_path_findings(text, path.name))
+    return findings
+
+
 def find_bundled_name_mentions(paths: Iterable[Path], names: Iterable[str]) -> list[str]:
     """Return one finding per file that names a bundled definition as a whole token."""
     patterns = [
