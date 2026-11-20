@@ -104,7 +104,9 @@ async fn accept_loop_serves_after_transient_emfile() -> Result<()> {
     Ok(())
 }
 
-/// Set in the child process of a routed activation test, to the directory it works in.
+/// Set only in the child process of a routed activation test, to the parent's temporary
+/// directory: its `logs` subdirectory for the unreadable-start test, and the directory
+/// itself (also the child's Gobby home) for the tests that use [`run_child`].
 #[cfg(unix)]
 const ROUTED_START_CHILD: &str = "GOBBY_SERVE_TEST_ROUTED_START_CHILD";
 
@@ -347,8 +349,9 @@ fn an_unreadable_start_writes_no_routed_file_until_a_read_succeeds_then_replays_
     }
 }
 
-/// Runs the test `name` of this module again as a child process, with `dir` as its working
-/// directory and Gobby home, and no logs directory override from the environment.
+/// Runs the test `name` of this module again as a child process, with `dir` in
+/// [`ROUTED_START_CHILD`] and as its Gobby home, and no logs directory override from the
+/// environment. The child keeps this process's working directory.
 #[cfg(unix)]
 fn run_child(name: &str, dir: &Path) -> std::process::Output {
     std::process::Command::new(std::env::current_exe().expect("test binary path"))

@@ -202,10 +202,12 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   discards only that family's staged jobs. If the sink still refuses a job at
   commit, that is an ordinary failure of its family, and the jobs that pass
   registered for the family are removed (`JobSink::remove_job`). The lease's jobs
-  end while the lease is still held, on every exit of a supervised lease lifetime
-  (`BackendSupervisor::run_ending`): an orderly end drains
-  them before the lease is released, and a lost lease, which cannot be held through
-  a drain, cancels them at once. The job host is fenced by the lease watch, so once
+  end while the lease is still held, on every exit of a lease lifetime that reached
+  `supervise` (`BackendSupervisor::run_ending`): an orderly end drains them before
+  the lease is released, and a lost lease, which cannot be held through a drain,
+  cancels them at once. The three early returns of `run_ending` (a sticky refusal
+  at entry, no PID claim, standby) call no hook; `ActiveServices::stop` ends the
+  jobs there. The job host is fenced by the lease watch, so once
   the lease is no longer held the running job is cancelled and no job starts again.
 - Pool. A family queries through `FamilyContext::serve_pool`, the shared serve pool.
   Each native pool takes `POOL_SHARE` connections from the budget that

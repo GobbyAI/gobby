@@ -238,7 +238,9 @@ impl RuntimeState {
                 .terminal_route
                 .write()
                 .unwrap_or_else(PoisonError::into_inner) = services.route();
-            // The family jobs end while the lease is still held, on every exit.
+            // The family jobs end while the lease is still held, on every exit of a lifetime
+            // that reached `supervise`. The early returns of `run_ending` (a sticky refusal at
+            // entry, no PID claim, standby) call no hook; `services.stop` ends the jobs there.
             let outcome = supervisor
                 .run_ending(shutdown.clone(), |exit| services.end_jobs(exit))
                 .await;
