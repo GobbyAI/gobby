@@ -16,6 +16,7 @@ import dataclasses
 import json
 import subprocess
 import sys
+import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from gobby.workflows.engine import run_command_effects
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.engine.enforcement_checks import EnforcementCheckMixin
 from gobby.workflows.engine.event_utils import _resolve_rule_events
+from gobby.workflows.engine.run_command import execute_run_command
 from gobby.workflows.engine.templating import TemplatingMixin
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.contracts import rules_corpus, rules_mutation, rules_recorder, rules_seed
@@ -930,6 +932,93 @@ def test_recorder_logs_the_deadline_each_run_command_receives() -> None:
     assert {"run_command_deadline": "none"} in none, f"no-deadline log: {none}"
 
 
+def test_recorder_labels_the_deadline_by_its_state() -> None:
+    recorder = rules_recorder._Recorder(set())
+
+    async def effect(owner: Any, effect: Any, row: Any, ctx: Any, context_parts: Any) -> None:
+        return None
+
+    wrapped = recorder.run_command_wrapper(effect)
+    now = time.monotonic()
+    contexts: dict[str, dict[str, Any]] = {
+        "none": {},
+        "live": {"_blocking_deadline": effect_deadline.BlockingEffectDeadline(now + 600.0)},
+        "expired": {"_blocking_deadline": effect_deadline.BlockingEffectDeadline(now - 1.0)},
+    }
+    for ctx in contexts.values():
+        asyncio.run(wrapped(None, None, None, ctx, []))
+    labels = [entry.get("run_command_deadline") for entry in recorder.effect_log]
+    assert labels == list(contexts), f"deadline labels {labels}, want {list(contexts)}"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="run_command spawns through /bin/sh")
+def test_deadline_handoff_case_reaches_the_detector_spawn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The handoff case proves the spent budget reaches the process, not only the effect."""
+    case = {c["id"]: c for c in _committed_cases()}[DEADLINE_HANDOFF]
+    assert case.get("deadline") == "expired", f"{DEADLINE_HANDOFF}: {case.get('deadline')!r}"
+    timeouts: list[float] = []
+
+    async def observed_spawn(command: list[str], **kwargs: Any) -> Any:
+        timeouts.append(kwargs["timeout_seconds"])
+        return await execute_run_command(command, **kwargs)
+
+    monkeypatch.setattr(run_command_effects, "execute_run_command", observed_spawn)
+    rules_corpus.replay_case(copy.deepcopy(case))
+    floor = run_command_effects._RUN_COMMAND_INLINE_FLOOR_SECONDS
+    assert timeouts == [floor], (
+        f"{DEADLINE_HANDOFF}: detector spawn timeouts {timeouts}, want one spawn at the "
+        f"{floor}s floor an expired deadline leaves"
+    )
+
+
+# --- the step-enforcement prefix ----------------------------------------------------------
+
+STEP_PREFIX_SPECS: dict[str, Spec] = {
+    STEP_BLOCK: S2_BLOCK,
+    STEP_MCP_BLOCK: S3_BLOCK,
+    STEP_RECHECK: S4_BLOCK,
+}
+
+
+def _step_prefix_dropped(original: Any) -> Any:
+    """Return the step check's block with its step-enforcement header line removed."""
+
+    def stub(self: Any, *args: Any, **kwargs: Any) -> Any:
+        response = original(self, *args, **kwargs)
+        if not isinstance(response, HookResponse) or not response.reason:
+            return response
+        header, _, rest = response.reason.partition("\n")
+        if STEP_REASON not in header:
+            return response
+        return dataclasses.replace(response, reason=rest)
+
+    return stub
+
+
+def test_step_block_specs_require_the_step_enforcement_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    by_id = {case["id"]: case for case in _committed_cases()}
+    accepted: list[str] = []
+    with monkeypatch.context() as patch:
+        original = RuleEngine._check_step_tool_enforcement
+        patch.setattr(RuleEngine, "_check_step_tool_enforcement", _step_prefix_dropped(original))
+        for case_id, spec in STEP_PREFIX_SPECS.items():
+            case = by_id[case_id]
+            stubbed = rules_corpus.replay_case(copy.deepcopy(case))
+            rules_mutation.assert_clean_stubbed_replay(stubbed, f"{case_id} without the prefix")
+            reason = str(_response(stubbed).get("reason") or "")
+            assert _decision(case, stubbed) == "block", f"{case_id}: {stubbed.get('outcome_class')}"
+            assert STEP_REASON not in reason, f"{case_id}: the stub kept the prefix: {reason!r}"
+            if not _spec_mismatches(spec, case, stubbed):
+                accepted.append(case_id)
+    assert not accepted, (
+        f"step block specs that accept a reason without the step-enforcement prefix: {accepted}"
+    )
+
+
 # --- loader refusals --------------------------------------------------------------------------
 
 
@@ -1074,6 +1163,30 @@ def test_loader_rejects_malformed_seeds(tmp_path: Path) -> None:
         "session",
         "inline caller without a session seed",
     )
+
+
+def _enabled_seed_case(enabled: object) -> dict[str, Any]:
+    definition = {**copy.deepcopy(STEP_SEED_DEFINITION), "enabled": enabled}
+    return _loader_case(
+        "synthetic-seeded", seed={"session": True, "agent_definitions": [definition]}
+    )
+
+
+def test_loader_refuses_a_non_boolean_enabled_flag(tmp_path: Path) -> None:
+    for flag in (True, False):
+        root = tmp_path / f"boolean-{flag}"
+        _manifest, loaded = rules_corpus.load_corpus(
+            _write_loader_corpus(root, [_enabled_seed_case(flag)])
+        )
+        assert [case["id"] for case in loaded] == ["synthetic-seeded"], f"enabled={flag}"
+    for index, coerced in enumerate(("false", 0, 1, None)):
+        _assert_refused(
+            tmp_path / f"coerced-{index}",
+            [_enabled_seed_case(coerced)],
+            "synthetic-seeded",
+            "enabled",
+            f"agent definition enabled={coerced!r}",
+        )
 
 
 BOUNDARY = {"duration": 0.5, "context": "synthetic detector result"}

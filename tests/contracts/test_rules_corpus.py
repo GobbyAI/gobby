@@ -1164,6 +1164,59 @@ def test_unused_field_guard_flags_every_write_form(tmp_path: Path) -> None:
     assert not flagged_reads, f"the guard flags these (field, read form) pairs: {flagged_reads}"
 
 
+# A set display iterated through a frozenset(...) call is a loop over a literal listing, so
+# each of these writes the field although no for statement iterates the set display itself.
+FROZENSET_LOOP_WRITE_FORMS = {
+    "for_frozenset_setattr": (
+        'for name in frozenset({"FIELD_NAME"}):\n    setattr(resp, name, "synthetic")\n'
+    ),
+    "comprehension_frozenset_setattr": (
+        '[setattr(resp, name, "synthetic") for name in frozenset({"FIELD_NAME"})]\n'
+    ),
+}
+
+
+def test_unused_field_guard_flags_a_loop_over_a_wrapped_set_display(tmp_path: Path) -> None:
+    fields = [
+        field for field in FIELDS_WITHOUT_RESPONSE_WRITER if _string_literal_rule_applies(field)
+    ]
+    assert fields, "no field without a response writer takes the string-literal rule"
+    unflagged: list[str] = []
+    for field in fields:
+        for name, template in FROZENSET_LOOP_WRITE_FORMS.items():
+            fixture = tmp_path / f"write-{field}-{name}.py"
+            fixture.write_text(template.replace(FIELD_TOKEN, field))
+            if not _writers_of(field, [fixture], literals=True):
+                unflagged.append(f"{field}:{name}")
+    assert not unflagged, f"the guard misses these (field, write form) pairs: {unflagged}"
+
+
+def test_vector_node_requests_record_paths_relative_to_the_fixture(tmp_path: Path) -> None:
+    repo = tmp_path.resolve() / "repo"
+    repo.mkdir()
+    target = f"{repo}/alpha.txt"
+    vector: dict[str, Any] = {
+        "entry": "gobby.hooks.checkout_reads.path_facts",
+        "input": {"args": [[target]], "kwargs": {}},
+        "scope": {
+            "node_delivery": {
+                "machine_id": "synthetic-node",
+                "hub_machine_id": "synthetic-hub",
+                "cwd": str(repo),
+                "files": {target: "alpha"},
+            }
+        },
+    }
+    replayed = rules_vectors._call(vector, repo)
+    assert isinstance(replayed, dict), f"the scoped call returned no envelope: {replayed!r}"
+    assert "raised" not in replayed, f"the scoped call raised: {replayed!r}"
+    assert "{repo}/alpha.txt" in json.dumps(replayed["result"]), replayed["result"]
+    requests = json.dumps(replayed["node_requests"])
+    assert "{repo}/alpha.txt" in requests, (
+        f"node_requests do not record the fixture path relative to the checkout: {requests}"
+    )
+
+
 def test_negative_vectors_cover_every_parametrize_combination() -> None:
     vectors = json.loads(VECTORS_PATH.read_text())["vectors"]
     counts: dict[str, int] = {}

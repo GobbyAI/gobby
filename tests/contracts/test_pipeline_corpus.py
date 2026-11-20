@@ -579,6 +579,31 @@ def test_pipeline_loader_requires_a_native_provider_payload(tmp_path: Path) -> N
     assert not empty, f"committed pipeline deliveries without a native payload: {empty}"
 
 
+def _setup_event_case(case_id: str, **reason: str) -> dict[str, Any]:
+    """A payload case whose one setup entry delivers a hook event directly."""
+    case = _payload_case(case_id)
+    case["setup"] = [{"event": {"type": HookEventType.SESSION_START.value}, **reason}]
+    return case
+
+
+def test_pipeline_loader_requires_a_reason_on_a_setup_event(tmp_path: Path) -> None:
+    manifest: dict[str, Any] = {
+        "schema_version": pipeline_corpus.SCHEMA_VERSION,
+        "collaborators": ["task_manager"],
+        "case_kinds": list(CASE_KINDS),
+    }
+    explained = _setup_event_case(
+        "synthetic-setup-event-explained", reason="synthetic direct setup delivery"
+    )
+    corpus = _write_corpus(tmp_path / "explained", manifest, [explained])
+    _loaded_manifest, loaded = pipeline_corpus.load_corpus(corpus)
+    assert [case["id"] for case in loaded] == [explained["id"]]
+    unexplained = _setup_event_case("synthetic-setup-event-unexplained")
+    corpus = _write_corpus(tmp_path / "unexplained", manifest, [unexplained])
+    with pytest.raises(ValueError, match=rf"{re.escape(unexplained['id'])}.*reason"):
+        pipeline_corpus.load_corpus(corpus)
+
+
 def test_pipeline_rules_are_synthetic_definitions() -> None:
     cases = _committed_cases()
     assert len(cases) >= MIN_CASES, (
