@@ -1,0 +1,659 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "consumer-bool",
+      "consumer": "BOOL",
+      "driver": "command_patterns_match",
+      "pattern": "(^|(?<=[/]))synq ",
+      "input": "/opt/synq go",
+      "control": "xsynq go",
+      "rewrite_check": true,
+      "wrong_rewrite": "^synq ",
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-bool-unsplit",
+      "consumer": "BOOL",
+      "driver": "command_patterns_match",
+      "pattern": "(^|(?<=[;|])) *synq ",
+      "input": "echo a;synq go \"",
+      "control": "echo synq \"",
+      "rewrite_check": true,
+      "wrong_rewrite": "^ *synq ",
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-bool-search",
+      "consumer": "BOOL",
+      "driver": "command_patterns_match",
+      "pattern": "synq\\b",
+      "input": "echo x synq",
+      "control": "echo x synqz",
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-bool-unconstrained",
+      "consumer": "BOOL",
+      "driver": "command_patterns_match",
+      "pattern": null,
+      "control_pattern": "zzz",
+      "input": "echo x",
+      "control": "echo x",
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-bool-bound",
+      "consumer": "BOOL",
+      "driver": "command_patterns_match",
+      "pattern": "zzz",
+      "nest": true,
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-bool-exemption",
+      "consumer": "BOOL",
+      "driver": "command_patterns_match",
+      "pattern": "synq\\b",
+      "not_pattern": "--dry\\b",
+      "input": "synq go",
+      "control": "synq go --dry",
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-bool-effect",
+      "consumer": "BOOL",
+      "driver": "rule_engine",
+      "effect": {
+        "type": "block",
+        "reason": "synthetic selector block",
+        "tools": [
+          "Bash"
+        ],
+        "command_pattern": "synq\\b"
+      },
+      "input": "synq go",
+      "control": "echo go",
+      "expect": {
+        "input": "block",
+        "control": "allow"
+      }
+    },
+    {
+      "id": "consumer-bool-effect-inert-exemption",
+      "consumer": "INERT-EXEMPTION",
+      "driver": "rule_engine",
+      "effect": {
+        "type": "block",
+        "reason": "synthetic selector block",
+        "tools": [
+          "Bash"
+        ],
+        "command_not_pattern": "synq\\b"
+      },
+      "control_effect": {
+        "type": "block",
+        "reason": "synthetic selector block",
+        "tools": [
+          "Bash"
+        ],
+        "command_pattern": "go\\b",
+        "command_not_pattern": "synq\\b"
+      },
+      "input": "synq go",
+      "control": "synq go",
+      "expect": {
+        "input": "block",
+        "control": "allow"
+      }
+    },
+    {
+      "id": "consumer-fullmatch",
+      "consumer": "FULLMATCH",
+      "driver": "attestation_shape_refusal",
+      "pattern": "syn-[a-z]{3}",
+      "input": "syn-abc",
+      "control": "syn-abcd",
+      "definitions": {
+        "agent": {
+          "name": "synthetic-agent-attest",
+          "prompts": {
+            "agent": "Synthetic."
+          },
+          "workflows": {
+            "rules": [
+              "synthetic-rule-attest"
+            ],
+            "rule_selectors": {
+              "include": []
+            }
+          }
+        },
+        "rules": [
+          {
+            "name": "synthetic-rule-attest",
+            "event": "task_close",
+            "attestation_shape": {
+              "kinds": [
+                "synthetic-kind"
+              ],
+              "reference": {
+                "scheme": "synthetic",
+                "value_pattern": "syn-[a-z]{3}"
+              }
+            },
+            "effects": [
+              {
+                "type": "block",
+                "reason": "synthetic close gate"
+              }
+            ]
+          },
+          {
+            "name": "synthetic-rule-attest-unselected",
+            "event": "task_close",
+            "attestation_shape": {
+              "kinds": [
+                "synthetic-kind"
+              ],
+              "reference": {
+                "scheme": "synthetic",
+                "value_pattern": "zzz"
+              }
+            },
+            "effects": [
+              {
+                "type": "block",
+                "reason": "synthetic close gate"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "input": null,
+        "control": "Selected closure rules can never accept this synthetic-kind attestation: task_close rule synthetic-rule-attest needs a reference value matching 'syn-[a-z]{3}', got reference value 'syn-abcd'. Accepted shape: reference {scheme 'synthetic', value matching 'syn-[a-z]{3}'}."
+      }
+    },
+    {
+      "id": "consumer-match-groups",
+      "consumer": "MATCH-GROUPS-FIRSTLINE",
+      "driver": "advance_seat",
+      "pattern": "^SYN (agree|object) ([0-9a-f]{7})$",
+      "input": "SYN agree abc1234\nbody",
+      "control": "x\nSYN agree abc1234",
+      "protocol": {
+        "consensus_step": "synthetic-review",
+        "withdrawal_step": "synthetic-withdraw",
+        "consensus_event": "agree",
+        "withdrawal_event": "object"
+      },
+      "expect": {
+        "input": {
+          "consensus": true,
+          "consensus_sha": "abc1234",
+          "bounced": false,
+          "_seat_consumed_messages": [
+            "synthetic-message-1"
+          ]
+        },
+        "control": {}
+      }
+    },
+    {
+      "id": "consumer-match-groups-unanchored",
+      "consumer": "MATCH-GROUPS-FIRSTLINE",
+      "driver": "advance_seat",
+      "pattern": "SYN (agree|object) ([0-9a-f]{7})$",
+      "input": "SYN agree abc1234\nbody",
+      "control": "x SYN agree abc1234",
+      "protocol": {
+        "consensus_step": "synthetic-review",
+        "withdrawal_step": "synthetic-withdraw",
+        "consensus_event": "agree",
+        "withdrawal_event": "object"
+      },
+      "expect": {
+        "input": {
+          "consensus": true,
+          "consensus_sha": "abc1234",
+          "bounced": false,
+          "_seat_consumed_messages": [
+            "synthetic-message-1"
+          ]
+        },
+        "control": {}
+      }
+    },
+    {
+      "id": "consumer-span-allowlisted",
+      "consumer": "SPAN-ALLOWLIST",
+      "driver": "first_response_match",
+      "patterns_from_constant_index": 1,
+      "regex": true,
+      "input": "It is NOT slow, BUT fast.",
+      "control": "It is fast.",
+      "expect": {
+        "input": "NOT slow, BUT fast",
+        "control": null
+      }
+    },
+    {
+      "id": "consumer-span-inert",
+      "consumer": "SPAN-ALLOWLIST",
+      "driver": "first_response_match",
+      "patterns": [
+        "not slow"
+      ],
+      "regex": true,
+      "regex_control": false,
+      "input": "It is not slow.",
+      "control": "It is not slow.",
+      "expect": {
+        "input": null,
+        "control": "not slow"
+      }
+    },
+    {
+      "id": "consumer-search-pkg",
+      "consumer": "SEARCH-PKG-M",
+      "driver": "compile_safe_regex",
+      "pattern": "^\\s*syn>\\s+\\S",
+      "input": "a\n  syn> go",
+      "control": "a syn> go",
+      "expect": {
+        "input": "match",
+        "control": "no_match"
+      }
+    },
+    {
+      "id": "consumer-fullmatch-path",
+      "consumer": "FULLMATCH-PATH",
+      "driver": "write_paths_match",
+      "pattern": "./syn/[a-z]+\\.txt",
+      "input": "syn/a.txt",
+      "control": "syn/a.txtx",
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-fullmatch-path-home",
+      "consumer": "FULLMATCH-PATH",
+      "driver": "write_paths_match",
+      "pattern": "~/syn/[a-z]+\\.txt",
+      "home": true,
+      "input": "syn/a.txt",
+      "control": "syn/a.txtx",
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-search-group",
+      "consumer": "SEARCH-GROUP",
+      "driver": "regex_search_filter",
+      "pattern": "syn-(\\d+)",
+      "input": "id syn-42",
+      "control": "id syn-x",
+      "expect": {
+        "input": "42",
+        "control": ""
+      }
+    },
+    {
+      "id": "consumer-search-group-nogroup",
+      "consumer": "SEARCH-GROUP",
+      "driver": "regex_search_filter",
+      "pattern": "syn-\\d+",
+      "input": "id syn-42",
+      "control": "id syn-x",
+      "expect": {
+        "input": "syn-42",
+        "control": ""
+      }
+    },
+    {
+      "id": "consumer-sub",
+      "consumer": "SUB",
+      "driver": "regex_replace_filter",
+      "pattern": "syn-(\\d+)",
+      "replacement": "n",
+      "input": "id syn-42 syn-7",
+      "control": "id syn-x",
+      "expect": {
+        "input": "id n n",
+        "control": "id syn-x"
+      }
+    },
+    {
+      "id": "consumer-sub-template",
+      "consumer": "SUB",
+      "driver": "regex_replace_filter",
+      "pattern": "syn-([0-9]+)",
+      "replacement": "<\\1>",
+      "input": "id syn-42 syn-7",
+      "control": "id syn-x",
+      "expect": {
+        "input": "id <42> <7>",
+        "control": "id syn-x"
+      }
+    },
+    {
+      "id": "consumer-sub-empty-match",
+      "consumer": "SUB",
+      "driver": "regex_replace_filter",
+      "pattern": "x*",
+      "replacement": "-",
+      "input": "abxd",
+      "control": "ab",
+      "expect": {
+        "input": "-a-b--d-",
+        "control": "-a-b-"
+      }
+    },
+    {
+      "id": "consumer-flag-guard-bool-ci",
+      "consumer": "BOOL",
+      "driver": "command_patterns_match",
+      "flag_guard": "case_insensitive",
+      "pattern": "synq\\b",
+      "input": "synq go",
+      "control": "SYNQ go",
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-flag-guard-bool-ml",
+      "consumer": "BOOL",
+      "driver": "command_patterns_match",
+      "flag_guard": "multi_line",
+      "pattern": "^synq ",
+      "input": "synq go \"",
+      "control": "echo a \"\nsynq go",
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-flag-guard-fullmatch-ci",
+      "consumer": "FULLMATCH",
+      "driver": "attestation_shape_refusal",
+      "flag_guard": "case_insensitive",
+      "pattern": "syn-[a-z]{3}",
+      "input": "syn-abc",
+      "control": "SYN-ABC",
+      "definitions": {
+        "agent": {
+          "name": "synthetic-agent-attest",
+          "prompts": {
+            "agent": "Synthetic."
+          },
+          "workflows": {
+            "rules": [
+              "synthetic-rule-attest"
+            ],
+            "rule_selectors": {
+              "include": []
+            }
+          }
+        },
+        "rules": [
+          {
+            "name": "synthetic-rule-attest",
+            "event": "task_close",
+            "attestation_shape": {
+              "kinds": [
+                "synthetic-kind"
+              ],
+              "reference": {
+                "scheme": "synthetic",
+                "value_pattern": "syn-[a-z]{3}"
+              }
+            },
+            "effects": [
+              {
+                "type": "block",
+                "reason": "synthetic close gate"
+              }
+            ]
+          },
+          {
+            "name": "synthetic-rule-attest-unselected",
+            "event": "task_close",
+            "attestation_shape": {
+              "kinds": [
+                "synthetic-kind"
+              ],
+              "reference": {
+                "scheme": "synthetic",
+                "value_pattern": "zzz"
+              }
+            },
+            "effects": [
+              {
+                "type": "block",
+                "reason": "synthetic close gate"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "input": null,
+        "control": "Selected closure rules can never accept this synthetic-kind attestation: task_close rule synthetic-rule-attest needs a reference value matching 'syn-[a-z]{3}', got reference value 'SYN-ABC'. Accepted shape: reference {scheme 'synthetic', value matching 'syn-[a-z]{3}'}."
+      }
+    },
+    {
+      "id": "consumer-flag-guard-fullmatch-ml",
+      "consumer": "FULLMATCH",
+      "driver": "attestation_shape_refusal",
+      "flag_guard": "multi_line",
+      "pattern": "syn|a\n^b",
+      "input": "syn",
+      "control": "a\nb",
+      "definitions": {
+        "agent": {
+          "name": "synthetic-agent-attest",
+          "prompts": {
+            "agent": "Synthetic."
+          },
+          "workflows": {
+            "rules": [
+              "synthetic-rule-attest"
+            ],
+            "rule_selectors": {
+              "include": []
+            }
+          }
+        },
+        "rules": [
+          {
+            "name": "synthetic-rule-attest",
+            "event": "task_close",
+            "attestation_shape": {
+              "kinds": [
+                "synthetic-kind"
+              ],
+              "reference": {
+                "scheme": "synthetic",
+                "value_pattern": "syn|a\n^b"
+              }
+            },
+            "effects": [
+              {
+                "type": "block",
+                "reason": "synthetic close gate"
+              }
+            ]
+          },
+          {
+            "name": "synthetic-rule-attest-unselected",
+            "event": "task_close",
+            "attestation_shape": {
+              "kinds": [
+                "synthetic-kind"
+              ],
+              "reference": {
+                "scheme": "synthetic",
+                "value_pattern": "zzz"
+              }
+            },
+            "effects": [
+              {
+                "type": "block",
+                "reason": "synthetic close gate"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "input": null,
+        "control": "Selected closure rules can never accept this synthetic-kind attestation: task_close rule synthetic-rule-attest needs a reference value matching 'syn|a\\n^b', got reference value 'a\\nb'. Accepted shape: reference {scheme 'synthetic', value matching 'syn|a\\n^b'}."
+      }
+    },
+    {
+      "id": "consumer-flag-guard-firstline-ci",
+      "consumer": "MATCH-GROUPS-FIRSTLINE",
+      "driver": "advance_seat",
+      "flag_guard": "case_insensitive",
+      "pattern": "^SYN (agree|object) ([0-9a-f]{7})$",
+      "input": "SYN agree abc1234\nbody",
+      "control": "syn agree abc1234\nbody",
+      "protocol": {
+        "consensus_step": "synthetic-review",
+        "withdrawal_step": "synthetic-withdraw",
+        "consensus_event": "agree",
+        "withdrawal_event": "object"
+      },
+      "expect": {
+        "input": {
+          "consensus": true,
+          "consensus_sha": "abc1234",
+          "bounced": false,
+          "_seat_consumed_messages": [
+            "synthetic-message-1"
+          ]
+        },
+        "control": {}
+      }
+    },
+    {
+      "id": "consumer-flag-guard-path-ci",
+      "consumer": "FULLMATCH-PATH",
+      "driver": "write_paths_match",
+      "flag_guard": "case_insensitive",
+      "pattern": "./syn/[a-z]+\\.txt",
+      "input": "syn/a.txt",
+      "control": "syn/A.txt",
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-flag-guard-path-ml",
+      "consumer": "FULLMATCH-PATH",
+      "driver": "write_paths_match",
+      "flag_guard": "multi_line",
+      "pattern": "./syn/(?:a\\.txt|a\n^b)",
+      "input": "syn/a.txt",
+      "control": "syn/a\nb",
+      "expect": {
+        "input": true,
+        "control": false
+      }
+    },
+    {
+      "id": "consumer-flag-guard-search-group-ci",
+      "consumer": "SEARCH-GROUP",
+      "driver": "regex_search_filter",
+      "flag_guard": "case_insensitive",
+      "pattern": "syn-([0-9]+)",
+      "input": "id syn-42",
+      "control": "id SYN-42",
+      "expect": {
+        "input": "42",
+        "control": ""
+      }
+    },
+    {
+      "id": "consumer-flag-guard-search-group-ml",
+      "consumer": "SEARCH-GROUP",
+      "driver": "regex_search_filter",
+      "flag_guard": "multi_line",
+      "pattern": "^syn-([0-9]+)",
+      "input": "syn-42",
+      "control": "id\nsyn-42",
+      "expect": {
+        "input": "42",
+        "control": ""
+      }
+    },
+    {
+      "id": "consumer-flag-guard-sub-ci",
+      "consumer": "SUB",
+      "driver": "regex_replace_filter",
+      "flag_guard": "case_insensitive",
+      "pattern": "syn-([0-9]+)",
+      "replacement": "n",
+      "input": "id syn-42",
+      "control": "id SYN-42",
+      "expect": {
+        "input": "id n",
+        "control": "id SYN-42"
+      }
+    },
+    {
+      "id": "consumer-flag-guard-sub-ml",
+      "consumer": "SUB",
+      "driver": "regex_replace_filter",
+      "flag_guard": "multi_line",
+      "pattern": "^syn-([0-9]+)",
+      "replacement": "n",
+      "input": "syn-4",
+      "control": "id\nsyn-4",
+      "expect": {
+        "input": "n",
+        "control": "id\nsyn-4"
+      }
+    },
+    {
+      "id": "consumer-flag-guard-pkg-ci",
+      "consumer": "SEARCH-PKG-M",
+      "driver": "compile_safe_regex",
+      "flag_guard": "case_insensitive",
+      "pattern": "syn> go",
+      "input": "a\nsyn> go",
+      "control": "a\nSYN> go",
+      "expect": {
+        "input": "match",
+        "control": "no_match"
+      }
+    }
+  ]
+}

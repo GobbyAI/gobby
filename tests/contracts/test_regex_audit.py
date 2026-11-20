@@ -885,8 +885,10 @@ def test_shape_families_hold_on_python_exhaustively() -> None:
         consumer = case["consumer"]
         original = case["original"]
         tree = tool.lex(original)
-        atoms = tool.engine_atoms(tree, consumer) + [
-            (construct, atom) for construct, atom, _ in tool.boundary_atoms(tree, consumer)
+        # The atoms the original itself holds: the fold cases are classified under BOOL, and an
+        # external flag of the case's consumer (SPAN-ALLOWLIST's i) adds atoms no fixture names.
+        atoms = tool.engine_atoms(tree, "BOOL") + [
+            (construct, atom) for construct, atom, _ in tool.boundary_atoms(tree, "BOOL")
         ]
         if atoms:
             assert "verdict" in case, f"{case['id']}: an engine atom outside a reported case"
@@ -1233,9 +1235,16 @@ def _sub_matches(consumer: str, pattern: str, probe: str) -> Sequence[object]:
 
 
 def _recomputed_case_inert(tree: tool.Node, consumer: str) -> bool:
-    """Each literal and class atom has one membership with and without ``i`` on the engine."""
+    """Each literal and class atom has one membership with and without ``i`` on the engine.
+
+    An atom the pattern already folds inline cannot change when the flag is added outside.
+    """
     engine = tool.CONSUMER_ENGINES[consumer]
-    for _, atom in tool.engine_atoms(tree, consumer):
+    source = tool._source(tree)
+    for node in tool.atom_nodes(tree, consumer):
+        if node.detail.get("ci"):
+            continue
+        atom = tool.atom_text(node, consumer, source)
         bare = re.sub(r"^\(\?i:(.*)\)$", r"\1", atom)
         if check.python_membership(atom, engine) != check.python_membership(bare, engine):
             return False
@@ -1243,8 +1252,11 @@ def _recomputed_case_inert(tree: tool.Node, consumer: str) -> bool:
 
 
 def _no_line_anchor(pattern: str) -> bool:
-    line_anchors = {"AT_BEGINNING", "AT_BEGINNING_LINE", "AT_END", "AT_END_LINE"}
-    return not line_anchors & _sre_anchors(pattern)
+    """No ``^`` or ``$`` that the external ``m`` flag would change (an inline ``m`` already holds)."""
+    return not any(
+        node.kind == "anchor" and node.detail["kind"] in ("^", "$") and not node.detail["multiline"]
+        for node in tool.walk(tool.lex(pattern))
+    )
 
 
 def _gate_boundaries(item: tool.FoundRegex, verdict: check.Verdict) -> None:
@@ -1526,8 +1538,8 @@ README_PHRASES = (
     "test_regex_audit.py",
     "src/gobby/install/shared",
     ".gobby/workflows/rules",
-    "re",
-    "regex",
+    "Python engine `re`",
+    "Python engine `regex`",
     "case_insensitive",
     "multi_line",
     "fullmatch",
@@ -1536,8 +1548,7 @@ README_PHRASES = (
     "-empty-subject",
     "-version-difference",
     "lookaround-fold-not-version-stable",
-    "None",
-    "null",
+    "an absent group is None on the Python side and null in the driver",
     "python-invalid",
     "class_matches_newline",
     "verify",
@@ -1692,7 +1703,9 @@ def test_two_engine_driver_detects_a_known_divergence() -> None:
     sub_result = _probe(results, 4)
     assert isinstance(sub_result, tuple) and sub_result[1] == "id n n", sub_result
     assert check.compare_observable("SUB", python_sub, sub_result) is None
-    assert check.compare_observable("SUB", python_sub, _probe(results, 5)) is not None
+    one_match = _probe(results, 5)
+    assert one_match == (True, (3, 9), ((7, 9),)), f"search mode is not one match: {one_match!r}"
+    assert check.compare_observable("SUB", python_sub, one_match) is not None
     altered = (sub_result[0], "id n syn-7")
     assert check.compare_observable("SUB", python_sub, altered) is not None
     iteration = _probe(results, 6)
@@ -2083,8 +2096,20 @@ def _check_sub_verdicts() -> None:
     assert mutated.kind == "fail" and str(mutated.reason).startswith("two-engine-mismatch")
 
 
+def _span_table(*patterns: str) -> check.DomainTable:
+    """A stable table of the case-folded atoms SPAN-ALLOWLIST reads in ``patterns``."""
+    return _stable_table(
+        {
+            ("re", atom): check.python_membership(atom, "re")
+            for pattern in patterns
+            for _, atom in tool.engine_atoms(tool.lex(pattern), "SPAN-ALLOWLIST")
+        }
+    )
+
+
 def _check_span_verdicts() -> None:
-    span = _expect("not slow", "SPAN-ALLOWLIST", "as_written")
+    table = _span_table("not slow", "[0-9]+")
+    span = _expect("not slow", "SPAN-ALLOWLIST", "as_written", table=table)
     probes = check.derive_probes("not slow", "not slow", "SPAN-ALLOWLIST")
     assert "NOT SLOW" in probes, probes
     entry = check.work_entry(0, "not slow", "SPAN-ALLOWLIST", probes)
@@ -2110,8 +2135,8 @@ def _check_span_verdicts() -> None:
         return [p for p in real(original, text, consumer, limit) if p == p.lower()]
 
     with mock.patch.object(check, "derive_probes", side_effect=no_swap):
-        _expect("not slow", "SPAN-ALLOWLIST", "reported", "no-flag-witness")
-        _expect("[0-9]+", "SPAN-ALLOWLIST", "as_written")
+        _expect("not slow", "SPAN-ALLOWLIST", "reported", "no-flag-witness", table=table)
+        _expect("[0-9]+", "SPAN-ALLOWLIST", "as_written", table=table)
     assert tool.flag_inert(tool.lex("[0-9]+"), "SPAN-ALLOWLIST", "case_insensitive")
     assert not tool.flag_inert(tool.lex("not slow"), "SPAN-ALLOWLIST", "case_insensitive")
     assert check.python_membership("(?i:[0-9])", "re") == check.python_membership("[0-9]", "re")
