@@ -64,6 +64,8 @@ DECODE_ERROR_KEY = "decode_error"
 # userinfo or other credential text, so it is never logged raw).
 UNKNOWN_FIELD = "<unknown>"
 UNPARSEABLE_PATH = "<unparseable target>"
+# Carried, as True, by the hit a request registers at its first byte until the request completes.
+PENDING_KEY = "pending"
 DESTINATION_KEYS = ("channel", "channel_id", "chat_id", "To")
 TEXT_KEYS = ("text", "initial_comment", "caption", "Body")
 TEAMS_ACTIVITY_PATH = re.compile(r".*/v3/conversations/([^/]+)/activities")
@@ -394,9 +396,16 @@ def _smtp_greeting(secure: bool) -> bytes:
 class FakeEdge:
     """A loopback provider edge, owned by one recorder run or one test."""
 
-    def __init__(self, root: Path) -> None:
-        """Keep the test authority and its key under ``root``. Nothing is bound until ``start``."""
+    def __init__(
+        self, root: Path, *, on_request_begin: Callable[[str], None] | None = None
+    ) -> None:
+        """Keep the test authority and its key under ``root``. Nothing is bound until ``start``.
+
+        ``on_request_begin`` is called with the host once for every request, after the request's
+        pending hit is in the log and outside the log lock, so it may read ``hits``.
+        """
         self._root = root
+        self._on_request_begin = on_request_begin
         self._authority: _Authority | None = None
         self._scripts: list[_Script] = []
         self._listeners: dict[str, socket.socket] = {}
@@ -553,6 +562,8 @@ class FakeEdge:
         """
         if not reader.peek(1):
             return False
+        if self._on_request_begin is not None:
+            self._on_request_begin(host)
         method = path = UNKNOWN_FIELD
         headers: dict[str, str] = {}
         semantic = empty_semantic()
