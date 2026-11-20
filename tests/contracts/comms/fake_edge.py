@@ -8,10 +8,12 @@ server with implicit TLS and an SMTP server with STARTTLS serve the email adapte
 Every request through the proxy is logged, in arrival order, as host, method, path and its
 sanitized ``semantic`` fields (``http_semantics``): the destination, the message text, the
 attachment filename and the SHA-256 of the uploaded bytes. Headers and raw bodies are never
-logged, so no request credential reaches the log. A request whose target the edge cannot parse,
-whose body it cannot read or whose payload it cannot decode is still logged, with empty
-semantic fields and a ``decode_error`` marker naming the stage and the error type, never the
-error message. The CONNECT itself is not logged. A Telegram bot token in a path is replaced
+logged, so no request credential reaches the log. A request whose head the edge cannot read,
+whose target it cannot parse, whose body it cannot read or whose payload it cannot decode is
+still logged, with empty semantic fields and a ``decode_error`` marker naming the stage and the
+error type, never the error message. What such a request never revealed, and a target that
+cannot be parsed, is logged as a fixed placeholder. A tunnel that carries no byte of a request
+logs nothing, and the CONNECT itself is not logged. A Telegram bot token in a path is replaced
 before the log keeps the path. Any host or path no script names answers HTTP 200 with a
 generic JSON body.
 """
@@ -23,6 +25,7 @@ import datetime as dt
 import email
 import email.policy
 import hashlib
+import io
 import ipaddress
 import json
 import re
@@ -312,19 +315,28 @@ class _Authority:
             return context
 
 
+def _read_request_line(reader: BinaryIO) -> str:
+    """One request line without its line ending."""
+    return reader.readline(MAX_LINE_BYTES).decode("latin-1").rstrip("\r\n")
+
+
+def _read_headers(reader: BinaryIO) -> dict[str, str]:
+    """The header block after a request line, with names lowercased."""
+    headers: dict[str, str] = {}
+    while True:
+        line = reader.readline(MAX_LINE_BYTES)
+        if line in (b"", b"\r\n", b"\n"):
+            return headers
+        name, _, value = line.decode("latin-1").partition(":")
+        headers[name.strip().lower()] = value.strip()
+
+
 def _read_head(reader: BinaryIO) -> tuple[str, dict[str, str]] | None:
     """One request line and its headers, with names lowercased; None at end of stream."""
     first = reader.readline(MAX_LINE_BYTES)
     if not first:
         return None
-    headers: dict[str, str] = {}
-    while True:
-        line = reader.readline(MAX_LINE_BYTES)
-        if line in (b"", b"\r\n", b"\n"):
-            break
-        name, _, value = line.decode("latin-1").partition(":")
-        headers[name.strip().lower()] = value.strip()
-    return first.decode("latin-1").rstrip("\r\n"), headers
+    return first.decode("latin-1").rstrip("\r\n"), _read_headers(reader)
 
 
 def _read_body(reader: BinaryIO, headers: dict[str, str]) -> bytes:
@@ -529,25 +541,31 @@ class FakeEdge:
         finally:
             reader.close()
 
-    def _serve_request(self, tls: ssl.SSLSocket, reader: BinaryIO, host: str) -> bool:
+    def _serve_request(self, tls: ssl.SSLSocket, reader: io.BufferedReader, host: str) -> bool:
         """Answer one tunnelled request; False when the tunnel closes after it.
 
-        Every request whose head arrives is logged exactly once, in the ``finally`` that every
-        exit passes through. A failure at any stage (target parse, body read, payload decode)
-        leaves empty semantic fields and a marker naming that stage and the error type.
+        A request begins with its first byte. A tunnel that ends, idles out or resets before
+        one carries no request and logs nothing. Every request that begins is logged exactly
+        once, in the ``finally`` that every later exit passes through. A failure at any stage
+        (head read, target parse, body read, payload decode) leaves empty semantic fields and a
+        marker naming that stage and the error type. Until the head is read the method and path
+        are ``UNKNOWN_FIELD``; a target that cannot be parsed is logged as ``UNPARSEABLE_PATH``.
         """
-        head = _read_head(reader)
-        if head is None:
+        if not reader.peek(1):
             return False
-        request_line, headers = head
-        method, _, rest = request_line.partition(" ")
-        target = rest.rpartition(" ")[0] or rest
-        # The target with no query, logged when the target itself cannot be parsed.
-        path = target.partition("?")[0] or "/"
+        method = path = UNKNOWN_FIELD
+        headers: dict[str, str] = {}
         semantic = empty_semantic()
-        stage = "target"
+        stage = "head"
         failure: Exception | None = None
         try:
+            request_line = _read_request_line(reader)
+            headers = _read_headers(reader)
+            method, _, rest = request_line.partition(" ")
+            target = rest.rpartition(" ")[0] or rest
+            stage = "target"
+            # The raw target can carry userinfo or other credential text, so it is never logged.
+            path = UNPARSEABLE_PATH
             path = urlsplit(target).path or "/"
             stage = "body"
             body = _read_body(reader, headers)

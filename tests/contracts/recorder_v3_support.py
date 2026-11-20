@@ -244,7 +244,7 @@ class ProviderEdgeCapture:
         ]
 
     def drain(self) -> list[dict[str, Any]]:
-        """Return the listed hits once the log has been quiet for the quiet period, or at the cap."""
+        """Return the listed hits once the log is quiet for the quiet period, or at the cap."""
         started = time.monotonic()
         seen, last_change = len(self._edge.hits()), started
         while True:
