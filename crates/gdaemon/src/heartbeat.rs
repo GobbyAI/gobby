@@ -314,6 +314,11 @@ async fn cancel_for_lost_lease(name: &str, run: &mut Run) {
 }
 
 /// Aborts the active child and joins it.
+///
+/// A rule of the job contract for leased-family jobs: aborting the child cancels only its
+/// task. Work it already dispatched to a blocking thread or already sent as SQL (the node
+/// hook spool prune's `spawn_blocking` is an example of such work) is neither cancelled nor
+/// joined, so it must be safe to finish after a lost lease or be fenced by its own SQL.
 async fn abort(run: &mut Run) {
     run.0.abort();
     // The join reports the cancellation this abort caused.

@@ -211,7 +211,15 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   the lease watch, so once the lease is no longer held the running job is cancelled
   and no job starts again. Lease loss wins over shutdown: the fence is watched
   through the drain grace, and a loss that is ready with the stop or arrives during
-  the drain aborts and joins the running job at once.
+  the drain aborts and joins the running job at once, and a job whose result is
+  ready in the same poll as the loss is logged as cancelled, not reported. The
+  lease keeps its heartbeat through the worker drain and the `before_release` hook
+  until release, so a database session that ends there publishes Lost and the
+  fence aborts the running job. Aborting a job cancels only its task: work it
+  already dispatched to a blocking thread or already sent as SQL (the node hook
+  spool prune's `spawn_blocking` is an example of such work) is neither cancelled
+  nor joined, so a leased-family job's work must be safe to finish after a lost
+  lease or be fenced by its own SQL.
 - Pool. A family queries through `FamilyContext::serve_pool`, the shared serve pool.
   Each native pool takes `POOL_SHARE` connections from the budget that
   `gobby_core::database_concurrency::pool_budget` resolves from the stored
@@ -221,7 +229,10 @@ impl<S: Clone + Send + Sync + 'static> RouteFamily<S> for TasksFamily {
   whose namespace is `gobby.<family>` and whose counters and histograms carry a
   `family` label in `gobby_core::telemetry`. A family logs through `tracing` under a
   `gobby` target, which is the only namespace the routed log files record, and never
-  prints to stderr.
+  prints to stderr. The configured log directory and its parents must be writable
+  only by the daemon's user: the writer follows symbolic links and opens
+  non-regular files on every open and reopen, as the Python writer does. Shared
+  log directories are not supported.
 - Errors. A family maps its failures onto the `DomainError` classes and renders
   them through the `gobby_core::domain_error` adapters
   (`docs/contracts/domain-errors.md`). It defines no error framework or status

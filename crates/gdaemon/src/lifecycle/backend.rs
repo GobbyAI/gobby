@@ -34,6 +34,7 @@ use tokio::{
 
 #[cfg(unix)]
 mod handshake;
+mod monitor;
 
 use handshake::HandshakeStep;
 
@@ -247,7 +248,9 @@ impl BackendSupervisor {
             return Ok(SupervisorExit::Standby);
         }
         let result = self.supervise(&mut shutdown).await;
-        before_release(result.as_ref().ok().copied()).await;
+        // The lease keeps its heartbeat until release, so a loss during the hook is published.
+        let exit = result.as_ref().ok().copied();
+        self.heartbeat_through(exit, before_release(exit)).await;
         // release takes the dedicated connection before awaiting, so failures and
         // cancellation cannot retain the advisory lock. Keep the machine claim
         // through lease loss and sticky refusal; release it on stop or error.
@@ -381,7 +384,8 @@ impl BackendSupervisor {
                         if let Some((_, seen)) = announced
                             && seen.elapsed() >= self.config.exit_grace
                         {
-                            break (backend.drain(self.config.drain_timeout).await?, true);
+                            let drain = backend.drain(self.config.drain_timeout);
+                            break (self.heartbeat_through(None, drain).await?, true);
                         }
                     }
                     _ = reports.tick() => {
@@ -471,7 +475,9 @@ impl BackendSupervisor {
         backend: &mut BackendChild,
         markers: &mut IntentMarker,
     ) -> Result<SupervisorExit> {
-        backend.drain(self.config.drain_timeout).await?;
+        // The lease keeps its heartbeat through the drain, as through the pre-release hook.
+        self.heartbeat_through(None, backend.drain(self.config.drain_timeout))
+            .await?;
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
         if matches!(
             markers.after_exit(now).await?,
