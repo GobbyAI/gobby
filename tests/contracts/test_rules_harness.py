@@ -3,9 +3,9 @@
 Each test pins one property the recorder or the case loader must hold whatever the corpus
 holds: a case runs through the entry it names, a handler case carries the domain it runs
 on, a seam caller's guards are evaluated, a fault list is never empty, a ``differs_at``
-path exists in both twins, nothing reaches the recorder's logs after the final pass, and a
-fault-hit guard that names a pass reads that pass's hits. Every case here is synthetic and
-built in this file.
+path exists in at least one twin, nothing reaches the recorder's logs after the final pass,
+and a fault-hit guard reads the last pass's hits unless it names a pass. Every case here is
+synthetic and built in this file.
 """
 
 from __future__ import annotations
@@ -30,7 +30,9 @@ HANDLER_ONLY_PASS_KEYS = ("facts", "observer_failures")
 BASE_ID = "synthetic-harness-base"
 DISPATCH_CASE_ID = path_tests.DISPATCH_CASE_ID
 DISPATCH_PATH = path_tests.DISPATCH_PATH
-ABSENT_FACT = "synthetic_harness_absent_fact"
+# A hub-query fault on the seeded-session read the dispatch caller makes first. The case
+# provides it and the read raises, so the caller stops after exactly one hit.
+SESSION_READ_FAULT = {"kind": "hub_query", "sql_contains": "SELECT id FROM sessions WHERE id"}
 LATE_ENTRY = {"synthetic_harness": "appended after the final pass"}
 
 
@@ -105,33 +107,42 @@ def test_a_case_runs_through_the_entry_it_names(tmp_path: Path) -> None:
 # --- a seam caller's requires guards are evaluated ---------------------------------------
 
 
-def _dispatch_case(requires: list[dict[str, Any]]) -> dict[str, Any]:
+def _dispatch_case(
+    requires: list[dict[str, Any]], faults: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     cases = [case for case in path_tests._cases() if case["id"] == DISPATCH_CASE_ID]
     assert len(cases) == 1, f"one {DISPATCH_CASE_ID} case is required, found {len(cases)}"
     case = copy.deepcopy(cases[0])
     case["requires"] = requires
+    if faults is not None:
+        case["faults"] = faults
     return case
 
 
-def _caller_refusal(requires: list[dict[str, Any]]) -> str | None:
+def _caller_refusal(
+    requires: list[dict[str, Any]], faults: list[dict[str, Any]] | None = None
+) -> str | None:
     try:
-        rules_corpus.replay_case(_dispatch_case(requires))
+        rules_corpus.replay_case(_dispatch_case(requires, faults))
     except AssertionError as exc:
         return str(exc)
     return None
 
 
 def test_a_seam_caller_evaluates_each_requires_guard() -> None:
-    # A seam caller observes no peer, so no held peer_inactive guard is asserted here: the
-    # guard holds only for a known peer that is not active. The held case is the mapping-form
-    # reached guard; the absent fact below proves a non-reached guard is evaluated.
     problems: list[str] = []
     refusal = _caller_refusal([{"reached": {"id": DISPATCH_PATH}}])
     if refusal is not None:
         problems.append(f"a reached guard written as a mapping holds but was refused: {refusal}")
-    refusal = _caller_refusal([{"fact": {"key": ABSENT_FACT, "equals": True}}])
-    if refusal is None or ABSENT_FACT not in refusal:
-        problems.append(f"a fact guard on an absent fact must fail on that fact, got: {refusal!r}")
+    faults = [dict(SESSION_READ_FAULT)]
+    refusal = _caller_refusal([{"fault_hit": {"count": 1}}], faults)
+    if refusal is not None:
+        problems.append(f"a fault_hit guard of one hit holds but was refused: {refusal}")
+    refusal = _caller_refusal([{"fault_hit": {"count": 2}}], faults)
+    if refusal is None or "fault_hit" not in refusal or "hit 1 times" not in refusal:
+        problems.append(
+            f"a fault_hit guard of two hits must fail on the one hit it saw, got: {refusal!r}"
+        )
     assert not problems, "\n".join(problems)
 
 
@@ -169,7 +180,7 @@ def test_the_loader_refuses_an_empty_fault_list(tmp_path: Path) -> None:
     assert not problems, "\n".join(problems)
 
 
-# --- a differs_at path exists in both twins ----------------------------------------------
+# --- a differs_at path exists in at least one twin ---------------------------------------
 
 
 def _twin(metadata: Mapping[str, Any]) -> dict[str, Any]:
@@ -185,16 +196,26 @@ def _twin(metadata: Mapping[str, Any]) -> dict[str, Any]:
     )
 
 
-def test_the_loader_refuses_a_differs_at_path_absent_from_either_twin(tmp_path: Path) -> None:
+def test_the_loader_refuses_a_differs_at_path_absent_from_both_twins(tmp_path: Path) -> None:
+    # A twin may differ from its base by the presence of the key itself, so a path one
+    # member carries is valid; only a path neither member carries is refused.
     flagged = _base()
     flagged["event"]["metadata"] = {"synthetic_flag": False}
     problems = _accepted_problems(
         tmp_path / "both", "a path in both twins", [flagged, _twin({"synthetic_flag": True})]
     )
-    problems += _refusal_problems(
-        tmp_path / "one",
+    problems += _accepted_problems(
+        tmp_path / "twin-only",
         "a path only the twin carries",
         [_base(), _twin({"synthetic_flag": True})],
+    )
+    problems += _accepted_problems(
+        tmp_path / "base-only", "a path only the base carries", [flagged, _twin({})]
+    )
+    problems += _refusal_problems(
+        tmp_path / "neither",
+        "a path neither twin carries",
+        [_base(), _twin({})],
         "synthetic-harness-twin",
         "differs_at",
     )
@@ -235,7 +256,7 @@ def test_the_recorder_refuses_a_log_entry_after_the_final_pass() -> None:
     assert not problems, "\n".join(problems)
 
 
-# --- a fault-hit guard that names a pass reads that pass's hits --------------------------
+# --- a fault-hit guard reads the last pass's hits unless it names a pass -----------------
 
 
 def _faulted_run(hits_per_pass: list[int]) -> rules_handler.CaseRun:
@@ -266,15 +287,18 @@ def _guard_refusal(requires: Mapping[str, Any], run: rules_handler.CaseRun) -> s
     return None
 
 
-def test_a_fault_hit_guard_that_names_a_pass_reads_that_pass_only() -> None:
-    run = _faulted_run([1, 0])
+def test_a_fault_hit_guard_reads_the_last_pass_unless_it_names_one() -> None:
     problems: list[str] = []
-    for requires in ({"fault_hit": True}, {"fault_hit": {"pass": 0}}):
-        refusal = _guard_refusal(requires, run)
-        if refusal is not None:
-            problems.append(f"{requires}: the fault was hit and the guard refused: {refusal}")
-    if _guard_refusal({"fault_hit": {"pass": 1}}, run) is None:
-        problems.append("a fault hit only on pass 0 satisfied a fault_hit guard on pass 1")
-    if _guard_refusal({"fault_hit": {"pass": 0, "count": 1}}, _faulted_run([1, 1])) is not None:
-        problems.append("one hit on pass 0 failed a pass-0 count of 1 because pass 1 hit too")
+    for hits, requires, holds in (
+        ([1, 0], {"fault_hit": True}, False),
+        ([1, 0], {"fault_hit": {"pass": 0}}, True),
+        ([0, 1], {"fault_hit": True}, True),
+        ([0, 1], {"fault_hit": {"pass": 0}}, False),
+        ([1, 1], {"fault_hit": {"pass": 0, "count": 1}}, True),
+    ):
+        refusal = _guard_refusal(requires, _faulted_run(hits))
+        if holds and refusal is not None:
+            problems.append(f"hits {hits}: {requires} holds but was refused: {refusal}")
+        if not holds and refusal is None:
+            problems.append(f"hits {hits}: {requires} does not hold but was accepted")
     assert not problems, "\n".join(problems)
