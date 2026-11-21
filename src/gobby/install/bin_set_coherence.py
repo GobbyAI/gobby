@@ -279,7 +279,7 @@ def _member_preparer(
 
     The stamp is captured from the signed copy, because that copy is the one swapped in.
     """
-    extra = prepare_staged.get(member) if prepare_staged is not None else None
+    caller_hook = prepare_staged.get(member) if prepare_staged is not None else None
 
     def prepare(staged: Path) -> None:
         _codesign_workspace_binary(staged)
@@ -291,8 +291,8 @@ def _member_preparer(
             except RuntimeStampUnsupportedError:
                 if not allow_unstamped_ghook:
                     raise
-        if extra is not None:
-            extra(staged)
+        if caller_hook is not None:
+            caller_hook(staged)
 
     return prepare
 
