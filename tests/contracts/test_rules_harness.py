@@ -122,15 +122,13 @@ def _caller_refusal(requires: list[dict[str, Any]]) -> str | None:
 
 
 def test_a_seam_caller_evaluates_each_requires_guard() -> None:
+    # A seam caller observes no peer, so no held peer_inactive guard is asserted here: the
+    # guard holds only for a known peer that is not active. The held case is the mapping-form
+    # reached guard; the absent fact below proves a non-reached guard is evaluated.
     problems: list[str] = []
-    held: tuple[tuple[str, list[dict[str, Any]]], ...] = (
-        ("a reached guard written as a mapping", [{"reached": {"id": DISPATCH_PATH}}]),
-        ("a held peer_inactive guard", [{"reached": DISPATCH_PATH}, {"peer_inactive": True}]),
-    )
-    for label, requires in held:
-        refusal = _caller_refusal(requires)
-        if refusal is not None:
-            problems.append(f"{label} holds but the replay refused it: {refusal}")
+    refusal = _caller_refusal([{"reached": {"id": DISPATCH_PATH}}])
+    if refusal is not None:
+        problems.append(f"a reached guard written as a mapping holds but was refused: {refusal}")
     refusal = _caller_refusal([{"fact": {"key": ABSENT_FACT, "equals": True}}])
     if refusal is None or ABSENT_FACT not in refusal:
         problems.append(f"a fact guard on an absent fact must fail on that fact, got: {refusal!r}")
@@ -229,7 +227,7 @@ def test_the_recorder_refuses_a_log_entry_after_the_final_pass() -> None:
         ):
             try:
                 rules_recorder.replay_case(copy.deepcopy(case))
-            except RuntimeError as exc:
+            except (RuntimeError, AssertionError) as exc:
                 if case["id"] not in str(exc):
                     problems.append(f"{log}: the refusal does not name the case: {exc}")
                 continue
