@@ -129,7 +129,34 @@
             }
           }
         ]
-      }
+      },
+      "known_bad": [
+        "known-bad-d45a6fbd1961"
+      ],
+      "known_bad_expect": [
+        {
+          "row": "known-bad-d45a6fbd1961",
+          "path": "effect_log",
+          "classification": "extends"
+        },
+        {
+          "row": "known-bad-d45a6fbd1961",
+          "path": "response.context",
+          "classification": "unpinned",
+          "reason": "the detector would run under the one-second floor against a real process start; the floor arithmetic is pinned by the boundary case synthetic-deadline-run-command-floor"
+        },
+        {
+          "row": "known-bad-d45a6fbd1961",
+          "path": "passes.0.effect_log",
+          "classification": "extends"
+        },
+        {
+          "row": "known-bad-d45a6fbd1961",
+          "path": "passes.0.response.context",
+          "classification": "unpinned",
+          "reason": "the detector would run under the one-second floor against a real process start; the floor arithmetic is pinned by the boundary case synthetic-deadline-run-command-floor"
+        }
+      ]
     },
     {
       "id": "synthetic-deadline-run-command-floor",

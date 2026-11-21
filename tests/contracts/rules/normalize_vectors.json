@@ -22198,6 +22198,269 @@
         "kwargs": {}
       },
       "expect": "/srv/app/lib"
+    },
+    {
+      "id": "known-bad-vector-b36c9397a142",
+      "entry": "gobby.hooks.normalization.normalize_tool_fields",
+      "input": {
+        "args": [
+          {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "bash -lc \"echo x | { cd sub; }; touch z.py\""
+            },
+            "cwd": "{repo}",
+            "project_path": "{repo}"
+          }
+        ]
+      },
+      "result_from_arg": 0,
+      "setup": {
+        "git_repo": true,
+        "files": {
+          "src/fixture.py": {
+            "repeat": "value = 1\n",
+            "count": 60
+          },
+          "sub/.keep": ""
+        }
+      },
+      "metadata": {
+        "reason": "replays a known-bad row input; the expect is the Python value"
+      },
+      "expect": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "bash -lc \"echo x | { cd sub; }; touch z.py\"",
+          "file_path": "z.py"
+        },
+        "cwd": "{repo}",
+        "project_path": "{repo}",
+        "_raw_tool_input": {
+          "command": "bash -lc \"echo x | { cd sub; }; touch z.py\""
+        },
+        "command": "bash -lc \"echo x | { cd sub; }; touch z.py\"",
+        "canonical_tool_kind": "write",
+        "canonical_tool_confidence": "high",
+        "canonical_file_paths": [
+          "z.py"
+        ],
+        "canonical_file_path": "z.py",
+        "canonical_write_file_paths": [
+          "z.py"
+        ],
+        "canonical_write_file_path": "z.py",
+        "canonical_repo_mutation": true,
+        "canonical_read_only": false,
+        "canonical_code_navigation_segments": [],
+        "tool_outcome": {
+          "status": "unknown"
+        }
+      },
+      "known_bad": [
+        "known-bad-b36c9397a142"
+      ],
+      "known_bad_expect": [
+        {
+          "row": "known-bad-b36c9397a142",
+          "path": "canonical_repo_mutation_scope_unknown",
+          "correct": true,
+          "from": {
+            "row": "known-bad-b36c9397a142",
+            "field": "correct"
+          }
+        }
+      ]
+    },
+    {
+      "id": "known-bad-vector-1f79ed390d5a",
+      "entry": "gobby.hooks.provider_launch_guard.blocks_direct_provider_launch",
+      "input": {
+        "args": [
+          "Bash",
+          {
+            "command": "repeat 1 claude -p hi"
+          }
+        ]
+      },
+      "metadata": {
+        "reason": "replays a known-bad row input; the expect is the Python value"
+      },
+      "expect": false,
+      "known_bad": [
+        "known-bad-1f79ed390d5a"
+      ],
+      "known_bad_expect": [
+        {
+          "row": "known-bad-1f79ed390d5a",
+          "path": "",
+          "correct": true,
+          "from": {
+            "row": "known-bad-1f79ed390d5a",
+            "field": "correct"
+          }
+        }
+      ]
+    },
+    {
+      "id": "known-bad-vector-b95a55516a5c",
+      "entry": "gobby.hooks.provider_launch_guard.blocks_direct_provider_launch",
+      "input": {
+        "args": [
+          "Bash",
+          {
+            "command": "for i j (1 2) claude -p hi"
+          }
+        ]
+      },
+      "metadata": {
+        "reason": "replays a known-bad row input; the expect is the Python value"
+      },
+      "expect": false,
+      "known_bad": [
+        "known-bad-b95a55516a5c"
+      ],
+      "known_bad_expect": [
+        {
+          "row": "known-bad-b95a55516a5c",
+          "path": "",
+          "correct": true,
+          "from": {
+            "row": "known-bad-b95a55516a5c",
+            "field": "correct"
+          }
+        }
+      ]
+    },
+    {
+      "id": "known-bad-vector-4ceb0723b8f9",
+      "entry": "gobby.hooks.normalization.normalize_tool_fields",
+      "input": {
+        "args": [
+          {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "uv lock"
+            },
+            "cwd": "{repo}",
+            "project_path": "{repo}"
+          }
+        ]
+      },
+      "result_from_arg": 0,
+      "setup": {
+        "git_repo": true,
+        "files": {
+          "src/fixture.py": {
+            "repeat": "value = 1\n",
+            "count": 60
+          },
+          "sub/.keep": ""
+        }
+      },
+      "metadata": {
+        "reason": "replays a known-bad row input; the expect is the Python value"
+      },
+      "expect": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "uv lock"
+        },
+        "cwd": "{repo}",
+        "project_path": "{repo}",
+        "_raw_tool_input": {
+          "command": "uv lock"
+        },
+        "command": "uv lock",
+        "canonical_tool_kind": "write",
+        "canonical_tool_confidence": "high",
+        "canonical_repo_mutation": true,
+        "canonical_read_only": false,
+        "canonical_code_navigation_segments": [],
+        "canonical_repo_mutation_scope_unknown": true,
+        "tool_outcome": {
+          "status": "unknown"
+        }
+      },
+      "known_bad": [
+        "known-bad-4ceb0723b8f9"
+      ],
+      "known_bad_expect": [
+        {
+          "row": "known-bad-4ceb0723b8f9",
+          "path": "canonical_repo_mutation_scope_unknown",
+          "correct": false,
+          "from": {
+            "row": "known-bad-4ceb0723b8f9",
+            "field": "correct"
+          }
+        }
+      ]
+    },
+    {
+      "id": "known-bad-vector-857c833813e4",
+      "entry": "gobby.hooks.normalization.normalize_tool_fields",
+      "input": {
+        "args": [
+          {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": "uv sync"
+            },
+            "cwd": "{repo}",
+            "project_path": "{repo}"
+          }
+        ]
+      },
+      "result_from_arg": 0,
+      "setup": {
+        "git_repo": true,
+        "files": {
+          "src/fixture.py": {
+            "repeat": "value = 1\n",
+            "count": 60
+          },
+          "sub/.keep": ""
+        }
+      },
+      "metadata": {
+        "reason": "replays a known-bad row input; the expect is the Python value"
+      },
+      "expect": {
+        "tool_name": "Bash",
+        "tool_input": {
+          "command": "uv sync"
+        },
+        "cwd": "{repo}",
+        "project_path": "{repo}",
+        "_raw_tool_input": {
+          "command": "uv sync"
+        },
+        "command": "uv sync",
+        "canonical_tool_kind": "write",
+        "canonical_tool_confidence": "high",
+        "canonical_repo_mutation": true,
+        "canonical_read_only": false,
+        "canonical_code_navigation_segments": [],
+        "canonical_repo_mutation_scope_unknown": true,
+        "tool_outcome": {
+          "status": "unknown"
+        }
+      },
+      "known_bad": [
+        "known-bad-857c833813e4"
+      ],
+      "known_bad_expect": [
+        {
+          "row": "known-bad-857c833813e4",
+          "path": "canonical_repo_mutation_scope_unknown",
+          "correct": false,
+          "from": {
+            "row": "known-bad-857c833813e4",
+            "field": "correct"
+          }
+        }
+      ]
     }
   ]
 }

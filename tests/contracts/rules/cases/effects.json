@@ -213,7 +213,58 @@
             }
           }
         ]
-      }
+      },
+      "known_bad": [
+        "known-bad-d45a6fbd1961"
+      ],
+      "known_bad_expect": [
+        {
+          "row": "known-bad-d45a6fbd1961",
+          "path": "response.context",
+          "classification": "contains",
+          "value": "synthetic detector saw: echo hi",
+          "from": {
+            "case": "synthetic-run-command-inline-success",
+            "path": "returned.context_parts.0.1"
+          }
+        },
+        {
+          "row": "known-bad-d45a6fbd1961",
+          "path": "effect_log",
+          "classification": "extends",
+          "adds": [
+            {
+              "from": {
+                "case": "synthetic-run-command-inline-success",
+                "path": "effect_log.2"
+              }
+            }
+          ]
+        },
+        {
+          "row": "known-bad-d45a6fbd1961",
+          "path": "passes.0.response.context",
+          "classification": "contains",
+          "value": "synthetic detector saw: echo hi",
+          "from": {
+            "case": "synthetic-run-command-inline-success",
+            "path": "returned.context_parts.0.1"
+          }
+        },
+        {
+          "row": "known-bad-d45a6fbd1961",
+          "path": "passes.0.effect_log",
+          "classification": "extends",
+          "adds": [
+            {
+              "from": {
+                "case": "synthetic-run-command-inline-success",
+                "path": "effect_log.2"
+              }
+            }
+          ]
+        }
+      ]
     },
     {
       "id": "synthetic-effect-set-variable",
@@ -1825,7 +1876,22 @@
             }
           }
         ]
-      }
+      },
+      "known_bad": [
+        "known-bad-d45a6fbd1961"
+      ],
+      "known_bad_expect": [
+        {
+          "row": "known-bad-d45a6fbd1961",
+          "path": "effect_log",
+          "classification": "extends"
+        },
+        {
+          "row": "known-bad-d45a6fbd1961",
+          "path": "passes.0.effect_log",
+          "classification": "extends"
+        }
+      ]
     },
     {
       "id": "synthetic-effect-proxy-hook",

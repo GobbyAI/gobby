@@ -1,0 +1,308 @@
+{
+  "schema_version": 1,
+  "rows": [
+    {
+      "id": "known-bad-b36c9397a142",
+      "ref": "#24177",
+      "entry": "gobby.hooks.normalization.normalize_tool_fields",
+      "input": "bash -lc \"echo x | { cd sub; }; touch z.py\"",
+      "field": "canonical_repo_mutation_scope_unknown",
+      "python_observed": null,
+      "correct": true,
+      "control": {
+        "input": "cd \"$X\"; touch z.py",
+        "python_observed": true
+      },
+      "dependent_paths": []
+    },
+    {
+      "id": "known-bad-40bc71234c2c",
+      "ref": "#24298",
+      "entry": "gobby.workflows.git_commit_parsing.parse_git_commit_invocations",
+      "input": "Git commit -m x foreign.txt",
+      "field": "count",
+      "python_observed": 0,
+      "correct": 1,
+      "control": {
+        "input": "git commit -m x foreign.txt",
+        "python_observed": 1
+      },
+      "dependent_paths": []
+    },
+    {
+      "id": "known-bad-13ed5b7663cb",
+      "ref": "#24298",
+      "entry": "gobby.workflows.git_commit_parsing.parse_git_commit_invocations",
+      "input": "/usr/bin/GIT commit -m x foreign.txt",
+      "field": "count",
+      "python_observed": 0,
+      "correct": 1,
+      "control": {
+        "input": "/usr/bin/git commit -m x foreign.txt",
+        "python_observed": 1
+      },
+      "dependent_paths": []
+    },
+    {
+      "id": "known-bad-e65a7b801e9c",
+      "ref": "#24298",
+      "entry": "gobby.workflows.git_commit_parsing.parse_git_commit_invocations",
+      "input": "env -S 'git commit -m x foreign.txt'",
+      "field": "count",
+      "python_observed": 0,
+      "correct": 1,
+      "control": {
+        "input": "env git commit -m x foreign.txt",
+        "python_observed": 1
+      },
+      "dependent_paths": []
+    },
+    {
+      "id": "known-bad-aa3c452615e6",
+      "ref": "#24298",
+      "entry": "gobby.workflows.git_commit_parsing.parse_git_commit_invocations",
+      "input": "trap 'git commit -m x foreign.txt' EXIT",
+      "field": "count",
+      "python_observed": 0,
+      "correct": 1,
+      "control": {
+        "input": "bash -c 'git commit -m x foreign.txt'",
+        "python_observed": 1
+      },
+      "dependent_paths": []
+    },
+    {
+      "id": "known-bad-4364114463a3",
+      "ref": "#24298",
+      "entry": "gobby.workflows.git_commit_parsing.parse_git_commit_invocations",
+      "input": "echo commit -m x foreign.txt | xargs git",
+      "field": "count",
+      "python_observed": 0,
+      "correct": 1,
+      "control": {
+        "input": "xargs git commit -m x foreign.txt < list",
+        "python_observed": 1
+      },
+      "dependent_paths": []
+    },
+    {
+      "id": "known-bad-1f79ed390d5a",
+      "ref": "#24299",
+      "entry": "gobby.hooks.provider_launch_guard.blocks_direct_provider_launch",
+      "input": "repeat 1 claude -p hi",
+      "field": "result",
+      "python_observed": false,
+      "correct": true,
+      "control": {
+        "input": "claude -p hi",
+        "python_observed": true
+      },
+      "dependent_paths": [],
+      "demonstration": {
+        "rules": [
+          {
+            "name": "synthetic-kb-launch-guard",
+            "event": "before_tool",
+            "when": "blocks_direct_provider_launch(event.data.get('tool_name'), event.data.get('tool_input'))",
+            "effects": [
+              {
+                "type": "block",
+                "reason": "synthetic launch refused"
+              }
+            ]
+          }
+        ],
+        "event": {
+          "type": "before_tool",
+          "source": "claude",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": ""
+            }
+          },
+          "metadata": {}
+        },
+        "expect": {
+          "input": "allow",
+          "control": "block"
+        },
+        "correct_input": "block"
+      }
+    },
+    {
+      "id": "known-bad-b95a55516a5c",
+      "ref": "#24299",
+      "entry": "gobby.hooks.provider_launch_guard.blocks_direct_provider_launch",
+      "input": "for i j (1 2) claude -p hi",
+      "field": "result",
+      "python_observed": false,
+      "correct": true,
+      "control": {
+        "input": "for i in 1 2; do claude -p hi; done",
+        "python_observed": true
+      },
+      "dependent_paths": [],
+      "demonstration": {
+        "rules": [
+          {
+            "name": "synthetic-kb-launch-guard",
+            "event": "before_tool",
+            "when": "blocks_direct_provider_launch(event.data.get('tool_name'), event.data.get('tool_input'))",
+            "effects": [
+              {
+                "type": "block",
+                "reason": "synthetic launch refused"
+              }
+            ]
+          }
+        ],
+        "event": {
+          "type": "before_tool",
+          "source": "claude",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": ""
+            }
+          },
+          "metadata": {}
+        },
+        "expect": {
+          "input": "allow",
+          "control": "block"
+        },
+        "correct_input": "block"
+      }
+    },
+    {
+      "id": "known-bad-72f46275132c",
+      "ref": "#24772",
+      "entry": "gobby.workflows.approval_brace_guard.approval_command_word_expansion",
+      "input": "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.x GIT_CONFIG_VALUE_0='!gobby' git x se$()ssions $D s7 --checkout /repo a.txt",
+      "field": "result",
+      "python_observed": false,
+      "correct": true,
+      "control": {
+        "input": "gobby se$()ssions approve-dirty-paths s7 --checkout /repo a.txt",
+        "python_observed": true
+      },
+      "dependent_paths": [],
+      "demonstration": {
+        "rules": [
+          {
+            "name": "synthetic-kb-word-expansion",
+            "event": "before_tool",
+            "when": "approval_command_word_expansion(event.data.get('tool_input', {}).get('command', ''))",
+            "effects": [
+              {
+                "type": "block",
+                "reason": "synthetic word expansion refused"
+              }
+            ]
+          }
+        ],
+        "event": {
+          "type": "before_tool",
+          "source": "claude",
+          "data": {
+            "tool_name": "Bash",
+            "tool_input": {
+              "command": ""
+            }
+          },
+          "metadata": {}
+        },
+        "expect": {
+          "input": "allow",
+          "control": "block"
+        },
+        "correct_input": "block"
+      }
+    },
+    {
+      "id": "known-bad-4ceb0723b8f9",
+      "ref": "unfiled:uv-lock-sync-scope-unknown",
+      "entry": "gobby.hooks.normalization.normalize_tool_fields",
+      "input": "uv lock",
+      "field": "canonical_repo_mutation_scope_unknown",
+      "python_observed": true,
+      "correct": false,
+      "control": {
+        "input": "uv --version",
+        "python_observed": null
+      },
+      "dependent_paths": []
+    },
+    {
+      "id": "known-bad-857c833813e4",
+      "ref": "unfiled:uv-lock-sync-scope-unknown",
+      "entry": "gobby.hooks.normalization.normalize_tool_fields",
+      "input": "uv sync",
+      "field": "canonical_repo_mutation_scope_unknown",
+      "python_observed": true,
+      "correct": false,
+      "control": {
+        "input": "uv --version",
+        "python_observed": null
+      },
+      "dependent_paths": []
+    },
+    {
+      "id": "known-bad-d45a6fbd1961",
+      "ref": "unfiled:frozen-run-command-payload",
+      "entry": "gobby.workflows.engine.run_command.build_run_command_payload",
+      "input": "echo hi",
+      "input_form": "frozen_event",
+      "field": "raised",
+      "python_observed": "TypeError",
+      "correct": null,
+      "control": {
+        "input": "echo hi",
+        "input_form": "live_event",
+        "python_observed": null
+      },
+      "dependent_paths": [
+        "response.context",
+        "response.context_parts",
+        "effect_log",
+        "audit_records",
+        "passes"
+      ]
+    },
+    {
+      "id": "known-bad-d4e670a9a8cf",
+      "ref": "unfiled:proxy-duplicate-before-tool-agent-identity",
+      "entry": "gobby.mcp_proxy.services.result_handling.build_before_tool_event",
+      "input": "synthetic-subagent-a1",
+      "input_form": "admitted_by_hook",
+      "field": "duplicate_identity",
+      "python_observed": {
+        "duplicate": true,
+        "agent_id_present": false,
+        "agent_id": null,
+        "decision": "block"
+      },
+      "correct": {
+        "duplicate": true,
+        "agent_id_present": true,
+        "agent_id": "synthetic-subagent-a1",
+        "decision": "allow"
+      },
+      "accepts": [
+        "not_reevaluated"
+      ],
+      "control": {
+        "input": "synthetic-subagent-a1",
+        "input_form": "no_prior_admission",
+        "python_observed": {
+          "duplicate": false,
+          "agent_id_present": false,
+          "agent_id": null,
+          "decision": "block"
+        }
+      },
+      "dependent_paths": []
+    }
+  ]
+}

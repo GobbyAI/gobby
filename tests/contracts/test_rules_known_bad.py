@@ -70,10 +70,11 @@ REQUIRED_ROW_KEYS = (
     "dependent_paths",
 )
 ENGINE_ENTRY_PREFIXES = ("gobby.hooks.", "gobby.workflows.")
+BUILD_BEFORE_TOOL_EVENT = "gobby.mcp_proxy.services.result_handling.build_before_tool_event"
 ENGINE_ENTRY_EXCEPTIONS: Mapping[str, str] = {
-    "gobby.mcp_proxy.services.result_handling.build_before_tool_event": (
-        "builds the before_tool event the rule engine evaluates for a direct MCP call; "
-        "addendum 2026-11-19 15:32"
+    BUILD_BEFORE_TOOL_EVENT: (
+        "builds the before_tool event the rule engine evaluates for a direct MCP call, so its "
+        "flaw is visible only as a rule decision"
     ),
 }
 PROXY_ROUTE_FORMS = ("admitted_by_hook", "no_prior_admission")
@@ -101,6 +102,9 @@ RAISED_FIELD = "raised"
 FROZEN_FORM = "frozen_event"
 LIVE_FORM = "live_event"
 VECTOR_REASON = "replays a known-bad row input; the expect is the Python value"
+# One affected-case pass replays every committed case of three layers and every vector
+# (about 340 s on the test hub), beyond the suite's 300 s default.
+REPLAY_TIMEOUT_SECONDS = 1800
 
 PROXY_SERVER = "synthetic-server"
 PROXY_TOOL = "synthetic-tool"
@@ -327,7 +331,10 @@ async def _observe_proxy_route(
                 return hook_manager
 
             service = ToolProxyService(client_manager, hook_manager_resolver=resolver)
-            with mock.patch.object(handler, "evaluate", new=recording_evaluate):
+            with (
+                mock.patch.object(handler, "evaluate", new=recording_evaluate),
+                _recording_event_builder() as built,
+            ):
                 _, _, _, error, outcome = await apply_before_tool_enforcement(
                     service, PROXY_SERVER, PROXY_TOOL, dict(PROXY_ARGUMENTS), session_id
                 )
@@ -358,7 +365,29 @@ async def _observe_proxy_route(
         "route_external_id": route_event.metadata.get("external_id"),
         "route_project_id": route_event.project_id,
         "route_evaluations": len(seen),
+        "built_events": len(built),
+        "route_event_built_by_entry": any(event is route_event for event in built),
     }
+
+
+@contextlib.contextmanager
+def _recording_event_builder() -> Iterator[list[HookEvent]]:
+    """Wrap the row's entry at every binding site and keep each event it returns."""
+    module, _, name = BUILD_BEFORE_TOOL_EVENT.rpartition(".")
+    reference = f"{module}:{name}"
+    original = rules_paths.resolve(reference)
+    built: list[HookEvent] = []
+
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        event = original(*args, **kwargs)
+        built.append(event)
+        return event
+
+    with contextlib.ExitStack() as stack:
+        for site in sorted(rules_paths.binding_sites(reference)):
+            owner, attribute = rules_paths.owner_and_attr(site)
+            stack.enter_context(mock.patch.object(owner, attribute, wrapper))
+        yield built
 
 
 def _proxy_before_tool_observation(
@@ -540,10 +569,11 @@ def _lookup(value: Any, path: str) -> Any:
 
 
 def _resolves(expect: Any, path: str) -> bool:
+    """The path resolves, or names a key Python did not write in a mapping that resolves."""
     if _lookup(expect, path) is not _MISSING:
         return True
-    parent = ".".join(_path_parts(path)[:-1])
-    return bool(parent) and _lookup(expect, parent) is not _MISSING
+    parts = _path_parts(path)
+    return bool(parts) and isinstance(_lookup(expect, ".".join(parts[:-1])), Mapping)
 
 
 def _under(path: str, roots: Sequence[str]) -> bool:
@@ -734,6 +764,7 @@ def test_each_row_has_a_differing_control() -> None:
         )
 
 
+@pytest.mark.timeout(REPLAY_TIMEOUT_SECONDS)
 def test_affected_corpus_cases_marked_known_bad() -> None:
     rows = _rows()
     row_ids = {row["id"] for row in rows}
@@ -775,6 +806,18 @@ def _vector_result(expect: Any) -> Any:
     if isinstance(expect, Mapping) and "result" in expect:
         return expect["result"]
     return expect
+
+
+def _vector_field_path(row: Mapping[str, Any], expect: Any) -> str:
+    """The path into a vector's expect that ``_vector_field`` reads the row's field from."""
+    prefix = "result" if isinstance(expect, Mapping) and "result" in expect else ""
+    result = _vector_result(expect)
+    field = row["field"]
+    if field in ("result", "count"):
+        return prefix
+    if isinstance(result, Mapping):
+        return ".".join(part for part in (prefix, field) if part)
+    return f"mutated_args.0.{field}"
 
 
 def _vector_field(row: Mapping[str, Any], expect: Any) -> Any:
@@ -838,6 +881,7 @@ def _proxy_row() -> dict[str, Any]:
     return found[0]
 
 
+@pytest.mark.timeout(REPLAY_TIMEOUT_SECONDS)
 def test_proxy_duplicate_before_tool_row_drives_the_real_route() -> None:
     row = _proxy_row()
     observation = _proxy_before_tool_observation(row["input"])
@@ -897,6 +941,10 @@ def test_proxy_route_helper_drives_the_production_route() -> None:
     assert other_source["sources"] == ["claude", "codex"], "the route's source follows the row"
     assert other_source["duplicate"] is False, "a different source has no pending context"
     for seen in (admitted, fresh, other_source):
+        assert seen["built_events"] == 1, f"the entry built {seen['built_events']} events"
+        assert seen["route_event_built_by_entry"] is True, (
+            "the evaluated event was not the one build_before_tool_event returned"
+        )
         assert seen["route_tool_name"] == "mcp__gobby__call_tool"
         assert seen["route_external_id"] == PROXY_EXTERNAL_ID
         assert seen["route_project_id"] == rules_seed.SYNTHETIC_PROJECT_ID
@@ -1049,7 +1097,7 @@ def _write_tags(affected: Mapping[str, set[str]], rows: Sequence[Mapping[str, An
         vector["known_bad_expect"] = [
             {
                 "row": row_id,
-                "path": "expect",
+                "path": _vector_field_path(by_id[row_id], vector.get("expect")),
                 "correct": by_id[row_id]["correct"],
                 "from": {"row": row_id, "field": "correct"},
             }
@@ -1058,6 +1106,7 @@ def _write_tags(affected: Mapping[str, set[str]], rows: Sequence[Mapping[str, An
     _dump(VECTORS_PATH, document)
 
 
+@pytest.mark.timeout(REPLAY_TIMEOUT_SECONDS)
 def test_rerecord_known_bad_registry() -> None:
     if os.environ.get(RECORD_ENV) != "1":
         pytest.skip("record mode only: set GOBBY_CORPUS_RECORD=1")

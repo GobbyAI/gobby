@@ -168,6 +168,46 @@ Every rule id starts with `synthetic-`. No case or vector asserts the behavior o
 rule. The bundled rule YAML is loaded through the engine loader only to check that each
 file still validates. Case and vector JSON carry no absolute or transcript paths.
 
+## Known-bad tags
+
+`tests/contracts/rules_known_bad.json` lists engine entries on which Python gives a wrong
+value. Each row names the entry, an input, the field read, Python's value
+(`python_observed`), the value the Rust port must give (`correct`), a control input on which
+Python is right, and `dependent_paths`, the expect paths the flaw can change downstream of
+the entry. A row's `id` is computed from its entry, input form, input and field; tags carry
+the id, never the row's `ref`.
+
+A case or vector whose replay calls a row's entry with the row's input and gets the row's
+flawed value carries `"known_bad": [<row id>, ...]` (sorted) and `known_bad_expect`, a list
+of declarations. The re-record of the registry computes the tags; the declarations on a case
+are hand-written, and those on a vector are written with it because the row determines them.
+A corpus re-record keeps both keys, since it assigns only `expect`.
+
+The Rust harness reads them as one contract:
+
+- At the entry it asserts the row's `correct`. A row's optional `accepts` names an allowed
+  alternative to `correct`; the only member is `not_reevaluated`, for route rows only: the row
+  also passes when the route does not evaluate the already admitted call a second time.
+- A control is unchanged behaviour: the Rust side reproduces each control's
+  `python_observed` exactly. A control carries no `correct`.
+- In a tagged case it asserts the recorded expect exactly at every path no declaration names,
+  and each named path by its declaration. An undeclared difference fails, so a tag never
+  switches a case off and never hides an unrelated regression.
+- A declaration names `row` (in the case's tag), `path` (into `expect`, at or below one of the
+  row's `dependent_paths`) and exactly one of: `correct` with `from` (a case path, vector path
+  or row field whose recorded value proves it), or `classification`: `contains` (`value` tied
+  by `from`), `extends` (the Rust list holds every recorded entry in order and at least one
+  more; `adds` names required members), `unpinned` (with `reason`: not compared until Python
+  is fixed and the case re-recorded) or `unchanged` (with `reason`: the flaw does not reach
+  this case's outcome).
+- A pass case records its response and logs again under `passes`. A top-level declaration has
+  a mirror of the same form under `passes`: response and outcome paths on the last pass, log
+  slices on each pass the flaw changes. A declaration on a per-pass log slice or on the last
+  pass's response has its top-level copy.
+- A condition-helper row carries a `demonstration`: a synthetic rule run on the row input and
+  on the control. Its `correct_input` is the outcome class Rust must give for the row input;
+  Rust asserts `correct_input` and `expect.control`, never `expect.input`.
+
 ## Replay
 
 Replay runs the engine and the normalizers against the committed expect blocks:
