@@ -212,7 +212,13 @@ def test_the_loader_refuses_a_fault_hit_guard_that_is_not_true_or_a_mapping(
     # A false guard would read as its opposite: every fault hit, the same check as true.
     problems: list[str] = []
     accepted: tuple[tuple[str, Any], ...] = (("true", True), ("a count mapping", {"count": 1}))
-    refused: tuple[tuple[str, Any], ...] = (("false", False), ("one", 1), ("a string", "yes"))
+    refused: tuple[tuple[str, Any], ...] = (
+        ("false", False),
+        ("one", 1),
+        ("a string", "yes"),
+        # A misspelt key would be ignored and the guard read as a plain hit check.
+        ("a misspelt key", {"cuont": 2}),
+    )
     for label, value in accepted:
         problems += _accepted_problems(
             tmp_path / f"accepted-{label.replace(' ', '-')}",
