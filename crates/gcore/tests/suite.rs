@@ -19,8 +19,19 @@ mod domain_error_http;
 #[path = "domain_error_internal.rs"]
 mod domain_error_internal;
 
+#[cfg(feature = "route-family")]
+#[path = "domain_error_python.rs"]
+mod domain_error_python;
+
+#[path = "json_dumps.rs"]
+mod json_dumps;
+
 #[path = "mcp_contract.rs"]
 mod mcp_contract;
 
 #[path = "public_boundary.rs"]
 mod public_boundary;
+
+#[cfg(feature = "route-family")]
+#[path = "route_claims.rs"]
+mod route_claims;

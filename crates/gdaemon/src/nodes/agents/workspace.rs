@@ -148,7 +148,10 @@ pub async fn retry_removals(agents: &NodeAgents) -> Result<()> {
         match remove(&record).await {
             Ok(()) => removed.push(run_id),
             Err(error) => {
-                eprintln!("gdaemon node: keeping removal record for run {run_id}: {error:#}");
+                tracing::warn!(
+                    target: "gobby.nodes.agents",
+                    "gdaemon node: keeping removal record for run {run_id}: {error:#}"
+                );
             }
         }
     }

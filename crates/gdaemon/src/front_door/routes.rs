@@ -8,6 +8,7 @@
 //! claims, requests a family's `claims` declines, and every upgrade stay on the hyper
 //! proxy.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::Infallible;
 use std::panic::AssertUnwindSafe;
@@ -23,7 +24,7 @@ use axum::http::{HeaderMap, Method, Response, StatusCode};
 use bytes::Bytes;
 use futures_util::FutureExt;
 use gobby_core::bootstrap::RouteBackend;
-use gobby_core::route_family::ProxiedCheck;
+use gobby_core::route_family::{Credential, Gate, PathMatch, ProxiedCheck, RouteClaim};
 use gobby_terminals::family::{RouteLatch, RouteModeError, WsRoutes};
 use http_body_util::BodyExt;
 use serde_json::Value;
@@ -31,16 +32,15 @@ use tower_service::Service;
 
 use super::FrontDoorState;
 use super::compare::{Outcome, Record};
-use super::health::HealthFamily;
 use super::proxy::{self, ForwardError};
+use super::registry::surfaces;
 
 pub use gobby_core::route_family::RouteFamily;
 
-/// Every family gdaemon implements. Stage 2 leaves add their families here.
-pub static FAMILIES: &[&dyn RouteFamily<FrontDoorState>] = &[&HealthFamily, &TerminalFamily];
+pub use super::registry::FAMILIES;
 
 /// The lifecycle is native; terminal upgrades retain the existing proxy transport.
-struct TerminalFamily;
+pub(super) struct TerminalFamily;
 
 impl RouteFamily<FrontDoorState> for TerminalFamily {
     fn name(&self) -> &'static str {
@@ -74,10 +74,44 @@ pub fn terminal_route(routes: &BTreeMap<String, RouteBackend>) -> RouteBackend {
         .unwrap_or_else(|| TerminalFamily.default_backend())
 }
 
+/// A claim row together with the family that declared it.
+type ClaimRow = (
+    &'static dyn RouteFamily<FrontDoorState>,
+    &'static RouteClaim,
+);
+
 struct Entry {
     family: &'static dyn RouteFamily<FrontDoorState>,
     backend: RouteBackend,
     router: Router,
+}
+
+impl Entry {
+    fn new(
+        family: &'static dyn RouteFamily<FrontDoorState>,
+        backend: RouteBackend,
+        state: &FrontDoorState,
+    ) -> Self {
+        Self {
+            family,
+            backend,
+            router: family
+                .router()
+                .fallback(proxy_fallback)
+                .with_state(state.clone()),
+        }
+    }
+}
+
+/// Exact rows beat segment rows, which beat raw prefixes, which beat rows that match
+/// every path.
+fn specificity(path: PathMatch) -> u8 {
+    match path {
+        PathMatch::Exact(_) => 3,
+        PathMatch::Segment(_) => 2,
+        PathMatch::RawPrefix(_) => 1,
+        PathMatch::Any => 0,
+    }
 }
 
 /// The routing table for one listener.
@@ -91,21 +125,20 @@ impl RouteTable {
         routes: &BTreeMap<String, RouteBackend>,
         state: &FrontDoorState,
     ) -> Self {
-        let entries = families
-            .iter()
-            .map(|&family| Entry {
-                family,
-                backend: routes
-                    .get(family.name())
-                    .copied()
-                    .unwrap_or_else(|| family.default_backend()),
-                router: family
-                    .router()
-                    .fallback(proxy_fallback)
-                    .with_state(state.clone()),
-            })
-            .collect();
-        Self { entries }
+        let selected = families.iter().map(|&family| {
+            let backend = routes
+                .get(family.name())
+                .copied()
+                .unwrap_or_else(|| family.default_backend());
+            Entry::new(family, backend, state)
+        });
+        // The surfaces are pinned Native: no routes-map value changes their answers.
+        let native_surfaces = surfaces()
+            .into_iter()
+            .map(|family| Entry::new(family, RouteBackend::Native, state));
+        Self {
+            entries: selected.chain(native_surfaces).collect(),
+        }
     }
 
     /// Serve one non-upgrade request.
@@ -125,6 +158,62 @@ impl RouteTable {
             (RouteBackend::Compare, true) => compare(entry, state, request).await,
             _ => proxy::forward(state, request).await,
         }
+    }
+
+    /// The family whose claim row answers this request, if any. Only Native entries are
+    /// consulted. The most specific matching row wins; at equal specificity the family
+    /// with the lower `start_rank` wins, and an equal rank keeps the earlier entry.
+    pub fn claim_owner(&self, method: &Method, path: &str, upgrade: bool) -> Option<&'static str> {
+        self.best_claim(|_, claim| claim.matches(method, path, upgrade))
+            .map(|(family, _)| family.name())
+    }
+
+    /// The family and row that answer this request in one claim phase, if any. A row
+    /// qualifies when its gate and credential are the phase's, it matches the request,
+    /// and its family's `claim_enabled` holds for `state`. Only Native entries are
+    /// consulted, and the most specific qualifying row wins, with ties in start order.
+    pub fn claimant(
+        &self,
+        state: &FrontDoorState,
+        method: &Method,
+        path: &str,
+        upgrade: bool,
+        gate: Gate,
+        credential: Credential,
+    ) -> Option<ClaimRow> {
+        self.best_claim(|family, claim| {
+            claim.gate == gate
+                && claim.credential == credential
+                && claim.matches(method, path, upgrade)
+                && family.claim_enabled(state)
+        })
+    }
+
+    /// The most specific row that `accepts`, among Native entries. At equal specificity
+    /// the lower `start_rank` wins, and an equal rank keeps the earlier entry, so ties go
+    /// to start order.
+    fn best_claim(
+        &self,
+        accepts: impl Fn(&'static dyn RouteFamily<FrontDoorState>, &RouteClaim) -> bool,
+    ) -> Option<ClaimRow> {
+        let mut best: Option<((u8, Reverse<u8>), ClaimRow)> = None;
+        for entry in self
+            .entries
+            .iter()
+            .filter(|entry| entry.backend == RouteBackend::Native)
+        {
+            let family = entry.family;
+            for claim in family.route_claims() {
+                if !accepts(family, claim) {
+                    continue;
+                }
+                let key = (specificity(claim.path), Reverse(family.start_rank()));
+                if best.is_none_or(|(best_key, _)| key > best_key) {
+                    best = Some((key, (family, claim)));
+                }
+            }
+        }
+        best.map(|(_, row)| row)
     }
 
     /// The longest claimed prefix wins.

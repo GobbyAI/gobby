@@ -24,7 +24,7 @@ search = []
 graph-analytics = []
 ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "reqwest/multipart"]
 # The `RouteFamily` seam gdaemon and its family crates share.
-route-family = ["dep:axum"]
+route-family = ["dep:axum", "postgres-pool"]
 full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"]
 
 [dependencies]
@@ -35,7 +35,7 @@ libc = "0.2"
 log = "0.4"
 uuid = { version = "1", features = ["v4", "v5"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 schemars = "1.2"
 jsonschema = { version = "0.17", default-features = false }
 serde_yaml = { package = "yaml_serde", version = "0.10.4" }
@@ -48,7 +48,7 @@ postgres-openssl = { version = "0.5", optional = true }
 # DataRow (RUSTSEC-2026-0178).
 tokio-postgres = { version = "0.7.18", optional = true, features = ["with-uuid-1"] }
 deadpool-postgres = { version = "0.14.2", optional = true, features = ["rt_tokio_1"] }
-tokio = { version = "1", optional = true, features = ["rt", "time"] }
+tokio = { version = "1", optional = true, features = ["rt", "sync", "time"] }
 # Non-optional + vendored on purpose: `fernet` (always-compiled, used by
 # `secrets`) pulls `openssl`/`openssl-sys` into *every* dependency graph,
 # including graphs that omit the `postgres` feature (ghook's whole graph,

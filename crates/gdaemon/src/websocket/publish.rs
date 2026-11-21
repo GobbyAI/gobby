@@ -63,7 +63,7 @@ pub async fn handle(native: &NativeWs, request: Request<Body>, peer: SocketAddr)
         let started = Instant::now();
         let response = bind(native, &token, &parts.headers, body).await;
         if let Some(line) = bind_timing_line(started.elapsed(), unix_ms(SystemTime::now())) {
-            eprintln!("{line}");
+            crate::logging::raw_stderr(&line);
         }
         response
     } else {

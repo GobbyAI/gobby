@@ -132,7 +132,10 @@ pub async fn handle(
     match serde_json::to_value(reply) {
         Ok(reply) => json_response(StatusCode::OK, reply, true),
         Err(error) => {
-            eprintln!("could not encode node reply: {error}");
+            tracing::warn!(
+                target: "gobby.nodes.internal_api",
+                "could not encode node reply: {error}"
+            );
             json_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({"error":"reply_encoding"}),

@@ -1,4 +1,4 @@
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use futures_util::FutureExt;
 use gobby_core::postgres_pool::{Pool, PoolSettings};
 use gobby_daemon::lease::{ActiveDaemonLease, LeaseMode, LeaseState};
@@ -542,6 +542,383 @@ async fn failed_transaction_and_drop_release_the_dedicated_session() -> Result<(
     }).await
 }
 
+/// The body of the 409 that refuses an admin promote or recover, and the error of an
+/// acquisition, while this daemon's own lease lifetime is open.
+pub(crate) const LIFETIME_OPEN: &str = "this daemon's lease lifetime has not ended";
+
+/// Ends a lease's dedicated session by its PID, as `lost_connection_reenters_standby` does.
+async fn terminate_session(db: &TestDb, pid: i32) -> Result<()> {
+    let killed: bool = db
+        .admin
+        .query_one("SELECT pg_terminate_backend($1)", &[&pid])
+        .await?
+        .try_get(0)?;
+    ensure!(killed, "the lease session {pid} was not terminated");
+    Ok(())
+}
+
+/// Waits until a probe sees no holder of the lease's PostgreSQL lock. The bound is a hang guard.
+async fn wait_until_unowned(probe: &ActiveDaemonLease) -> Result<()> {
+    timeout(Duration::from_secs(10), async {
+        while probe.owner().await?.is_some() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        anyhow::Ok(())
+    })
+    .await
+    .context("the lease lock was never freed")?
+}
+
+/// Waits until the lease has seen its session's socket close, with nothing heartbeating it.
+async fn wait_until_closed(lease: &ActiveDaemonLease) -> Result<()> {
+    timeout(Duration::from_secs(10), async {
+        while lease.fence().is_some() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .context("the lease never saw its session close")
+}
+
+/// [`wait_until_closed`] for a lease behind its lock, taking the lock for each look.
+#[cfg(unix)]
+async fn wait_until_closed_under_lock(
+    lease: &gobby_daemon::lease::NamedLock<ActiveDaemonLease>,
+) -> Result<()> {
+    timeout(Duration::from_secs(10), async {
+        while lease.lock_as("test").await.fence().is_some() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .context("the lease never saw its session close")
+}
+
+impl TestDb {
+    async fn epoch(&self, token: &str) -> Result<Option<i64>> {
+        Ok(self.runtime_row(token).await?.map(|(epoch, _)| epoch))
+    }
+}
+
+/// A hub runtime whose only lease is `lease`, with a standby backend.
+#[cfg(unix)]
+fn lease_runtime(lease: ActiveDaemonLease) -> gobby_daemon::state::RuntimeState {
+    use gobby_daemon::lease::NamedLock;
+    use gobby_daemon::lifecycle::backend::BackendStatus;
+    use tokio::sync::watch;
+    gobby_daemon::state::RuntimeState {
+        mode: LeaseMode::Hub,
+        lease_state: Some(lease.subscribe()),
+        lease: Some(Arc::new(NamedLock::new(lease))),
+        backend: watch::channel(BackendStatus::Standby).1,
+        backend_wait: watch::channel(None).1,
+        write_token: Default::default(),
+        terminal_route: Default::default(),
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_lease_published_lost_with_a_live_session_is_not_active_and_is_not_reacquired_by_admin()
+-> Result<()> {
+    use super::lifecycle::lease_admin;
+    use axum::http::{Method, StatusCode};
+    database_case(async |db| {
+        let token = Uuid::new_v4().to_string();
+        let lease = db.lease(&token)?;
+        let application = lease.application_name().to_owned();
+        let runtime = lease_runtime(lease);
+        let held = runtime.lease.as_ref().context("the runtime's lease")?;
+        let lifetime = held
+            .lock_as("test")
+            .await
+            .begin_lifetime(None)
+            .await?
+            .context("the first lifetime did not acquire")?;
+        held.lock_as("test").await.loss().publish();
+        let session: i32 = db
+            .admin
+            .query_one(
+                "SELECT pid FROM pg_stat_activity WHERE application_name = $1",
+                &[&application],
+            )
+            .await?
+            .try_get(0)?;
+
+        let (status, body) = lease_admin(&runtime, Method::GET, "/api/admin/lease/status").await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body["mode"], "standby",
+            "a lease published lost reads as active: {body}"
+        );
+        assert_eq!(body["held"], true, "{body}");
+        assert_eq!(body["owner_pid"], session, "{body}");
+        let (status, body) =
+            lease_admin(&runtime, Method::POST, "/api/admin/lease/promote").await?;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["detail"], LIFETIME_OPEN, "{body}");
+        let (status, body) = lease_admin(
+            &runtime,
+            Method::POST,
+            "/api/admin/lease/recover?stale_after_seconds=0.001",
+        )
+        .await?;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert_eq!(body["detail"], LIFETIME_OPEN, "{body}");
+        assert_eq!(db.epoch(&token).await?, Some(1), "admin rotated the epoch");
+        let listed = db
+            .admin
+            .query("SELECT 1 FROM pg_stat_activity WHERE pid = $1", &[&session])
+            .await?;
+        assert_eq!(listed.len(), 1, "admin ended the lease session");
+
+        let _lifetime = held
+            .lock_as("test")
+            .await
+            .begin_lifetime(Some(lifetime))
+            .await?
+            .context("the next lifetime did not acquire")?;
+        assert_eq!(db.epoch(&token).await?, Some(2));
+        let (status, body) =
+            lease_admin(&runtime, Method::POST, "/api/admin/lease/promote").await?;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(
+            body,
+            serde_json::json!({"promoting": false, "mode": "active"})
+        );
+        held.lock_as("test").await.release().await
+    })
+    .await
+}
+
+#[tokio::test]
+async fn an_open_lifetime_refuses_every_other_acquisition_until_the_run_loop_ends_it() -> Result<()>
+{
+    database_case(async |db| {
+        let token = Uuid::new_v4().to_string();
+        let mut lease = db.lease(&token)?;
+        let probe = db.lease(&token)?;
+        let mut peer = db.lease(&token)?;
+        let state = lease.subscribe();
+        let first = lease
+            .begin_lifetime(None)
+            .await?
+            .context("the first lifetime did not acquire")?;
+        let pid = probe.owner().await?.context("the lease has no owner")?.pid;
+        terminate_session(db, pid).await?;
+        ensure!(
+            lease.heartbeat().await.is_err(),
+            "a heartbeat on the terminated session succeeded"
+        );
+        wait_until_unowned(&probe).await?;
+
+        assert!(
+            lease.try_acquire().await.is_err(),
+            "an open lifetime let try_acquire acquire"
+        );
+        assert_eq!(db.epoch(&token).await?, Some(1));
+        assert_eq!(*state.borrow(), LeaseState::Lost);
+        let error = lease
+            .recover_stale_owner(Duration::from_millis(1))
+            .await
+            .expect_err("an open lifetime let recovery run");
+        assert!(error.to_string().contains(LIFETIME_OPEN), "{error:#}");
+        let second = lease
+            .begin_lifetime(Some(first))
+            .await?
+            .expect("the run loop's begin acquires the next lifetime");
+        assert_eq!(db.epoch(&token).await?, Some(2));
+        assert_eq!(*state.borrow(), LeaseState::Active);
+        {
+            let _third = lease
+                .begin_lifetime(Some(second))
+                .await?
+                .expect("a begin on a healthy lease keeps it");
+            assert_eq!(
+                db.epoch(&token).await?,
+                Some(2),
+                "a healthy handoff rotated the epoch"
+            );
+        }
+        // The third lifetime was abandoned, not ended.
+        assert_eq!(*state.borrow(), LeaseState::Lost);
+        assert!(lease.fence().is_none());
+        assert!(
+            lease.try_acquire().await.is_err(),
+            "an abandoned lifetime reopened acquisition"
+        );
+        assert!(
+            lease.begin_lifetime(None).await.is_err(),
+            "an abandoned lifetime let a new one begin"
+        );
+        assert_eq!(db.epoch(&token).await?, Some(2));
+        assert!(
+            !peer.try_acquire().await?,
+            "an abandoned lifetime gave up the lock"
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_lease_published_lost_fails_its_heartbeat_and_keeps_its_session() -> Result<()> {
+    database_case(async |db| {
+        let token = Uuid::new_v4().to_string();
+        let mut lease = db.lease(&token)?;
+        let probe = db.lease(&token)?;
+        ensure!(lease.try_acquire().await?, "fixture must hold the lease");
+        let state = lease.subscribe();
+        let pid = probe.owner().await?.context("the lease has no owner")?.pid;
+        lease.loss().publish();
+
+        assert!(
+            lease.heartbeat().await.is_err(),
+            "a lease published lost passed its heartbeat"
+        );
+        assert!(lease.fence().is_none());
+        assert_eq!(
+            probe.owner().await?.map(|owner| owner.pid),
+            Some(pid),
+            "the failed heartbeat closed the lease session"
+        );
+        assert!(lease.release().await.is_ok());
+        assert!(probe.owner().await?.is_none(), "the release kept the lock");
+        assert_eq!(*state.borrow(), LeaseState::Standby);
+        lease.loss().publish();
+        assert_eq!(
+            *state.borrow(),
+            LeaseState::Standby,
+            "a loss published after the release replaced Standby"
+        );
+        Ok(())
+    })
+    .await
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_promote_on_a_dead_session_the_supervisor_has_not_detected_is_refused_without_a_heartbeat()
+-> Result<()> {
+    use super::lifecycle::lease_admin;
+    use axum::http::{Method, StatusCode};
+    database_case(async |db| {
+        let token = Uuid::new_v4().to_string();
+        let lease = db.lease(&token)?;
+        let probe = db.lease(&token)?;
+        let state = lease.subscribe();
+        let runtime = lease_runtime(lease);
+        let held = runtime.lease.as_ref().context("the runtime's lease")?;
+        let _lifetime = held
+            .lock_as("test")
+            .await
+            .begin_lifetime(None)
+            .await?
+            .context("the lifetime did not acquire")?;
+        let pid = probe.owner().await?.context("the lease has no owner")?.pid;
+        terminate_session(db, pid).await?;
+        wait_until_closed_under_lock(held).await?;
+        ensure!(
+            *state.borrow() == LeaseState::Active,
+            "something heartbeated the dead session"
+        );
+
+        for path in [
+            "/api/admin/lease/promote",
+            "/api/admin/lease/promote",
+            "/api/admin/lease/recover?stale_after_seconds=0.001",
+        ] {
+            let (status, body) = lease_admin(&runtime, Method::POST, path).await?;
+            assert_eq!(status, StatusCode::CONFLICT, "{path}: {body}");
+            assert_eq!(body["detail"], LIFETIME_OPEN, "{path}: {body}");
+            assert_eq!(
+                *state.borrow(),
+                LeaseState::Active,
+                "{path} heartbeated the dead session"
+            );
+            assert_eq!(db.epoch(&token).await?, Some(1), "{path} rotated the epoch");
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_lifetime_whose_session_died_is_ended_by_the_failed_begin_and_the_next_begin_acquires()
+-> Result<()> {
+    database_case(async |db| {
+        let token = Uuid::new_v4().to_string();
+        let mut lease = db.lease(&token)?;
+        let probe = db.lease(&token)?;
+        let state = lease.subscribe();
+        let first = lease
+            .begin_lifetime(None)
+            .await?
+            .context("the first lifetime did not acquire")?;
+        let pid = probe.owner().await?.context("the lease has no owner")?.pid;
+        terminate_session(db, pid).await?;
+        wait_until_closed(&lease).await?;
+        wait_until_unowned(&probe).await?;
+
+        assert!(
+            lease.begin_lifetime(Some(first)).await.is_err(),
+            "a begin on a dead session succeeded"
+        );
+        assert_eq!(*state.borrow(), LeaseState::Lost);
+        assert!(lease.fence().is_none());
+        assert_eq!(db.epoch(&token).await?, Some(1));
+        let next = lease.begin_lifetime(None).await?;
+        assert!(next.is_some(), "the failed begin left acquisition refused");
+        assert_eq!(db.epoch(&token).await?, Some(2));
+        assert_eq!(*state.borrow(), LeaseState::Active);
+        lease.release().await
+    })
+    .await
+}
+
+#[tokio::test]
+async fn a_lease_refuses_a_lifetime_token_issued_by_another_lease() -> Result<()> {
+    database_case(async |db| {
+        let token = Uuid::new_v4().to_string();
+        let mut issuer = db.lease(&token)?;
+        let mut lease = db.lease(&token)?;
+        let foreign = issuer
+            .begin_lifetime(None)
+            .await?
+            .context("the issuer's lifetime did not acquire")?;
+        issuer.release().await?;
+        let state = lease.subscribe();
+        let _own = lease
+            .begin_lifetime(None)
+            .await?
+            .context("the lease's own lifetime did not acquire")?;
+        assert_eq!(db.epoch(&token).await?, Some(2));
+
+        let refused = lease.begin_lifetime(Some(foreign)).await;
+        assert!(
+            refused.is_err(),
+            "a lifetime token issued by another lease ended this lease's lifetime"
+        );
+        assert!(lease.lifetime_open(), "the foreign token closed the gate");
+        assert_eq!(*state.borrow(), LeaseState::Active);
+        assert!(
+            lease.fence().is_some(),
+            "the foreign token cost the authority"
+        );
+        assert_eq!(
+            db.epoch(&token).await?,
+            Some(2),
+            "the foreign token rotated the epoch"
+        );
+        let Err(error) = lease.begin_lifetime(None).await else {
+            panic!("a begin with no token succeeded while the own lifetime is open");
+        };
+        assert!(error.to_string().contains(LIFETIME_OPEN), "{error:#}");
+        lease.release().await
+    })
+    .await
+}
+
 #[test]
 fn node_mode_is_refused_before_connecting() {
     // Pool::build does not connect, so an unreachable URL proves no connection.
@@ -627,6 +1004,7 @@ async fn acquisition_checkout_and_connect_count_against_the_operation_bound() ->
             ))
             .await?;
         let returned = tokio::spawn(async move {
+            // test-quality: allow SLEEP_IN_TEST -- the checkout must wait for a bounded window shorter than the 5 s operation bound before the connections return; the pool has no event to await, and paused time would advance over the real database I/O
             tokio::time::sleep(Duration::from_secs(4)).await;
             drop(held);
         });

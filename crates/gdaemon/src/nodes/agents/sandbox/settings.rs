@@ -5,6 +5,7 @@ use super::{
     paths::{ResolvedPaths, expand_user, resolve_nonstrict, subtree_prefix, text},
     tables::SRT_DEFAULT_WRITE_PATHS,
 };
+use gobby_core::json::{CANONICAL, Json, dumps};
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -104,52 +105,9 @@ fn effective_deny_write(allow_write: &[String], deny_write: &[String], home: &Pa
         .collect()
 }
 
-/// Serialize with sorted object keys and no whitespace, matching `json.dumps(sort_keys=True)`.
+/// `json.dumps(settings, sort_keys=True, separators=(",", ":"))`, as the oracle hashes it.
 pub(super) fn canonical_json(value: &Value) -> String {
-    match value {
-        Value::Object(map) => {
-            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
-            entries.sort_by(|left, right| left.0.cmp(right.0));
-            let fields: Vec<String> = entries
-                .into_iter()
-                .map(|(key, item)| format!("{}:{}", json_string(key), canonical_json(item)))
-                .collect();
-            format!("{{{}}}", fields.join(","))
-        }
-        Value::Array(items) => {
-            let items: Vec<String> = items.iter().map(canonical_json).collect();
-            format!("[{}]", items.join(","))
-        }
-        Value::String(text) => json_string(text),
-        scalar => scalar.to_string(),
-    }
-}
-
-/// Python's `json.dumps` with `ensure_ascii`: printable ASCII stays literal, and every
-/// other character becomes lowercase `\uXXXX`, with surrogate pairs above the BMP.
-fn json_string(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len() + 2);
-    escaped.push('"');
-    for character in text.chars() {
-        match character {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            '\u{8}' => escaped.push_str("\\b"),
-            '\u{c}' => escaped.push_str("\\f"),
-            ' '..='~' => escaped.push(character),
-            _ => {
-                let mut units = [0; 2];
-                for unit in character.encode_utf16(&mut units) {
-                    escaped.push_str(&format!("\\u{unit:04x}"));
-                }
-            }
-        }
-    }
-    escaped.push('"');
-    escaped
+    dumps(&Json::from(value), CANONICAL).expect("CANONICAL writes every float a Value can hold")
 }
 
 #[cfg(test)]

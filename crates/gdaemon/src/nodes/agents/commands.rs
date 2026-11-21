@@ -211,7 +211,10 @@ impl Prepare {
             match next.commit(&agents.home, &agents.changed) {
                 Ok(()) => *state = next,
                 Err(error) => {
-                    eprintln!("gdaemon node: record cancel of undelivered run {run_id}: {error:#}");
+                    tracing::warn!(
+                        target: "gobby.nodes.agents",
+                        "gdaemon node: record cancel of undelivered run {run_id}: {error:#}"
+                    );
                 }
             }
         }

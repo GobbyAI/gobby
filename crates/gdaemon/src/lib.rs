@@ -1,10 +1,14 @@
 //! Library surface of `gdaemon`, shared by the binary and its integration tests.
+#![deny(clippy::print_stderr)]
 
 mod casefold;
+pub mod family_start;
 pub mod front_door;
 pub mod heartbeat;
 pub mod lease;
 pub mod lifecycle;
+pub mod logging;
+pub mod native_pools;
 pub mod node_commands;
 pub mod nodes;
 pub mod pane_detection;

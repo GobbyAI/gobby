@@ -79,7 +79,10 @@ pub async fn repair(
 
 fn warn_on_error(what: &str, result: Result<()>) {
     if let Err(error) = result {
-        eprintln!("gdaemon node: {what} failed: {error:#}");
+        tracing::warn!(
+            target: "gobby.nodes.agents",
+            "gdaemon node: {what} failed: {error:#}"
+        );
     }
 }
 
@@ -105,7 +108,10 @@ async fn copy_provider_hooks(source_root: &Path, path: &Path, provider: &str) ->
         return Ok(());
     }
     if let Err(error) = copy_tree(&source, &path.join(dir), dir, &tracked) {
-        eprintln!("gdaemon node: copying {dir} hooks failed: {error:#}");
+        tracing::warn!(
+            target: "gobby.nodes.agents",
+            "gdaemon node: copying {dir} hooks failed: {error:#}"
+        );
     }
     Ok(())
 }
@@ -204,7 +210,10 @@ async fn mcp_config(path: &Path, provider: &str, env: &RepairEnv<'_>) -> Result<
         .context("MCP servers configuration must be an object")?;
     servers.insert("gobby".into(), entry.clone());
     if let Err(error) = write_atomic(&mcp_path, &pretty(&Value::Object(selected))?) {
-        eprintln!("gdaemon node: writing .mcp.json failed: {error:#}");
+        tracing::warn!(
+            target: "gobby.nodes.agents",
+            "gdaemon node: writing .mcp.json failed: {error:#}"
+        );
         return Ok(());
     }
     if provider != "claude" {
@@ -236,7 +245,10 @@ async fn mcp_config(path: &Path, provider: &str, env: &RepairEnv<'_>) -> Result<
     })
     .await?;
     if let Err(error) = result {
-        eprintln!("gdaemon node: patching ~/.claude.json failed: {error:#}");
+        tracing::warn!(
+            target: "gobby.nodes.agents",
+            "gdaemon node: patching ~/.claude.json failed: {error:#}"
+        );
     }
     Ok(())
 }

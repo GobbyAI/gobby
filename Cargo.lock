@@ -2574,6 +2574,8 @@ dependencies = [
  "toml",
  "toml_edit",
  "tower-service",
+ "tracing",
+ "tracing-subscriber",
  "uuid",
 ]
 

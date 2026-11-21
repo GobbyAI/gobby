@@ -177,4 +177,55 @@ pub mod http {
     {
         (status(err.class()), envelope(err))
     }
+
+    /// The coded envelope `{"error": <safe message>, "code": code}`, with the status from
+    /// the error's class.
+    pub fn coded(err: &DomainError, code: &str) -> (StatusCode, Value) {
+        (
+            status(err.class()),
+            json!({"error": err.message(), "code": code}),
+        )
+    }
+
+    /// The Python daemon's fixed error bodies, for routes whose oracle is that daemon.
+    pub mod python {
+        use axum::http::StatusCode;
+        use serde_json::{Value, json};
+
+        use super::super::{DomainError, DomainErrorClass};
+
+        /// The global 500 body. The error's message is never rendered.
+        pub fn internal_500(_err: &DomainError) -> (StatusCode, Value) {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({
+                    "status": "error",
+                    "message": "Internal server error",
+                    "error_logged": true,
+                }),
+            )
+        }
+
+        /// The 503 body for a hub pool outage.
+        pub fn hub_unavailable() -> (StatusCode, Value) {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                json!({"status": "error", "message": "Hub temporarily unavailable"}),
+            )
+        }
+
+        /// The hooks route's acknowledged 200 body, for an `Internal` error only.
+        pub fn hook_acknowledged(err: &DomainError) -> Option<(StatusCode, Value)> {
+            (err.class() == DomainErrorClass::Internal).then(|| {
+                (
+                    StatusCode::OK,
+                    json!({
+                        "status": "error",
+                        "message": "Internal error occurred but request acknowledged",
+                        "error_logged": true,
+                    }),
+                )
+            })
+        }
+    }
 }

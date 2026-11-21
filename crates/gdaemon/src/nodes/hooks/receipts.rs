@@ -38,7 +38,10 @@ pub async fn sweep_receipts(node: &NodeServices, ledger: &Ledger) -> Result<()> 
         let _ = match acknowledge(node, ledger, &claim.envelope, envelope_id).await {
             Ok(()) => claim.remove().await,
             Err(error) => {
-                eprintln!("node receipt forwarding failed; retaining acknowledgment: {error:#}");
+                tracing::warn!(
+                    target: "gobby.hooks",
+                    "node receipt forwarding failed; retaining acknowledgment: {error:#}"
+                );
                 claim.restore().await
             }
         };
@@ -234,7 +237,10 @@ impl Drop for Claim {
             // Cancellation must not strand a current-owner claim forever.
             tokio::task::spawn_blocking(move || {
                 if let Err(error) = rename_if_present(&claimed, &original) {
-                    eprintln!("failed to restore cancelled node receipt claim: {error:#}");
+                    tracing::warn!(
+                        target: "gobby.hooks",
+                        "failed to restore cancelled node receipt claim: {error:#}"
+                    );
                 }
             });
         }

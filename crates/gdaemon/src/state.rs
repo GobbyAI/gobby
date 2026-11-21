@@ -5,7 +5,7 @@
 
 use crate::{
     front_door::relay::HubRelay,
-    lease::{ActiveDaemonLease, LeaseState, NamedLock},
+    lease::{ActiveDaemonLease, LeaseLifetime, LeaseState, NamedLock},
     lifecycle::{
         backend::{BackendConfig, BackendStatus, BackendSupervisor, SupervisorExit},
         pid_file::{PidFileClaim, claim_from_environment},
@@ -72,7 +72,8 @@ impl NodeServices {
             match crate::nodes::agents::sandbox::runtime::verify_srt_installation(home) {
                 Ok(installation) => installation,
                 Err(error) => {
-                    eprintln!(
+                    tracing::warn!(
+                        target: "gobby.daemon",
                         "gdaemon node: SRT install unverified, managed spawns refused: {error}"
                     );
                     // An empty root is the unverified sentinel; spawn refuses it.
@@ -190,48 +191,69 @@ impl RuntimeState {
         bootstrap: HubDatabaseBootstrap,
         terminals: gobby_terminals::family::RouteLatch,
         home: std::path::PathBuf,
+        families: crate::family_start::ProcessFamilies,
     ) -> Result<()> {
+        // The lifetime the next acquisition ends. A guard dropped any other way is abandoned
+        // and keeps every other acquisition refused for the rest of the process.
+        let mut previous: Option<LeaseLifetime> = None;
         loop {
             if *shutdown.borrow() {
                 return Ok(());
             }
-            if let Some(lease) = &self.lease {
-                let acquired = match lease
-                    .lock_as("startup lease acquisition")
-                    .await
-                    .try_acquire()
-                    .await
-                {
-                    Ok(acquired) => acquired,
-                    Err(error) => {
-                        eprintln!("gdaemon lease acquisition: {error:#}");
-                        false
-                    }
-                };
-                if !acquired {
-                    tokio::select! {
-                        changed = shutdown.changed() => {
-                            if changed.is_err() {
-                                return Ok(());
+            let lifetime = match &self.lease {
+                None => None,
+                Some(lease) => {
+                    let begun = lease
+                        .lock_as("startup lease acquisition")
+                        .await
+                        .begin_lifetime(previous.take())
+                        .await;
+                    match begun {
+                        Ok(Some(lifetime)) => Some(lifetime),
+                        other => {
+                            if let Err(error) = other {
+                                tracing::warn!(
+                                    target: "gobby.daemon",
+                                    "gdaemon lease acquisition: {error:#}"
+                                );
                             }
+                            tokio::select! {
+                                changed = shutdown.changed() => {
+                                    if changed.is_err() {
+                                        return Ok(());
+                                    }
+                                }
+                                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                            }
+                            continue;
                         }
-                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
                     }
-                    continue;
                 }
-            }
-            let services = crate::state_services::ActiveServices::start(
+            };
+            let mut services = crate::state_services::ActiveServices::start(
                 &bootstrap,
                 &terminals,
                 &home,
                 self.write_token.clone(),
+                &families,
+                self.lease_state.clone(),
             )
             .await?;
             *self
                 .terminal_route
                 .write()
                 .unwrap_or_else(PoisonError::into_inner) = services.route();
-            let outcome = supervisor.run(shutdown.clone()).await;
+            // The supervised lifetime admits the family jobs after its entry heartbeat and ends
+            // them while the lease is still held. The four early returns of `run_ending` (a
+            // sticky refusal at entry, no PID claim, standby, an error from `lock_lease` at
+            // entry) admit none. A lifetime that is over leaves the watch not Active before its
+            // services stop.
+            let outcome = supervisor.run_ending(shutdown.clone(), &mut services).await;
+            if !matches!(outcome, Ok(SupervisorExit::RestartTerminals))
+                && let Some(lifetime) = &lifetime
+            {
+                lifetime.lose();
+            }
             let drain = outcome
                 .as_ref()
                 .is_ok_and(|outcome| outcome.drains_terminals());
@@ -245,18 +267,28 @@ impl RuntimeState {
                 SupervisorExit::Refused => {
                     // Refusal is sticky and keeps the machine claim, but releases
                     // database ownership. Only a full process restart retries.
-                    while !*shutdown.borrow() {
-                        if shutdown.changed().await.is_err() {
-                            break;
-                        }
-                    }
+                    wait_for_shutdown(&mut shutdown).await;
                     return Ok(());
                 }
                 SupervisorExit::Standby
                 | SupervisorExit::LeaseLost
-                | SupervisorExit::RestartTerminals => {}
+                | SupervisorExit::RestartTerminals => previous = lifetime,
             }
         }
+    }
+
+    /// Holds a supervisor whose start was refused before any lease: it publishes the
+    /// sticky refusal and keeps the machine claim, starts no services, and returns at
+    /// shutdown. Only a full process restart retries.
+    pub async fn hold_refused(
+        supervisor: BackendSupervisor,
+        reason: String,
+        mut shutdown: watch::Receiver<bool>,
+    ) -> Result<()> {
+        supervisor.refuse(reason);
+        wait_for_shutdown(&mut shutdown).await;
+        drop(supervisor);
+        Ok(())
     }
 
     pub fn standby(&self) -> bool {
@@ -266,6 +298,15 @@ impl RuntimeState {
         match &self.lease_state {
             Some(state) => *state.borrow() != LeaseState::Active,
             None => false,
+        }
+    }
+}
+
+/// Returns once `shutdown` is true or its sender is gone.
+async fn wait_for_shutdown(shutdown: &mut watch::Receiver<bool>) {
+    while !*shutdown.borrow() {
+        if shutdown.changed().await.is_err() {
+            break;
         }
     }
 }

@@ -39,7 +39,10 @@ pub fn droid_shim_dir(gobby: &Path, platform: &str) -> Option<PathBuf> {
     match ensure_shim(gobby) {
         Ok(directory) => Some(directory),
         Err(error) => {
-            eprintln!("gdaemon: ps shim unavailable; sandboxed ps will fail closed: {error:#}");
+            tracing::warn!(
+                target: "gobby.nodes.agents.sandbox",
+                "gdaemon: ps shim unavailable; sandboxed ps will fail closed: {error:#}"
+            );
             None
         }
     }

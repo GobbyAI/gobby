@@ -13,6 +13,7 @@ import json
 import os
 import socket
 import struct
+import sys
 from collections.abc import Callable, Coroutine
 from pathlib import Path
 from unittest.mock import patch
@@ -48,6 +49,10 @@ BOOT_VARIABLES = (WORKER_MARKER_ENV, WORKER_CHANNEL_FD_ENV, WORKER_CREDENTIAL_FD
 UNUSED_DESCRIPTOR = 1023
 # Far above the C int range that os.fstat and os.fdopen accept.
 OUT_OF_C_INT_DESCRIPTOR = 1 << 60
+# A marked start on win32 is refused before any descriptor is read.
+UNIX_MARKED_START = pytest.mark.skipif(
+    sys.platform == "win32", reason="a marked start needs the worker channel, which is unix-only"
+)
 
 
 def _credential_descriptor(payload: bytes) -> int:
@@ -64,6 +69,7 @@ def _close_quietly(fd: int) -> None:
         os.close(fd)
 
 
+@UNIX_MARKED_START
 def test_take_worker_boot_pops_marker_and_reads_credential(monkeypatch: pytest.MonkeyPatch) -> None:
     credential_fd = _credential_descriptor(CREDENTIAL.encode("utf-8"))
     channel_socket, peer = socket.socketpair()
@@ -82,6 +88,7 @@ def test_take_worker_boot_pops_marker_and_reads_credential(monkeypatch: pytest.M
         peer.close()
 
 
+@UNIX_MARKED_START
 @pytest.mark.parametrize("channel_value", [None, "three"], ids=["missing", "not-an-integer"])
 def test_take_worker_boot_refuses_a_marker_without_descriptors(
     monkeypatch: pytest.MonkeyPatch, channel_value: str | None
@@ -101,6 +108,7 @@ def test_take_worker_boot_refuses_a_marker_without_descriptors(
         _close_quietly(credential_fd)
 
 
+@UNIX_MARKED_START
 @pytest.mark.parametrize("variable", [WORKER_CHANNEL_FD_ENV, WORKER_CREDENTIAL_FD_ENV])
 def test_take_worker_boot_refuses_a_descriptor_beyond_the_c_int_range(
     monkeypatch: pytest.MonkeyPatch, variable: str
@@ -145,6 +153,7 @@ def _serve_only(
     return serve_worker(worker)
 
 
+@UNIX_MARKED_START
 @pytest.mark.parametrize("channel_kind", ["closed", "not-a-socket"])
 def test_marked_start_refuses_an_unusable_channel_descriptor_with_exit_78(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], channel_kind: str

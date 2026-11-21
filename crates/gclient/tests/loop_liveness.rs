@@ -1718,7 +1718,7 @@ async fn held_orphan_fetch_and_kill_fanout_are_nonblocking_and_complete() {
     let driver = async {
         let probe = LivenessProbe::new(&mock, &input_tx, draws, frames).with_native_hosts(&_home);
         // Empty tab-bar space opens the global menu, where destroy is the
-        // eighth item.
+        // tenth item, nine rows below the first.
         input_tx
             .send(RawInputEvent::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Right),
@@ -1729,7 +1729,7 @@ async fn held_orphan_fetch_and_kill_fanout_are_nonblocking_and_complete() {
             .await
             .expect("live loop mouse input");
         probe.shows("Destroy orphaned terminals").await;
-        for _ in 0..8 {
+        for _ in 0..9 {
             probe.key(KeyCode::Down, KeyModifiers::empty()).await;
         }
         probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
@@ -1815,7 +1815,8 @@ async fn orphan_kill_fanout_keeps_at_most_eight_requests_in_flight() {
             .await
             .expect("live loop mouse input");
         probe.shows("Destroy orphaned terminals").await;
-        for _ in 0..8 {
+        // Destroy is the tenth global menu item, nine rows below the first.
+        for _ in 0..9 {
             probe.key(KeyCode::Down, KeyModifiers::empty()).await;
         }
         probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
@@ -1890,10 +1891,11 @@ async fn a_stale_orphan_inventory_never_replaces_a_dialog_opened_after_it() {
 
     let driver = async {
         let probe = LivenessProbe::new(&mock, &input_tx, draws, frames).with_native_hosts(&_home);
-        // Destroy is the eighth global menu item. Its inventory is held.
+        // Destroy is the tenth global menu item, nine rows below the first.
+        // Its inventory is held.
         open_global_menu(&input_tx).await;
         probe.shows("Destroy orphaned terminals").await;
-        for _ in 0..8 {
+        for _ in 0..9 {
             probe.key(KeyCode::Down, KeyModifiers::empty()).await;
         }
         probe.key(KeyCode::Enter, KeyModifiers::empty()).await;
@@ -1901,10 +1903,10 @@ async fn a_stale_orphan_inventory_never_replaces_a_dialog_opened_after_it() {
             websocket_requests(&mock, "terminal_list").len() == 1
         })
         .await;
-        // The user opens keybinding help, the sixth item, before the inventory lands.
+        // The user opens keybinding help, the seventh item, before the inventory lands.
         open_global_menu(&input_tx).await;
         probe.shows("Keybinding help").await;
-        for _ in 0..5 {
+        for _ in 0..6 {
             probe.key(KeyCode::Down, KeyModifiers::empty()).await;
         }
         probe.key(KeyCode::Enter, KeyModifiers::empty()).await;

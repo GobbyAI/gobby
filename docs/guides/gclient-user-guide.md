@@ -86,10 +86,10 @@ alternative labels:
 | Menu | Items |
 | --- | --- |
 | Gobby | Settings, Reload config, Quit |
-| File | New terminal, New tab, New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals… |
+| File | New terminal, New tab, New grid..., New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals… |
 | Edit | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name (when named), Send right-clicks to pane / Use gclient menu |
 | View | Appearance: Dark / Light / System ▸, Theme: Restored ▸, Monochrome, Show sidebar, Pin sidebar, Show all machines, Show all projects, Group agents by project |
-| Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled, New grid…), Respond, Mark seen, Open alert target, Next / Previous attention |
+| Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled), Respond, Mark seen, Open alert target, Next / Previous attention |
 | Agent | Respond, Mark seen, Open alert target, Next attention, Previous attention |
 | Help | Keybinds, Alerts…, Daemon, About Gobby |
 
@@ -174,8 +174,9 @@ The five layouts under **Arrange ▸** redistribute a tab's panes into the
 chosen layout. Window › Arrange ▸ arranges the active tab; the same submenu in
 a tab's or a pane's right-click menu arranges that tab, bringing it forward
 first. A choice whose tab has closed, or whose pane has left it, is refused
-with a notice. **Arrange ▸ › New grid…** asks for rows and columns
-and starts a terminal in each new cell. **Help › Daemon** shows the daemon URL, client and daemon
+with a notice. **New grid...**, in the File menu, a tab's right-click menu
+and the empty tab bar's menu, asks for rows and columns and starts a terminal
+in each new cell. **Help › Daemon** shows the daemon URL, client and daemon
 versions, health, last roster refresh, and completed startup timings. **Help ›
 About Gobby** shows the versions, URL, and machine.
 
@@ -874,16 +875,16 @@ close.
 | Target | Items |
 | --- | --- |
 | Pane | Rename pane, Clear pane name, Swap with focused pane, Split right, Split down, Zoom / Unzoom, Arrange ▸ (for the pane's tab), Move to tab ▸ (with another workspace tab), Respond (when it needs you), Copy mode, Send right-clicks to pane / Use gclient menu, Close pane |
-| Tab | New tab, Rename tab, Arrange ▸ (for that tab), Move to tab ▸ (moves every pane of the tab into the chosen tab and closes the emptied one), Sort tabs A–Z (with two or more workspace tabs on the bar), Close tab |
+| Tab | New tab, New grid..., Rename tab, Arrange ▸ (for that tab), Move to tab ▸ (moves every pane of the tab into the chosen tab and closes the emptied one), Sort tabs A–Z (with two or more workspace tabs on the bar), Close tab |
 | Project card | Rename, Close, New worktree, Open worktree…, Collapse / Expand |
 | Worktree row | Rename, Close, Delete worktree checkout… |
 | Agent or bare terminal row | Focus, Open in new tab, Respond (when it needs you), Mark seen, Close terminal / Destroy orphaned terminal (when orphaned) |
-| Empty tab bar or empty sidebar | New terminal, New tab, New project…, Open project…, Settings, Keybinding help, Reload config, Toggle sidebar, Destroy orphaned terminals…, Quit |
+| Empty tab bar or empty sidebar | New terminal, New tab, New grid..., New project…, Open project…, Settings, Keybinding help, Reload config, Toggle sidebar, Destroy orphaned terminals…, Quit |
 | **Gobby** on the menu bar (click) | Settings, Reload config, Quit |
-| **File** on the menu bar (click) | New terminal, New tab, New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals… |
+| **File** on the menu bar (click) | New terminal, New tab, New grid..., New project…, Open project…, Rename tab, Sort tabs A–Z, Close tab, Destroy orphaned terminals… |
 | **Edit** on the menu bar (click) | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name, Send right-clicks to pane / Use gclient menu |
 | **View** on the menu bar (click) | Appearance ▸, Theme ▸, Monochrome, Show sidebar, Pin sidebar, Show all machines, Show all projects, Group agents by project |
-| **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (five layouts, New grid…), Respond, Mark seen, Open alert target, Next / Previous attention |
+| **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (five layouts), Respond, Mark seen, Open alert target, Next / Previous attention |
 | **Help** on the menu bar (click) | Keybinds, Alerts…, Daemon, About Gobby |
 
 `Send right-clicks to pane` flips a per-pane flag so the pane's application gets

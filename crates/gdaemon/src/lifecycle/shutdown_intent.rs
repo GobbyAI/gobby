@@ -6,7 +6,18 @@ use std::{
     collections::HashSet,
     io,
     path::{Path, PathBuf},
+    sync::Arc,
 };
+use tokio::sync::{Notify, watch};
+
+/// A test's hold on the marker read that follows a backend's exit. While `held` is true,
+/// `IntentMarker::after_exit` notifies `parked` and waits. Production sets none.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct ExitReadHold {
+    pub held: watch::Receiver<bool>,
+    pub parked: Arc<Notify>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Intent {
@@ -27,6 +38,7 @@ pub struct IntentMarker {
     path: PathBuf,
     before_spawn: Option<Vec<u8>>,
     consumed: HashSet<[u8; 32]>,
+    hold: Option<ExitReadHold>,
 }
 
 impl IntentMarker {
@@ -35,7 +47,14 @@ impl IntentMarker {
             path: home.join("shutdown_intent_active.json"),
             before_spawn: None,
             consumed: HashSet::new(),
+            hold: None,
         }
+    }
+
+    /// Sets a test's hold on the read after each exit; None keeps the read unheld.
+    pub(crate) fn with_hold(mut self, hold: Option<ExitReadHold>) -> Self {
+        self.hold = hold;
+        self
     }
 
     /// Snapshot bytes, keeping the marker in place for planned-shutdown hook guards.
@@ -50,6 +69,14 @@ impl IntentMarker {
     }
 
     pub async fn after_exit(&mut self, now: f64) -> io::Result<Option<Intent>> {
+        if let Some(hold) = &self.hold {
+            let mut held = hold.held.clone();
+            if *held.borrow() {
+                hold.parked.notify_one();
+            }
+            // A dropped sender ends the hold, so a test that fails cannot strand the supervisor.
+            let _ = held.wait_for(|held| !*held).await;
+        }
         let Some(marker) = self.fresh(now).await? else {
             return Ok(None);
         };

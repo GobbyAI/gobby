@@ -122,9 +122,9 @@ register a top-level `/health` REST route.
 | `POST` | `/api/admin/workflows/reload` | Reload installed workflow definitions. |
 | `GET` | `/api/admin/cron/protected-runs` | Active restart-protected cron runs; inspect before lifecycle changes. |
 | `GET` | `/api/admin/lease/status` | Database-wide daemon lease and current owner mode. |
-| `POST` | `/api/admin/lease/promote` | Ask standby to acquire ownership; active owner reports no promotion. |
+| `POST` | `/api/admin/lease/promote` | Ask standby to acquire ownership; active owner reports no promotion; returns 409 while this daemon's own lease lifetime has not ended. |
 | `POST` | `/api/admin/lease/handoff` | Active owner relinquishes after quiescence checks; conflicts return 409. |
-| `POST` | `/api/admin/lease/recover` | Explicit stale-owner recovery on standby; active owner refuses with 409. |
+| `POST` | `/api/admin/lease/recover` | Explicit stale-owner recovery on standby; active owner refuses with 409; returns 409 while this daemon's own lease lifetime has not ended. |
 | `GET` | `/api/admin/stats` | Aggregate daemon statistics. |
 | `GET` | `/api/admin/usage` | Token-event breakdown; `hours` (0 means all history) and optional `project_id`. Storage failures log and return empty totals. |
 | `GET` | `/api/admin/usage/ledger` | Per-call usage ledger page for exactly one of `session_id` or `task_id` (UUIDs), with optional `cursor` and `limit` (1 to 1000, default 200). Totals cover the whole scope on every page. Returns 400 for a malformed cursor or a scope that is not exactly one; a project-scoped caller gets 403 for another project's session or task. |

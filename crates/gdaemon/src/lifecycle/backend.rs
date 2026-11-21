@@ -2,14 +2,14 @@
 
 use super::{
     pid_file::PidFileClaim,
-    shutdown_intent::{Intent, IntentMarker},
+    shutdown_intent::{ExitReadHold, Intent, IntentMarker},
     worker_channel::{
         WORKER_CHANNEL_FD_ENV, WORKER_CREDENTIAL_FD_ENV, WORKER_MARKER_ENV, WorkerAttachment,
         WorkerSpawn, attach,
     },
     worker_handshake::{GenerationSource, RUNNER_DEFAULT, RunnerMode, WorkerSession},
 };
-use crate::lease::{ActiveDaemonLease, NamedGuard, NamedLock};
+use crate::lease::{ActiveDaemonLease, LeaseLoss, NamedGuard, NamedLock};
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use gobby_terminals::write_api::{TokenLease, TokenSlot};
@@ -29,22 +29,18 @@ use tokio::{
     process::{Child, Command},
     sync::{oneshot, watch},
     task::JoinHandle,
-    time::{Instant, Interval, interval, interval_at, sleep_until, timeout},
+    time::{Instant, interval_at, sleep_until, timeout},
 };
 
 #[cfg(unix)]
 mod handshake;
+mod monitor;
 
 use handshake::HandshakeStep;
+use monitor::Pulse;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BackendStatus {
-    Standby,
-    Starting { pid: u32 },
-    Backoff { delay: Duration },
-    Refused { reason: String },
-    Stopped,
-}
+pub use gobby_core::family::BackendStatus;
+pub use monitor::{HEARTBEAT_LOCK_LIMIT, LeaseScoped};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupervisorExit {
@@ -76,7 +72,9 @@ pub struct BackendConfig {
     pub exit_grace: Duration,
     /// Cadence of the supervisor's wait reports while a backend has not exited.
     pub report_interval: Duration,
-    /// Longest the supervisor waits for the lease lock before it fails, naming the holder.
+    /// Longest the supervisor waits for the lease lock at a lifetime's entry and at its release
+    /// before it fails, naming the holder. A supervised heartbeat waits at most
+    /// [`HEARTBEAT_LOCK_LIMIT`].
     pub lease_lock_limit: Duration,
     /// Sink for supervisor wait reports; stderr unless a caller captures them.
     pub reporter: Arc<dyn Fn(&str) + Send + Sync>,
@@ -114,13 +112,15 @@ impl BackendConfig {
             exit_grace: Duration::from_secs(60),
             report_interval: Duration::from_secs(60),
             lease_lock_limit: Duration::from_secs(120),
-            reporter: Arc::new(|line: &str| eprintln!("{line}")),
+            reporter: Arc::new(|line: &str| crate::logging::raw_stderr(line)),
         })
     }
 }
 
 pub struct BackendSupervisor {
     lease: Option<Arc<NamedLock<ActiveDaemonLease>>>,
+    /// Publishes the lease as lost without its lock; taken at each lifetime's standby check.
+    loss: Option<LeaseLoss>,
     pid_claim: Option<PidFileClaim>,
     config: BackendConfig,
     state: watch::Sender<BackendStatus>,
@@ -131,6 +131,8 @@ pub struct BackendSupervisor {
     mode: RunnerMode,
     /// Assigns the generation of each worker session this supervisor spawns.
     generations: GenerationSource,
+    /// A test's hold on the marker read after each exit; production sets none.
+    exit_read_hold: Option<ExitReadHold>,
 }
 
 impl BackendSupervisor {
@@ -157,12 +159,14 @@ impl BackendSupervisor {
         let (wait, _) = watch::channel(None);
         Self {
             lease,
+            loss: None,
             pid_claim: Some(pid_claim),
             config,
             state,
             wait,
             mode,
             generations: GenerationSource::default(),
+            exit_read_hold: None,
         }
     }
 
@@ -190,6 +194,11 @@ impl BackendSupervisor {
         self.state.subscribe()
     }
 
+    /// Publishes a sticky refusal without running: a start failure no relaunch clears.
+    pub(crate) fn refuse(&self, reason: String) {
+        self.state.send_replace(BackendStatus::Refused { reason });
+    }
+
     /// The supervisor's current wait reason, or None when it is not waiting.
     pub fn subscribe_wait(&self) -> watch::Receiver<Option<String>> {
         self.wait.subscribe()
@@ -205,19 +214,14 @@ impl BackendSupervisor {
     async fn lock_lease<'a>(
         &'a self,
         lease: &'a NamedLock<ActiveDaemonLease>,
+        limit: Duration,
     ) -> Result<NamedGuard<'a, ActiveDaemonLease>> {
         let started = Instant::now();
         let reporter = |line: &str| {
             self.report(line);
             self.record_progress(std::process::id(), "lease lock wait", started);
         };
-        let outcome = lock_reporting(
-            lease,
-            self.config.report_interval,
-            self.config.lease_lock_limit,
-            &reporter,
-        )
-        .await;
+        let outcome = lock_reporting(lease, self.config.report_interval, limit, &reporter).await;
         if outcome.is_ok() {
             self.wait.send_replace(None);
         }
@@ -226,19 +230,59 @@ impl BackendSupervisor {
 
     /// Run one ownership lifetime. Refused instances never acquire or spawn again.
     /// Dropping/cancelling this future kills its child and closes the liveness writer.
-    pub async fn run(&mut self, mut shutdown: watch::Receiver<bool>) -> Result<SupervisorExit> {
+    pub async fn run(&mut self, shutdown: watch::Receiver<bool>) -> Result<SupervisorExit> {
+        self.run_ending(shutdown, &mut ()).await
+    }
+
+    /// [`BackendSupervisor::run`], admitting `scoped` at the lifetime's start and ending it on
+    /// the lifetime's exit (None for an error) while the lease is still held, so lease-scoped
+    /// work ends before release.
+    pub async fn run_ending(
+        &mut self,
+        mut shutdown: watch::Receiver<bool>,
+        scoped: &mut impl LeaseScoped,
+    ) -> Result<SupervisorExit> {
         if matches!(*self.state.borrow(), BackendStatus::Refused { .. }) {
             return Ok(SupervisorExit::Refused);
         }
         if self.pid_claim.is_none() {
             return Ok(SupervisorExit::Stopped);
         }
-        if let Some(lease) = &self.lease
-            && self.lock_lease(lease).await?.fence().is_none()
-        {
-            return Ok(SupervisorExit::Standby);
+        if let Some(lease) = &self.lease {
+            let mut guard = self.lock_lease(lease, self.config.lease_lock_limit).await?;
+            if let Err(error) = guard.heartbeat().await {
+                tracing::warn!(
+                    target: "gobby.lifecycle",
+                    "backend lease not held at lifetime start: {error:#}"
+                );
+                return Ok(SupervisorExit::Standby);
+            }
+            let loss = guard.loss();
+            scoped.admit()?;
+            drop(guard);
+            self.loss = Some(loss);
+        } else {
+            scoped.admit()?;
         }
-        let result = self.supervise(&mut shutdown).await;
+        let result = {
+            let mut pulse = Pulse::new(self);
+            let result = self.supervise(&mut shutdown, &mut pulse).await;
+            // The lease keeps its heartbeat through the end, so a loss during the end is published.
+            let exit = result.as_ref().ok().copied();
+            pulse.through(exit, scoped.end(exit)).await;
+            // No heartbeat is left in flight past this point, on any exit.
+            if let Err(error) = pulse.settle().await {
+                tracing::warn!(target: "gobby.lifecycle", "backend lease lost before release: {error:#}");
+            }
+            result
+        };
+        // Nothing verifies the lease from here to its release, so the watch must not read Active
+        // through the release's lock wait. A terminal restart keeps the lease, and its watch.
+        if !matches!(result, Ok(SupervisorExit::RestartTerminals))
+            && let Some(loss) = &self.loss
+        {
+            loss.publish();
+        }
         // release takes the dedicated connection before awaiting, so failures and
         // cancellation cannot retain the advisory lock. Keep the machine claim
         // through lease loss and sticky refusal; release it on stop or error.
@@ -253,7 +297,7 @@ impl BackendSupervisor {
         }
         let release = match &self.lease {
             _ if matches!(result, Ok(SupervisorExit::RestartTerminals)) => Ok(()),
-            Some(lease) => match self.lock_lease(lease).await {
+            Some(lease) => match self.lock_lease(lease, self.config.lease_lock_limit).await {
                 Ok(mut guard) => guard.release().await,
                 Err(error) => Err(error),
             },
@@ -262,7 +306,7 @@ impl BackendSupervisor {
         match result {
             Err(error) => {
                 if let Err(release_error) = release {
-                    eprintln!("lease release: {release_error:#}");
+                    tracing::warn!(target: "gobby.lifecycle", "lease release: {release_error:#}");
                 }
                 Err(error)
             }
@@ -273,7 +317,11 @@ impl BackendSupervisor {
         }
     }
 
-    async fn supervise(&mut self, shutdown: &mut watch::Receiver<bool>) -> Result<SupervisorExit> {
+    async fn supervise(
+        &self,
+        shutdown: &mut watch::Receiver<bool>,
+        pulse: &mut Pulse<'_>,
+    ) -> Result<SupervisorExit> {
         ensure!(
             !self.config.heartbeat_interval.is_zero(),
             "heartbeat interval must be positive"
@@ -282,17 +330,18 @@ impl BackendSupervisor {
             !self.config.report_interval.is_zero(),
             "report interval must be positive"
         );
-        let mut markers = IntentMarker::new(&self.config.home);
+        let mut markers =
+            IntentMarker::new(&self.config.home).with_hold(self.exit_read_hold.clone());
         let mut crashes = 0u32;
-        let mut heartbeats = interval(self.config.heartbeat_interval);
-        heartbeats.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            if shutdown_requested(shutdown) {
-                return Ok(SupervisorExit::Stopped);
-            }
-            if let Err(error) = self.heartbeat().await {
-                eprintln!("backend lease lost: {error:#}");
-                return Ok(SupervisorExit::LeaseLost);
+            tokio::select! { biased;
+                _ = shutdown_signal(shutdown) => return Ok(SupervisorExit::Stopped),
+                beaten = pulse.now() => {
+                    if let Err(error) = beaten {
+                        tracing::warn!(target: "gobby.lifecycle", "backend lease lost: {error:#}");
+                        return Ok(SupervisorExit::LeaseLost);
+                    }
+                }
             }
             markers.before_spawn().await?;
             if shutdown_requested(shutdown) {
@@ -304,13 +353,12 @@ impl BackendSupervisor {
             self.state.send_replace(BackendStatus::Starting { pid });
             // A Rust-mode child answers its handshake before the wait loop supervises it.
             if let Some(attachment) = backend.worker.as_mut() {
-                match self
-                    .await_handshake(attachment, shutdown, &mut heartbeats)
-                    .await
-                {
+                match self.await_handshake(attachment, shutdown, pulse).await {
                     HandshakeStep::Ready => {}
                     HandshakeStep::Shutdown => {
-                        return self.drain_for_shutdown(&mut backend, &mut markers).await;
+                        return self
+                            .drain_for_shutdown(&mut backend, &mut markers, pulse)
+                            .await;
                     }
                     HandshakeStep::LeaseLost => {
                         backend.drain(self.config.drain_timeout).await?;
@@ -320,8 +368,8 @@ impl BackendSupervisor {
                     HandshakeStep::Failed(error) => {
                         // The child is ended and reaped here, so its status is known.
                         backend.kill_group()?;
-                        let status = backend.child.wait().await?;
-                        backend.finish_stderr().await;
+                        let status = pulse.through(None, backend.child.wait()).await?;
+                        pulse.through(None, backend.finish_stderr()).await;
                         if let Some(exit) = self.handle_handshake_failure(&error) {
                             return Ok(exit);
                         }
@@ -334,7 +382,7 @@ impl BackendSupervisor {
                         let delay = crash_delay(crashes);
                         crashes = crashes.saturating_add(1);
                         self.state.send_replace(BackendStatus::Backoff { delay });
-                        if let Some(exit) = self.back_off(delay, shutdown, &mut heartbeats).await {
+                        if let Some(exit) = pulse.back_off(delay, shutdown).await {
                             return Ok(exit);
                         }
                         continue;
@@ -351,19 +399,19 @@ impl BackendSupervisor {
             let (status, reaped): (ExitStatus, bool) = loop {
                 tokio::select! { biased;
                     _ = shutdown_signal(shutdown) => {
-                        return self.drain_for_shutdown(&mut backend, &mut markers).await;
+                        return self.drain_for_shutdown(&mut backend, &mut markers, pulse).await;
                     }
                     status = backend.child.wait() => break (status?, false),
-                    _ = heartbeats.tick() => {
-                        if let Err(error) = self.heartbeat().await {
-                            eprintln!("backend lease lost: {error:#}");
+                    beaten = pulse.next() => {
+                        if let Err(error) = beaten {
+                            tracing::warn!(target: "gobby.lifecycle", "backend lease lost: {error:#}");
                             backend.drain(self.config.drain_timeout).await?;
                             self.state.send_replace(BackendStatus::Stopped);
                             return Ok(SupervisorExit::LeaseLost);
                         }
                         if announced.is_none() {
                             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
-                            if let Some(intent) = markers.pending(now).await? {
+                            if let Some(intent) = pulse.through(None, markers.pending(now)).await? {
                                 announced = Some((intent, Instant::now()));
                             }
                         }
@@ -372,7 +420,8 @@ impl BackendSupervisor {
                         if let Some((_, seen)) = announced
                             && seen.elapsed() >= self.config.exit_grace
                         {
-                            break (backend.drain(self.config.drain_timeout).await?, true);
+                            let drain = backend.drain(self.config.drain_timeout);
+                            break (pulse.through(None, drain).await?, true);
                         }
                     }
                     _ = reports.tick() => {
@@ -390,7 +439,7 @@ impl BackendSupervisor {
                 // The leader may exit while descendants retain sockets or stderr.
                 // Retain process-group ownership through reaping, including exit 78.
                 backend.kill_group()?;
-                backend.finish_stderr().await;
+                pulse.through(None, backend.finish_stderr()).await;
             }
             if started_at.elapsed() >= Duration::from_secs(30) {
                 crashes = 0;
@@ -401,7 +450,8 @@ impl BackendSupervisor {
             // The child is gone: report it down until the next spawn or stop, not starting.
             self.state.send_replace(BackendStatus::Stopped);
             let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
-            let intent = markers.after_exit(now).await?;
+            // A heartbeat may be in flight here: the read runs beside it, never bare.
+            let intent = pulse.through(None, markers.after_exit(now)).await?;
             if shutdown_requested(shutdown) {
                 return Ok(
                     if matches!(
@@ -427,31 +477,8 @@ impl BackendSupervisor {
             let delay = crash_delay(crashes);
             crashes = crashes.saturating_add(1);
             self.state.send_replace(BackendStatus::Backoff { delay });
-            if let Some(exit) = self.back_off(delay, shutdown, &mut heartbeats).await {
+            if let Some(exit) = pulse.back_off(delay, shutdown).await {
                 return Ok(exit);
-            }
-        }
-    }
-
-    /// Sleeps out a crash backoff while heartbeating. Returns the exit when a shutdown or a lost
-    /// lease ends the wait first, and None when the delay has passed.
-    async fn back_off(
-        &self,
-        delay: Duration,
-        shutdown: &mut watch::Receiver<bool>,
-        heartbeats: &mut Interval,
-    ) -> Option<SupervisorExit> {
-        let deadline = Instant::now() + delay;
-        loop {
-            tokio::select! { biased;
-                _ = shutdown_signal(shutdown) => return Some(SupervisorExit::Stopped),
-                _ = sleep_until(deadline) => return None,
-                _ = heartbeats.tick() => {
-                    if let Err(error) = self.heartbeat().await {
-                        eprintln!("backend lease lost: {error:#}");
-                        return Some(SupervisorExit::LeaseLost);
-                    }
-                }
             }
         }
     }
@@ -461,11 +488,15 @@ impl BackendSupervisor {
         &self,
         backend: &mut BackendChild,
         markers: &mut IntentMarker,
+        pulse: &mut Pulse<'_>,
     ) -> Result<SupervisorExit> {
-        backend.drain(self.config.drain_timeout).await?;
+        // The lease keeps its heartbeat through the drain, as through the pre-release end.
+        pulse
+            .through(None, backend.drain(self.config.drain_timeout))
+            .await?;
         let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
         if matches!(
-            markers.after_exit(now).await?,
+            pulse.through(None, markers.after_exit(now)).await?,
             Some(Intent::StopTerminals | Intent::RestartTerminals)
         ) {
             return Ok(SupervisorExit::StopTerminals);
@@ -485,13 +516,6 @@ impl BackendSupervisor {
             },
         });
         SupervisorExit::Refused
-    }
-
-    async fn heartbeat(&self) -> Result<()> {
-        if let Some(lease) = &self.lease {
-            self.lock_lease(lease).await?.heartbeat().await?;
-        }
-        Ok(())
     }
 
     /// Logs what a live backend is still waited on; called once per report interval.
@@ -816,8 +840,12 @@ impl BackendChild {
     async fn finish_stderr(&mut self) {
         match timeout(Duration::from_millis(250), &mut self.stderr).await {
             Ok(Ok(Ok(()))) => {}
-            Ok(Ok(Err(error))) => eprintln!("backend stderr read: {error}"),
-            Ok(Err(error)) => eprintln!("backend stderr task: {error}"),
+            Ok(Ok(Err(error))) => {
+                tracing::warn!(target: "gobby.lifecycle", "backend stderr read: {error}");
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(target: "gobby.lifecycle", "backend stderr task: {error}");
+            }
             Err(_) => self.stderr.abort(), // A descendant may retain the output pipe.
         }
     }
@@ -869,7 +897,7 @@ impl Drop for BackendChild {
     fn drop(&mut self) {
         self.stderr.abort();
         if let Err(error) = self.kill_group() {
-            eprintln!("backend group cleanup: {error}");
+            tracing::warn!(target: "gobby.lifecycle", "backend group cleanup: {error}");
         }
     }
 }
@@ -910,7 +938,7 @@ fn signal_group(group: i32, signal: i32) -> io::Result<bool> {
 fn publish_line(line: &mut Vec<u8>, last: &watch::Sender<String>) {
     let text = String::from_utf8_lossy(line).trim().to_string();
     if !text.is_empty() {
-        eprintln!("{text}");
+        crate::logging::raw_stderr(&text);
         last.send_replace(text);
     }
     line.clear();

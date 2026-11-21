@@ -312,7 +312,26 @@ fn push_env_pair(argv: &mut Vec<String>, name: &str, value: &str) {
     );
 }
 
-/// A TOML basic string as Codex reads it: JSON string syntax, the Python port's `json.dumps`.
+/// A TOML basic string as Codex reads it: the Python port's `json.dumps` escapes, except
+/// that a character beyond U+FFFF is written `\UXXXXXXXX`. `json.dumps` writes it as a
+/// surrogate pair, which TOML 1.0 refuses because a surrogate is not a scalar value.
 fn quoted(value: &str) -> String {
-    Value::String(value.to_string()).to_string()
+    let mut output = String::with_capacity(value.len() + 2);
+    output.push('"');
+    let mut buffer = [0; 4];
+    for character in value.chars() {
+        let code = u32::from(character);
+        if code > 0xffff {
+            output.push_str(&format!("\\U{code:08x}"));
+        } else {
+            let escaped = gobby_core::json::quote(character.encode_utf8(&mut buffer), true);
+            output.push_str(&escaped[1..escaped.len() - 1]);
+        }
+    }
+    output.push('"');
+    output
 }
+
+#[cfg(test)]
+#[path = "provider_command/tests.rs"]
+mod tests;

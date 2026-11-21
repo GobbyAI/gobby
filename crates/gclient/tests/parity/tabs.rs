@@ -276,6 +276,9 @@ fn human_waits_drive_tab_bells_and_needs_you_counts() {
         let pane = ws
             .open_terminal("term-seat", "native", "epoch")
             .expect("seat pane");
+        // A scripted pane is named after its terminal id; clear that name so
+        // the header shows the seat's identity rather than a custom name.
+        ws.pane_mut(pane).label = None;
         ws.daemon_mut().set_roster(json!({
             "epoch": "attention",
             "seq": 1,

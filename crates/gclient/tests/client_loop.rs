@@ -6333,8 +6333,9 @@ async fn sort_tabs_menu_reorders_by_title_and_reattaches_in_that_order() {
                 KeyModifiers::NONE,
             )
             .await;
-            // New tab, Rename tab, Arrange ▸, Move to tab ▸, then Sort tabs A–Z.
-            for _ in 0..4 {
+            // New tab, New grid..., Rename tab, Arrange ▸, Move to tab ▸,
+            // then Sort tabs A–Z.
+            for _ in 0..5 {
                 send_key(&input_tx, KeyCode::Down, KeyModifiers::NONE).await;
             }
             send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
@@ -6842,17 +6843,17 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         settle_live_event().await;
 
         // Bare tab-bar space opens the global menu; clicking `reload config`
-        // (its seventh row) re-reads the prefs file.
+        // (its eighth row) re-reads the prefs file.
         press(MouseButton::Right, bare_cell).await;
-        hover(item_cell(bare_cell, 6)).await;
-        press(MouseButton::Left, item_cell(bare_cell, 6)).await;
+        hover(item_cell(bare_cell, 7)).await;
+        press(MouseButton::Left, item_cell(bare_cell, 7)).await;
         settle_live_event().await;
 
-        // The tab's menu: `close tab` (its fourth row, as one tab has nowhere
+        // The tab's menu: `close tab` (its fifth row, as one tab has nowhere
         // to move and nothing to sort) runs the confirm-close path.
         press(MouseButton::Right, tab_cell).await;
-        hover(item_cell(tab_cell, 3)).await;
-        press(MouseButton::Left, item_cell(tab_cell, 3)).await;
+        hover(item_cell(tab_cell, 4)).await;
+        press(MouseButton::Left, item_cell(tab_cell, 4)).await;
         settle_live_event().await;
         drop(input_tx);
         (initial, other)

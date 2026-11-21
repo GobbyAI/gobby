@@ -111,7 +111,7 @@ backend on loopback:
 ```yaml
 front_door:
   enabled: true            # default; false keeps Python on the public ports (loopback-only)
-  routes:                  # route family -> proxy | native | compare; absent = proxy
+  routes:                  # route family -> proxy | native | compare; absent = the family's compiled default
     health: native
     terminal_ws: proxy
   tls:
@@ -126,7 +126,9 @@ front_door:
 name to `proxy` (forward to Python), `native` (served by gdaemon), or `compare`
 (run both, log differences, return the proxied response). Any other value is a
 parse error. Unknown family names are accepted, so a newer family can be
-configured before this daemon serves it. Keys other than `enabled`, `routes`, and
+configured before this daemon serves it. A family with no entry takes its compiled
+default, and `routes` is a test override, not an operator switch (see Family
+activation and rollback below). Keys other than `enabled`, `routes`, and
 `tls` are rejected, so a typo such as `enable: false` cannot silently leave the
 front door on.
 
@@ -263,6 +265,31 @@ The file-loading helper `expand_env_vars` in `src/gobby/config/_loading.py` supp
 document services do not call that helper. Do not transfer its syntax to these APIs.
 Public reads and YAML exports preserve secrecy through masks and `secret_set`
 metadata. The authenticated effective route resolves only the active reference.
+
+#### Family activation and rollback
+
+Each route family's backend is its compiled default: the family's `default_backend`,
+which is `proxy` until the family is ported and `native` once it is activated. A
+family with no `front_door.routes` entry takes that compiled default. The native
+surfaces the front door claims itself are always `native`, whatever the map says.
+
+- Activation. A family changes backend only in its checkpoint's activation commit,
+  which changes the compiled default. The change reaches a daemon only when that
+  build is installed: `gobby cutover` builds and promotes the binary set, then
+  restarts the daemon. Under a window hold, pass the hold's token with
+  `--hold-token`.
+- Rollback. Each promotion keeps the outgoing binaries as a generation under
+  `~/.gobby/bin/generations/`. `gobby rollback list` shows the generations, and
+  `gobby rollback restore <generation>` puts one back and restarts the daemon, which
+  returns every family to the backend that generation compiled in. The version
+  restored over is burned and refused by every later promotion, so the fix ships
+  forward under a new version.
+- Not an operator switch. `front_door.routes` stays a validated bootstrap key for
+  test harnesses and isolated test daemons, where a test pins a family to `proxy`,
+  `native` or `compare`. It is not how a family is activated or rolled back on a
+  live daemon. Compare evidence from such a run is read with
+  `gdaemon compare-report --since <unix seconds>`, which exits 1 on any difference,
+  native error or mismatch, and on an empty window.
 
 ## Nodes
 

@@ -7,7 +7,10 @@ use deadpool_postgres::ClientWrapper;
 use std::time::Duration;
 use tokio::time::{sleep, timeout};
 
-const RECOVERY_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bound of one probe or one recovery phase. The supervised heartbeat's lock bound,
+/// `HEARTBEAT_LOCK_LIMIT`, is derived from it: the status probe is the only I/O done under the
+/// lease lock while a lifetime is open.
+pub(crate) const RECOVERY_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub(crate) struct FreshLeaseOwner;
@@ -39,6 +42,9 @@ impl ActiveDaemonLease {
     /// Never promotes. Termination rechecks PID, application identity,
     /// freshness and the exact database-wide lock in a single statement.
     pub async fn recover_stale_owner(&self, stale_after: Duration) -> Result<LeaseOwner> {
+        if self.lifetime_open {
+            bail!(super::LIFETIME_OPEN);
+        }
         let (client, keys, owner) = timeout(RECOVERY_TIMEOUT, async {
             let client = self.connect("gobby-lease-probe").await?;
             let keys = resolve_keys(&client).await?;

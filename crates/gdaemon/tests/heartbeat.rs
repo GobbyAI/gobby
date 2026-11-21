@@ -1,10 +1,14 @@
-use std::future::pending;
+use std::future::{Future, pending, poll_fn};
+use std::pin::pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::task::Poll;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
 use gobby_daemon::heartbeat::HeartbeatHost;
+use gobby_daemon::lease::LeaseState;
+use tokio::sync::watch;
 use tokio::time::{Instant, advance, sleep};
 
 async fn settle() {
@@ -135,6 +139,9 @@ async fn failing_job_leaves_siblings_running() -> Result<()> {
 
 #[tokio::test(start_paused = true)]
 async fn panicking_job_runs_again_and_leaves_siblings_running() -> Result<()> {
+    // The job failure is a record; with no subscriber it is dropped, and
+    // panic_is_logged_with_the_registrant_name reads it from this test's stderr.
+    gobby_daemon::logging::install_pre_config();
     let mut host = HeartbeatHost::new();
     let attempts = Arc::new(AtomicUsize::new(0));
     let calls = Arc::clone(&attempts);
@@ -307,6 +314,133 @@ async fn dropping_host_aborts_its_active_child() -> Result<()> {
     settle().await;
     assert_eq!(active.load(Ordering::SeqCst), 0);
     Ok(())
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lost_lease_cancels_the_running_job_at_once() -> Result<()> {
+    let (lease, fence) = watch::channel(LeaseState::Active);
+    let mut host = HeartbeatHost::new();
+    let active = blocking_job(&mut host, None)?;
+    host.start_fenced(fence)?;
+    settle().await;
+    tick(5).await;
+    assert_eq!(active.load(Ordering::SeqCst), 1, "the job is running");
+
+    lease.send_replace(LeaseState::Lost);
+    tick(1).await;
+
+    assert_eq!(
+        active.load(Ordering::SeqCst),
+        0,
+        "the running job outlived the lease by a second; it must be cancelled at once"
+    );
+    host.stop().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lost_lease_starts_no_job_again() -> Result<()> {
+    let (lease, fence) = watch::channel(LeaseState::Active);
+    let mut host = HeartbeatHost::new();
+    let runs = counter(&mut host, "owner work")?;
+    host.start_fenced(fence)?;
+    settle().await;
+    tick(5).await;
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        1,
+        "the job ran while the lease was held"
+    );
+
+    lease.send_replace(LeaseState::Lost);
+    tick(60).await;
+
+    assert_eq!(
+        runs.load(Ordering::SeqCst),
+        1,
+        "a job ran as owner after the lease was lost"
+    );
+    host.stop().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lease_lost_before_shutdown_aborts_the_running_job_without_a_drain() -> Result<()> {
+    let (lease, fence) = watch::channel(LeaseState::Active);
+    let mut host = HeartbeatHost::new();
+    let active = blocking_job(&mut host, None)?;
+    host.start_fenced(fence)?;
+    settle().await;
+    tick(5).await;
+    assert_eq!(active.load(Ordering::SeqCst), 1, "the job is running");
+
+    // The loss and the shutdown are both ready before the supervisor next runs.
+    lease.send_replace(LeaseState::Lost);
+    let mut stopping = pin!(host.stop());
+    let parked = poll_fn(|cx| Poll::Ready(stopping.as_mut().poll(cx).is_pending())).await;
+    assert!(parked, "the stop waits on the supervisor");
+    tick(1).await;
+
+    assert_eq!(
+        active.load(Ordering::SeqCst),
+        0,
+        "a lease lost before shutdown left the running job draining; it must be aborted at once"
+    );
+    stopping.await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lease_lost_during_the_drain_aborts_the_running_job_at_once() -> Result<()> {
+    let (lease, fence) = watch::channel(LeaseState::Active);
+    let mut host = HeartbeatHost::new();
+    let active = blocking_job(&mut host, None)?;
+    host.start_fenced(fence)?;
+    settle().await;
+    tick(5).await;
+    let stopped = tokio::spawn(async move { host.stop().await });
+    settle().await;
+    assert!(!stopped.is_finished(), "the stop is draining the job");
+    assert_eq!(active.load(Ordering::SeqCst), 1, "the job is draining");
+
+    lease.send_replace(LeaseState::Lost);
+    tick(1).await;
+
+    assert_eq!(
+        active.load(Ordering::SeqCst),
+        0,
+        "a lease lost during the drain left the job running; it must be aborted at once"
+    );
+    assert!(
+        stopped.is_finished(),
+        "the stop still waits on the drain grace after the lease was lost"
+    );
+    stopped.await?
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_drain_with_the_lease_held_still_gives_the_job_its_grace() -> Result<()> {
+    let (_lease, fence) = watch::channel(LeaseState::Active);
+    let mut host = HeartbeatHost::new();
+    let active = blocking_job(&mut host, Some(Duration::from_secs(4)))?;
+    host.start_fenced(fence)?;
+    settle().await;
+    tick(5).await;
+    let stopped = tokio::spawn(async move { host.stop().await });
+    settle().await;
+    tick(3).await;
+    assert_eq!(
+        active.load(Ordering::SeqCst),
+        1,
+        "the job was cut short while the lease was held"
+    );
+    assert!(!stopped.is_finished(), "the stop is draining the job");
+
+    tick(1).await;
+
+    assert!(
+        stopped.is_finished(),
+        "the job finished within the grace but the stop did not return"
+    );
+    assert_eq!(active.load(Ordering::SeqCst), 0, "the job finished");
+    stopped.await?
 }
 
 #[tokio::test(start_paused = true)]

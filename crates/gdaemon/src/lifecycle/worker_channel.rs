@@ -102,6 +102,7 @@ impl fmt::Debug for WorkerAttachment {
 /// What one spawn hands over: the parent's attachment, and the descriptors the child inherits.
 /// The parent holds the child descriptors only until the spawn returns.
 #[derive(Debug)]
+#[cfg_attr(not(unix), allow(dead_code))]
 pub(crate) struct WorkerSpawn {
     pub attachment: WorkerAttachment,
     #[cfg(unix)]
@@ -140,8 +141,10 @@ pub(crate) fn attach(session: WorkerSession) -> io::Result<WorkerSpawn> {
     })
 }
 
-/// Off unix no worker channel exists, so no spawn can attach one.
+/// Off unix no worker channel exists, so no spawn can attach one. Its only caller, the
+/// backend supervisor, is unix-only.
 #[cfg(not(unix))]
+#[allow(dead_code)]
 pub(crate) fn attach(_session: WorkerSession) -> io::Result<WorkerSpawn> {
     Err(io::Error::from(io::ErrorKind::Unsupported))
 }

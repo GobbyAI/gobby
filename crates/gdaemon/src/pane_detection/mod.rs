@@ -89,10 +89,13 @@ pub struct ManifestSet {
 
 impl ManifestSet {
     /// Compiles `(provider_id, content)` rows as `_install_rows` does. A row that fails to
-    /// compile, or whose manifest names another provider, is skipped with a warning on stderr.
+    /// compile, or whose manifest names another provider, is skipped with a WARNING record.
     /// A later row for the same provider replaces an earlier one.
     pub fn from_rows(rows: &[(String, String)]) -> Self {
-        Self::from_rows_logged(rows, |line| eprintln!("gdaemon: {line}"))
+        Self::from_rows_logged(
+            rows,
+            |line| tracing::warn!(target: "gobby.pane_detection", "gdaemon: {line}"),
+        )
     }
 
     /// `from_rows` with each skipped row reported through `warn`, in the same

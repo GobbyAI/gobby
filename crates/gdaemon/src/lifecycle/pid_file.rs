@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use gobby_core::json::{CANONICAL, Json, dumps};
 use num_bigint::BigInt;
 use rand::{RngCore, rngs::OsRng};
 use serde::Serialize;
@@ -624,81 +625,12 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Python's sorted, compact, ensure_ascii=True JSON is the checksum contract.
-/// Sorting explicitly avoids depending on serde_json's map feature selection.
+/// `json.dumps(record, sort_keys=True, separators=(",", ":"))` is the checksum
+/// contract; the parsed value keeps integer digits as written and floats as floats.
 fn canonical(raw: &RawValue) -> io::Result<String> {
-    let text = raw.get().trim();
-    Ok(match text.as_bytes().first() {
-        Some(b'{') => {
-            let fields: PidRecord = serde_json::from_str(text).map_err(io::Error::other)?;
-            let items = fields
-                .iter()
-                .map(|(key, value)| {
-                    Ok(format!(
-                        "{}:{}",
-                        canonical(&to_raw_value(key).map_err(io::Error::other)?)?,
-                        canonical(value)?
-                    ))
-                })
-                .collect::<io::Result<Vec<_>>>()?;
-            format!("{{{}}}", items.join(","))
-        }
-        Some(b'[') => {
-            let values: Vec<Box<RawValue>> =
-                serde_json::from_str(text).map_err(io::Error::other)?;
-            format!(
-                "[{}]",
-                values
-                    .iter()
-                    .map(|v| canonical(v))
-                    .collect::<io::Result<Vec<_>>>()?
-                    .join(",")
-            )
-        }
-        Some(b'"') => {
-            let s: String = serde_json::from_str(text).map_err(io::Error::other)?;
-            let quoted = serde_json::to_string(&s).map_err(io::Error::other)?;
-            let mut ascii = String::new();
-            for ch in quoted.chars() {
-                if ch >= '\u{7f}' {
-                    let mut units = [0_u16; 2];
-                    for unit in ch.encode_utf16(&mut units) {
-                        ascii.push_str(&format!("\\u{unit:04x}"));
-                    }
-                } else {
-                    ascii.push(ch);
-                }
-            }
-            ascii
-        }
-        Some(b't' | b'f' | b'n') => text.into(),
-        _ => {
-            // RawValue preserves number literals locally, without changing
-            // serde_json::Number serialization in other workspace consumers.
-            if let Ok(integer) = text.parse::<BigInt>() {
-                integer.to_string()
-            } else {
-                python_float(serde_json::from_str::<f64>(text).map_err(io::Error::other)?)
-            }
-        }
-    })
-}
-
-fn python_float(number: f64) -> String {
-    let raw = number.to_string();
-    let magnitude = number.abs();
-    if magnitude != 0.0 && !(1e-4..1e16).contains(&magnitude) {
-        let scientific = format!("{number:e}");
-        let (mantissa, exponent) = scientific
-            .split_once('e')
-            .expect("scientific format contains e");
-        let exponent: i32 = exponent.parse().expect("formatted exponent is an integer");
-        format!("{mantissa}e{exponent:+03}")
-    } else if !raw.contains('.') {
-        format!("{raw}.0")
-    } else {
-        raw
-    }
+    let value = Json::parse(raw.get()).map_err(io::Error::other)?;
+    dumps(&value, CANONICAL)
+        .map_err(|error| io::Error::other(format!("pid record is not encodable: {error:?}")))
 }
 
 pub fn encode_record<T: Serialize + ?Sized>(record: &T) -> io::Result<Vec<u8>> {

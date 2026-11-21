@@ -14,6 +14,8 @@ fn database_url_from(env: &dyn Fn(&str) -> Option<String>) -> Result<String, DbU
 }
 
 /// The test hub from the process environment, or `None` after printing a skip line.
+/// The skip line is test output for the person running the suite, not a daemon record.
+#[allow(clippy::print_stderr)]
 fn test_database_url() -> Option<String> {
     match database_url_from(&|name| std::env::var(name).ok()) {
         Ok(url) => Some(url),

@@ -9,6 +9,7 @@ use axum::{
     routing::get,
 };
 use deadpool_postgres::tokio_postgres::Row;
+use gobby_core::domain_error::{DomainError, DomainErrorClass, http};
 use gobby_core::postgres_pool::Pool;
 use serde_json::{Value, json};
 use std::time::SystemTime;
@@ -173,9 +174,20 @@ fn error(status: StatusCode, code: &str, message: &str) -> Response {
     )
 }
 
+/// A coded envelope whose status comes from the error's class; a 503 carries the retry
+/// hint, as [`error`] does.
+fn domain_error(class: DomainErrorClass, code: &str, message: &str) -> Response {
+    let (status, body) = http::coded(&DomainError::new(class, message), code);
+    crate::front_door::health::json_response(
+        status,
+        body,
+        status == StatusCode::SERVICE_UNAVAILABLE,
+    )
+}
+
 fn unavailable() -> Response {
-    error(
-        StatusCode::SERVICE_UNAVAILABLE,
+    domain_error(
+        DomainErrorClass::Unavailable,
         "machines_unavailable",
         "Machine inventory is unavailable",
     )
@@ -190,9 +202,53 @@ fn missing_auth() -> Response {
 }
 
 fn not_found() -> Response {
-    error(
-        StatusCode::NOT_FOUND,
+    domain_error(
+        DomainErrorClass::Missing,
         "machine_not_found",
         "Machine not found",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::header::CONTENT_TYPE;
+    use http_body_util::BodyExt;
+
+    async fn parts(response: Response) -> (StatusCode, Option<String>, Value) {
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let bytes = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body collects")
+            .to_bytes();
+        let body = serde_json::from_slice(&bytes).expect("body is JSON");
+        (status, content_type, body)
+    }
+
+    #[tokio::test]
+    async fn unavailable_and_not_found_bodies_are_pinned() {
+        assert_eq!(
+            parts(unavailable()).await,
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Some("application/json".to_owned()),
+                json!({"error": "Machine inventory is unavailable", "code": "machines_unavailable"}),
+            )
+        );
+        assert_eq!(
+            parts(not_found()).await,
+            (
+                StatusCode::NOT_FOUND,
+                Some("application/json".to_owned()),
+                json!({"error": "Machine not found", "code": "machine_not_found"}),
+            )
+        );
+    }
 }

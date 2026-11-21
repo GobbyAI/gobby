@@ -1,3 +1,5 @@
+#![deny(clippy::print_stderr)]
+
 use std::env;
 
 use anyhow::{Context, Result};
@@ -11,6 +13,7 @@ use gobby_core::schema::{
 };
 use gobby_daemon::front_door::compare;
 use gobby_daemon::front_door::waivers::WaiverManifest;
+use gobby_daemon::logging;
 use time::OffsetDateTime;
 
 const DATABASE_URL_ENV: &str = "GOBBY_DATABASE_URL";
@@ -65,6 +68,9 @@ enum SchemaCommand {
 }
 
 fn main() -> Result<()> {
+    // Before any thread exists: the local offset read is refused once others run.
+    logging::install_pre_config();
+    logging::capture_local_offset();
     let cli = Cli::parse();
     let verifying = matches!(
         &cli.command,
@@ -98,7 +104,7 @@ fn main() -> Result<()> {
         && verifying
         && transient_schema_failure(error)
     {
-        eprintln!("{error}");
+        logging::raw_stderr(&error.to_string());
         std::process::exit(75);
     }
     result

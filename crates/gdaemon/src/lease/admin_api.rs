@@ -61,6 +61,14 @@ pub async fn handle(state: &RuntimeState, request: Request<Body>) -> Response<Bo
                     json!({"detail": "refused runtime requires a full restart"}),
                 );
             }
+            // An open lifetime that is not active is draining, tearing down or abandoned:
+            // acquiring here would install an epoch the run loop still releases.
+            if lease.lifetime_open() {
+                return response(
+                    StatusCode::CONFLICT,
+                    json!({"detail": super::LIFETIME_OPEN}),
+                );
+            }
             if path.ends_with("/recover") {
                 let value = request
                     .uri()

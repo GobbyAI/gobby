@@ -72,3 +72,12 @@ fn serialize_escapes_non_ascii_like_python_json_dumps() {
     let parsed: Value = serde_json::from_str(&serialized).unwrap();
     assert_eq!(parsed, json!({"tty": "/dev/ttyé", "term_program": "🚀"}));
 }
+
+#[test]
+fn serialize_escapes_del_like_json_dumps() {
+    let mut context = Map::new();
+    context.insert("tty".into(), json!("/dev/tty\u{7f}x"));
+
+    // json.dumps({"tty": "/dev/tty\x7fx"}, separators=(",", ":"))
+    assert_eq!(serialize(&context), r#"{"tty":"/dev/tty\u007fx"}"#);
+}

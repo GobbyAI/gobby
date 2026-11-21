@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 use std::error::Error;
-use std::io::{self, Write};
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -11,9 +10,9 @@ use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 use axum::http::{HeaderValue, Response, StatusCode};
 use gobby_core::config::{is_machine_config_key, is_secret_reference_key};
 use gobby_core::grant::deployment_token;
+use gobby_core::json::{Json, PYTHON, dumps};
 use gobby_core::postgres_pool::Pool;
-use serde::{Deserialize, Serialize};
-use serde_json::ser::Formatter;
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::RuntimeState;
@@ -92,109 +91,10 @@ pub fn machine_values(active: &ActiveState) -> BTreeMap<String, String> {
 fn stringify(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
+        // Python's `_stringify_config_value` returns `json.dumps(value)`.
         other => {
-            let mut out = Vec::new();
-            other
-                .serialize(&mut serde_json::Serializer::with_formatter(
-                    &mut out, PythonJson,
-                ))
-                .expect("a JSON value serializes into a Vec");
-            String::from_utf8(out).expect("serde_json writes UTF-8")
+            dumps(&Json::from(other), PYTHON).expect("PYTHON writes every float a Value can hold")
         }
-    }
-}
-
-/// Python's `json.dumps` defaults: `", "` and `": "` separators, ASCII-only
-/// strings, and `float.__repr__` for floats.
-struct PythonJson;
-
-impl Formatter for PythonJson {
-    fn begin_array_value<W: ?Sized + Write>(
-        &mut self,
-        writer: &mut W,
-        first: bool,
-    ) -> io::Result<()> {
-        if first {
-            Ok(())
-        } else {
-            writer.write_all(b", ")
-        }
-    }
-
-    fn begin_object_key<W: ?Sized + Write>(
-        &mut self,
-        writer: &mut W,
-        first: bool,
-    ) -> io::Result<()> {
-        if first {
-            Ok(())
-        } else {
-            writer.write_all(b", ")
-        }
-    }
-
-    fn begin_object_value<W: ?Sized + Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        writer.write_all(b": ")
-    }
-
-    fn write_f64<W: ?Sized + Write>(&mut self, writer: &mut W, value: f64) -> io::Result<()> {
-        writer.write_all(python_float_repr(value).as_bytes())
-    }
-
-    fn write_string_fragment<W: ?Sized + Write>(
-        &mut self,
-        writer: &mut W,
-        fragment: &str,
-    ) -> io::Result<()> {
-        for c in fragment.chars() {
-            if (' '..='~').contains(&c) {
-                writer.write_all(c.encode_utf8(&mut [0; 4]).as_bytes())?;
-            } else {
-                for unit in c.encode_utf16(&mut [0; 2]) {
-                    write!(writer, "\\u{unit:04x}")?;
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Python's `repr(float)`: the shortest round-trip digits, exponent form below
-/// `1e-4` and from `1e16`, and a trailing `.0` on integral fixed-form values.
-fn python_float_repr(value: f64) -> String {
-    let sign = if value.is_sign_negative() { "-" } else { "" };
-    let magnitude = value.abs();
-    if magnitude == 0.0 {
-        return format!("{sign}0.0");
-    }
-    // `{:e}` prints the shortest round-trip digits as `d[.ddd]e<exponent>`.
-    let scientific = format!("{magnitude:e}");
-    let (mantissa, exponent) = scientific
-        .split_once('e')
-        .expect("`{:e}` output has an exponent");
-    let exponent: i32 = exponent.parse().expect("`{:e}` exponent is an integer");
-    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
-    if (-4..16).contains(&exponent) {
-        let body = if exponent < 0 {
-            format!("0.{}{digits}", "0".repeat((-exponent - 1) as usize))
-        } else {
-            let int_len = exponent as usize + 1;
-            if digits.len() <= int_len {
-                format!("{digits}{}.0", "0".repeat(int_len - digits.len()))
-            } else {
-                format!("{}.{}", &digits[..int_len], &digits[int_len..])
-            }
-        };
-        format!("{sign}{body}")
-    } else {
-        let (head, tail) = digits.split_at(1);
-        let fraction = if tail.is_empty() {
-            String::new()
-        } else {
-            format!(".{tail}")
-        };
-        let exp_sign = if exponent < 0 { '-' } else { '+' };
-        format!("{sign}{head}{fraction}e{exp_sign}{:02}", exponent.abs())
     }
 }
 
