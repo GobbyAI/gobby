@@ -215,7 +215,7 @@ row names the Python behaviour, its evidence and the disposition.
 | Python drain loop POSTs envelopes back through the front door over HTTP | `src/gobby/hooks/inbox.py::_post_envelope`, `src/gobby/hooks/inbox_maintenance.py::drain_hook_inbox_loop` | Drop: the Rust drain dispatches through the route table in process; 7.13 unschedules the loop and 7.17 deletes its module (Decision 5) |
 | An 862-line route module | `src/gobby/servers/routes/mcp/hooks.py` | Drop: one Rust module per concern (P3) |
 | Provider inferred from inner payload fields | memory a39d0411, #17173 | Keep the fix: `source` alone selects the adapter (4.1) |
-| Seven `RuleEffect` types no bundled rule uses: `set_display_content`, `rewrite_input`, `set_permission_response`, `set_retry`, `set_watch_paths`, `set_worktree_path`, `set_elicitation` | `src/gobby/workflows/definitions.py::RuleEffect` (F2) | Keep: they are the rule-authoring schema, adapters already translate each field, and synthetic corpus cases pin them (2.12) |
+| Six `RuleEffect` types no bundled rule uses: `set_display_content`, `set_permission_response`, `set_retry`, `set_watch_paths`, `set_worktree_path`, `set_elicitation` (bundled rules use the other nine, `rewrite_input` among them) | `src/gobby/workflows/definitions.py::RuleEffect` (F2) | Keep: they are the rule-authoring schema, adapters already translate each field, and synthetic corpus cases pin all six (2.12) |
 | Per-bundled-rule behaviour tests | Josh, 2026-10-27 | Drop: schema and loader conformance only (Decision 11) |
 | TDD-gate evidence code left after #23341 retired the gate | `src/gobby/workflows/tdd_paths.py` is gone; nothing in `src/` imports `src/gobby/workflows/rust_test_evidence.py` | Drop: not ported (Site rows 3 and 13); #25266 deletes the module and its two tests |
 
@@ -326,6 +326,8 @@ Targets:
 - `tests/contracts/rules/README.md`
 - `tests/contracts/rules_corpus.py`
 - `tests/contracts/test_rules_corpus.py`
+- `tests/contracts/rules_known_bad.json`
+- `tests/contracts/test_rules_known_bad.py`
 
 **Research context:**
 - **Call surface.** `src/gobby/workflows/hooks.py::WorkflowHookHandler._evaluate_rules`
@@ -342,9 +344,10 @@ Targets:
 - **Filtering.** `_filter_by_agent_scope`, `_filter_by_audience` and
   `_filter_by_active_rules`.
 - **Effects.** `src/gobby/workflows/definitions.py::RuleEffect` accepts 15
-  types. Bundled YAML uses eight: `block`, `set_variable`, `inject_context`,
-  `mcp_call`, `observe`, `load_skill`, `run_command` and `proxy_hook`. The other
-  seven are kept (Debt not to port, F2) and pinned here by synthetic cases.
+  types. Bundled YAML uses nine: `block`, `set_variable`, `inject_context`,
+  `mcp_call`, `observe`, `load_skill`, `run_command`, `proxy_hook` and
+  `rewrite_input`. The other six are kept (Debt not to port, F2) and pinned
+  here by synthetic cases.
 - **Response.** `src/gobby/workflows/engine/evaluation.py::EvaluationMixin._assemble_response`
   fills these `HookResponse` fields (`src/gobby/hooks/events.py`): `decision`,
   `reason`, `context`, `context_parts`, `system_message`, `display_content`,
@@ -379,7 +382,26 @@ JSON file per case, listed in `manifest.json`. A case carries:
 
 Rule bodies are synthetic. They exercise engine features; no case asserts the
 behavior of a bundled rule (Decision 11). Both engines must produce each
-case's `expect` block; no case carries a Rust-only expectation.
+case's `expect` block; no case carries a Rust-only expectation, except at the
+paths a known-bad tag declares.
+
+Known-bad rows are tagged, never excluded. `tests/contracts/rules_known_bad.json`
+lists engine entries on which Python gives a wrong value. A row names the
+entry, an input, the field read, Python's value (`python_observed`), the value
+the port must give (`correct`), a control input on which Python is right, and
+the expect paths the flaw can change downstream of the entry. A row's id is
+computed from its entry, input form, input and field. A case or vector whose
+replay reaches a row's entry with the row's input and gets the flawed value
+carries `known_bad` (the sorted row ids) and `known_bad_expect`, one
+declaration per changed path; the registry re-record computes the tags, and
+the declarations on a case are written by hand. A tagged case stays in
+equality. Python's replay asserts the recorded `expect`, so it pins
+`python_observed`. The Rust replay asserts `correct` at the entry, the
+declared value at each declared path, and the recorded `expect` exactly at
+every other path, so an undeclared difference fails and a tag never switches
+a case off. A control is unchanged behaviour: Rust reproduces its
+`python_observed` exactly. A Python fix on the port branch retires its row in
+the same commit. `tests/contracts/rules/README.md` holds the declaration forms.
 
 `rules_corpus.py` records cases. It seeds rows through `RuleDefinitionManager`
 in the isolated test hub and runs `RuleEngine.evaluate`. Pytest monkeypatching
@@ -433,9 +455,9 @@ Family cases reuse the inputs of those modules' Python unit tests, rewritten as
 synthetic rule bodies, events and seam scripts. They stay engine cases: none
 asserts a bundled rule's behavior.
 
-**Granularity:** one leaf with seven acceptance items. The case schema, the
-exporter that is its oracle and the coverage checks are one artifact; a corpus
-without its exporter cannot be re-recorded.
+**Granularity:** one leaf with eight acceptance items. The case schema, the
+exporter that is its oracle, the coverage checks and the known-bad tags on its
+cases are one artifact; a corpus without its exporter cannot be re-recorded.
 
 **Acceptance:**
 - 1.1.1 - The manifest and every case load at `schema_version` 1, and a stale version is rejected. test: `tests/contracts/test_rules_corpus.py::test_loader_rejects_stale_schema_version`.
@@ -445,6 +467,7 @@ without its exporter cannot be re-recorded.
 - 1.1.5 - Every hardcoded behavior 2.16 and 2.17 list has a case, and every response field appears set in some case. test: `tests/contracts/test_rules_corpus.py::test_corpus_covers_hardcoded_behavior_and_response_fields`.
 - 1.1.6 - The Python functions reproduce every normalizer vector. test: `tests/contracts/test_rules_corpus.py::test_python_normalizer_replays_vectors`.
 - 1.1.7 - The README documents the record and replay commands, the synthetic-rule rule, and the re-record obligation when the engine changes. file: `tests/contracts/rules/README.md`.
+- 1.1.8 - Every case and vector that reaches a known-bad row's entry with the row's input carries that row's `known_bad` tag and declares each path the flaw changes; a tagged case stays in equality, Python asserting `python_observed` and Rust the row's `correct`. test: `tests/contracts/test_rules_known_bad.py::test_affected_corpus_cases_marked_known_bad`.
 
 **Verification:** planned:
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_rules_corpus.py -v`.
@@ -969,6 +992,32 @@ Targets:
 - **Regex dialect.** Rule patterns use Python `re`. Bundled rules use
   lookarounds the `regex` crate rejects. `regex` and `fancy-regex` are both in
   `Cargo.lock`.
+- **Regex audit.** The `regex`-then-`fancy-regex` fallback below is
+  superseded by port map decision D33 (`docs/port/map-v2.md`). The audit in
+  `tests/contracts/test_regex_audit.py` is generic over whatever bundled
+  patterns exist; the per-pattern list is the generated
+  `docs/port/regex-audit.md`, an output for the operator, not an asserted
+  fixture. A pattern counts as exact only after its generated Rust text passed
+  the two-engine driver. Lookaround rows no rewrite family covers, and
+  constructs whose meaning differs between the engines with no exact
+  translation, are operator decisions listed in that report. Four engine facts
+  the port must reproduce or decide:
+  - `re` takes `\d` and `\w` from the interpreter's Unicode tables, which
+    differ between CPython 3.13 and 3.14 (`\d`: 680 and 760 code points), so a
+    pattern holding them, or `\b` or `\B`, has no single Rust equivalent and is
+    an operator decision under a `-version-difference` id (for example
+    `re:word-boundary-version-difference`); the `regex` package gives one `\d`
+    set on both.
+  - `\B` never holds on an empty subject under `re` on CPython 3.13 and holds
+    there on 3.14, under the `regex` package and in Rust. The decision id
+    `re:non-word-boundary-empty-subject` names the decision the port owes; the
+    report lists no row under it, because while the `-version-difference` ids
+    are open every `re` pattern with a boundary is listed under those.
+  - A substitution replaces every match, and Python accepts an empty match
+    directly after a non-empty one where the Rust iterator does not; a
+    substitution pattern that can match the empty string is reported as
+    `sub-empty-match-iteration`.
+  - The port's `regex_replace` expands Python replacement templates itself.
 - **Site row 4.** `_git_ignored`: node read; unanswered degrades to not
   ignored, so enforcement stays on.
 - **Site row 14.** `_verified_source_line_count` and `_ignore_decision`: node
@@ -1182,6 +1231,13 @@ Targets:
   `memory_review_conditions.py` (129); and `condition_helpers_sessions.py`
   (602: `send_keys_target_in_scope`, `send_message_target_allowed`,
   `spawn_target_allowed`, `network_override_allowed`) over `SessionQueries`.
+- **Memory review.** Nothing in the rule pass calls
+  `memory_review_conditions`. It is reached through the variable manager:
+  `SessionVariableManager.record_memory_review`
+  (`src/gobby/workflows/state_manager.py`) calls
+  `pending_memory_reviews_complete`, and `queue_memory_review` reaches it only
+  by calling `record_memory_review` when a matching review record already
+  exists.
 - **Site rows.** 11: `_projection_for_path` via `projected_monolith_paths`
   (`require-decompose-monolith-before-threshold-write`) reads through the seam;
   unanswered lists the path with the diagnostic. 12:
@@ -1371,8 +1427,9 @@ Targets:
 **Research context:**
 - **Python modules.** `src/gobby/workflows/engine/enforcement_checks.py` (994:
   `EnforcementCheckMixin._check_step_tool_enforcement`,
-  `_check_agent_tool_enforcement`), `enforcement_completion.py` (730:
-  `_replay_bound_task_commits`), `enforcement_handlers.py` (193),
+  `_check_agent_tool_enforcement`), `enforcement_completion.py` (730;
+  `_replay_bound_task_commits` was removed in `0855e3aac9`, so entering a step
+  replays no earlier commit), `enforcement_handlers.py` (193),
   `enforcement_audit.py` (82: `_audit_step_tool_call`), `enforcement.py` (60)
   and `step_tool_input.py` (64); `src/gobby/workflows/step_instances.py` (392),
   `step_context.py` (183) and `step_binding.py` (104: `release_lost_binding`,
@@ -1384,8 +1441,9 @@ Targets:
   key strings; the priority is 875 (DR6).
 - **Tables.** `agent_step_instances` and `agent_step_workflows`.
 - **Lifecycle in the pass.** `_process_step_after_tool`,
-  `_route_step_transition_notice`, the lost-binding rewind, and bound-commit
-  replay on entering a step with `link_commit` handlers.
+  `_route_step_transition_notice` and the lost-binding rewind. Entering a step
+  with `link_commit` handlers replays no earlier bound commit; the corpus pins
+  that absence.
 - **Site row 10.** `plan_write_paths_allowed` (plan-mode write gate) reads with
   the node's home and temp roots; unanswered returns `False`.
 
@@ -1402,7 +1460,7 @@ state machine and one lock.
 **Acceptance:**
 - 2.16.1 - Every step-tool and agent-tool enforcement case in the corpus replays equal, with step audit records matching `_audit_step_tool_call` field for field. test: `crates/gworkflows/tests/step_enforcement_corpus.rs::step_and_agent_cases_replay_equal`.
 - 2.16.2 - Step mutations hold the advisory lock with Python's `AgentStepInstanceMutation` key and priority 875, and a concurrent Python holder blocks them. test: `crates/gworkflows/src/step/tests.rs::step_lock_matches_python_key`.
-- 2.16.3 - After-tool transitions, transition notices, the lost-binding rewind and bound-commit replay replay equal. test: `crates/gworkflows/tests/step_enforcement_corpus.rs::step_lifecycle_cases_replay_equal`.
+- 2.16.3 - After-tool transitions, transition notices and the lost-binding rewind replay equal, and entering a step replays no earlier bound commit. test: `crates/gworkflows/tests/step_enforcement_corpus.rs::step_lifecycle_cases_replay_equal`.
 - 2.16.4 - Site row 10: the plan-mode gate reads with the node's home and temp roots, and an unanswered read returns `False`. test: `crates/gworkflows/src/step/tests.rs::site_row_10_plan_writes_fail_closed`.
 
 **Verification:** the shared P2 commands.
@@ -1432,15 +1490,22 @@ Targets:
     recovery state (`src/gobby/workflows/engine/blocked_tool_recovery.py`, 288);
   - edit/write pending and `tool_block_pending` after a tool runs
     (`_manage_after_tool_recovery_state`);
-  - the `POST_TOOL_BATCH` reset of `stop_attempts` and `_block_reasons_shown`;
+  - `POST_TOOL_BATCH`, which only closes the response batch
+    (`block_batching.close_response_batch`); the reset of `stop_attempts` and
+    `_block_reasons_shown` is the turn-start reset, skipped while
+    `_blocked_turn_end_pending` is set;
   - auto-discover-servers on the first prompt (`servers_listed`), an `_proxy`
-    self-call through `McpDispatch`;
+    self-call: the engine only appends it to `response.metadata["mcp_calls"]`,
+    and `HookManager._dispatch_mcp_calls`
+    (`src/gobby/hooks/hook_manager_dispatch.py`) dispatches it;
   - the turn-end `stop_attempts` increment, which durable waits do not
     consume;
   - the `force_allow_stop`, `tool_block_pending` and `edit_write_pending` stop
     gates, where a claimed task suppresses `force_allow_stop`;
   - `_deliver_late_mcp_injections`, `_flush_pending_terminal_denial` and
-    `_finalize_block_response`.
+    `_finalize_block_response`. The terminal-denial producer
+    (`enforcement_checks.py`) needs `runner.run_storage`; the rule pass only
+    flushes a queued denial through `_flush_pending_terminal_denial`.
 - **F4.** After a before-tool rewrite by `_rewrite_input` or a `proxy_hook`,
   `evaluate` re-runs agent tool enforcement, step tool enforcement and
   `_run_rule_loop(..., block_effects_only=True)` against the rewritten input,
@@ -1454,7 +1519,7 @@ behavior that bundled rules and seat workflows rely on, so none is dropped.
 **Acceptance:**
 - 2.17.1 - Every hardcoded-behavior case in the 1.1 corpus replays equal. test: `crates/gworkflows/tests/lifecycle_corpus.rs::lifecycle_cases_replay_equal`.
 - 2.17.2 - With enforcement disabled every event allows and no rule runs, and with aggregate blocking off the pass stops at the first block except on an interrupted turn end. test: `crates/gworkflows/tests/lifecycle_corpus.rs::config_switches_match_python`.
-- 2.17.3 - Stop gates, attempt counters and the batch reset match Python, including a claimed task suppressing `force_allow_stop`, and repeated blocked calls reach `max_consecutive_blocked_tool_attempts` as Python counts them. test: `crates/gworkflows/tests/lifecycle_corpus.rs::stop_gates_and_counters_match_python`.
+- 2.17.3 - Stop gates, attempt counters, the batch close and the turn-start reset match Python, including a claimed task suppressing `force_allow_stop`, and repeated blocked calls reach `max_consecutive_blocked_tool_attempts` as Python counts them. test: `crates/gworkflows/tests/lifecycle_corpus.rs::stop_gates_and_counters_match_python`.
 - 2.17.4 - F4: a rewritten input is rechecked by both tool enforcements and block effects only, and non-block effects run once. test: `crates/gworkflows/tests/lifecycle_corpus.rs::rewrite_recheck_runs_block_effects_only`.
 
 **Verification:** the shared P2 commands.
@@ -2629,7 +2694,11 @@ Three are bound here:
 an `Arc`. The pipeline holds one clone, and `serve::run` keeps the other for
 #24884's gateway composition, which takes it (Cross-plan edges). Every Rust
 pass of a session, from a hook or a proxied tool call, then joins one FIFO and
-one pending tool context (Decision 4).
+one pending tool context (Decision 4). A proxied tool call that a hook already
+admitted inherits the agent identity of the admitted call or is not evaluated
+a second time; a call with no preceding hook has no agent id. Therefore the
+pending tool context keeps the agent id of the admitted call, which Python's
+does not (known-bad row unfiled:proxy-duplicate-before-tool-agent-identity).
 
 `hooks::dispatch::LocalDispatch` sends a request through `FrontDoor::handle`
 with a loopback peer and the local operator credential
@@ -3419,3 +3488,13 @@ Platform evidence (Orchestrator, 2026-10-28):
 
 2026-10-28 — Initial narrative by Plan Writer gobby#18278 for planning task
 #25256. No consensus or manifest is claimed.
+
+2026-11-20 — Amendments from the P0-DECISIONS port chunk (#25939): 1.1 tags
+known-bad rows and keeps tagged cases in equality (item 1.1.8); the effect-type
+count is nine bundled and six unused (1.1 research context and the Debt row);
+2.8 records the generic regex audit and four engine facts; 2.12, 2.16 and 2.17
+drop stale hardcoded paths (removed bound-commit replay, the batch close
+against the turn-start reset, memory review through the variable manager, the
+terminal-denial producer, the proxy self-call dispatch); 7.1 states that a
+proxied call keeps the admitted call's agent id. No consensus or manifest is
+claimed.
