@@ -106,7 +106,9 @@ REPORT_REASONS = frozenset(
 )
 SEMANTIC_PREFIX = "semantic-decision:"
 # Constructs Rust compiles with another meaning; every other fail construct Rust rejects.
-RUST_REINTERPRETED_IDS = frozenset({"possessive", "verbose-flag", "posix-class"})
+RUST_REINTERPRETED_IDS = frozenset(
+    {"possessive", "verbose-flag", "posix-class", "unicode-property"}
+)
 REQUIRED_CONSTRUCT_IDS = (
     "literal",
     "non-ascii-literal",
@@ -1377,6 +1379,17 @@ def test_fail_reasons_name_the_cause_from_the_closed_set() -> None:
         assert _fail_reason("a(b)") == "parser-disagreement"
     with mock.patch.object(tool, "min_width", return_value=0):
         assert _fail_reason("a(b)") == "parser-disagreement"
+
+
+def test_a_unicode_property_reads_as_reinterpreted_where_python_accepts_it() -> None:
+    # Only the regex package compiles a property escape; Rust compiles it too, against its own
+    # Unicode tables, so the pattern fails as reinterpreted rather than rejected.
+    for pattern in ("q\\p{L}", "q\\P{L}"):
+        verdict = _verdict(pattern, "SEARCH-PKG-M")
+        assert verdict.kind == "fail", verdict
+        assert verdict.reason == "rust-reinterpreted:unicode-property", verdict
+    # The re module rejects the escape, so Python validity decides first there.
+    assert _fail_reason("q\\p{L}") == "python-invalid"
 
 
 # ---------------------------------------------------------------------------------------------
