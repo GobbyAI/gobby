@@ -211,13 +211,24 @@ def test_the_loader_refuses_a_fault_hit_guard_that_is_not_true_or_a_mapping(
 ) -> None:
     # A false guard would read as its opposite: every fault hit, the same check as true.
     problems: list[str] = []
-    accepted: tuple[tuple[str, Any], ...] = (("true", True), ("a count mapping", {"count": 1}))
+    accepted: tuple[tuple[str, Any], ...] = (
+        ("true", True),
+        ("a count mapping", {"count": 1}),
+        ("a pass and count mapping", {"pass": 0, "count": 1}),
+    )
     refused: tuple[tuple[str, Any], ...] = (
         ("false", False),
         ("one", 1),
         ("a string", "yes"),
         # A misspelt key would be ignored and the guard read as a plain hit check.
         ("a misspelt key", {"cuont": 2}),
+        # A fraction would be truncated on replay: 1.9 hits read as 1, pass 0.9 as pass 0.
+        ("a fractional count", {"count": 1.9}),
+        ("a fractional pass", {"pass": 0.9}),
+        ("a zero count", {"count": 0}),
+        ("a negative pass", {"pass": -1}),
+        ("a boolean count", {"count": True}),
+        ("a boolean pass", {"pass": False}),
     )
     for label, value in accepted:
         problems += _accepted_problems(
