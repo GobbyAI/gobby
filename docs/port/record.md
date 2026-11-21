@@ -5053,7 +5053,7 @@ Contract of the SEAM-FAMILY chunk (#25950), as built on its branch. The frozen t
   - The quiet-hours.yaml lookbehind row is reported under `re:word-boundary-version-difference`, not rewritten.
   - The eight decision ids and their options are in the report's `decisions`. The operator's questions go to Josh as one batch from the port session; nothing in `src/` is refused or rewritten.
 - Stale text in the map's P0-DECISIONS goal:
-  - "76 lookaround and backreference matches in at least 10 bundled rule files" is the command_pattern subset; the counts above are the whole universe.
+  - "76 lookaround and backreference matches in at least 10 bundled rule files" is stale. The raw scan finds 132 lookaround tokens on 75 `command_pattern` lines of 33 bundled rule files; quiet-hours.yaml adds 1 token on 1 line, giving 76 lines across both trees. The parsed report holds 77 bundled `command_pattern` rows with lookaround, 78 with quiet-hours.yaml. The counts above are the whole universe.
   - `SUPPORTED_HOOK_SOURCES` is at src/gobby/servers/routes/mcp/hooks.py line 89, not 91.
   - The only assignment of `_pending_interaction_manager` is tests/servers/test_session_control.py line 1876, not 2112.
   - The map is not edited here; a map revision takes these corrections.
