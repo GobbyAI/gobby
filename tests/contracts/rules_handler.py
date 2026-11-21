@@ -157,6 +157,15 @@ def validate_requires(case_id: str, requires: Any, faults: Any) -> None:
                 f"{case_id}: a fault_hit guard has unknown key(s) "
                 f"{sorted(set(value) - {'count', 'pass'})}"
             )
+        if isinstance(value, Mapping):
+            # int() on replay would truncate a fraction and read a bool as 0 or 1.
+            for key, least in (("pass", 0), ("count", 1)):
+                number = value.get(key, least)
+                if isinstance(number, bool) or not isinstance(number, int) or number < least:
+                    raise ValueError(
+                        f"{case_id}: a fault_hit guard's {key} is an integer of at least "
+                        f"{least}, got {number!r}"
+                    )
         if not faults:
             raise ValueError(f"{case_id}: a fault_hit guard needs the case faults it checks")
 
