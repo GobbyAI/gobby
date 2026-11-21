@@ -9297,8 +9297,8 @@
     },
     {
       "id": "synthetic-hardcoded-bound-commit-replay",
-      "kind": "rule_pass",
-      "entry": "engine",
+      "kind": "handler_pass",
+      "entry": "handler",
       "provenance": "synthetic",
       "scenario_ids": [
         "S-HARDCODED-BOUND-COMMIT-REPLAY"
@@ -9306,18 +9306,31 @@
       "family": null,
       "observer": null,
       "transition": null,
+      "posix_only": true,
+      "reaches": [],
       "requires": [
         {
+          "step": {
+            "equals": "synthetic-commit"
+          }
+        },
+        {
           "variable": {
-            "name": "synthetic_commit_bound",
-            "equals": true
+            "name": "synthetic_commit_replayed",
+            "equals": null
           }
         }
       ],
+      "observe": {
+        "step_instance": true,
+        "tasks": [
+          "t1"
+        ]
+      },
       "rules": [
         {
-          "name": "synthetic-replay-observe",
-          "event": "before_tool",
+          "name": "synthetic-replay-after",
+          "event": "after_tool",
           "effects": [
             {
               "type": "observe",
@@ -9326,43 +9339,185 @@
           ]
         }
       ],
+      "domain": {
+        "repo": {
+          "files": {
+            "a.py": "x = 1\n"
+          },
+          "commits": [
+            {
+              "message": "synthetic earlier commit",
+              "add": [
+                "a.py"
+              ]
+            }
+          ]
+        },
+        "agents": {
+          "synthetic-replay-agent": {
+            "name": "synthetic-replay-agent",
+            "body": {
+              "workflows": {
+                "rule_selectors": {
+                  "include": [
+                    "tag:default"
+                  ]
+                }
+              },
+              "prompts": {
+                "agent": "Synthetic corpus agent."
+              }
+            },
+            "step_workflow": {
+              "steps": [
+                {
+                  "name": "synthetic-claim",
+                  "on_mcp_success": [
+                    {
+                      "server": "gobby-tasks",
+                      "tool": "claim_task",
+                      "action": "set_variable",
+                      "variable": "synthetic_claimed",
+                      "value": true
+                    }
+                  ],
+                  "transitions": [
+                    {
+                      "to": "synthetic-commit",
+                      "when": "vars.get('synthetic_claimed')"
+                    }
+                  ]
+                },
+                {
+                  "name": "synthetic-commit",
+                  "on_mcp_success": [
+                    {
+                      "server": "gobby-tasks",
+                      "tool": "link_commit",
+                      "action": "set_variable",
+                      "variable": "synthetic_commit_replayed",
+                      "value": true
+                    }
+                  ],
+                  "transitions": [
+                    {
+                      "to": "synthetic-done",
+                      "when": "vars.get('synthetic_commit_replayed')"
+                    }
+                  ]
+                },
+                {
+                  "name": "synthetic-done",
+                  "status_message": "synthetic done step"
+                }
+              ]
+            },
+            "enabled": true
+          }
+        },
+        "sessions": {
+          "self": {
+            "source": "claude",
+            "agent": "synthetic-replay-agent"
+          }
+        },
+        "tasks": {
+          "t1": {
+            "title": "synthetic task with an earlier commit",
+            "claimed_by": "self"
+          }
+        },
+        "variables": {
+          "self": {
+            "_agent_type": "synthetic-replay-agent",
+            "assigned_task_id": "{task:t1}"
+          }
+        },
+        "step_instances": {
+          "self": {
+            "agent": "synthetic-replay-agent",
+            "current_step": "synthetic-claim"
+          }
+        }
+      },
       "event": {
-        "type": "before_tool",
+        "type": "after_tool",
         "source": "claude",
+        "between": [
+          {
+            "op": "link_commit",
+            "task": "t1",
+            "commit": 1
+          }
+        ],
         "data": {
-          "tool_name": "Bash",
+          "tool_name": "mcp__gobby__call_tool",
           "tool_input": {
-            "command": "echo hi"
+            "server_name": "gobby-tasks",
+            "tool_name": "claim_task",
+            "arguments": {
+              "task_id": "{task:t1}"
+            }
+          },
+          "tool_output": {
+            "success": true,
+            "result": "synthetic claimed"
           }
         },
         "metadata": {}
       },
       "seam_failures": [],
-      "variables": {
-        "synthetic_commit_bound": true
-      },
       "expect": {
         "outcome_class": "allow",
         "eager_variable_delta": {
-          "project": {
-            "name": "Unknown",
-            "id": "unknown",
-            "path": ""
-          },
+          "_found_work_activity_revision": 1,
+          "_found_work_gate_armed_at": "<timestamp>",
           "_gobby_feedback_survey_active": false,
+          "_last_blocked_batch_counted": false,
+          "_last_blocked_reason": "",
+          "_last_blocked_recovery_conditions": [],
+          "_last_blocked_rule_name": "",
+          "_last_blocked_tool": "",
           "_observations": [
             {
               "category": "general",
               "message": "replay",
-              "timestamp": "<volatile>",
-              "rule": "synthetic-replay-observe"
+              "rule": "synthetic-replay-after",
+              "timestamp": "<volatile>"
             }
-          ]
+          ],
+          "_variable_defaults_loaded": true,
+          "claimed_task_extra_skills": [],
+          "claimed_task_is_source_work": false,
+          "claimed_task_requires_tdd": false,
+          "consecutive_tool_blocks": 0,
+          "context_compact_block_message": "",
+          "context_compact_guidance_kind": "",
+          "context_compact_guidance_message": "",
+          "context_compact_mid_turn_pressure_band": "none",
+          "mcp_calls": {
+            "gobby-tasks": [
+              "claim_task"
+            ]
+          },
+          "mcp_results": {
+            "gobby-tasks": {
+              "claim_task": {}
+            }
+          },
+          "project": {
+            "id": "{project}",
+            "name": "synthetic-project",
+            "path": "{repo}"
+          },
+          "synthetic_claimed": true,
+          "tool_block_pending": false,
+          "unresolvable_claimed_task_extra_skills": []
         },
         "on_receipt_payload": null,
         "effect_log": [
           {
-            "event": "before_tool"
+            "event": "after_tool"
           },
           {
             "seam": "rule_definitions",
@@ -9370,9 +9525,24 @@
             "outcome": "ok"
           },
           {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
+            "write": "workflow_audit_log",
+            "call": "log",
+            "outcome": "ok"
+          },
+          {
             "effect": "observe",
             "delivery": "eager",
-            "rule": "synthetic-replay-observe"
+            "rule": "synthetic-replay-after"
           },
           {
             "write": "rule_eval",
@@ -9382,19 +9552,35 @@
         ],
         "audit_records": [
           {
-            "rule": "synthetic-replay-observe",
+            "rule": "synthetic-replay-after",
             "result": "allow",
-            "event": "before_tool"
+            "event": "after_tool"
           }
         ],
-        "response": {},
+        "response": {
+          "context": "Step transition: synthetic-claim -> synthetic-commit",
+          "context_parts": [
+            [
+              "step_transition",
+              "Step transition: synthetic-claim -> synthetic-commit"
+            ]
+          ]
+        },
         "passes": [
           {
             "outcome_class": "allow",
-            "response": {},
+            "response": {
+              "context": "Step transition: synthetic-claim -> synthetic-commit",
+              "context_parts": [
+                [
+                  "step_transition",
+                  "Step transition: synthetic-claim -> synthetic-commit"
+                ]
+              ]
+            },
             "effect_log": [
               {
-                "event": "before_tool"
+                "event": "after_tool"
               },
               {
                 "seam": "rule_definitions",
@@ -9402,9 +9588,24 @@
                 "outcome": "ok"
               },
               {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              },
+              {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              },
+              {
+                "write": "workflow_audit_log",
+                "call": "log",
+                "outcome": "ok"
+              },
+              {
                 "effect": "observe",
                 "delivery": "eager",
-                "rule": "synthetic-replay-observe"
+                "rule": "synthetic-replay-after"
               },
               {
                 "write": "rule_eval",
@@ -9414,26 +9615,94 @@
             ],
             "audit_records": [
               {
-                "rule": "synthetic-replay-observe",
+                "rule": "synthetic-replay-after",
                 "result": "allow",
-                "event": "before_tool"
+                "event": "after_tool"
               }
             ],
             "eager_variable_delta": {
-              "project": {
-                "name": "Unknown",
-                "id": "unknown",
-                "path": ""
-              },
+              "_found_work_activity_revision": 1,
+              "_found_work_gate_armed_at": "<timestamp>",
               "_gobby_feedback_survey_active": false,
+              "_last_blocked_batch_counted": false,
+              "_last_blocked_reason": "",
+              "_last_blocked_recovery_conditions": [],
+              "_last_blocked_rule_name": "",
+              "_last_blocked_tool": "",
               "_observations": [
                 {
                   "category": "general",
                   "message": "replay",
-                  "timestamp": "<volatile>",
-                  "rule": "synthetic-replay-observe"
+                  "rule": "synthetic-replay-after",
+                  "timestamp": "<volatile>"
                 }
-              ]
+              ],
+              "_variable_defaults_loaded": true,
+              "claimed_task_extra_skills": [],
+              "claimed_task_is_source_work": false,
+              "claimed_task_requires_tdd": false,
+              "consecutive_tool_blocks": 0,
+              "context_compact_block_message": "",
+              "context_compact_guidance_kind": "",
+              "context_compact_guidance_message": "",
+              "context_compact_mid_turn_pressure_band": "none",
+              "mcp_calls": {
+                "gobby-tasks": [
+                  "claim_task"
+                ]
+              },
+              "mcp_results": {
+                "gobby-tasks": {
+                  "claim_task": {}
+                }
+              },
+              "project": {
+                "id": "{project}",
+                "name": "synthetic-project",
+                "path": "{repo}"
+              },
+              "synthetic_claimed": true,
+              "tool_block_pending": false,
+              "unresolvable_claimed_task_extra_skills": []
+            },
+            "facts": {
+              "foreign_dirty_edit_conflict": "",
+              "foreign_landing_merge": false,
+              "session_owned_reviewable_paths": null,
+              "foreign_staged_commit_conflict": "",
+              "base_merge_git_step": false,
+              "base_merge_write": false,
+              "commit_has_reviewable_paths": true,
+              "commit_records_only_plan_paths": false,
+              "has_dirty_files": false,
+              "target_task_has_edits": false,
+              "has_target_task_dirty_files": false,
+              "found_work_shirk": false,
+              "found_work_shirk_confirmed": false,
+              "terminal_validation_failure": false,
+              "terminal_validation_failure_commands": [],
+              "unclaimed_found_work": false,
+              "unclaimed_found_work_tasks": []
+            },
+            "observer_failures": [],
+            "observe": {
+              "step_instance": {
+                "current_step": "synthetic-commit",
+                "step_action_count": 0,
+                "variables": {
+                  "synthetic_claimed": true
+                }
+              },
+              "tasks": {
+                "t1": {
+                  "closed": false,
+                  "claimed_by_session_id": "{session:self}",
+                  "commits": [
+                    "{commit:1}"
+                  ],
+                  "labels": []
+                }
+              }
             }
           }
         ]

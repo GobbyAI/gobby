@@ -1425,15 +1425,15 @@ Targets:
 - `crates/gworkflows/tests/step_enforcement_corpus.rs`
 
 **Research context:**
-- **Python modules.** `src/gobby/workflows/engine/enforcement_checks.py` (994:
+- **Python modules.** `src/gobby/workflows/engine/enforcement_checks.py` (966:
   `EnforcementCheckMixin._check_step_tool_enforcement`,
-  `_check_agent_tool_enforcement`), `enforcement_completion.py` (730;
+  `_check_agent_tool_enforcement`), `enforcement_completion.py` (755;
   `_replay_bound_task_commits` was removed in `0855e3aac9`, so entering a step
-  replays no earlier commit), `enforcement_handlers.py` (193),
+  replays no earlier commit), `enforcement_handlers.py` (198),
   `enforcement_audit.py` (82: `_audit_step_tool_call`), `enforcement.py` (60)
   and `step_tool_input.py` (64); `src/gobby/workflows/step_instances.py` (392),
-  `step_context.py` (183) and `step_binding.py` (104: `release_lost_binding`,
-  #23886); `src/gobby/workflows/enforcement/blocking.py` (743:
+  `step_context.py` (183) and `step_binding.py` (123: `release_lost_binding`,
+  #23886); `src/gobby/workflows/enforcement/blocking.py` (769:
   `plan_write_paths_allowed`, `task_mutation_requires_tasks_skill`).
 - **Locking.** The step check runs inside
   `db.transaction_immediate(AgentStepInstanceMutation(session_id))`. gcore's
@@ -1443,13 +1443,15 @@ Targets:
 - **Lifecycle in the pass.** `_process_step_after_tool`,
   `_route_step_transition_notice` and the lost-binding rewind. Entering a step
   with `link_commit` handlers replays no earlier bound commit; the corpus pins
-  that absence.
+  that absence (`synthetic-hardcoded-bound-commit-replay`: a claimed task with
+  an earlier linked commit, and a claim that enters the `link_commit` step and
+  stays there).
 - **Site row 10.** `plan_write_paths_allowed` (plan-mode write gate) reads with
   the node's home and temp roots; unanswered returns `False`.
 
 Port both checks and the step lifecycle as `step`. `step::repo` reads and
 updates step instances on the gcore pool under the `AgentStepInstanceMutation`
-key. The 994-line check module splits into `enforcement.rs` (step) and
+key. The 966-line check module splits into `enforcement.rs` (step) and
 `agent_tools.rs` (agent level). `engine::pass` calls the checks where
 `RuleEngine.evaluate` does.
 
