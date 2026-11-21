@@ -129,31 +129,42 @@ drive. `tests/contracts/rules_paths.py` is the registry of path ids, `rules_case
 the loader checks for the keys below, and `tests/contracts/test_rules_paths.py` the tests.
 
 - `kind` is `rule_pass` (the engine entry), `handler_pass` (`entry: "handler"`: every pass
-  goes through `WorkflowHookHandler.evaluate_async`) or `seam_caller`. A handler case seeds
-  `domain` (`rules_domain.py`): a project, a git `repo` built in a temporary directory,
+  goes through `WorkflowHookHandler.evaluate_async`) or `seam_caller`. The recorder picks a
+  case's entry from its `entry` key, never from the keys it carries. A handler case must
+  seed `domain` (`rules_domain.py`): a project, a git `repo` built in a temporary directory,
   `sessions`, `agents` with step workflows, `tasks`, `variables`, `step_instances` and
-  `agent_runs`. A case gives `seed` or `domain`, never both. `{repo}`, `{session:<key>}`,
+  `agent_runs`; the loader refuses a handler case without one and a `domain` on any other
+  case. A case gives `seed` or `domain`, never both. `{repo}`, `{session:<key>}`,
   `{task:<key>}` and the other placeholders resolve at seed time and are written back into
   the record, so no recorded value names a temporary path or a generated id.
 - `sequence` holds the passes after `event`; any pass may carry `between`, the state
   operations applied before it (a claim, a git step, a wait, a cached late MCP result).
   `expect.passes` records each pass's outcome, response, logs, variable delta and, for a
   handler pass, the facts it evaluated and the paths it reached. The top-level logs stay
-  whole-case and the top-level response is the last pass's.
+  whole-case and are exactly the concatenation of the passes' slices: the recorder refuses
+  a case whose logs gain an entry after the final pass. The top-level response is the last
+  pass's.
 - `reaches` lists the path ids the case drives; replacing a callable path with its stub
   changes an output the case produces. `control_for` lists callable paths the case runs
   without the stub changing it; it needs `twin_of`, a partner that lists the path under
   `reaches`.
 - `twin_of` names the case this one is paired with and `differs_at` the input paths where
-  the two differ; their produced outputs differ. An inline branch is proved by a twin pair or
-  by `branch_passes: {"<branch id>": [i, j]}`, two of the case's own passes whose outputs
+  the two differ; their produced outputs differ. A `differs_at` path must exist in at least
+  one of the two members, since a twin may differ from its base by carrying a key the base
+  lacks; a path neither member carries is refused. An inline branch is proved by a twin pair
+  or by `branch_passes: {"<branch id>": [i, j]}`, two of the case's own passes whose outputs
   differ.
-- `faults` injects a failure (`rules_faults.py`); a fault case is the twin of its unfaulted
-  base, names its fault branch under `reaches`, and `seam_of` names the helper whose removal
-  leaves it unchanged.
+- `faults` injects a failure (`rules_faults.py`); it is a non-empty list, and the loader
+  refuses an empty one. A fault case is the twin of its unfaulted base, names its fault
+  branch under `reaches`, and `seam_of` names the helper whose removal leaves it unchanged.
 - `requires` lists guards that must hold at record and in plain replay (a fact, a variable,
   the current step, a reached path, a fault hit), each on the last pass unless it names
-  `pass`.
+  `pass`. `reached` is a path id or a mapping `{"id": <path id>, "pass": <index>}`.
+  `fault_hit` is `true` or a mapping with optional `pass` and `count`: every case fault is
+  hit on that pass (the last pass when `pass` is absent), `count` times when given; hits on
+  other passes do not count. A seam caller has one pass whose guards are evaluated the same
+  way; it runs no rule pass, so it holds only `reached` and `fault_hit`, and any other guard
+  on a seam caller is refused.
 - `observe` names domain rows recorded after each pass (session variables, the step instance,
   tasks, agent runs). `returned_spy_keys` names the keys of a seam caller's `returned` that
   are the harness's own log, which the mutation comparison drops.

@@ -92,8 +92,8 @@ _IN_STACK: contextvars.ContextVar[frozenset[str]] = contextvars.ContextVar(
 
 def validate_faults(case_id: str, faults: Any) -> None:
     """Raise ``ValueError`` naming the case and the offending kind, filter or name."""
-    if not isinstance(faults, list):
-        raise ValueError(f"{case_id}: faults must be a list, got {faults!r}")
+    if not isinstance(faults, list) or not faults:
+        raise ValueError(f"{case_id}: faults must be a non-empty list, got {faults!r}")
     for fault in faults:
         if not isinstance(fault, Mapping):
             raise ValueError(f"{case_id}: a faults entry is not a mapping: {fault!r}")

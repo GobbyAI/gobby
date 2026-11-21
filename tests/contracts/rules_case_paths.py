@@ -16,7 +16,7 @@ from typing import Any
 
 from tests.contracts import rules_domain, rules_faults, rules_handler, rules_paths
 
-HANDLER_ENTRY = "handler"
+HANDLER_ENTRY = rules_handler.HANDLER_ENTRY
 ENTRIES = frozenset({"engine", HANDLER_ENTRY})
 CALLER_KIND = "seam_caller"
 PASS_KINDS = frozenset({"rule_pass", "handler_pass"})
@@ -54,6 +54,10 @@ def _validate_entry(case_id: str, case: Mapping[str, Any]) -> None:
         raise ValueError(f"{case_id}: a rule_pass case runs the engine entry, not {entry!r}")
     if "seed" in case and "domain" in case:
         raise ValueError(f"{case_id}: give seed or domain, not both")
+    if kind == "handler_pass" and case.get("domain") is None:
+        raise ValueError(f"{case_id}: a handler_pass case needs the domain it runs on")
+    if kind != "handler_pass" and "domain" in case:
+        raise ValueError(f"{case_id}: a domain is seeded for a handler_pass case only")
     if "domain" in case:
         rules_domain.validate_domain(case_id, case["domain"])
     if "requires" in case:
@@ -79,14 +83,14 @@ def _validate_coverage(case_id: str, case: Mapping[str, Any]) -> None:
             raise ValueError(f"{case_id}: seam_of {seam!r} is also under reaches or control_for")
         if "twin_of" not in case:
             raise ValueError(f"{case_id}: seam_of needs a twin_of without the fault")
-        if "faults" not in case:
+        if not case.get("faults"):
             raise ValueError(f"{case_id}: seam_of needs the faults that degrade the seam")
     if "faults" in case:
         rules_faults.validate_faults(case_id, case["faults"])
         if "twin_of" not in case:
             raise ValueError(f"{case_id}: faults need a twin_of without the faults")
     unfaulted = [pid for pid in reaches if _is_fault_branch(pid)]
-    if unfaulted and "faults" not in case:
+    if unfaulted and not case.get("faults"):
         raise ValueError(f"{case_id}: fault branch(es) {unfaulted} under reaches need faults")
     if "twin_of" in case:
         if not isinstance(case["twin_of"], str):

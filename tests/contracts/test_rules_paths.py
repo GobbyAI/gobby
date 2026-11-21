@@ -719,11 +719,13 @@ def _well_formed_cases() -> dict[str, dict[str, Any]]:
     cases = [
         _path_case(
             "synthetic-path-base",
+            domain=_domain(),
             reaches=["family.commit_guard"],
             requires={"reached": "family.commit_guard"},
         ),
         _path_case(
             "synthetic-path-control",
+            domain=_domain(),
             event=_event_with("git status"),
             twin_of="synthetic-path-base",
             differs_at=["event.data.tool_input.command"],
@@ -732,6 +734,7 @@ def _well_formed_cases() -> dict[str, dict[str, Any]]:
         ),
         _path_case(
             "synthetic-path-seam",
+            domain=_domain(),
             faults=[dict(GIT_FAULT)],
             twin_of="synthetic-path-base",
             differs_at=["faults"],
@@ -741,6 +744,7 @@ def _well_formed_cases() -> dict[str, dict[str, Any]]:
         ),
         _path_case(
             "synthetic-path-raise",
+            domain=_domain(),
             faults=[dict(OPEN_FAULT)],
             twin_of="synthetic-path-base",
             differs_at=["faults"],
@@ -978,6 +982,7 @@ def _malformed_path_members() -> list[tuple[str, list[dict[str, Any]], str, str]
             "handler_pass without the handler entry", "synthetic-path-base", "entry", entry="engine"
         ),
         member("seed and domain", "synthetic-path-domain", "seed", seed={"session": True}),
+        member("domain on an engine-entry case", passes, "domain", domain=_domain()),
         member(
             "returned_spy_keys on a rule_pass case",
             passes,

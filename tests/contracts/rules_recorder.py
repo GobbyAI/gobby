@@ -573,8 +573,10 @@ async def _run_events(
     recorder: _Recorder,
     state: rules_domain.DomainState | None,
 ) -> rules_handler.CaseRun:
-    """Run every pass of a case through its entry: the engine, or the hook handler."""
-    if state is not None:
+    """Run every pass of a case through the entry it names: the engine, or the hook handler."""
+    if case.get("entry") == rules_handler.HANDLER_ENTRY:
+        if state is None:
+            raise RuntimeError(f"{case.get('id')}: a handler-entry case needs a domain")
         engine = _engine(case, db, domain=True)
         return await rules_handler.run_handler_case(db, case, state, recorder, engine=engine)
     deadline = None
@@ -698,9 +700,10 @@ def _observe_caller(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[
         if case.get("rules"):
             _seed_rules(db, case["rules"])
         _patched_recorder(recorder, stack, rtk_probe=_rtk_probe(case, stack))
-        with rules_handler.instrumented(case) as (_session, probe_log, _probing):
+        with rules_handler.instrumented(case) as (session, probe_log, _probing):
             returned, error = asyncio.run(_guarded_call(caller, db, case["input"]))
         reached = list(probe_log)
+        hits = _jsonable(list(session.log)) if session is not None else []
     if error is not None:
         recorder.effect_log.append({"raised": error})
     expect: dict[str, Any] = {
@@ -714,9 +717,7 @@ def _observe_caller(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[
         "reached": reached,
     }
     if not rules_paths.stub_active():
-        for name, value in rules_handler._guard_entries(case):
-            if name != "reached" or value not in reached:
-                raise AssertionError(f"{case.get('id')}: guard {name} does not hold: {reached}")
+        rules_handler.check_caller_requires(case, reached, hits)
     return expect, recorder.effect_log
 
 
@@ -732,6 +733,22 @@ def skipped_groups(rules: list[Mapping[str, Any]], reached: set[str]) -> list[st
     return sorted(group for group, names in members.items() if not names & reached)
 
 
+def _refuse_entries_after_the_final_pass(
+    case: Mapping[str, Any], recorder: _Recorder, passes: list[dict[str, Any]]
+) -> None:
+    """Raise when a whole-case log is not the concatenation of its passes' slices.
+
+    Every entry belongs to the pass that appended it, so an entry appended after the final
+    pass (or between two passes' slices) is refused instead of being recorded.
+    """
+    for log in ("effect_log", "audit_records"):
+        sliced = [item for entry in passes for item in entry[log]]
+        if sliced != getattr(recorder, log):
+            raise RuntimeError(
+                f"{case.get('id')}: the recorder's {log} holds entries no pass appended"
+            )
+
+
 def _observe(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Run one case and return ``(expect block, effect log)``."""
     if case.get("kind") == CALLER_KIND:
@@ -745,13 +762,14 @@ def _observe(case: Mapping[str, Any]) -> tuple[dict[str, Any], list[dict[str, An
         _case_environment(stack)
         rules_seed.apply_case_seed(db, case.get("seed"))
         state = None
-        if case.get("domain") is not None:
+        if case.get("entry") == rules_handler.HANDLER_ENTRY and case.get("domain") is not None:
             state = rules_domain.seed_domain(db, case["domain"], Path(tmp).resolve(), stack)
         _seed_rules(db, case["rules"])
         _patched_recorder(recorder, stack, rtk_probe=_rtk_probe(case, stack))
         if recorder.effect_log or recorder.audit_records:
             raise RuntimeError(f"{case.get('id')}: seeding wrote to the recorder's logs")
         run = asyncio.run(_run_events(db, case, recorder, state))
+    _refuse_entries_after_the_final_pass(case, recorder, run.passes)
     response = run.response
     staged = response.metadata.get(STAGED_PAYLOAD_KEY) if response is not None else None
     delta, deletions = variable_delta(run.initial, run.final, scrub=run.scrub)

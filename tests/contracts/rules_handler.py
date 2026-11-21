@@ -36,6 +36,8 @@ from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.contracts import rules_domain, rules_faults, rules_paths, rules_seed
 
 SELF = rules_domain.SELF
+# The entry key value of a case whose passes run through the hook handler on its domain.
+HANDLER_ENTRY = "handler"
 CANONICAL_KEYS = ("canonical_tool_kind", "mcp_server", "mcp_tool")
 GUARD_NAMES = frozenset(
     {
@@ -49,6 +51,8 @@ GUARD_NAMES = frozenset(
         "peer_inactive",
     }
 )
+# The guards a seam caller's one pass can hold: it records reached paths and fault hits only.
+CALLER_GUARD_NAMES = frozenset({"reached", "fault_hit"})
 Scrub = Callable[[Any], Any]
 
 
@@ -148,11 +152,35 @@ def check_requires(case: Mapping[str, Any], run: CaseRun) -> None:
         index = int(value["pass"]) if isinstance(value, Mapping) and "pass" in value else count - 1
         if not 0 <= index < count:
             raise AssertionError(f"{case_id}: guard {name} names pass {index} of {count}")
-        problem = _guard_problem(
-            name, value, run.passes[index], run.observations[index], case, run.fault_log
-        )
+        problem = _guard_problem(name, value, run.passes[index], run.observations[index], case)
         if problem:
             raise AssertionError(f"{case_id}: guard {name} (pass {index}) does not hold: {problem}")
+
+
+def check_caller_requires(
+    case: Mapping[str, Any], reached: list[str], hits: list[dict[str, Any]]
+) -> None:
+    """Check a seam caller's guards on its one pass: the paths it reached and its fault hits.
+
+    A seam caller runs no rule pass, so only the ``reached`` and ``fault_hit`` guards can
+    hold on it; any other guard is refused, since its empty observation could hold vacuously.
+    """
+    case_id = str(case.get("id"))
+    other = sorted({name for name, _value in _guard_entries(case)} - CALLER_GUARD_NAMES)
+    if other:
+        raise AssertionError(f"{case_id}: a seam caller cannot hold guard(s) {other}")
+    entry = {"reached": list(reached), "faults": list(hits)}
+    run = CaseRun(
+        response=None,
+        error=None,
+        passes=[entry],
+        observations=[PassObservation(variables={})],
+        fault_log=list(hits),
+        initial={},
+        final={},
+        scrub=lambda value: value,
+    )
+    check_requires(case, run)
 
 
 def _guard_problem(
@@ -161,7 +189,6 @@ def _guard_problem(
     entry: Mapping[str, Any],
     seen: PassObservation,
     case: Mapping[str, Any],
-    fault_log: list[dict[str, Any]],
 ) -> str | None:
     spec = value if isinstance(value, Mapping) else {}
     if name == "reached":
@@ -169,8 +196,10 @@ def _guard_problem(
         logs = [*entry.get("reached", []), *entry.get("between_reached", [])]
         return None if wanted in logs else f"{wanted!r} not in {logs}"
     if name == "fault_hit":
+        # The hits of the guard's pass only: the last pass, or the pass the guard names.
+        pass_hits = entry.get("faults", [])
         for index, fault in enumerate(case.get("faults", [])):
-            hits = [hit for hit in fault_log if hit.get("index") == index]
+            hits = [hit for hit in pass_hits if hit.get("index") == index]
             if not hits:
                 return f"fault {index} ({fault.get('kind')}) was never hit"
             if "count" in spec and len(hits) != int(spec["count"]):

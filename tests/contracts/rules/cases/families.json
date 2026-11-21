@@ -4479,7 +4479,9 @@
       ],
       "requires": [
         {
-          "fault_hit": true
+          "fault_hit": {
+            "pass": 0
+          }
         },
         {
           "reached": {

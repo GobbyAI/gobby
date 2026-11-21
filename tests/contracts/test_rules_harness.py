@@ -143,6 +143,10 @@ def test_a_seam_caller_evaluates_each_requires_guard() -> None:
         problems.append(
             f"a fault_hit guard of two hits must fail on the one hit it saw, got: {refusal!r}"
         )
+    # A caller records no peer, step, variable or fact, so such a guard could hold vacuously.
+    refusal = _caller_refusal([{"peer_inactive": True}])
+    if refusal is None or "peer_inactive" not in refusal:
+        problems.append(f"a peer_inactive guard on a seam caller must be refused, got: {refusal!r}")
     assert not problems, "\n".join(problems)
 
 
