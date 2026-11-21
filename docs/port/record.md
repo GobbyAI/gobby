@@ -1947,6 +1947,15 @@ Josh's rulings about the port as Gobby memory held them on 2026-11-18, each with
 #### Debt not to port
 
 <!-- gport:kept debt:P0-DECISIONS -->
+- Python's rule-pass `run_command` never runs, wrongly, at src/gobby/workflows/engine/run_command.py (`build_run_command_payload`, line 137): it deep-copies the frozen event data, `_ReadOnlyDict.__deepcopy__` (src/gobby/workflows/evaluation_context.py, line 19) returns the same read-only object, `normalize_tool_fields` then pops from it and raises `TypeError("Workflow evaluation inputs are read-only")`, and the effect fails open at src/gobby/workflows/engine/run_command_effects.py lines 76-78; the Rust port must build the payload from a mutable copy and run the command (known-bad row `known-bad-d45a6fbd1961`).
+- Python's MCP proxy builds a second before_tool event with no agent id for a call that a hook already admitted, wrongly at src/gobby/mcp_proxy/services/result_handling.py (`build_before_tool_event`, line 32; it only sets `_mcp_proxy_duplicate_before_tool` at line 163), and the pending tool context it could copy from holds no agent id (src/gobby/workflows/tool_context.py, `_snapshot_tool_context`, line 107), so a rule on a missing agent id treats a subagent's admitted call as the parent's; the Rust port's pending context keeps the agent identity and the duplicate event inherits it, or the call is not evaluated a second time (known-bad row `known-bad-d4e670a9a8cf`).
+- Python's rewrite recheck calls `_check_agent_tool_enforcement` without `base_merge_write` at src/gobby/workflows/engine/core.py lines 747-752, while the first check passes it (lines 552-558). Read from the code, not reproduced by a case; the Rust port does not copy the omission without a decision.
+- The shell-guard rows of the known-bad index (#24177, #24298 x5, #24299 x2, #24772 and the uv lock and uv sync row) are Python flaws: the Rust port implements each row's `correct` value, never `python_observed` (D18).
+- Python `re` accepts lookaround; the Rust `regex` crate rejects it. The audit report (docs/port/regex-audit.json) names every pattern with its rewrite or its reported decision; the Rust port copies no lookaround syntax and takes the rewrite or the operator's ruling for each reported row.
+- Python `re` reads `\d`, `\w`, `\b` and `\B` from the interpreter's Unicode tables, which change between minors (`\d` 680 code points on CPython 3.13 and 760 on 3.14, `\w` 138,558 and 142,940; docs/port/regex-audit.json `decisions`), and `\B` on the empty subject matches on 3.14 and not on 3.13 (tests/contracts/regex_audit/constructs.json, `boundary`). The Rust port assumes no parity on these atoms until the operator rules on each `-version-difference` decision.
+- Python's substitution accepts an empty match directly after a non-empty one (`x*` replaced by `-` in `abxd` gives `-a-b--d-`, case `consumer-sub-empty-match` in tests/contracts/regex_audit/consumers.json), and Python replacement templates expand group references (`consumer-sub-template`); the port's regex_replace must reproduce both, not the Rust iterator's or template syntax's own answer.
+- `HookResponse.trigger_action` has no producer in Python (src/gobby/hooks/events.py line 287, declared for future use), and `modify_args` has no reachable producer: only the ACP base adapter writes it (src/gobby/adapters/acp_hook_adapter.py lines 363-368), for BeforeModel and BeforeToolSelection, which no routed adapter reaches. The Rust port adds no producer of either without a contract change.
+- `EventHandlers` takes a `call_tool` collaborator (src/gobby/hooks/event_handlers/__init__.py line 133) that no handler reads; the Rust port needs no such collaborator.
 <!-- gport:end debt:P0-DECISIONS -->
 
 ### P0-LOWTRAFFIC: Low-traffic corpora: voice, comms, install, node install
@@ -4859,6 +4868,16 @@ Contract of the SEAM-FAMILY chunk (#25950), as built on its branch. The frozen t
 ## Known-bad index
 
 <!-- gport:kept known-bad -->
+- Registry: `tests/contracts/rules_known_bad.json` (P0-DECISIONS), 13 rows, each with a control input that Python gets right. Python's replay asserts `python_observed`; a port asserts `correct` (D18). Each row's `ref`, entry, input, field, Python's value and the correct value:
+  - `known-bad-b36c9397a142` #24177, `gobby.hooks.normalization.normalize_tool_fields`, `bash -lc "echo x | { cd sub; }; touch z.py"`, `canonical_repo_mutation_scope_unknown`: null, correct true.
+  - `known-bad-40bc71234c2c`, `known-bad-13ed5b7663cb`, `known-bad-e65a7b801e9c`, `known-bad-aa3c452615e6`, `known-bad-4364114463a3` #24298, `gobby.workflows.git_commit_parsing.parse_git_commit_invocations`, field `count`: 0, correct 1, for `Git commit -m x foreign.txt`, `/usr/bin/GIT commit -m x foreign.txt`, `env -S 'git commit -m x foreign.txt'`, `trap 'git commit -m x foreign.txt' EXIT` and `echo commit -m x foreign.txt | xargs git`.
+  - `known-bad-1f79ed390d5a`, `known-bad-b95a55516a5c` #24299, `gobby.hooks.provider_launch_guard.blocks_direct_provider_launch`, field `result`: false, correct true, for `repeat 1 claude -p hi` and `for i j (1 2) claude -p hi`.
+  - `known-bad-72f46275132c` #24772, `gobby.workflows.approval_brace_guard.approval_command_word_expansion`, a git alias that runs `gobby se$()ssions` through `GIT_CONFIG_*`, field `result`: false, correct true.
+  - `known-bad-4ceb0723b8f9`, `known-bad-857c833813e4` unfiled:uv-lock-sync-scope-unknown, `gobby.hooks.normalization.normalize_tool_fields`, `uv lock` and `uv sync`, `canonical_repo_mutation_scope_unknown`: true, correct false.
+  - `known-bad-d45a6fbd1961` unfiled:frozen-run-command-payload, `gobby.workflows.engine.run_command.build_run_command_payload`, `echo hi` on a frozen event, field `raised`: `TypeError`, correct null. Tagged cases: `synthetic-effect-run-command` and `synthetic-effect-run-command-rule-pass` (tests/contracts/rules/cases/effects.json) and `synthetic-deadline-handed-to-effects` (failures.json); its dependent paths are `response.context`, `response.context_parts`, `effect_log`, `audit_records` and `passes`.
+  - `known-bad-d4e670a9a8cf` unfiled:proxy-duplicate-before-tool-agent-identity, `gobby.mcp_proxy.services.result_handling.build_before_tool_event`, a subagent's call already admitted by a hook, field `duplicate_identity`: agent id absent and the call blocked, correct the agent id inherited and the call allowed (not re-evaluating the call is also accepted).
+- Five rows also have a vector tagged known_bad in `tests/contracts/rules/normalize_vectors.json` (#24177, #24299 x2 and the two uv rows). Only the frozen run_command row tags committed corpus cases; the other rows have empty dependent paths.
+- Retired at record time, not written: #24286 (`xargs -n1 head -n 100 < list`) and #25321 x2 (`xargs -0 cat < list`, `xargs -n1 cat < list`). Python now sets `canonical_code_navigation_broad` to true for all three (re-run at 7ceb0e3077). The fix is 96b56b6c13 or 9639d0b183 (#25602, both 2026-11-03); #24286 is attributed to 96b56b6c13 by its body, and the #25321 rows were not bisected.
 <!-- gport:end known-bad -->
 
 ## Found Work
@@ -5013,6 +5032,36 @@ Contract of the SEAM-FAMILY chunk (#25950), as built on its branch. The frozen t
 ### P0-DECISIONS
 
 <!-- gport:kept found:P0-DECISIONS -->
+- Owned rows: none. The map gives P0-DECISIONS no ledger selector, so it owns no ledger row and has no status file. Its deliverable is the oracle below, recorded at 7ceb0e3077 and counted there.
+- The corpus. Every case uses synthetic definitions; none names, loads or counts a bundled rule, agent definition, pipeline or step workflow. Each layer has its own manifest (schema 1), loader, coverage check and README with the record and replay commands:
+  - Rule-pass layer, `tests/contracts/rules/`: 192 cases in 16 case files (110 rule_pass, 74 handler_pass, 8 seam_caller). The manifest requires 115 scenario ids, 15 effect types, 2 delivery classes, 16 rule-set response fields, 13 helper families, 5 observers and 3 transitions. The other three response fields have named owners in `tests/contracts/rules/manifest.json`: `system_message` adapters, `modify_args` unrouted and `trigger_action` none.
+  - Normalizer vectors: 922 in `tests/contracts/rules/normalize_vectors.json`, over the 46 modules of `tests/contracts/rules/normalize_modules.json`. 286 replay one parametrize combination each of the 27 negative tests they name, and 5 are tagged known_bad.
+  - Adapter layer, `tests/contracts/adapters/`: 176 cases in 8 files covering claude, codex, droid, grok, agy and git: 79 inbound, 87 outbound, 6 node-origin no-file, 2 git verdicts and 2 route refusals.
+  - Pipeline layer, `tests/contracts/pipeline/`: 68 cases in 4 files, 46 event cases and 22 collaborator failures (one per collaborator kind, `call_tool` included).
+  - Each layer's corpus changes outcome when the production path it names is stubbed. The mutation, reach and path tests are in `tests/contracts/test_rules_engine_paths.py`, `tests/contracts/test_rules_paths.py`, `tests/contracts/test_adapters_corpus.py` and `tests/contracts/test_pipeline_corpus.py`.
+- The exporter runs in process in pytest on the isolated test hub, not in an isolated daemon as the map's goal says (port-session ruling). Route refusals run through ASGI.
+- Layer (b), envelope shapes mined from local CLI transcripts: none was mined in this chunk. Layer (a) covers every adapter, and the map lets (b) be thin.
+- Regex audit, generated by `tests/contracts/test_regex_audit.py` in record mode into `docs/port/regex-audit.json` and `docs/port/regex-audit.md`; the report is output, not an asserted fixture.
+  - Scope: 200 patterns from 48 sources: 96 in the bundled rule tree, 2 in bundled agent definitions, 98 in the detection TOML files, 1 in `.gobby/workflows/rules/quiet-hours.yaml` and 3 Python allowlist patterns.
+  - Verdicts: 23 as_written, 58 rewrite and 119 reported. Every rewrite and as_written row is verified on both engines by the Rust driver `crates/gport/tests/regex_audit.rs`; no reported row is verified.
+  - Consumer classes: BOOL 88, SEARCH-PKG-M 98, SPAN-ALLOWLIST 9, FULLMATCH 2, MATCH-GROUPS-FIRSTLINE 2 and FULLMATCH-PATH 1. No pattern holds a backreference.
+  - Lookaround: the raw token scan finds 147 occurrences on 84 lines of 36 YAML files (146 on 83 lines of 35 files in the bundled rule tree, plus 1 in quiet-hours.yaml). The parsed report holds 155: YAML aliases add 6, a detection TOML adds 1 and a Python pattern adds 1. 88 rows hold lookaround. 16 are rewritten and 72 reported: 48 under a `\b` or `\w` version-difference decision, which takes precedence, 12 unsupported shape, 7 continuation, 4 non-boolean consumer and 1 under repetition.
+  - The quiet-hours.yaml lookbehind row is reported under `re:word-boundary-version-difference`, not rewritten.
+  - The eight decision ids and their options are in the report's `decisions`. The operator's questions go to Josh as one batch from the port session; nothing in `src/` is refused or rewritten.
+- Stale text in the map's P0-DECISIONS goal:
+  - "76 lookaround and backreference matches in at least 10 bundled rule files" is the command_pattern subset; the counts above are the whole universe.
+  - `SUPPORTED_HOOK_SOURCES` is at src/gobby/servers/routes/mcp/hooks.py line 89, not 91.
+  - The only assignment of `_pending_interaction_manager` is tests/servers/test_session_control.py line 1876, not 2112.
+  - The map is not edited here; a map revision takes these corrections.
+- Hold-open resolve defect (#25708): no rows were recorded. The port session ruled that the registry holds engine behaviours shown with synthetic definitions. The defect is still present at 7ceb0e3077: `_pending_interaction_manager` is read at src/gobby/servers/websocket/chat/_interaction_responses.py line 84 and src/gobby/servers/websocket/session_control.py line 129 and assigned nowhere in `src/`. #25708 is closed as folded into #25685, which is open. Owner: #25685 and the chunk that ports the websocket chat server.
+- The third assistant-response pattern holds a lookahead and is keyed in a Python allowlist (src/gobby/workflows/assistant_response_matching.py line 25), so a rewrite needs a D4 exception. It is reported (`lookaround-non-boolean`). Owner: RULE-1A, with the operator's ruling.
+- Known limits of the regex audit gate. Each fails closed:
+  - The verbose-flag check scans raw text, so `[(?x)]a` is a false `rust-reinterpreted:verbose-flag` fail.
+  - An octal or `\N{...}` escape inside a bracket class reaches the gate as a driver mismatch, not as `rust-rejected:*`.
+  - The gate's flag-inertness oracle shares logic with the tool it checks. Owner: unassigned.
+- Platform record (ruling 31). The manifests' `platform_record` says macOS (darwin arm64) recorded and replayed every layer; that is the chunk gate. Linux, Windows x64 and Windows arm64 were not run.
+  - On Windows, 61 rule-pass cases marked `posix_only` are skipped: those that seed git, a transcript or a filesystem fault, or spawn through `/bin/sh`. Fixture-repository vectors are skipped there too. Pure-string vectors and engine-entry cases replay on every platform.
+  - Owner: post-port smoke test; no chunk waits on a non-macOS run.
 <!-- gport:end found:P0-DECISIONS -->
 
 ### P0-LOWTRAFFIC
