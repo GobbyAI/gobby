@@ -2,7 +2,8 @@
 
 Each test pins one property the recorder or the case loader must hold whatever the corpus
 holds: a case runs through the entry it names, a handler case carries the domain it runs
-on, a seam caller's guards are evaluated, a fault list is never empty, a ``differs_at``
+on, a seam caller's guards are evaluated, a ``fault_hit`` guard is ``true`` or a mapping
+and needs a declared fault on a seam caller, a fault list is never empty, a ``differs_at``
 path exists in at least one twin, nothing reaches the recorder's logs after the final pass,
 and a fault-hit guard reads the last pass's hits unless it names a pass. Every case here is
 synthetic and built in this file.
@@ -34,6 +35,11 @@ DISPATCH_PATH = path_tests.DISPATCH_PATH
 # provides it and the read raises, so the caller stops after exactly one hit.
 SESSION_READ_FAULT = {"kind": "hub_query", "sql_contains": "SELECT id FROM sessions WHERE id"}
 LATE_ENTRY = {"synthetic_harness": "appended after the final pass"}
+# The well-formed seam caller of the path tests, its faulted twin and a faulted pass case.
+CALLER_ID = "synthetic-path-caller"
+CALLER_REACHED = {"reached": DISPATCH_PATH}
+FAULTED_CALLER_ID = "synthetic-harness-faulted-caller"
+FAULT_GUARD_ID = "synthetic-harness-fault-guard"
 
 
 def _handler_case(case_id: str, **overrides: Any) -> dict[str, Any]:
@@ -147,6 +153,80 @@ def test_a_seam_caller_evaluates_each_requires_guard() -> None:
     refusal = _caller_refusal([{"peer_inactive": True}])
     if refusal is None or "peer_inactive" not in refusal:
         problems.append(f"a peer_inactive guard on a seam caller must be refused, got: {refusal!r}")
+    assert not problems, "\n".join(problems)
+
+
+# --- a fault_hit guard needs faults and is true or a mapping -----------------------------
+
+
+def _seam_caller(requires: Mapping[str, Any], **overrides: Any) -> dict[str, Any]:
+    case = copy.deepcopy(path_tests._well_formed_cases()[CALLER_ID])
+    case.update(requires=dict(requires), **overrides)
+    return case
+
+
+def test_the_loader_refuses_a_fault_hit_guard_on_a_seam_caller_without_faults(
+    tmp_path: Path,
+) -> None:
+    # With no case fault the guard's per-fault check loops over nothing and holds vacuously.
+    problems = _accepted_problems(
+        tmp_path / "reached", "a seam caller with a reached guard", [_seam_caller(CALLER_REACHED)]
+    )
+    faulted = _seam_caller(
+        {"fault_hit": True},
+        id=FAULTED_CALLER_ID,
+        faults=[dict(SESSION_READ_FAULT)],
+        twin_of=CALLER_ID,
+        differs_at=["faults"],
+    )
+    problems += _accepted_problems(
+        tmp_path / "faulted",
+        "a seam caller with faults and a fault_hit guard",
+        [_seam_caller(CALLER_REACHED), faulted],
+    )
+    problems += _refusal_problems(
+        tmp_path / "no-faults",
+        "a seam caller with a fault_hit guard and no faults",
+        [_seam_caller({"fault_hit": True})],
+        CALLER_ID,
+        "fault_hit",
+    )
+    assert not problems, "\n".join(problems)
+
+
+def _fault_guarded(value: Any) -> dict[str, Any]:
+    return _handler_case(
+        FAULT_GUARD_ID,
+        faults=[dict(path_tests.GIT_FAULT)],
+        twin_of=BASE_ID,
+        differs_at=["faults"],
+        seam_of="family.ledger_reconcile",
+        reaches=["family.ledger_reconcile.status_unavailable"],
+        requires={"fault_hit": value},
+    )
+
+
+def test_the_loader_refuses_a_fault_hit_guard_that_is_not_true_or_a_mapping(
+    tmp_path: Path,
+) -> None:
+    # A false guard would read as its opposite: every fault hit, the same check as true.
+    problems: list[str] = []
+    accepted: tuple[tuple[str, Any], ...] = (("true", True), ("a count mapping", {"count": 1}))
+    refused: tuple[tuple[str, Any], ...] = (("false", False), ("one", 1), ("a string", "yes"))
+    for label, value in accepted:
+        problems += _accepted_problems(
+            tmp_path / f"accepted-{label.replace(' ', '-')}",
+            f"a fault_hit guard of {label}",
+            [_base(), _fault_guarded(value)],
+        )
+    for label, value in refused:
+        problems += _refusal_problems(
+            tmp_path / f"refused-{label.replace(' ', '-')}",
+            f"a fault_hit guard of {label}",
+            [_base(), _fault_guarded(value)],
+            FAULT_GUARD_ID,
+            "fault_hit",
+        )
     assert not problems, "\n".join(problems)
 
 

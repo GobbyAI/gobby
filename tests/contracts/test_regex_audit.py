@@ -41,6 +41,7 @@ from gobby.workflows.assistant_response_matching import (
 from gobby.workflows.regex_validation import iter_definition_regexes
 from gobby.workflows.templates import TemplateEngine
 from tests.contracts import regex_audit_check as check
+from tests.contracts import regex_audit_classify as classify
 from tests.contracts import regex_audit_tool as tool
 from tests.contracts import rules_corpus
 
@@ -105,10 +106,6 @@ REPORT_REASONS = frozenset(
     }
 )
 SEMANTIC_PREFIX = "semantic-decision:"
-# Constructs Rust compiles with another meaning; every other fail construct Rust rejects.
-RUST_REINTERPRETED_IDS = frozenset(
-    {"possessive", "verbose-flag", "posix-class", "unicode-property"}
-)
 REQUIRED_CONSTRUCT_IDS = (
     "literal",
     "non-ascii-literal",
@@ -589,7 +586,8 @@ def _construct_fail_reason(row: Mapping[str, Any]) -> str:
     minors = compiles.values() if isinstance(compiles, Mapping) else (compiles,)
     if not all(minors):
         return "python-invalid"
-    if row["id"] in RUST_REINTERPRETED_IDS:
+    # The constructs Rust compiles with another meaning are the classifier's own set.
+    if row["id"] in classify._RUST_REINTERPRETED:
         return f"rust-reinterpreted:{row['id']}"
     return f"rust-rejected:{row['id']}"
 
@@ -824,6 +822,20 @@ def test_construct_table_holds_on_python() -> None:
     _check_membership(document)
     _check_iteration(document)
     _check_python_validity(document)
+
+
+def test_the_reinterpreted_set_the_audit_reads_is_the_classifiers_fail_constructs() -> None:
+    # The audit holds no copy of the set: an id the classifier adds or drops changes the
+    # reason _construct_fail_reason expects, so the set must name fail constructs only.
+    reinterpreted = classify._RUST_REINTERPRETED
+    fail_ids = {
+        row["id"] for row in _load(CONSTRUCTS_FIXTURE)["constructs"] if row["disposition"] == "fail"
+    }
+    outside = sorted(reinterpreted - fail_ids)
+    assert reinterpreted and outside == [], (
+        f"the classifier's reinterpreted set {sorted(reinterpreted)} names ids that are not"
+        f" fail constructs: {outside}"
+    )
 
 
 # ---------------------------------------------------------------------------------------------
