@@ -152,6 +152,11 @@ def validate_requires(case_id: str, requires: Any, faults: Any) -> None:
         value = entry["fault_hit"]
         if value is not True and not isinstance(value, Mapping):
             raise ValueError(f"{case_id}: a fault_hit guard is true or a mapping, got {value!r}")
+        if isinstance(value, Mapping) and set(value) - {"count", "pass"}:
+            raise ValueError(
+                f"{case_id}: a fault_hit guard has unknown key(s) "
+                f"{sorted(set(value) - {'count', 'pass'})}"
+            )
         if not faults:
             raise ValueError(f"{case_id}: a fault_hit guard needs the case faults it checks")
 
