@@ -133,8 +133,13 @@ def _guard_entries(case: Mapping[str, Any]) -> list[tuple[str, Any]]:
     return [(name, value) for entry in entries for name, value in dict(entry).items()]
 
 
-def validate_requires(case_id: str, requires: Any) -> None:
-    """Raise ``ValueError`` naming the case for a malformed guard list or unknown guard."""
+def validate_requires(case_id: str, requires: Any, faults: Any) -> None:
+    """Raise ``ValueError`` naming the case for a malformed guard list or unknown guard.
+
+    A ``fault_hit`` guard is ``true`` or a mapping, and the case declares faults: the guard
+    checks each case fault, so with none it would hold vacuously, and ``false`` would read
+    as the same check as ``true``.
+    """
     entries = [requires] if isinstance(requires, Mapping) else requires
     if not isinstance(entries, list) or not all(isinstance(e, Mapping) for e in entries):
         raise ValueError(f"{case_id}: requires must be a mapping or a list of mappings")
@@ -142,6 +147,13 @@ def validate_requires(case_id: str, requires: Any) -> None:
         unknown = sorted(set(entry) - GUARD_NAMES)
         if unknown:
             raise ValueError(f"{case_id}: requires has unknown guard(s) {unknown}")
+        if "fault_hit" not in entry:
+            continue
+        value = entry["fault_hit"]
+        if value is not True and not isinstance(value, Mapping):
+            raise ValueError(f"{case_id}: a fault_hit guard is true or a mapping, got {value!r}")
+        if not faults:
+            raise ValueError(f"{case_id}: a fault_hit guard needs the case faults it checks")
 
 
 def check_requires(case: Mapping[str, Any], run: CaseRun) -> None:

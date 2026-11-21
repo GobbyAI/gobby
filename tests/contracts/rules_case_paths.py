@@ -61,7 +61,7 @@ def _validate_entry(case_id: str, case: Mapping[str, Any]) -> None:
     if "domain" in case:
         rules_domain.validate_domain(case_id, case["domain"])
     if "requires" in case:
-        rules_handler.validate_requires(case_id, case["requires"])
+        rules_handler.validate_requires(case_id, case["requires"], case.get("faults"))
 
 
 def _validate_coverage(case_id: str, case: Mapping[str, Any]) -> None:

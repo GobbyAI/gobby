@@ -321,13 +321,13 @@ replaces them. Python is the oracle until 7.17.
 `kind: deliverable`
 
 Targets:
-- `tests/contracts/rules/manifest.json`
-- `tests/contracts/rules/normalize_vectors.json`
+- `tests/contracts/rules/manifest.json::*` — scope-reason: the rule-pass corpus manifest this deliverable owns whole
+- `tests/contracts/rules/normalize_vectors.json::*` — scope-reason: the normalizer vectors this deliverable owns whole
 - `tests/contracts/rules/README.md`
-- `tests/contracts/rules_corpus.py`
-- `tests/contracts/test_rules_corpus.py`
-- `tests/contracts/rules_known_bad.json`
-- `tests/contracts/test_rules_known_bad.py`
+- `tests/contracts/rules_corpus.py::*` — scope-reason: the corpus loader and exporter this deliverable owns whole
+- `tests/contracts/test_rules_corpus.py::*` — scope-reason: the corpus tests this deliverable owns whole
+- `tests/contracts/rules_known_bad.json::*` — scope-reason: the known-bad registry this deliverable owns whole
+- `tests/contracts/test_rules_known_bad.py::*` — scope-reason: the known-bad registry tests this deliverable owns whole
 
 **Research context:**
 - **Call surface.** `src/gobby/workflows/hooks.py::WorkflowHookHandler._evaluate_rules`
@@ -543,10 +543,10 @@ stating the four DR5 mappings, and extend the document test to require it.
 `kind: deliverable`
 
 Targets:
-- `tests/contracts/adapters/manifest.json`
+- `tests/contracts/adapters/manifest.json::*` — scope-reason: the adapter corpus manifest this deliverable owns whole
 - `tests/contracts/adapters/README.md`
-- `tests/contracts/adapters_corpus.py`
-- `tests/contracts/test_adapters_corpus.py`
+- `tests/contracts/adapters_corpus.py::*` — scope-reason: the adapter corpus loader and exporter this deliverable owns whole
+- `tests/contracts/test_adapters_corpus.py::*` — scope-reason: the adapter corpus tests this deliverable owns whole
 
 **Research context:**
 - **Adapters on the route.** `src/gobby/adapters/claude_code.py::ClaudeCodeAdapter`,
@@ -584,10 +584,10 @@ including the node-origin no-file branches.
 `kind: deliverable`
 
 Targets:
-- `tests/contracts/pipeline/manifest.json`
+- `tests/contracts/pipeline/manifest.json::*` — scope-reason: the hook pipeline corpus manifest this deliverable owns whole
 - `tests/contracts/pipeline/README.md`
-- `tests/contracts/pipeline_corpus.py`
-- `tests/contracts/test_pipeline_corpus.py`
+- `tests/contracts/pipeline_corpus.py::*` — scope-reason: the pipeline corpus loader and exporter this deliverable owns whole
+- `tests/contracts/test_pipeline_corpus.py::*` — scope-reason: the pipeline corpus tests this deliverable owns whole
 
 **Research context:**
 - **Entry.** `src/gobby/hooks/hook_manager.py::HookManager` runs
@@ -2240,7 +2240,7 @@ Targets:
 - `crates/gingress/src/sessions/tests.rs`
 - `docs/contracts/parity-waivers.json::*` — scope-reason: adds one waiver entry for this divergence
 - `docs/contracts/parity-ledger.md::*` — scope-reason: regenerated so the hooks row notes the waiver
-- `tests/contracts/pipeline/manifest.json`
+- `tests/contracts/pipeline/manifest.json::*` — scope-reason: the 1.4 refusal case cites the waiver and gains a waived_expect
 
 **Research context:**
 - **hub-mode Decision 18.** Registering a node session that the hub did not

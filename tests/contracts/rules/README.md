@@ -162,7 +162,9 @@ the loader checks for the keys below, and `tests/contracts/test_rules_paths.py` 
   `pass`. `reached` is a path id or a mapping `{"id": <path id>, "pass": <index>}`.
   `fault_hit` is `true` or a mapping with optional `pass` and `count`: every case fault is
   hit on that pass (the last pass when `pass` is absent), `count` times when given; hits on
-  other passes do not count. A seam caller has one pass whose guards are evaluated the same
+  other passes do not count. The loader refuses any other `fault_hit` value (`false`
+  included) and a `fault_hit` guard on a case without `faults`, which would hold vacuously.
+  A seam caller has one pass whose guards are evaluated the same
   way; it runs no rule pass, so it holds only `reached` and `fault_hit`, and any other guard
   on a seam caller is refused.
 - `observe` names domain rows recorded after each pass (session variables, the step instance,
